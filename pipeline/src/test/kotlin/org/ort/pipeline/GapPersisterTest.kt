@@ -118,6 +118,48 @@ class GapPersisterTest {
     }
 
     @Test
+    @Requirement("FR-CAP-5", "F23")
+    fun `WPC3 a bare read error on a Bluetooth audio route is mapped to BLUETOOTH_AUDIO_LOST, not INPUT_LOST`() =
+        runTest {
+            val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+            db.sessionDao().insert(PipelineTestFixtures.session())
+            val persister = GapPersister(db.captureGapDao(), TestClock())
+
+            val gap = GapRecord(
+                startMonotonicNanos = 0,
+                endMonotonicNanos = 1_000_000,
+                startWallMillis = 0,
+                endWallMillis = 1,
+                cause = "read error",
+            )
+            persister.persist("SESSION01", gap, isBluetoothAudioRoute = true)
+
+            assertEquals(
+                CaptureGapCause.BLUETOOTH_AUDIO_LOST,
+                db.captureGapDao().listBySession("SESSION01").single().cause,
+            )
+        }
+
+    @Test
+    @Requirement("FR-CAP-5", "F23")
+    fun `WPC3 isBluetoothAudioRoute does not change a cause that already names something more specific`() = runTest {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        val persister = GapPersister(db.captureGapDao(), TestClock())
+
+        val gap = GapRecord(
+            startMonotonicNanos = 0,
+            endMonotonicNanos = 1_000_000,
+            startWallMillis = 0,
+            endWallMillis = 1,
+            cause = "os stopped: unclean end detected on launch",
+        )
+        persister.persist("SESSION01", gap, isBluetoothAudioRoute = true)
+
+        assertEquals(CaptureGapCause.OS_STOPPED, db.captureGapDao().listBySession("SESSION01").single().cause)
+    }
+
+    @Test
     @Requirement("R-106")
     fun `a route-mismatch-shaped cause is mapped to ROUTE_LOST -- reserved, unreachable today`() = runTest {
         val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)

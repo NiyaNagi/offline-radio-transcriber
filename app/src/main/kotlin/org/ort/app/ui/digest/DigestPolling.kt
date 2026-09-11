@@ -578,6 +578,9 @@ public object DigestPolling {
     private fun causeProse(cause: CaptureGapCause): String = when (cause) {
         CaptureGapCause.CALL -> "incoming call took the microphone"
         CaptureGapCause.INPUT_LOST -> "input lost"
+        // WPC3 (FR-CAP-5, F23): out-of-row fix reported to the lead -- see LogViewData.gapCauseProse's
+        // matching comment for why this string, and its board, is provisional pending WPF.
+        CaptureGapCause.BLUETOOTH_AUDIO_LOST -> "Bluetooth audio lost"
         CaptureGapCause.OS_STOPPED -> "stopped by the OS"
         CaptureGapCause.ROUTE_LOST -> "route lost"
         CaptureGapCause.INTERRUPTION -> "interrupted"

@@ -16,6 +16,8 @@ import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.pipeline.PipelineTestFixtures
+import org.ort.pipeline.rig.FrequencyProvenance
+import org.ort.pipeline.rig.FrequencyReading
 import org.ort.segment.FrameSpec
 import org.ort.segment.SegmentConfig
 import org.ort.segment.SegmentId
@@ -168,4 +170,97 @@ public class RealSegmentSinkTest {
             assertTrue("a too-short segment must never be enqueued for Pass B", queued.isEmpty())
             assertEquals(1, persistedCalls)
         }
+
+    /**
+     * WPC3 (FR-RIG-6): [org.ort.data.entity.TransmissionEntity.rigStateChangedMidTransmission]
+     * must carry the [FrequencyReading.changedDuringTransmission] flag the frequency provider
+     * reports — before this, the flag had nowhere to persist to (E2-B09's own report).
+     */
+    @Test
+    @Requirement("FR-RIG-6")
+    public fun `a frequency reading flagged changed mid-transmission persists that flag on the row`(): Unit =
+        runBlocking {
+            val clock = TestClock(startMonotonicNanos = 500_000_000L, startWallMillis = 1_700_000_000_000L)
+            val sampleClock = SampleClock(
+                anchorMonotonicNanos = clock.monotonicNanos(),
+                anchorWallMillis = clock.wallMillis(),
+                anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+                sampleRate = FrameSpec.SAMPLE_RATE,
+            )
+            val segmentConfig = SegmentConfig()
+            val queue = WorkQueue(db, clock)
+
+            val sink = RealSegmentSink(
+                filesDir,
+                sessionId,
+                db,
+                queue,
+                sampleClock,
+                segmentConfig,
+                frequencyProvider = { _, _ ->
+                    FrequencyReading(14_250_000L, FrequencyProvenance.RIG, changedDuringTransmission = true)
+                },
+            ) {}
+
+            val startSample = 0L
+            val endSample = FrameSpec.SAMPLE_RATE.toLong()
+            val writer = sink.open(SegmentId(0), startSample)
+            writer.append(FloatArray(endSample.toInt()) { 0.1f })
+            writer.close(
+                SegmentRecord(
+                    id = SegmentId(0),
+                    startSample = startSample,
+                    endSample = endSample,
+                    vadStartSample = startSample,
+                    vadEndSample = endSample,
+                    sampleCount = endSample,
+                    outcome = SegmentOutcome.SPEECH,
+                ),
+            )
+
+            val persisted = db.transmissionDao().getById("$sessionId-0")
+            assertNotNull(persisted)
+            assertTrue(
+                "a mid-transmission rig change must be flagged on the persisted row",
+                persisted!!.rigStateChangedMidTransmission,
+            )
+        }
+
+    /** The other half of the flag above: an unflagged reading must persist `false`, never `true`
+     * by default -- the flag names a real event, not a fabricated one. */
+    @Test
+    @Requirement("FR-RIG-6")
+    public fun `an unflagged frequency reading persists rigStateChangedMidTransmission as false`(): Unit = runBlocking {
+        val clock = TestClock(startMonotonicNanos = 500_000_000L, startWallMillis = 1_700_000_000_000L)
+        val sampleClock = SampleClock(
+            anchorMonotonicNanos = clock.monotonicNanos(),
+            anchorWallMillis = clock.wallMillis(),
+            anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        val segmentConfig = SegmentConfig()
+        val queue = WorkQueue(db, clock)
+
+        val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, segmentConfig) {}
+
+        val startSample = 0L
+        val endSample = FrameSpec.SAMPLE_RATE.toLong()
+        val writer = sink.open(SegmentId(0), startSample)
+        writer.append(FloatArray(endSample.toInt()) { 0.1f })
+        writer.close(
+            SegmentRecord(
+                id = SegmentId(0),
+                startSample = startSample,
+                endSample = endSample,
+                vadStartSample = startSample,
+                vadEndSample = endSample,
+                sampleCount = endSample,
+                outcome = SegmentOutcome.SPEECH,
+            ),
+        )
+
+        val persisted = db.transmissionDao().getById("$sessionId-0")
+        assertNotNull(persisted)
+        assertFalse(persisted!!.rigStateChangedMidTransmission)
+    }
 }

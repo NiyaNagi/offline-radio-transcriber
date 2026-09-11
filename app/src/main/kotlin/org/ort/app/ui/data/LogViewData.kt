@@ -298,6 +298,12 @@ public object LogItemsMapper {
     private fun gapCauseProse(cause: CaptureGapCause): String = when (cause) {
         CaptureGapCause.CALL -> "incoming call"
         CaptureGapCause.INPUT_LOST -> "input lost"
+        // WPC3 (FR-CAP-5, F23): out-of-row fix reported to the lead -- adding CaptureGapCause
+        // .BLUETOOTH_AUDIO_LOST (schema v9) broke this when's exhaustiveness. No board names this
+        // string yet (E2-G05 is still `open`); "Bluetooth audio lost" follows this same function's
+        // own INPUT_LOST wording exactly, distinguished only by naming the route, pending WPF's
+        // real F23 board text.
+        CaptureGapCause.BLUETOOTH_AUDIO_LOST -> "Bluetooth audio lost"
         CaptureGapCause.OS_STOPPED -> "app stopped by the OS"
         CaptureGapCause.ROUTE_LOST -> "route lost"
         CaptureGapCause.INTERRUPTION -> "interruption"

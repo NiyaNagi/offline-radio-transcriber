@@ -21,6 +21,7 @@ import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.AudioIo
 import org.ort.capture.android.AudioRecordSource
+import org.ort.capture.android.BackoffLadder
 import org.ort.capture.android.GapRecord
 import org.ort.capture.android.GapTracker
 import org.ort.capture.android.codec.DeflatePredictiveCodec
@@ -321,7 +322,18 @@ public class RealCaptureService : Service() {
         // AudioRecordSource emitted Interrupted/Resumed (and, after F-010, a dropped-span cause)
         // but no one joined them to CaptureGapDao (FR-RUN-12, AC-48; constitution IV). Reuses the
         // [gapPersister] constructed above for the F5 check -- one instance, two callers.
-        val gapRelay = CaptureGapRelay(GapTracker(SystemClock)) { gap -> gapPersister.persist(sessionId, gap) }
+        //
+        // WPC3 (FR-CAP-5, F23): [selectedInputDevice] is read at PERSIST time, not captured here --
+        // it is a `var` field AudioRecordSource's own route-change handling can update mid-session,
+        // and a gap this relay persists must reflect the route that actually dropped, not whatever
+        // was selected when the relay was constructed.
+        val gapRelay = CaptureGapRelay(GapTracker(SystemClock)) { gap ->
+            gapPersister.persist(
+                sessionId,
+                gap,
+                isBluetoothAudioRoute = selectedInputDevice?.kind == AudioDeviceKind.BLUETOOTH,
+            )
+        }
 
         startShedMonitor(db)
 
@@ -486,7 +498,18 @@ public class RealCaptureService : Service() {
                 CaptureEvent.RouteChanged -> refreshInputStatusFromRoute(audioSource)
                 is CaptureEvent.Interrupted -> {
                     CaptureState.interrupted(event.cause)
-                    InputStatus.lost(sinceMillis = SystemClock.wallMillis())
+                    // F23 (WPC3): the first retry's own ladder numbers, from the real
+                    // BackoffLadder AudioRecordSource itself retries on -- see InputStatus.lost's
+                    // own kdoc for why this is a one-time snapshot, not a live countdown
+                    // (AudioRecordSource.recoverFromInterruption() is a private loop with no
+                    // per-attempt signal past this first one -- :capture-android/:capture-api
+                    // are out of this package's file ownership; see this package's report).
+                    InputStatus.lost(
+                        sinceMillis = SystemClock.wallMillis(),
+                        attempt = 1,
+                        ofTotal = RECONNECT_LADDER_STEPS,
+                        nextRetryInMillis = BackoffLadder.delayMillisFor(1),
+                    )
                     DiagnosticsLog.logInputLost(SystemClock.wallMillis())
                     // FR-OBS-1 "overruns": F-010's dropped-span encoding is the one Interrupted
                     // cause this file can actually attribute a real duration to -- see
@@ -533,12 +556,25 @@ public class RealCaptureService : Service() {
             queue,
             sampleClock,
             segmentConfig,
-            // WPC2 (FR-RIG-6/8/9): every transmission's frequency, with its provenance -- read from
-            // whichever RigSupervisor this session built. `band = null`: band-scoped attribution
-            // (the TH-D75A's dual-receive squelch correlation, D23) is not wired at the
-            // segment/transmission level yet -- see this package's report.
+            // WPC3 (FR-RIG-6/8/9, D23): every transmission's frequency, with its provenance -- read
+            // from whichever RigSupervisor this session built, band-scoped by whichever band's
+            // squelch actually opened at the transmission's start (RigSupervisor.bandAtTransmissionStart's
+            // own kdoc states the exact rule for a single band open / neither open / both open).
+            // `null` when nothing is dual-band (every non-TH-D75A rig, and the null module) --
+            // frequencyForTransmission(band = null, ...) is then exactly the pre-existing,
+            // unscoped-history behaviour. When both bands were open, the reading's own
+            // `changedDuringTransmission` flag (FR-RIG-6, reused rather than adding a second one)
+            // is forced true to mark the attribution as ambiguous, regardless of whether the
+            // frequency itself moved.
             frequencyProvider = { startNanos, endNanos ->
-                rigSupervisor?.frequencyForTransmission(band = null, startNanos, endNanos) ?: FrequencyReading.UNKNOWN
+                val supervisor = rigSupervisor
+                if (supervisor == null) {
+                    FrequencyReading.UNKNOWN
+                } else {
+                    val resolved = supervisor.bandAtTransmissionStart(startNanos)
+                    val reading = supervisor.frequencyForTransmission(resolved.band, startNanos, endNanos)
+                    if (resolved.ambiguous) reading.copy(changedDuringTransmission = true) else reading
+                }
             },
         ) {
             transmissionCount++
@@ -1141,6 +1177,12 @@ public class RealCaptureService : Service() {
         /** "tier from the shed level for now" (R-102) — the shed order's own top level (FR-RUN-3). */
         private const val MAX_TIER: Int = 3
 
+        /** F23 (WPC3): `BackoffLadder`'s own step count (1s, 2s, 5s, 10s, 30s, then holding) —
+         * copied rather than read, since that object does not expose its length publicly; see
+         * [org.ort.pipeline.rig.RigSupervisor]'s matching constant for the same policy applied to
+         * the two rig-side ladders. */
+        internal const val RECONNECT_LADDER_STEPS: Int = 5
+
         private const val BYTES_PER_GIB: Double = 1024.0 * 1024.0 * 1024.0
     }
 }
@@ -1365,6 +1407,12 @@ internal class RealSegmentSink(
                     utcOffsetMinutes = timestamps.utcOffsetMinutes,
                     calibrationId = null,
                     executionProvider = null,
+                    // WPC3 (FR-RIG-6): the rig reported a different reading before this
+                    // transmission ended than it had at the start -- either a genuine
+                    // mid-transmission change, or (D23) both bands were open at start and this
+                    // reading is an ambiguous pick between them (see RealCaptureService's
+                    // frequencyProvider wiring). Either way, never silently overwritten.
+                    rigStateChangedMidTransmission = frequencyReading.changedDuringTransmission,
                 )
                 val encoded = File(filesDir, entity.audioPath())
 

@@ -70,7 +70,10 @@ import java.util.concurrent.Executors
  * records which capture mode, audio route and rig transport produced it — see that entity's own
  * doc comment for why all five are nullable; v8 adds [ProseSummaryEntity] (FR-DIG-3, FR-DIG-11 /
  * T3) so a generated per-thread prose summary persists across process death — see that entity's
- * own doc comment for how it differs from [StationSummaryEntity]'s per-station accumulation.
+ * own doc comment for how it differs from [StationSummaryEntity]'s per-station accumulation; v9
+ * (WPC3) adds [TransmissionEntity.rigStateChangedMidTransmission] (FR-RIG-6) and
+ * [org.ort.data.entity.CaptureGapCause.BLUETOOTH_AUDIO_LOST] (FR-CAP-5) — see each one's own doc
+ * comment.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -121,7 +124,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun proseSummaryDao(): ProseSummaryDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 8
+        public const val SCHEMA_VERSION: Int = 9
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -294,6 +297,28 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v8 → v9 (WPC3, FR-RIG-6, FR-CAP-5): adds `transmission.rigStateChangedMidTransmission` —
+         * see [org.ort.data.entity.TransmissionEntity]'s own doc comment. No existing table or
+         * column is touched or dropped; every v8 row survives untouched, the new column defaulting
+         * to `0` (`false`) — a non-nullable `Boolean` column needs an explicit `DEFAULT` clause,
+         * unlike the nullable `ADD COLUMN`s every earlier migration in this file added (FR-AST-5/6
+         * → AC-53), verified by `MigrationTest`.
+         *
+         * [org.ort.data.entity.CaptureGapCause.BLUETOOTH_AUDIO_LOST] is also new in this version,
+         * but needs no migration statement of its own: the enum is stored by name in the existing
+         * `capture_gap.cause` `TEXT` column (see that enum's own doc comment), so a new value is
+         * schema-safe by construction — appending it never touches a stored row.
+         */
+        public val MIGRATION_8_9: Migration = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `transmission` ADD COLUMN `rigStateChangedMidTransmission` " +
+                        "INTEGER NOT NULL DEFAULT 0",
+                )
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> = arrayOf(
@@ -304,6 +329,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             MIGRATION_5_6,
             MIGRATION_6_7,
             MIGRATION_7_8,
+            MIGRATION_8_9,
         )
 
         private suspend fun PooledConnection.exec(sql: String) {

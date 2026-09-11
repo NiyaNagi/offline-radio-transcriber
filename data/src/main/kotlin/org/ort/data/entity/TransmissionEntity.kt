@@ -23,6 +23,16 @@ import org.ort.core.TransmissionState
  * (which means it did not). This is what lets a read path answer "which records still need
  * improving" without re-offering one a reprocess already brought current
  * ([org.ort.data.dao.TransmissionDao.idsBelowProcessedTier]).
+ *
+ * [rigStateChangedMidTransmission] (schema v9, WPC3, FR-RIG-6): the rig reported a different
+ * reading before this transmission ended than it had at the start -- either a genuine
+ * mid-transmission frequency/squelch change, or (D23) both bands of a dual-receive rig were open
+ * at the transmission's start and [frequencyHz] is an ambiguous pick between them
+ * (`org.ort.pipeline.rig.RigSupervisor.bandAtTransmissionStart`'s own kdoc states the exact rule).
+ * Set once, at persist time, from `org.ort.pipeline.rig.FrequencyReading.changedDuringTransmission`
+ * -- never revisited afterwards (constitution III). `false` by default, meaning "no rig-state
+ * change was ever recorded" -- never conflated with "no rig was connected", which
+ * [frequencyProvenance] already states separately (constitution I).
  */
 @Entity(
     tableName = "transmission",
@@ -73,6 +83,7 @@ public data class TransmissionEntity(
     val executionProvider: String?,
     val isReprocessCandidate: Boolean = false,
     val processedTier: Tier? = null,
+    val rigStateChangedMidTransmission: Boolean = false,
 ) {
     /**
      * The derived on-disk path for this transmission's audio (technical design §12.2): paths

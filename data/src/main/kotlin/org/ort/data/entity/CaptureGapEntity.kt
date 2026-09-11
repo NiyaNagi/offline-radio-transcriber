@@ -37,6 +37,15 @@ public enum class CaptureGapCause {
 
     /** F9/AC-2: a route-mismatch halt. See `GapPersister.causeFor`'s kdoc for why no gap reaches this today. */
     ROUTE_LOST,
+
+    /**
+     * WPC3 (schema v9, FR-CAP-5, F23): a Bluetooth **audio** route dropping mid-session — the more
+     * precisely-named sibling of [INPUT_LOST] for exactly this route kind, so a Bluetooth dropout
+     * is distinguishable in the log from a USB or built-in-mic one. See `GapPersister.causeFor`'s
+     * own kdoc for how this is told apart from [INPUT_LOST]. Appended last, per this enum's own
+     * "do not reorder" rule.
+     */
+    BLUETOOTH_AUDIO_LOST,
 }
 
 @Entity(tableName = "capture_gap")

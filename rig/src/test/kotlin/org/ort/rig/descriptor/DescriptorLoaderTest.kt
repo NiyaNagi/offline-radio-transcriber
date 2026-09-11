@@ -57,7 +57,7 @@ class DescriptorLoaderTest {
 
     @Test
     fun `FR_RIG_11 a failing descriptor loads a NullRigModule with the error attached`() {
-        val module = DescriptorLoader.loadModule(INVALID_JSON) { _, _ -> FakeRigTransport() }
+        val module = DescriptorLoader.loadModule(INVALID_JSON) { _, _, _ -> FakeRigTransport() }
 
         assertTrue(module is NullRigModule)
         val nullModule = module as NullRigModule
@@ -66,7 +66,7 @@ class DescriptorLoaderTest {
 
     @Test
     fun `FR_RIG_4 a valid descriptor loads a DescriptorRigModule`() {
-        val module = DescriptorLoader.loadModule(VALID_JSON) { _, _ -> FakeRigTransport() }
+        val module = DescriptorLoader.loadModule(VALID_JSON) { _, _, _ -> FakeRigTransport() }
 
         assertTrue(module is DescriptorRigModule)
         assertEquals(setOf(RigTransportKind.USB_SERIAL), module.transports)

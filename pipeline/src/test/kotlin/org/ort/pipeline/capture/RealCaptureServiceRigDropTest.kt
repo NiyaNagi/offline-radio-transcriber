@@ -78,7 +78,7 @@ public class RealCaptureServiceRigDropTest {
             asrEngine = { AsrEngineAvailability.Unavailable("no model in this test") },
             shedSignals = { _, _, _ -> FakeShedSignals() },
             captureConfigurationStore = { InMemoryCaptureConfigurationStore(initial = config) },
-            rigTransportFactory = { _ -> RigTransportFactory { _, _ -> rigTransport } },
+            rigTransportFactory = { _ -> RigTransportFactory { _, _, _ -> rigTransport } },
         )
 
         try {

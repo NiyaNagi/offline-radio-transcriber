@@ -455,6 +455,153 @@ confirming the seam did its job.
   this package closes only the `unit` half of each.
 
 ---
+## 2026-09-10 (WPC3: descriptor-declared USB/Bluetooth transport facts, schema v9, band-scoped frequency attribution, RigLinkBridge, reconnect-ladder counters)
+
+### (pending) — rig and data follow-up: TransportSpec VID/PID/lineTerminator, schema v9 (rigStateChangedMidTransmission, BLUETOOTH_AUDIO_LOST), D23 band-scoped attribution, RigLinkBridge, F9/F23 ladder position
+
+**Scope:** `rig/src/**` (descriptor model, validator, loader, bundled JSON, `HexIntSerializer`),
+`data/src/**` + `data/schemas/org.ort.data.OrtDatabase/9.json` (schema v9), `pipeline/src/main/kotlin/org/ort/pipeline/rig/**`
+(`RigSupervisor`, `DefaultRigTransportFactory`, `RigTransportFactory`, new `RigLinkBridge`),
+`pipeline/.../capture/{RealCaptureService,InputStatus,RigStatus}.kt`, `pipeline/.../GapPersister.kt`,
+new `pipeline/.../ReconnectLadderPosition.kt`, and every test under those trees. Two mechanical,
+lead-approved boundary crossings outside this ownership list — see item 7 below.
+
+**Requirements/ACs:** FR-RIG-3, FR-RIG-6, FR-RIG-7, FR-RIG-9, FR-RIG-11, FR-RIG-13, FR-RIG-14,
+FR-RIG-15, FR-CAP-5, D23, F9, F23, FR-AST-5, FR-AST-6 → AC-53. Checklist row E2-A06.
+
+**What changed** (strict TDD throughout — every item below shipped with a failing test first):
+
+*Constitution Check.* I (a USB hardware identity is both-or-neither, never half-guessed; VID/PID
+stay absent because `docs/reference/th-d75a-cat.md` states them as unverified — never fabricated;
+D23's both-bands-open case is flagged `ambiguous` rather than silently picking a frequency).
+II (every item below has a discriminating test — see the discrimination note). III (schema v9's
+migration touches no existing column; nothing is deleted). IV (`RigLinkBridge.probe` refuses
+rather than opening a transport while `CaptureState.isCapturing`, so a picker probe can never race
+a live session's own `RigSupervisor` for the same USB/Bluetooth link). VI (F9/F23's ladder
+position numbers come from the real `UsbReconnectBackoff`/`BluetoothReconnectBackoff`/
+`BackoffLadder` each path already retries on — never a second, invented schedule). VII
+(`RigSupervisor`/`RigLinkBridge` still depend only on `RigTransportFactory`/the descriptor module;
+`:app` never needs to import `:rig-bluetooth` directly because of `RigLinkBridge`'s `PairedRigDevice`).
+
+1. **`TransportSpec`** gains `usbVendorId`/`usbProductId` (hex-string JSON via the new
+   `HexIntSerializer`, e.g. `"0x0451"`) and `lineTerminator` (a plain string). `DescriptorValidator`
+   rejects a transport declaring exactly one of `usbVendorId`/`usbProductId`
+   (`DescriptorError.IncompleteUsbIdentity`) and an explicitly empty `lineTerminator`
+   (`DescriptorError.EmptyLineTerminator`) — absent (`null`) is not an error, only empty is. Both
+   bundled descriptors (`kenwood-thd75a.json`, `generic-ascii-cat.json`) now declare
+   `lineTerminator = ";"` on every transport; **neither declares VID/PID** —
+   `docs/reference/th-d75a-cat.md` §"Still to verify" lists VID/PID as item 1, unconfirmed, so the
+   TH-D75A descriptor leaves them absent rather than guessing (constitution I); hardware row H1
+   fills them in once the radio is on hand over USB. `DefaultRigTransportFactory` now takes the
+   descriptor's own `TransportSpec?` and reads `usbVendorId`/`usbProductId`/`lineTerminator` from it
+   first, falling back to `CaptureConfiguration.rigParams` only for whatever the spec does not
+   declare; the Bluetooth address is always read from `rigParams` (no descriptor field could name
+   *which* paired device to use). `RigTransportFactory.create`/`DescriptorRigModule`'s constructor
+   parameter both gained the `TransportSpec?` parameter — every call site across `:pipeline`/`:rig`
+   updated.
+
+2. **Schema v9** (`OrtDatabase.SCHEMA_VERSION = 9`): `TransmissionEntity.rigStateChangedMidTransmission:
+   Boolean = false` (a non-nullable `ADD COLUMN ... DEFAULT 0`) and
+   `CaptureGapCause.BLUETOOTH_AUDIO_LOST` (appended last, per that enum's own "never reorder" rule —
+   stored by name in the existing `TEXT` column, so it needs no migration statement of its own).
+   `MIGRATION_8_9` added to `OrtDatabase.MIGRATIONS`; `data/schemas/org.ort.data.OrtDatabase/9.json`
+   committed. `MigrationTest` gained a dedicated v8→v9 test plus a loop test that walks every
+   fixture v1..v8 through the *entire* chain to v9 (not just its own introducing step).
+   `FtsIndexRepairTest`'s raw v8 fixture insert updated for the new column (mechanical).
+
+3. **FR-RIG-6's persisted flag and the Bluetooth gap cause.** `RealSegmentSink` now persists
+   `FrequencyReading.changedDuringTransmission` onto `TransmissionEntity.rigStateChangedMidTransmission`
+   (two new `RealSegmentSinkTest` cases: flagged and unflagged). `GapPersister.persist` gained an
+   `isBluetoothAudioRoute: Boolean = false` parameter; `causeFor` maps the existing "device"/"read
+   error" signal to `BLUETOOTH_AUDIO_LOST` when true, `INPUT_LOST` otherwise (two new
+   `GapPersisterTest` cases). `RealCaptureService`'s `gapRelay` reads `selectedInputDevice?.kind`
+   **live, at persist time** (not captured at construction), so a gap always reflects the route
+   that actually dropped, including a mid-session route change. `RealCaptureServiceBluetoothDropTest`
+   (new) drives a real Bluetooth-shaped drop end to end through `RealCaptureService` and asserts the
+   gap's cause, the `InputStatus.Lost` route/profile, and the F23 ladder fields.
+
+4. **D23 band-scoped attribution.** `RigSupervisor.bandAtTransmissionStart(startNanos)` returns
+   `BandAtStart(band, ambiguous)`: exactly one band open → that band, unambiguous; neither open →
+   `BandAtStart.NONE` (never guessed); both open → the band whose squelch has been continuously open
+   **longer** (via `DescriptorRigModule.squelchOpenedAtNanos`), flagged `ambiguous = true`. A
+   single-band/no-band rig always reports `NONE`, preserving the exact pre-existing unscoped
+   behaviour. `RealCaptureService`'s `frequencyProvider` now calls `bandAtTransmissionStart` first
+   and passes its band into `frequencyForTransmission`, forcing `changedDuringTransmission = true`
+   when ambiguous. Four new `RigSupervisorTest` cases, including "both bands open" driven by a
+   `FakeRigTransport` pushing `BY` unsolicited lines for both bands (exactly the scenario the
+   TH-D75A's simultaneous dual-receive produces).
+
+5. **`pipeline/rig/RigLinkBridge.kt` (new).** `RigLinkBridge` interface: `pairedDevices():
+   PairedRigDevicesResult` (`devices: List<PairedRigDevice(name, address, sppSupport: SppSupport)>`
+   plus `permissionGranted: Boolean` — an empty list *and* a false flag together are the "no
+   BLUETOOTH_CONNECT" signal, never inferred from emptiness alone, never a `SecurityException`) and
+   `probe(rigId, transportKind, params): Flow<RigLinkProbeState>` with states `Opening → Open →
+   Identified(rigId) → Verified(capabilities)`, interruptible by `Lost(reason)`, `NoPermission` or
+   `Failed(reason)`. `DefaultRigLinkBridge` runs the descriptor module's real identify/verify
+   sequence over a factory-built transport, refuses with `Failed` while `CaptureState.isCapturing`,
+   and always closes the transport on completion (`awaitClose`). `FakeRigLinkBridge` scripts every
+   state. Five `RigLinkBridgeTest` cases: capture-running refusal, the happy path to `Verified`
+   over a `FakeRigTransport`, an unknown rig id naming both the rig id and transport in `Failed`,
+   no-Bluetooth-permission reporting `NoPermission` (never `Identified`) over a real
+   `BluetoothSppTransport`, and a USB detach before any reply reporting `Lost` (never `Identified`)
+   over a real `UsbSerialTransport`.
+
+6. **F9/F23 reconnect-ladder position.** New pure function `reconnectLadderPositionAt(elapsedMillis,
+   ofTotal, delayMillisFor) -> ReconnectLadderPosition(attempt, ofTotal, nextRetryInMillis)` in
+   `pipeline/ReconnectLadderPosition.kt`, driven by the *real* `UsbReconnectBackoff`/
+   `BluetoothReconnectBackoff`/`BackoffLadder` step functions each path already retries on — never a
+   second, independently-invented schedule. `RigStatus.State.Stale` and `InputStatus.State.Lost`
+   both gained trailing, defaulted `attempt: Int?`, `ofTotal: Int?`, `nextRetryInMillis: Long?`
+   fields (every pre-existing caller keeps compiling unchanged). `RigSupervisor.onRigState` computes
+   the position from wall time elapsed since the *first* STALE observation of an outage (tracked
+   separately from `Stale.sinceMillis`, which stays "now" on every re-observation, unchanged) so a
+   dual-band rig's multiple per-band STALE events for one real retry cycle never double-count an
+   attempt. `RealCaptureService`'s `CaptureEvent.Interrupted` handler passes the first retry's own
+   numbers into `InputStatus.lost`. `ReconnectLadderTest` (new, 5 cases) covers the pure function
+   directly; `RigSupervisorTest` and `RealCaptureServiceBluetoothDropTest` each assert the real
+   field values (`attempt`, `ofTotal`, `nextRetryInMillis` — exact names) end to end.
+
+7. **Two lead-approved boundary crossings**, both the mechanical minimum to keep an exhaustive
+   `when (CaptureGapCause)` compiling once `BLUETOOTH_AUDIO_LOST` was added — no other change:
+   `app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt` (`gapCauseProse`, +6 lines, one new
+   branch: `"Bluetooth audio lost"`, matching the existing `INPUT_LOST` wording, pending a real
+   board — E2-G05 is still open) and `app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt`
+   (`causeProse`, +3 lines, same string). Neither file gained any other edit.
+
+**Discrimination.** `GapPersister.causeFor`'s Bluetooth branch was reverted to always return
+`INPUT_LOST`; `GapPersisterTest`'s new "mapped to BLUETOOTH_AUDIO_LOST" case then failed for the
+right reason (`java.lang.AssertionError: expected:<BLUETOOTH_AUDIO_LOST> but was:<INPUT_LOST>`);
+the production line was restored and the same test passed again (`:pipeline:testDebugUnitTest
+--tests org.ort.pipeline.GapPersisterTest`, green).
+
+**Verified:**
+- `./gradlew :rig:test :data:testDebugUnitTest :pipeline:testDebugUnitTest -PortAllowMissingBundledAssets=true`
+  — green (all cached/rerun clean after the ktlint fix below).
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green in
+  8m58s, full monorepo including `:app`; `dependencyRules: OK` (20 modules, every edge permitted);
+  `platformGuards: OK` (no analytics/telemetry SDK, no HTTP client outside `:net`,
+  `INTERNET` declared only by `:net`). Found and fixed one real `ktlint` violation along the way:
+  `InputStatus.lost(...)`'s four-parameter signature (119 chars) fit under the project's 120-column
+  `max_line_length`, so ktlint's `function-signature` rule required it collapsed to one line —
+  collapsed, not suppressed.
+- `./gradlew -p buildSrc test -PortAllowMissingBundledAssets=true` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — 450 requirements, 233 covered,
+  no `orphan tests naming unknown requirements` line (E2-A06 is cited in kdoc only; every test name
+  cites a real spec id — `FR-RIG-3`, `FR-RIG-6`, `FR-CAP-5`, `D23`, `F9`, `F23`, `AC-53`, etc.).
+- `./gradlew coverageMatrixCheck -PortAllowMissingBundledAssets=true` — up to date (233 of 450).
+
+**Left open / not done:**
+- H1 (VID/PID with the TH-D75A in hand over USB) is unstarted — deliberately; guessing them would
+  violate constitution I.
+- `RigLinkBridge` has no UI caller yet — WPD/WPE's setup picker is the consumer this bridge exists
+  for, out of this package's ownership.
+- E2-G05 (a real board naming Bluetooth-audio-lost prose) is still `open`; the interim string in
+  `LogViewData`/`DigestPolling` is provisional, matching `INPUT_LOST`'s own wording exactly.
+- `CaptureGapCause.CALL`/`ROUTE_LOST` remain unreachable from any real running code path (unchanged
+  from before this session — see `GapPersister.causeFor`'s own kdoc).
+- A `rigId` supplied through the FR-RIG-19 import catalogue (not one of the two bundled ids) is out
+  of `bundledDescriptorById`'s scope, as before this session.
 
 ## 2026-09-10 (WPC2 follow-up: real USB/Bluetooth rig transports wired behind RigTransportFactory)
 
@@ -28078,6 +28225,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

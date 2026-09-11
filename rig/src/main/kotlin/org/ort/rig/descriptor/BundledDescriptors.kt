@@ -23,6 +23,15 @@ public object BundledDescriptors {
         }
     }
 
+    /**
+     * WPC3 (FR-RIG-3): `kenwood-thd75a.json`'s two transports both declare `lineTerminator = ";"`
+     * (Kenwood convention, `docs/reference/th-d75a-cat.md`). Neither declares `usbVendorId`/
+     * `usbProductId` — that same reference file marks both "still to verify" (finding #1), so this
+     * descriptor leaves them absent rather than guessing (constitution I); H1 (the operator, with
+     * the radio in hand over USB) fills them in, at which point
+     * [org.ort.pipeline.rig.DefaultRigTransportFactory] picks them up automatically — the
+     * connect-params fallback exists for exactly this "not yet declared" case.
+     */
     public fun kenwoodThD75a(): RigDescriptor = load(KENWOOD_TH_D75A_RESOURCE)
 
     public fun genericAsciiCat(): RigDescriptor = load(GENERIC_ASCII_CAT_RESOURCE)

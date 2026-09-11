@@ -533,17 +533,73 @@ public class MigrationTest {
     }
 
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v7 — walks forward through
-     * the *entire* migration chain to v8 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v7,
+     * WPC3, FR-RIG-6, FR-CAP-5: v8 → v9 adds `transmission.rigStateChangedMidTransmission`. Proves
+     * both halves of FR-AST-5/6: a pre-existing `transmission` row survives with its real data
+     * intact, and the new column defaults to `false` (never a fabricated `true`) until
+     * [OrtDatabase.transmissionDao]'s insert path sets it.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-RIG-6", "FR-CAP-5")
+    public fun migration_from_v8_to_v9_preserves_existing_rows_and_adds_the_rig_state_changed_column() {
+        val dbName = "migration-test-db-v9-rig-state-changed"
+        val v8 = helper.createDatabase(dbName, 8)
+        v8.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, captureMode, " +
+                "audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 8, 0, 0, NULL, NULL, NULL, NULL, NULL)",
+        )
+        v8.execSQL(
+            "INSERT INTO transmission (id, sessionId, threadId, startedAtUtc, endedAtUtc, durationMs, " +
+                "audioFormat, preRollMs, postRollMs, frequencyHz, frequencyProvenance, mode, signalStrength, " +
+                "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
+                "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
+                "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
+                "isReprocessCandidate, processedTier) VALUES ('TX1', 'S1', NULL, 0, 1000, 1000, " +
+                "'flac/16k/mono', 200, 200, 14250000, 'rig', NULL, NULL, NULL, NULL, 'UNKNOWN', NULL, NULL, " +
+                "NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, NULL)",
+        )
+        v8.close()
+
+        helper.runMigrationsAndValidate(dbName, 9, true, OrtDatabase.MIGRATION_8_9)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val transmission = runBlocking { db.transmissionDao().getById("TX1") }
+            assertEquals("flac/16k/mono", transmission!!.audioFormat) // pre-existing row survives
+            assertEquals(14250000L, transmission.frequencyHz)
+            assertEquals(
+                "the new column must default to false, never a fabricated true",
+                false,
+                transmission.rigStateChangedMidTransmission,
+            )
+
+            runBlocking {
+                db.transmissionDao().insert(
+                    transmission.copy(id = "TX2", rigStateChangedMidTransmission = true),
+                )
+            }
+            val flagged = runBlocking { db.transmissionDao().getById("TX2") }
+            assertEquals(true, flagged!!.rigStateChangedMidTransmission) // new write path usable post-migration
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v8 — walks forward through
+     * the *entire* migration chain to v9 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v8,
      * so the same insert works unmodified against every fixture version; what varies is only which
      * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
      * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v7_migrates_forward_to_v8_preserving_its_session_row() {
-        for (fixtureVersion in 1..7) {
+    public fun every_prior_fixture_from_v1_to_v8_migrates_forward_to_v9_preserving_its_session_row() {
+        for (fixtureVersion in 1..8) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -563,7 +619,7 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v8",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v9",
                     "test",
                     migrated!!.appVersion,
                 )

@@ -105,6 +105,90 @@ class DescriptorValidatorTest {
     }
 
     @Test
+    fun `FR_RIG_3 a USB transport declaring only usbVendorId is rejected`() {
+        val descriptor = validDescriptor().copy(
+            transports = listOf(
+                TransportSpec(
+                    kind = "usb_serial",
+                    capabilities = listOf("FREQUENCY", "SQUELCH_STATE"),
+                    usbVendorId = 0x0451,
+                    usbProductId = null,
+                ),
+            ),
+        )
+
+        val errors = DescriptorValidator.validate(descriptor)
+
+        assertTrue(errors.any { it is DescriptorError.IncompleteUsbIdentity && it.transportKind == "usb_serial" })
+    }
+
+    @Test
+    fun `FR_RIG_3 a USB transport declaring only usbProductId is rejected`() {
+        val descriptor = validDescriptor().copy(
+            transports = listOf(
+                TransportSpec(
+                    kind = "usb_serial",
+                    capabilities = listOf("FREQUENCY", "SQUELCH_STATE"),
+                    usbVendorId = null,
+                    usbProductId = 0x8613,
+                ),
+            ),
+        )
+
+        val errors = DescriptorValidator.validate(descriptor)
+
+        assertTrue(errors.any { it is DescriptorError.IncompleteUsbIdentity })
+    }
+
+    @Test
+    fun `FR_RIG_3 a USB transport declaring both usbVendorId and usbProductId is accepted`() {
+        val descriptor = validDescriptor().copy(
+            transports = listOf(
+                TransportSpec(
+                    kind = "usb_serial",
+                    capabilities = listOf("FREQUENCY", "SQUELCH_STATE"),
+                    usbVendorId = 0x0451,
+                    usbProductId = 0x8613,
+                ),
+            ),
+        )
+
+        assertTrue(DescriptorValidator.validate(descriptor).isEmpty())
+    }
+
+    @Test
+    fun `FR_RIG_3 an empty lineTerminator is rejected`() {
+        val descriptor = validDescriptor().copy(
+            transports = listOf(
+                TransportSpec(
+                    kind = "usb_serial",
+                    capabilities = listOf("FREQUENCY", "SQUELCH_STATE"),
+                    lineTerminator = "",
+                ),
+            ),
+        )
+
+        val errors = DescriptorValidator.validate(descriptor)
+
+        assertTrue(errors.any { it is DescriptorError.EmptyLineTerminator })
+    }
+
+    @Test
+    fun `FR_RIG_3 a null lineTerminator is not an error -- absent, not empty`() {
+        val descriptor = validDescriptor().copy(
+            transports = listOf(
+                TransportSpec(
+                    kind = "usb_serial",
+                    capabilities = listOf("FREQUENCY", "SQUELCH_STATE"),
+                    lineTerminator = null,
+                ),
+            ),
+        )
+
+        assertTrue(DescriptorValidator.validate(descriptor).isEmpty())
+    }
+
+    @Test
     fun `catastrophically backtracking regex is rejected as too complex`() {
         val descriptor = validDescriptor().copy(
             poll = PollSpec(intervalMs = 500, commands = listOf(CommandSpec(send = "FQ", expect = "^(a+)+$"))),

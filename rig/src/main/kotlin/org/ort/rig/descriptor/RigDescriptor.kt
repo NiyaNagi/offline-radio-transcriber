@@ -25,12 +25,33 @@ public data class RigDescriptor(
     public val verified: Boolean = false,
 )
 
-/** One transport this radio is reachable over, and what it yields there (FR-RIG-14/FR-RIG-17). */
+/**
+ * One transport this radio is reachable over, and what it yields there (FR-RIG-14/FR-RIG-17).
+ *
+ * [usbVendorId]/[usbProductId] (FR-RIG-3) are hardware facts about a specific radio, written in
+ * JSON as hex (`"0x0451"`, via [HexIntSerializer]) — the convention every USB device table already
+ * uses — and parsed into a plain [Int]. Both `null` until a real radio confirms them
+ * (constitution I: `docs/reference/th-d75a-cat.md` marks the TH-D75A's own values "still to
+ * verify", so the bundled descriptor leaves them absent rather than guessing; H1 fills them in).
+ * [DescriptorValidator] rejects a descriptor that sets exactly one of the pair.
+ *
+ * [lineTerminator] (FR-RIG-3) is the line terminator this rig's ASCII CAT protocol expects —
+ * Kenwood convention is `";"` (`docs/reference/th-d75a-cat.md`). `null` when a descriptor does not
+ * state one, never a silently-assumed default at this layer:
+ * [org.ort.pipeline.rig.DefaultRigTransportFactory] reads this first and falls back to
+ * `CaptureConfiguration.rigParams` only for what the descriptor does not declare.
+ * [DescriptorValidator] rejects an explicitly empty terminator.
+ */
 @Serializable
 public data class TransportSpec(
     public val kind: String,
     public val serial: SerialParams? = null,
     public val capabilities: List<String> = emptyList(),
+    @Serializable(with = HexIntSerializer::class)
+    public val usbVendorId: Int? = null,
+    @Serializable(with = HexIntSerializer::class)
+    public val usbProductId: Int? = null,
+    public val lineTerminator: String? = null,
 )
 
 @Serializable

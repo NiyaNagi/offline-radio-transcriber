@@ -45,9 +45,21 @@ public object RigStatus {
             public val descriptorId: String? = null,
         ) : State
 
-        /** The rig stopped reporting at [sinceMillis]; [lastKnown] is what it reported last — including
-         * its own [Connected.transportKind]/[Connected.descriptorId], carried forward unchanged. */
-        public data class Stale(public val lastKnown: Connected, public val sinceMillis: Long) : State
+        /**
+         * The rig stopped reporting at [sinceMillis]; [lastKnown] is what it reported last —
+         * including its own [Connected.transportKind]/[Connected.descriptorId], carried forward
+         * unchanged. [attempt]/[ofTotal]/[nextRetryInMillis] (F9, WPC3) are
+         * [org.ort.pipeline.ReconnectLadderPosition]'s fields, computed from the real
+         * `UsbReconnectBackoff`/`BluetoothReconnectBackoff` this transport retries on — trailing,
+         * defaulted `null` so every pre-existing caller of [RigStatus.stale] keeps compiling.
+         */
+        public data class Stale(
+            public val lastKnown: Connected,
+            public val sinceMillis: Long,
+            public val attempt: Int? = null,
+            public val ofTotal: Int? = null,
+            public val nextRetryInMillis: Long? = null,
+        ) : State
     }
 
     @Volatile
@@ -67,8 +79,14 @@ public object RigStatus {
         state = State.Connected(descriptor, bands, transportKind, descriptorId)
     }
 
-    public fun stale(lastKnown: State.Connected, sinceMillis: Long) {
-        state = State.Stale(lastKnown, sinceMillis)
+    public fun stale(
+        lastKnown: State.Connected,
+        sinceMillis: Long,
+        attempt: Int? = null,
+        ofTotal: Int? = null,
+        nextRetryInMillis: Long? = null,
+    ) {
+        state = State.Stale(lastKnown, sinceMillis, attempt, ofTotal, nextRetryInMillis)
     }
 
     public fun reset() {

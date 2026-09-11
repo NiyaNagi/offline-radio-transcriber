@@ -14,7 +14,7 @@ class GenericAsciiCatDescriptorTest {
 
     @Test
     fun `capabilities are FREQUENCY and MODE on both transports`() {
-        val module = DescriptorRigModule(BundledDescriptors.genericAsciiCat(), { _, _ -> FakeRigTransport() })
+        val module = DescriptorRigModule(BundledDescriptors.genericAsciiCat(), { _, _, _ -> FakeRigTransport() })
 
         val expected = setOf(RigCapability.FREQUENCY, RigCapability.MODE)
         assertEquals(expected, module.capabilities(RigTransportKind.USB_SERIAL))
@@ -28,7 +28,7 @@ class GenericAsciiCatDescriptorTest {
         transport.scriptReply("MD;", "MD2;")
         val module = DescriptorRigModule(
             BundledDescriptors.genericAsciiCat(),
-            { _, _ -> transport },
+            { _, _, _ -> transport },
             readTimeoutMs = 60,
         )
         try {

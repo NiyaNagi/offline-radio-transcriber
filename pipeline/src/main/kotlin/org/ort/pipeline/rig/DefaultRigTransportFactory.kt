@@ -5,6 +5,7 @@ import org.ort.rig.RigTransport
 import org.ort.rig.RigTransportKind
 import org.ort.rig.bluetooth.AndroidBluetoothLink
 import org.ort.rig.bluetooth.BluetoothSppTransport
+import org.ort.rig.descriptor.TransportSpec
 import org.ort.rig.usb.AndroidUsbSerialLink
 import org.ort.rig.usb.UsbSerialLineConfig
 import org.ort.rig.usb.UsbSerialParity
@@ -20,14 +21,17 @@ import org.ort.rig.usb.UsbSerialTransport
  * own `runCatching`) as "fall back to the null module, stated", exactly like an invalid descriptor
  * (FR-RIG-11), so this failing loudly degrades safely rather than blocking capture.
  *
- * **Connection parameters this factory needs that no `RigDescriptor` field carries yet** (VID/PID
- * are hardware facts, not protocol facts; the line terminator is explicitly never defaulted by
- * `:rig-usb`/`:rig-bluetooth` themselves — see [UsbSerialLineConfig]'s own kdoc on why guessing it
- * is exactly the silent failure constitution I forbids) are read from [CaptureConfiguration.rigParams]
- * by the key names in [ParamKeys]. A required key that is missing or unparsable fails this call
- * loudly (see class kdoc) rather than substituting an invented value. `baud`/`dataBits`/`stopBits`/
- * `parity` fall back to the RS-232 defaults both bundled descriptors already declare (9600 8N1) —
- * not a new assumption, the same one already written into the JSON files under
+ * **Connection parameters, and where each one comes from (WPC3, FR-RIG-3):** VID/PID and the line
+ * terminator are hardware/protocol facts a [TransportSpec] can now declare directly — see that
+ * class's own kdoc — so [transportSpec], when non-null, is read **first**; [CaptureConfiguration.rigParams]
+ * (by the key names in [ParamKeys]) is the fallback for exactly what [transportSpec] does not
+ * declare (e.g. the bundled TH-D75A descriptor today, which leaves VID/PID absent pending H1 — see
+ * [org.ort.rig.descriptor.BundledDescriptors.kenwoodThD75a]'s own kdoc). The Bluetooth address is
+ * always a configuration value — no descriptor field carries it, since it names *which* paired
+ * device to use, not a fact about the rig model. A required value missing from both sources fails
+ * this call loudly (see class kdoc) rather than substituting an invented one. `baud`/`dataBits`/
+ * `stopBits`/`parity` fall back to the RS-232 defaults both bundled descriptors already declare
+ * (9600 8N1) — not a new assumption, the same one already written into the JSON files under
  * `rig/src/main/resources/descriptors/`.
  *
  * One instance is created per session ([RealCaptureService][org.ort.pipeline.capture.RealCaptureService]'s
@@ -54,9 +58,13 @@ public class DefaultRigTransportFactory(private val context: Context) : RigTrans
 
     private val createdUsbLinks = mutableListOf<AndroidUsbSerialLink>()
 
-    override fun create(kind: RigTransportKind, params: Map<String, String>): RigTransport = when (kind) {
-        RigTransportKind.USB_SERIAL -> createUsb(params)
-        RigTransportKind.BLUETOOTH_SPP -> createBluetooth(params)
+    override fun create(
+        kind: RigTransportKind,
+        transportSpec: TransportSpec?,
+        params: Map<String, String>,
+    ): RigTransport = when (kind) {
+        RigTransportKind.USB_SERIAL -> createUsb(transportSpec, params)
+        RigTransportKind.BLUETOOTH_SPP -> createBluetooth(transportSpec, params)
         else -> throw UnsupportedRigTransportException(kind)
     }
 
@@ -68,13 +76,10 @@ public class DefaultRigTransportFactory(private val context: Context) : RigTrans
         createdUsbLinks.clear()
     }
 
-    private fun createUsb(params: Map<String, String>): RigTransport {
-        val vendorId = requireIntParam(params, ParamKeys.USB_VENDOR_ID)
-        val productId = requireIntParam(params, ParamKeys.USB_PRODUCT_ID)
-        val lineTerminator = requireParam(params, ParamKeys.LINE_TERMINATOR).let { raw ->
-            require(raw.length == 1) { "${ParamKeys.LINE_TERMINATOR} must be exactly one character, was '$raw'" }
-            raw[0]
-        }
+    private fun createUsb(spec: TransportSpec?, params: Map<String, String>): RigTransport {
+        val vendorId = spec?.usbVendorId ?: requireIntParam(params, ParamKeys.USB_VENDOR_ID)
+        val productId = spec?.usbProductId ?: requireIntParam(params, ParamKeys.USB_PRODUCT_ID)
+        val lineTerminator = resolveLineTerminator(spec, params)
         val lineConfig = UsbSerialLineConfig(
             baudRate = params[ParamKeys.BAUD]?.toIntOrNull() ?: DEFAULT_BAUD,
             dataBits = params[ParamKeys.DATA_BITS]?.toIntOrNull() ?: DEFAULT_DATA_BITS,
@@ -87,13 +92,20 @@ public class DefaultRigTransportFactory(private val context: Context) : RigTrans
         return UsbSerialTransport(vendorId, productId, lineConfig, link)
     }
 
-    private fun createBluetooth(params: Map<String, String>): RigTransport {
+    private fun createBluetooth(spec: TransportSpec?, params: Map<String, String>): RigTransport {
+        // The Bluetooth address is always a configuration value (WPC3): no descriptor field names
+        // *which* paired device to use, only what a rig model over this transport can do.
         val address = requireParam(params, ParamKeys.BLUETOOTH_ADDRESS)
-        val lineTerminator = requireParam(params, ParamKeys.LINE_TERMINATOR).let { raw ->
-            require(raw.length == 1) { "${ParamKeys.LINE_TERMINATOR} must be exactly one character, was '$raw'" }
-            raw[0]
-        }
+        val lineTerminator = resolveLineTerminator(spec, params)
         return BluetoothSppTransport(address, AndroidBluetoothLink(context), lineTerminator)
+    }
+
+    /** WPC3 (FR-RIG-3): the descriptor's own [TransportSpec.lineTerminator] first, falling back to
+     * [CaptureConfiguration.rigParams] only when the descriptor does not declare one. */
+    private fun resolveLineTerminator(spec: TransportSpec?, params: Map<String, String>): Char {
+        val raw = spec?.lineTerminator ?: requireParam(params, ParamKeys.LINE_TERMINATOR)
+        require(raw.length == 1) { "${ParamKeys.LINE_TERMINATOR} must be exactly one character, was '$raw'" }
+        return raw[0]
     }
 
     // Deliberately isNotEmpty, not isNotBlank: a legitimate lineTerminator is very often

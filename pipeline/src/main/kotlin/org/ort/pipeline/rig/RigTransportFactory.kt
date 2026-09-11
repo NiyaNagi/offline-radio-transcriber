@@ -2,6 +2,7 @@ package org.ort.pipeline.rig
 
 import org.ort.rig.RigTransport
 import org.ort.rig.RigTransportKind
+import org.ort.rig.descriptor.TransportSpec
 
 /**
  * WPC2's seam for turning a chosen [RigTransportKind] into a live [RigTransport] (FR-RIG-13/14).
@@ -9,13 +10,19 @@ import org.ort.rig.RigTransportKind
  * `:rig-bluetooth` directly — so swapping in the real transports (WPB) touches exactly one class,
  * [DefaultRigTransportFactory], and nothing that composes it.
  *
- * A `fun interface` rather than a plain typealias so a test can write `RigTransportFactory { _, _
- * -> fakeTransport }` directly, matching [org.ort.rig.descriptor.DescriptorRigModule]'s own
- * constructor parameter shape (`(RigTransportKind, Map<String, String>) -> RigTransport`) via
- * [RigTransportFactory::create] as a method reference.
+ * A `fun interface` rather than a plain typealias so a test can write `RigTransportFactory { _, _,
+ * _ -> fakeTransport }` directly, matching [org.ort.rig.descriptor.DescriptorRigModule]'s own
+ * constructor parameter shape (`(RigTransportKind, TransportSpec?, Map<String, String>) ->
+ * RigTransport`) via [RigTransportFactory::create] as a method reference.
+ *
+ * WPC3 (FR-RIG-3): [transportSpec] is the descriptor's own spec for [kind] when the module being
+ * connected came from a [org.ort.rig.descriptor.RigDescriptor] (`null` for a factory driven some
+ * other way, e.g. a test constructing a transport directly) — [DefaultRigTransportFactory] reads
+ * `usbVendorId`/`usbProductId`/`lineTerminator` from it first, falling back to [params] only for
+ * whatever the descriptor did not declare.
  */
 public fun interface RigTransportFactory {
-    public fun create(kind: RigTransportKind, params: Map<String, String>): RigTransport
+    public fun create(kind: RigTransportKind, transportSpec: TransportSpec?, params: Map<String, String>): RigTransport
 
     /**
      * Releases anything [create] allocated outside the [RigTransport] instances themselves — real
