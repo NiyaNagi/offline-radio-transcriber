@@ -259,7 +259,26 @@ public data class ModelRowViewState(
      * fact `Settings-Assets` could not previously tell apart under `asset-corrupt` (exactly R-934's
      * own finding). WPE renders this; this field only carries it. */
     val lastRejection: BundledAssetRejection? = null,
+    /** R-865 (register, reopened by reviewer D3 on run 4a): a marker whose *text* matches the
+     * expected checksum is not proof the real bytes are still there — the reopened bug was a
+     * fixture (and, in production, a truncation or deletion after the marker was written) leaving
+     * a 0-byte file with a marker that still read [ModelRowStatus.INSTALLED]/"verified". `rowFor`
+     * compares the file's real on-disk length against [ModelCatalogEntry.sizeBytes] (the
+     * manifest's own declared size) for every part whose marker text matches, and populates this
+     * instead of reporting [ModelRowStatus.INSTALLED] when they disagree — "marker present, bytes
+     * missing" is a materially different, worse fact than "installed", and `Settings-Assets` must
+     * never read the two the same way. `null` whenever the row genuinely verifies (or was never
+     * attempted at all). `BundledAssetInstaller`'s own idempotency check carries the identical
+     * length comparison, so the very next `installAll`/`reinstall` re-copies and re-verifies for
+     * real rather than trusting the same stale marker forever. */
+    val truncated: TruncatedAsset? = null,
 )
+
+/** R-865: the two real numbers `Settings-Assets` needs to render "marker present, bytes missing
+ * (N of M)" honestly — never a bare boolean, so the board can say exactly how far short the file
+ * fell (a genuinely empty placeholder and a file cut off at 99% both fail the same check but read
+ * very differently to an operator deciding whether to retry). */
+public data class TruncatedAsset(public val onDiskBytes: Long, public val expectedBytes: Long)
 
 public data class ModelsViewState(val rows: List<ModelRowViewState>, val requeuedMessage: String? = null)
 
@@ -675,6 +694,14 @@ public object ModelsController {
      * own tests. It returns null exactly for an entry whose checksum is
      * [ChecksumState.UnknownSideloadOnly] — see [ModelCatalog.specFor]. Production call sites
      * never pass it.
+     *
+     * [expectedSizeBytes] (R-865) is the same kind of seam: it defaults to
+     * [ModelCatalogEntry.sizeBytes] (the manifest's own declared size, `null` when the catalog
+     * carries none) — a caller's own tests that exercise the fetch/sideload *mechanism* against a
+     * synthetic destination or a deliberately small body (this file's own established pattern —
+     * see [download]/[sideload]'s own doc comments) override it to `{ null }` per part, since
+     * their synthetic content was never meant to match a real catalog entry's real declared size
+     * in the first place; production never passes it.
      */
     public fun currentState(
         context: Context,
@@ -682,11 +709,12 @@ public object ModelsController {
         specFor: (ModelId, File) -> ModelFetchSpec? = ModelCatalog::specFor,
         stagedStore: StagedActivationStore = SharedPreferencesStagedActivationStore(context),
         currentTierLabel: () -> String = ::realCurrentTierLabel,
+        expectedSizeBytes: (ModelId) -> Long? = { ModelCatalog.entry(it).sizeBytes.takeIf { size -> size > 0 } },
     ): ModelsViewState {
         stagedActivationFlow.value = stagedStore.current()
         val filesDir = context.filesDir
         val tier = currentTierLabel()
-        val rows = ModelId.entries.map { id -> rowFor(id, filesDir, specFor, tier) }
+        val rows = ModelId.entries.map { id -> rowFor(id, filesDir, specFor, tier, expectedSizeBytes(id)) }
         return ModelsViewState(rows = rows, requeuedMessage = requeuedMessage)
     }
 
@@ -843,28 +871,56 @@ public object ModelsController {
         filesDir: File,
         specFor: (ModelId, File) -> ModelFetchSpec?,
         currentTierLabel: String,
+        expectedSizeBytes: Long?,
     ): ModelRowViewState {
         val catalogEntry = ModelCatalog.entry(id)
         val tierEligible = catalogEntry.tiers.isEmpty() || currentTierLabel in catalogEntry.tiers
         val spec = specFor(id, filesDir)
-        if (spec != null) {
-            val marker = markerFile(spec.destination)
-            val verified = spec.destination.isFile && marker.isFile && marker.readText() == spec.checksum.value
-            val status = if (verified) ModelRowStatus.INSTALLED else ModelRowStatus.NOT_INSTALLED
-            return ModelRowViewState(
-                id,
-                id.label,
-                status,
-                detail = null,
-                checksumKnown = true,
-                sizeBytes = if (verified) spec.destination.length() else null,
-                checksumPrefix = if (verified) spec.checksum.value.take(CHECKSUM_PREFIX_LENGTH) else null,
-                bundled = catalogEntry.bundled,
-                tierEligible = tierEligible,
-                lastRejection = if (verified) null else BundledAssetInstaller.lastRejectionFor(spec.destination),
-            )
+        return if (spec != null) {
+            knownChecksumRow(id, catalogEntry, spec, tierEligible, expectedSizeBytes)
+        } else {
+            unknownChecksumRow(id, filesDir, catalogEntry, tierEligible, expectedSizeBytes)
         }
+    }
 
+    private fun knownChecksumRow(
+        id: ModelId,
+        catalogEntry: ModelCatalogEntry,
+        spec: ModelFetchSpec,
+        tierEligible: Boolean,
+        expectedSizeBytes: Long?,
+    ): ModelRowViewState {
+        val marker = markerFile(spec.destination)
+        val markerMatches = spec.destination.isFile && marker.isFile && marker.readText() == spec.checksum.value
+        // R-865: a marker text match is not proof the real bytes are still there — compare the
+        // on-disk length against the manifest's own declared size (`expectedSizeBytes`, `null` when
+        // there is none to check against) before ever reporting INSTALLED.
+        val onDiskBytes = if (spec.destination.isFile) spec.destination.length() else 0L
+        val truncated = truncatedAssetOrNull(markerMatches, onDiskBytes, expectedSizeBytes)
+        val verified = markerMatches && truncated == null
+        val status = if (verified) ModelRowStatus.INSTALLED else ModelRowStatus.NOT_INSTALLED
+        return ModelRowViewState(
+            id,
+            id.label,
+            status,
+            detail = null,
+            checksumKnown = true,
+            sizeBytes = if (verified) spec.destination.length() else null,
+            checksumPrefix = if (verified) spec.checksum.value.take(CHECKSUM_PREFIX_LENGTH) else null,
+            bundled = catalogEntry.bundled,
+            tierEligible = tierEligible,
+            lastRejection = if (verified) null else BundledAssetInstaller.lastRejectionFor(spec.destination),
+            truncated = truncated,
+        )
+    }
+
+    private fun unknownChecksumRow(
+        id: ModelId,
+        filesDir: File,
+        catalogEntry: ModelCatalogEntry,
+        tierEligible: Boolean,
+        expectedSizeBytes: Long?,
+    ): ModelRowViewState {
         // A safe cast, not `as`: [specFor] is an injectable seam (tests use it to force this
         // branch — see ModelsControllerTest's own KDoc), so a null spec no longer guarantees the
         // real catalog entry is itself ChecksumState.UnknownSideloadOnly the way it did before WPG
@@ -874,7 +930,12 @@ public object ModelsController {
             ?: "no checksum available to verify this install against"
         val destination = catalogEntry.destination(filesDir)
         val marker = markerFile(destination)
-        val installed = destination.isFile && marker.isFile
+        val markerPresent = destination.isFile && marker.isFile
+        // R-865: same floor as the Known-checksum branch above — a marker's mere presence is not
+        // proof the real bytes are still there.
+        val onDiskBytes = if (destination.isFile) destination.length() else 0L
+        val truncated = truncatedAssetOrNull(markerPresent, onDiskBytes, expectedSizeBytes)
+        val installed = markerPresent && truncated == null
         val status = if (installed) ModelRowStatus.INSTALLED_UNVERIFIED else ModelRowStatus.NOT_INSTALLED
         return ModelRowViewState(
             id,
@@ -887,7 +948,20 @@ public object ModelsController {
             bundled = catalogEntry.bundled,
             tierEligible = tierEligible,
             lastRejection = if (installed) null else BundledAssetInstaller.lastRejectionFor(destination),
+            truncated = truncated,
         )
+    }
+
+    /** R-865: shared by both [rowFor] branches — `null` unless [markerLooksValid] (the marker text
+     * itself matches) and the real on-disk length disagrees with [expectedSizeBytes] (`null` there
+     * means no declared size to check against at all). */
+    private fun truncatedAssetOrNull(
+        markerLooksValid: Boolean,
+        onDiskBytes: Long,
+        expectedSizeBytes: Long?,
+    ): TruncatedAsset? {
+        if (!markerLooksValid || expectedSizeBytes == null || onDiskBytes == expectedSizeBytes) return null
+        return TruncatedAsset(onDiskBytes = onDiskBytes, expectedBytes = expectedSizeBytes)
     }
 
     private const val CHECKSUM_PREFIX_LENGTH = 8

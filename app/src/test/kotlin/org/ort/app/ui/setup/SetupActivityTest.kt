@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.content.Intent
 import android.os.Looper
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.AndroidComposeTestRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.lifecycle.Lifecycle
@@ -511,6 +512,44 @@ class SetupActivityTest {
                 assertTrue("choosing Bluetooth over the USB preset must record the override", store.modeOverriddenRig)
             }
         }
+    }
+
+    /** R-941 (register, reviewer A3 run 4a): S09b's title read the descriptor's full display name
+     * verbatim ("How is the Kenwood TH-D75A linked?") — the same manufacturer-prefix strip R-845
+     * (CF06) and R-903 (S11) already apply. */
+    @Test
+    fun `R_941 S09b drops the manufacturer prefix from the title`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
+            .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
+            .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
+            .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_RADIO_CHOICE, RadioChoice.TH_D75A.name)
+            .putString(
+                SharedPreferencesSetupStore.KEY_RIG_ID,
+                org.ort.rig.descriptor.BundledDescriptors.kenwoodThD75a().id,
+            )
+            .apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        val activityRule = ActivityScenarioRule(SetupActivity::class.java)
+        val rule = AndroidComposeTestRule(activityRule) { r ->
+            var activity: SetupActivity? = null
+            r.scenario.onActivity { activity = it }
+            checkNotNull(activity) { "SetupActivity did not reach RESUMED" }
+        }
+        val statement = object : Statement() {
+            override fun evaluate() {
+                rule.waitForIdle()
+                rule.onNodeWithText("How is the TH-D75A linked?").assertIsDisplayed()
+            }
+        }
+        val description = Description.createTestDescription(SetupActivityTest::class.java, "r941TitleDropsPrefix")
+        rule.apply(statement, description).evaluate()
     }
 
     // --- R-344 (validator pass 4, halt): S09's third row routes through a real frequency entry ---

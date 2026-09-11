@@ -132,10 +132,17 @@ private val TIER_CAPABILITIES: List<TierCapability> = listOf(
     ),
 )
 
-/** `Settings-Tier.dc.html` verbatim (R-134): the consequence line under each hold-at-tier override
- * — `null` (T0/T1) means the board draws no such row for that tier; the option itself still works,
- * it just states no consequence beyond what "The tiers" above already says. */
+/** Register R-974 (Reviewer D3, run 4a, polish): "Hold at tier 0" and "Hold at tier 1" carried no
+ * sub-line at all while "Let the phone choose" and "Hold at tier 2" both did — the same
+ * cost/trade-off shape [TIER_CAPABILITIES] itself already documents per tier, just never surfaced
+ * here for these two. Each sentence is sourced from that same table's own ordinal-1/ordinal-2
+ * detail text (never invented): T0 forgoes voice matching and threads entirely (ordinal 1's
+ * "Tiny model only. No voice match... no threads"); T1 restores those but still leaves Pass C off
+ * (ordinal 2's "Pass C off — ambiguous overs stay ambiguous"). T2's own pre-existing sentence
+ * already carries the same shape one tier up (Pass C deferred to Improve, one below the max). */
 private val OVERRIDE_CONSEQUENCES: Map<String, String?> = mapOf(
+    "T0" to "the coolest, longest-running hold · no voice matching, no threads, plainly spelled callsigns only",
+    "T1" to "voice matching and threads restored · Pass C still off, ambiguous overs stay ambiguous until run later",
     "T2" to "cooler and longer on battery · Pass C can be run later from Improve records",
 )
 

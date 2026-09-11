@@ -652,11 +652,13 @@ private fun GroupedAssetRow(
                 modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.xs, start = MARKER_COLUMN_WIDTH),
                 horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
             ) {
-                // R-934 follow-up: the rejection-aware sentence when this exact part was corrupted
-                // and removed (WPG's persisted `lastRejection`) — the plain label unchanged
-                // otherwise, matching [notInstalledLabel]'s own identical rule for the single-file
-                // case.
-                val partLabel = part.lastRejection?.let { rejectionLabel(part.label, it) } ?: part.label
+                // R-865/R-934 follow-up: the truncated-bytes sentence, then the rejection-aware one
+                // when this exact part was corrupted and removed (WPG's persisted `truncated`/
+                // `lastRejection`) — the plain label unchanged otherwise, matching
+                // [notInstalledLabel]'s own identical precedence for the single-file case.
+                val partLabel = part.truncated?.let { truncatedLabel(part.label, it) }
+                    ?: part.lastRejection?.let { rejectionLabel(part.label, it) }
+                    ?: part.label
                 Text(
                     text = partLabel,
                     style = OrtType.subLine,
@@ -1105,6 +1107,7 @@ private fun notInstalledLeadFor(row: ModelRowViewState): String = when {
  * this build can state, never the generic "not yet verified on this launch" a corrupted copy and a
  * never-attempted one used to share. */
 private fun notInstalledLabel(row: ModelRowViewState): String {
+    row.truncated?.let { return truncatedLabel(row.label, it) }
     row.lastRejection?.let { return rejectionLabel(row.label, it) }
     return if (!row.checksumKnown) {
         "not installed · sideload only, " + row.detail.orEmpty()
@@ -1112,6 +1115,22 @@ private fun notInstalledLabel(row: ModelRowViewState): String {
         notInstalledLeadFor(row)
     }
 }
+
+/**
+ * Register R-865 (render half, WPG's guard `ModelRowViewState.truncated`, landed `7354b061`): a
+ * marker whose *text* matches but whose real on-disk length disagrees with the manifest is a
+ * materially worse fact than "not yet verified" — the bytes a checksum would need are demonstrably
+ * not all there, right now, on this device. Checked ahead of [row.lastRejection] in
+ * [notInstalledLabel]: the two facts are independent ([ModelRowViewState.truncated]'s own doc
+ * comment), but a truncation is the fresher, more specific on-disk fact whenever both happen to be
+ * set. "marker present, bytes missing — <on disk> of <declared> on disk · re-verified on next
+ * launch" — [BundledAssetInstaller]'s own idempotency check compares the identical length, so the
+ * very next `installAll` genuinely re-copies and re-verifies rather than trusting the stale marker
+ * forever (never an empty promise).
+ */
+private fun truncatedLabel(label: String, truncated: org.ort.app.ui.data.TruncatedAsset): String =
+    "$label marker present, bytes missing — ${formatAssetSize(truncated.onDiskBytes)} of " +
+        "${formatAssetSize(truncated.expectedBytes)} on disk · re-verified on next launch"
 
 /**
  * Register R-934 follow-up: "<label> failed verification on this launch (sha256 <expected>… ≠

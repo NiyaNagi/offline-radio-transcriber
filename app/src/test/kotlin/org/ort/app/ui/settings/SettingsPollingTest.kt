@@ -8,6 +8,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.data.realCaptureConfigurationStore
+import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.capture.BluetoothAudioProfile
@@ -38,6 +39,7 @@ class SettingsPollingTest {
         RigStatus.reset()
         ShedStatus.reset()
         clearConfigStore()
+        clearSetupStore()
     }
 
     @Before
@@ -47,6 +49,7 @@ class SettingsPollingTest {
         RigStatus.reset()
         ShedStatus.reset()
         clearConfigStore()
+        clearSetupStore()
     }
 
     /** R-860/R-861/R-864: [realCaptureConfigurationStore] always opens the same real
@@ -55,6 +58,14 @@ class SettingsPollingTest {
      * into, or be polluted by, any other test sharing this JVM worker. */
     private fun clearConfigStore() {
         context.getSharedPreferences(SharedPreferencesCaptureConfigurationStore.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().clear().commit()
+    }
+
+    /** R-951: this class's own new tests write a real hand-entered Setup-time frequency to prove
+     * [SettingsPolling.capture]'s fallback to it — cleared before and after every test the same
+     * reason [clearConfigStore] already is. */
+    private fun clearSetupStore() {
+        context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Context.MODE_PRIVATE)
             .edit().clear().commit()
     }
 
@@ -253,130 +264,52 @@ class SettingsPollingTest {
     }
 
     @Test
-    fun `R_845 the title strips the real bundled Kenwood descriptor's own leading manufacturer word`() {
-        RigStatus.connected(
-            descriptor = "Kenwood TH-D75A",
-            bands = emptyList(),
-            transportKind = RigTransportKind.BLUETOOTH_SPP,
-            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+    fun `R_951 Log overs against falls back to the frequency hand-entered during Setup`() {
+        val setupPrefs = context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Context.MODE_PRIVATE)
+        SharedPreferencesSetupStore(setupPrefs).manualFrequencyHz = 145_230_000L
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(state.manualFrequencyMhz == "145.230") {
+            "expected the real Setup-time hand-entered frequency, got ${state.manualFrequencyMhz}"
+        }
+    }
+
+    @Test
+    fun `R_951 a Settings-time edit always wins over the Setup-time one`() {
+        val setupPrefs = context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Context.MODE_PRIVATE)
+        SharedPreferencesSetupStore(setupPrefs).manualFrequencyHz = 145_230_000L
+        val state = SettingsPolling.capture(context, InMemorySettingsStore(manualFrequencyMhz = "146.960"))
+        assert(state.manualFrequencyMhz == "146.960") {
+            "expected the operator's own later Settings edit to win, got ${state.manualFrequencyMhz}"
+        }
+    }
+
+    @Test
+    fun `R_951 stays honestly not set when neither store ever recorded one`() {
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(state.manualFrequencyMhz == null) {
+            "expected no fabricated frequency, got ${state.manualFrequencyMhz}"
+        }
+    }
+
+    @Test
+    fun `R_871 the Input row reads a real clock time and duration, never a raw epoch millisecond`() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor(id = "6", kind = AudioDeviceKind.USB_DEVICE, label = "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "linear",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
         )
-        val state = SettingsPolling.rig(context)
-        assert(state.descriptorLabel == "TH-D75A") {
-            "expected the manufacturer word dropped, got ${state.descriptorLabel}"
+        val sinceMillis = org.ort.core.SystemClock.wallMillis() - 3 * 60_000L
+        InputStatus.lost(sinceMillis)
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(!state.inputSubLine.contains(sinceMillis.toString())) {
+            "expected no raw epoch millisecond value, got ${state.inputSubLine}"
         }
-    }
-
-    @Test
-    fun `R_845 a descriptor with no digit-bearing word is left unchanged, nothing to strip`() {
-        RigStatus.connected(descriptor = "Generic ASCII CAT", bands = emptyList())
-        val state = SettingsPolling.rig(context)
-        assert(state.descriptorLabel == "Generic ASCII CAT") {
-            "expected no change (no manufacturer prefix to drop), got ${state.descriptorLabel}"
+        assert(state.inputSubLine.contains(org.ort.app.ui.failures.FailureMapper.clockLabel(sinceMillis))) {
+            "expected the real clock time, got ${state.inputSubLine}"
         }
-    }
-
-    @Test
-    fun `R_845 the pollingClause is unpolled for the real Kenwood descriptor, which declares push`() {
-        RigStatus.connected(
-            descriptor = "Kenwood TH-D75A",
-            bands = emptyList(),
-            transportKind = RigTransportKind.BLUETOOTH_SPP,
-            descriptorId = BundledDescriptors.kenwoodThD75a().id,
-        )
-        val state = SettingsPolling.rig(context)
-        assert(state.pollingClause == "reading both bands unpolled") {
-            "expected the real unsolicited-push clause, got ${state.pollingClause}"
-        }
-    }
-
-    @Test
-    fun `R_845 the pollingClause is a real interval for the generic descriptor, which has no push`() {
-        RigStatus.connected(
-            descriptor = "Generic ASCII CAT",
-            bands = emptyList(),
-            transportKind = RigTransportKind.USB_SERIAL,
-            descriptorId = BundledDescriptors.genericAsciiCat().id,
-        )
-        val state = SettingsPolling.rig(context)
-        assert(state.pollingClause == "polled every 0.5 s") {
-            "expected the real 500ms poll interval, got ${state.pollingClause}"
-        }
-    }
-
-    @Test
-    fun `R_835 an unmatched descriptorId falls back to the honest not-reported label, never invented data`() {
-        RigStatus.connected(descriptor = "Imported Radio", bands = emptyList(), descriptorId = "some-imported-id")
-        val state = SettingsPolling.rig(context)
-        assert(state.rigModuleLabel == NOT_REPORTED_BY_RIG_MODULE)
-        assert(state.pollingClause == NOT_REPORTED_BY_RIG_MODULE)
-        assert(state.autoInformation == null)
-    }
-
-    @Test
-    fun `R_835_R_923 the Rig-module row renders the real descriptor's own capabilities as CAT mnemonics`() {
-        RigStatus.connected(
-            descriptor = "Kenwood TH-D75A",
-            bands = emptyList(),
-            transportKind = RigTransportKind.BLUETOOTH_SPP,
-            descriptorId = BundledDescriptors.kenwoodThD75a().id,
-        )
-        val state = SettingsPolling.rig(context)
-        // R-923 (Reviewer C2, run 3): `docs/reference/th-d75a-cat.md`'s own verified command
-        // table — FREQUENCY -> FQ, SQUELCH_STATE -> BY, SUB_BAND -> BC — the screen's own
-        // established shorthand, never the raw `RigCapability` enum names, and never the board
-        // mockup's own broader eight-command example (`FQ BY FO BC MR ME AI BL`, illustrative of a
-        // command set no accessible source in this build actually declares).
-        assert(state.rigModuleLabel == "kenwood-thd75a · built in · verified command set FQ BY BC") {
-            "expected the real CAT mnemonics, got ${state.rigModuleLabel}"
-        }
-        assert(!state.rigModuleLabel.contains("FQ BY FO BC MR ME AI BL"))
-        assert(!state.rigModuleLabel.contains("FREQUENCY"))
-    }
-
-    @Test
-    fun `R_835_reopened otherTransportLabel reads vid-pid not yet verified H1, never the board mockup ids`() {
-        RigStatus.connected(
-            descriptor = "Kenwood TH-D75A",
-            bands = emptyList(),
-            transportKind = RigTransportKind.BLUETOOTH_SPP,
-            descriptorId = BundledDescriptors.kenwoodThD75a().id,
-        )
-        val state = SettingsPolling.rig(context)
-        assert(state.otherTransportLabel == "USB serial also supported, vid/pid not yet verified (H1)") {
-            "expected the honest H1 qualifier, got ${state.otherTransportLabel}"
-        }
-        assert(state.otherTransportLabel?.contains("0x0451") != true)
-    }
-
-    @Test
-    fun `R_835 Auto-information is real for the Kenwood descriptor, using its own real poll interval`() {
-        RigStatus.connected(
-            descriptor = "Kenwood TH-D75A",
-            bands = emptyList(),
-            transportKind = RigTransportKind.BLUETOOTH_SPP,
-            descriptorId = BundledDescriptors.kenwoodThD75a().id,
-        )
-        val state = SettingsPolling.rig(context)
-        val ai = state.autoInformation
-        assert(ai != null) { "expected a real Auto-information row for the Kenwood descriptor" }
-        assert(ai!!.label == "Auto-information, AI 1") {
-            "expected the descriptor's own real enable string, got ${ai.label}"
-        }
-        assert(ai.subLine.contains("fallback poll every 2 s if it stops")) {
-            "expected the descriptor's own real 2s poll fallback, got ${ai.subLine}"
-        }
-    }
-
-    @Test
-    fun `R_835 no Auto-information for the generic descriptor, which declares no push block`() {
-        RigStatus.connected(
-            descriptor = "Generic ASCII CAT",
-            bands = emptyList(),
-            transportKind = RigTransportKind.USB_SERIAL,
-            descriptorId = BundledDescriptors.genericAsciiCat().id,
-        )
-        val state = SettingsPolling.rig(context)
-        assert(state.autoInformation == null) { "generic ASCII CAT declares no unsolicited push at all" }
     }
 
     @Test

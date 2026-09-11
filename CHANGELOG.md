@@ -194,6 +194,72 @@ itself (this round's actual subject) does not depend on it. Run 5 (the full tour
 revoked-permission `S02c` pass) queued after the remaining items above land, per the coordinator's own
 explicit sequencing.
 
+## 2026-09-11 (WPE R-865 render half: CF04 renders WPG's truncated-asset guard)
+
+### <pending> — settings modes: R-865 render half — CF04 renders "marker present, bytes missing" from WPG's real guard
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`, matching test file
+(new `app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenTruncatedTest.kt`). Merged `main`
+fast-forward to `7493eb1e` first, bringing in WPG's guard (`7354b061`): `ModelRowViewState
+.truncated: TruncatedAsset?` (`onDiskBytes`, `expectedBytes`), set alongside `ModelRowStatus
+.NOT_INSTALLED` whenever a part's marker text matches but its real on-disk length disagrees with
+the manifest — the last piece of R-865's own reopened finding (a stale marker over a truncated or
+deleted file must never read "verified").
+
+**Requirements/ACs:** R-865 (render half — the guard itself is WPG's, landed and merged before this
+round; this is only the rendering CF04 owed it).
+
+**What changed:** *Constitution check.* I (the row now states the real on-disk/expected byte counts
+from `TruncatedAsset` itself, never a guess, and never "verified" beside them). II (the new test was
+watched failing — "could not find any node" against the real not-yet-fixed sentence — for all three
+sites before the fix landed). VIII (grey marker, never green, for a fact this dishonest to claim
+verified).
+
+1. **CF04 per-asset rows (`AssetRow`, e.g. VAD) and grouped-family parts (`GroupedAssetRow`, e.g. a
+   Whisper part)** — `notInstalledLabel`/the grouped per-part label now check `row.truncated` ahead
+   of `row.lastRejection` (the two facts are independent per `TruncatedAsset`'s own doc comment; a
+   truncation is the fresher, more specific on-disk fact whenever both happen to be set) and render
+   `"<label> marker present, bytes missing — <on disk> of <declared> on disk · re-verified on next
+   launch"` via a new `truncatedLabel` helper, reusing the existing `formatAssetSize`. Because
+   `truncated != null` always implies `ModelRowStatus.NOT_INSTALLED` (WPG's own guard), the existing
+   hollow-ring `AssetMarker` already renders grey for this state with no marker change needed — it
+   was never reachable as "verified"/solid-green in the first place once the guard set the status
+   correctly.
+2. **The Gemma row (`ProseDigestModelRow`)** — already routes its own `NOT_INSTALLED` branch through
+   the shared `notInstalledLabel`, so it picked up the same rendering with no separate code change;
+   confirmed by a dedicated test (an empty on-disk Gemma file behind a matching marker) rather than
+   assumed.
+3. **The Space total** — verified, not changed: `SpaceSection`'s own figure
+   (`ModelsContent.kt`'s `rememberModelsExtras`) sums `ModelCatalog.entries.sizeBytes` (the
+   build-time declared catalogue total), never any row's own live `sizeBytes` — a truncated row's
+   bytes were structurally never reachable from that sum in the first place (and `truncated`'s own
+   row already carries `sizeBytes = null`, matching every other `NOT_INSTALLED` row).
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green, full suite
+  (5m46s).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green (3m3s).
+- `./gradlew -PortAllowMissingBundledAssets=true ktlintMainSourceSetFormat
+  ktlintTestSourceSetFormat detekt` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true dependencyRules platformGuards` — green (20
+  modules checked, both OK).
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK` (all 8 checks pass).
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 241 covered;
+  `coverageMatrixCheck` — up to date.
+- New tests written failing first over the real `ModelsController.currentState` path (never a
+  hand-built `ModelRowViewState`) — an empty-file and a partial-file case, the exact
+  `tier0-llm-stored` shape: `ModelsScreenTruncatedTest.R_865...single-asset row with an empty
+  on-disk file...`, `...a grouped part with a partial on-disk file...`, `...the Gemma row...` — all
+  three failed against "could not find any node" before the fix, pass now. Confirmed no regression
+  on the pre-existing `ModelsScreenRejectionTest`/`ModelsScreenTest`/`ModelsScreenProseDigestTest`
+  suites (`lastRejection`'s own precedent case still renders unchanged when `truncated` is null).
+
+**Left open / not done:** none for this finding — this was the last piece of R-865 (both the guard
+and the render half are now landed and confirmed).
+
+---
+
 ## 2026-09-11 (WPF run-4 validator findings: R-870/872/874/875/942/970 fixed, R-871 diagnosed and routed to WPE, R-873/876 left to WPI)
 
 ### <pending> — status modes: R-870/R-872/R-874/R-875/R-942/R-970 fixed; R-871 diagnosed (CF06/CF11, WPE's); R-873/R-876 unaddressed (WPI's)
@@ -291,6 +357,356 @@ device capture in the merge that preceded this round, not by this round's own cl
   job); rows above are `fixed` on this report's own tests, not `closed`.
 
 ---
+
+## 2026-09-11 (WPE run-4a/5 findings: R-950/R-951/R-974/R-871 fixed; R-972 investigated, not a code defect; R-973 investigated, not reproduced)
+
+### <pending> — settings modes: R-950/R-951/R-974/R-871 fixed; R-972 investigated (no code change); R-973 investigated, not reproduced; SettingsPolling split for LargeClass
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/{SettingsPolling.kt,SettingsRigFacts.kt (new),
+SettingsTierScreen.kt}`, matching test files (`SettingsPollingTest.kt`, `SettingsRigFactsTest.kt`
+(new), `SettingsTierScreenTest.kt`), plus one new reproduction test,
+`app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenLexiconMissingTest.kt`. Merged `main` twice
+this round (fast-forward to `ee3b027f` for reviewer B3/D3's run-4a findings; a real merge to
+`7eb69a75` after a WIP commit, bringing in WPF's round-5 fixes and R-871's diagnosis).
+
+**Requirements/ACs:** R-950, R-951, R-972 (investigated, no defect found), R-973 (investigated, not
+reproduced), R-974, R-871.
+
+**What changed:** *Constitution check.* I (every fallback here reads a real store or a real
+formatter, never fabricates a fact — the Setup-time frequency fallback, the CAT mnemonic table, the
+tier cost lines). II (each fix below has its own discriminating test, watched to fail for the
+stated reason, then pass once the fix landed — R-871's `sinceClockLabel` was reverted to raw millis
+and all three sites failed before being restored). VIII (R-972/R-973 are reported honestly as not
+reproduced/not a code defect rather than a fabricated fix).
+
+1. **R-950 (spec)** — CF11's live Rig-link row read the raw descriptor name with no transport or
+   address clause ("Kenwood TH-D75A · connected") — the manufacturer prefix undropped and the
+   transport/address axis CF06's own Link row already carries simply missing. New
+   `SettingsRigFacts.rigLinkSubLine` renders `name · transport · address when known · state`, the
+   same shared `stripManufacturerPrefix`/`linkAddressLabel` CF06 already uses.
+2. **R-951 (halt)** — CF02's "Log overs against" read "not set" under `overnight`, though that
+   fixture hand-enters 145.230 MHz. Root, by reading both stores before writing anything: the
+   scenario (and the real onboarding flow it mirrors — `SetupActivity.kt` never touches
+   `SettingsStore` at all, confirmed by grep) only ever records that entry to
+   `SetupStore.manualFrequencyHz`, never to `SettingsStore.manualFrequencyMhz` (the separate field
+   this row reads/writes going forward) — a real product gap, not only a scenario one. Fixed with an
+   honest fallback: an explicit Settings-time edit always wins; the genuinely-untouched case now
+   reads the real Setup-time entry instead of a bare "not set".
+3. **R-972 (spec, investigated)** — "Callsian lexicon" grepped across the entire source tree:
+   zero hits, in this file or any other. No other domain-term typo found either. Concluded this is a
+   reviewer transcription/OCR artifact against a real screenshot, not a reachable string in this
+   build — no code change made for a string that does not exist.
+4. **R-973 (halt, investigated exhaustively, not reproduced)** — under `model-missing`, CF04 was
+   reported rendering only its own title with nothing below it, not scrollable. Reproduced the exact
+   scenario two ways: (a) a hand-built fresh `ModelsController.currentState` plus a real
+   not-installed `LexiconAssetActions` fed straight into `ModelsScreen`, and (b) the real
+   `Scenarios.load(context, "model-missing")` path (real DB, real `CaptureState`/
+   `AsrAvailability`, real `ModelsController.currentState`/`lexiconRow`) driving the real
+   `ModelsContent` composable end to end. Both compose completely — every row, every sub-line, every
+   action reachable via `performScrollTo()` — in this Robolectric/Compose harness. No crash path, no
+   early return, no state this build can construct that stops rendering after the Lexicon title was
+   found by reading `ModelsScreen.kt`'s full render order or `LexiconAssetRow`'s own body. Kept test
+   (b) as new regression coverage for a real combination no existing test exercised before. Reported
+   as not reproduced rather than a fabricated fix — most likely a real-device/live-overlay timing
+   issue outside what this harness can construct, the same class of finding R-853/R-873 already
+   escalated to on-device diagnosis in this program.
+5. **R-974 (polish)** — CF05's "Hold at tier 0" and "Hold at tier 1" carried no cost/trade-off
+   sub-line while "Let the phone choose" and "Hold at tier 2" both did. Added real sub-lines to
+   `OVERRIDE_CONSEQUENCES` for `T0`/`T1`, sourced from `TIER_CAPABILITIES`'s own ordinal-1/ordinal-2
+   detail text (never invented) — the same cost/trade-off shape T2's own pre-existing line already
+   has.
+6. **R-871 (spec)** — WPF traced "Stale since 1789125179230" (a raw epoch-millisecond value) to two
+   places in this package: CF11's Rig-link row (`SettingsPolling.modeScreen()`'s `rigLink` Stale
+   branch) and CF06's `staleSinceLabel` (`SettingsRigFacts.rig()`'s Stale branches). A third site of
+   the same defect class was found while fixing it: CF02's Input row ("input lost since
+   &lt;millis&gt;", `SettingsPolling.capture()`'s `InputStatus.State.Lost` branch). New
+   `sinceClockLabel(millis)` renders `"since &lt;clock&gt; · &lt;duration&gt;"` via the real,
+   already-tested `FailureMapper.clockLabel`/`FailureMapper.durationLabel` (`ui/failures`, read
+   across package, never edited — the same formatters F9's own title already uses for the identical
+   shape) — never a second, differently-formatted copy invented here. All three sites now use it.
+7. **Housekeeping** — `SettingsPolling.kt` tripped detekt's `LargeClass` after this round's
+   additions; the CF06/CF11 rig-facts block (the `rig()` entry point and every private helper it
+   uses) was split out verbatim into a new `SettingsRigFacts.kt` in the same package, with
+   `SettingsPolling.rig`/`.stripManufacturerPrefix` kept as one-line delegates so every existing
+   caller (including `ui/setup/RadioVerifiedScreen.kt`, outside this package's ownership) keeps
+   compiling unchanged. `SettingsPollingTest.kt` was split the same way into
+   `SettingsRigFactsTest.kt` once it hit the same threshold from the new tests above.
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green, full suite
+  (7m31s).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green (3m33s).
+- `./gradlew -PortAllowMissingBundledAssets=true ktlintMainSourceSetFormat
+  ktlintTestSourceSetFormat detekt` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true dependencyRules platformGuards` — green (20
+  modules checked, both OK).
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK` (all 8 checks pass).
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 241 covered ->
+  `results/coverage-matrix.md`; `coverageMatrixCheck` — up to date.
+- R-871 discrimination: `sinceClockLabel` reverted to raw-millis formatting — all three new tests
+  (`SettingsPollingTest.R_871...Input row...`, `SettingsRigFactsTest.R_871...stale Rig-link
+  row...`, `SettingsRigFactsTest.R_871...staleSinceLabel...`) failed with the raw epoch value in the
+  assertion message; restored, all three pass.
+- Every other fix above (R-950, R-951, R-974) was likewise written failing first and watched to fail
+  for the stated reason before its own code change landed.
+
+**Left open / not done:**
+- R-972: no code change (the reported string does not exist in source) — reported to the coordinator
+  as likely a transcription artifact rather than closed by a fix.
+- R-973: not reproduced in this JVM/Robolectric harness despite two independent, faithful attempts;
+  stays open pending on-device diagnosis (a uiautomator dump or logcat trace at the moment of the
+  original capture would localize it further, matching R-853/R-873's own precedent in this program).
+- R-865 (render half, reopened): still blocked — re-checked `ModelRowStatus`/`ModelRowViewState`
+  after this round's second main merge and WPG's "marker present, bytes missing" state has not
+  landed yet (`ModelRowStatus` still has exactly three values). Nothing to render until it does.
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/{failures/FailureMapper.kt,components/Controls.kt,components/ActivityPatternChart.kt,digest/DigestScreens.kt,screens/ModelsScreen.kt,setup/RigBluetoothScreen.kt (test only)}`,
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, matching test files. Merged `main` twice this
+round (first fast-forward to `c2b11e47` — V10's device-validation report, findings R-870..R-876, and
+confirmation the prior round's R-910/R-911/R-912/R-913 fixes hold on a real device; second, a real
+merge to `ee3b027f` after committing this round's own work-in-progress first per this repo's own
+rule, bringing reviewer A3/D3's run-4a findings R-940..R-944/R-970..R-974 into the register).
+
+**Requirements/ACs:** R-870, R-871 (diagnosed, not fixed here), R-872, R-874, R-875, R-942, R-970,
+R-836 (F9 half, closed by R-872), R-863/R-805 (both revisited by R-874/R-942).
+
+**What changed:** *Constitution check.* II (a discriminating test precedes every fix, each watched
+to fail for the stated reason before the code landed). VIII (rows below move to `fixed` on this
+report's own tests; R-853/R-910/R-911/R-912/R-913 were already confirmed `closed` by V10's own
+device capture in the merge that preceded this round, not by this round's own claim).
+
+1. **R-872 (halt)** — the real defect was not `LiveBarPolling` (already correctly discriminates
+   `RigStatus.Stale` from `InputStatus.Lost`, proven by the pre-existing, still-green
+   `LiveBarPollingTest.R_836` rig-only-drop case) but the `rig-bt-lost` scenario itself, which never
+   opened `InputStatus` or published a `LevelStatus` reading at all — the live bar's own honest
+   "nothing measured yet" floor read identically to F23's genuine mute on a real device.
+   `Scenarios.rigBtLost()` now opens a real wired-headset `InputStatus` and a real
+   `LevelStatus.Measured` reading, the same shape every other "audio is fine" scenario already uses.
+2. **R-870 (polish)** — `FailureMapper.mapThermalOrBacklogOrRigBanner` was the one caller of the
+   shared `stripRigManufacturerPrefix` (`ui/data/RigDisplayName.kt`, R-845/R-916/R-920) that never
+   applied it — F9's own banner title kept "Kenwood" where N04/DG04/CF06 all read "TH-D75A". Fixed.
+3. **R-874 (spec)** — R-863's own `TextAction` fix (`wrapContentWidth(unbounded = true)`) traded a
+   per-letter wrap for silent clipping past the row's real edge once a real 390dp card was too
+   narrow for the action beside its own leading label at font scale 2.0. Reverted to bounded
+   `wrapContentWidth(align = Alignment.Start)` and gave the two call sites that needed R-863's
+   protection their own `Modifier.weight(1f, fill = false)` leading sibling on a `Row.fillMaxWidth()`
+   (DG05's over-range label; CF04's grouped-family part label, `ui/screens/ModelsScreen.kt` — this
+   file is `ui/screens`, this round's own ownership, not `ui/settings`) — Compose's own `Row`
+   measure policy then reliably gives the non-weighted action first claim on the row's real width,
+   wrapping at word boundaries only if it alone still does not fit. S10b's own `Refresh` row already
+   used this exact shape (R-805) and needed no change.
+4. **R-875 (design)** — `ActivityPatternChart`'s axis row measures the real axis-start/axis-end/
+   caption strings (`rememberTextMeasurer`, the same real-font-metrics pattern
+   `ui/components/Rows.kt`'s column-width helpers use) against the row's own real available width:
+   unchanged when all three genuinely fit, the caption drops to its own centred row below the axis
+   labels when they do not, rather than overlapping the right axis time.
+5. **R-871 (spec)** — investigated, not fixed: "Set the frequency by hand" opens CF02
+   (`SettingsPolling.capture()`), which has no rig-facts row at all. The exact raw-epoch-millis
+   defect this row names is real in two places, both `ui/settings` (WPE's, not touched here):
+   `SettingsPolling.modeScreen()`'s own CF11 "Rig link" row and `SettingsPolling.rig()`'s own CF06
+   `staleSinceLabel` — the latter confirms this row's own question ("if it is CF06's, WPE").
+6. **R-942 (design)** — reviewer A3's own run-4a capture of a *real* regression R-874's fix already
+   closes: S10b's "Pair a device in system settings"/"Refresh" overlapped at font scale 2.0 because
+   of R-863's same unbounded `TextAction` measurement. S10b's own row already gave its leading
+   action `weight(1f)` on `Row.fillMaxWidth()` (R-805's own shape) — it only needed `TextAction`
+   itself to stop overriding that with unbounded single-line measurement. Confirmed with a new real
+   390dp-screen test; no code change beyond R-874's own `Controls.kt` fix was needed here.
+7. **R-970 (spec)** — the same defect class as R-874, this time on `Badge` (`ui/components/
+   Controls.kt`): CF04's "ACTIVE" badge stacked one character per line beside a wrapped Whisper
+   family title at font scale 2.0. `Badge` itself carries no width override to revert (it is, and
+   was, a plain content-hugging `Box`) — the real defect was all three title-plus-badge `Row`s in
+   `ui/screens/ModelsScreen.kt` (the single asset row, the grouped-family row, the lexicon row)
+   sharing a `Row` with neither side weighted and no `fillMaxWidth()`. Each title now yields
+   (`Modifier.weight(1f, fill = false)` on `Row.fillMaxWidth()`), and `Badge`'s own kdoc states the
+   shared rule for future callers.
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green (full suite, twice:
+  once per fix batch, once after the final line-length cleanup).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true build dependencyRules platformGuards ktlintCheck` —
+  green.
+- `./gradlew -PortAllowMissingBundledAssets=true detekt` — green (after fixing two `MaxLineLength`
+  violations this round's own new tests introduced).
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`.
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 240 covered, no
+  orphan-test line (`R-870`/`R-872`/`R-874`/`R-875`/`R-942`/`R-970` all resolve to their own real
+  test classes); `coverageMatrixCheck` — up to date.
+- Exact new test names: `WpiScenariosTest.R_872_rig-bt-lost seeds a real Measured level and an
+  opened, not lost, InputStatus`; `FailureMapperTest.R_870 F9 drops the descriptor's own leading
+  manufacturer word, matching every other screen`; `DigestScreensTest.R_874 DG05 Read the overs
+  wraps within the card at font scale 2_0, never past its edge`; `ModelsScreenTest.R_874 CF04
+  Install from a file wraps within a real 390dp screen at font scale 2_0, never past its edge`;
+  `ActivityPatternChartTest.R_875 the not-listening caption stacks under the axis row rather than
+  colliding with it at 2_0` and its own `...a short caption at normal scale stays on the same row...`
+  regression guard; `RigBluetoothScreenTest.R_942 Pair in system settings and Refresh never overlap
+  on a real 390dp screen at font scale 2_0`; `ModelsScreenTest.R_970 the ACTIVE badge stays whole
+  and inside the row beside a wrapped Whisper title at 2_0` (reproduced the 0-width per-letter
+  collapse directly by reverting its own fix before restoring it).
+
+**Left open / not done:**
+- **R-871**: diagnosed and routed to WPE (CF06/CF11, `ui/settings`), not fixed here.
+- **R-873, R-876**: WPI's (scenario-holder process-restart survival; `scenario.ps1`'s own SQL
+  hygiene check) — unaddressed, out of this round's scope.
+- No device re-capture was performed this round (emulator confirmation is V-series validators' own
+  job); rows above are `fixed` on this report's own tests, not `closed`.
+## 2026-09-11 (WPD follow-up: S02c's trailing scroll padding, S09b's title prefix, S05's real facts/markers/waveform, S07's meter proven proportional — R-940, R-941, R-943, R-944)
+
+### (pending) — SetupScaffold trailing spacer, RouteCheck real facts (routedDeviceLabel/levelBars/noiseFloorDbfs), VerifyScreen checklist rewrite, LevelScreen bar-rect extraction
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{SetupScaffold,SetupActivity,RouteCheck,VerifyScreen,LevelScreen}.kt`,
+matching test files under `app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-CAP-2a, FR-CAP-3, FR-CAP-3a, AC-2, AC-97, AC-98.
+
+**What changed:**
+
+1. **R-940 (spec) — S02c at font scale 2.0 never reached the third bullet or the decline banner,
+   even at scroll end.** `SetupScaffold`'s scrollable body now carries a trailing `Spacer` equal to
+   the pinned bottom action block's own real, measured height (R-613's shape) — applied to every
+   setup screen, not only S02c, since the mechanism lives in the one shared scaffold. Not
+   reproduced under a plain Robolectric render at any scale tried (both nodes were already
+   reachable via `performScrollTo()` before this change), so the new regression test instead proves
+   the structural invariant the fix targets directly: once scrolled fully into view, the decline
+   banner's own bottom edge never sits at or below the fixed bar's own top edge.
+2. **R-941 — S09b's title read the descriptor's full display name verbatim** ("How is the Kenwood
+   TH-D75A linked?"). Now goes through `SettingsPolling.stripManufacturerPrefix`, the same helper
+   R-845 (CF06) and R-903 (S11) already reuse rather than duplicate.
+3. **R-943 (design) — S05 was missing the board's checklist markers, mono meta lines, elapsed
+   counter and Input waveform card (`Setup-Verify.dc.html` lines 40–91).** A not-yet-reached
+   check's own marker was a filled circle exactly the screen's background colour — invisible, not
+   the board's dim outline ring; now a real `border(1.5.dp, textLow, CircleShape)`. `RouteCheckState`
+   gained three real, never-invented facts — `routedDeviceLabel` (`null` until `ROUTE_MATCH`
+   genuinely passes), `levelBars` (the same real per-sample rolling window `RealLevelCheck`'s own
+   bars use, accumulated during the `SIGNAL` listen) and `noiseFloorDbfs` (a running minimum of the
+   same real peak readings, identical policy to `RealLevelCheck`'s own noise floor) — threaded from
+   `RealRouteCheck`'s real listen loop (the `publishedVerificationFor` short-circuit path correctly
+   reports an empty/`null` waveform, since it never runs a real listen of its own). `VerifyScreen`
+   now renders: the native-rate detail with grouped-thousands Hz formatting (`formatHzGrouped`,
+   "48 000 Hz"), the routed-device detail line (`"getRoutedDevice() → USB Audio Device"`), a live
+   `"0:11"`-style elapsed counter beside "Listening for signal" (only while genuinely still
+   listening, `formatElapsed`), and a new `InputWaveformCard` (the same proportional-bar drawing
+   `LevelScreen`'s own meter uses, via the newly-shared `levelBarRects`) with real "noise floor …
+   dBFS" / "signal heard" captions, the latter never claimed before `SIGNAL` has actually passed.
+4. **R-944 (design) — investigated, found already correct, and locked in with new tests.** S07's
+   meter (`LevelScreen.kt`) already drew a genuine proportional envelope from `RealLevelCheck`'s own
+   real per-sample rolling window (never alternating blocks), under the tinted target band, the red
+   clip line and the dashed noise-floor line — confirmed by reading `LevelCheck.kt`/`LevelScreen.kt`
+   and their own extensive prior register citations (R-120..R-125, R-225, R-465, R-542) line by
+   line against `Setup-Level.dc.html` before concluding this, per constitution I (never fabricate a
+   fix for something not actually broken). The bar-height/colour computation was pulled out of
+   `LevelMeter`'s `Canvas` draw scope into a new pure `levelBarRects` function (behaviour-preserving)
+   specifically so "proportional, never alternating" is now directly unit-testable rather than only
+   assertable at the geometry-constant level the pre-existing `R_465` tests already covered.
+
+**Verified:**
+- New tests: `BluetoothPermissionScreenTest`'s `R_940` (font scale 2.0, `@GraphicsMode(NATIVE)`,
+  never-overlapping bounds assertion); `SetupActivityTest`'s `R_941` (title text via a real
+  `AndroidComposeTestRule` launch); `RouteCheckTest`'s `R_943_*` (5: routed device label populated
+  once matched, honestly null before, real level bars/noise floor during a real listen, honestly
+  empty before any sample is read, the `InputStatus` short-circuit never fabricates a listen of its
+  own); `VerifyScreenTest`'s `R_943_*` (11: pending ring, grouped-thousands Hz, routed-device
+  detail present/absent, elapsed counter present-while-listening/gone-once-passed, waveform card
+  presence, honest noise-floor dash, signal-heard caption gated on the real stage, plus
+  `formatHzGrouped`/`formatElapsed` pure cases); `LevelScreenTest`'s `R_944_*` (3: proportional,
+  never-alternating bar heights; the tinted band's own 3-way colour banding; an empty history draws
+  nothing) — all green, and every pre-existing test in every touched file still passes.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green (two `LongMethod`/`CyclomaticComplexMethod` findings
+  from the new `RouteCheck`/`VerifyScreen` code closed by extracting `listenForSignal`/
+  `RouteCheckFacts`/`VerifyBottomActions`, no behaviour change).
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — 240 of 450, up to date.
+**Left open / not done:** R-940's own real-device clipping could not be reproduced in Robolectric
+under the configurations tried — the fix and its regression test are structural/defensive, per the
+same honest-reporting pattern this package's own R-866/R-902 entries already established.
+
+---
+## 2026-09-11 (WPG follow-up: R-865 reopened — currentState refuses verified for a truncated bundled part)
+
+### (pending) — bundled assets: a marker text match is no longer enough; ModelsController compares on-disk length against the manifest's declared size
+
+**Scope:** `app/src/main/kotlin/org/ort/app/assets/BundledAssetInstaller.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (the `ModelRowViewState`/`rowFor`/
+`currentState` half only — no screen file touched),
+`app/src/test/kotlin/org/ort/app/assets/BundledAssetInstallerTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerTest.kt`. Also one existing test in
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt` (not `ui/`, but WPI's own logical
+territory) — see item 4 below; flagged, not silently absorbed.
+
+**Requirements/ACs:** R-865 (register, reopened by reviewer D3 on run 4a — `tier0-llm-stored`
+read "555 MB · on disk: 0 KB · bundled · verified e3d981c0"), FR-AST-3a. WPE's and WPI's earlier
+partial fixes (`85965b00`, `ccc12ce3`) addressed the declared-size display and the scenario's own
+fixture; this closes the deeper gap the reviewer actually found — `ModelsController.currentState`
+itself still called a 0-byte file "verified" because its own check never compared length against
+anything.
+
+**What changed:**
+
+1. **`BundledAssetInstaller.installOne`'s idempotency shortcut** now requires
+   `destination.length() == entry.sizeBytes` (a new field on the internal `ManifestEntry`, parsed
+   from the manifest's own `sizeBytes`) in addition to the existing marker-text match, split into
+   `isAlreadyVerified` to stay under detekt's condition-complexity threshold. A marker whose *text*
+   still matches over a truncated or deleted file no longer short-circuits — the next
+   `installAll`/`reinstall` falls through to the real copy-then-verify path and either repairs the
+   part for real or (if the source is *also* bad) produces a proper R-934 rejection, never a silent
+   "still installed".
+2. **`ModelsController.currentState`/`rowFor`** gained the same floor at the reporting layer, which
+   is what the reopened bug actually named: both the Known- and Unknown-checksum branches (split
+   out of `rowFor` into `knownChecksumRow`/`unknownChecksumRow` plus a shared `truncatedAssetOrNull`
+   helper, purely to stay under detekt's cyclomatic-complexity threshold) now compare the real
+   on-disk length against `expectedSizeBytes` (a new seam parameter on `currentState`, defaulting to
+   `ModelCatalogEntry.sizeBytes` — the manifest's own declared size) before ever reporting
+   `INSTALLED`/`INSTALLED_UNVERIFIED`. On a mismatch, the row reports the existing `NOT_INSTALLED`
+   status (accurate — the bytes genuinely are not there) plus a new `TruncatedAsset(onDiskBytes,
+   expectedBytes)` on a new `ModelRowViewState.truncated` field — the distinct fact the reviewer
+   asked for ("marker present, bytes missing"), never conflated with "never attempted"
+   (`truncated` stays `null` for that case) or with a checksum rejection (`lastRejection`, R-934 —
+   both facts coexist independently). WPE renders it; no `ui/` file touched.
+3. **Four existing tests, retroactively given `expectedSizeBytes = { null }`** (mirroring how
+   `isBundled = { false }` was added when D35 landed): each proves a *mechanism* (the fetch-through-
+   the-fake path, the trust-on-first-use sideload path, the R-934 rejection path, the E2-H08
+   replace/roll-back path) against synthetic destinations or deliberately small bodies that were
+   never meant to match a real catalogue entry's real declared size — commented at each site with
+   why.
+4. **Boundary crossing, reported not hidden.** `WpiScenariosTest.R_842_tier0-llm-stored...` asserted
+   the exact pre-fix bug this round closes: `ScenarioFixtures.installModelFixture`'s own 64-byte
+   Gemma placeholder (its own doc comment, written believing R-865 already closed, says the
+   placeholder is "real enough for... the tier distinction, same as this function always did for
+   every entry before R-865") used to read `ModelRowStatus.INSTALLED`; after this fix it correctly
+   reads `NOT_INSTALLED` with a `truncated` fact. Updated the one assertion (and the test's own
+   name) to the corrected expectation — AC-138's real concern (tier-ineligible ⇒ never loaded)
+   does not depend on `status` at all, so nothing about what that test actually proves is weakened.
+   This file lives in `app/src/test/.../debug/`, not `ui/`, but is WPI's logical territory; flagged
+   here for WPI/the lead to confirm, and `ScenarioFixtures.kt` itself (the fixture's now-stale doc
+   comment) was left untouched, per not owning `app/src/debug/**`.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest` — full module, green (including the pre-existing WPE/WPI
+  `R_865`-tagged tests in `ui/screens`/`ui/settings`/`ui/digest`/debug scenarios, confirmed
+  together with these new ones — orthogonal, not conflicting: those test the screen's own
+  "0 bytes ⇒ placeholder" rendering heuristic, this fixes the data layer one level below it).
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green.
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — regenerated, confirmed up to date.
+- `python tools/spec-check/spec_check.py` — 8/8.
+- **Discrimination, two rounds, matching the two layers changed:** (1) disabled the size check in
+  `BundledAssetInstaller.isAlreadyVerified` — exactly the one test naming that path failed
+  (`installAll does not trust a marker over a truncated file`), restored, green again. (2) disabled
+  `ModelsViewData.truncatedAssetOrNull`'s comparison — exactly the two tests naming the empty/
+  partial-file cases failed, the full-length and no-marker cases (correctly) did not, restored,
+  green again. Also caught and fixed a real regression from an earlier edit in this same session: a
+  `part.delete()` call had been dropped from the checksum-mismatch branch during a since-reverted
+  intermediate edit — `AC_137 a corrupted bundled asset is refused...` failed on "no leftover
+  partial file" until it was restored; this is called out explicitly since it was a genuine bug
+  this round's own testing caught, not the reopened R-865 issue itself.
+
+**Left open:** WPE's own rendering of `ModelRowViewState.truncated` (this package does not touch
+`ui/screens`/`ui/settings`, per the coordinator's own instruction); the register row's `closed`
+status is the lead's call.
 
 ## 2026-09-11 (WPE follow-up: R-934 closed — rendering WPG's persisted rejection on CF04)
 
@@ -30732,6 +31148,8 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
+
 
 
 

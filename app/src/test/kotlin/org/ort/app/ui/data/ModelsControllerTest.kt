@@ -105,7 +105,11 @@ class ModelsControllerTest {
     fun `FR_ASR_1 download drives ModelAcquisition through the fake client and the row shows installed`(): Unit =
         runTest {
             val spec = specFor(goodChecksum)
-            val before = ModelsController.currentState(context, specFor = spec)
+            // R-865: this test's own `body` (2048 bytes) never claims to match VAD's real declared
+            // catalogue size — it proves the fetch-through-the-fake mechanism, not a real install —
+            // so the size-mismatch check is disabled here exactly like `isBundled` is above.
+            val noSizeCheck: (ModelId) -> Long? = { null }
+            val before = ModelsController.currentState(context, specFor = spec, expectedSizeBytes = noSizeCheck)
             assertEquals(ModelRowStatus.NOT_INSTALLED, before.rows.first { it.id == ModelId.VAD }.status)
 
             val result = ModelsController.download(
@@ -121,7 +125,7 @@ class ModelsControllerTest {
             assertTrue("the verified file must land at the destination", dest.isFile)
             assertEquals(body.toList(), dest.readBytes().toList())
 
-            val after = ModelsController.currentState(context, specFor = spec)
+            val after = ModelsController.currentState(context, specFor = spec, expectedSizeBytes = noSizeCheck)
             assertEquals(ModelRowStatus.INSTALLED, after.rows.first { it.id == ModelId.VAD }.status)
         }
 
@@ -223,8 +227,12 @@ class ModelsControllerTest {
             val sourceFile = File(tempFilesDir, "user-picked-tokens.txt")
             sourceFile.writeBytes(body)
             val noSpec: (ModelId, File) -> ModelFetchSpec? = { _, _ -> null }
+            // R-865: `body` (2048 bytes) never claims to match ASR_TOKENS's real declared
+            // catalogue size — this test proves the trust-on-first-use sideload mechanism, not a
+            // real install, so the size-mismatch check is disabled here.
+            val noSizeCheck: (ModelId) -> Long? = { null }
 
-            val before = ModelsController.currentState(fakeContext, specFor = noSpec)
+            val before = ModelsController.currentState(fakeContext, specFor = noSpec, expectedSizeBytes = noSizeCheck)
             assertEquals(
                 ModelRowStatus.NOT_INSTALLED,
                 before.rows.first { it.id == ModelId.ASR_TOKENS }.status,
@@ -234,7 +242,7 @@ class ModelsControllerTest {
             val result = ModelsController.sideload(fakeContext, ModelId.ASR_TOKENS, sourceFile, specFor = noSpec)
 
             assertTrue("expected a Success, got $result", result is ModelActionResult.Success)
-            val after = ModelsController.currentState(fakeContext, specFor = noSpec)
+            val after = ModelsController.currentState(fakeContext, specFor = noSpec, expectedSizeBytes = noSizeCheck)
             val row = after.rows.first { it.id == ModelId.ASR_TOKENS }
             assertEquals(ModelRowStatus.INSTALLED_UNVERIFIED, row.status)
             assertFalse(row.checksumKnown)
@@ -402,8 +410,15 @@ class ModelsControllerTest {
         val failed = BundledAssetInstaller.installAll(tempFilesDir, corruptSource).single()
         assertTrue(failed is BundledAssetState.Failed)
 
-        val rowAfterRejection = ModelsController.currentState(fakeContext, specFor = vadSpecFor)
-            .rows.first { it.id == ModelId.VAD }
+        // R-865: this test's own tiny synthetic content (4 bytes) never claims to match VAD's real
+        // declared catalogue size — it proves the rejection-persistence mechanism, not a real
+        // install, so the size-mismatch check is disabled here.
+        val noSizeCheck: (ModelId) -> Long? = { null }
+        val rowAfterRejection = ModelsController.currentState(
+            fakeContext,
+            specFor = vadSpecFor,
+            expectedSizeBytes = noSizeCheck,
+        ).rows.first { it.id == ModelId.VAD }
         assertEquals(ModelRowStatus.NOT_INSTALLED, rowAfterRejection.status)
         val rejection = rowAfterRejection.lastRejection
         assertTrue("expected currentState's row to expose the rejection, got null", rejection != null)
@@ -421,13 +436,127 @@ class ModelsControllerTest {
         val recovered = BundledAssetInstaller.reinstall("VAD", tempFilesDir, goodSource)
         assertTrue(recovered is BundledAssetState.Installed)
 
-        val rowAfterRecovery = ModelsController.currentState(fakeContext, specFor = vadSpecFor)
-            .rows.first { it.id == ModelId.VAD }
+        val rowAfterRecovery = ModelsController.currentState(
+            fakeContext,
+            specFor = vadSpecFor,
+            expectedSizeBytes = noSizeCheck,
+        ).rows.first { it.id == ModelId.VAD }
         assertEquals(ModelRowStatus.INSTALLED, rowAfterRecovery.status)
         assertTrue(
             "a recovered, verified row must not still carry a rejection",
             rowAfterRecovery.lastRejection == null,
         )
+    }
+
+    // R-865 (register, reopened by reviewer D3 on run 4a): a marker whose *text* matches is not
+    // proof the real bytes are still there — `tier0-llm-stored` read "555 MB · on disk: 0 KB ·
+    // bundled · verified e3d981c0" because a 0-byte placeholder's marker still matched. `rowFor`
+    // must compare the real on-disk length against the catalogue's own declared size for every
+    // part it would otherwise call verified, and report a distinct fact instead of `INSTALLED`.
+    //
+    // The marker in every test below is a pure string match against `ModelFetchSpec.checksum` —
+    // `rowFor` never re-hashes the file — so the "bytes" written need not actually hash to
+    // anything; only their *length* against `ModelCatalog.entry(VAD).sizeBytes` (the real,
+    // uninjectable declared size) matters here, exactly mirroring the reopened bug's own shape.
+
+    private fun vadSpecForRejection(destination: File, checksum: Checksum): (ModelId, File) -> ModelFetchSpec? =
+        { id, _ ->
+            if (id == ModelId.VAD) {
+                ModelFetchSpec(url = "https://example.invalid/VAD", destination = destination, checksum = checksum)
+            } else {
+                null
+            }
+        }
+
+    @Test
+    @Requirement("R-865")
+    fun `R_865 a marker matching a full-length file still reports INSTALLED with no truncation fact`() {
+        val tempFilesDir = Files.createTempDirectory("models-controller-r865-full").toFile()
+        val fakeContext = object : android.content.ContextWrapper(context) {
+            override fun getFilesDir(): File = tempFilesDir
+        }
+        val destination = ModelCatalog.entry(ModelId.VAD).destination(tempFilesDir)
+        val expectedSize = ModelCatalog.entry(ModelId.VAD).sizeBytes
+        val checksum = Checksum(value = "a".repeat(64))
+        destination.parentFile?.mkdirs()
+        destination.writeBytes(ByteArray(expectedSize.toInt()))
+        File(destination.parentFile, destination.name + ".sha256").writeText(checksum.value)
+
+        val row = ModelsController.currentState(fakeContext, specFor = vadSpecForRejection(destination, checksum))
+            .rows.first { it.id == ModelId.VAD }
+
+        assertEquals(ModelRowStatus.INSTALLED, row.status)
+        assertTrue("a full-length verified file must carry no truncation fact", row.truncated == null)
+    }
+
+    @Test
+    @Requirement("R-865")
+    fun `R_865 a marker over an empty file reports the truncated fact, never INSTALLED`() {
+        val tempFilesDir = Files.createTempDirectory("models-controller-r865-empty").toFile()
+        val fakeContext = object : android.content.ContextWrapper(context) {
+            override fun getFilesDir(): File = tempFilesDir
+        }
+        val destination = ModelCatalog.entry(ModelId.VAD).destination(tempFilesDir)
+        val expectedSize = ModelCatalog.entry(ModelId.VAD).sizeBytes
+        val checksum = Checksum(value = "b".repeat(64))
+        destination.parentFile?.mkdirs()
+        destination.writeBytes(ByteArray(0)) // exactly the reopened bug's own shape
+        File(destination.parentFile, destination.name + ".sha256").writeText(checksum.value)
+
+        val row = ModelsController.currentState(fakeContext, specFor = vadSpecForRejection(destination, checksum))
+            .rows.first { it.id == ModelId.VAD }
+
+        assertEquals("must never read as INSTALLED beside 0 bytes", ModelRowStatus.NOT_INSTALLED, row.status)
+        val truncated = row.truncated
+        assertTrue("expected a truncation fact, got null", truncated != null)
+        checkNotNull(truncated)
+        assertEquals(0L, truncated.onDiskBytes)
+        assertEquals(expectedSize, truncated.expectedBytes)
+    }
+
+    @Test
+    @Requirement("R-865")
+    fun `R_865 a marker over a partial file reports the truncated fact, never INSTALLED`() {
+        val tempFilesDir = Files.createTempDirectory("models-controller-r865-partial").toFile()
+        val fakeContext = object : android.content.ContextWrapper(context) {
+            override fun getFilesDir(): File = tempFilesDir
+        }
+        val destination = ModelCatalog.entry(ModelId.VAD).destination(tempFilesDir)
+        val expectedSize = ModelCatalog.entry(ModelId.VAD).sizeBytes
+        val checksum = Checksum(value = "c".repeat(64))
+        val partialSize = 1_000
+        destination.parentFile?.mkdirs()
+        destination.writeBytes(ByteArray(partialSize))
+        File(destination.parentFile, destination.name + ".sha256").writeText(checksum.value)
+
+        val row = ModelsController.currentState(fakeContext, specFor = vadSpecForRejection(destination, checksum))
+            .rows.first { it.id == ModelId.VAD }
+
+        assertEquals(ModelRowStatus.NOT_INSTALLED, row.status)
+        val truncated = row.truncated
+        assertTrue("expected a truncation fact, got null", truncated != null)
+        checkNotNull(truncated)
+        assertEquals(partialSize.toLong(), truncated.onDiskBytes)
+        assertEquals(expectedSize, truncated.expectedBytes)
+    }
+
+    @Test
+    @Requirement("R-865")
+    fun `R_865 no marker at all is unaffected by the size check — plain NOT_INSTALLED, no truncation fact`() {
+        val tempFilesDir = Files.createTempDirectory("models-controller-r865-nomarker").toFile()
+        val fakeContext = object : android.content.ContextWrapper(context) {
+            override fun getFilesDir(): File = tempFilesDir
+        }
+        val destination = ModelCatalog.entry(ModelId.VAD).destination(tempFilesDir)
+        val checksum = Checksum(value = "d".repeat(64))
+        // Nothing written at all — the honest "never attempted" case this fix must not disturb.
+
+        val row = ModelsController.currentState(fakeContext, specFor = vadSpecForRejection(destination, checksum))
+            .rows.first { it.id == ModelId.VAD }
+
+        assertEquals(ModelRowStatus.NOT_INSTALLED, row.status)
+        assertTrue("never-attempted must carry no truncation fact", row.truncated == null)
+        assertTrue("never-attempted must carry no rejection either", row.lastRejection == null)
     }
 
     // WPG follow-up (coordinator-assigned, same session): E2-H08's own missing case —
@@ -495,7 +624,14 @@ class ModelsControllerTest {
         )
         assertTrue("expected a Success, got $sideloadResult", sideloadResult is ModelActionResult.Success)
 
-        val afterSideload = ModelsController.currentState(fakeContext, specFor = replacementSpecFor)
+        // R-865: this test's own 64-byte fixtures never claim to match VAD's real declared
+        // catalogue size — it proves the replace/roll-back mechanism, not a real install, so the
+        // size-mismatch check is disabled here.
+        val afterSideload = ModelsController.currentState(
+            fakeContext,
+            specFor = replacementSpecFor,
+            expectedSizeBytes = { null },
+        )
         val replacedRow = afterSideload.rows.first { it.id == ModelId.VAD }
         assertEquals(ModelRowStatus.INSTALLED, replacedRow.status)
         assertEquals(replacementChecksum.value.take(8), replacedRow.checksumPrefix)
