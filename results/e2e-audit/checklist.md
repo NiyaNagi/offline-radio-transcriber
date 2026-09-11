@@ -142,16 +142,16 @@ Last updated 2026-09-10 by the lead at plan creation. Every row starts `open` or
 
 | id | requirement | what must be true | verification | owner | status |
 |---|---|---|---|---|---|
-| E2-J01 | plan § WPI | Every scenario named in the plan exists, seeds real stores/holders, and is documented in `results/ui-audit/README.md` | unit (`ScenariosTest` per scenario) | WPI | open |
-| E2-J02 | plan § WPI | `tour.json` has a step for every board in the plan's input list at 1.0 and 2.0, `-end` for long ones; `SetupStepIds` knows S00/S02c/S09b/S10b | tour run (manifest `ok` for each) | WPI | open |
-| E2-J03 | constitution VIII | Steps the tour cannot reach are named in the README with the reason, never faked | review | WPI | open |
+| E2-J01 | plan § WPI | Every scenario named in the plan exists, seeds real stores/holders, and is documented in `results/ui-audit/README.md` | unit (`WpiScenariosTest` ×17) | WPI | fixed — `711aecb`, gate on main pending |
+| E2-J02 | plan § WPI | `tour.json` has a step for every board in the plan's input list at 1.0 and 2.0, `-end` for long ones; `SetupStepIds` knows S00/S02c/S09b/S10b | tour run 1 on port 5558: **191 steps, 191 ok, 0 errors** (180 s), 40 new PNGs across 17 scenarios, `tour-manifest.json` committed | WPI | fixed — `711aecb` |
+| E2-J03 | constitution VIII | Steps the tour cannot reach are named in the README with the reason, never faked | review — README names S10b's paired list (no `RigLinkPort` injection seam in `SetupActivity`; WPD adding `DebugRigLinkPortOverride`) | WPI | fixed — `711aecb`; seam in flight |
 
 ## K — Validation rounds
 
 | id | what | evidence | owner | status |
 |---|---|---|---|---|
-| E2-K01 | Tour run 1 over the full step list on port 5558 | `results/ui-audit/tour-manifest.json`, commit | lead | open |
-| E2-K02 | Reviewers A–D (bases R-810..R-840) compare every new capture to its artboard | register rows | lead | open |
+| E2-K01 | Tour run 1 over the full step list on port 5558 | `results/ui-audit/tour-manifest.json` at `2a4dbf5` — 191/191 ok (WPI ran it from its branch; a second run from `main` follows the seam fix) | lead | fixed |
+| E2-K02 | Reviewers A–D (bases R-810..R-840) compare every new capture to its artboard | register rows | lead | building — four reviewers launched on the run-1 set |
 | E2-K03 | V8 Setup, three lanes (5554) | register rows R-850+, captures | validator | open |
 | E2-K04 | V9 Settings, assets, LLM (5556) | register rows R-860+ | validator | open |
 | E2-K05 | V10 Status, session, digest, failures (5554) | register rows R-870+ | validator | open |
