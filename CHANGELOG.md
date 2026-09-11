@@ -32,6 +32,75 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (register R-885: every Migration now overrides migrate(SQLiteConnection), the path a real device actually opens through)
+
+### (pending) — Migration.migrate(SupportSQLiteDatabase) alone crashed a real BundledSQLiteDriver open; every Migration now overrides both signatures
+
+**Scope:** `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`, `data/src/test/kotlin/org/ort/data/MigrationTest.kt`.
+
+**Requirements/ACs:** R-885, AC-53, FR-AST-5, FR-AST-6.
+
+**What changed:** *Constitution check.* II (test-first: the new test is shown to fail with the exact
+reported crash before the fix, and pass after — see Verified). IV (a real device's first upgrade
+open must never throw; "the migration ran" is the fact this module exists to guarantee, not a
+best-effort). This project's Room version is **2.7.2**, with `androidx.sqlite` **2.5.2**; `:data`'s
+`OrtDatabase.create` (the *only* place a connection is ever opened — production and every JVM test
+alike, per that function's own kdoc) installs `androidx.sqlite.driver.bundled.BundledSQLiteDriver`
+via `RoomDatabase.Builder.setDriver(...)` (register R-204, for `fts5` support the platform SQLite
+lacks). `androidx.room.migration.Migration`'s own default `migrate(connection: SQLiteConnection)`
+implementation bridges to the legacy `migrate(db: SupportSQLiteDatabase)` override **only** when the
+connection wraps a `SupportSQLiteDatabase` — true solely on the classic, non-driver open path
+(`RoomDatabase.Builder` with no `.setDriver(...)` call). Every `Migration` in `OrtDatabase.kt`
+overrode only that legacy method, so a real device carrying an older on-disk database crashed on
+its very first upgrade open with `kotlin.NotImplementedError: Migration functionality with a
+provided SQLiteDriver requires overriding the migrate(SQLiteConnection) function.`
+
+**Why `MigrationTest` never caught it**: this module's own `MigrationTestHelper` (Room's testing
+helper, used via the two-arg `MigrationTestHelper(instrumentation, OrtDatabase::class.java)`
+constructor) and every plain `Room.databaseBuilder(...).build()` call this file's pre-existing tests
+use for their post-migration reads are **both** the classic, non-driver path — neither ever calls
+`.setDriver(...)`. Every migration's SQL was exercised and verified correct many times over; the
+*signature* Room would call it through in production was never the one being tested at all.
+
+**Fix**: every `Migration` in `OrtDatabase.MIGRATIONS` (1→2 through 9→10) now overrides **both**
+`migrate(db: SupportSQLiteDatabase)` and `migrate(connection: SQLiteConnection)`, each running the
+identical `List<String>` of SQL statements — `SupportSQLiteDatabase.execSQL(sql)` on one side,
+`androidx.sqlite.execSQL(SQLiteConnection, String)` (the driver-native equivalent, from
+`androidx.sqlite:sqlite`) on the other. Kept both overrides, rather than only the new one, since
+`MigrationTestHelper`'s own legacy path still calls the `SupportSQLiteDatabase` signature and there
+is no reason to make that path depend on the bridge working.
+
+**New permanent gate**: `MigrationTest.r_885_every_fixture_from_v1_to_v9_opens_through_the_real_OrtDatabase_create_and_reads_its_session_row`
+writes each of the nine released fixture versions (1 through 9, including the exact version named
+in the halt report, from `data/schemas/org.ort.data.OrtDatabase/9.json`) directly through
+`MigrationTestHelper.createDatabase` — deliberately never `.runMigrationsAndValidate`, which itself
+performs the migration through the same legacy path this bug hid behind — then opens that exact
+on-disk file through `OrtDatabase.create` itself (the real production factory, real
+`BundledSQLiteDriver`, real connection-based migration) and reads the seeded `session` row back.
+Every future `Migration` this file adds is exercised by this same loop with no further change
+needed here.
+
+**Verified:** confirmed the new test fails, before the fix, with exactly the reported crash
+(`kotlin.NotImplementedError: Migration functionality with a provided SQLiteDriver requires
+overriding the migrate(SQLiteConnection) function.` at `androidx.room.migration.Migration.migrate`)
+via `./gradlew -PortAllowMissingBundledAssets=true :data:testDebugUnitTest --tests
+"org.ort.data.MigrationTest.r_885*"`; passes after the fix, same command. `:data:testDebugUnitTest`
+(full) — green, every pre-existing case unchanged. Full gate — `./gradlew
+-PortAllowMissingBundledAssets=true build dependencyRules platformGuards`, `-p buildSrc test`,
+`python tools/spec-check/spec_check.py`, `coverageMatrix` + `coverageMatrixCheck` (as two
+invocations) — all green; pasted in the report.
+
+**Left open / not done:** the failing device's own re-upgrade is the lead's/WPI's to confirm; this
+fix cannot itself un-corrupt a database instance that already hit the crash mid-migration on a real
+device (SQLite's own `ALTER TABLE`/`CREATE TABLE IF NOT EXISTS` statements are individually
+atomic, but Room does not wrap a multi-statement `Migration` in an outer transaction on either
+path, so a device that crashed partway through a multi-statement migration such as v2→v3 could be
+left with a partially-applied version — worth a one-time diagnostic read on the affected device
+before assuming a clean retry, not attempted here since no such device is reachable from this
+worktree).
+
+---
+
 ## 2026-09-11 (WPE R-865 render half: CF04 renders WPG's truncated-asset guard)
 
 ### <pending> — settings modes: R-865 render half — CF04 renders "marker present, bytes missing" from WPG's real guard

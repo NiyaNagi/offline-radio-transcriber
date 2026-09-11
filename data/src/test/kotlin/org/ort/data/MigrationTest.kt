@@ -707,4 +707,61 @@ public class MigrationTest {
             }
         }
     }
+
+    /**
+     * Register R-885 (halt): the real production open path — [OrtDatabase.create], which installs
+     * [androidx.sqlite.driver.bundled.BundledSQLiteDriver] — hands every [androidx.room.migration
+     * .Migration] a connection through its `migrate(SQLiteConnection)` entry point, not the legacy
+     * `migrate(SupportSQLiteDatabase)` override every [Migration] in [OrtDatabase] originally had
+     * alone. [androidx.room.migration.Migration]'s own default `migrate(SQLiteConnection)`
+     * implementation only bridges to `migrate(SupportSQLiteDatabase)` when the connection wraps a
+     * `SupportSQLiteDatabase` — true only on the classic, non-driver open path
+     * ([androidx.room.RoomDatabase.Builder] with no `.setDriver(...)` call). Both [helper] (Room's
+     * own [MigrationTestHelper]) and every plain `Room.databaseBuilder(...).build()` call elsewhere
+     * in this file are exactly that classic path, so this whole suite — despite exercising every
+     * migration's SQL — never once drove a connection-based open and never caught this. A device
+     * carrying an older on-disk database crashed on its very first real open with
+     * `NotImplementedError: Migration N-M requires overriding migrate(SQLiteConnection)`.
+     *
+     * Reproduces by writing each fixture version's on-disk file directly through
+     * [MigrationTestHelper.createDatabase] — deliberately never [MigrationTestHelper
+     * .runMigrationsAndValidate], which itself performs the migration through the same legacy path
+     * this test exists to bypass — then opening that exact file through [OrtDatabase.create]
+     * itself: the same factory function, with the same [androidx.sqlite.driver.bundled
+     * .BundledSQLiteDriver], the shipped app and every other production caller use. `fixtureVersion`
+     * 9 is the version named in the halt report (`data/schemas/org.ort.data.OrtDatabase/9.json`);
+     * the loop also covers every earlier released version, since each is an on-disk shape a real
+     * device could still be carrying. Kept as the permanent upgrade-path gate: every future
+     * [Migration] this file adds is exercised by this same loop with no further change needed here.
+     */
+    @Test
+    @Requirement("R-885", "AC-53", "FR-AST-5", "FR-AST-6")
+    public fun r_885_every_fixture_from_v1_to_v9_opens_through_the_real_OrtDatabase_create_and_reads_its_session_row() {
+        for (fixtureVersion in 1..9) {
+            val dbName = "r885-real-open-v$fixtureVersion"
+            val fixture = helper.createDatabase(dbName, fixtureVersion)
+            fixture.execSQL(
+                "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                    "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
+                    "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, $fixtureVersion, 0, 0)",
+            )
+            fixture.close()
+
+            // The real production factory -- installs BundledSQLiteDriver and, since this on-disk
+            // file sits at fixtureVersion (not head), runs every pending Migration through the
+            // connection-based path a real device actually uses. This is the exact call R-885
+            // crashed in.
+            val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), dbName)
+            try {
+                val migrated = runBlocking { db.sessionDao().getById("S1") }
+                assertEquals(
+                    "fixture v$fixtureVersion's session row must survive a real OrtDatabase.create() open",
+                    "test",
+                    migrated!!.appVersion,
+                )
+            } finally {
+                db.close()
+            }
+        }
+    }
 }

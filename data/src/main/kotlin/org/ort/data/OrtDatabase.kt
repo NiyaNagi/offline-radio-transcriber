@@ -10,8 +10,10 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.room.useReaderConnection
 import androidx.room.useWriterConnection
+import androidx.sqlite.SQLiteConnection
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
+import androidx.sqlite.execSQL
 import kotlinx.coroutines.runBlocking
 import org.ort.data.dao.ActivityDao
 import org.ort.data.dao.CaptureGapDao
@@ -130,21 +132,44 @@ public abstract class OrtDatabase : RoomDatabase() {
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
+         * Register R-885 (halt): every [Migration] below overrides **both**
+         * `migrate(SupportSQLiteDatabase)` and `migrate(SQLiteConnection)`, each running the exact
+         * same [List] of SQL statements. [create] installs [BundledSQLiteDriver] (register R-204),
+         * so the real, connection-based open path is the *only* one a shipped device ever takes;
+         * [Migration]'s own default `migrate(SQLiteConnection)` bridges to the legacy
+         * `migrate(SupportSQLiteDatabase)` override only when the connection wraps a
+         * `SupportSQLiteDatabase` — true solely on the classic, non-driver open path (no
+         * `.setDriver(...)` call), which is exactly the path `androidx.room.testing
+         * .MigrationTestHelper` and a plain `Room.databaseBuilder(...).build()` (no driver) both
+         * take. A `Migration` overriding only the legacy method therefore worked in every one of
+         * this module's own `MigrationTest` cases yet crashed a real device on its first upgrade
+         * open with `NotImplementedError: Migration requires overriding migrate(SQLiteConnection)`
+         * — `MigrationTest`'s own
+         * `r_885_every_fixture_from_v1_to_v9_opens_through_the_real_OrtDatabase_create_and_reads_its_session_row`
+         * reproduces this by opening through [create] itself (the real factory) rather than through
+         * the helper, and is the permanent gate against a regression here.
+         *
          * v1 → v2 (F-021): adds the `shed_event` table so [ShedEventEntity] rows can be
          * persisted. No existing table is touched — every v1 row survives untouched
          * (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
          */
         public val MIGRATION_1_2: Migration = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `shed_event` (" +
-                        "`id` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `levelBefore` INTEGER NOT NULL, " +
-                        "`levelAfter` INTEGER NOT NULL, `trigger` TEXT NOT NULL, `reason` TEXT NOT NULL, " +
-                        "`atWallMillis` INTEGER NOT NULL, `atMonotonicNanos` INTEGER NOT NULL, " +
-                        "`samplePosition` INTEGER, PRIMARY KEY(`id`))",
-                )
+                MIGRATION_1_2_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_1_2_STATEMENTS.forEach(connection::execSQL)
             }
         }
+
+        private val MIGRATION_1_2_STATEMENTS: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `shed_event` (" +
+                "`id` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `levelBefore` INTEGER NOT NULL, " +
+                "`levelAfter` INTEGER NOT NULL, `trigger` TEXT NOT NULL, `reason` TEXT NOT NULL, " +
+                "`atWallMillis` INTEGER NOT NULL, `atMonotonicNanos` INTEGER NOT NULL, " +
+                "`samplePosition` INTEGER, PRIMARY KEY(`id`))",
+        )
 
         /**
          * v2 → v3 (register R-052, R-073): adds `station_identity_history`,
@@ -163,39 +188,35 @@ public abstract class OrtDatabase : RoomDatabase() {
          */
         public val MIGRATION_2_3: Migration = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `station_identity_history` (" +
-                        "`id` TEXT NOT NULL, `stationId` TEXT NOT NULL, `field` TEXT NOT NULL, " +
-                        "`previousValue` TEXT, `newValue` TEXT, `changedAt` INTEGER NOT NULL, " +
-                        "PRIMARY KEY(`id`))",
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_station_identity_history_stationId` " +
-                        "ON `station_identity_history` (`stationId`)",
-                )
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `voiceprint_binding_history` (" +
-                        "`id` TEXT NOT NULL, `voiceprintId` TEXT NOT NULL, `previousStationId` TEXT, " +
-                        "`previousBindingConfidence` REAL, `previousBindingSource` TEXT, " +
-                        "`newStationId` TEXT, `newBindingConfidence` REAL, `newBindingSource` TEXT, " +
-                        "`changedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_voiceprint_binding_history_voiceprintId` " +
-                        "ON `voiceprint_binding_history` (`voiceprintId`)",
-                )
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `prior_adjustment` (" +
-                        "`id` TEXT NOT NULL, `stationId` TEXT NOT NULL, `name` TEXT NOT NULL, " +
-                        "`weight` REAL NOT NULL, `reason` TEXT, `isCurrent` INTEGER NOT NULL, " +
-                        "`updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_prior_adjustment_stationId_name_isCurrent` " +
-                        "ON `prior_adjustment` (`stationId`, `name`, `isCurrent`)",
-                )
+                MIGRATION_2_3_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_2_3_STATEMENTS.forEach(connection::execSQL)
             }
         }
+
+        private val MIGRATION_2_3_STATEMENTS: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `station_identity_history` (" +
+                "`id` TEXT NOT NULL, `stationId` TEXT NOT NULL, `field` TEXT NOT NULL, " +
+                "`previousValue` TEXT, `newValue` TEXT, `changedAt` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`id`))",
+            "CREATE INDEX IF NOT EXISTS `index_station_identity_history_stationId` " +
+                "ON `station_identity_history` (`stationId`)",
+            "CREATE TABLE IF NOT EXISTS `voiceprint_binding_history` (" +
+                "`id` TEXT NOT NULL, `voiceprintId` TEXT NOT NULL, `previousStationId` TEXT, " +
+                "`previousBindingConfidence` REAL, `previousBindingSource` TEXT, " +
+                "`newStationId` TEXT, `newBindingConfidence` REAL, `newBindingSource` TEXT, " +
+                "`changedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+            "CREATE INDEX IF NOT EXISTS `index_voiceprint_binding_history_voiceprintId` " +
+                "ON `voiceprint_binding_history` (`voiceprintId`)",
+            "CREATE TABLE IF NOT EXISTS `prior_adjustment` (" +
+                "`id` TEXT NOT NULL, `stationId` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                "`weight` REAL NOT NULL, `reason` TEXT, `isCurrent` INTEGER NOT NULL, " +
+                "`updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+            "CREATE INDEX IF NOT EXISTS `index_prior_adjustment_stationId_name_isCurrent` " +
+                "ON `prior_adjustment` (`stationId`, `name`, `isCurrent`)",
+        )
 
         /**
          * v3 → v4 (register R-204 follow-up, FR-REP-2/9): adds `transmission.processedTier` —
@@ -206,9 +227,17 @@ public abstract class OrtDatabase : RoomDatabase() {
          */
         public val MIGRATION_3_4: Migration = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `transmission` ADD COLUMN `processedTier` TEXT")
+                MIGRATION_3_4_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_3_4_STATEMENTS.forEach(connection::execSQL)
             }
         }
+
+        private val MIGRATION_3_4_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `transmission` ADD COLUMN `processedTier` TEXT",
+        )
 
         /**
          * v4 → v5, shared by two independent register items (the lead's own instruction: one
@@ -226,22 +255,26 @@ public abstract class OrtDatabase : RoomDatabase() {
          */
         public val MIGRATION_4_5: Migration = object : Migration(4, 5) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousAttributionState` TEXT")
-                db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousAttributionConfidence` REAL")
-                db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousAttributionSourceTransmissionId` TEXT")
-                db.execSQL("ALTER TABLE `correction` ADD COLUMN `previousCorrected` INTEGER")
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `lattice_slot` (" +
-                        "`id` TEXT NOT NULL, `transmissionId` TEXT NOT NULL, `candidateId` TEXT NOT NULL, " +
-                        "`index` INTEGER NOT NULL, `unit` TEXT NOT NULL, `score` REAL NOT NULL, " +
-                        "`keptAlternate` TEXT, `charStart` INTEGER, `charEnd` INTEGER, PRIMARY KEY(`id`))",
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_lattice_slot_transmissionId_candidateId_index` " +
-                        "ON `lattice_slot` (`transmissionId`, `candidateId`, `index`)",
-                )
+                MIGRATION_4_5_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_4_5_STATEMENTS.forEach(connection::execSQL)
             }
         }
+
+        private val MIGRATION_4_5_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `correction` ADD COLUMN `previousAttributionState` TEXT",
+            "ALTER TABLE `correction` ADD COLUMN `previousAttributionConfidence` REAL",
+            "ALTER TABLE `correction` ADD COLUMN `previousAttributionSourceTransmissionId` TEXT",
+            "ALTER TABLE `correction` ADD COLUMN `previousCorrected` INTEGER",
+            "CREATE TABLE IF NOT EXISTS `lattice_slot` (" +
+                "`id` TEXT NOT NULL, `transmissionId` TEXT NOT NULL, `candidateId` TEXT NOT NULL, " +
+                "`index` INTEGER NOT NULL, `unit` TEXT NOT NULL, `score` REAL NOT NULL, " +
+                "`keptAlternate` TEXT, `charStart` INTEGER, `charEnd` INTEGER, PRIMARY KEY(`id`))",
+            "CREATE INDEX IF NOT EXISTS `index_lattice_slot_transmissionId_candidateId_index` " +
+                "ON `lattice_slot` (`transmissionId`, `candidateId`, `index`)",
+        )
 
         /**
          * v5 → v6 (register R-426): adds the `work_attempt` table for [WorkAttemptEntity] — one
@@ -251,18 +284,22 @@ public abstract class OrtDatabase : RoomDatabase() {
          */
         public val MIGRATION_5_6: Migration = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `work_attempt` (" +
-                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `itemId` INTEGER NOT NULL, " +
-                        "`attemptNo` INTEGER NOT NULL, `startedAtMillis` INTEGER NOT NULL, " +
-                        "`finishedAtMillis` INTEGER NOT NULL, `outcome` TEXT NOT NULL, `reason` TEXT NOT NULL)",
-                )
-                db.execSQL(
-                    "CREATE INDEX IF NOT EXISTS `index_work_attempt_itemId_attemptNo` " +
-                        "ON `work_attempt` (`itemId`, `attemptNo`)",
-                )
+                MIGRATION_5_6_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_5_6_STATEMENTS.forEach(connection::execSQL)
             }
         }
+
+        private val MIGRATION_5_6_STATEMENTS: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `work_attempt` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `itemId` INTEGER NOT NULL, " +
+                "`attemptNo` INTEGER NOT NULL, `startedAtMillis` INTEGER NOT NULL, " +
+                "`finishedAtMillis` INTEGER NOT NULL, `outcome` TEXT NOT NULL, `reason` TEXT NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS `index_work_attempt_itemId_attemptNo` " +
+                "ON `work_attempt` (`itemId`, `attemptNo`)",
+        )
 
         /**
          * v6 → v7 (FR-CAP-13, AC-129): adds `session.captureMode`, `.audioRouteKind`,
@@ -273,13 +310,21 @@ public abstract class OrtDatabase : RoomDatabase() {
          */
         public val MIGRATION_6_7: Migration = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `session` ADD COLUMN `captureMode` TEXT")
-                db.execSQL("ALTER TABLE `session` ADD COLUMN `audioRouteKind` TEXT")
-                db.execSQL("ALTER TABLE `session` ADD COLUMN `audioRouteLabel` TEXT")
-                db.execSQL("ALTER TABLE `session` ADD COLUMN `bluetoothProfile` TEXT")
-                db.execSQL("ALTER TABLE `session` ADD COLUMN `rigTransport` TEXT")
+                MIGRATION_6_7_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_6_7_STATEMENTS.forEach(connection::execSQL)
             }
         }
+
+        private val MIGRATION_6_7_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `session` ADD COLUMN `captureMode` TEXT",
+            "ALTER TABLE `session` ADD COLUMN `audioRouteKind` TEXT",
+            "ALTER TABLE `session` ADD COLUMN `audioRouteLabel` TEXT",
+            "ALTER TABLE `session` ADD COLUMN `bluetoothProfile` TEXT",
+            "ALTER TABLE `session` ADD COLUMN `rigTransport` TEXT",
+        )
 
         /**
          * v7 → v8 (FR-DIG-3, FR-DIG-11 / T3): adds the `prose_summary` table for
@@ -289,14 +334,20 @@ public abstract class OrtDatabase : RoomDatabase() {
          */
         public val MIGRATION_7_8: Migration = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "CREATE TABLE IF NOT EXISTS `prose_summary` (" +
-                        "`threadId` TEXT NOT NULL, `text` TEXT NOT NULL, " +
-                        "`sourceTransmissionIds` TEXT NOT NULL, `generatedAtMillis` INTEGER NOT NULL, " +
-                        "`modelId` TEXT NOT NULL, PRIMARY KEY(`threadId`))",
-                )
+                MIGRATION_7_8_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_7_8_STATEMENTS.forEach(connection::execSQL)
             }
         }
+
+        private val MIGRATION_7_8_STATEMENTS: List<String> = listOf(
+            "CREATE TABLE IF NOT EXISTS `prose_summary` (" +
+                "`threadId` TEXT NOT NULL, `text` TEXT NOT NULL, " +
+                "`sourceTransmissionIds` TEXT NOT NULL, `generatedAtMillis` INTEGER NOT NULL, " +
+                "`modelId` TEXT NOT NULL, PRIMARY KEY(`threadId`))",
+        )
 
         /**
          * v8 → v9 (WPC3, FR-RIG-6, FR-CAP-5): adds `transmission.rigStateChangedMidTransmission` —
@@ -313,12 +364,17 @@ public abstract class OrtDatabase : RoomDatabase() {
          */
         public val MIGRATION_8_9: Migration = object : Migration(8, 9) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL(
-                    "ALTER TABLE `transmission` ADD COLUMN `rigStateChangedMidTransmission` " +
-                        "INTEGER NOT NULL DEFAULT 0",
-                )
+                MIGRATION_8_9_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_8_9_STATEMENTS.forEach(connection::execSQL)
             }
         }
+
+        private val MIGRATION_8_9_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `transmission` ADD COLUMN `rigStateChangedMidTransmission` INTEGER NOT NULL DEFAULT 0",
+        )
 
         /**
          * v9 → v10 (E2-A07): adds `session.rigDescriptorId`, `.audioRouteVerified` and
@@ -328,11 +384,19 @@ public abstract class OrtDatabase : RoomDatabase() {
          */
         public val MIGRATION_9_10: Migration = object : Migration(9, 10) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                db.execSQL("ALTER TABLE `session` ADD COLUMN `rigDescriptorId` TEXT")
-                db.execSQL("ALTER TABLE `session` ADD COLUMN `audioRouteVerified` INTEGER")
-                db.execSQL("ALTER TABLE `session` ADD COLUMN `audioNativeRateHz` INTEGER")
+                MIGRATION_9_10_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_9_10_STATEMENTS.forEach(connection::execSQL)
             }
         }
+
+        private val MIGRATION_9_10_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `session` ADD COLUMN `rigDescriptorId` TEXT",
+            "ALTER TABLE `session` ADD COLUMN `audioRouteVerified` INTEGER",
+            "ALTER TABLE `session` ADD COLUMN `audioNativeRateHz` INTEGER",
+        )
 
         /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
