@@ -181,12 +181,34 @@ class CaptureStatusMapperTest {
         assertEquals("No rig configured", view.radio.value)
     }
 
+    // R-839 (register, halt): "no radio support in this build yet" was a false claim about the
+    // build (WPA/WPB/WPC shipped full USB/Bluetooth rig support) surviving from before the rig
+    // module existed at all (register R-263/R-444) — retired for the honest, session-scoped line.
     @Test
     @Requirement("R-263")
-    fun `R_263 the no-rig sub-line reads in operator language, never a bare spec id`() {
+    fun `R_839 the no-rig sub-line names this session, never a false claim about the build`() {
         val view = state(rig = RigStatus.State.Absent)
-        assertEquals("no radio support in this build yet", view.radio.subLine)
+        assertEquals("no rig for this session", view.radio.subLine)
         assertFalse(view.radio.subLine!!.contains("FR-"))
+        assertFalse(view.radio.subLine!!.contains("this build"))
+    }
+
+    @Test
+    @Requirement("R-839")
+    fun `R_839 a session that recorded a real rig transport renders it, even with no live RigStatus`() {
+        val view = state(
+            rig = RigStatus.State.Absent,
+            routeFacts = SessionRouteFacts(
+                captureMode = null,
+                audioRouteKind = null,
+                audioRouteLabel = null,
+                bluetoothProfile = null,
+                rigTransport = RigTransportKind.BLUETOOTH_SPP,
+            ),
+        )
+        assertEquals("Bluetooth SPP", view.radio.value)
+        assertEquals("not connected right now — from this session's own record", view.radio.subLine)
+        assertFalse(view.radio.subLine!!.contains("this build"))
     }
 
     @Test

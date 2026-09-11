@@ -107,6 +107,107 @@ the "renders without crashing, every row stays clickable regardless of emphasis"
 semantics tree does not expose rendered text/icon colour cheaply for a Robolectric assertion, so
 the actual visual weight/colour is left for the next tour capture to confirm against the artboard,
 per constitution VIII's own "when a test and a screenshot disagree, the screenshot wins" rule.
+## 2026-09-10 (WPF follow-up round 2: tour run 1 reviewer findings — R-824, R-825, R-831..R-834, R-836..R-839, R-844)
+
+### (pending) — status modes: DG04 never claims a live session ended cleanly, drops the Input row's device/type restatement, DG04 Rig link leads with the live rig's own name, real HFP profile names, F9 names the transport and device it dropped, F23 omits its retry sentence rather than substituting prose, the live bar mutes and captions a genuine audio-gone drop distinctly from a rig-only one, two new stroke icons, N04 retires "no radio support in this build", and the coverage bar carries its own axis
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/{digest/{DigestViewData,DigestPolling,SessionsScreens},data/{LiveBarPolling,CaptureStatusViewState,LogViewData},failures/{FailureViewState,FailureMapper,FailureBanners},components/{OrtIcons,Rows,Feedback},screens/LogScreen}.kt`,
+matching test files under `app/src/test/kotlin/...` (`DigestPollingTest`, `SessionsScreensTest`,
+`LiveBarPollingTest`, `CaptureStatusMapperTest`, `FailureScreensTest`, `OrtIconsTest`,
+`RejectedRowTest`, `LogScreenTest`). `results/ui-audit/register.md` updated in place (11 rows'
+status column). Branch only — not merged to `main`.
+
+**Requirements/ACs:** FR-CAP-5, FR-CAP-10, FR-CAP-11, FR-CAP-13, FR-RIG-14, FR-RIG-15. (Every new
+test is tagged with the real functional-spec id it establishes; the register row id — R-824 etc. —
+stays a plain-prose reference in each block's own comment, per this branch's own earlier orphan-id
+fix.)
+
+**What changed:**
+
+*Constitution Check.* I (a live session's header now says so structurally, never "ended cleanly";
+F23's retry sentence is real numbers or nothing, never a substitute; the Rig link row's live rig
+name and the Input row's dedup both read only real signals — nothing here fabricates a "verified"
+flag or a native sample rate `:data` does not persist, reported as a limitation instead). II
+(every fix reproduces the register's own exact seeded state as an exact-string or exact-count
+assertion, not a loose substring, so a partial fix would still fail it — `R_834`'s own Bluetooth-
+occurrence count is the sharpest example). IV (unchanged). VI (the meter/caption fix reads real
+process-wide signals only — `InputStatus`/`LevelStatus`/`RigStatus` — never a fabricated distinction
+between the two failure modes). VII (the icon override is a new, additive `Banner` parameter, not a
+special case baked into one banner's own layout; the live-rig-name lookup reuses the identical
+"prefer live, fall back to the session column" seam N04/F9 already established, not a new one).
+
+1. **R-824 (halt):** `SessionDetailViewState.live` (the identical `CaptureState` fact
+   `SessionRowViewState.live` already computes) — the header reads "`<range>` · Live · `<elapsed>`
+   so far" while live, never "ended cleanly" or an unclean-termination claim it has not reached.
+2. **R-825/R-834 (design/spec):** a single `typeClauseOrNull` rule — case-insensitive substring —
+   drops the Input row's generic type clause ("built-in mic", "Bluetooth") whenever the session's
+   own real device label already names it, fixing both the built-in-mic and the Bluetooth captures
+   the register cites without a special case for either. Bluetooth profile labels renamed to the
+   real HFP codec names ("HFP mSBC"/"HFP CVSD"/"profile not reported"). **Not fabricated**: a
+   "verified" flag and a native sample rate, to match `Session.dc.html`'s own further USB example —
+   `:data` has no persisted per-session route-verified flag or native rate at all (checked directly;
+   only `audioRouteLabel`/`audioRouteKind` exist); a schema addition is owed, reported not silently
+   dropped.
+3. **R-831 (spec):** F9's title now leads "`<deviceLabel>` disconnected over `<transportLabel>` at
+   `<time>` — frequency is stale" — both fields were already computed by `FailureMapper`, just never
+   rendered by `FailRigBanner`; falls back to naming the device alone when the transport is `null`.
+4. **R-832 (spec):** F23's retry-ladder sentence is omitted entirely, not replaced with "Retrying
+   automatically.", when the real ladder position is unknown — real numbers or nothing. **WPI's own
+   scenario-seeding half stays open** (`bt-audio-dropped` still seeds no `attempt`/`ofTotal`/
+   `nextRetryInMillis`), so this is unit-proven against hand-built states only, not yet device/tour-
+   verifiable.
+5. **R-833 (spec), reported which:** `:data` has no persisted rig-descriptor id on the session row
+   at all (only `rigTransport`, the kind) — for a *currently live* session, `rigLinkLabel` now reads
+   the rig's own real name off `RigStatus`'s live state instead (N04/F9's own "prefer live" pattern),
+   guarded against a live `RigStatus` that has moved to a different transport than the one this
+   session's own row recorded. A genuinely past session still renders the transport alone.
+6. **R-836 (design):** `LiveBarPolling` structurally mutes the meter (`level = [0f,0f,0f,0f]`)
+   whenever `InputStatus.state is Lost`, regardless of a stale, still-"live-looking" `LevelStatus`
+   reading from before the drop (that signal has no way to know the route dropped on its own), and
+   reads the board's own "no audio — reconnecting to `<device>`" caption for a Bluetooth-audio drop
+   specifically, never the stale last-heard partial. A rig-only drop (`RigStatus.Stale` alone,
+   `InputStatus` untouched) is unaffected — the real meter, the real last-heard partial, since audio
+   genuinely is still fine.
+7. **R-837/R-838 (design), ownership widened to `OrtIcons.kt`:** `OrtIcons.brokenLink` (F23's
+   banner, via `Banner`'s new additive `icon` parameter) and `OrtIcons.interruptedConnector` (the
+   Log's own Bluetooth-audio-dropped gap row, via `LogListItem.Gap`'s real `CaptureGapCause`, never
+   a check against the row's own label prose). **The register's own path text for R-837 was
+   corrupted in transcription** (`M7 7l10 10-5 5V2l5 5L7 17` traces no recognisable shape) and no
+   path at all was given for R-838 — both redrawn as clean, recognisable stroke glyphs in this
+   file's own conventions instead of a literal trace; reported here rather than silently presented
+   as pixel-exact.
+8. **R-839 (halt), N04 half:** `CaptureStatusViewState.radioFacts`'s `Absent` branch no longer says
+   "no radio support in this build yet" (false since WPA/WPB/WPC shipped full rig support) — a
+   session that recorded a real `rigTransport` renders it ("not connected right now — from this
+   session's own record"); only a session that genuinely never had one still says "no rig for this
+   session". **`SettingsRigScreen`'s own `FailedState` (CF06) is WPE's file, not touched here.**
+9. **R-844 (polish):** `SessionDetailScreen` passes the session's own real start/end clock labels to
+   `ActivityPatternChart`'s existing `axisStart`/`axisEnd` parameters — already built, simply unused
+   by this call, so a session with no not-listening hour at all (a solid green block) rendered no
+   axis row whatsoever.
+
+**Verified** (all on this workstation, `JAVA_HOME`/`ANDROID_HOME` as this session's own preamble,
+`-PortAllowMissingBundledAssets=true` on every invocation):
+- `./gradlew :app:testDebugUnitTest` — BUILD SUCCESSFUL (full suite, 1653 tests).
+- `./gradlew :app:smokeTestDebugUnitTest` — BUILD SUCCESSFUL.
+- `./gradlew build dependencyRules platformGuards` — BUILD SUCCESSFUL; `dependencyRules: OK`, 20
+  modules; `platformGuards: OK`, 20 modules.
+- `./gradlew -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix` — 240 of 450 covered; no orphan-test line.
+- `./gradlew coverageMatrixCheck` — up to date (240 of 450).
+- `./gradlew :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL (three style fixes made along the
+  way: `Banner`'s new `LongParameterList` (9th param), `DigestPollingTest`'s new `LargeClass`, two
+  wrapped/combined lines over 120 chars).
+
+**Left open / not done:**
+- R-832's WPI half (seed real `attempt`/`ofTotal`/`nextRetryInMillis` in the `bt-audio-dropped`
+  scenario) — not this package's row.
+- R-839's WPE half (`SettingsRigScreen`'s own `FailedState`, CF06) — not this package's file.
+- Tour/device re-capture for all eleven rows — this session is unit-only, per its own scope; the
+  register's own status column notes each row `fixed`, not `closed` (constitution VIII: closing
+  needs a capture, not a builder's report).
+- Not merged to `main`; the lead merges builder branches.
 
 ---
 
@@ -28712,6 +28813,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

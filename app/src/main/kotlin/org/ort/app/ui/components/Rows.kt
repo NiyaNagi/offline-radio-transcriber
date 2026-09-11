@@ -1145,9 +1145,18 @@ public fun LogGroupHeader(label: String, modifier: Modifier = Modifier, onClick:
 }
 
 /** `Rows.dc.html`'s gap row: the app was not listening, and says so with the reason — never
- * conflated with a quiet band (FR-UI-12, FR-RUN-12). */
+ * conflated with a quiet band (FR-UI-12, FR-RUN-12). [bluetoothAudioDropped] (R-838, register,
+ * design) swaps the ordinary [OrtIcons.gapWarn] circle for [OrtIcons.interruptedConnector] — a
+ * structural flag from the row's own real [org.ort.data.entity.CaptureGapCause], never a check
+ * against [label]'s own prose. `false` (every caller before this existed) renders exactly as
+ * before. */
 @Composable
-public fun GapRow(timeLabel: String, label: String, modifier: Modifier = Modifier) {
+public fun GapRow(
+    timeLabel: String,
+    label: String,
+    modifier: Modifier = Modifier,
+    bluetoothAudioDropped: Boolean = false,
+) {
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -1170,10 +1179,14 @@ public fun GapRow(timeLabel: String, label: String, modifier: Modifier = Modifie
                 modifier = Modifier.widthIn(min = rememberTimeColumnWidth()),
             )
             Icon(
-                imageVector = OrtIcons.gapWarn,
+                imageVector = if (bluetoothAudioDropped) OrtIcons.interruptedConnector else OrtIcons.gapWarn,
                 contentDescription = null,
                 tint = OrtColors.accentGap,
-                modifier = Modifier.size(13.dp),
+                // R-838: see Banner's own identical testTag doc comment (Feedback.kt) — proves the
+                // real cause actually reached the rendered icon, never a check against label prose.
+                modifier = Modifier.size(13.dp).testTag(
+                    if (bluetoothAudioDropped) "gap-row-icon-interrupted" else "gap-row-icon-default",
+                ),
             )
             Text(text = label, style = OrtType.subLine, color = OrtColors.accentAmberDim)
         }

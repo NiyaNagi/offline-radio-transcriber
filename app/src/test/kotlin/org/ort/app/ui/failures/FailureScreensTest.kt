@@ -363,9 +363,11 @@ class FailureScreensTest {
         composeTestRule.onNodeWithText("Retry 3 of 8, next in 20 s.", substring = true).assertIsDisplayed()
     }
 
+    // R-832 (register, spec): real numbers or nothing — "Retrying automatically." was a substitute
+    // sentence, retired outright rather than kept as a fallback.
     @Test
     @Requirement("FR-CAP-5")
-    fun `FR_CAP_5 F23 reads Retrying automatically for a caller with no real ladder position`() {
+    fun `R_832 F23 omits the retry sentence entirely for a caller with no real ladder position`() {
         composeTestRule.setContent {
             OrtTheme {
                 FailBluetoothAudioDroppedBanner(
@@ -379,7 +381,93 @@ class FailureScreensTest {
                 )
             }
         }
-        composeTestRule.onNodeWithText("Retrying automatically.", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Retrying automatically", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText(", next in", substring = true).assertDoesNotExist()
+        // "Retry now" is the banner's own primary action label, real and unaffected by omitting the
+        // ladder-position sentence from the body text.
+        composeTestRule.onNodeWithText("Retry now").assertIsDisplayed()
+        // The rest of the body is unaffected — omitting the ladder clause must not also swallow the
+        // rig-link sentence that follows it.
+        composeTestRule.onNodeWithText("rig link over Bluetooth", substring = true).assertIsDisplayed()
+    }
+
+    // R-831 (register, spec, FR-RIG-15): the title must name what actually dropped — the real
+    // device and, when known, the transport — never the generic "Radio" word the register's own
+    // capture showed even though both facts were already computed and simply never rendered.
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_831 F9 names the real device and transport in its own title`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRigBanner(
+                    state = RigViewState(
+                        deviceLabel = "TH-D75A",
+                        sinceLabel = "21:01:37",
+                        transportLabel = "the Bluetooth SPP transport",
+                    ),
+                    onReconnect = {},
+                    onSetFrequencyByHand = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText(
+            "TH-D75A disconnected over the Bluetooth SPP transport at 21:01:37 — frequency is stale",
+            substring = true,
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_831 F9 names only the device when the transport is not known, never fabricated`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRigBanner(
+                    state = RigViewState(deviceLabel = "TH-D75A", sinceLabel = "21:01:37"),
+                    onReconnect = {},
+                    onSetFrequencyByHand = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("TH-D75A disconnected at 21:01:37 — frequency is stale", substring = true)
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithText("Radio disconnected", substring = true).assertDoesNotExist()
+    }
+
+    // R-837 (register, design): F23's banner draws the board's own broken-link glyph, never the
+    // generic amber circle every other DEGRADED banner shares — proven through the real wiring
+    // (Banner's own `icon` parameter), not merely that OrtIcons.brokenLink exists.
+    @Test
+    fun `R_837 F23 draws the broken-link icon, not the generic banner icon`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailBluetoothAudioDroppedBanner(
+                    state = BluetoothAudioDroppedViewState(
+                        deviceLabel = "Handheld BT",
+                        droppedAtLabel = "04:33",
+                        rigLinkStillUp = true,
+                    ),
+                    onRetryNow = {},
+                    onSwitchToWiredInput = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("banner-icon-custom", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("banner-icon-default", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_837 every other DEGRADED banner keeps the generic icon`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRigBanner(
+                    state = RigViewState(deviceLabel = "TH-D75A", sinceLabel = "21:01:37"),
+                    onReconnect = {},
+                    onSetFrequencyByHand = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag("banner-icon-default", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("banner-icon-custom", useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test

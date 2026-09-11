@@ -38,9 +38,18 @@ public object LiveBarPolling {
         val override = failureOverrideLiveBar()
         val routeFacts = RoomSessionRouteFactsReader(context).forSession(sessionId)
         val (tone, label) = if (override != null) override.tone to override.label else toneAndLabel()
+        val input = InputStatus.state
         return LiveBarViewState(
-            level = levelBars(),
-            partialText = override?.partialText ?: sessionId?.let { newestPassAPartial(context, it) },
+            // R-836 (register, design): input genuinely lost -- audio structurally cannot be
+            // flowing, so the meter reads flat/muted regardless of whatever LevelStatus last
+            // measured (that signal has no way to know the route dropped and would otherwise keep
+            // showing the last live-looking reading indefinitely). F9 (RigStatus.Stale alone,
+            // InputStatus untouched) is unaffected -- audio really is still fine under a rig-only
+            // drop, so its meter keeps reading the real signal, live amber bars included.
+            level = levelBars(input),
+            partialText = override?.partialText
+                ?: bluetoothAudioLostCaption(input)
+                ?: sessionId?.let { newestPassAPartial(context, it) },
             label = label,
             tone = tone,
             meterTone = override?.meterTone,
@@ -50,6 +59,15 @@ public object LiveBarPolling {
             localMicrophone = routeFacts.isLocalMicrophone,
         )
     }
+
+    /** R-836 (register, design, `Fail-Bluetooth-Audio.dc.html`): "no audio — reconnecting to
+     * <device>" for a genuine Bluetooth-audio drop — there is no new partial to report while audio
+     * is not flowing at all, and showing the stale last-heard one would misleadingly suggest it
+     * still is. A rig-only drop (F9) leaves [InputStatus] untouched, so it keeps reading the real
+     * last-heard partial via [newestPassAPartial] exactly as before, unchanged. */
+    private fun bluetoothAudioLostCaption(input: InputStatus.State): String? = (input as? InputStatus.State.Lost)
+        ?.takeIf { it.lastKnown.descriptor.kind == AudioDeviceKind.BLUETOOTH }
+        ?.let { "no audio — reconnecting to ${it.lastKnown.descriptor.label}" }
 
     /**
      * `Main.dc.html`'s footer bars, now real (R-112 closed this — see the prior "not measured"
@@ -65,12 +83,17 @@ public object LiveBarPolling {
      * [org.ort.app.ui.components.LiveBar]'s own palette colours a `DEGRADED` meter amber on that
      * tone alone (guide §6.6) — colour follows tone, not a second, redundant per-bar flag here.
      */
-    private fun levelBars(): List<Float> = when (val level = LevelStatus.state) {
-        LevelStatus.State.NotMeasured -> List(LEVEL_BAR_COUNT) { 0f }
-        is LevelStatus.State.Measured -> {
-            val rmsFraction = normalizedFraction(level.rmsDbfs)
-            val peakFraction = normalizedFraction(level.peakDbfs)
-            listOf(rmsFraction, peakFraction, rmsFraction, peakFraction)
+    private fun levelBars(input: InputStatus.State): List<Float> {
+        // R-836: see this function's own call site — a genuinely lost input always reads muted,
+        // never a stale LevelStatus reading from before the route dropped.
+        if (input is InputStatus.State.Lost) return List(LEVEL_BAR_COUNT) { 0f }
+        return when (val level = LevelStatus.state) {
+            LevelStatus.State.NotMeasured -> List(LEVEL_BAR_COUNT) { 0f }
+            is LevelStatus.State.Measured -> {
+                val rmsFraction = normalizedFraction(level.rmsDbfs)
+                val peakFraction = normalizedFraction(level.peakDbfs)
+                listOf(rmsFraction, peakFraction, rmsFraction, peakFraction)
+            }
         }
     }
 

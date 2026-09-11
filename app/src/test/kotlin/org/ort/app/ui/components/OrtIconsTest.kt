@@ -60,6 +60,8 @@ class OrtIconsTest {
         "export" to OrtIcons.export,
         "diagnostics" to OrtIcons.diagnostics,
         "edit" to OrtIcons.edit,
+        "brokenLink" to OrtIcons.brokenLink,
+        "interruptedConnector" to OrtIcons.interruptedConnector,
     )
 
     @Test
@@ -90,6 +92,19 @@ class OrtIconsTest {
         allIcons.forEach { (name, vector) ->
             assert(vector.root.size > 0) { "$name has no path data" }
         }
+    }
+
+    // R-837/R-838 (register, design): both new glyphs must actually be distinct shapes from the
+    // generic gapWarn circle they replace — a same-named-but-identical icon would pass every other
+    // check here while still reproducing the exact "visually identical" defect the register found.
+    @Test
+    fun `R_837 brokenLink is a distinct shape from the generic gapWarn circle`() {
+        assert(OrtIcons.brokenLink.name != OrtIcons.gapWarn.name)
+    }
+
+    @Test
+    fun `R_838 interruptedConnector is a distinct shape from the generic gapWarn circle`() {
+        assert(OrtIcons.interruptedConnector.name != OrtIcons.gapWarn.name)
     }
 
     @Test

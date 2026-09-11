@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
+import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
@@ -72,26 +73,37 @@ public fun FailBluetoothAudioDroppedBanner(
     onSwitchToWiredInput: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // R-832 (register, spec): real numbers or nothing — a substitute sentence ("Retrying
+    // automatically.") is neither. Omitted entirely, not replaced, when the ladder position is not
+    // known (a caller that predates WPC3, or a scenario that has not seeded one).
     val retryClause = if (state.retryAttempt != null && state.retryTotal != null) {
         "Retry ${state.retryAttempt} of ${state.retryTotal}" +
             (state.nextRetrySeconds?.let { ", next in $it s." } ?: ".")
     } else {
-        "Retrying automatically."
+        null
     }
     val rigClause = if (state.rigLinkStillUp) {
         "The rig link over Bluetooth is separate and still up."
     } else {
         "The rig link is also down."
     }
+    val body = listOfNotNull(
+        "${state.deviceLabel} went out of range or was switched off. Nothing is being heard until it " +
+            "is back: this gap is recorded, not papered over.",
+        retryClause,
+        rigClause,
+    ).joinToString(" ")
     Banner(
         title = "Bluetooth audio dropped at ${state.droppedAtLabel} — reconnecting",
-        body = "${state.deviceLabel} went out of range or was switched off. Nothing is being heard until it " +
-            "is back: this gap is recorded, not papered over. $retryClause $rigClause",
+        body = body,
         tone = BannerTone.DEGRADED,
         primaryActionLabel = "Retry now",
         onPrimaryAction = onRetryNow,
         secondaryActionLabel = "Switch to a wired input",
         onSecondaryAction = onSwitchToWiredInput,
+        // R-837 (register, design): the board's own broken-link glyph, not the generic amber
+        // circle every other DEGRADED banner shares.
+        icon = OrtIcons.brokenLink,
         modifier = modifier.testTag("failure-bluetooth-audio-banner"),
     )
 }
@@ -408,8 +420,18 @@ public fun FailRigBanner(
     } else {
         ""
     }
+    // R-831 (register, spec, FR-RIG-15): the title must name what actually dropped — the real
+    // device (`state.deviceLabel`, e.g. "TH-D75A") and, when known, the transport
+    // (`state.transportLabel`, e.g. "the Bluetooth SPP transport") — never the generic "Radio"
+    // this banner read even when both facts were already computed and simply never rendered.
+    val title = if (state.transportLabel != null) {
+        "${state.deviceLabel} disconnected over ${state.transportLabel} at ${state.sinceLabel} — " +
+            "frequency is stale"
+    } else {
+        "${state.deviceLabel} disconnected at ${state.sinceLabel} — frequency is stale"
+    }
     Banner(
-        title = "Radio disconnected at ${state.sinceLabel} — frequency is stale",
+        title = title,
         body = "Capture continues. Overs since then are logged against the last frequency the rig reported, " +
             "and marked so. If you changed channel, they are wrong until the rig is back.$retryClause",
         tone = BannerTone.DEGRADED,

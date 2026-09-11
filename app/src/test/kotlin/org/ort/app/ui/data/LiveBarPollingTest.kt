@@ -349,6 +349,105 @@ class LiveBarPollingTest {
         assertEquals("Input lost", state.label)
     }
 
+    // -----------------------------------------------------------------------------------------
+    // R-836 (register, design): the live bar's own caption and meter must actually distinguish an
+    // audio-gone drop (F23) from a rig-only one (F9) — the register's own capture found both blank
+    // and both reading the identical flat/muted meter, "visually identical" even though F9's own
+    // board draws live amber bars (audio really is still fine when only the CAT link drops).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `R_836 a Bluetooth-audio drop reads the boards own no-audio caption, never a stale partial`() = runTest {
+        CaptureState.capturing("s1")
+        val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
+        InputStatus.opened(btDevice, 16_000, "none", true, true, 0L)
+        InputStatus.lost(sinceMillis = 0L)
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals("no audio — reconnecting to Handheld BT", state.partialText)
+    }
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `R_836 a Bluetooth-audio drop mutes the meter regardless of a stale live-looking LevelStatus`() = runTest {
+        CaptureState.capturing("s1")
+        // A real reading from just before the drop -- must not survive as a stale "still live"
+        // meter once the route is genuinely gone (LevelStatus itself has no way to know it dropped).
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -10f,
+                rmsDbfs = -14f,
+                noiseFloorDbfs = -50f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            peakHistoryDbfs = emptyList(),
+        )
+        val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
+        InputStatus.opened(btDevice, 16_000, "none", true, true, 0L)
+        InputStatus.lost(sinceMillis = 0L)
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(listOf(0f, 0f, 0f, 0f), state.level)
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_836 a rig-only drop keeps the real live meter and the last-heard partial, audio is fine`() = runTest {
+        CaptureState.capturing("s1")
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -10f,
+                rmsDbfs = -14f,
+                noiseFloorDbfs = -50f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            peakHistoryDbfs = emptyList(),
+        )
+        RigStatus.stale(RigStatus.State.Connected("TH-D75A", emptyList()), sinceMillis = 0L)
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals("Rig lost", state.label)
+        // Real, non-muted bars -- InputStatus was never touched by a rig-only drop.
+        assert(state.level.any { it > 0f }) { "expected real, non-muted level bars, got ${state.level}" }
+    }
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `R_836 a generic non-Bluetooth input Lost also mutes the meter, the same structural cause`() = runTest {
+        CaptureState.capturing("s1")
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -10f,
+                rmsDbfs = -14f,
+                noiseFloorDbfs = -50f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 16_000,
+                updatedAtMillis = 0L,
+            ),
+            peakHistoryDbfs = emptyList(),
+        )
+        val usbDevice = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device")
+        InputStatus.opened(usbDevice, 48_000, "none", true, true, 0L)
+        InputStatus.lost(sinceMillis = 0L)
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(listOf(0f, 0f, 0f, 0f), state.level)
+        // Not a Bluetooth device -- the F23-specific caption must not fire for the generic case.
+        assertEquals(null, state.partialText)
+    }
+
     @Test
     @Requirement("FR-CAP-3a")
     fun `FR_CAP_3a no session id never carries the room mark, never a fabricated fact`() = runTest {

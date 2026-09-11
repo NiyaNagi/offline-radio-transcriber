@@ -57,8 +57,25 @@ public data class SessionDetailViewState(
     /** E2-G03: "<transport label>" from the session's own `rigTransport` column, "no rig this
      * session" for a v7-onward session that genuinely ran without one (`LOCAL_MICROPHONE`), or
      * R-450's original not-tracked line for a pre-v7 row. No rig-event history exists in `:data`
-     * today to name a stale span from (constitution I) — always just the transport alone. */
+     * today to name a stale span from (constitution I) — always just the transport alone.
+     * **R-833 amendment**: for a *currently live* session ([live]), leads with the rig's own real
+     * name read live off `RigStatus` (WPC2) — the same "prefer live, fall back to the session
+     * column" pattern N04/F9 already use — since `:data` itself has no persisted rig-descriptor id
+     * to fall back to for a past session (only the transport kind). */
     val rigLinkLabel: String = NOT_TRACKED_LABEL,
+    /** R-824 (register, halt): `true` exactly when this is the session `CaptureState` itself
+     * reports as currently capturing — the identical fact [SessionRowViewState.live] already
+     * carries for the row list, computed the same way. A live session's own header must say so and
+     * never claim an end time or a clean/unclean termination it has not reached yet. */
+    val live: Boolean = false,
+    /** R-844 (register, DG04 coverage bar, guide §8): the coverage chart's own real start/end mono
+     * clock labels — guide §8 requires an axis label at each end of every activity chart, and
+     * [org.ort.app.ui.components.ActivityPatternChart] already supports `axisStart`/`axisEnd`, just
+     * unused by this screen's own call (so a session with no not-listening hours — a solid green
+     * block — rendered no axis row at all, that composable's own gating). `null` (every caller
+     * before this existed) renders exactly as before. */
+    val coverageStartLabel: String? = null,
+    val coverageEndLabel: String? = null,
 ) {
     public companion object {
         /** R-450's original honest line — reused by [modeLabel]/[rigLinkLabel]'s own defaults so a

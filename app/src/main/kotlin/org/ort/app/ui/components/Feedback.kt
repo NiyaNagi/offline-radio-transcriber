@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -52,6 +53,7 @@ import org.ort.app.ui.theme.OrtType
 public enum class BannerTone { DEGRADED, HALTING }
 
 @Composable
+@Suppress("LongParameterList") // R-837's icon override is the 9th, additive, defaulted parameter.
 public fun Banner(
     title: String,
     body: String,
@@ -61,6 +63,11 @@ public fun Banner(
     onPrimaryAction: (() -> Unit)? = null,
     secondaryActionLabel: String? = null,
     onSecondaryAction: (() -> Unit)? = null,
+    // R-837 (register, design): most banners share one generic icon per tone (the halt ring, the
+    // amber gap-warn circle) — `null` (every caller before this existed) keeps exactly that. A
+    // caller whose own board draws a distinct glyph (F23's broken-link, `Fail-Bluetooth-Audio
+    // .dc.html`) passes it here instead of the generic fallback.
+    icon: ImageVector? = null,
 ) {
     val bg = if (tone == BannerTone.HALTING) OrtColors.haltBg else OrtColors.bgRowGap
     val border = if (tone == BannerTone.HALTING) OrtColors.haltBorder else OrtColors.bannerAmberBorder
@@ -77,10 +84,14 @@ public fun Banner(
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         Icon(
-            imageVector = if (tone == BannerTone.HALTING) OrtIcons.halt else OrtIcons.gapWarn,
+            imageVector = icon ?: if (tone == BannerTone.HALTING) OrtIcons.halt else OrtIcons.gapWarn,
             contentDescription = null,
             tint = iconTint,
-            modifier = Modifier.size(17.dp),
+            // R-837: a plain testTag (never announced, unlike contentDescription) so a test can
+            // prove a caller-supplied icon actually reached the rendered Icon, not just that
+            // OrtIcons.brokenLink exists — the real regression this guards is the wiring, not the
+            // glyph's own path data (OrtIconsTest covers that already).
+            modifier = Modifier.size(17.dp).testTag(if (icon != null) "banner-icon-custom" else "banner-icon-default"),
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
