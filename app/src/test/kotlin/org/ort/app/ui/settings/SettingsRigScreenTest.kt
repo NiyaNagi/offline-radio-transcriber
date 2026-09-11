@@ -1,6 +1,9 @@
 package org.ort.app.ui.settings
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -18,12 +21,14 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * R-413 (register, halt, Reviewer D): a Band tile's mono frequency value used to wrap one
@@ -406,5 +411,42 @@ class SettingsRigScreenTest {
         composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = pushed, onBack = {}) } }
 
         composeTestRule.onNodeWithText("Connected · Bluetooth SPP · reading both bands unpolled").assertExists()
+    }
+
+    /**
+     * Register R-980 (halt, run 6): confirms CF06's own `KeyValueRow` with a trailing action (the
+     * `Link` row's own `Switch`) does not regress into the same per-character collapse CF02's own
+     * "Re-verify the route now" row showed — a real, long `subLine` (transport + address + paired
+     * + other-transport, this row's own established shape) at font scale 2.0 on the tour's real
+     * 390dp AVD width. `@GraphicsMode.NATIVE` and a real 390dp width: this package's own
+     * established discipline for real glyph-wrap measurement.
+     */
+    @Test
+    @Requirement("FR-RIG-15")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_980 the Link rows own long sub-line never starves into a per-character collapse at 2_0`() {
+        val state = connectedState().copy(
+            transportLabel = "Bluetooth SPP",
+            linkAddressLabel = "D8:3A:DD:41:0C:7F",
+            otherTransportLabel = "USB serial also supported",
+        )
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        SettingsRigScreen(state = state, onBack = {})
+                    }
+                }
+            }
+        }
+
+        val subLineNode = composeTestRule
+            .onNodeWithText("Bluetooth SPP · D8:3A:DD:41:0C:7F", substring = true, useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val widthPx = subLineNode.size.width
+        assert(widthPx > 60) {
+            "expected the Link row's own sub-line to keep a real wrap width, got ${widthPx}px (a " +
+                "per-character collapse measures only a few px wide)"
+        }
     }
 }

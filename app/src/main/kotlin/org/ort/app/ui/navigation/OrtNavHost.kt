@@ -24,9 +24,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -815,16 +813,23 @@ private fun NavHostBody(
     audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
     search: SearchHostState,
 ) {
-    // Register R-262 (accessibility validator): the same real-measured-height mechanism
-    // [org.ort.app.ui.failures.FailureHost] built for the banner's `contentTopPadding` (that
-    // file's own R-178 doc comment), mirrored for [LiveBar]'s own pinned bottom placement — without
-    // this, a destination's own scrollable content (`ModelsContent`/`Settings-Assets`, where this
-    // was found) sizes itself to the full content column height and the live bar then pins on top
-    // of its last row rather than the column making room for it. `0.dp` (density-converted from
-    // the measured px) whenever the live bar is not currently shown — mirrors `FailurePresentation
-    // .None -> onBannerHeightChanged(0.dp)` in that same file.
-    var liveBarHeight by remember { mutableStateOf(0.dp) }
-    val density = LocalDensity.current
+    // Register R-262 (accessibility validator), superseded by R-957 (root cause, WPI's host
+    // comparison on 5558/5556): R-262 added an explicit `padding(bottom = liveBarHeight)` to the
+    // content box below, real-measuring [LiveBar]'s own height via `onGloballyPositioned` the same
+    // way [org.ort.app.ui.failures.FailureHost] does for the banner's `contentTopPadding` (that
+    // file's own R-178 doc comment) — believing a destination's own scrollable content otherwise
+    // sized itself to the full column height with the bar pinning on top of its last row. Proven
+    // wrong on-device (`uiautomator dump`, 5558/5556): the content box below is *already* a
+    // `weight(1f)` sibling of [LiveBar]'s own box in this same `Column` — Compose measures every
+    // non-weighted sibling (the header, the live bar) first and gives the weighted box exactly
+    // what remains, with no extra padding needed at all, on the very first frame the live bar
+    // exists (confirmed by a real device dump and a Robolectric test asserting the content box's
+    // own bottom lands exactly at the live bar's own top, `OrtNavHostDestinationDispatchTest
+    // .R_957`'s own four cases). The removed padding was a genuine, reproducible *second*
+    // reservation stacked on the natural one — a 125px/45dp dead band on every live-session
+    // capture at 1.0 that read as the last row "cut with blank space", never an overlap (nothing
+    // was ever clipped, which is why `R_262`'s own `<=` check below never caught it). One
+    // mechanism only now: plain `Column` sibling spacing, no measured-height state at all.
     Column(modifier = layout.modifier) {
         val isDrillIn = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId).any { it != null }
         // ui-conformance WP3 round 4 (R-129 smoke coverage found this, real at the time): this host
@@ -887,7 +892,7 @@ private fun NavHostBody(
         // above a drill-in/`SEARCH`/`SETTINGS` (the `if` above) means their content needs the
         // extra clearance that comment explains.
         val clearance = bannerClearance(!isDrillIn && !isSearch && !isSettings, layout.contentTopPadding)
-        Box(modifier = Modifier.weight(1f).padding(top = clearance, bottom = liveBarHeight)) {
+        Box(modifier = Modifier.weight(1f).padding(top = clearance)) {
             NavHostDispatch(ids, callbacks, sessionId, context, audioPlayer, search)
         }
 
@@ -902,21 +907,14 @@ private fun NavHostBody(
         if (shownLiveBar != null) {
             // Wrapped, not passed as `LiveBar`'s own `modifier` (that param reaches only its
             // inner clickable `Row`, not the 1dp top-edge strip above it — `ui/components/
-            // LiveBar.kt` is outside this row to edit for a more precise seam) — measures this
-            // bar's whole real footprint as pinned in this `Column`. `testTag` (register R-262):
-            // a stable node for a test to read this wrapper's own `boundsInRoot`, independent of
-            // `LiveBar`'s own runtime-varying label text.
-            Box(
-                modifier = Modifier
-                    .testTag("live-bar-clearance")
-                    .onGloballyPositioned { coordinates ->
-                        liveBarHeight = with(density) { coordinates.size.height.toDp() }
-                    },
-            ) {
+            // LiveBar.kt` is outside this row to edit for a more precise seam) — a plain `Column`
+            // sibling below the weighted content box above; Compose's own layout already gives
+            // that box exactly the remaining height, no measured-height state needed (R-957).
+            // `testTag` (register R-262): a stable node for a test to read this wrapper's own
+            // `boundsInRoot`, independent of `LiveBar`'s own runtime-varying label text.
+            Box(modifier = Modifier.testTag("live-bar-clearance")) {
                 LiveBar(state = shownLiveBar, onClick = callbacks.onOpenCapture)
             }
-        } else {
-            liveBarHeight = 0.dp
         }
     }
 }

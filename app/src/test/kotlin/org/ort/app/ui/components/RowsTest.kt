@@ -546,6 +546,51 @@ class RowsTest {
         }
     }
 
+    /**
+     * Register R-980 (halt, run 6): CF02's "Re-verify the route now" row (a long key, plus a
+     * trailing `Verify` action) rendered its own caption one character per line at font scale 2.0
+     * on the tour's real 390dp-wide AVD — a non-weighted `key` `Text` in a `Row` is measured
+     * against the *whole* remaining row width first, so a long key reports its own full,
+     * unwrapped, single-line width, leaving the weighted value/sub-line column whatever sliver is
+     * left over once the trailing action (measured first too, unweighted) has also taken its
+     * share — the same starvation class `TextAction`'s own doc comment already names for
+     * R-805/R-863/R-874/R-970, this time on the row's *leading* side. `@GraphicsMode.NATIVE` and a
+     * real 390dp width: this package's own established discipline for real glyph-wrap measurement.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_980 a long key with a trailing action never starves the value column into a per-character collapse`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        KeyValueRow(
+                            key = "Re-verify the route now",
+                            value = "",
+                            subLine = "30 s · capture pauses for it · a gap is recorded",
+                            trailingMarker = { TextAction(text = "Verify", onClick = {}) },
+                        )
+                    }
+                }
+            }
+        }
+
+        val captionNode = composeTestRule
+            .onNodeWithText("30 s · capture pauses for it · a gap is recorded", useUnmergedTree = true)
+            .fetchSemanticsNode()
+        // A genuine per-character collapse measures only a few px wide (one glyph) and many lines
+        // tall; a real word-wrapped column, even a narrow one, still measures a real fraction of
+        // the 390dp row. `density = 1f` above means px and dp coincide numerically here — 60 is
+        // comfortably above one glyph's own width and comfortably below what a healthy wrap would
+        // ever shrink to.
+        val widthPx = captionNode.size.width
+        assert(widthPx > 60) {
+            "expected the caption to keep a real wrap width, got ${widthPx}px (a per-character " +
+                "collapse measures only a few px wide)"
+        }
+        composeTestRule.onNodeWithText("Verify").assertExists()
+    }
+
     // `NavRow`'s own tests moved to `NavRowTest.kt` (detekt's `LargeClass` finding, once this file
     // grew past a reasonable size across every row family it covers) — `NavRow` was already a
     // self-contained cluster here, not entangled with `LogRow`/`KeyValueRow`/the rest this file

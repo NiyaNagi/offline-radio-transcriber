@@ -210,6 +210,90 @@ formatting violation from the new test was fixed via `ktlintFormat`).
 ---
 
 ## 2026-09-11 (WPI run 6: R-943/R-944/R-945/R-955/R-956/R-960 steps captured; R-933/R-957 diagnosed — the tour harness is not the suspect)
+## 2026-09-11 (WPE R-957/R-980 fixed: NavHostBody's real double reservation removed; KeyValueRow's leading key yields to its value)
+
+### <pending> — settings modes: R-957 fixed (root cause: NavHostBody's own redundant live-bar padding) — R-980 fixed (KeyValueRow's key starved the value column at 2.0)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`NavHostBody`, root cause
+— justified: this path is this round's own file ownership),
+`app/src/main/kotlin/org/ort/app/ui/components/Rows.kt` (`KeyValueRow`, shared — the finding's own
+root cause, same justified-crossing precedent as R-880/R-881),
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsCaptureScreen.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`, matching test files
+(`OrtNavHostDestinationDispatchTest.kt`, `RowsTest.kt`, `SettingsCaptureScreenTest.kt`,
+`ModelsScreenTest.kt`, `SettingsRigScreenTest.kt`). Merged main to `bfc3c70e` (R-957 root-cause
+register) then to whatever the tip carried after (register-only commits).
+
+**Requirements/ACs:** R-957 (root cause), R-980.
+
+**What changed:** *Constitution check.* II (both fixes discrimination-tested — the exact real
+padding value reappears as the measured drift when reverted, confirmed on-device before and
+after). VIII (a real device dump before and after the fix is the evidence, not an assumption).
+
+1. **R-957 (halt, root cause)** — WPI's host comparison on 5558 found the real defect precisely:
+   `ScrollView` bounds `[0,128][1080,2087]`, live bar `[0,2212][1080,2337]` — a 125px/45dp dead
+   band between the scroll viewport's own bottom and the bar's top on both CF02 and CF04, on every
+   live-session capture at 1.0. Traced to the true single root cause in `NavHostBody`
+   (`OrtNavHost.kt`, this round's own file): its content box was `Box(Modifier.weight(1f)
+   .padding(top = clearance, bottom = liveBarHeight))` — a `weight(1f)` sibling of `LiveBar`'s own
+   box in the *same* `Column`, which Compose's own layout already sizes to exactly the remaining
+   height once its non-weighted siblings (the header, the live bar) are measured — the explicit
+   `bottom = liveBarHeight` padding on top of that was a genuine, reproducible *second*
+   reservation, redundant with the natural sibling spacing (R-262's own real-measured-height
+   mechanism, added under the belief the sibling spacing alone was insufficient — proven wrong: the
+   existing `R_262` test's own scenario, scrolling to the end *before* the bar ever shows, still
+   passes with the padding removed). Removed `bottom = liveBarHeight` (and the now-unused
+   `liveBarHeight` state/`onGloballyPositioned` measurement entirely) from `NavHostBody` — one
+   mechanism only, plain `Column` sibling spacing. `SettingsCaptureScreen`/`ModelsScreen`'s own
+   *separate*, static 44dp trailing clearance (R-826/R-933) was a further, independent redundancy
+   stacked on top of whatever the host did — also removed, from both files, now that the host's own
+   real reservation is the single, correct source. Confirmed on-device, before and after, on the
+   exact same emulator: CF02 and CF04 both went from a 125px dead band to a 2px one (rounding
+   noise) — see **Verified** below for the exact dump excerpts.
+2. **R-980 (halt, run 6)** — CF02's "Re-verify the route now" row (a long key, a trailing `Verify`
+   action) rendered its own caption one character per line at font scale 2.0 on the tour's real
+   390dp AVD. Root cause in the shared `KeyValueRow` (`ui/components/Rows.kt`): with a
+   `trailingMarker` present, the leading `key` `Text` had no upper bound at all — a non-weighted
+   child in a `Row` is measured against the whole remaining row width, so a long key reported its
+   own full, unwrapped, single-line width, leaving the weighted value/sub-line column whatever
+   sliver was left over once the action (also measured first, unweighted) took its own share — the
+   same starvation class R-805/R-863/R-874/R-970 already named, this time on the row's *leading*
+   side. `key` now yields (`Modifier.weight(1f, fill = false)`, wraps at words within its own
+   share); the value column keeps a real minimum (`weight(1.5f)` against the key's `1f` — roughly
+   60% of what remains once the action's own intrinsic width is taken); the action is unchanged
+   (still measured first, at its own real intrinsic width).
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green, full suite
+  (7m31s).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green (3m48s).
+- `./gradlew -PortAllowMissingBundledAssets=true ktlintMainSourceSetFormat
+  ktlintTestSourceSetFormat detekt` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true dependencyRules platformGuards` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`.
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 241 covered;
+  `coverageMatrixCheck` — up to date.
+- R-957 discrimination: `OrtNavHostDestinationDispatchTest`'s four new `R_957` tests (CF02/CF04 ×
+  1.0/2.0), driving the real `OrtNavHost` with a real `CaptureState.capturing` session, failed with
+  the *exact* injected padding value as the measured drift when the redundant padding was
+  restored, passed (drift < 2dp) once removed. The pre-existing `R_262`/`R_910`/`R_911` tests
+  (every destination the host wraps: NOW, CAPTURE, SEARCH, LOG, THREADS, STATIONS, FREQUENCIES,
+  IMPROVE_RECORDS, EARLIER_NIGHTS, the Session drill-in) all still pass unchanged — exactly one
+  live bar, no overlap, on every one of them.
+- R-957 on-device (`emulator-5556`, this round's own build): before —
+  `mode-change-pending`/CF02 and `model-missing`/CF04 both showed `ScrollView` bottom `2087` vs
+  live bar top `2212` (125px gap, matching WPI's own 5558 dump exactly). After the fix, same
+  scenarios, same device, fresh install: **CF02** `ScrollView` bounds `[0,128][1080,2210]`, live
+  bar `[0,2212][1080,2337]` (2px gap); **CF04** `ScrollView` bounds `[0,128][1080,2210]`, live bar
+  `[0,2212][1080,2337]` (2px gap, identical). Dumps and screenshots kept in this session's own
+  scratchpad, not the repo.
+- R-980 discrimination: `RowsTest.R_980...`/`SettingsRigScreenTest.R_980...` both measured `0px`
+  for the value/sub-line column before the fix (a genuine per-character collapse), `> 60px` after.
+
+**Left open / not done:** none for these two findings — R-957 is closed with a real device
+before/after; R-980's own fix is confirmed on both the row that reported it (CF02) and the
+one the coordinator asked to double-check (CF06's `Link` row).
 
 ### 0a50bf28 — run 6: 217/217 ok on main a98ecde0; CF02/CF04 verdict — drawToBitmap() and a real screencap agree, both truncated at the same point
 
@@ -32072,6 +32156,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

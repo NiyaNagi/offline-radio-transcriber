@@ -11,7 +11,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
@@ -23,7 +22,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.dp
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -136,57 +134,17 @@ class SettingsCaptureScreenTest {
         composeTestRule.onNodeWithText("Local microphone").assertDoesNotExist()
     }
 
-    @Test
-    @Requirement("FR-CAP-12")
-    fun `R_826 scrolled to the end the closing paragraph clears a live bar pinned below this screen`() {
-        // R-826: at font scale 1.0, the closing paragraph ("The level is set on the radio...") was
-        // clipped behind the live bar — reproduced here the same structural way this codebase's own
-        // R-613 precedent does (`CaptureStatusScreenTest.kt`'s own case): a real sibling occupying
-        // the live bar's own height, below a `weight(1f)` box holding this screen, then a real
-        // maximum scroll, then one node's bottom checked against the sibling's own top. This mirrors
-        // `NavHostBody`'s own real layout for `SETTINGS` (`OrtNavHost.kt`: a `weight(1f)` `Box`
-        // holding destination content, `LiveBar` a plain sibling below it) without needing to touch
-        // that file or this screen's own public signature (`SettingsCaptureScreen` has no `liveBar`
-        // parameter of its own, unlike `CaptureStatusScreen` — see this screen's own doc comment for
-        // why its own fix is an unconditional static clearance rather than one keyed off a real
-        // passed-in live bar state).
-        composeTestRule.setContent {
-            OrtTheme {
-                Column(modifier = Modifier.width(390.dp).height(500.dp)) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        SettingsCaptureScreen(
-                            state = state(CaptureMode.LOCAL_MICROPHONE),
-                            onBack = {},
-                            toggles = SettingsCaptureToggleActions({}, {}, {}),
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp).testTag("fake-live-bar"))
-                }
-            }
-        }
-
-        val scrollable = composeTestRule.onNode(hasScrollAction())
-        scrollable.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
-        composeTestRule.waitForIdle()
-
-        val paragraphBottom = composeTestRule
-            .onNodeWithText("The level is set on the radio", substring = true)
-            .getUnclippedBoundsInRoot()
-            .bottom
-        val liveBarTop = composeTestRule.onNodeWithTag("fake-live-bar").getUnclippedBoundsInRoot().top
-        // Half of this fix's own clearance (44dp), as a margin against measurement noise — proves a
-        // *meaningful* gap exists (the fix's own clearance, not just whatever a bare max scroll
-        // against a zero-padding viewport boundary would already give for free — the R-613 case's
-        // own identical reasoning for the identical `>= 22.dp` threshold).
-        val minimumExpectedGap = 22.dp
-        assertTrue(
-            "expected the closing paragraph's own bottom ($paragraphBottom) to clear the live bar's " +
-                "own top ($liveBarTop) by at least $minimumExpectedGap after a real max scroll; got a gap " +
-                "of ${liveBarTop - paragraphBottom}, consistent with R-826's own report of the paragraph " +
-                "clipped behind the live bar",
-            liveBarTop - paragraphBottom >= minimumExpectedGap,
-        )
-    }
+    // Register R-957 (root cause, WPI's host comparison on 5558/5556): the real "no dead band"
+    // regression test now lives in `OrtNavHostDestinationDispatchTest.kt`
+    // (`R_957 CF02s scroll viewport ends exactly at the live bars top...`), driving the real
+    // `OrtNavHost`/`NavHostBody` this screen is actually reached through — that is the one place
+    // the real bug (a redundant `padding(bottom = liveBarHeight)` on `NavHostBody`'s own content
+    // box, on top of the natural `Column` sibling spacing it already gets) could ever be caught.
+    // An isolated wrapper here that hand-adds its own `padding(bottom = ...)` to simulate that bug
+    // no longer reflects `NavHostBody`'s own real shape once the redundant padding was removed
+    // from it, so it is not repeated here — see the two `R_957 the closing paragraph...` tests
+    // below for what *this* screen's own file still owns: that removing its own now-redundant
+    // static clearance never made the paragraph unreachable.
 
     @Test
     @Requirement("FR-CAP-12")
