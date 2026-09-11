@@ -1,7 +1,9 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -63,5 +65,17 @@ class ModeScreenTest {
 
         composeTestRule.onNodeWithTag("setup-mode-bluetooth").performClick()
         assert(chosen == CaptureMode.BLUETOOTH_RADIO)
+    }
+
+    /** R-851 (validator V8, device): the Bluetooth-connected-radio row rendered with no leading
+     * icon at all, unlike the other two rows — `design/canvas/Setup-Mode.dc.html`'s own glyph
+     * (now `OrtIcons.bluetooth`) closes the gap. All three rows carry one icon each. */
+    @Test
+    fun `R_851 all three mode rows render a leading icon`() {
+        composeTestRule.setContent {
+            OrtTheme { ModeScreen(onChoose = {}) }
+        }
+
+        composeTestRule.onAllNodesWithTag("navigation-row-icon", useUnmergedTree = true).assertCountEquals(3)
     }
 }

@@ -49,7 +49,7 @@ public fun InputScreen(
     SetupScaffold(
         step = SetupStep.INPUT,
         title = "Input",
-        subtitle = "Which of these is the radio?",
+        subtitle = "Which of these carries the radio's audio?",
         onBack = onBack,
         titleTrailing = {
             TextAction(text = "Refresh", onClick = onRefresh, modifier = Modifier.testTag("setup-input-refresh"))
@@ -153,6 +153,38 @@ public fun presetChipStateFor(
         )
     }
 }
+
+/**
+ * R-902 (reviewer A2, run 3, spec): under `mode-local-mic` S04 named "Local microphone" as the
+ * preset in [presetChipStateFor]'s own chip but pre-selected no row at all, leaving `Verify this
+ * input` disabled — nothing the operator did wrong, since [SetupActivity]'s own pre-select logic
+ * used `firstOrNull`, which always picks *a* match, never asking whether it was the only one.
+ * Constitution I: with two-or-more routes of the preset's own kind enumerated (two USB devices,
+ * say), there is no honest single "the" preset route to guess at — pre-selecting the first one
+ * anyway would silently choose *for* the operator among options this mode's own preset does not
+ * actually distinguish between. [routes.singleOrNull] is the whole fix: exactly one match
+ * pre-selects it, zero or several leave [InputViewState.selectedId] `null`, same as an unresolved
+ * preset today — the operator's own tap remains how a genuine choice gets made either way.
+ */
+public fun presetInputRouteFor(captureMode: CaptureMode?, routes: List<InputRouteOption>): InputRouteOption? {
+    val presetKind = captureMode?.let(CaptureModePresets::presetsFor)?.preferredRouteKind ?: return null
+    return routes.singleOrNull { it.routeKind == presetKind }
+}
+
+/**
+ * R-852 (validator V8, spec, FR-CAP-9): [SetupActivity.RenderInput]'s own override-tracking used to
+ * fire only when [presetRouteId] was non-null, so picking a route under the "none attached, choose
+ * a route" chip ([presetChipStateFor]'s own [PresetChipState.presetUnavailableText] case —
+ * [presetInputRouteFor] returning `null` because nothing matched, or several did) never recorded an
+ * override at all, and that chip could never change afterward. An explicit pick is an override the
+ * instant it is not literally the one honest preset match — including every pick when there was no
+ * such match to begin with (constitution I: the operator's own choice, once made, must never keep
+ * reading as "still on the preset"). `false` with no [captureMode] at all — there is no preset to
+ * override yet (never reachable through [SetupActivity]'s own dispatch, since S04 is gated on a
+ * capture mode already being chosen, but honest regardless).
+ */
+public fun isAudioRouteOverride(captureMode: CaptureMode?, presetRouteId: String?, selectedId: String): Boolean =
+    captureMode != null && selectedId != presetRouteId
 
 private fun audioRouteKindLabel(kind: AudioRouteKind): String = when (kind) {
     AudioRouteKind.BUILT_IN_MIC -> "Built-in microphone"

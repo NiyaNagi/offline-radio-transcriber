@@ -173,6 +173,15 @@ public object OrtIcons {
             1.9f,
         )
     }
+
+    /** R-851 (validator V8, device, D33): S00's Bluetooth-connected-radio row had no leading icon
+     * at all (`icon = null` — `InputRouteEnumerator.kt`'s own doc comment names this exact gap for
+     * S04's rows too, reported rather than fixed there since it predates this row's own module).
+     * `design/canvas/Setup-Mode.dc.html`'s own glyph, verbatim (`M7 7l10 10-5 5V2l5 5L7 17`) — the
+     * classic Bluetooth "bowtie", same 24-unit viewBox/round caps/joins as every icon here. */
+    public val bluetooth: ImageVector = buildIcon("bluetooth") {
+        strokePath("M7 7l10 10-5 5V2l5 5L7 17", 1.9f)
+    }
     public val builtInMic: ImageVector = buildIcon("builtInMic") {
         strokePath(
             "M12,3 H12 A3,3 0 0 1 15,6 V11 A3,3 0 0 1 12,14 H12 A3,3 0 0 1 9,11 V6 A3,3 0 0 1 12,3 Z " +

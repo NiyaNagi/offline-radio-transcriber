@@ -32,6 +32,156 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPD follow-up: S11's marker/title/duration/AC-133 clause, S04's pre-select and override fix, S00's Bluetooth icon, S04's subtitle — R-902, R-903, R-850, R-851, R-852)
+
+### (pending) — presetInputRouteFor/isAudioRouteOverride, RadioVerifiedScreen's marker+duration+AC-133 clause, OrtIcons.bluetooth
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{InputScreen,SetupActivity,SetupScaffold,RadioVerifiedScreen,ModeScreen}.kt`,
+`app/src/main/kotlin/org/ort/app/ui/components/OrtIcons.kt` (lead-approved mechanical exception —
+see below), matching test files under `app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-CAP-9, FR-RIG-14, AC-133.
+
+**What changed:**
+
+1. **R-902 (spec, reviewer A2 run 3) — S04 pre-selected the preset route's *first* enumerated
+   match, never asking whether it was the only one.** Under `mode-local-mic`, the chip claimed
+   "preset by Local microphone" with nothing actually selected and `Verify` disabled — the real bug
+   was `onChooseMode`'s own `firstOrNull`, which always picks *a* match regardless of ambiguity.
+   `presetInputRouteFor(captureMode, routes)` (new, pure, `InputScreen.kt`) pre-selects only when
+   `routes.singleOrNull { it.routeKind == presetKind }` finds exactly one match — several matches
+   pre-select none (constitution I: no honest single "the" preset route to guess at). Wired through
+   a new `SetupActivity.applyPresetInputIfUnselected()`, called from both `refreshInputRoutes()`
+   (a cold/resumed entry straight onto S04, or a debug scenario that seeds `captureMode` directly
+   without ever calling `onChooseMode`) and `onChooseMode`'s own already-enumerated-routes path —
+   not only the interactive tap path the old logic only ever ran from.
+2. **R-903 (design, reviewer A2 run 3) — S11 was missing the connected marker, showed the full
+   manufacturer-prefixed descriptor, and never named a measured verify duration or AC-133's "same
+   command set as USB" clause.** `SetupScaffold` gains a `titleLeading` parameter (a small
+   composable rendered before the title text, centre-aligned per the board's own `align-items:
+   center` sub-row) — S11's own 9dp green `Box`. Both S11 titles now go through
+   `SettingsPolling.stripManufacturerPrefix` (`internal`, same module, R-845's own CF06 fix reused
+   rather than duplicated) — "Kenwood TH-D75A connected" → "TH-D75A connected". `SetupActivity` now
+   times S10b's real open → identify → verify handshake with `org.ort.core.Clock.monotonicNanos()`
+   (never `wallMillis` — that interface's own doc comment is explicit wall time can jump and is
+   never honest for a duration), started in `onSelectRigBluetoothDevice` and stopped the instant
+   `onRigLinkStateChanged` first sees `RigLinkState.Verified`; `null` (never a fabricated number)
+   for the USB lane, which has no equivalent timed probe, and reset on `onChangeRadio`/the USB
+   branch of `onConnectRigTransport` so a later visit never inherits an abandoned attempt's timing.
+   `radioVerifiedSubtitle`/`sameCommandSetAsUsb` (new, pure, `RadioVerifiedScreen.kt`) assemble the
+   board's own worked example — `"Bluetooth SPP · identified and verified in 1.2 s · same command
+   set as USB"` — the last clause true only when the rig's own catalogue entry declares both
+   `BLUETOOTH_SPP` and `USB_SERIAL` with an identical, non-empty capability set (AC-133).
+3. **R-850 (design, validator V8, device)** — S04's subtitle read "Which of these is the radio?";
+   the board's own copy is "Which of these carries the radio's audio?" (S04 asks which *input*
+   carries the audio, not which device the radio itself is).
+4. **R-851 (design, validator V8, device) — lead-approved mechanical exception in
+   `ui/components/OrtIcons.kt`, outside this package's own ownership**, the same kind of exception
+   already granted once this program for `Scenarios.kt`: S00's Bluetooth-connected-radio row
+   rendered with no leading icon at all (`icon = null`), unlike the other two rows.
+   `OrtIcons.bluetooth` (new) is `design/canvas/Setup-Mode.dc.html`'s own glyph verbatim (`M7 7l10
+   10-5 5V2l5 5L7 17`, the classic Bluetooth "bowtie", sourced directly from the live design canvas
+   markup, not a written transcription). `NavigationRow`'s own icon gained a `testTag` (invisible to
+   TalkBack) purely so a test can assert one actually rendered — a bare `Icon` carries no semantics
+   of its own to query otherwise.
+5. **R-852 (spec, validator V8, device, FR-CAP-9)** — `RenderInput`'s override-tracking guarded on
+   `presetRouteId != null`, so picking a route under R-816's own "none attached, choose a route"
+   chip (no enumerated route matched the preset at all) never recorded an override, and that chip
+   could never change afterward. `isAudioRouteOverride(captureMode, presetRouteId, selectedId)`
+   (new, pure, `InputScreen.kt`) fires whenever the pick is not literally the one honest preset
+   match — including every pick when there was no such match to begin with — sharing
+   `presetInputRouteFor`'s own "exactly one match" rule for what counts as "the" preset in the first
+   place (an ambiguous multi-match case is exactly as unresolved for override-detection as it is for
+   pre-selection).
+
+**Verified:**
+- New tests: `InputScreenTest`'s `R_850_*` (1), `R_902_*` (4: exactly one match pre-selects, several
+  pre-select none, no match pre-selects none, no capture mode pre-selects none), `R_852_*` (4: no
+  match is an override, the exact preset match is never an override, a different pick is an
+  override, no capture mode is never an override); `ModeScreenTest`'s `R_851_*` (1: all three rows
+  render a leading icon); `RadioVerifiedScreenTest`'s `R_903_*` (7: the marker dot renders on
+  Connected and never on Stale, a measured duration renders, no duration renders the plain clause,
+  the AC-133 clause renders only when asked, plus three pure `radioVerifiedSubtitle`/`sameCommandSetAsUsb`
+  cases) and its two pre-existing title assertions updated to the now-stripped-prefix wording — all
+  green. Robolectric's own `AudioManager` shadow reports no real input devices by default (confirmed
+  directly — a first attempt at an activity-level "cold-opened S04 pre-selects the built-in mic"
+  test failed on this, not the fix), so R-902's own regression proof stays at the pure-function
+  level, the same shape this file's pre-existing `presetChipStateFor` tests already use.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — up to date.
+**Left open / not done:** R-853 (Now's idle body against a live bar/no F23 banner under
+`bt-audio-dropped`) is WPF's file, not touched here.
+
+---
+
+## 2026-09-11 (WPD follow-up: S12 44dp Install floor, the Models row's optional-LLM gate — R-866, R-862/AC-138)
+
+### (pending) — ReadySetupRow's row-level 44dp floor; modelsRow no longer gates green on the optional Gemma model
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/ReadyScreen.kt`, matching test files under
+`app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-AST-3a, AC-138.
+
+**What changed:**
+
+1. **R-866 (register, validator V9) — S12's amber `Install` measured 95px/34.3dp on a real device,
+   under the 44dp floor every other action met.** Not reproduced under any Robolectric configuration
+   tried (isolated render, a real-device-width `360.dp` render, and a forced multi-line wrapped
+   value all measured `Install` at exactly 44px/44dp under `@GraphicsMode(NATIVE)` — `TextAction`'s
+   own existing `requiredHeightIn(min = 44.dp)` already held every time) — reported honestly rather
+   than claimed as a reproduced defect. `ReadySetupRow`'s outer row now also carries an explicit
+   `requiredHeightIn(min = 44.dp)`, first in its own modifier chain (the same R-510-class ordering
+   this file's `TextAction`/`KeyValueRow` already document), as a defensive floor on the row's whole
+   clickable/visual band in addition to `TextAction`'s own — matching "the TextAction/row pattern the
+   rest of S12 uses" per the coordinator's own instruction. New bounds tests prove the floor holds
+   for the exact `Install` row shape at font scale 1.0 and 2.0 (the latter with the value forced to
+   wrap across several lines).
+2. **R-862 (halt, AC-138) — the Models row was an all-or-nothing gate with no "genuinely not offered
+   in this build" state.** `modelsRow` required *every* `ModelId` — the gated, tier-3-only
+   `LLM_GEMMA3_1B` included — to read `INSTALLED` before ever showing green; a no-`HF_TOKEN` build
+   (real installer, every real transcription asset genuinely installed, Gemma honestly never fetched
+   at build time) read "No transcription model yet" forever regardless of how many real entries were
+   installed (WPI's diagnosis, `results/ui-audit/README.md`'s own R-862 section, confirmed by reading
+   `ModelsViewData.kt`/`ModelsController.currentState` before writing this). Amber is now reserved
+   for what it should have always meant: an asset needed for tier ≥1 transcription (every `ModelId`
+   but the gated LLM) missing or unverified — mirroring `ModelsScreen.kt`'s own established
+   `ModelId.LLM_GEMMA3_1B` carve-out (`rows.filterNot { it.id == ModelId.LLM_GEMMA3_1B }`). Once that
+   required set is complete the row is green regardless of the LLM's own state: `"N bundled ·
+   checksums verified"` when it too is installed (or entirely absent from a synthetic, non-production
+   `rows` list — never regressing the existing minimal-fixture tests), or `"N of M bundled · ready —
+   Gemma 3 1B not in this build"` — the board's own worked example (`Setup-Done.dc.html`) — when it
+   is genuinely gated and absent. A missing/corrupt *required* asset still reads amber and now names
+   it (`"No transcription model yet — <label> not installed"`) when the failure is partial, keeping
+   the plain, pre-existing "No transcription model yet" wording only when nothing at all is
+   installed.
+
+**Verified:**
+- New tests: `ReadyScreenTest`'s `R_866_*` (2: font scale 1.0 and 2.0, the latter with a forced
+  multi-line wrapped value), `ReadyRowsForTest`'s `R_862_*` (4: 5 of 5 green; 4 of 5 with only the
+  gated Gemma model absent — green, names it; 3 of 5 with the encoder corrupt and Gemma also absent
+  — amber, names the encoder, not Gemma; 0 of 5 — the plain amber line, unchanged) — all green, and
+  every pre-existing `ReadyRowsForTest`/`ReadyScreenTest` case (including the single-row,
+  no-Gemma-present minimal fixtures the new logic must not regress) still passes.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — up to date.
+**Left open / not done:** R-866's own real-device 34.3dp measurement could not be reproduced in
+Robolectric under any configuration tried — the row-level floor is a defensive hardening per the
+coordinator's own instruction, not a proven discrimination fix; if a future real-device dump repeats
+it, the next validator pass should capture a fresh uiautomator dump immediately after the scroll
+settles (this file's own investigation could not rule out a transient mid-scroll/mid-recomposition
+capture as the real cause).
+
+---
+
 ## 2026-09-11 (WPI: mode-change-pending's live holders, tier0-llm-stored's real installer, install.ps1's escape hatch; R-862 reported, not fixed)
 
 ### adedd40c — R-860/R-861 mode-change-pending opens InputStatus/RigStatus; R-865 tier0-llm-stored installs its four non-gated entries for real; R-868 install.ps1 passes -PortAllowMissingBundledAssets through

@@ -161,6 +161,19 @@ public class SetupActivity : ComponentActivity() {
     private var rigLinkState by mutableStateOf<RigLinkState?>(null)
     private var rigLinkRunToken by mutableStateOf(0)
 
+    /** R-903 (reviewer A2, run 3, design): the moment [onSelectRigBluetoothDevice] started this
+     * attempt — S11's "identified and verified in N.N s" clause is measured from here to the
+     * instant [rigLinkState] first reaches [RigLinkState.Verified] ([onRigLinkStateChanged]), never
+     * fabricated. [org.ort.core.Clock.monotonicNanos], never [org.ort.core.Clock.wallMillis] — that
+     * interface's own doc comment is explicit that wall time is for display/storage only and can
+     * jump, so it is never honest for measuring a duration. `null` whenever no attempt is in flight
+     * (reset on every fresh device selection so a later attempt's timing never inherits an earlier
+     * one's start). [clock] is a settable seam (mirrors [isDebugBuild]'s own shape) purely for test
+     * determinism. */
+    private var rigLinkVerifyStartedAtNanos: Long? = null
+    private var rigLinkVerifiedDurationSeconds by mutableStateOf<Double?>(null)
+    internal var clock: org.ort.core.Clock = org.ort.core.SystemClock
+
     /** WPD's own `:app`-local seam (`RigLinkPort.kt`'s doc comment has the full account) — the
      * real link runs over WPC3's `RigLinkBridge` (`:pipeline`, merged `8e40041`), never
      * `:rig-bluetooth` directly (constitution VII); see [BridgeRigLinkPort]'s own doc comment.
@@ -224,6 +237,10 @@ public class SetupActivity : ComponentActivity() {
     /** Test-only window into [rigBluetoothSelectedAddress] — proves [EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS]
      * actually reached this field, independent of whatever [rigLinkPort] then does with it. */
     internal val rigBluetoothSelectedAddressForTest: String? get() = rigBluetoothSelectedAddress
+
+    /** Test-only window into [rigLinkVerifiedDurationSeconds] — R-903's own regression proof needs
+     * to see the real measured value [onRigLinkStateChanged] computed. */
+    internal val rigLinkVerifiedDurationSecondsForTest: Double? get() = rigLinkVerifiedDurationSeconds
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -345,13 +362,7 @@ public class SetupActivity : ComponentActivity() {
     internal fun onChooseMode(mode: CaptureMode) {
         store.captureMode = mode
         val preset = CaptureModePresets.presetsFor(mode)
-        if (inputRoutes.isEmpty()) refreshInputRoutes()
-        inputRoutes.firstOrNull { it.routeKind == preset.preferredRouteKind }?.let { route ->
-            selectedInputId = route.id
-            selectedInputLabel = route.label
-            store.selectedInputId = route.id
-            store.selectedInputLabel = route.label
-        }
+        if (inputRoutes.isEmpty()) refreshInputRoutes() else applyPresetInputIfUnselected()
         store.modeOverriddenAudio = false
         store.rigTransport = preset.preferredRigTransportKind
         store.modeOverriddenRig = false
@@ -415,6 +426,23 @@ public class SetupActivity : ComponentActivity() {
 
     internal fun refreshInputRoutes() {
         inputRoutes = InputRouteEnumerator(this, audioIo).list()
+        applyPresetInputIfUnselected()
+    }
+
+    /** R-902: the single place [presetInputRouteFor]'s own "exactly one match" pre-select actually
+     * runs — called from every path that can bring S04 up with a real route list and nothing chosen
+     * yet, not only the interactive [onChooseMode] tap: [refreshInputRoutes] itself (a cold/resumed
+     * entry straight onto `INPUT`, or a debug scenario that seeds `SetupStore.captureMode` directly
+     * without ever calling [onChooseMode]) and [onChooseMode]'s own already-enumerated-routes case.
+     * A no-op once the operator (or a resumed [SetupStore.selectedInputId]) has already chosen
+     * something — never overwrites a real choice, matching [onChooseMode]'s own prior behaviour. */
+    private fun applyPresetInputIfUnselected() {
+        if (selectedInputId != null) return
+        val route = presetInputRouteFor(store.captureMode, inputRoutes) ?: return
+        selectedInputId = route.id
+        selectedInputLabel = route.label
+        store.selectedInputId = route.id
+        store.selectedInputLabel = route.label
     }
 
     internal fun onSelectInput(id: String) {
@@ -570,6 +598,9 @@ public class SetupActivity : ComponentActivity() {
             refreshPairedDevices()
             navigateForward(SetupStep.RIG_BLUETOOTH)
         } else {
+            // R-903: the USB lane has no timed probe at all -- never carry a Bluetooth attempt's
+            // own measured duration into an S11 visit this lane reaches directly.
+            rigLinkVerifiedDurationSeconds = null
             // Matches the pre-catalogue onChooseRadio's own dispatch: a genuinely Connected
             // RigStatus (today, only ever produced by the debug scenario simulator -- :rig-usb's
             // real transport is not wired to :app, RigLinkPort.kt's own doc comment) skips the
@@ -594,6 +625,23 @@ public class SetupActivity : ComponentActivity() {
         rigBluetoothSelectedAddress = address
         rigLinkState = null
         rigLinkRunToken += 1
+        // R-903: a fresh attempt's own start -- never inherits a duration from a previous pick.
+        rigLinkVerifyStartedAtNanos = clock.monotonicNanos()
+        rigLinkVerifiedDurationSeconds = null
+    }
+
+    /** R-903: [RenderRigBluetooth]'s own `LaunchedEffect` routes every [RigLinkState] emission
+     * through here rather than assigning [rigLinkState] directly, so the one moment the checklist
+     * first reaches [RigLinkState.Verified] is also the one moment S11's real, measured verify
+     * duration gets computed — from [rigLinkVerifyStartedAtNanos], never recomputed on a later
+     * recomposition even though [rigLinkState] itself does not change again after `Verified`. */
+    internal fun onRigLinkStateChanged(new: RigLinkState) {
+        rigLinkState = new
+        if (new is RigLinkState.Verified && rigLinkVerifiedDurationSeconds == null) {
+            rigLinkVerifyStartedAtNanos?.let { startedAt ->
+                rigLinkVerifiedDurationSeconds = (clock.monotonicNanos() - startedAt) / NANOS_PER_SECOND
+            }
+        }
     }
 
     internal fun onRefreshRigBluetoothDevices() {
@@ -662,6 +710,10 @@ public class SetupActivity : ComponentActivity() {
         store.rigBluetoothAddress = null
         store.rigBluetoothVerified = false
         radioAbsentBanner = null
+        // R-903: a later S11 visit (a different rig, or the same one over a different transport)
+        // must never show a duration measured for a now-abandoned attempt.
+        rigLinkVerifyStartedAtNanos = null
+        rigLinkVerifiedDurationSeconds = null
         syncCaptureConfiguration()
         step = SetupStep.RADIO
     }
@@ -780,8 +832,10 @@ public class SetupActivity : ComponentActivity() {
     @Composable
     private fun RenderInput() {
         val chipState = presetChipStateFor(store.captureMode, store.modeOverriddenAudio, inputRoutes)
-        val presetRouteId = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRouteKind
-            ?.let { kind -> inputRoutes.firstOrNull { it.routeKind == kind }?.id }
+        // R-902: the same "exactly one match" rule presetInputRouteFor's own pre-select uses --
+        // several equally-preferred routes are exactly as ambiguous for override-detection as they
+        // are for pre-selection, never treated as if the first one enumerated were "the" preset.
+        val presetRouteId = presetInputRouteFor(store.captureMode, inputRoutes)?.id
         InputScreen(
             state = InputViewState(
                 routes = inputRoutes,
@@ -790,7 +844,7 @@ public class SetupActivity : ComponentActivity() {
                 presetUnavailableText = chipState.presetUnavailableText,
             ),
             onSelect = {
-                if (presetRouteId != null && it != presetRouteId) store.modeOverriddenAudio = true
+                if (isAudioRouteOverride(store.captureMode, presetRouteId, it)) store.modeOverriddenAudio = true
                 onSelectInput(it)
             },
             onRefresh = ::refreshInputRoutes,
@@ -852,7 +906,7 @@ public class SetupActivity : ComponentActivity() {
         val address = rigBluetoothSelectedAddress
         if (address != null) {
             LaunchedEffect(rigLinkRunToken, address) {
-                rigLinkPort.connect(address, entry?.id ?: "").collect { rigLinkState = it }
+                rigLinkPort.connect(address, entry?.id ?: "").collect(::onRigLinkStateChanged)
             }
         }
         RigBluetoothScreen(
@@ -964,6 +1018,7 @@ public class SetupActivity : ComponentActivity() {
             }
             return
         }
+        val rigTransportKind = store.rigTransport?.let(RigPickerCatalogue::fromPresetKind)
         RadioVerifiedScreen(
             state = status,
             onContinue = ::onRadioVerifiedContinue,
@@ -975,6 +1030,11 @@ public class SetupActivity : ComponentActivity() {
                     PresetRigTransportKind.BLUETOOTH_SPP -> "Bluetooth SPP"
                 }
             },
+            verifyDurationSeconds = rigLinkVerifiedDurationSeconds,
+            sameCommandSetAsUsb = sameCommandSetAsUsb(
+                currentRigEntry()?.transportCapabilities.orEmpty(),
+                rigTransportKind,
+            ),
         )
     }
 
@@ -1015,6 +1075,10 @@ public class SetupActivity : ComponentActivity() {
     }
 
     internal companion object {
+        /** R-903: the divisor [onRigLinkStateChanged] uses to turn a [org.ort.core.Clock.monotonicNanos]
+         * delta into the real, decimal seconds [radioVerifiedSubtitle] renders ("1.2 s"). */
+        private const val NANOS_PER_SECOND: Double = 1_000_000_000.0
+
         /** See this class's own doc comment. The name of a [SetupStep] entry, e.g. `"INPUT"`. */
         const val EXTRA_STEP: String = "step"
 

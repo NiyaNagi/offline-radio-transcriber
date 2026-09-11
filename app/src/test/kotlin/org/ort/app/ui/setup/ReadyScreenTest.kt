@@ -19,6 +19,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 /** R-080..R-084 (ui-conformance-plan WP9) — `Setup-Done.dc.html` (S12). */
 @RunWith(RobolectricTestRunner::class)
@@ -235,5 +236,52 @@ class ReadyScreenTest {
         val text = readyFooterText(listOf(row(false), row(false), row(false), row(true)))
 
         assert(text.endsWith("The 3 amber items are worth fixing before an overnight run.")) { "got '$text'" }
+    }
+
+    // --- R-866 (register, validator V9): S12's amber Install action must meet the 44dp floor -----
+
+    private val modelsRowNotInstalled = ReadyRow(
+        "Models",
+        "No transcription model yet",
+        ok = false,
+        statusText = null,
+        actionLabel = "Install",
+    )
+
+    /**
+     * R-866: validator V9 measured the real device's `Install` action at 95px/34.3dp, under the
+     * 44dp floor every other S12 action met (`results/ui-audit/validation/V9/assets-bundled/S12*`).
+     * Not reproduced here under any Robolectric configuration tried — an isolated render, a
+     * real-device-width (`360.dp`) render, and a forced multi-line value all measured `Install` at
+     * exactly 44px/44dp under `@GraphicsMode(NATIVE)` — but `ReadySetupRow`'s outer row now also
+     * carries an explicit `requiredHeightIn(min = 44.dp)`, first in its own modifier chain
+     * (`ReadySetupRow`'s own doc comment has the account), as a defensive floor on the whole row's
+     * clickable/visual band in addition to [TextAction]'s existing one, matching the pattern every
+     * other S12 action already meets. This test proves that floor holds for the exact `Install` row
+     * shape, at both 1.0 and 2.0 font scale, wrapped value included.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_866 Install meets the 44dp floor at font scale 1_0`() {
+        composeTestRule.setContent {
+            OrtTheme { ReadyScreen(state = ReadyViewState(listOf(modelsRowNotInstalled)), onStartCapture = {}) }
+        }
+        val heightDp = composeTestRule.onNodeWithText("Install").fetchSemanticsNode().size.height
+        assert(heightDp >= 44) { "expected Install >= 44dp at scale 1.0 (density 1.0px/dp here), was ${heightDp}px" }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_866 Install meets the 44dp floor at font scale 2_0, value wrapped to several lines`() {
+        val longValue = "No transcription model yet at all here, this is a very long value line " +
+            "that must wrap onto several lines regardless of the available width in this test"
+        val row = modelsRowNotInstalled.copy(value = longValue)
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme { ReadyScreen(state = ReadyViewState(listOf(row)), onStartCapture = {}) }
+            }
+        }
+        val heightDp = composeTestRule.onNodeWithText("Install").fetchSemanticsNode().size.height
+        assert(heightDp >= 44) { "expected Install >= 44dp at scale 2.0 (density 1.0px/dp here), was ${heightDp}px" }
     }
 }

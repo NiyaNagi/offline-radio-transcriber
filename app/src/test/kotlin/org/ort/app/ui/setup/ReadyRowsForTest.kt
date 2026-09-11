@@ -280,4 +280,71 @@ class ReadyRowsForTest {
         assertFalse(row.ok)
         assertEquals("Install", row.actionLabel)
     }
+
+    // --- R-862 (register, halt, AC-138): the LLM is optional -- amber is reserved for a real ------
+    // --- tier >=1 transcription asset missing or unverified, never the gated Gemma model alone -----
+
+    private fun modelRow(id: ModelId, status: ModelRowStatus) =
+        ModelRowViewState(id = id, label = id.label, status = status, detail = null, bundled = true)
+
+    private val everyModelInstalled = listOf(
+        modelRow(ModelId.ASR_ENCODER, ModelRowStatus.INSTALLED),
+        modelRow(ModelId.ASR_DECODER, ModelRowStatus.INSTALLED),
+        modelRow(ModelId.ASR_TOKENS, ModelRowStatus.INSTALLED),
+        modelRow(ModelId.VAD, ModelRowStatus.INSTALLED),
+        modelRow(ModelId.LLM_GEMMA3_1B, ModelRowStatus.INSTALLED),
+    )
+
+    @Test
+    fun `R_862 5 of 5 installed, Gemma included, renders the plain green N bundled line`() {
+        val row = rows(modelsState = ModelsViewState(everyModelInstalled)).first { it.label == "Models" }
+
+        assertTrue(row.ok)
+        assertEquals("ready", row.statusText)
+        assertEquals("5 bundled · checksums verified", row.value)
+        assertEquals(null, row.actionLabel)
+    }
+
+    /** AC-138: a no-`HF_TOKEN` build never fetches the gated Gemma asset at all -- every real
+     * transcription asset (tier >=1) is genuinely installed, so this must read green, naming the
+     * one real, honest reason the count is 4 of 5, never amber for an asset this build never
+     * offered in the first place. */
+    @Test
+    fun `R_862 4 of 5 with only the gated Gemma model absent renders green and names it`() {
+        val rowsWithoutGemma = everyModelInstalled.map {
+            if (it.id == ModelId.LLM_GEMMA3_1B) modelRow(it.id, ModelRowStatus.NOT_INSTALLED) else it
+        }
+        val row = rows(modelsState = ModelsViewState(rowsWithoutGemma)).first { it.label == "Models" }
+
+        assertTrue(row.ok, "the required transcription set is complete -- the optional LLM must never gate this")
+        assertEquals("ready", row.statusText)
+        assertEquals("4 of 5 bundled · ready — Gemma 3 1B not in this build", row.value)
+        assertEquals(null, row.actionLabel)
+    }
+
+    @Test
+    fun `R_862 3 of 5 with the encoder corrupt renders amber and names the encoder, not Gemma`() {
+        val rowsWithCorruptEncoderAndNoGemma = everyModelInstalled.map {
+            when (it.id) {
+                ModelId.ASR_ENCODER -> modelRow(it.id, ModelRowStatus.NOT_INSTALLED)
+                ModelId.LLM_GEMMA3_1B -> modelRow(it.id, ModelRowStatus.NOT_INSTALLED)
+                else -> it
+            }
+        }
+        val row = rows(modelsState = ModelsViewState(rowsWithCorruptEncoderAndNoGemma)).first { it.label == "Models" }
+
+        assertFalse(row.ok, "the encoder is required for tier >=1 transcription -- this must stay amber")
+        assertEquals("Install", row.actionLabel)
+        assertEquals("No transcription model yet — ${ModelId.ASR_ENCODER.label} not installed", row.value)
+    }
+
+    @Test
+    fun `R_862 0 of 5 installed renders the plain amber No transcription model yet line`() {
+        val rowsNoneInstalled = everyModelInstalled.map { modelRow(it.id, ModelRowStatus.NOT_INSTALLED) }
+        val row = rows(modelsState = ModelsViewState(rowsNoneInstalled)).first { it.label == "Models" }
+
+        assertFalse(row.ok)
+        assertEquals("Install", row.actionLabel)
+        assertEquals("No transcription model yet", row.value)
+    }
 }

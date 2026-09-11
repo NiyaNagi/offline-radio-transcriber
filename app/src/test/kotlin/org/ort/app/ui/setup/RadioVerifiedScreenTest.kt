@@ -6,6 +6,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -38,12 +41,26 @@ class RadioVerifiedScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Kenwood TH-D75A connected").assertIsDisplayed()
+        // R-903: the manufacturer prefix is dropped, matching R-845's own CF06 treatment.
+        composeTestRule.onNodeWithText("TH-D75A connected").assertIsDisplayed()
         composeTestRule.onNodeWithTag("setup-radio-verified-band-A").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("setup-radio-verified-band-B").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("Squelch state — attributes each over to a band")
             .performScrollTo()
             .assertIsDisplayed()
+    }
+
+    /** R-903 (reviewer A2, run 3, design): the 9dp green marker dot beside the title, present only
+     * for a genuinely `Connected` reading — never on the `Stale` header, which is not connected. */
+    @Test
+    fun `R_903 the connected marker dot renders beside the title`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(state = connected, onContinue = {}, onChangeRadio = {}, onReconnect = {})
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-radio-verified-marker").assertIsDisplayed()
     }
 
     @Test
@@ -77,12 +94,16 @@ class RadioVerifiedScreenTest {
             OrtTheme { RadioVerifiedScreen(state = stale, onContinue = {}, onChangeRadio = {}, onReconnect = {}) }
         }
 
-        composeTestRule.onNodeWithText("Kenwood TH-D75A — last known").assertIsDisplayed()
+        // R-903: the manufacturer prefix is dropped here too, for the same reason as the
+        // Connected title -- both read the same RigStatus.Connected.descriptor.
+        composeTestRule.onNodeWithText("TH-D75A — last known").assertIsDisplayed()
         composeTestRule.onNodeWithTag("setup-radio-verified-band-A").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("setup-radio-verified-reconnect").assertIsDisplayed()
         composeTestRule.onNodeWithTag("setup-radio-verified-change").assertIsDisplayed()
         // No Continue on a stale reading -- Reconnect/Change radio are the only ways forward.
         composeTestRule.onNodeWithTag("setup-radio-verified-continue").assertDoesNotExist()
+        // R-903: the connected marker dot never renders here -- a stale reading is not connected.
+        composeTestRule.onNodeWithTag("setup-radio-verified-marker").assertDoesNotExist()
     }
 
     @Test
@@ -122,5 +143,144 @@ class RadioVerifiedScreenTest {
         }
 
         composeTestRule.onNodeWithText("Bluetooth SPP · identified and verified").assertIsDisplayed()
+    }
+
+    // --- R-903 (reviewer A2, run 3, design): the measured verify duration and AC-133's ------------
+    // --- "same command set as USB" clause -----------------------------------------------------------
+
+    @Test
+    fun `R_903 a measured verify duration renders in the subtitle`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(
+                    state = connected,
+                    onContinue = {},
+                    onChangeRadio = {},
+                    onReconnect = {},
+                    transportLabel = "Bluetooth SPP",
+                    verifyDurationSeconds = 1.2,
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Bluetooth SPP · identified and verified in 1.2 s").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_903 no measured duration renders the plain clause, never a fabricated number`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(
+                    state = connected,
+                    onContinue = {},
+                    onChangeRadio = {},
+                    onReconnect = {},
+                    transportLabel = "USB serial",
+                    verifyDurationSeconds = null,
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("USB serial · identified and verified").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_903 AC_133 same command set as USB renders only when asked to`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(
+                    state = connected,
+                    onContinue = {},
+                    onChangeRadio = {},
+                    onReconnect = {},
+                    transportLabel = "Bluetooth SPP",
+                    verifyDurationSeconds = 1.2,
+                    sameCommandSetAsUsb = true,
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Bluetooth SPP · identified and verified in 1.2 s · same command set as USB")
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `radioVerifiedSubtitle joins every real clause the board draws`() {
+        assertEquals(
+            "Bluetooth SPP · identified and verified in 1.2 s · same command set as USB",
+            radioVerifiedSubtitle(
+                transportLabel = "Bluetooth SPP",
+                verifyDurationSeconds = 1.2,
+                sameCommandSetAsUsb = true,
+            ),
+        )
+    }
+
+    @Test
+    fun `radioVerifiedSubtitle omits the duration clause when nothing was measured`() {
+        assertEquals(
+            "USB serial · identified and verified",
+            radioVerifiedSubtitle(
+                transportLabel = "USB serial",
+                verifyDurationSeconds = null,
+                sameCommandSetAsUsb = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `radioVerifiedSubtitle with no transportLabel still returns a real, capitalised sentence`() {
+        assertEquals(
+            "Identified and verified",
+            radioVerifiedSubtitle(transportLabel = null, verifyDurationSeconds = null, sameCommandSetAsUsb = false),
+        )
+    }
+
+    @Test
+    fun `sameCommandSetAsUsb is true only for identical, non-empty Bluetooth and USB capability sets`() {
+        val identical = mapOf(
+            org.ort.rig.RigTransportKind.BLUETOOTH_SPP to setOf(org.ort.rig.RigCapability.FREQUENCY),
+            org.ort.rig.RigTransportKind.USB_SERIAL to setOf(org.ort.rig.RigCapability.FREQUENCY),
+        )
+        assertTrue(sameCommandSetAsUsb(identical, org.ort.rig.RigTransportKind.BLUETOOTH_SPP))
+    }
+
+    @Test
+    fun `sameCommandSetAsUsb is false when the two transports declare different capabilities`() {
+        val different = mapOf(
+            org.ort.rig.RigTransportKind.BLUETOOTH_SPP to setOf(org.ort.rig.RigCapability.FREQUENCY),
+            org.ort.rig.RigTransportKind.USB_SERIAL to
+                setOf(org.ort.rig.RigCapability.FREQUENCY, org.ort.rig.RigCapability.SQUELCH_STATE),
+        )
+        assertFalse(sameCommandSetAsUsb(different, org.ort.rig.RigTransportKind.BLUETOOTH_SPP))
+    }
+
+    @Test
+    fun `sameCommandSetAsUsb is false when the current transport is not Bluetooth at all`() {
+        val identical = mapOf(
+            org.ort.rig.RigTransportKind.BLUETOOTH_SPP to setOf(org.ort.rig.RigCapability.FREQUENCY),
+            org.ort.rig.RigTransportKind.USB_SERIAL to setOf(org.ort.rig.RigCapability.FREQUENCY),
+        )
+        assertFalse(sameCommandSetAsUsb(identical, org.ort.rig.RigTransportKind.USB_SERIAL))
+        assertFalse(sameCommandSetAsUsb(identical, null))
+    }
+
+    @Test
+    fun `sameCommandSetAsUsb is false when either transport is undeclared or both are empty`() {
+        assertFalse(
+            sameCommandSetAsUsb(
+                mapOf(org.ort.rig.RigTransportKind.BLUETOOTH_SPP to setOf(org.ort.rig.RigCapability.FREQUENCY)),
+                org.ort.rig.RigTransportKind.BLUETOOTH_SPP,
+            ),
+        )
+        assertFalse(
+            sameCommandSetAsUsb(
+                mapOf(
+                    org.ort.rig.RigTransportKind.BLUETOOTH_SPP to emptySet(),
+                    org.ort.rig.RigTransportKind.USB_SERIAL to emptySet(),
+                ),
+                org.ort.rig.RigTransportKind.BLUETOOTH_SPP,
+            ),
+        )
     }
 }
