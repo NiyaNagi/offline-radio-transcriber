@@ -8,6 +8,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.data.realCaptureConfigurationStore
+import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.capture.BluetoothAudioProfile
@@ -17,6 +18,7 @@ import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.rig.CaptureConfiguration
+import org.ort.pipeline.rig.DefaultRigTransportFactory
 import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 import org.ort.rig.RigTransportKind
 import org.ort.rig.descriptor.BundledDescriptors
@@ -38,6 +40,7 @@ class SettingsPollingTest {
         RigStatus.reset()
         ShedStatus.reset()
         clearConfigStore()
+        clearSetupStore()
     }
 
     @Before
@@ -47,6 +50,7 @@ class SettingsPollingTest {
         RigStatus.reset()
         ShedStatus.reset()
         clearConfigStore()
+        clearSetupStore()
     }
 
     /** R-860/R-861/R-864: [realCaptureConfigurationStore] always opens the same real
@@ -55,6 +59,14 @@ class SettingsPollingTest {
      * into, or be polluted by, any other test sharing this JVM worker. */
     private fun clearConfigStore() {
         context.getSharedPreferences(SharedPreferencesCaptureConfigurationStore.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().clear().commit()
+    }
+
+    /** R-951: this class's own new tests write a real hand-entered Setup-time frequency to prove
+     * [SettingsPolling.capture]'s fallback to it — cleared before and after every test the same
+     * reason [clearConfigStore] already is. */
+    private fun clearSetupStore() {
+        context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Context.MODE_PRIVATE)
             .edit().clear().commit()
     }
 
@@ -249,6 +261,69 @@ class SettingsPollingTest {
         val state = SettingsPolling.modeScreen(context)
         assert(state.audioRoute.subLine.endsWith("· HFP CVSD")) {
             "expected the real HFP codec name appended, got ${state.audioRoute.subLine}"
+        }
+    }
+
+    @Test
+    fun `R_950 CF11's live Rig link row strips the prefix and names transport and address`() {
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(
+                mode = CaptureMode.BLUETOOTH_RADIO,
+                selectedInputId = null,
+                rigParams = mapOf(DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS to "D8:3A:DD:41:0C:7F"),
+            ),
+        )
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val state = SettingsPolling.modeScreen(context)
+        assert(state.rigLink.subLine == "TH-D75A · Bluetooth SPP · D8:3A:DD:41:0C:7F · connected") {
+            "expected the board's own name/transport/address/state shape, got ${state.rigLink.subLine}"
+        }
+    }
+
+    @Test
+    fun `R_950 CF11's live Rig link row omits the address clause when none is known`() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val state = SettingsPolling.modeScreen(context)
+        assert(state.rigLink.subLine == "TH-D75A · Bluetooth SPP · connected") {
+            "expected no address clause when unknown, got ${state.rigLink.subLine}"
+        }
+    }
+
+    @Test
+    fun `R_951 Log overs against falls back to the frequency hand-entered during Setup`() {
+        val setupPrefs = context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Context.MODE_PRIVATE)
+        SharedPreferencesSetupStore(setupPrefs).manualFrequencyHz = 145_230_000L
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(state.manualFrequencyMhz == "145.230") {
+            "expected the real Setup-time hand-entered frequency, got ${state.manualFrequencyMhz}"
+        }
+    }
+
+    @Test
+    fun `R_951 a Settings-time edit always wins over the Setup-time one`() {
+        val setupPrefs = context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Context.MODE_PRIVATE)
+        SharedPreferencesSetupStore(setupPrefs).manualFrequencyHz = 145_230_000L
+        val state = SettingsPolling.capture(context, InMemorySettingsStore(manualFrequencyMhz = "146.960"))
+        assert(state.manualFrequencyMhz == "146.960") {
+            "expected the operator's own later Settings edit to win, got ${state.manualFrequencyMhz}"
+        }
+    }
+
+    @Test
+    fun `R_951 stays honestly not set when neither store ever recorded one`() {
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(state.manualFrequencyMhz == null) {
+            "expected no fabricated frequency, got ${state.manualFrequencyMhz}"
         }
     }
 
