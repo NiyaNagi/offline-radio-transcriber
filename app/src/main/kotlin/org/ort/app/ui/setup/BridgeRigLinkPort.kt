@@ -3,9 +3,9 @@ package org.ort.app.ui.setup
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.ort.pipeline.rig.DefaultRigTransportFactory
-import org.ort.pipeline.rig.PairedRigDevice
 import org.ort.pipeline.rig.RigLinkBridge
 import org.ort.pipeline.rig.RigLinkProbeState
+import org.ort.pipeline.rig.RigLinkSppSupport
 import org.ort.rig.RigTransportKind
 
 /**
@@ -26,7 +26,7 @@ public class BridgeRigLinkPort(private val bridge: RigLinkBridge) : RigLinkPort 
                 PairedDevice(
                     name = device.name ?: device.address,
                     address = device.address,
-                    sppCapable = toSppCapable(device),
+                    sppCapable = toSppCapable(device.sppSupport),
                 )
             },
             permissionGranted = result.permissionGranted,
@@ -45,32 +45,14 @@ public class BridgeRigLinkPort(private val bridge: RigLinkBridge) : RigLinkPort 
         params = mapOf(DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS to address),
     ).map(::toRigLinkState)
 
-    /**
-     * **Known, reported gap**: [PairedRigDevice.sppSupport]'s declared type
-     * (`org.ort.rig.bluetooth.SppSupport`) is not resolvable from `:app` at all — confirmed by
-     * attempting `import org.ort.rig.bluetooth.SppSupport` here and reading the compiler's own
-     * "Cannot access class ... Check your module classpath" error before writing this workaround.
-     * `pipeline/build.gradle.kts` declares `implementation(project(":rig-bluetooth"))`, which Gradle
-     * does not expose to `:pipeline`'s own consumers' compile classpath — only `api` would. That
-     * line is outside this package's ownership to change (`:pipeline`, WPC3's own file), so this
-     * reads the value through `java.lang.reflect` instead: [Class.getMethod]/[java.lang.reflect.Method.invoke]
-     * need no compile-time reference to [PairedRigDevice.sppSupport]'s declared type at all, only
-     * to `PairedRigDevice` itself (`:pipeline`'s own type, already resolvable). Once
-     * `:rig-bluetooth` is exposed as `api`, this collapses to a plain `when (device.sppSupport) {
-     * SppSupport.YES -> true; ... }` and this whole function (and its `getMethod` lookup) can be
-     * deleted.
-     */
-    private fun toSppCapable(device: PairedRigDevice): Boolean? {
-        val sppSupportName = runCatching {
-            device.javaClass.getMethod("getSppSupport").invoke(device)?.toString()
-        }.getOrNull()
-        return when (sppSupportName) {
-            "YES" -> true
-            "NO" -> false
-            // "UNKNOWN", or the reflective read itself failing -- both are honestly unknown,
-            // never guessed as false (constitution I).
-            else -> null
-        }
+    /** [RigLinkSppSupport] is [RigLinkBridge]'s own type, not `:rig-bluetooth`'s — introduced so
+     * this exact mapping could be a plain, resolvable `when` (WPC3 follow-up, `d6b65fab`; see
+     * [RigLinkSppSupport]'s own kdoc for the leaked-type gap it replaced). `UNKNOWN` is honestly
+     * unknown, never guessed as `false` (constitution I). */
+    private fun toSppCapable(sppSupport: RigLinkSppSupport): Boolean? = when (sppSupport) {
+        RigLinkSppSupport.YES -> true
+        RigLinkSppSupport.NO -> false
+        RigLinkSppSupport.UNKNOWN -> null
     }
 
     private fun toRigLinkState(probeState: RigLinkProbeState): RigLinkState = when (probeState) {

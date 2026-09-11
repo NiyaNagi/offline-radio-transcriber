@@ -8,8 +8,10 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.pipeline.rig.FakeRigLinkBridge
+import org.ort.pipeline.rig.PairedRigDevice
 import org.ort.pipeline.rig.PairedRigDevicesResult
 import org.ort.pipeline.rig.RigLinkProbeState
+import org.ort.pipeline.rig.RigLinkSppSupport
 import org.ort.rig.RigCapability
 import org.ort.rig.RigTransportKind
 
@@ -120,17 +122,34 @@ class BridgeRigLinkPortTest {
         )
     }
 
-    /**
-     * `PairedRigDevice.sppSupport`'s own type (`org.ort.rig.bluetooth.SppSupport`) is not
-     * resolvable from `:app` at all (see [BridgeRigLinkPort.toSppCapable]'s own doc comment for
-     * the full account and the exact one-line `pipeline/build.gradle.kts` fix this is pending) —
-     * this test's own source cannot construct a [org.ort.pipeline.rig.PairedRigDevice] either, for
-     * the identical reason, so the YES/NO/UNKNOWN → true/false/null mapping itself is proven where
-     * it CAN be constructed: [InMemoryRigLinkPortTest] exercises the full selectable/dim/unknown
-     * behaviour `:app`-side; `:pipeline`'s own `RigLinkBridgeTest` proves
-     * [org.ort.pipeline.rig.DefaultRigLinkBridge.pairedDevices] itself. What this test proves
-     * instead is the permission flag, which needs no [org.ort.pipeline.rig.PairedRigDevice] at all.
-     */
+    @Test
+    fun `pairedDevices maps SPP-capable, headset-only and unknown devices, and the permission flag`() {
+        val bridge = FakeRigLinkBridge()
+        bridge.setPairedDevices(
+            PairedRigDevicesResult(
+                devices = listOf(
+                    PairedRigDevice("TH-D75A", "AA:BB", RigLinkSppSupport.YES),
+                    PairedRigDevice("Handheld BT", "CC:DD", RigLinkSppSupport.NO),
+                    PairedRigDevice(null, "EE:FF", RigLinkSppSupport.UNKNOWN),
+                ),
+                permissionGranted = true,
+            ),
+        )
+        val port = BridgeRigLinkPort(bridge)
+
+        val result = port.pairedDevices()
+
+        assertTrue(result.permissionGranted)
+        assertEquals(
+            listOf(
+                PairedDevice("TH-D75A", "AA:BB", sppCapable = true),
+                PairedDevice("Handheld BT", "CC:DD", sppCapable = false),
+                PairedDevice("EE:FF", "EE:FF", sppCapable = null),
+            ),
+            result.devices,
+        )
+    }
+
     @Test
     fun `pairedDevices reports permissionGranted false straight through, never inferred from an empty list`() {
         val bridge = FakeRigLinkBridge()

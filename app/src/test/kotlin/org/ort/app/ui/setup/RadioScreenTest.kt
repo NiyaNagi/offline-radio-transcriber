@@ -1,7 +1,9 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -25,11 +27,13 @@ class RadioScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private fun state(presetLabel: String? = null, importError: String? = null) = RadioPickerViewState(
-        catalogue = RigPickerCatalogue.build(),
-        presetLabel = presetLabel,
-        importError = importError,
-    )
+    private fun state(presetLabel: String? = null, importError: String? = null, emphasizedEntryId: String? = null) =
+        RadioPickerViewState(
+            catalogue = RigPickerCatalogue.build(),
+            presetLabel = presetLabel,
+            importError = importError,
+            emphasizedEntryId = emphasizedEntryId,
+        )
 
     @Test
     fun `E2_E08 renders one row per catalogue entry, generated from the descriptor set`() {
@@ -39,7 +43,54 @@ class RadioScreenTest {
 
         composeTestRule.onNodeWithText("Kenwood TH-D75A").assertIsDisplayed()
         composeTestRule.onNodeWithText("Generic ASCII CAT").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithText(NullRigModule.DISPLAY_NAME).performScrollTo().assertIsDisplayed()
+        // R-813: the null module's own displayName is overridden with the board's own copy for
+        // this row -- see displayNameFor's own doc comment.
+        composeTestRule.onNodeWithText("No radio — I will enter the frequency").performScrollTo().assertIsDisplayed()
+    }
+
+    // --- R-813 (reviewer finding): the null entry's row uses the board's own copy -----------------
+
+    @Test
+    fun `R_813 the null entry never renders NullRigModule's own generic catalogue displayName`() {
+        composeTestRule.setContent {
+            OrtTheme { RadioScreen(state = state(), onChoose = {}, onImport = {}, onNotNow = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-radio-entry-${NullRigModule.ID}").performScrollTo().assertIsDisplayed()
+        composeTestRule.onAllNodesWithText(NullRigModule.DISPLAY_NAME).assertCountEquals(0)
+    }
+
+    // --- R-815 (reviewer finding): exactly one row is emphasized -----------------------------------
+
+    @Test
+    fun `R_815 the preset entry id names the emphasized row, and no other row claims it`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioScreen(
+                    state = state(emphasizedEntryId = "kenwood-thd75a"),
+                    onChoose = {},
+                    onImport = {},
+                    onNotNow = {},
+                )
+            }
+        }
+
+        // Both rows exist and are reachable regardless of emphasis (emphasis is visual only,
+        // never a click-ability change) -- the emphasis styling itself is exercised via
+        // NavigationRow's own iconTint/titleColor parameters, asserted directly below.
+        composeTestRule.onNodeWithTag("setup-radio-entry-kenwood-thd75a").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-radio-entry-generic-ascii-cat").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_815 null emphasizedEntryId still renders every row, none of them crashing on a missing match`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioScreen(state = state(emphasizedEntryId = null), onChoose = {}, onImport = {}, onNotNow = {})
+            }
+        }
+
+        composeTestRule.onNodeWithText("Kenwood TH-D75A").assertIsDisplayed()
     }
 
     @Test

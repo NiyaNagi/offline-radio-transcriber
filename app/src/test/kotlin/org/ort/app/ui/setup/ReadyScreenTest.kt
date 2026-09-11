@@ -207,4 +207,33 @@ class ReadyScreenTest {
         composeTestRule.onNodeWithText("Change").assertHasClickAction().performClick()
         assert(changed)
     }
+
+    // --- R-812 (reviewer finding, halt): the footer's amber-count sentence is generated, never --
+    // --- a fabricated "two" -----------------------------------------------------------------------
+
+    private fun row(ok: Boolean) = ReadyRow("x", "y", ok = ok, statusText = null, actionLabel = null)
+
+    @Test
+    fun `R_812 no amber rows drops the second sentence entirely`() {
+        val text = readyFooterText(listOf(row(true), row(true)))
+
+        assert(
+            text == "Every model this app can use shipped with it and was verified against " +
+                "its checksum on first launch — nothing was downloaded.",
+        ) { "got '$text'" }
+    }
+
+    @Test
+    fun `R_812 exactly one amber row reads the singular sentence`() {
+        val text = readyFooterText(listOf(row(true), row(false)))
+
+        assert(text.endsWith("The amber item is worth fixing before an overnight run.")) { "got '$text'" }
+    }
+
+    @Test
+    fun `R_812 N amber rows names the real count, never a hardcoded two`() {
+        val text = readyFooterText(listOf(row(false), row(false), row(false), row(true)))
+
+        assert(text.endsWith("The 3 amber items are worth fixing before an overnight run.")) { "got '$text'" }
+    }
 }

@@ -5,11 +5,14 @@ package org.ort.app.ui.setup
  * [presetLabel] (D33, FR-CAP-9) is the chosen [org.ort.core.capture.CaptureMode]'s
  * [org.ort.core.capture.CaptureMode.operatorLabel] — the preset chip's "preset by <mode>" text —
  * and is `null` once the operator has overridden the audio-route preset ([SetupStore.modeOverriddenAudio]),
- * per the board's own "hidden when the operator overrode" rule. */
+ * per the board's own "hidden when the operator overrode" rule, **or** once [presetChipStateFor]
+ * finds that the mode's preferred route was never actually enumerated (R-816 — [presetUnavailableText]
+ * carries the honest chip text for that case instead; the two are mutually exclusive). */
 public data class InputViewState(
     val routes: List<InputRouteOption>,
     val selectedId: String?,
     val presetLabel: String? = null,
+    val presetUnavailableText: String? = null,
 )
 
 /** S05's whole view-state (`Setup-Verify.dc.html`) — the input being checked and where
