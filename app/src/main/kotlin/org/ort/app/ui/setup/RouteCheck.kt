@@ -2,6 +2,7 @@ package org.ort.app.ui.setup
 
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withTimeoutOrNull
 import org.ort.capture.android.AudioDeviceDescriptor
@@ -18,11 +19,26 @@ public enum class RouteCheckStage { NATIVE_RATE, ROUTE_MATCH, SIGNAL, RESAMPLER 
 /** Everything [RouteCheck.run] can report — `Setup-Verify.dc.html`'s progressing checklist and
  * `Setup-Route-Mismatch.dc.html`'s halt are both driven from this one sealed type. */
 public sealed interface RouteCheckState {
-    /** [passed] grows one [RouteCheckStage] at a time as the checklist progresses. */
+    /** [passed] grows one [RouteCheckStage] at a time as the checklist progresses.
+     *
+     * R-943 (register, reviewer A3 run 4a, design): [routedDeviceLabel], [levelBars] and
+     * [noiseFloorDbfs] are the real facts `Setup-Verify.dc.html`'s own second check line and Input
+     * waveform card need — never invented (constitution I). [routedDeviceLabel] is `null` until
+     * [RouteCheckStage.ROUTE_MATCH] actually passes (before that, what `getRoutedDevice()` will
+     * report is not yet a settled fact); [levelBars] is the last few real peak samples taken during
+     * the [RouteCheckStage.SIGNAL] wait, as `0f..1f` fractions on the exact same `-60..0` dBFS scale
+     * [levelBarFraction] already gives S07's own meter — empty before listening starts, same shape
+     * as [LevelReading.bars]. [noiseFloorDbfs] is a running minimum of the same real peak readings,
+     * the identical policy [RealLevelCheck] already uses for S07's own noise-floor fact — `null`
+     * until at least one real sample has been read.
+     */
     public data class InProgress(
         val passed: Set<RouteCheckStage>,
         val nativeRateHz: Int,
         val elapsedListeningMillis: Long,
+        val routedDeviceLabel: String? = null,
+        val levelBars: List<Float> = emptyList(),
+        val noiseFloorDbfs: Double? = null,
     ) : RouteCheckState
 
     /**
@@ -30,9 +46,18 @@ public sealed interface RouteCheckState {
      * string (`InputStatus.State.Opened.resamplerId` — see [RealRouteCheck]'s own doc comment)
      * whenever a live capture session already has this exact device open; otherwise it is `null`
      * when [nativeRateHz] already matches the pipeline's target rate (no resampling occurs), or a
-     * locally-computed, honest description that resampling will happen.
+     * locally-computed, honest description that resampling will happen. [routedDeviceLabel]/
+     * [levelBars]/[noiseFloorDbfs]: see [InProgress]'s own doc comment — both stay whatever the
+     * real listen loop last built up (empty/`null` for the [publishedVerificationFor] short-circuit
+     * path, which never ran a real listen of its own).
      */
-    public data class Passed(val nativeRateHz: Int, val resamplerDescription: String?) : RouteCheckState
+    public data class Passed(
+        val nativeRateHz: Int,
+        val resamplerDescription: String?,
+        val routedDeviceLabel: String? = null,
+        val levelBars: List<Float> = emptyList(),
+        val noiseFloorDbfs: Double? = null,
+    ) : RouteCheckState
 
     /** `Setup-Route-Mismatch.dc.html`: the OS routed audio somewhere other than [selected]. */
     public data class Mismatch(
@@ -111,48 +136,114 @@ public class RealRouteCheck(
         var passed = setOf(RouteCheckStage.NATIVE_RATE)
         emit(RouteCheckState.InProgress(passed, nativeRate, 0L))
 
-        val verdict = RouteVerifier.verify(selected, io.routedDevice())
+        val routedDevice = io.routedDevice()
+        val verdict = RouteVerifier.verify(selected, routedDevice)
         if (verdict is RouteVerdict.Mismatch) {
             io.close()
             emit(RouteCheckState.Mismatch(selected, verdict.routed, verdict.reason))
             return@flow
         }
         passed = passed + RouteCheckStage.ROUTE_MATCH
-        emit(RouteCheckState.InProgress(passed, nativeRate, 0L))
+        val routedDeviceLabel = routedDevice?.label
+        emit(RouteCheckState.InProgress(passed, nativeRate, 0L, routedDeviceLabel))
 
         val published = publishedVerificationFor(selected)
         if (published != null) {
             io.close()
-            emit(RouteCheckState.Passed(published.nativeRateHz, published.resamplerId))
+            emit(
+                RouteCheckState.Passed(
+                    published.nativeRateHz,
+                    published.resamplerId,
+                    routedDeviceLabel ?: published.descriptor.label,
+                ),
+            )
             return@flow
         }
 
-        var elapsed = 0L
-        var heard = false
-        val buffer = ShortArray(READ_BUFFER_FRAMES)
-        val finishedListening = withTimeoutOrNull(listenTimeoutMillis) {
-            while (!heard) {
-                val n = io.read(buffer)
-                if (n > 0 && peakDbfs(buffer, n) >= signalThresholdDbfs) {
-                    heard = true
-                } else {
-                    delay(pollIntervalMillis)
-                    elapsed += pollIntervalMillis
-                    emit(RouteCheckState.InProgress(passed, nativeRate, elapsed))
-                }
-            }
-        }
-        if (finishedListening == null) {
+        val listened = listenForSignal(io, passed, nativeRate, routedDeviceLabel)
+        if (listened == null) {
             io.close()
             emit(RouteCheckState.TimedOut)
             return@flow
         }
         passed = passed + RouteCheckStage.SIGNAL
-        emit(RouteCheckState.InProgress(passed, nativeRate, elapsed))
+        emit(
+            RouteCheckState.InProgress(
+                passed,
+                nativeRate,
+                listened.elapsed,
+                routedDeviceLabel,
+                listened.levelBars,
+                listened.noiseFloorDbfs,
+            ),
+        )
 
         val resamplerDescription = resamplerDescriptionFor(nativeRate)
         io.close()
-        emit(RouteCheckState.Passed(nativeRate, resamplerDescription))
+        emit(
+            RouteCheckState.Passed(
+                nativeRate,
+                resamplerDescription,
+                routedDeviceLabel,
+                listened.levelBars,
+                listened.noiseFloorDbfs,
+            ),
+        )
+    }
+
+    /** [listenForSignal]'s own real, accumulated facts once a signal was genuinely heard — a `null`
+     * return from that function means the listen timed out instead; this type is never constructed
+     * for that case. */
+    private class ListenResult(val elapsed: Long, val levelBars: List<Float>, val noiseFloorDbfs: Double?)
+
+    /**
+     * R-943: split out of [run] purely to keep that function under detekt's length/complexity
+     * ceiling — no behaviour changed from the original inline loop. Real-time listens for a signal
+     * above [signalThresholdDbfs], emitting an [RouteCheckState.InProgress] (carrying the real,
+     * accumulated [ListenResult] facts so far) after every unsuccessful poll; `null` once
+     * [listenTimeoutMillis] elapses with nothing heard, exactly [kotlinx.coroutines.withTimeoutOrNull]'s
+     * own contract.
+     */
+    private suspend fun FlowCollector<RouteCheckState>.listenForSignal(
+        io: AudioIo,
+        passed: Set<RouteCheckStage>,
+        nativeRate: Int,
+        routedDeviceLabel: String?,
+    ): ListenResult? {
+        var elapsed = 0L
+        var heard = false
+        val buffer = ShortArray(READ_BUFFER_FRAMES)
+        // R-943: the same real, per-sample rolling window RealLevelCheck's own bars use (never
+        // fabricated) — accumulated only while a raw sample was actually read this iteration.
+        val levelBars = ArrayDeque<Float>()
+        var noiseFloorDbfs: Double? = null
+        return withTimeoutOrNull(listenTimeoutMillis) {
+            while (!heard) {
+                val n = io.read(buffer)
+                if (n > 0) {
+                    val peak = peakDbfs(buffer, n)
+                    levelBars.addLast(levelBarFraction(peak))
+                    if (levelBars.size > INPUT_BAR_COUNT) levelBars.removeFirst()
+                    noiseFloorDbfs = noiseFloorDbfs?.let { minOf(it, peak) } ?: peak
+                    heard = peak >= signalThresholdDbfs
+                }
+                if (!heard) {
+                    delay(pollIntervalMillis)
+                    elapsed += pollIntervalMillis
+                    emit(
+                        RouteCheckState.InProgress(
+                            passed,
+                            nativeRate,
+                            elapsed,
+                            routedDeviceLabel,
+                            levelBars.toList(),
+                            noiseFloorDbfs,
+                        ),
+                    )
+                }
+            }
+            ListenResult(elapsed, levelBars.toList(), noiseFloorDbfs)
+        }
     }
 
     /**
@@ -179,19 +270,30 @@ public class RealRouteCheck(
         (InputStatus.state as? InputStatus.State.Opened)
             ?.takeIf { it.descriptor.id == selected.id && it.routeVerified }
 
+    /** R-943: a genuinely silent buffer used to return `-Infinity`, which is harmless for
+     * [levelBarFraction] (it clamps) but poisons a running-minimum noise floor forever once hit —
+     * the identical trap [RealLevelCheck]'s own `peakDbfs` already documents and avoids. Returns
+     * the chart's own floor sentinel instead, matching that fix exactly; the [signalThresholdDbfs]
+     * comparison this feeds is unaffected either way (`-60.0 >= -40.0` is exactly as false as
+     * `-Infinity >= -40.0` was). */
     private fun peakDbfs(buffer: ShortArray, n: Int): Double {
         var peak = 0
         for (i in 0 until n) {
             val a = abs(buffer[i].toInt())
             if (a > peak) peak = a
         }
-        if (peak == 0) return Double.NEGATIVE_INFINITY
+        if (peak == 0) return NOISE_FLOOR_SILENCE_DBFS
         return 20.0 * log10(peak / SHORT_FULL_SCALE)
     }
 
     public companion object {
         public const val DEFAULT_LISTEN_TIMEOUT_MILLIS: Long = 30_000L
         public const val DEFAULT_POLL_INTERVAL_MILLIS: Long = 200L
+
+        /** R-943: `Setup-Verify.dc.html`'s own Input waveform card draws exactly 12 bars — matched
+         * here, not [RealLevelCheck.DEFAULT_BAR_COUNT] (15, S07's own board), so each screen's
+         * rolling window matches its own board precisely. */
+        public const val INPUT_BAR_COUNT: Int = 12
 
         /** A conservative floor: real speech from a squelch-open radio sits well above this;
          * ordinary line/circuit noise on an idle input does not. Not a spec-mandated figure —
@@ -205,5 +307,11 @@ public class RealRouteCheck(
 
         private const val READ_BUFFER_FRAMES: Int = 1_600
         private const val SHORT_FULL_SCALE: Double = 32_768.0
+
+        /** [peakDbfs]'s sentinel for "read nothing at all this frame" — the identical value and
+         * reasoning [RealLevelCheck]'s own `NOISE_FLOOR_SILENCE_DBFS` documents (deliberately far
+         * below the chart's own floor so a running-minimum noise floor is never poisoned to
+         * `-Infinity` by one silent read). */
+        private const val NOISE_FLOOR_SILENCE_DBFS: Double = -90.0
     }
 }

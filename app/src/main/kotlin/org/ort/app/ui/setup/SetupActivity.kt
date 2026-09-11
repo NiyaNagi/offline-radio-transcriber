@@ -30,6 +30,7 @@ import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.navigation.ReaderDestination
+import org.ort.app.ui.settings.SettingsPolling
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.capture.android.AndroidAudioIo
@@ -919,7 +920,13 @@ public class SetupActivity : ComponentActivity() {
                 )
             }
         RigTransportScreen(
-            state = RigTransportViewState(entry.displayName, options, selectedRigTransportKind),
+            // R-941 (register, reviewer A3 run 4a): the same manufacturer-prefix strip R-845
+            // (CF06) and R-903 (S11) already apply, reused rather than duplicated.
+            state = RigTransportViewState(
+                SettingsPolling.stripManufacturerPrefix(entry.displayName),
+                options,
+                selectedRigTransportKind,
+            ),
             onSelect = ::onSelectRigTransport,
             onConnect = ::onConnectRigTransport,
             onBack = ::onRigTransportBack,

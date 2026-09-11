@@ -127,6 +127,78 @@ device capture in the merge that preceded this round, not by this round's own cl
   hygiene check) — unaddressed, out of this round's scope.
 - No device re-capture was performed this round (emulator confirmation is V-series validators' own
   job); rows above are `fixed` on this report's own tests, not `closed`.
+## 2026-09-11 (WPD follow-up: S02c's trailing scroll padding, S09b's title prefix, S05's real facts/markers/waveform, S07's meter proven proportional — R-940, R-941, R-943, R-944)
+
+### (pending) — SetupScaffold trailing spacer, RouteCheck real facts (routedDeviceLabel/levelBars/noiseFloorDbfs), VerifyScreen checklist rewrite, LevelScreen bar-rect extraction
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{SetupScaffold,SetupActivity,RouteCheck,VerifyScreen,LevelScreen}.kt`,
+matching test files under `app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-CAP-2a, FR-CAP-3, FR-CAP-3a, AC-2, AC-97, AC-98.
+
+**What changed:**
+
+1. **R-940 (spec) — S02c at font scale 2.0 never reached the third bullet or the decline banner,
+   even at scroll end.** `SetupScaffold`'s scrollable body now carries a trailing `Spacer` equal to
+   the pinned bottom action block's own real, measured height (R-613's shape) — applied to every
+   setup screen, not only S02c, since the mechanism lives in the one shared scaffold. Not
+   reproduced under a plain Robolectric render at any scale tried (both nodes were already
+   reachable via `performScrollTo()` before this change), so the new regression test instead proves
+   the structural invariant the fix targets directly: once scrolled fully into view, the decline
+   banner's own bottom edge never sits at or below the fixed bar's own top edge.
+2. **R-941 — S09b's title read the descriptor's full display name verbatim** ("How is the Kenwood
+   TH-D75A linked?"). Now goes through `SettingsPolling.stripManufacturerPrefix`, the same helper
+   R-845 (CF06) and R-903 (S11) already reuse rather than duplicate.
+3. **R-943 (design) — S05 was missing the board's checklist markers, mono meta lines, elapsed
+   counter and Input waveform card (`Setup-Verify.dc.html` lines 40–91).** A not-yet-reached
+   check's own marker was a filled circle exactly the screen's background colour — invisible, not
+   the board's dim outline ring; now a real `border(1.5.dp, textLow, CircleShape)`. `RouteCheckState`
+   gained three real, never-invented facts — `routedDeviceLabel` (`null` until `ROUTE_MATCH`
+   genuinely passes), `levelBars` (the same real per-sample rolling window `RealLevelCheck`'s own
+   bars use, accumulated during the `SIGNAL` listen) and `noiseFloorDbfs` (a running minimum of the
+   same real peak readings, identical policy to `RealLevelCheck`'s own noise floor) — threaded from
+   `RealRouteCheck`'s real listen loop (the `publishedVerificationFor` short-circuit path correctly
+   reports an empty/`null` waveform, since it never runs a real listen of its own). `VerifyScreen`
+   now renders: the native-rate detail with grouped-thousands Hz formatting (`formatHzGrouped`,
+   "48 000 Hz"), the routed-device detail line (`"getRoutedDevice() → USB Audio Device"`), a live
+   `"0:11"`-style elapsed counter beside "Listening for signal" (only while genuinely still
+   listening, `formatElapsed`), and a new `InputWaveformCard` (the same proportional-bar drawing
+   `LevelScreen`'s own meter uses, via the newly-shared `levelBarRects`) with real "noise floor …
+   dBFS" / "signal heard" captions, the latter never claimed before `SIGNAL` has actually passed.
+4. **R-944 (design) — investigated, found already correct, and locked in with new tests.** S07's
+   meter (`LevelScreen.kt`) already drew a genuine proportional envelope from `RealLevelCheck`'s own
+   real per-sample rolling window (never alternating blocks), under the tinted target band, the red
+   clip line and the dashed noise-floor line — confirmed by reading `LevelCheck.kt`/`LevelScreen.kt`
+   and their own extensive prior register citations (R-120..R-125, R-225, R-465, R-542) line by
+   line against `Setup-Level.dc.html` before concluding this, per constitution I (never fabricate a
+   fix for something not actually broken). The bar-height/colour computation was pulled out of
+   `LevelMeter`'s `Canvas` draw scope into a new pure `levelBarRects` function (behaviour-preserving)
+   specifically so "proportional, never alternating" is now directly unit-testable rather than only
+   assertable at the geometry-constant level the pre-existing `R_465` tests already covered.
+
+**Verified:**
+- New tests: `BluetoothPermissionScreenTest`'s `R_940` (font scale 2.0, `@GraphicsMode(NATIVE)`,
+  never-overlapping bounds assertion); `SetupActivityTest`'s `R_941` (title text via a real
+  `AndroidComposeTestRule` launch); `RouteCheckTest`'s `R_943_*` (5: routed device label populated
+  once matched, honestly null before, real level bars/noise floor during a real listen, honestly
+  empty before any sample is read, the `InputStatus` short-circuit never fabricates a listen of its
+  own); `VerifyScreenTest`'s `R_943_*` (11: pending ring, grouped-thousands Hz, routed-device
+  detail present/absent, elapsed counter present-while-listening/gone-once-passed, waveform card
+  presence, honest noise-floor dash, signal-heard caption gated on the real stage, plus
+  `formatHzGrouped`/`formatElapsed` pure cases); `LevelScreenTest`'s `R_944_*` (3: proportional,
+  never-alternating bar heights; the tinted band's own 3-way colour banding; an empty history draws
+  nothing) — all green, and every pre-existing test in every touched file still passes.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green (two `LongMethod`/`CyclomaticComplexMethod` findings
+  from the new `RouteCheck`/`VerifyScreen` code closed by extracting `listenForSignal`/
+  `RouteCheckFacts`/`VerifyBottomActions`, no behaviour change).
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — 240 of 450, up to date.
+**Left open / not done:** R-940's own real-device clipping could not be reproduced in Robolectric
+under the configurations tried — the fix and its regression test are structural/defensive, per the
+same honest-reporting pattern this package's own R-866/R-902 entries already established.
 
 ---
 
@@ -30570,6 +30642,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

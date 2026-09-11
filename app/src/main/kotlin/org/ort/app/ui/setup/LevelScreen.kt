@@ -202,9 +202,10 @@ private fun LevelMeter(reading: LevelReading?, modifier: Modifier = Modifier) {
             // Clip line — 0 dBFS. Halt-coloured always (WP4's own rule: never amber, the one
             // thing on this chart that stays red even though the live status dot below is amber).
             // R-465: CHART_CEILING_DBFS is the scale's own top, so this always lands at fraction
-            // 1.0 — [yForReferenceLine] (not the unclamped [yForFraction] bars use) keeps its full
-            // stroke inside the canvas rather than exactly on row 0, bisected by/merged into this
-            // Box's own top border. See that function's own doc for the on-device evidence.
+            // 1.0 — [yForReferenceLine] (not the unclamped mapping [levelBarRects] uses for bars)
+            // keeps its full stroke inside the canvas rather than exactly on row 0, bisected by/
+            // merged into this Box's own top border. See that function's own doc for the on-device
+            // evidence.
             val clipY = yForReferenceLine(
                 levelBarFraction(LevelViewState.CHART_CEILING_DBFS.toDouble()),
                 lineClearPx,
@@ -229,35 +230,60 @@ private fun LevelMeter(reading: LevelReading?, modifier: Modifier = Modifier) {
             }
 
             val bars = reading?.bars.orEmpty()
-            if (bars.isNotEmpty()) {
-                val gapPx = 1.5.dp.toPx()
-                val barWidth = (size.width - gapPx * (bars.size - 1)) / bars.size
-                val bandTopFraction = levelBarFraction(LevelViewState.TARGET_BAND_TOP_DBFS.toDouble())
-                val bandBottomFraction = levelBarFraction(LevelViewState.TARGET_BAND_BOTTOM_DBFS.toDouble())
-                bars.forEachIndexed { index, fraction ->
-                    val clamped = fraction.coerceIn(0f, 1f)
-                    val x = index * (barWidth + gapPx)
-                    val barTopY = yForFraction(clamped)
-                    val color = when {
-                        clamped >= bandTopFraction -> OrtColors.accentGreen
-                        clamped >= bandBottomFraction -> OrtColors.chartGreenRamp[1]
-                        else -> OrtColors.meterWarn
-                    }
-                    drawRect(color = color, topLeft = Offset(x, barTopY), size = Size(barWidth, size.height - barTopY))
-                }
+            levelBarRects(bars, size.width, size.height, gapPx = 1.5.dp.toPx()).forEach { rect ->
+                drawRect(
+                    color = rect.color,
+                    topLeft = Offset(rect.x, rect.topY),
+                    size = Size(rect.width, size.height - rect.topY),
+                )
             }
         }
     }
 }
 
-/** `0f..1f` (floor..ceiling, [levelBarFraction]'s own direction) to a top-down canvas Y. Bars use
- * this directly — a bar's own rectangle is meant to reach the true edge, unclamped. */
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.yForFraction(fraction: Float): Float =
-    size.height * (1f - fraction.coerceIn(0f, 1f))
+/** One of [LevelMeter]'s bars, already positioned/coloured — [topY] is the top-down canvas Y
+ * [levelBarRects] computed from that bar's own real fraction, never a fixed/alternating value. */
+internal data class LevelBarRect(
+    val x: Float,
+    val width: Float,
+    val topY: Float,
+    val color: androidx.compose.ui.graphics.Color,
+)
 
 /**
- * R-465 (device-verified, `setup-level/S07-level.png`): [yForFraction] alone is correct for the
- * *scale*, but the clip line always sits at `CHART_CEILING_DBFS` — fraction `1.0`, i.e. exactly
+ * R-944 (register, reviewer A3 run 4a, design): pulled out of [LevelMeter]'s own `Canvas` draw
+ * scope so the property the finding names — a genuine proportional envelope from real samples,
+ * never a fixed/alternating pattern regardless of what was actually measured — is directly
+ * testable without a `DrawScope`/pixel comparison. Each [LevelBarRect.topY] is this bar's own real
+ * [LevelReading.bars] fraction mapped onto the canvas height (`0f..1f`, floor..ceiling, unclamped
+ * beyond `coerceIn` — a bar's own rectangle is meant to reach the true edge); the 3-way colour
+ * banding is the same real threshold comparison [LevelMeter] always drew, just relocated.
+ */
+internal fun levelBarRects(bars: List<Float>, widthPx: Float, heightPx: Float, gapPx: Float): List<LevelBarRect> {
+    if (bars.isEmpty()) return emptyList()
+    val barWidth = (widthPx - gapPx * (bars.size - 1)) / bars.size
+    val bandTopFraction = levelBarFraction(LevelViewState.TARGET_BAND_TOP_DBFS.toDouble())
+    val bandBottomFraction = levelBarFraction(LevelViewState.TARGET_BAND_BOTTOM_DBFS.toDouble())
+    return bars.mapIndexed { index, fraction ->
+        val clamped = fraction.coerceIn(0f, 1f)
+        val color = when {
+            clamped >= bandTopFraction -> OrtColors.accentGreen
+            clamped >= bandBottomFraction -> OrtColors.chartGreenRamp[1]
+            else -> OrtColors.meterWarn
+        }
+        LevelBarRect(
+            x = index * (barWidth + gapPx),
+            width = barWidth,
+            topY = heightPx * (1f - clamped),
+            color = color,
+        )
+    }
+}
+
+/**
+ * R-465 (device-verified, `setup-level/S07-level.png`): [levelBarRects]'s own unclamped mapping
+ * alone is correct for the *scale*, but the clip line always sits at `CHART_CEILING_DBFS` —
+ * fraction `1.0`, i.e. exactly
  * canvas row `0`, where it was device-confirmed genuinely invisible, not merely faint. The actual
  * inset math is [org.ort.app.ui.components.referenceLineY] — WP4 (register R-542) found the
  * byte-identical defect in its own `LevelMeterScreen.kt`, so this now calls the one shared copy

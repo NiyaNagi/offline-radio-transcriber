@@ -221,4 +221,84 @@ class RouteCheckTest {
             "must never attribute a different device's InputStatus to this one, got ${passed.resamplerDescription}",
         )
     }
+
+    // --- R-943 (register, reviewer A3 run 4a, design): the routed-device label and the Input ------
+    // --- waveform card's real per-sample level history/noise floor -- never invented ----------------
+
+    @Test
+    fun `R_943 the routed device label is real, populated once the route-match stage passes`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.forceRoutedDevice(usb)
+        io.enqueueFrames(loudFrame())
+
+        val states = RealRouteCheck(pollIntervalMillis = 10L).run(io, usb).toList()
+
+        val routeMatched = states.filterIsInstance<RouteCheckState.InProgress>()
+            .first { RouteCheckStage.ROUTE_MATCH in it.passed }
+        assertEquals("USB Audio Device", routeMatched.routedDeviceLabel)
+        val passed = states.last() as RouteCheckState.Passed
+        assertEquals("USB Audio Device", passed.routedDeviceLabel)
+    }
+
+    @Test
+    fun `R_943 before route-match the routed device label is honestly null, never guessed early`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.forceRoutedDevice(usb)
+        io.enqueueFrames(loudFrame())
+
+        val states = RealRouteCheck(pollIntervalMillis = 10L).run(io, usb).toList()
+
+        val beforeRouteMatch = states.filterIsInstance<RouteCheckState.InProgress>()
+            .first { RouteCheckStage.ROUTE_MATCH !in it.passed }
+        assertNull(beforeRouteMatch.routedDeviceLabel)
+    }
+
+    @Test
+    fun `R_943 the level bars and noise floor are real samples taken during the listen, never fabricated`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.forceRoutedDevice(usb)
+        io.enqueueFrames(loudFrame())
+
+        val states = RealRouteCheck(pollIntervalMillis = 10L).run(io, usb).toList()
+
+        val passed = states.last() as RouteCheckState.Passed
+        assertTrue(passed.levelBars.isNotEmpty(), "a real sample must have been captured")
+        assertTrue(passed.noiseFloorDbfs != null, "a running noise floor must exist once a sample was read")
+    }
+
+    @Test
+    fun `R_943 before any sample is ever read the level bars and noise floor are honestly empty`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.forceRoutedDevice(usb) // nothing enqueued -- every read returns nothing, so this times out
+
+        val states = RealRouteCheck(listenTimeoutMillis = 50L, pollIntervalMillis = 10L).run(io, usb).toList()
+
+        val everyInProgress = states.filterIsInstance<RouteCheckState.InProgress>()
+        assertTrue(everyInProgress.isNotEmpty())
+        assertTrue(
+            everyInProgress.all { it.levelBars.isEmpty() && it.noiseFloorDbfs == null },
+            "no real sample was ever read -- neither field may report anything, got $everyInProgress",
+        )
+    }
+
+    @Test
+    fun `R_943 the InputStatus short-circuit path never fabricates a listen of its own`() = runTest {
+        InputStatus.opened(
+            descriptor = usb,
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 a1b2c3d4e5f6)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        val io = FakeAudioIo(deviceSampleRate = 48_000)
+        io.forceRoutedDevice(usb)
+
+        val states = RealRouteCheck(listenTimeoutMillis = 1L, pollIntervalMillis = 1L).run(io, usb).toList()
+
+        val passed = states.last() as RouteCheckState.Passed
+        assertEquals("USB Audio Device", passed.routedDeviceLabel)
+        assertTrue(passed.levelBars.isEmpty(), "the short-circuit never ran a real listen of its own")
+        assertNull(passed.noiseFloorDbfs)
+    }
 }
