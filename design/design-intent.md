@@ -220,7 +220,7 @@ did about it, and carries the recovery action. None of these is a bare error.
 | F06 | `Fail-Storage.dc.html` | F6 storage exhausted | Warn early, stop audio before text, **never stop capture silently** | FR-STO-3 | drawn + built |
 | F07 | `Fail-Thermal.dc.html` | F7 thermal throttling | Tier degraded, surfaced, restores when cool | FR-TIER, P10 | drawn + built |
 | F08 | `Fail-Backlog.dc.html` | F8 backlog unbounded | Tier degraded, capture prioritised, items marked deferred | FR-RUN-10, P10 | drawn + built |
-| F09 | `Fail-Rig.dc.html` | F9 rig disconnected | Last-known frequency marked **stale**, capture continues | FR-RIG-9 | drawn + built |
+| F09 | `Fail-Rig.dc.html` | F9 rig disconnected | Last-known frequency marked **stale**, capture continues. *(Amended 2026-09-10)* the banner names the transport that dropped and carries the reconnect-ladder sentence ("Retry 3 of 8, next in 20 s") from the real backoff — omitted, never invented, when no ladder is running | FR-RIG-9, FR-RIG-15 | drawn + built — amended; re-judge at the next tour run |
 | F10 | `Fail-Cluster.dc.html` | F10 cluster mis-merge | Split, re-derive, mark corrected | FR-SPK-7 | drawn + built |
 | F11 | `Fail-Wrong.dc.html` | F11 confident but wrong | Lattice and candidates always shown; correction one tap | FR-UI-8, P2 | drawn + built |
 | F12 | `Fail-Lexicon.dc.html` | F12 lexicon import corrupt | Reject import, keep previous, report | FR-LEX-12 | drawn + built |
