@@ -3,6 +3,8 @@ package org.ort.app.debug
 import android.content.Context
 import org.ort.app.ui.data.ChecksumState
 import org.ort.app.ui.data.ModelCatalog
+import org.ort.app.ui.data.ModelCatalogEntry
+import org.ort.app.ui.data.ModelId
 import org.ort.capture.android.codec.DeflatePredictiveCodec
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.capture.android.heartbeat.HeartbeatRecord
@@ -267,17 +269,34 @@ internal object ScenarioFixtures {
      * exist for its own `INSTALLED_UNVERIFIED` status.
      */
     fun installEveryModelFixture(context: Context) {
+        ModelCatalog.entries.forEach { entry -> installModelFixture(context, entry) }
+    }
+
+    /**
+     * The single-entry body [installEveryModelFixture] loops over every catalog entry with — split
+     * out (R-865) so `tier0-llm-stored` can call it for exactly [ModelId.LLM_GEMMA3_1B] alone,
+     * leaving its other four entries to the real installer instead (see
+     * [Scenarios.tier0LlmStored]'s own doc comment for why: this build's own escape hatch (no
+     * `HF_TOKEN`) leaves the gated LLM genuinely absent from `bundled/manifest.json`, so it is the
+     * one entry the real installer can never mark `Installed` here regardless of any fix — a
+     * placeholder plus the *real*, pinned [ModelCatalog] checksum as the marker is real enough for
+     * that one entry's own purpose, the tier distinction, same as this function always did for
+     * every entry before R-865).
+     */
+    fun installModelFixture(context: Context, id: ModelId) {
+        installModelFixture(context, ModelCatalog.entry(id))
+    }
+
+    private fun installModelFixture(context: Context, entry: ModelCatalogEntry) {
         val filesDir = context.filesDir
-        ModelCatalog.entries.forEach { entry ->
-            val destination = entry.destination(filesDir)
-            destination.parentFile?.mkdirs()
-            destination.writeBytes(ByteArray(64))
-            val markerText = when (val state = entry.checksumState) {
-                is ChecksumState.Known -> state.checksum.value
-                is ChecksumState.UnknownSideloadOnly -> "sideloaded"
-            }
-            File(destination.parentFile, destination.name + ".sha256").writeText(markerText)
+        val destination = entry.destination(filesDir)
+        destination.parentFile?.mkdirs()
+        destination.writeBytes(ByteArray(64))
+        val markerText = when (val state = entry.checksumState) {
+            is ChecksumState.Known -> state.checksum.value
+            is ChecksumState.UnknownSideloadOnly -> "sideloaded"
         }
+        File(destination.parentFile, destination.name + ".sha256").writeText(markerText)
     }
 
     /** The other half of [installEveryModelFixture] — `model-missing`'s own contract ("keeps

@@ -2592,6 +2592,28 @@ public object Scenarios {
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        // R-860/R-861 (halt): this is a live USB session, exactly like `mode-usb`'s own — CF02/CF11
+        // read the process-wide `InputStatus`/`RigStatus` holders, never the session row directly, so
+        // leaving them at their default idle state (as this scenario did before this fix) rendered the
+        // *current* USB session as if nothing were open at all, only the pending Bluetooth change
+        // showing anything real.
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+            transportKind = RigModuleTransportKind.USB_SERIAL,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
         configStore.update(
             CaptureConfiguration(
                 mode = CaptureMode.BLUETOOTH_RADIO,
@@ -2723,19 +2745,23 @@ public object Scenarios {
      * genuinely reads `false` for it — stored, never loaded (AC-138's own distinction). `backlog`
      * stays `0`: this is a tier fact, not F8's backlog failure, which gates on the queue depth alone.
      *
-     * **Deliberately not [installRealBundledAssets]** (R-841/R-842): this build's own escape hatch
-     * leaves `LLM_GEMMA3_1B` genuinely absent from `bundled/manifest.json` (gated, no `HF_TOKEN`), so
-     * the real installer can never report it `Installed` here regardless of fix — there is no real,
-     * ~550 MB gated file for this fixture to install. [ScenarioFixtures.installEveryModelFixture] is
-     * the same established shortcut `overnight`/`stations-14-nights` already use for exactly this
-     * "render every row as installed regardless of what this dev machine happens to have fetched"
-     * need: a placeholder file plus the *real*, pinned [ModelCatalog] checksum as the marker, which
-     * is what [org.ort.app.ui.data.ModelsController.currentState] actually verifies against — real
-     * enough for this scenario's own purpose (the tier distinction), unlike `assets-bundled`/
-     * `asset-corrupt`, whose whole point is exercising the installer's real digest comparison.
+     * **R-865 (halt, coordinator spot-check): the four non-gated entries now install through the
+     * REAL [installRealBundledAssets]**, exactly like `assets-bundled` — this scenario's own earlier
+     * shape (every entry, Gemma included, via [ScenarioFixtures.installEveryModelFixture]'s fabricated
+     * placeholder-plus-real-checksum marker) made S12's Models row read every one of the four
+     * non-gated entries as "verified" without the real installer ever having run, an avoidable
+     * dishonesty this round closes. **Only [ModelId.LLM_GEMMA3_1B] still gets the placeholder**
+     * ([ScenarioFixtures.installModelFixture] for that one id alone): this build's own escape hatch
+     * (no `HF_TOKEN`) leaves it genuinely absent from `bundled/manifest.json`, so the real installer
+     * can never report it `Installed` here regardless of any fix — there is no real, ~550 MB gated
+     * file for this fixture to install, and a placeholder plus the *real*, pinned [ModelCatalog]
+     * checksum as the marker is real enough for that one entry's own purpose here (the tier
+     * distinction), unlike `assets-bundled`/`asset-corrupt`, whose whole point is exercising the
+     * installer's real digest comparison on entries a real build genuinely can fetch.
      */
     private fun tier0LlmStored(context: Context): LoadResult {
-        ScenarioFixtures.installEveryModelFixture(context)
+        installRealBundledAssets(context)
+        ScenarioFixtures.installModelFixture(context, ModelId.LLM_GEMMA3_1B)
         ShedStatus.update(level = 1, backlog = 0)
         return LoadResult(0, 0, null)
     }
