@@ -11,6 +11,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -19,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.After
@@ -43,6 +45,7 @@ import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * WP11b, register R-100/R-101: [FailureHost] end to end — a real process-wide signal set before
@@ -364,4 +367,113 @@ class FailureHostTest {
     // configuration rather than fix it). No test added here for the reason `AGENTS.md` names: a
     // half-fix is not shipped, and the real fix needs a line inside `CaptureStatusScreen.kt`
     // itself (WP4's row, outside even the one exception this package was granted).
+
+    /**
+     * Register R-883 (halt, validator V11, font scale 2.0): on the real device the banner's own
+     * measured bottom and the destination content's own top were pixel-for-pixel equal
+     * (`uiautomator`'s own dump had both at `y=1262`) — an exact touch, not a real overlap, but
+     * V11's own screenshot read the zero gap as the banner's last (cut-off) line bleeding into the
+     * "Tonight" heading below it. `R_178` above already proves the `>=` case (content never
+     * strictly above the banner); this proves the *stronger* claim R-883 actually needs — a real,
+     * non-zero gap always separates them, whatever the banner's own height ends up being.
+     */
+    @Test
+    @Requirement("R-883")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_883 the destination content clears the banner by a real gap, not just an exact touch`() {
+        RigStatus.stale(
+            lastKnown = RigStatus.State.Connected("TH-D75A", emptyList()),
+            sinceMillis = 0L,
+        )
+
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    FailureHost(sessionId = null) { contentTopPadding ->
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Box(modifier = Modifier.fillMaxWidth().height(44.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(top = contentTopPadding)
+                                    .testTag("test-content-below-banner"),
+                            ) {
+                                Text("Tonight")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        composeTestRule.mainClock.advanceTimeByFrame()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("failure-rig-banner").assertIsDisplayed()
+
+        val bannerBottom = composeTestRule.onNodeWithTag("failure-banner-overlay").getUnclippedBoundsInRoot().bottom
+        val contentTop = composeTestRule.onNodeWithTag("test-content-below-banner").getUnclippedBoundsInRoot().top
+        // A floor, not FailureHost.kt's own exact private BANNER_CONTENT_CLEARANCE value (`xl` =
+        // 30.dp today) — not importable across this file boundary anyway (Kotlin top-level
+        // `private` is file-scoped, the way `R_300`'s own test already treats
+        // `BANNER_MAX_HEIGHT_FRACTION` as an implementation detail, not an imported symbol) — this
+        // only needs to prove a *real, meaningful* gap exists, not pin the exact tuned value. On
+        // the real device this floor also has to clear a structural offset this test's own tiny
+        // 44dp header stand-in does not reproduce (`ScreenHeader`'s real height vs. the banner's
+        // own internal header clearance) — tuned against the device, not this test alone; see
+        // `BANNER_CONTENT_CLEARANCE`'s own kdoc.
+        val expectedClearance = 8.dp
+        assertTrue(
+            "content top ($contentTop) must clear the banner's own bottom ($bannerBottom) by a " +
+                "real gap of at least $expectedClearance — register R-883, V11's own screenshot " +
+                "found them touching exactly, which read as the banner's own last line bleeding " +
+                "into the heading below",
+            contentTop >= bannerBottom + expectedClearance,
+        )
+    }
+
+    /**
+     * Register R-883 (halt, validator V11, font scale 2.0): the banner was already reachable by a
+     * real scroll on the device (confirmed directly: swiping it reveals both F9 actions past the
+     * fold) — V11's own complaint was that nothing on screen ever said so ("no scroll affordance
+     * reaches it"). This proves the hint shows exactly while more is hidden and clears the moment
+     * a real max-scroll reaches the banner's own end, never lingering once nothing more is cut off.
+     */
+    @Test
+    @Requirement("R-883")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_883 a scroll hint shows while F9's own message is cut off, and clears once fully scrolled`() {
+        RigStatus.stale(
+            lastKnown = RigStatus.State.Connected("TH-D75A", emptyList()),
+            sinceMillis = 0L,
+        )
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    FailureHost(sessionId = null) {
+                        Text("underlying destination", modifier = Modifier.fillMaxSize())
+                    }
+                }
+            }
+        }
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("failure-rig-banner").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithTag("failure-banner-scroll-hint").assertIsDisplayed()
+
+        // Default (auto-advancing) clock here, unlike `R_300`/the other `R_883` test above: a real
+        // `ScrollBy` dispatches through the scrollable's own fling/animation machinery, which needs
+        // real frames to settle — `R_613`'s own established technique runs with the same default.
+        composeTestRule.onNodeWithTag("failure-banner-scroll-content")
+            .performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
+        composeTestRule.waitForIdle()
+
+        assertTrue(
+            "expected the scroll hint to clear once a real max-scroll reaches the banner's own " +
+                "end — nothing is left cut off for it to point at",
+            composeTestRule.onAllNodesWithTag("failure-banner-scroll-hint").fetchSemanticsNodes().isEmpty(),
+        )
+    }
 }

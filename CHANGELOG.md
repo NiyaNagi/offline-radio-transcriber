@@ -34,7 +34,70 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (register R-885: every Migration now overrides migrate(SQLiteConnection), the path a real device actually opens through)
 
-### (pending) — Migration.migrate(SupportSQLiteDatabase) alone crashed a real BundledSQLiteDriver open; every Migration now overrides both signatures
+### (pending) — R-883: the failure banner overlay now leaves real daylight below itself and shows a scroll hint while its message is cut off
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureHost.kt`,
+`app/src/test/kotlin/org/ort/app/ui/failures/FailureHostTest.kt`, `results/ui-audit/register.md`.
+
+**Requirements/ACs:** R-883 (halt, validator V11, font scale 2.0).
+
+**What changed:** *Constitution check.* VIII (visual conformance is evidence-backed — closed only on
+device re-capture, held to here: the register row is marked `fixed`, not `closed`, pending the
+validator's own re-pass). II (test-first: both new tests are shown to fail for the reported reason
+before the fix and pass after — see Verified). V11 found the fixed-height failure banner overlay
+(`FailureHost.kt`'s `BannerOverlay`) reading as if its last wrapped line bled into the destination's
+own "Tonight" heading at font scale 2.0, with F9's own message never fully readable and no visible
+way to reach the rest of it. Investigation (an `onGloballyPositioned` probe placed on both the
+banner and the destination content, on a real device, hash-verified against the installed APK to
+rule out a shared-emulator install race) found the banner's own cap/offset math (`R-178`/`R-300`,
+already shipped) was genuinely correct — `contentTopPadding` already equalled the banner's real
+measured height — but that measurement is deliberately taken *excluding* `HEADER_HEIGHT` (R-178's
+own documented shape), while the real device's own `ScreenHeader` height and the banner's own
+internal `HEADER_HEIGHT + failureScreenInset()` clearance do not exactly cancel, leaving roughly
+20dp of real slack. A banner tall enough to hit `BANNER_MAX_HEIGHT_FRACTION`'s own cap consumed
+exactly that slack, so the destination's own heading landed flush against the banner's last
+(cut-off) line with zero visible gap — not a real paint-order overlap, but visually indistinguishable
+from one, and the cut line itself is what made the message unreadable. Fixed two ways: (1)
+`onHeightMeasured` now reports its measured height plus a new `BANNER_CONTENT_CLEARANCE`
+(`OrtSpacing.xl`, 30dp — comfortably clears the ~20dp slack measured on the reference device, with
+margin for other devices), so `contentTopPadding` downstream always leaves real daylight, never just
+an exact touch; (2) `verticalScroll` moved one level in (off the measured/capped box itself,
+onto a new inner `Box` tagged `failure-banner-scroll-content`) so a sibling down-chevron hint
+(`failure-banner-scroll-hint`, `OrtIcons.chevron` rotated to point down, content-description "More
+of this message below — scroll to read the rest.") can sit `Alignment.BottomCenter` in the same
+capped rectangle, shown only while `ScrollState.canScrollForward` is true and clearing once a real
+scroll reaches the banner's own end — addressing "no scroll affordance reaches it" directly (the
+banner was already reachable by a real swipe, confirmed directly on device; nothing on screen ever
+said so).
+
+**Verified:**
+- `FailureHostTest.R_883 the destination content clears the banner by a real gap, not just an exact touch`
+  (new, `@GraphicsMode(NATIVE)`, font scale 2.0): asserts `contentTop >= bannerBottom + 8.dp` (a
+  floor, not the tuned 30dp value) — shown to fail (`content top (232.0.dp) must clear the banner's
+  own bottom (232.0.dp) ...`, i.e. an exact touch) with the clearance addition reverted, and pass
+  restored.
+- `FailureHostTest.R_883 a scroll hint shows while F9's own message is cut off, and clears once fully scrolled`
+  (new, `@GraphicsMode(NATIVE)`): asserts the hint is displayed at rest and gone after a real
+  `ScrollBy` max-scroll (the `R-613`/`R-262` technique) — shown to fail (hint never displayed) with
+  the hint block disabled, and pass restored.
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest --tests "org.ort.app.ui.failures.FailureHostTest"`
+  — 10 tests, all green (the file's existing R-100/R-101/R-147/R-164/R-178/R-300/F9_rig/FR_CAP_5
+  cases hold unchanged).
+- Real device: built, installed on `emulator-5556` (`ort_audit_2`) with the installed APK's SHA-256
+  verified against the built artifact before each capture (the shared-emulator install race that
+  produced several misleading earlier readings this round is recorded in this package's own report),
+  `rig-bt-lost` scenario at `font_scale 2.0` — screenshot shows a real, visible gap between the
+  banner and "Tonight", the amber card's border no longer touching the heading below; `font_scale`
+  restored to 1.0 afterward.
+
+**Left open / not done:** F23 (`FailBluetoothAudioDroppedBanner`) shares the identical
+`BannerOverlay`/`Banner` mechanism this fix changes and is expected to inherit the same behaviour,
+but was not separately re-captured on device this round — the register row says so; a re-pass
+should confirm it directly. Register row moved to `fixed`, not `closed` (constitution VIII) — closes
+only on the validator's own device re-capture. The exact ~20dp structural slack this fix clears is a
+property of the reference device's own header/inset measurements; `OrtSpacing.xl` (30dp) was chosen
+with headroom over the measured value rather than pinned to it, but was not verified against every
+device this app targets.
 
 **Scope:** `data/src/main/kotlin/org/ort/data/OrtDatabase.kt`, `data/src/test/kotlin/org/ort/data/MigrationTest.kt`.
 
