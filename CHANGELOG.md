@@ -142,6 +142,70 @@ this round — its own message already fit within the old 40% cap (run 5 closed 
 grew, never shrank, so it is not expected to regress, but this was not directly confirmed on device.
 `emulator-5556` itself was never confirmed working again before this round's commit — a re-check
 there (or on whichever port the next validator pass uses) would still be worthwhile hygiene.
+## 2026-09-11 (WPD reviewer A4 run 6: R-882 reopened — the real 390dp/420dpi collapse root-caused and fixed; R-981 signal-heard caption)
+
+### <pending> — setup modes: R-882 reopened - Radio row stacks status below label+value past 2.0 scale when an action is also present; R-981 - the waveform card's signal-heard caption always renders
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/ReadyScreen.kt`,
+`app/src/main/kotlin/org/ort/app/ui/setup/VerifyScreen.kt`, matching test files
+(`ReadyScreenTest.kt`, `VerifyScreenTest.kt`). Merged local `main` fast-forward to `917f4a1e`
+first (brought in reviewer E1's run-6 register entries and the `S12-ready-bt` tour evidence; no
+conflict with this round's files).
+
+**Requirements/ACs:** R-882 (register, reopened by reviewer A4 run 6, halt — the R-882 fix from
+this program's own prior round genuinely fixed the reported string but not the underlying
+layout defect, which a wider real-device width happened not to expose), R-981 (register, design).
+
+**What changed:** *Constitution check.* I (the caption reads the real
+`RouteCheckStage.SIGNAL in passed` fact either way, never a decorative constant; the doc comment
+below states plainly what was measured, not a guess). II (root-caused with a real semantics-tree
+dump against the exact reported width/density before writing any fix, then a genuine
+revert-and-confirm-failure on the actual committed test, not merely a passing assertion). VIII
+(the stacked layout is the narrowest fix that resolves the one row shape that breaks, not a
+blanket restructure risking every other row's already-correct rendering).
+
+1. **R-882 root cause, found not guessed:** reproduced with
+   `@Config(qualifiers = "w390dp-h844dp-420dpi")` at font scale 2.0 (the tour AVD's own real width
+   and density — 1080px / 2.769 px-per-dp ≈ 390dp, per the coordinator's own arithmetic) against
+   the exact real `readyRowsFor` output for `rig-bt-connected`, then a full semantics-tree dump.
+   This was never the Compose-weight bug the original R-882 fix (rightly) targeted —
+   `wrapContentWidth(unbounded = true)` measured every element's own true width correctly. The
+   real defect: Radio is the one row with four genuinely unshrinkable demands on one line at once
+   (the label's 96dp floor, the value, `verified`, and — external to this row's own facts column,
+   but sharing its budget — `Change`'s own real width); at 390dp and 2.0x scale those four do not
+   fit, so `ReadyRow.value`'s fair, correctly-computed share came out to a few pixels, wrapping at
+   *characters* for lack of a *word's* worth of room. Every other row has at most three such
+   demands and fits (`Input`/`Level`: statusText, no action; `Mode`/`Overnight`: action, no
+   statusText) — confirmed by the same dump.
+2. **`ReadyFactColumns`** — past `LARGE_FONT_SCALE_THRESHOLD` (1.5, the identical figure and
+   reasoning `LevelScreen.kt`'s own `LevelFooterFacts` already established for an analogous
+   three-facts-do-not-fit-one-line case, register R-225), **and only when both
+   `ReadyRow.statusText` and `ReadyRow.actionLabel` are real** — the one shape that actually
+   starves — `statusText` now renders on its own second line below label+value, still fully
+   inside `ReadySetupRow`'s own `clearAndSetSemantics` boundary (R-361/R-342's "one fact node"
+   announcement unaffected), leaving `ReadyRow.value` the entire first line's own remaining width.
+   Every other row shape (three demands or fewer, or normal font scale) renders exactly as before.
+3. **`InputWaveformCard`** (`VerifyScreen.kt`, S05) — the board's right-hand caption
+   (`Setup-Verify.dc.html` lines 87–90, one `space-between` row with the left-hand noise floor) was
+   rendered only once `signalHeard` was true, leaving nothing at all on that side while still
+   listening (`results/ui-audit/setup-verified/S05-verify.png`). It now always names the real
+   route-check fact: "signal heard" (green) once `RouteCheckStage.SIGNAL` has genuinely passed, an
+   honest "not yet" (dim, never invented, never blank) while it has not.
+
+**Verified:** `:app:testDebugUnitTest --tests ReadyScreenTest --tests ReadyRowsForTest --tests
+VerifyScreenTest` — all green, including the new `R_882 the real rig-bt-connected Radio row wraps
+at words, not characters, at 390dp 420dpi` test (built from the real `readyRowsFor` output, not a
+hand-built row, at the exact reported width/density) and `R_981 the waveform card names the
+real not-yet-heard fact, never rendering blank`. The R-882 fix was temporarily disabled
+(`stackStatusBelow` forced `false`) and the exact same test was confirmed to fail identically to
+the original report — a genuine discrimination, not a vacuous assertion — before being restored.
+Full app test suite (`:app:testDebugUnitTest`) and smoke suite (`:app:smokeTestDebugUnitTest`)
+both green. `./gradlew build dependencyRules platformGuards` green (one ktlint multiline-argument
+formatting violation from the new test was fixed via `ktlintFormat`).
+`python tools/spec-check/spec_check.py` — all 8 checks pass. `coverageMatrix`/
+`coverageMatrixCheck` — 241 of 450 covered, unchanged, no drift.
+
+**Left open:** none for these two register lines.
 
 ---
 
@@ -32008,6 +32072,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

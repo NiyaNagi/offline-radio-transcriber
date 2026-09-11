@@ -6,6 +6,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeightIn
@@ -19,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -225,37 +227,99 @@ internal fun readyRowFactsDescription(row: ReadyRow): String =
  * never over- or under-report their own true width, the value reliably receives whatever real
  * space is left, wrapping at word boundaries the normal way `Text` already does once given a real
  * width to wrap within, rather than collapsing to nothing and falling back to one letter per line.
+ *
+ * R-882 reopened (register, reviewer A4 run 6, halt): the fix above still left the Radio row
+ * broken at the tour AVD's real width (390dp, 420dpi) — reproduced with
+ * `@Config(qualifiers = "w390dp-h844dp-420dpi")`, and *isolated to a single, unaccompanied Radio
+ * row* (`ReadyScreenTest`'s own debug dump proved this is not a multi-row interaction). Root cause
+ * (found by measuring the real dump, not guessing): this was never a Compose weight bug at all —
+ * `wrapContentWidth`'s protection worked exactly as designed, every element correctly reported its
+ * own true natural width, and *that is exactly the problem*. Radio is the one row whose facts line
+ * genuinely has four real, unshrinkable demands at once — the label's 96dp floor, [ReadyRow.value],
+ * [ReadyRow.statusText] ("verified"), and — external to this composable, but sharing the same
+ * facts-row budget once [ReadyRow.actionLabel] is real too — `Change`'s own real width. At 390dp
+ * and 2.0x font scale those four genuinely do not fit on one line; Compose divided the row's real,
+ * correctly-measured space fairly, and [ReadyRow.value]'s fair share came out to a few pixels,
+ * wrapping at *characters* because there was no *word's* worth of width to wrap into. [Input]/
+ * [Level] (statusText but no actionLabel) and [Mode]/[Overnight] (actionLabel but no statusText)
+ * each have only three demands, and fit; Radio, alone among these rows, has all four
+ * ([radioRow]'s own R-285 doc comment already names Radio as the one row where status and action
+ * coexist). The fix is the same one [LevelScreen.kt]'s own `LevelFooterFacts` already established
+ * for an analogous "three facts do not fit one line at 2.0" case (register R-225): past
+ * [LARGE_FONT_SCALE_THRESHOLD], **and only when both [ReadyRow.statusText] and
+ * [ReadyRow.actionLabel] are real** (the one shape that actually starves), [statusText] moves to
+ * its own second line below label+value — still fully inside this composable's own subtree, so
+ * [ReadySetupRow]'s outer `clearAndSetSemantics` still announces it as part of the same one fact
+ * node (R-361/R-342 unaffected) — leaving [ReadyRow.value] the *entire* first line's remaining
+ * width (label's floor and the marker only), the same generous share [Mode]'s own four-line-wrapped
+ * value already proves is plenty. Every other row shape (three demands or fewer, or normal font
+ * scale) renders exactly as before — this is deliberately the narrowest fix that resolves the one
+ * combination that actually breaks, not a blanket restructure of every row.
  */
 @Composable
 private fun ReadyFactColumns(row: ReadyRow, modifier: Modifier = Modifier) {
-    Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = row.label,
-            style = OrtType.control,
-            color = OrtColors.textDim,
-            modifier = Modifier
-                .wrapContentWidth(unbounded = true)
-                .widthIn(min = 96.dp)
-                .testTag("setup-ready-row-${row.label.lowercase()}-label"),
-        )
-        Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+    val stackStatusBelow = LocalDensity.current.fontScale >= LARGE_FONT_SCALE_THRESHOLD &&
+        row.statusText != null &&
+        row.actionLabel != null
+    if (stackStatusBelow) {
+        Column(modifier = modifier) {
+            Row(verticalAlignment = Alignment.CenterVertically) { ReadyLabelValueRow(row) }
             Text(
-                text = row.value,
-                style = OrtType.control,
-                color = OrtColors.textHigh,
-                modifier = Modifier.testTag("setup-ready-row-${row.label.lowercase()}-value"),
-            )
-        }
-        row.statusText?.let { statusText ->
-            Text(
-                text = statusText,
+                text = requireNotNull(row.statusText),
                 style = OrtType.signal,
                 color = OrtColors.accentGreenDim,
-                modifier = Modifier.wrapContentWidth(unbounded = true).padding(start = 8.dp),
+                modifier = Modifier.padding(start = LABEL_MIN_WIDTH_DP + 12.dp, top = 2.dp),
             )
+        }
+    } else {
+        Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
+            ReadyLabelValueRow(row)
+            row.statusText?.let { statusText ->
+                Text(
+                    text = statusText,
+                    style = OrtType.signal,
+                    color = OrtColors.accentGreenDim,
+                    modifier = Modifier.wrapContentWidth(unbounded = true).padding(start = 8.dp),
+                )
+            }
         }
     }
 }
+
+/** The label + value pair every [ReadyFactColumns] shape shares, factored out so the stacked
+ * (R-882 reopened) and single-line branches never risk drifting apart on this half. Must be called
+ * from inside a `RowScope` — both callers are. */
+@Composable
+private fun RowScope.ReadyLabelValueRow(row: ReadyRow) {
+    Text(
+        text = row.label,
+        style = OrtType.control,
+        color = OrtColors.textDim,
+        modifier = Modifier
+            .wrapContentWidth(unbounded = true)
+            .widthIn(min = LABEL_MIN_WIDTH_DP)
+            .testTag("setup-ready-row-${row.label.lowercase()}-label"),
+    )
+    Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
+        Text(
+            text = row.value,
+            style = OrtType.control,
+            color = OrtColors.textHigh,
+            modifier = Modifier.testTag("setup-ready-row-${row.label.lowercase()}-value"),
+        )
+    }
+}
+
+/** R-226's own floor, named once so [ReadyFactColumns]' stacked branch can align the second line
+ * under the value column rather than the label. */
+private val LABEL_MIN_WIDTH_DP = 96.dp
+
+/** [LevelScreen.kt]'s own `LevelFooterFacts` established this exact figure for the same reason
+ * (register R-225): the smallest font scale a real row here is known not to fit every element on
+ * one line at, confirmed by this register line's own on-device/tour evidence — not a spec-mandated
+ * number. Duplicated rather than shared because that one is `private` to its own file and the two
+ * screens' rows are otherwise unrelated. */
+private const val LARGE_FONT_SCALE_THRESHOLD = 1.5f
 
 @Composable
 private fun AmberHalfMarker() {
