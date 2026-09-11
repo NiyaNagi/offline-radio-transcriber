@@ -60,9 +60,11 @@ public data class SettingsCaptureToggleActions(
 /**
  * CF02 (`Settings-Capture.dc.html`, amended 2026-09-10): [mode]/[modeLabel]/[modeSubLine] back the
  * new leading Capture-mode row (FR-CAP-12) — real from
- * [org.ort.app.ui.data.CaptureModeFacts.currentMode], which always has a value
- * ([org.ort.pipeline.rig.CaptureConfiguration.DEFAULT] on a fresh install — a stated default, never
- * an absent fact, constitution I).
+ * [org.ort.app.ui.data.CaptureModeFacts.currentMode]. Register R-821 (halt): [mode] is `null`, and
+ * [modeLabel]/[modeSubLine] read "Not set"/"pick a mode to start capturing"
+ * ([org.ort.app.ui.settings.SettingsPolling.NOT_SET_MODE_LABEL]/`NOT_SET_MODE_SUB_LINE`), exactly
+ * when the operator has never chosen a mode at all — never [CaptureMode.LOCAL_MICROPHONE]'s own
+ * label, which used to render here as a fabricated fact (constitution I) before setup had run.
  */
 public data class SettingsCaptureViewState(
     val inputLabel: String,
@@ -73,8 +75,8 @@ public data class SettingsCaptureViewState(
     val noiseReductionEnabled: Boolean,
     val bandPassEnabled: Boolean,
     val manualFrequencyMhz: String?,
-    val mode: CaptureMode = CaptureMode.LOCAL_MICROPHONE,
-    val modeLabel: String = CaptureMode.LOCAL_MICROPHONE.operatorLabel,
+    val mode: CaptureMode? = null,
+    val modeLabel: String = "Not set",
     val modeSubLine: String = "",
 )
 
@@ -100,23 +102,61 @@ public data class SettingsModeViewState(
     val rigLink: SettingsModeSetRowViewState,
 )
 
+/** [overCountLabel] (register R-835): real per-band over counts need the same band-at-start
+ * attribution `org.ort.pipeline.rig.RigSupervisor.bandAtTransmissionStart` computes at record
+ * time — re-deriving it here from a band's *current* frequency would silently mis-count a band
+ * retuned mid-session, and no `:data`/`:pipeline` accessor exposes the real, already-attributed
+ * count (`:data` is outside this package's ownership to add one to) — so this is always the
+ * honest "not reported by this rig module" fallback today, never a fabricated or fragile guess
+ * (constitution I). Flagged in this round's own report as the real gap: a `:pipeline`-side
+ * `RigStatus.State.Connected.bandOverCounts`, or a `:data` DAO query, would resolve it properly. */
 public data class SettingsRigBandViewState(
     val label: String,
     val frequencyLabel: String,
     val statusLabel: String,
     val squelchOpen: Boolean,
+    val overCountLabel: String = NOT_REPORTED_BY_RIG_MODULE,
 )
+
+/** CF06's "Auto-information" row (`Settings-Rig.dc.html`'s `AI 1` row) — shown only when the
+ * connected/stale descriptor's own bundled JSON declares an `unsolicited` push block at all (a
+ * structural fact about that rig module, not a live runtime flag this build has no reader for —
+ * see [SettingsRigViewState.autoInformation]'s own doc comment for why an unmatched/imported
+ * descriptor omits this row rather than guessing). */
+public data class SettingsRigAutoInformationViewState(val label: String, val subLine: String)
 
 /** `Settings-Rig.dc.html` (amended 2026-09-10, FR-RIG-14/15). [connected] is `false` for both
  * `Absent` and `Stale` — [staleSinceLabel] distinguishes them (`null` when [connected] is `true` or
  * the rig has never connected at all).
  *
- * [transportLabel] is real from `RigStatus.State.Connected.transportKind` (WPC2, merged `e464820`).
- * [linkAddressLabel] is real from `CaptureConfigurationStore.current().rigParams`
+ * [descriptorLabel] (register R-845): the connected/stale descriptor's own display name with its
+ * leading manufacturer word(s) dropped — "Kenwood TH-D75A" (`rig/src/main/resources/descriptors/
+ * kenwood-thd75a.json`'s own `displayName`, unchanged since `RigStatus.State.Connected.descriptor`)
+ * becomes "TH-D75A" here, never a second, separately-maintained title string. [transportLabel] is
+ * real from `RigStatus.State.Connected.transportKind` (WPC2, merged `e464820`). [linkAddressLabel]
+ * is real from `CaptureConfigurationStore.current().rigParams`
  * (`DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS`/`USB_VENDOR_ID`+`USB_PRODUCT_ID`) when
  * that session's own params carry one — `null` when they do not (an imported/generic descriptor
  * with no such param, or nothing connected yet), rendered honestly rather than guessed
- * (constitution I). */
+ * (constitution I).
+ *
+ * Register R-835 additions, all real from the matched bundled [org.ort.rig.descriptor.RigDescriptor]
+ * (by `RigStatus.State.Connected.descriptorId`/`Stale.lastKnown.descriptorId`) where one exists, and
+ * [NOT_REPORTED_BY_RIG_MODULE] otherwise — never board-literal placeholder data
+ * (`kenwood-thd75a.json` itself leaves USB `vid`/`pid` `null`, "still to verify" — this screen does
+ * not invent the board's own mockup `vid 0x0451 pid 0x16a8` where the real descriptor has none):
+ * [rigModuleLabel] (`<descriptor id> · built in · verified command set <caps>`, real
+ * [org.ort.rig.RigCapability] names for the transport in use — not the board's own raw CAT
+ * mnemonics, which no accessible source in this build carries); [otherTransportLabel] (the
+ * descriptor's *other* declared transport, named plainly, with real vid/pid appended only when the
+ * descriptor itself states them); [autoInformation] (`null` when the matched descriptor declares no
+ * `unsolicited` push block at all — a structural absence, not an unreported fact); [batteryLabel]
+ * (no real battery reader exists anywhere in `:pipeline` today — always the honest fallback);
+ * [pollingClause] (`"reading both bands unpolled"` when the descriptor declares `unsolicited`, sent
+ * on every connect per that field's own contract; `"polled every N s"` from the descriptor's own
+ * real `poll.intervalMs` when it declares only that; the fallback when a descriptor is matched but
+ * states neither, or none is matched at all).
+ */
 public data class SettingsRigViewState(
     val descriptorLabel: String,
     val connected: Boolean,
@@ -124,7 +164,17 @@ public data class SettingsRigViewState(
     val bands: List<SettingsRigBandViewState>,
     val transportLabel: String? = null,
     val linkAddressLabel: String? = null,
+    val rigModuleLabel: String = NOT_REPORTED_BY_RIG_MODULE,
+    val otherTransportLabel: String? = null,
+    val autoInformation: SettingsRigAutoInformationViewState? = null,
+    val batteryLabel: String = NOT_REPORTED_BY_RIG_MODULE,
+    val pollingClause: String = NOT_REPORTED_BY_RIG_MODULE,
 )
+
+/** R-835: the one honest fallback string every CF06 fact this build genuinely cannot supply reads
+ * — never a different wording per row, so an operator (or a test) recognises "unreported" as one
+ * consistent shape rather than several accidentally-different ones. */
+public const val NOT_REPORTED_BY_RIG_MODULE: String = "not reported by this rig module"
 
 public data class SettingsTierViewState(
     val currentTierLabel: String,

@@ -130,6 +130,14 @@ private val SessionsPageSaver: Saver<SessionsPage, String> = Saver(
  * the same as reaching that detail any other way — a host that needs "back to `Settings-Storage`"
  * instead wraps this composable with its own header/back at the call site, not something this
  * package's own internal navigation state can express.
+ *
+ * [openDigest] (round, register R-840, WPE's own navigation seam — the tour had no way to reach
+ * this package's `Digest` (DG01/DG05) at all, only ever the `Session` (DG04) detail above): `true`
+ * seeds [page] on `SessionsPage.Digest(it)` instead of `SessionsPage.Detail(it)` when
+ * [initialSessionId] is also set — the exact same destination that detail's own `Digest` button
+ * (`onOpenDigest` below) opens by a real tap. `false` (the default, every existing caller) changes
+ * nothing. Ignored when [initialSessionId] is `null`, the same "only meaningful alongside its own
+ * id" relationship this package's `Log`'s seeded time window already has to its own session id.
  */
 @Composable
 public fun SessionsContent(
@@ -138,9 +146,14 @@ public fun SessionsContent(
     modifier: Modifier = Modifier,
     onOpenTransmission: (String) -> Unit = {},
     initialSessionId: String? = null,
+    openDigest: Boolean = false,
 ) {
     var page by rememberSaveable(stateSaver = SessionsPageSaver) {
-        mutableStateOf(initialSessionId?.let { SessionsPage.Detail(it) } ?: SessionsPage.List)
+        mutableStateOf(
+            initialSessionId?.let { id ->
+                if (openDigest) SessionsPage.Digest(id) else SessionsPage.Detail(id)
+            } ?: SessionsPage.List,
+        )
     }
     var list by remember { mutableStateOf<SessionsViewState?>(null) }
     LaunchedEffect(page) { if (page is SessionsPage.List) list = DigestPolling.sessions(context) }
