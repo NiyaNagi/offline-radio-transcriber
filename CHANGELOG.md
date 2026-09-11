@@ -32,6 +32,97 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPI follow-up: first-tour-run fixes — real bundled-asset install, BLUETOOTH_CONNECT reachability, CaptureConfigurationStore/station/ladder seeding, WPD's RigLinkPort seam)
+
+### 74adf1c — WPI follow-up · reviewer findings from the first tour run, fixed and re-captured
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `tools/ui-audit/{install.ps1,scenario.ps1,tour.json}`, `results/ui-audit/README.md`, `results/coverage-matrix.md` (regenerated), `results/ui-audit/**` (re-captured PNGs + manifest).
+**Requirements/ACs:** R-810, R-811, R-817, R-820, R-821, R-822, R-823, R-827, R-830, R-832, R-841, R-842, R-843; FR-CAP-3a/8/9/10/11/12/13, FR-RIG-13/14/15, FR-AST-3/3a/3b, D33, D34, AC-128/129/130/131/137/138.
+**What changed:**
+1. **R-841/R-842/R-843 (halt) — the real bug behind "not installed · 3 of 3 parts missing" on
+   CF04/S12.** `assets-bundled`/`asset-corrupt` now drive `BundledAssetInstaller` through the REAL
+   `org.ort.app.assets.AndroidBundledAssetSource` (the exact source `OrtApplication.onCreate()`
+   itself installs from) instead of a `FakeBundledAssetSource` with hand-computed sha256 values —
+   `ModelsController.currentState` verifies a marker against `ModelCatalog`'s hardcoded, generated
+   production checksum, which a fabricated-manifest marker could never satisfy regardless of how
+   real the installer call itself was. `asset-corrupt` uses a new `Scenarios.CorruptingBundledAssetSource`
+   wrapper that flips one byte for exactly one entry while every other asset — manifest.json
+   included — reads through the real source untouched, so the digest failure is genuine, not
+   fabricated. `tier0-llm-stored` uses `ScenarioFixtures.installEveryModelFixture` instead (the LLM
+   is genuinely absent from this escape-hatch build's own manifest — no real bytes exist to install
+   for real). `WpiScenariosTest.kt`'s three asset tests now assert `ModelsController.currentState`
+   directly, per the coordinator's instruction, not a file on disk.
+2. **R-810/R-811/R-820/R-830 — S09b/S10b/S11/S04's Bluetooth lane rendered S02c instead.**
+   `install.ps1` now also grants `BLUETOOTH_CONNECT` (API 31+) alongside `RECORD_AUDIO`/
+   `POST_NOTIFICATIONS`, since `SetupActivity.EXTRA_STEP` clamps any requested step back to
+   `stepFor`'s own natural resume point — which stopped at S02c for every Bluetooth-mode scenario
+   while the permission was ungranted. This makes S02c itself unreachable by default in exchange —
+   `results/ui-audit/README.md`'s "Reaching S02c" section now documents the explicit `pm revoke`
+   needed before capturing `setup-bt-permission`'s own steps, and the two-pass tour recipe used to
+   capture both halves in one round (`scenario.ps1`'s own `.NOTES` cross-references it).
+3. **R-821/R-822 (halt) — CF02/CF11 read `CaptureConfigurationStore.current()`, not the session
+   row.** `mode-local-mic`/`mode-usb`/`mode-bluetooth` now each write a real
+   `SharedPreferencesCaptureConfigurationStore.update(...)` (before `ScenarioFixtures.markCapturing`,
+   so it lands as `current`, never `pending`) matching the session/`RigStatus`/`InputStatus` facts
+   each already seeds — `mode-bluetooth`'s carries the paired device's own address in
+   `rigParams[DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS]` (CF02/CF06's Link-row address
+   reads this directly). `mode-change-pending`'s own pending Bluetooth write gained the same
+   `rigParams` address for consistency. New `WpiScenariosTest` cases assert `current()`/`rigParams`
+   per scenario.
+4. **R-823 — `mode-local-mic` showed one station heard on N01b but zero on ST01.** A transmission's
+   own `stationId` is not a `station` catalog row; `mode-local-mic` now also inserts a real
+   `StationEntity` for `W7NPC`, the same way `overnight`/`search-corpus` already do.
+5. **R-832 — F23/F9's own ladder sentence had nothing to render.** `bt-audio-dropped`'s
+   `InputStatus.lost(...)` and `rig-bt-lost`'s `RigStatus.stale(...)` now both pass a real
+   reconnect-ladder position (`attempt = 3`, `ofTotal = 8`, `nextRetryInMillis = 20_000`, the
+   coordinator's own specified numbers) instead of the honest-but-blank defaulted-null fields.
+6. **R-817/R-827 — `@2x-end` steps for R-744's pair rule.** Added
+   `setup-bt-permission/S02c-bluetooth-permission@2x-end` and `mode-local-mic/N01b-now@2x-end` to
+   `tour.json`. Both genuinely captured their plain and `@2x` siblings; the `@2x-end` (`scroll:
+   "end"`) variant itself errors on both — `"no vertically-scrollable container found"` — the same
+   way five pre-existing `setup-verified/*@2x-end` steps already do, because neither screen actually
+   needs to scroll even at font scale 2.0. Documented as a known, non-blocking tour-mechanism gap in
+   the README, not a defect in either scenario.
+7. **WPD's `DebugRigLinkPortOverride` seam (coordinator-assigned) closes S10b's paired-device-list
+   gap.** `setup-rig-bluetooth` now calls `DebugRigLinkPortOverride.show(InMemoryRigLinkPort(...))`
+   with two real, scripted paired devices (`TH-D75A`, SPP-capable; `Handheld BT`, headset-class
+   only) and a working default connect → identify → verify script — S10b's own paired-device list
+   now renders real rows. **What still cannot be reached, reported not faked:** the checklist
+   progression and a dropped-link banner need a tap on a paired-device row
+   (`SetupActivity.onSelectRigBluetoothDevice`), and neither the tour's setup-step renderer nor any
+   `SetupActivity` extra can drive that today (`rigBluetoothSelectedAddress` is unpersisted `Activity`
+   state, confirmed by reading `SetupActivity.kt`) — the README's own section now names the exact
+   hook needed (a tap capability in `ScreenshotTourActivity`, or a new `SetupActivity.EXTRA_*`) for
+   whoever picks it up. `Scenarios.resetProcessWideFacets` now also clears
+   `DebugRigLinkPortOverride` so it never leaks across scenario loads. Two new `WpiScenariosTest`
+   cases assert the scenario installs the override with both devices, and that it is ignored the
+   moment `isDebugBuild` reports `false` (the general gate is `DebugRigLinkPortOverrideTest`'s own
+   row).
+**Verified:**
+- `:app:testDebugUnitTest --tests "org.ort.app.debug.*"` — green, every new and pre-existing case.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`, 20 modules; `platformGuards: OK`, 20 modules.
+- `-PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `-PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 240 covered, no orphan
+  line at all this round.
+- `-PortAllowMissingBundledAssets=true coverageMatrixCheck` — up to date (240 of 450).
+- Screenshot tour, port 5558, two passes (`install.ps1 -Port 5558 -Clear` first, which now grants
+  `BLUETOOTH_CONNECT` too): pass A (`BLUETOOTH_CONNECT` explicitly revoked)
+  `tour.ps1 -Port 5558 -Only "setup-bt-permission/*"` — **steps: 3 ok: 3 errors: 0**; pass B
+  (`BLUETOOTH_CONNECT` re-granted) `tour.ps1 -Port 5558` (no filter) — **steps: 193 ok: 186
+  errors: 7**, all seven the known `@2x-end`-on-a-short-screen pattern above, none a regression.
+**Left open / not done:**
+- The tap-driven S10b checklist/drop states — needs either a tap capability in the tour's own
+  setup-step renderer or a new `SetupActivity.EXTRA_*`, both named exactly in the README for
+  whoever picks it up.
+- The `scroll: "end"` no-op-vs-error gap for a screen that already fits — a small
+  `ScreenshotTourActivity` fix, not attempted this round (documented, not blocking).
+- `checklist.md`'s rows for R-810/811/817/820/821/822/823/827/830/832/841/842/843 are left for the
+  lead to mark, per this package's file ownership.
+
+---
+
 ## 2026-09-10 (WPD follow-up: the tour-injection seam for S10b, and reviewer findings R-812..R-816)
 
 ### (pending) — DebugRigLinkPortOverride (tour seam) + R-812/R-813/R-814/R-815/R-816
