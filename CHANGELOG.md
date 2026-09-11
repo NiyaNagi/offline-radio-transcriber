@@ -32,6 +32,83 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPF run-4 validator findings: R-870/872/874/875 fixed, R-871 diagnosed and routed to WPE, R-873/876 left to WPI)
+
+### <pending> — status modes: R-870/R-872/R-874/R-875 fixed; R-871 diagnosed (CF06/CF11, WPE's); R-873/R-876 unaddressed (WPI's)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/{failures/FailureMapper.kt,components/Controls.kt,components/ActivityPatternChart.kt,digest/DigestScreens.kt,screens/ModelsScreen.kt}`,
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, matching test files. Merged `main` first
+(fast-forward to `c2b11e47`, which brought V10's own device-validation report, findings R-870..R-876,
+and confirmation that the prior round's R-910/R-911/R-912/R-913 fixes hold on a real device — nine
+destinations, one live bar each, no fragment, pills labelled, N01b/DG04 coverage agree).
+
+**Requirements/ACs:** R-870, R-871 (diagnosed, not fixed here), R-872, R-874, R-875, R-836 (F9 half,
+closed by R-872), R-863 (revisited by R-874).
+
+**What changed:** *Constitution check.* II (a discriminating test precedes every fix, each watched
+to fail for the stated reason before the code landed). VIII (rows below move to `fixed` on this
+report's own tests; R-853/R-910/R-911/R-912/R-913 were already confirmed `closed` by V10's own
+device capture in the merge that preceded this round, not by this round's own claim).
+
+1. **R-872 (halt)** — the real defect was not `LiveBarPolling` (already correctly discriminates
+   `RigStatus.Stale` from `InputStatus.Lost`, proven by the pre-existing, still-green
+   `LiveBarPollingTest.R_836` rig-only-drop case) but the `rig-bt-lost` scenario itself, which never
+   opened `InputStatus` or published a `LevelStatus` reading at all — the live bar's own honest
+   "nothing measured yet" floor read identically to F23's genuine mute on a real device.
+   `Scenarios.rigBtLost()` now opens a real wired-headset `InputStatus` and a real
+   `LevelStatus.Measured` reading, the same shape every other "audio is fine" scenario already uses.
+2. **R-870 (polish)** — `FailureMapper.mapThermalOrBacklogOrRigBanner` was the one caller of the
+   shared `stripRigManufacturerPrefix` (`ui/data/RigDisplayName.kt`, R-845/R-916/R-920) that never
+   applied it — F9's own banner title kept "Kenwood" where N04/DG04/CF06 all read "TH-D75A". Fixed.
+3. **R-874 (spec)** — R-863's own `TextAction` fix (`wrapContentWidth(unbounded = true)`) traded a
+   per-letter wrap for silent clipping past the row's real edge once a real 390dp card was too
+   narrow for the action beside its own leading label at font scale 2.0. Reverted to bounded
+   `wrapContentWidth(align = Alignment.Start)` and gave the two call sites that needed R-863's
+   protection their own `Modifier.weight(1f, fill = false)` leading sibling on a `Row.fillMaxWidth()`
+   (DG05's over-range label; CF04's grouped-family part label, `ui/screens/ModelsScreen.kt` — this
+   file is `ui/screens`, this round's own ownership, not `ui/settings`) — Compose's own `Row`
+   measure policy then reliably gives the non-weighted action first claim on the row's real width,
+   wrapping at word boundaries only if it alone still does not fit. S10b's own `Refresh` row already
+   used this exact shape (R-805) and needed no change.
+4. **R-875 (design)** — `ActivityPatternChart`'s axis row measures the real axis-start/axis-end/
+   caption strings (`rememberTextMeasurer`, the same real-font-metrics pattern
+   `ui/components/Rows.kt`'s column-width helpers use) against the row's own real available width:
+   unchanged when all three genuinely fit, the caption drops to its own centred row below the axis
+   labels when they do not, rather than overlapping the right axis time.
+5. **R-871 (spec)** — investigated, not fixed: "Set the frequency by hand" opens CF02
+   (`SettingsPolling.capture()`), which has no rig-facts row at all. The exact raw-epoch-millis
+   defect this row names is real in two places, both `ui/settings` (WPE's, not touched here):
+   `SettingsPolling.modeScreen()`'s own CF11 "Rig link" row and `SettingsPolling.rig()`'s own CF06
+   `staleSinceLabel` — the latter confirms this row's own question ("if it is CF06's, WPE").
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green (full suite, twice:
+  once per fix batch, once after the final line-length cleanup).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true build dependencyRules platformGuards ktlintCheck` —
+  green.
+- `./gradlew -PortAllowMissingBundledAssets=true detekt` — green (after fixing two `MaxLineLength`
+  violations this round's own new tests introduced).
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`.
+- Exact new test names: `WpiScenariosTest.R_872_rig-bt-lost seeds a real Measured level and an
+  opened, not lost, InputStatus`; `FailureMapperTest.R_870 F9 drops the descriptor's own leading
+  manufacturer word, matching every other screen`; `DigestScreensTest.R_874 DG05 Read the overs
+  wraps within the card at font scale 2_0, never past its edge`; `ModelsScreenTest.R_874 CF04
+  Install from a file wraps within a real 390dp screen at font scale 2_0, never past its edge`;
+  `ActivityPatternChartTest.R_875 the not-listening caption stacks under the axis row rather than
+  colliding with it at 2_0` and its own `...a short caption at normal scale stays on the same row...`
+  regression guard.
+
+**Left open / not done:**
+- **R-871**: diagnosed and routed to WPE (CF06/CF11, `ui/settings`), not fixed here.
+- **R-873, R-876**: WPI's (scenario-holder process-restart survival; `scenario.ps1`'s own SQL
+  hygiene check) — unaddressed, out of this round's scope.
+- No device re-capture was performed this round (emulator confirmation is V-series validators' own
+  job); rows above are `fixed` on this report's own tests, not `closed`.
+
+---
+
 ## 2026-09-11 (WPE follow-up: R-934 closed — rendering WPG's persisted rejection on CF04)
 
 ### (pending) — settings modes: R-934 closed - CF04 renders the real persisted checksum-mismatch rejection on the affected part

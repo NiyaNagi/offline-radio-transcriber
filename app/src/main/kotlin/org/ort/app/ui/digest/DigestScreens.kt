@@ -193,12 +193,22 @@ private fun DigestProseCard(card: DigestProseCardViewState, onReadOvers: () -> U
             color = OrtColors.textSecondary,
             modifier = Modifier.padding(top = 7.dp),
         )
+        // R-874 (register, spec): `fillMaxWidth()` plus `weight(1f, fill = false)` on the
+        // *leading* label — `TextAction`'s own doc comment (`ui/components/Controls.kt`) names
+        // this the required shape: Compose's `Row` measures the non-weighted `TextAction` first,
+        // against the row's own real width, before the weighted label ever claims anything, so
+        // the label yields (wraps, never the action) when both do not fit at font scale 2.0.
         Row(
-            modifier = Modifier.padding(top = OrtSpacing.xs),
+            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.xs),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
         ) {
-            Text(text = card.oversRangeLabel, style = OrtType.subLine, color = OrtColors.textFaint)
+            Text(
+                text = card.oversRangeLabel,
+                style = OrtType.subLine,
+                color = OrtColors.textFaint,
+                modifier = Modifier.weight(1f, fill = false),
+            )
             TextAction(text = "Read the overs", onClick = onReadOvers)
         }
     }

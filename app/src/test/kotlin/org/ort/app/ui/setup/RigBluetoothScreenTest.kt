@@ -1,20 +1,27 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.GraphicsMode
 
@@ -272,6 +279,53 @@ class RigBluetoothScreenTest {
         val size = composeTestRule.onNodeWithTag("setup-rig-bt-refresh").fetchSemanticsNode().size
         assert(size.width > size.height) {
             "expected Refresh wider than tall (single line), was ${size.width} x ${size.height}"
+        }
+    }
+
+    /** R-942 (register, spec, reviewer A3, run 4a): R-863's own `TextAction` fix
+     * (`wrapContentWidth(unbounded = true)`) regressed this exact row on a real 390dp screen —
+     * "Pair a device in system settings" and "Refresh" rendered on top of each other at font scale
+     * 2.0 (`setup-rig-bluetooth/S10b-rig-bluetooth@2x.png`). R-874's own fix (bounded
+     * `wrapContentWidth`, `TextAction`'s own doc comment) is the same root cause this row already
+     * avoided the *other* way (`weight(1f)` on the leading action, R-805) — this proves the two
+     * fixes now agree: no overlap between the two actions, `Refresh` stays whole and inside the
+     * row, never past the real screen's own right edge. */
+    @Test
+    @Requirement("R-942")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_942 Pair in system settings and Refresh never overlap on a real 390dp screen at font scale 2_0`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        RigBluetoothScreen(
+                            state = state(),
+                            onSelectDevice = {},
+                            onPairInSettings = {},
+                            onRefresh = {},
+                            onContinue = {},
+                            onUseUsbInstead = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        val pairBounds = composeTestRule.onNodeWithTag("setup-rig-bt-pair-in-settings").getUnclippedBoundsInRoot()
+        val refreshBounds = composeTestRule.onNodeWithTag("setup-rig-bt-refresh").getUnclippedBoundsInRoot()
+        assertTrue(
+            "expected 'Pair a device in system settings' (right ${pairBounds.right}) and 'Refresh' " +
+                "(left ${refreshBounds.left}) to never overlap at font scale 2.0, got an overlap",
+            pairBounds.right <= refreshBounds.left || pairBounds.bottom <= refreshBounds.top,
+        )
+        assertTrue(
+            "expected 'Refresh' own right edge (${refreshBounds.right}) to stay within the real 390dp " +
+                "screen's own right edge at font scale 2.0, never clipped past it",
+            refreshBounds.right <= 390.dp,
+        )
+        val refreshSize = composeTestRule.onNodeWithTag("setup-rig-bt-refresh").fetchSemanticsNode().size
+        assert(refreshSize.width > refreshSize.height) {
+            "expected Refresh wider than tall (single line, whole word), was ${refreshSize.width} x ${refreshSize.height}"
         }
     }
 }

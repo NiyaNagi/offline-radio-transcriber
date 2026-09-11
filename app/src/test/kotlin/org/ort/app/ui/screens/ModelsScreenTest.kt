@@ -522,6 +522,41 @@ class ModelsScreenTest {
         }
     }
 
+    /** R-874 (register, spec, validator V10): R-863's own fix (`TextAction`'s then-unbounded
+     * measurement) held the case above at whatever width this test's default window offers, but
+     * traded per-word wrap for silent clipping past a *real* 390dp screen's own edge — the same
+     * regression `DigestScreensTest`'s own `R_874` case proves for DG05. This drives the identical
+     * real production path (`ModelsController.currentState`) inside a real-width `Box`, proving the
+     * fix here too: the leading part label now yields (`Modifier.weight(1f, fill = false)` on
+     * `Row.fillMaxWidth()`), so "Install from a file" wraps within the screen's own real width
+     * rather than past it. */
+    @Test
+    @Requirement("R-874")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_874 CF04 Install from a file wraps within a real 390dp screen at font scale 2_0, never past its edge`() {
+        val freshContext = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val cleanInstallState = ModelsController.currentState(freshContext)
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        ModelsScreen(state = cleanInstallState, onDownload = {}, onSideload = {})
+                    }
+                }
+            }
+        }
+
+        val actionBounds = composeTestRule
+            .onNodeWithContentDescription("Install Whisper tiny.en — encoder from a file")
+            .getUnclippedBoundsInRoot()
+        assertTrue(
+            "expected 'Install from a file' own right edge (${actionBounds.right}) to stay within the " +
+                "real 390dp screen's own right edge at font scale 2.0, never clipped past it",
+            actionBounds.right <= 390.dp,
+        )
+    }
+
     @Test
     @Requirement("R-140")
     fun `R_140 the Whisper family row reads active with one aggregate size once every part is installed`() {
@@ -574,6 +609,66 @@ class ModelsScreenTest {
         composeTestRule.onNodeWithContentDescription(
             "Install Whisper tiny.en — tokens from a file",
         ).assertDoesNotExist()
+    }
+
+    /** R-970 (register, spec, reviewer A3, run 4a): the "ACTIVE" badge beside the wrapped Whisper
+     * family title stacked one character per line at the right edge of a real 390dp screen at font
+     * scale 2.0 (`assets-bundled/CF04-settings-assets@2x.png`) — the same defect class R-874
+     * established for `TextAction`: the leading title, unweighted in a `Row` with no
+     * `fillMaxWidth()`, took the row's width first, squeezing the trailing `Badge` to nothing. The
+     * fix gives the title `Modifier.weight(1f, fill = false)` on `Row.fillMaxWidth()` so the badge
+     * is measured first, at its own real width, and stays whole and inside the row. */
+    @Test
+    @Requirement("R-970")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_970 the ACTIVE badge stays whole and inside the row beside a wrapped Whisper title at 2_0`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        ModelsScreen(
+                            state = ModelsViewState(
+                                rows = listOf(
+                                    row(
+                                        ModelId.ASR_ENCODER,
+                                        ModelRowStatus.INSTALLED,
+                                        sizeBytes = 1_000_000L,
+                                        checksumPrefix = "aa",
+                                    ),
+                                    row(
+                                        ModelId.ASR_DECODER,
+                                        ModelRowStatus.INSTALLED,
+                                        sizeBytes = 2_000_000L,
+                                        checksumPrefix = "bb",
+                                    ),
+                                    row(
+                                        ModelId.ASR_TOKENS,
+                                        ModelRowStatus.INSTALLED_UNVERIFIED,
+                                        checksumKnown = false,
+                                        sizeBytes = 500_000L,
+                                        checksumPrefix = "cc",
+                                    ),
+                                ),
+                            ),
+                            onDownload = {},
+                            onSideload = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        val badgeBounds = composeTestRule.onNodeWithText("ACTIVE", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertTrue(
+            "expected the ACTIVE badge own right edge (${badgeBounds.right}) to stay within the real " +
+                "390dp screen's own right edge at font scale 2.0, never clipped past it",
+            badgeBounds.right <= 390.dp,
+        )
+        val badgeSize = composeTestRule.onNodeWithText("ACTIVE", useUnmergedTree = true).fetchSemanticsNode().size
+        assert(badgeSize.width > badgeSize.height) {
+            "expected the ACTIVE badge wider than tall (whole word, single line), was " +
+                "${badgeSize.width} x ${badgeSize.height}"
+        }
     }
 
     @Test

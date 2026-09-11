@@ -3,6 +3,7 @@ package org.ort.app.ui.failures
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.data.StagedActivation
+import org.ort.app.ui.data.stripRigManufacturerPrefix
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
@@ -340,7 +341,10 @@ public object FailureMapper {
         if (rig is RigStatus.State.Stale) {
             return FailurePresentation.Rig(
                 RigViewState(
-                    deviceLabel = rig.lastKnown.descriptor,
+                    // R-870 (register, polish): the same shared helper R-845/R-916/R-920 apply on
+                    // CF06/N04/DG04 — F9's own title was the one caller still rendering the
+                    // descriptor's leading manufacturer word verbatim.
+                    deviceLabel = stripRigManufacturerPrefix(rig.lastKnown.descriptor),
                     sinceLabel = clockLabel(rig.sinceMillis),
                     // E2-G06 (F9, FR-RIG-15): WPC2's own live `RigStatus.transportKind` — `null`
                     // for a caller that predates it (a debug scenario), never fabricated.

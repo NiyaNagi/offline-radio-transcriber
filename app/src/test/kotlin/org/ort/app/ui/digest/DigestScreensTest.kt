@@ -1,12 +1,18 @@
 package org.ort.app.ui.digest
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -105,6 +111,46 @@ class DigestScreensTest {
         assert(size.width > size.height) {
             "expected 'Read the overs' wider than tall (single line), was ${size.width} x ${size.height}"
         }
+    }
+
+    /** R-874 (register, spec, validator V10): R-863's fix (`TextAction`'s own unbounded, always-
+     * single-line measurement) trades the per-word-per-line wrap for silent clipping — at a
+     * *realistic* card width (390dp, matching the device V10 captured on), "Read the overs" no
+     * longer fits on one line next to the card's own over-range label at font scale 2.0, and
+     * unbounded measurement pushes it straight past the card's own right edge
+     * (`llm-enabled-prose_DG05@2x_cards.png`, "Read th…"). The rule this proves: the card's own
+     * leading label yields (`Modifier.weight(1f, fill = false)`, `Row.fillMaxWidth()`) so the
+     * action is measured against the row's own real available width first, then wraps at word
+     * boundaries within it — never past the card's own edge, never one letter per line either
+     * (this file's own `R_863` case above still holds unconstrained). */
+    @Test
+    @Requirement("R-874")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_874 DG05 Read the overs wraps within the card at font scale 2_0, never past its edge`() {
+        val prose = DigestProseSectionViewState(
+            cards = listOf(card()),
+            footnote = "Written on this phone by the bundled language model from the resolved overs only.",
+        )
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        DigestScreen(state = baseState(prose), onBack = {}, onOpenItem = {}, onFullLog = {})
+                    }
+                }
+            }
+        }
+
+        val actionBounds = composeTestRule.onNodeWithText("Read the overs", substring = true)
+            .getUnclippedBoundsInRoot()
+        val cardBounds = composeTestRule.onNodeWithTag("digest-prose-card").getUnclippedBoundsInRoot()
+        assertTrue(
+            "expected 'Read the overs' own right edge (${actionBounds.right}) to stay within the card's " +
+                "own right edge (${cardBounds.right}) at font scale 2.0 on a real 390dp card, never clipped " +
+                "past it",
+            actionBounds.right <= cardBounds.right,
+        )
     }
 
     @Test
