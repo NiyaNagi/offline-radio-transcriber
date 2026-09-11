@@ -32,6 +32,72 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPE R-865 render half: CF04 renders WPG's truncated-asset guard)
+
+### <pending> — settings modes: R-865 render half — CF04 renders "marker present, bytes missing" from WPG's real guard
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt`, matching test file
+(new `app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenTruncatedTest.kt`). Merged `main`
+fast-forward to `7493eb1e` first, bringing in WPG's guard (`7354b061`): `ModelRowViewState
+.truncated: TruncatedAsset?` (`onDiskBytes`, `expectedBytes`), set alongside `ModelRowStatus
+.NOT_INSTALLED` whenever a part's marker text matches but its real on-disk length disagrees with
+the manifest — the last piece of R-865's own reopened finding (a stale marker over a truncated or
+deleted file must never read "verified").
+
+**Requirements/ACs:** R-865 (render half — the guard itself is WPG's, landed and merged before this
+round; this is only the rendering CF04 owed it).
+
+**What changed:** *Constitution check.* I (the row now states the real on-disk/expected byte counts
+from `TruncatedAsset` itself, never a guess, and never "verified" beside them). II (the new test was
+watched failing — "could not find any node" against the real not-yet-fixed sentence — for all three
+sites before the fix landed). VIII (grey marker, never green, for a fact this dishonest to claim
+verified).
+
+1. **CF04 per-asset rows (`AssetRow`, e.g. VAD) and grouped-family parts (`GroupedAssetRow`, e.g. a
+   Whisper part)** — `notInstalledLabel`/the grouped per-part label now check `row.truncated` ahead
+   of `row.lastRejection` (the two facts are independent per `TruncatedAsset`'s own doc comment; a
+   truncation is the fresher, more specific on-disk fact whenever both happen to be set) and render
+   `"<label> marker present, bytes missing — <on disk> of <declared> on disk · re-verified on next
+   launch"` via a new `truncatedLabel` helper, reusing the existing `formatAssetSize`. Because
+   `truncated != null` always implies `ModelRowStatus.NOT_INSTALLED` (WPG's own guard), the existing
+   hollow-ring `AssetMarker` already renders grey for this state with no marker change needed — it
+   was never reachable as "verified"/solid-green in the first place once the guard set the status
+   correctly.
+2. **The Gemma row (`ProseDigestModelRow`)** — already routes its own `NOT_INSTALLED` branch through
+   the shared `notInstalledLabel`, so it picked up the same rendering with no separate code change;
+   confirmed by a dedicated test (an empty on-disk Gemma file behind a matching marker) rather than
+   assumed.
+3. **The Space total** — verified, not changed: `SpaceSection`'s own figure
+   (`ModelsContent.kt`'s `rememberModelsExtras`) sums `ModelCatalog.entries.sizeBytes` (the
+   build-time declared catalogue total), never any row's own live `sizeBytes` — a truncated row's
+   bytes were structurally never reachable from that sum in the first place (and `truncated`'s own
+   row already carries `sizeBytes = null`, matching every other `NOT_INSTALLED` row).
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green, full suite
+  (5m46s).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green (3m3s).
+- `./gradlew -PortAllowMissingBundledAssets=true ktlintMainSourceSetFormat
+  ktlintTestSourceSetFormat detekt` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true dependencyRules platformGuards` — green (20
+  modules checked, both OK).
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK` (all 8 checks pass).
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 241 covered;
+  `coverageMatrixCheck` — up to date.
+- New tests written failing first over the real `ModelsController.currentState` path (never a
+  hand-built `ModelRowViewState`) — an empty-file and a partial-file case, the exact
+  `tier0-llm-stored` shape: `ModelsScreenTruncatedTest.R_865...single-asset row with an empty
+  on-disk file...`, `...a grouped part with a partial on-disk file...`, `...the Gemma row...` — all
+  three failed against "could not find any node" before the fix, pass now. Confirmed no regression
+  on the pre-existing `ModelsScreenRejectionTest`/`ModelsScreenTest`/`ModelsScreenProseDigestTest`
+  suites (`lastRejection`'s own precedent case still renders unchanged when `truncated` is null).
+
+**Left open / not done:** none for this finding — this was the last piece of R-865 (both the guard
+and the render half are now landed and confirmed).
+
+---
+
 ## 2026-09-11 (WPE run-4a/5 findings: R-950/R-951/R-974/R-871 fixed; R-972 investigated, not a code defect; R-973 investigated, not reproduced)
 
 ### <pending> — settings modes: R-950/R-951/R-974/R-871 fixed; R-972 investigated (no code change); R-973 investigated, not reproduced; SettingsPolling split for LargeClass
