@@ -32,6 +32,68 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPG follow-up: R-807(c) — daemon OOM on the first genuine 5/5-asset gate)
+
+### 85a0520c — R-807(c) fixed: -Xmx4g, streaming audited clean, no CI heap to align
+
+**Scope:** `gradle.properties` only. No app/buildSrc source changed.
+
+**Requirements/ACs:** none new — a build-infrastructure fix underpinning D35/D36's bundled-asset
+gate, not a behavioural change.
+
+**What changed:** Register row R-807(c): the first full gate run with all five assets genuinely
+packaged (no escape hatch, a real `HF_TOKEN`) killed the Gradle daemon with
+`OutOfMemoryError: Java heap space` inside the execution-history cache, at
+`org.gradle.jvmargs=-Xmx2g`. Raised to `-Xmx4g` (kept `-Dfile.encoding=UTF-8` alongside it) —
+the 555 MB `LLM_GEMMA3_1B` asset's on-disk footprint plus a much larger post-build execution
+history (task-output metadata now tracked for a 555 MB file across `fetchBundledAssets`,
+`mergeDebugAssets`/`mergeReleaseAssets`, and packaging) outgrew the old 2 g budget once every
+asset was actually present, rather than `missing` under the escape hatch.
+
+Audited every task under my ownership for a whole-file-in-memory read of the 555 MB asset per
+the coordinator's specific ask (the fetch task's own hash verification should stream; AGP's own
+asset merge is its own code, out of scope): `FetchBundledAssetsTask`'s `sha256Of` streams via a
+64 KB `MessageDigest` buffer loop, its cache-to-output copy is `File.copyTo` (Kotlin stdlib,
+itself buffer-streamed, never a full read), and its HTTP download streams
+`InputStream.copyTo(OutputStream)`. `BundledAssetInstaller`'s `sha256Of` streams identically, and
+its APK-asset-to-`filesDir` copy is `InputStream.copyTo(OutputStream)`. The only whole-array reads
+in either file are `manifestFile.readText()` / `manifestOnDisk.readText()` /
+`source.open(MANIFEST_ASSET_PATH).use { it.readBytes() }` — all against the small JSON manifest
+(a few hundred bytes for 5 entries), never the asset bodies themselves. Nothing of mine reads the
+555 MB file whole into memory; no streaming fix was needed beyond the heap bump.
+
+Grepped `.github/workflows/{ci,release,emulator}.yml` for `Xmx`/`JAVA_OPTS`/`GRADLE_OPTS`/
+`jvmargs`/`heap`: the only hits are `GRADLE_OPTS: -Dorg.gradle.daemon=false` in `ci.yml` and
+`release.yml` (daemon-off, not a heap size) — no separate CI-side JVM heap override exists to
+align; both workflows already rely on `gradle.properties`' `org.gradle.jvmargs`, so the `-Xmx4g`
+raise takes effect there automatically with no additional workflow edit needed.
+
+**Verified:**
+- `$env:HF_TOKEN = [Environment]::GetEnvironmentVariable('HF_TOKEN','User')` (a real token is
+  present at the OS User scope on this machine) then `./gradlew fetchBundledAssets` →
+  `fetchBundledAssets: 5/5 assets verified and packaged` — genuinely all five, Gemma included.
+- `./gradlew build dependencyRules platformGuards` with that same real token and no escape
+  hatch → **no daemon OOM** (the specific defect this row reports); ran to completion in
+  10m11s. Two pre-existing test failures surfaced, both exactly and only the other two halves
+  of this same register row, explicitly owned by WPI, not touched here:
+  `WpiScenariosTest.R_841_assets-bundled reports every non-gated entry INSTALLED…` (asserts
+  `NOT_INSTALLED` for the gated LLM unconditionally — hard-codes the no-token world, R-807(a))
+  and `ScenariosTest.R_110 loading every scenario back to back five times…` (timed out at 1
+  minute copying a real 555 MB file on every load, R-807(b)).
+- Re-ran the standard gate under the usual dev configuration (`-PortAllowMissingBundledAssets=true`,
+  no `HF_TOKEN`, matching every prior round): `./gradlew build dependencyRules platformGuards`
+  green (4/5 assets, Gemma honestly `missing`); `coverageMatrix` then `coverageMatrixCheck` run
+  as separate invocations (their combined-invocation failure is a pre-existing Gradle
+  implicit-dependency validation artifact of requesting both on one command line, unrelated to
+  this change — confirmed by running them apart) — `241/450 covered`, unchanged; `python
+  tools/spec-check/spec_check.py` — all 8 checks PASS. No regression from the heap change.
+
+**Left open / not done:** R-807(a) and R-807(b) are WPI's, not mine, and remain open on the
+register under their own ownership — a real-token gate is not yet fully green end-to-end because
+of those two, independent of this fix. This round made no app/buildSrc code change, so no new
+unit test was added or is applicable; the "test" for this row is the real gate run itself,
+recorded above.
+
 ## 2026-09-11 (WPI run 6 prep: R-944 level-envelope display-window fix, R-945/R-955/R-956/R-960 new tour steps — held for "run 6 go")
 
 ### bff4910f — R-944 fixed for real (A4's "decaying spike"), R-945 rig-bt-connected/S12-ready-bt, R-955/R-956/R-960 new CF02/CF06/CF11/F09 steps — tour run itself held
