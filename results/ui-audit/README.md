@@ -205,6 +205,102 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `calibration` | F22 (`Fail-Calibration.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Calibration`, a five-point reliability scatter. No runtime signal exists. |
 | `lexicon-corrupt` | R-154, F12 (`Fail-Lexicon.dc.html`), FR-LEX-12/FR-LEX-30/FR-AST-2 — unlike every scenario above, this one is **not** a `DebugFailureOverride` stand-in: it seeds a real "previous" `lexicon_version` row (2026.08 · 1,104,208 records), then calls the *real* `org.ort.app.ui.data.ModelsController.installLexicon` against a genuinely corrupt bundled asset (`app/src/debug/assets/lexicon-corrupt/lexicon-2026.09.tsv` — a manifest declaring 1,122,410 records whose checksum matches neither the 2 data rows actually present nor their count), through the new `:lexicon` package `org.ort.lexicon.import` (`LexiconImportValidator`/`LexiconImportInstaller`). The genuine `LexiconImportResult.Rejected` this produces is stored in `org.ort.app.debug.LexiconCorruptScenario.lastResult` — see "Known gaps" below for why nothing renders it yet. |
 
+### P19/WPI — capture modes, Bluetooth, bundled assets and the LLM (`spec/e2e-capture-modes-plan.md`, E2-J01)
+
+Every scenario below seeds the **real** store/holder/DB it names — `SharedPreferencesSetupStore`,
+`SharedPreferencesCaptureConfigurationStore`, the process-wide `RigStatus`/`InputStatus`/
+`CaptureState` holders, the real `OrtDatabase` (including the v7 session columns `captureMode`/
+`audioRouteKind`/`audioRouteLabel`/`bluetoothProfile`/`rigTransport` FR-CAP-13 added),
+`RoomProseSummaryStore`, the real prose-digest settings store, and the real
+`org.ort.app.assets.BundledAssetInstaller` — never a UI stand-in. `WpiScenariosTest.kt` (split from
+`ScenariosTest.kt` the same way `FailureOverrideScenariosTest.kt` already was, once this file's own
+size crossed detekt's `LargeClass` threshold) proves each one's own claim below against the real
+store/holder/DB, not merely that the scenario loads.
+
+| Scenario | What it seeds |
+|---|---|
+| `setup-mode` | D33/FR-CAP-8, S00: a completely fresh `SetupStore` (`welcomeSeen = true`, `captureMode = null`) — `SetupStateMachine.stepFor` resumes at `SetupStep.MODE` directly from a cold `MainActivity` launch. |
+| `setup-bt-permission` | D33, S02c: Bluetooth mode chosen, mic already granted, `BLUETOOTH_CONNECT` genuinely undecided. **The OS permission itself is live `PackageManager` state, not a `SetupStore` field** — see "Reaching S02c" below for the exact `pm grant`/`pm revoke` recipe this state needs. |
+| `setup-rig-transport` | D33/FR-RIG-13, S09b: Bluetooth mode, a verified wired-headset input, the TH-D75A chosen at S09, but `SetupStore.rigTransport` genuinely unset — `stepFor` resumes at `SetupStep.RIG_TRANSPORT`. Needs `BLUETOOTH_CONNECT` already granted (see "Reaching S02c") or `stepFor` stops one step earlier, at S02c. |
+| `setup-rig-bluetooth` | D33/D34, S10b: the same base as `setup-rig-transport`, but `rigTransport = BLUETOOTH_SPP` and `rigBluetoothVerified = false` — `stepFor` resumes at `SetupStep.RIG_BLUETOOTH`. **The one real gap this package found and reported, not worked around** — see "The `RigLinkPort` injection seam" below. |
+| `mode-local-mic` | FR-CAP-3a/10, AC-128/129: a live session with real v7 columns `captureMode = LOCAL_MICROPHONE`/`audioRouteKind = BUILT_IN_MIC` (`frequencyHz` honestly `null` — no rig at all), a real `InputStatus.Opened` on a built-in-mic descriptor, plus the real `SetupStore` left mid-way at S04 with the Local-microphone preset chip showing, for the "S04 in a lane per mode" tour coverage. |
+| `mode-usb` | FR-CAP-13, AC-129: a live session over USB — v7 columns `captureMode = USB_RADIO`/`audioRouteKind = USB`/`rigTransport = USB_SERIAL`, a real `RigStatus.Connected` naming the USB-serial transport and the TH-D75A descriptor (F9/CF06), the S04 preset chip alongside it. |
+| `mode-bluetooth` | D34/FR-CAP-11/13: a live session over Bluetooth audio (SCO, mSBC) *and* Bluetooth rig control (SPP) at once — two independent Bluetooth links, both real (`InputStatus.Opened` with a `BluetoothAudioProfile.HFP_MSBC` descriptor, `RigStatus.Connected` with `transportKind = BLUETOOTH_SPP`), the S04 preset chip alongside it. |
+| `bt-audio-session` | FR-CAP-13: an *ended* session captured over Bluetooth audio, two real overs, for the Log's `bt audio` row mark (E2-G04) and DG04's session-review facts. |
+| `bt-audio-dropped` | F23, FR-CAP-5: a *live* Bluetooth session whose audio just stopped — `InputStatus.State.Lost` with a genuine Bluetooth `lastKnown` (via `InputStatus.opened` then `InputStatus.lost`, the only way `lost` ever transitions), plus a real, **open** `CaptureGapEntity` (`cause = INPUT_LOST` — `CaptureGapCause.BLUETOOTH_AUDIO_LOST` does not exist in this schema yet, owed to WPC3, checklist E2-A06/E2-D07; the same honest stand-in the real `RealCaptureService` itself reports today). The rig's own *control* link stays `Connected` — an audio-only drop, distinct from `rig-bt-lost`'s control-only one. |
+| `rig-bt-connected` | CF06: a live session whose rig link is `RigStatus.Connected` over Bluetooth SPP, transport and descriptor both named; also leaves the real `SetupStore` at S11/`SetupStep.RADIO_VERIFIED` (a genuinely resumable state — `SetupActivity.EXTRA_STEP`'s own "at or before the natural resume point" rule honours it). |
+| `rig-bt-lost` | F9, FR-RIG-15: `RigStatus.State.Stale` whose own `lastKnown` names the Bluetooth SPP transport and the TH-D75A descriptor — unlike the pre-P19 `rig-lost` (transport/descriptor both `null`), F9's board can now name what dropped. |
+| `mode-change-pending` | FR-CAP-12, AC-131: a live USB-radio session, plus a real `CaptureConfigurationStore` write requesting Bluetooth for the *next* session, written after the session is marked capturing so the store's own freeze rule genuinely lands it as `pendingConfiguration`, never touching `current` (CF11's amber banner). |
+| `assets-bundled` | FR-AST-3/3b, AC-137: the real `BundledAssetInstaller`, driven through a `FakeBundledAssetSource` built from `ModelCatalog.entries` itself (never a hand-typed manifest) — every entry installs for real, a real file lands at each entry's own production destination path. Also leaves the real `SetupStore` at S12/`SetupStep.READY` (a verified USB input, no rig) so S12's own Mode row and Models row render against this scenario's real, just-installed bundled assets. |
+| `asset-corrupt` | AC-137: one entry (`ModelId.ASR_ENCODER`) is served real placeholder bytes declared under a manifest sha256 computed from *different* bytes — the same "declared digest disagrees with what arrived" shape a truncated download produces — so `BundledAssetInstaller.installOne`'s own real comparison genuinely fails for that one entry (never activated, no file left at its destination) while every other entry installs for real. |
+| `llm-enabled-prose` | DG05, FR-DIG-3/6/11: the real `overnight` fixture (so the QSO thread's own four real over ids exist to attribute a summary to), one more small thread of two overs on the same session (DG05's own second card), prose enabled via the real `SharedPreferencesProseDigestSettingsStore`, and two real, stored `ProseSummary` rows via the real `RoomProseSummaryStore`. |
+| `llm-disabled` | DG01, FR-DIG-3b, AC-140: the same two summaries genuinely stored, but prose is disabled — DG05's "In their words" section must render absent entirely (E2-G07's own discriminating test), not merely empty. |
+| `tier0-llm-stored` | FR-AST-3a, AC-138: `ModelId.LLM_GEMMA3_1B` installs for real (a genuine file on disk at its real destination), but this device's own `ShedStatus` level is forced so the current tier sits below T3, so `ModelRowViewState.tierEligible` genuinely reads `false` for it — stored, never loaded. |
+
+**Verifying `assets-bundled`/`asset-corrupt`/`tier0-llm-stored` against `ModelsController.currentState`
+does not work, and this is not a bug in either.** `ModelsController.currentState`'s own `rowFor`
+verifies the marker file it finds against `ModelCatalog`'s *hardcoded, generated* production
+checksum (`GeneratedBundledAssetManifest`, baked at build time from the real committed asset
+manifest) — never against whatever bytes a scenario's own `FakeBundledAssetSource` actually wrote.
+A scenario-installed file can therefore never read `INSTALLED` through that one code path, by
+construction, regardless of whether `BundledAssetInstaller` itself genuinely installed it. What is
+real and checkable is the filesystem effect itself: a real file exists at `ModelCatalog`'s own real,
+production destination path for every entry that installed, genuinely absent for one that failed
+its digest check. `WpiScenariosTest.kt` checks exactly that (`ModelCatalog.entry(id).destination(filesDir).isFile`),
+not the `ModelsController` row — the one exception is `tier0-llm-stored`'s `tierEligible` assertion,
+which *is* computed independently of the checksum match and so is safe to read from
+`ModelsController.currentState` directly.
+
+### Reaching S02c (register/plan D33, checklist E2-J01)
+
+`SetupStateMachine.stepFor`'s `BLUETOOTH_PERMISSION` gate reads `PermissionsState.bluetoothConnectGranted`
+— live `PackageManager` state on API 31+ (`BLUETOOTH_CONNECT`), not a `SetupStore` preference — the
+same category of live-permission gate "Reaching S07/S09/S12" below already documents for
+`RECORD_AUDIO`/`POST_NOTIFICATIONS`. `setup-bt-permission` seeds every `SetupStore` fact S02c needs
+to *resume* here (Bluetooth mode chosen, the decline flag left `false`); grant `RECORD_AUDIO` as
+`install.ps1` already does, then leave `BLUETOOTH_CONNECT` **un**granted (the default state for a
+freshly installed app — nothing to revoke on a clean install) or explicitly revoke it if a prior
+grant is suspected:
+
+```powershell
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5558 shell pm grant org.ort.app android.permission.RECORD_AUDIO
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5558 shell pm revoke org.ort.app android.permission.BLUETOOTH_CONNECT
+
+.\tools\ui-audit\scenario.ps1 -Port 5558 -Name setup-bt-permission
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5558 shell am start -n org.ort.app/.MainActivity
+```
+
+To move past S02c (proving the recovery half, not part of this package's own scenario table),
+grant it and relaunch:
+
+```powershell
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5558 shell pm grant org.ort.app android.permission.BLUETOOTH_CONNECT
+$env:ANDROID_HOME\platform-tools\adb.exe -s emulator-5558 shell am start -n org.ort.app/.MainActivity
+```
+
+### The `RigLinkPort` injection seam (checklist E2-J01 — reported, not fixed here)
+
+D33/D34's S10b (`Setup-Rig-Bluetooth.dc.html`) shows a paired-device list — the operator picking
+which paired Bluetooth device is the rig's own SPP link. `setup-rig-bluetooth` seeds every real
+`SetupStore` fact needed to *resume* at S10b, but the list itself renders honestly empty on this
+build: `org.ort.app.ui.setup.SetupActivity` constructs its own `RigLinkPort` as a hardcoded field —
+`private val rigLinkPort: RigLinkPort = InMemoryRigLinkPort()`, an **empty** paired-device list —
+with no companion `var`, no test-only setter, and no debug-build conditional, unlike every other
+process-wide fact a scenario seeds (`RigStatus`, `InputStatus`, `CaptureState`, ... or
+`org.ort.app.ui.failures.DebugFailureOverride`/`org.ort.app.ui.data.DebugSearchOverride`, both
+*main*-source, debug-settable holders `Scenarios.kt` already writes to). There is therefore no seam
+`app/src/debug` can reach to publish a scripted `InMemoryRigLinkPort` (`TH-D75A` SPP-capable,
+`Handheld BT` headset-only, exactly as this package's brief asked for) into a real `SetupActivity`
+composition without a change to `app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt` —
+outside this package's file ownership (`app/src/debug/**`, `tools/ui-audit/**`, this README, tests
+under `app/src/test/.../debug/`). **The exact hook needed**: a small main-source holder mirroring
+`DebugFailureOverride`'s own shape — `@Volatile public var override: RigLinkPort? = null` in a new
+or existing debug-reachable object, gated on `BuildConfig.DEBUG` (or an `isDebugBuild` check
+matching this codebase's existing convention), read by `SetupActivity` in place of the hardcoded
+`InMemoryRigLinkPort()` when non-null. `setup-rig-bluetooth`'s tour steps (S10b, S10b@2x) still
+capture the real screen — its paired-device list section, honestly empty — this is a known,
+reported exclusion (constitution VIII), not a fake.
+
 ### Reaching S07/S09/S12 (register R-227, R-264, R-285)
 
 Before `setup-verified`, S07 (`Setup-Level.dc.html`), S09 (`Setup-Rig.dc.html`) and S12

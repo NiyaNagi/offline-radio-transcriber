@@ -73,11 +73,10 @@ import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import org.ort.pipeline.reprocess.ReprocessStatus
 import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
-import org.ort.rig.RigTransportKind as RigModuleTransportKind
 import org.ort.rig.descriptor.BundledDescriptors
 import java.io.File
 import java.security.MessageDigest
-
+import org.ort.rig.RigTransportKind as RigModuleTransportKind
 
 /**
  * spec/ui-conformance-plan.md WP0, register R-110 — the debug scenario simulator's fixture
@@ -2211,7 +2210,9 @@ public object Scenarios {
         InputStatus.lost(lostSinceMillis)
         RigStatus.connected(
             descriptor = "Kenwood TH-D75A",
-            bands = listOf(RigStatus.BandState(band = "A", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false)),
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
             transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
             descriptorId = BundledDescriptors.kenwoodThD75a().id,
         )
