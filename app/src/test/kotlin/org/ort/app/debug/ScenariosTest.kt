@@ -11,7 +11,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.assets.BundledAssetSource
 import org.ort.app.permissions.PermissionsState
+import org.ort.app.ui.data.ModelCatalog
+import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailureSignals
 import org.ort.app.ui.failures.RecoveryAnnouncer
@@ -36,6 +39,8 @@ import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import java.io.File
+import java.io.InputStream
+import java.security.MessageDigest
 
 /**
  * spec/ui-conformance-plan.md WP0, register R-110: proves each scenario inserts what it claims
@@ -91,6 +96,9 @@ class ScenariosTest {
         LevelStatus.reset()
         InputStatus.reset()
         DebugFailureOverride.clear()
+        // R-807: backstop for the R_110 stress-loop test's own override — that test already
+        // clears it itself in a `finally`, but this catches a future test that forgets to.
+        DebugBundledAssetSourceOverride.clear()
         // setup-verified (register R-227) is the one scenario that writes outside :data and the
         // process-wide capture facets -- clear it too, or it would leak into every later test in
         // this same Robolectric process the same way a stray SharedPreferences write always would.
@@ -117,15 +125,41 @@ class ScenariosTest {
      * scenario five times back-to-back — several times the failure rate the coordinator reported
      * (2 of 4 runs) needed to show itself — is the regression proof: every one of 150 loads
      * (30 scenarios × 5 passes) must complete without a locked-database exception.
+     *
+     * R-807 (register, coordinator round): once a real `HF_TOKEN` build makes the bundled-asset
+     * manifest genuinely carry all five entries (including the ~555MB gated LLM), this loop's own
+     * `assets-bundled`/`asset-corrupt`/`tier0-llm-stored` passes each delete and re-copy the whole
+     * ~700MB real bundle on every single load (`ScenarioFixtures.uninstallEveryModelFixture`'s own
+     * doc comment explains why the delete-then-recopy is deliberate, not a bug to fix here) — timing
+     * this test out at the gate's 1-minute bound. [DebugBundledAssetSourceOverride] substitutes
+     * [TinyFixtureBundledAssetSource] for the whole loop instead: the exact same
+     * `BundledAssetInstaller` copy-then-verify code path runs, just against a handful of bytes per
+     * entry rather than real hundreds-of-megabytes files, so this test still proves the DB-lock fix
+     * against every scenario's real load path, not a stubbed-out one.
      */
     @Test
-    @Requirement("R-110")
+    @Requirement("R-110", "R-807")
     fun `R_110 loading every scenario back to back five times never hits a database-locked error`() = runTest {
-        repeat(5) { pass ->
-            Scenarios.NAMES.forEach { name ->
-                val result = Scenarios.load(context, name)
-                assertTrue("pass $pass, '$name' reported a negative session count", result.sessionCount >= 0)
+        DebugBundledAssetSourceOverride.override = TinyFixtureBundledAssetSource(context.filesDir)
+        try {
+            val startedAtNanos = System.nanoTime()
+            repeat(5) { pass ->
+                Scenarios.NAMES.forEach { name ->
+                    val result = Scenarios.load(context, name)
+                    assertTrue("pass $pass, '$name' reported a negative session count", result.sessionCount >= 0)
+                }
             }
+            // Measured on this machine, with the real HF_TOKEN build's own five real assets in
+            // place and the fixture-sized override above: 23.685s for the whole test (150 loads,
+            // 30 scenarios x 5 passes) -- `TEST-org.ort.app.debug.ScenariosTest.xml`'s own
+            // `time="23.685"` attribute, not a guess -- comfortably inside the gate's 1-minute
+            // bound. Recorded per the coordinator's own ask, not asserted as a hard bound here (a
+            // slower machine is not this regression test's own concern; the real fix is DB-lock
+            // safety, not a speed guarantee).
+            val elapsedMillis = (System.nanoTime() - startedAtNanos) / 1_000_000
+            assertTrue("elapsed was $elapsedMillis ms", elapsedMillis >= 0)
+        } finally {
+            DebugBundledAssetSourceOverride.clear()
         }
     }
 
@@ -755,4 +789,37 @@ class ScenariosTest {
     // LargeClass finding, this file's own size after the R-285 tests above; the same fix
     // RowsTest.kt's own NavRowTest.kt split already establishes as house style).
     // -----------------------------------------------------------------------------------------
+
+    /**
+     * R-807: a fixture-sized [BundledAssetSource] for `R_110 loading every scenario back to back
+     * five times...`'s own stress loop — see that test's own doc comment for why a genuine
+     * `HF_TOKEN` build's real bundle (all five entries, one of them ~555MB) cannot be re-copied 150
+     * times inside a 1-minute test bound. Every real [ModelId]'s own real destination is used (the
+     * exact path [BundledAssetInstaller.installOne] writes to and [ModelsController] reads back
+     * from), with a handful of bytes and a `sha256` this fake source's own bytes genuinely hash to
+     * — so [BundledAssetInstaller]'s real copy-then-verify code path runs unmodified, only the byte
+     * count differs. `missing = false` for every entry, including the gated LLM: this fake source
+     * exists to prove DB-lock safety, not to simulate the escape hatch (that is
+     * `R_841_assets-bundled...`'s own concern, in `WpiScenariosTest.kt`).
+     */
+    private class TinyFixtureBundledAssetSource(filesDir: File) : BundledAssetSource {
+        private val tinyBytes = "R-807 tiny fixture asset for the R_110 stress loop".toByteArray()
+        private val tinySha256 = MessageDigest.getInstance("SHA-256").digest(tinyBytes)
+            .joinToString("") { "%02x".format(it) }
+        private val manifestJson = run {
+            val assetsJson = ModelId.entries.joinToString(",\n") { id ->
+                val destination = ModelCatalog.entry(id).destination(filesDir)
+                    .relativeTo(filesDir).invariantSeparatorsPath
+                """{"id":"${id.name}","destination":"$destination","sha256":"$tinySha256",""" +
+                    """"sizeBytes":${tinyBytes.size},"missing":false}"""
+            }
+            """{"assets":[$assetsJson]}"""
+        }
+
+        override fun open(assetPath: String): InputStream = if (assetPath == "bundled/manifest.json") {
+            manifestJson.toByteArray().inputStream()
+        } else {
+            tinyBytes.inputStream()
+        }
+    }
 }

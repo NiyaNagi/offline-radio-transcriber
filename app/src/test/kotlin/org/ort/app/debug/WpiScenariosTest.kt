@@ -15,15 +15,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.assets.AndroidBundledAssetSource
+import org.ort.app.assets.BundledAssetInstaller
+import org.ort.app.assets.BundledAssetState
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.setup.DebugRigLinkPortOverride
+import org.ort.app.ui.setup.DebugRouteCheckOverride
 import org.ort.app.ui.setup.InMemoryRigLinkPort
 import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.RigLinkState
+import org.ort.app.ui.setup.RouteCheckStage
+import org.ort.app.ui.setup.RouteCheckState
 import org.ort.app.ui.setup.SetupStateMachine
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
@@ -100,6 +106,7 @@ class WpiScenariosTest {
         DebugFailureOverride.clear()
         DebugRigLinkPortOverride.clear()
         DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        DebugRouteCheckOverride.clear()
         context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE)
             .edit().clear().commit()
         context.getSharedPreferences(
@@ -716,25 +723,34 @@ class WpiScenariosTest {
     }
 
     /**
-     * R-944: `setup-verified`'s own S05 raw-signal listen now draws an `InputWaveformCard` from the
-     * same [LevelStatus] holder S07's meter reads (WPD `64081712`/merge `7706d0ab`) — this scenario
-     * must seed the same real, non-constant envelope, not leave the holder at its default (empty)
-     * state the way it did before this round.
+     * R-943 (register, reviewer A4 run 5, halt): `setup-verified`'s own S05 board is reached by a
+     * cold `EXTRA_STEP` launch straight at `VERIFY`, so `RealRouteCheck` never actually runs — every
+     * fact the board needs comes only from [DebugRouteCheckOverride.show]. Corrects this round's own
+     * earlier, wrong assumption that S05 read the process-wide [LevelStatus] holder S07's meter
+     * does — reading `VerifyScreen.kt`/`DebugRouteCheckOverride.kt` once WPD's seam actually landed
+     * showed S05 reads `RouteCheckState.InProgress.levelBars` instead, a genuinely different holder.
      */
     @Test
-    @Requirement("R-944")
-    fun `R_944_setup-verified seeds the same non-constant speech-shaped level envelope for S05`() = runTest {
+    @Requirement("R-943")
+    fun `R_943_setup-verified publishes a real InProgress RouteCheckState for S05`() = runTest {
         Scenarios.load(context, "setup-verified")
 
-        val level = LevelStatus.state
-        assertTrue("expected LevelStatus.Measured, got $level", level is LevelStatus.State.Measured)
-        val history = LevelStatus.peakHistoryDbfs
-        assertTrue("expected a few seconds' worth of samples, got ${history.size}", history.size >= 60)
+        val state = DebugRouteCheckOverride.activeOverride
+        assertTrue("expected RouteCheckState.InProgress, got $state", state is RouteCheckState.InProgress)
+        state as RouteCheckState.InProgress
+        assertEquals("USB Audio Device", state.routedDeviceLabel)
+        assertEquals(48_000, state.nativeRateHz)
+        assertEquals(12_000L, state.elapsedListeningMillis)
+        assertEquals(-58.0, state.noiseFloorDbfs)
         assertTrue(
-            "expected every sample within the noise floor/peak bounds, got $history",
-            history.all { it in -58f..-14f },
+            "expected NATIVE_RATE and ROUTE_MATCH already passed, got ${state.passed}",
+            state.passed.containsAll(setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH)),
         )
-        assertTrue("expected a non-constant envelope, got $history", history.toSet().size > 1)
+        assertTrue("expected a non-empty, non-constant levelBars envelope", state.levelBars.toSet().size > 1)
+        assertTrue(
+            "expected every levelBars fraction within 0f..1f, got ${state.levelBars}",
+            state.levelBars.all { it in 0f..1f },
+        )
     }
 
     @Test
@@ -913,9 +929,21 @@ class WpiScenariosTest {
      * `Settings-Assets`/S12's Models row use — not merely a file on disk, so this test would have
      * caught the original bug (a genuinely installed file whose marker still failed
      * `ModelsController`'s own checksum comparison against a different value).
+     *
+     * R-807 (register, coordinator round): the gated LLM's own expected status used to be
+     * hard-coded `NOT_INSTALLED`, true only for the local escape-hatch build (no `HF_TOKEN`) — the
+     * first gate run with the real `HF_TOKEN` present genuinely installs it, failing this hard-coded
+     * assertion. Derived instead from this exact build's own packaged
+     * `bundled/manifest.json` (read through the real [BundledAssetInstaller], never a guess): its
+     * `missing` flag for [ModelId.LLM_GEMMA3_1B] is what actually determines whether this build can
+     * install it at all, so the expectation is computed from that same real fact — true in both the
+     * escape-hatch and the real-token build. `installAll` here is a second, idempotent call (this
+     * scenario's own load already ran it once) — an already-verified entry re-verifies by file
+     * length alone, no re-copy (`BundledAssetInstaller.installOne`'s own `isAlreadyVerified` short
+     * circuit), so this costs nothing extra.
      */
     @Test
-    @Requirement("FR-AST-3", "FR-AST-3b", "AC-137", "R-841")
+    @Requirement("FR-AST-3", "FR-AST-3b", "AC-137", "R-841", "R-807")
     fun `R_841_assets-bundled reports every non-gated entry INSTALLED through ModelsController`() = runTest {
         Scenarios.load(context, "assets-bundled")
 
@@ -927,9 +955,17 @@ class WpiScenariosTest {
                 rows.getValue(id).status,
             )
         }
+        val gatedResult = BundledAssetInstaller.installAll(context.filesDir, AndroidBundledAssetSource(context))
+            .first { it.id == ModelId.LLM_GEMMA3_1B.name }
+        val expectedGatedStatus = if (gatedResult is BundledAssetState.NotBundledInThisBuild) {
+            ModelRowStatus.NOT_INSTALLED
+        } else {
+            ModelRowStatus.INSTALLED
+        }
         assertEquals(
-            "this dev/escape-hatch build genuinely lacks the gated LLM — honest, not a defect",
-            ModelRowStatus.NOT_INSTALLED,
+            "expected ${ModelId.LLM_GEMMA3_1B} to read $expectedGatedStatus given this build's own " +
+                "packaged-manifest state ($gatedResult) -- honest either way, never hard-coded",
+            expectedGatedStatus,
             rows.getValue(ModelId.LLM_GEMMA3_1B).status,
         )
     }

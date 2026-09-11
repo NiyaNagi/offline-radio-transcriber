@@ -93,6 +93,79 @@ register under their own ownership — a real-token gate is not yet fully green 
 of those two, independent of this fix. This round made no app/buildSrc code change, so no new
 unit test was added or is applicable; the "test" for this row is the real gate run itself,
 recorded above.
+## 2026-09-11 (WPI R-807 real-asset gate fixes, R-943 DebugRouteCheckOverride for S05 — held for "run 6 go")
+
+### 90abf5f7 — R-807: WpiScenariosTest/ScenariosTest fixed for the real-HF_TOKEN gate; R-943: setup-verified/S05 publishes a real RouteCheckState
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios.kt,DebugBundledAssetSourceOverride.kt}`,
+`app/src/test/kotlin/org/ort/app/debug/{ScenariosTest.kt,WpiScenariosTest.kt}`,
+`results/coverage-matrix.md` (regenerated). Merged `main` twice this round: `f1e7db0f`→`14240e8d`
+(WPD's `DebugRouteCheckOverride`/`RouteCheckState`/`SetupActivity.RenderVerify` seam, R-943's own
+product half).
+
+**Requirements/ACs:** R-807, R-943.
+
+**What changed:**
+
+1. **R-807(a).** `WpiScenariosTest.R_841_assets-bundled...` hard-coded the gated LLM's own expected
+   status as `NOT_INSTALLED` — true only for the local escape-hatch build (no `HF_TOKEN`); the first
+   gate run with a real `HF_TOKEN` genuinely installs it, failing the hard-coded assertion. Derived
+   the expectation instead from this exact build's own packaged `bundled/manifest.json`, read
+   through the real `BundledAssetInstaller` (a second, idempotent `installAll` call — the scenario's
+   own load already ran it once, so an already-verified entry only re-verifies by file length, no
+   re-copy): `BundledAssetState.NotBundledInThisBuild` → expect `NOT_INSTALLED`; anything else →
+   expect `INSTALLED`. True in both builds now.
+2. **R-807(b).** `ScenariosTest.R_110 loading every scenario back to back five times...` timed out
+   at the gate's 1-minute bound once a real `HF_TOKEN` build made `assets-bundled`/`asset-corrupt`/
+   `tier0-llm-stored` each delete-and-recopy the whole real ~700MB bundle (`installRealBundledAssets`'s
+   own `uninstallEveryModelFixture` call, deliberate — see that function's own doc comment — not a
+   bug to fix there) on every one of 150 loads. New `DebugBundledAssetSourceOverride` (a settable
+   `BundledAssetSource` override, `app/src/debug`-only) lets this one test substitute
+   `TinyFixtureBundledAssetSource` — the real `ModelId`/destination shape, a handful of bytes per
+   entry — for its own loop, so `BundledAssetInstaller`'s real copy-then-verify path still runs end
+   to end, just against a negligible byte count. **Found and fixed a self-defeating bug while wiring
+   this in**: `Scenarios.resetProcessWideFacets()` runs at the top of every single `load()` call, so
+   clearing the new override there (the same pattern every other `Debug*Override` in this codebase
+   follows) silently defeated it on the very first iteration of the loop it was set for — this one
+   override is deliberately *not* cleared by `resetProcessWideFacets`, since it must survive a whole
+   *sequence* of loads within one test, not be scoped to a single scenario's own render; the test's
+   own `try`/`finally` (backstopped by its `@After`) is what clears it. Measured, with the real
+   assets in place and the override applied: **23.685s** for the full 150-load loop
+   (`TEST-org.ort.app.debug.ScenariosTest.xml`'s own `time` attribute), comfortably inside the
+   1-minute bound — recorded in the test's own doc comment, not asserted as a hard bound.
+3. **R-943.** `setup-verified`'s own S05 board (`Setup-Verify.dc.html`) is reached by a cold
+   `SetupActivity.EXTRA_STEP` launch straight at `VERIFY` — no S04 selection ever ran, so
+   `RealRouteCheck.run`'s listen loop never starts, and every fact the board needs (the routed-device
+   line, the native-rate line, the elapsed counter, the Input waveform card, the noise-floor text)
+   would otherwise be genuinely absent. `Scenarios.setupVerified()` now calls
+   `DebugRouteCheckOverride.show(RouteCheckState.InProgress(...))` with a real "still listening"
+   snapshot: `passed = {NATIVE_RATE, ROUTE_MATCH}`, `nativeRateHz = 48_000`,
+   `elapsedListeningMillis = 12_000`, `routedDeviceLabel = "USB Audio Device"`,
+   `noiseFloorDbfs = -58.0`, and a genuine speech-shaped `levelBars` envelope (a new
+   `speechShapedLevelBarFractions()`, sized to what `InputWaveformCard` actually draws — confirmed
+   by reading `VerifyScreen.kt` first that it draws every element with no `takeLast` truncation the
+   way S07's own meter has, so this needed no R-944-style display-window fix). `resetProcessWideFacets`
+   clears it. **Corrects this session's own earlier, wrong assumption** (a prior round's `setupVerified`
+   published a `LevelStatus.Measured` reading for S05, believing S05 read the same process-wide
+   holder S07's meter does — written before `DebugRouteCheckOverride` existed on this branch;
+   reading `VerifyScreen.kt` once it actually landed showed S05 reads
+   `RouteCheckState.InProgress.levelBars` instead, a genuinely different holder the old
+   `LevelStatus.update` call never fed at all). New `WpiScenariosTest.R_943_setup-verified...`
+   replaces the old, now-wrong `R_944_setup-verified...` case, asserting the real override directly.
+
+**Verified:** With the real `HF_TOKEN` present (`$env:HF_TOKEN = [Environment]::GetEnvironmentVariable
+('HF_TOKEN','User')`), `.\gradlew.bat fetchBundledAssets` — 5/5 real assets verified and packaged,
+`bundled/manifest.json`'s own `missing` flag `false` for all five including the gated LLM — then
+`.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.WpiScenariosTest" --tests
+"org.ort.app.debug.ScenariosTest"` **without** `-PortAllowMissingBundledAssets` — BUILD SUCCESSFUL,
+85/85 tests, including both R-807 fixes and the new R-943 case. Then the full standard gate
+(`build dependencyRules platformGuards`, `coverageMatrix`/`coverageMatrixCheck` as two invocations,
+with the escape hatch per this session's own standing rule) — all green.
+
+**Left open / not done:** the tour run itself (R-945/R-955/R-956/R-960's new steps, plus R-943's own
+`setup-verified/S05*` re-capture) still held for the coordinator's explicit "run 6 go".
+
+---
 
 ## 2026-09-11 (WPI run 6 prep: R-944 level-envelope display-window fix, R-945/R-955/R-956/R-960 new tour steps — held for "run 6 go")
 
@@ -31675,6 +31748,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 
