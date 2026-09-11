@@ -54,7 +54,25 @@ public fun SettingsCaptureScreen(
     onOpenModeSettings: () -> Unit = {},
     onEditManualFrequency: ((String) -> Unit)? = null,
 ) {
-    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    // Register R-826: the closing paragraph below was clipped behind the live bar at font scale
+    // 1.0 — the R-613 shape (`CaptureStatusScreen.kt`'s own `liveBarClearanceFor`/
+    // `LIVE_BAR_CLEARANCE` doc comment): trailing padding *inside* the scrollable content, sized to
+    // the live bar's own height floor, not padding on an outer wrapping modifier (WP11b measured
+    // that subtracts from the same weighted budget 1:1 instead of inserting real clearance — not
+    // repeated here). Unlike `CaptureStatusScreen` (which embeds its own live bar and only clears
+    // one when a real one is passed in), this screen is reached only through `NavHostBody`'s own
+    // `SETTINGS` dispatch, which does *not* embed its own live bar either (`embedsOwnLiveBar` is
+    // `NOW`/`CAPTURE` only) — so a live bar showing here is the host's own sibling, outside this
+    // composable's own tree entirely, reserved via `NavHostBody`'s real-measured-height mechanism
+    // (register R-262) on the ancestor `Box` this screen's `modifier` parameter is handed inside.
+    // That measurement is asynchronous (0 on the very first frame — the same timing trap R-262's
+    // own doc comment names) and this screen has no `liveBar` parameter of its own to make the
+    // clearance conditional the way `CaptureStatusScreen` does — so this floor applies
+    // unconditionally, the same static-not-measured choice that file's own doc comment already
+    // defends for the identical reason (one line's worth of breathing room, cheap even when unused).
+    Column(
+        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = LIVE_BAR_CLEARANCE),
+    ) {
         DrillInHeader(parentLabel = "Settings", onBack = onBack)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
             Text(text = "Input and level", style = OrtType.screenTitle, color = OrtColors.textHigh)
@@ -176,6 +194,11 @@ private fun captureModeIcon(mode: CaptureMode?) = when (mode) {
 /** E2-F01 (`spec/e2e-capture-modes-plan.md`): the stable handle a test or the tour uses to find
  * CF02's own Capture-mode row. */
 public const val CAPTURE_MODE_ROW_TEST_TAG: String = "settings-capture-mode-row"
+
+/** R-826 — see [SettingsCaptureScreen]'s own doc comment on its scroll container. The same 44dp
+ * floor `ui/components/LiveBar.kt`'s own minimum height uses (`CaptureStatusScreen.kt`'s own
+ * `LIVE_BAR_CLEARANCE`, not importable here — that constant is `private` in a different package). */
+private val LIVE_BAR_CLEARANCE = 44.dp
 
 /** R-132 (register, round 4 System validator): `Edit` is real when a caller wires [onEdit] —
  * `SettingsStore.manualFrequencyMhz` is a real writable field (confirmed by reading

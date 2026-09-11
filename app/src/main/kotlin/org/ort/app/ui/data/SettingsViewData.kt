@@ -3,7 +3,6 @@ package org.ort.app.ui.data
 import android.content.Context
 import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.CaptureState
-import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.rig.CaptureConfigurationStore
 import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 
@@ -15,14 +14,23 @@ import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
  * adaptation here, not a rewrite across every screen.
  */
 public interface CaptureModeFacts {
-    /** The mode in force right now — [CaptureConfigurationStore.current]'s own mode. Never
-     * `null`: that store always has a real value, [CaptureConfiguration.DEFAULT] on a fresh
-     * install (constitution I — a stated default, not an absent fact). */
-    public fun currentMode(): CaptureMode
+    /**
+     * The mode in force right now — `null` when the operator has never chosen one at all (register
+     * R-821, halt): [CaptureConfigurationStore.current] itself cannot say this — its own contract
+     * (confirmed by reading `CaptureConfigurationStore.kt`'s `SharedPreferencesCaptureConfigurationStore
+     * .current`) collapses "never written" and "written, LOCAL_MICROPHONE" to the identical
+     * [org.ort.pipeline.rig.CaptureConfiguration.DEFAULT] before this interface ever sees it — CF02/
+     * CF11 rendering that collapsed default as a real fact ("Built-in microphone") on a fresh
+     * install, before setup has ever run, was exactly the fabricated fact R-821 named: nothing was
+     * chosen, so nothing is reported as chosen (constitution I). [RealCaptureModeFacts] restores the
+     * distinction the store's own contract does not carry, by reading underneath it.
+     */
+    public fun currentMode(): CaptureMode?
 
     /** Non-null exactly when a mode change was recorded while a session was live and has not yet
      * applied — [CaptureConfigurationStore.pendingConfiguration]'s own mode. Drives CF11's amber
-     * "applies when it ends" banner. */
+     * "applies when it ends" banner. A pending write always follows a real [update], never this
+     * seam's own "never configured" ambiguity — no equivalent nullability question here. */
     public fun pendingMode(): CaptureMode?
 
     /** True exactly while a session is live — [org.ort.pipeline.capture.CaptureState.isCapturing]. */
@@ -48,29 +56,37 @@ public fun realCaptureConfigurationStore(context: Context): CaptureConfiguration
         ),
     )
 
-/** The real [CaptureModeFacts], backed by [store] ([realCaptureConfigurationStore] by default). */
+/** The real [CaptureModeFacts], backed by [store] ([realCaptureConfigurationStore] by default).
+ * [currentMode] and [hasBeenConfigured] both rest on [CaptureConfigurationStore.hasBeenConfigured]
+ * (R-821, E2-A07 follow-up) rather than a raw `SharedPreferences` read underneath the store — that
+ * store method already carries the exact "never written at all" fact this class needs, so a
+ * change to the store's own key layout cannot silently break this seam the way reading its keys
+ * directly would have. */
 public class RealCaptureModeFacts(private val store: CaptureConfigurationStore) : CaptureModeFacts {
     public constructor(context: Context) : this(realCaptureConfigurationStore(context))
 
-    override fun currentMode(): CaptureMode = store.current().mode
+    override fun currentMode(): CaptureMode? = if (store.hasBeenConfigured()) store.current().mode else null
     override fun pendingMode(): CaptureMode? = store.pendingConfiguration()?.mode
     override fun isSessionLive(): Boolean = CaptureState.isCapturing
     override fun hasBeenConfigured(): Boolean = store.hasBeenConfigured()
 }
 
-/** The behavioural fake (constitution II) — a plain, settable [CaptureModeFacts] for tests. */
+/** The behavioural fake (constitution II) — a plain, settable [CaptureModeFacts] for tests.
+ * [mode] defaults `null` (R-821: "not set" is the honest default, the same reasoning
+ * [RealCaptureModeFacts] now rests on) — a test that needs a specific current mode calls
+ * [setMode] explicitly, the same way it already must for [setPending]/[setSessionLive]. */
 public class FakeCaptureModeFacts(
-    private var mode: CaptureMode = CaptureMode.LOCAL_MICROPHONE,
+    private var mode: CaptureMode? = null,
     private var pending: CaptureMode? = null,
     private var sessionLive: Boolean = false,
     private var configured: Boolean = true,
 ) : CaptureModeFacts {
-    override fun currentMode(): CaptureMode = mode
+    override fun currentMode(): CaptureMode? = mode
     override fun pendingMode(): CaptureMode? = pending
     override fun isSessionLive(): Boolean = sessionLive
     override fun hasBeenConfigured(): Boolean = configured
 
-    public fun setMode(value: CaptureMode) {
+    public fun setMode(value: CaptureMode?) {
         mode = value
     }
 

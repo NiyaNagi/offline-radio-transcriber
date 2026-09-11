@@ -234,6 +234,7 @@ public fun OrtNavHost(
                             navState.pendingLogFilter.value,
                             navState.pendingReviewSessionId.value,
                             seed?.logSheetOpen ?: false,
+                            navState.reviewSessionView.value,
                         ),
                         navState.frequencyInitialView.value,
                         navState.openStationSubScreen.value,
@@ -386,6 +387,11 @@ private data class NavHostNavState(
     // `SessionsContent.initialSessionId` is read on ITS first composition and this value is read
     // again later by the back gesture — the same reasoning [logFrequencyOrigin] itself rests on.
     val pendingReviewSessionId: MutableState<String?>,
+    // R-840: which of `Earlier nights`' two screens [pendingReviewSessionId] should land on — see
+    // [NavSeed.reviewSessionView]'s own doc comment. Only meaningful alongside
+    // [pendingReviewSessionId], the same companion relationship [frequencyInitialView] already has
+    // to [openFrequencyHz]; `rememberSaveable`, the same reasoning [frequencyInitialView] rests on.
+    val reviewSessionView: MutableState<ReviewSessionView>,
 ) {
     fun closeDrillIns() {
         openTransmissionId.value = null
@@ -411,6 +417,9 @@ private data class NavHostNavState(
         // nights` (the drawer row) must not silently reseed a stale session or resurrect a "back
         // goes to Settings-Storage" promise a normal navigation never made.
         pendingReviewSessionId.value = null
+        // R-840: same reasoning again — an ordinary way of reaching `Earlier nights` must not
+        // silently reseed a stale `Digest` landing for whatever session is opened next.
+        reviewSessionView.value = ReviewSessionView.SESSION
     }
 
     /** R-017: records which destination a drill-in opened from before running [setter], so a
@@ -511,6 +520,8 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
     // Round 11, register R-133 — see `NavHostNavState.pendingReviewSessionId`'s own doc comment for
     // why this is `rememberSaveable`.
     val pendingReviewSessionId = rememberSaveable { mutableStateOf(seed?.pendingReviewSessionId) }
+    // R-840 — see [NavHostNavState.reviewSessionView]'s own doc comment.
+    val reviewSessionView = rememberSaveable { mutableStateOf(seed?.reviewSessionView ?: ReviewSessionView.SESSION) }
     return NavHostNavState(
         openedFrom,
         searchOpenedFrom,
@@ -526,6 +537,7 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
         frequencyInitialView,
         openStationSubScreen,
         pendingReviewSessionId,
+        reviewSessionView,
     )
 }
 
@@ -664,6 +676,8 @@ private data class DestinationInitialState(
     // Round 14 (after WP5 merged `LogContent.initialSheetOpen`) — see `NavSeed.logSheetOpen`'s own
     // doc comment.
     val logInitialSheetOpen: Boolean,
+    // R-840 — see `NavHostNavState.reviewSessionView`'s own doc comment.
+    val reviewSessionView: ReviewSessionView,
 )
 
 /** [NavHostBody]'s destination/drill-in identity, bundled to keep that composable's own parameter count down. */
@@ -1041,6 +1055,7 @@ private fun DestinationContent(
     val logInitialFilter = initialState.logInitialFilter
     val reviewSessionId = initialState.reviewSessionId
     val logInitialSheetOpen = initialState.logInitialSheetOpen
+    val reviewSessionView = initialState.reviewSessionView
     val content = modifier
     val onOpenTransmission = callbacks.onOpenTransmission
     val onOpenStation = callbacks.onOpenStation
@@ -1144,6 +1159,11 @@ private fun DestinationContent(
                 modifier = content,
                 onOpenTransmission = onOpenTransmission,
                 initialSessionId = reviewSessionId,
+                // R-840: real now — WP10 merged `SessionsContent.openDigest` (confirmed by reading
+                // `ui/digest/SessionsContent.kt` before wiring this) — lands `Earlier nights` on
+                // that session's own `Digest` (DG01/DG05) instead of its `Session` (DG04) detail,
+                // seeded via `NavSeed.reviewSessionView = DIGEST`.
+                openDigest = reviewSessionView == ReviewSessionView.DIGEST,
             )
 
         // Round 12, R-350: `onOpenModels` real now (WP10's `94c946c`) — same callback as `Now`'s

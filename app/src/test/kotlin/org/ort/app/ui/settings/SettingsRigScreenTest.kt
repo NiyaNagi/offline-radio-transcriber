@@ -9,6 +9,8 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -96,8 +98,48 @@ class SettingsRigScreenTest {
             OrtTheme { SettingsRigScreen(state = disconnected, onBack = {}) }
         }
 
-        composeTestRule.onNodeWithText("No radio support in this build yet", substring = true).assertExists()
+        composeTestRule.onNodeWithText("No rig configured", substring = true).assertExists()
         composeTestRule.onNodeWithText("FR-RIG", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `R_839 the no-rig-configured state retires the old build-limitation copy for an honest, ordinary one`() {
+        val disconnected = SettingsRigViewState(
+            descriptorLabel = "TH-D75A",
+            connected = false,
+            staleSinceLabel = null,
+            bands = emptyList(),
+        )
+        composeTestRule.setContent {
+            OrtTheme { SettingsRigScreen(state = disconnected, onBack = {}) }
+        }
+
+        composeTestRule.onNodeWithText("No radio support in this build yet", substring = true).assertDoesNotExist()
+        composeTestRule
+            .onNodeWithText("No rig configured", substring = true)
+            .assertExists()
+        composeTestRule
+            .onNodeWithText("Overs are logged against the frequency you set", substring = true)
+            .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-14")
+    fun `R_839 Change radio is real and live even while no rig has ever connected`() {
+        var changed = false
+        val disconnected = SettingsRigViewState(
+            descriptorLabel = "TH-D75A",
+            connected = false,
+            staleSinceLabel = null,
+            bands = emptyList(),
+        )
+        composeTestRule.setContent {
+            OrtTheme { SettingsRigScreen(state = disconnected, onBack = {}, onSwitchTransport = { changed = true }) }
+        }
+
+        composeTestRule.onAllNodesWithText("Change radio")[0].performClick()
+        assert(changed) { "expected Change radio to call onSwitchTransport even with nothing ever connected" }
     }
 
     // --- CF06 (`spec/e2e-capture-modes-plan.md` E2-F03, FR-RIG-14/15) — the Link/Reconnect rewrite ---
@@ -138,7 +180,7 @@ class SettingsRigScreenTest {
                 SettingsRigScreen(state = connectedState(), onBack = {}, onSwitchTransport = { switched = true })
             }
         }
-        composeTestRule.onNodeWithText("Switch").performClick()
+        composeTestRule.onNodeWithText("Switch").performScrollTo().performClick()
         assert(switched) { "expected Switch to call onSwitchTransport" }
     }
 
@@ -191,5 +233,140 @@ class SettingsRigScreenTest {
         composeTestRule.onNodeWithText("the link is retried with backoff", substring = true).assertExists()
         composeTestRule.onNodeWithText("No radio support in this build yet", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("Reconnect").assertIsEnabled()
+    }
+
+    // --- R-835/R-845 (register, round 3 tour finding) — the rest of the board's Connection section ---
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_835 the attribution-explanation and Rig-module rows render the board's own real copy`() {
+        val state = connectedState().copy(
+            transportLabel = "Bluetooth SPP",
+            rigModuleLabel = "kenwood-thd75a · built in · verified command set FREQUENCY, SQUELCH_STATE, SUB_BAND",
+        )
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("HOW OVERS ARE ATTRIBUTED TO A BAND").assertExists()
+        composeTestRule.onNodeWithText("By squelch state, BY").assertExists()
+        composeTestRule
+            .onNodeWithText("the radio mixes both bands into one audio stream", substring = true)
+            .assertExists()
+        composeTestRule.onNodeWithText("Rig module").assertExists()
+        composeTestRule
+            .onNodeWithText(
+                "kenwood-thd75a · built in · verified command set FREQUENCY, SQUELCH_STATE, SUB_BAND",
+                substring = true,
+            )
+            .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_835 an unmatched descriptor's Rig-module row reads the honest not-reported fallback`() {
+        val state = connectedState().copy(transportLabel = "Bluetooth SPP")
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = state, onBack = {}) } }
+
+        composeTestRule
+            .onNodeWithContentDescription("Rig module, , $NOT_REPORTED_BY_RIG_MODULE")
+            .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_835 the Link row folds in paired-in-system-settings and the other-transport clause`() {
+        val state = connectedState().copy(
+            transportLabel = "Bluetooth SPP",
+            linkAddressLabel = "D8:3A:DD:41:0C:7F",
+            otherTransportLabel = "USB serial also supported",
+        )
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = state, onBack = {}) } }
+
+        composeTestRule
+            .onNodeWithText(
+                "Bluetooth SPP · D8:3A:DD:41:0C:7F · paired in system settings · USB serial also supported",
+                substring = true,
+            )
+            .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_835 a USB link never claims paired in system settings`() {
+        val state = connectedState().copy(transportLabel = "USB serial", linkAddressLabel = "vid 0x0451 pid 0x16a8")
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("paired in system settings", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_835 the Auto-information row renders only when the descriptor declares push, real On value`() {
+        val withAi = connectedState().copy(
+            autoInformation = SettingsRigAutoInformationViewState(
+                label = "Auto-information, AI 1",
+                subLine = "changes arrive without polling · fallback poll every 2 s if it stops",
+            ),
+        )
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = withAi, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Auto-information, AI 1").assertExists()
+        composeTestRule.onNodeWithText("changes arrive without polling", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_835 no Auto-information row at all when the descriptor declares no push`() {
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = connectedState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Auto-information", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_835 the Radio-battery row always renders, honest fallback with no real reader`() {
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = connectedState(), onBack = {}) } }
+
+        composeTestRule
+            .onNodeWithContentDescription("Radio battery, BL, , $NOT_REPORTED_BY_RIG_MODULE")
+            .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_835 both band tiles show an over count, honest fallback with no real per-band source`() {
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = connectedState(), onBack = {}) } }
+
+        composeTestRule.onAllNodesWithTag(BAND_TILE_OVER_COUNT_TEST_TAG).assertCountEquals(2)
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_835 both Reconnect and Change radio render side by side once connected`() {
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = connectedState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Reconnect").assertExists()
+        composeTestRule.onAllNodesWithText("Change radio").assertCountEquals(1)
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_845 the subtitle's polling clause is real, from the state, not a hardcoded unpolled claim`() {
+        val polled = connectedState().copy(transportLabel = "USB serial", pollingClause = "polled every 2 s")
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = polled, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Connected · USB serial · polled every 2 s").assertExists()
+        composeTestRule.onNodeWithText("unpolled", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_845 the subtitle names unpolled only while the real pollingClause says so`() {
+        val pushed = connectedState().copy(
+            transportLabel = "Bluetooth SPP",
+            pollingClause = "reading both bands unpolled",
+        )
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = pushed, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Connected · Bluetooth SPP · reading both bands unpolled").assertExists()
     }
 }

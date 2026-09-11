@@ -24,6 +24,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import org.ort.app.BuildConfig
 import org.ort.app.MainActivity
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
@@ -106,7 +107,27 @@ public class SetupActivity : ComponentActivity() {
      * pure translation. */
     private lateinit var captureConfigStore: CaptureConfigurationStore
 
-    private var step by mutableStateOf<SetupStep?>(null)
+    private val stepState = mutableStateOf<SetupStep?>(null)
+
+    /**
+     * R-802 (register, tour run 2): `refreshPairedDevices()` used to run only from
+     * [onSelectRigTransport]'s forward path and the explicit `Refresh` action, so an operator
+     * whose process died mid-S10b (or anyone the tour/debug seam cold-opens straight onto this
+     * step via [EXTRA_STEP]) saw an empty paired-device list until they tapped `Refresh` — a real
+     * defect, not just a tour gap, since [SetupStateMachine]'s `RIG_BLUETOOTH` gate is resumable by
+     * design. Routing every assignment through this property (not just [navigateForward]'s) means
+     * [refreshPairedDevices] runs the moment the step *becomes* `RIG_BLUETOOTH`, on every path that
+     * can produce that value: [refreshStep]'s cold/gate resume, [tryOpenAtRequestedStep]'s debug
+     * entry, [navigateForward]'s forward action, and [onBack]. [onSelectRigTransport]'s own explicit
+     * call is redundant with this but harmless (a second, idempotent [RigLinkPort.pairedDevices]
+     * read) — left as-is rather than special-cased apart from the rest.
+     */
+    private var step: SetupStep?
+        get() = stepState.value
+        set(value) {
+            stepState.value = value
+            if (value == SetupStep.RIG_BLUETOOTH) refreshPairedDevices()
+        }
     private val backStack = ArrayDeque<SetupStep>()
 
     private var inputRoutes by mutableStateOf<List<InputRouteOption>>(emptyList())
@@ -191,6 +212,19 @@ public class SetupActivity : ComponentActivity() {
      * itself. */
     internal val radioCatalogueForTest: RigCatalogue get() = radioCatalogue
 
+    /** Test-only window into [rigBluetoothDevices] — R-802's own regression proof needs to see
+     * what a cold-opened S10b actually lists, not just that the screen renders something. */
+    internal val rigBluetoothDevicesForTest: List<PairedDevice> get() = rigBluetoothDevices
+
+    /** Test-only window into [rigLinkState] — the debug-extra follow-up's own regression proof
+     * (connecting -> identified -> verified -> dropped) reads this directly rather than scraping
+     * Compose semantics for each intermediate frame. */
+    internal val rigLinkStateForTest: RigLinkState? get() = rigLinkState
+
+    /** Test-only window into [rigBluetoothSelectedAddress] — proves [EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS]
+     * actually reached this field, independent of whatever [rigLinkPort] then does with it. */
+    internal val rigBluetoothSelectedAddressForTest: String? get() = rigBluetoothSelectedAddress
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)
@@ -215,6 +249,18 @@ public class SetupActivity : ComponentActivity() {
             }
         }
         if (!tryOpenAtRequestedStep(intent?.getStringExtra(EXTRA_STEP))) refreshStep()
+        applyDebugRigBluetoothAddressExtra()
+    }
+
+    /** See [EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS]'s own doc comment. Called once, after the step has
+     * already resolved above — deliberately after, not folded into [tryOpenAtRequestedStep], since
+     * this must also apply on the *ordinary* resume path (no [EXTRA_STEP] at all: a store already
+     * gated on `RIG_BLUETOOTH`), not only the debug direct-entry one. */
+    private fun applyDebugRigBluetoothAddressExtra() {
+        if (!isDebugBuild()) return
+        if (step != SetupStep.RIG_BLUETOOTH) return
+        val address = intent?.getStringExtra(EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS) ?: return
+        onSelectRigBluetoothDevice(address)
     }
 
     /** See [EXTRA_STEP]'s own doc comment. Returns `true` (consuming the request) only when the
@@ -976,6 +1022,32 @@ public class SetupActivity : ComponentActivity() {
          * "render at the platform's own font scale" — never assume `1.0f` means the same thing as
          * absence; they differ whenever the platform's own real setting is not already `1.0`. */
         const val EXTRA_FONT_SCALE: String = "font_scale"
+
+        /**
+         * Debug-only (tour builder follow-up, `spec/e2e-capture-modes-plan.md` WPD): a paired
+         * device's Bluetooth MAC address to pre-select on S10b, honored only when [isDebugBuild]
+         * reports true — see this constant's doc, and [DebugRigLinkPortOverride]'s own class kdoc
+         * for why one of these seams exists at all here. [SetupStore]'s `RIG_BLUETOOTH` gate is
+         * resumable, but the connect -> identify -> verify checklist and its drop/failure banners
+         * (E2-E10/E2-E11) only ever animate after [onSelectRigBluetoothDevice] runs, which is
+         * normally a tap on a paired-device row (`RigBluetoothScreen`'s own `PairedDeviceRow`) — a
+         * tap the screenshot tour (`app/src/debug/kotlin/org/ort/app/debug/tour`) cannot perform,
+         * since it can only relaunch this activity with intent extras. Read once, in [onCreate],
+         * immediately after the step resolves (whether via [EXTRA_STEP] or the ordinary
+         * [refreshStep] resume) — a no-op unless that resolved step is exactly `RIG_BLUETOOTH`, so
+         * launching at any other step (or a debug build with no `RIG_BLUETOOTH` gate pending)
+         * ignores this extra entirely rather than fabricating a selection nothing asked for. In a
+         * release build [isDebugBuild] reports false and the extra is never even read, matching
+         * [DebugRigLinkPortOverride.activeOverride]'s own gating exactly.
+         */
+        const val EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS: String = "debug_rig_bluetooth_address"
+
+        /** Test seam — see [EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS]'s own doc comment for why one is
+         * needed, identically to [DebugRigLinkPortOverride.isDebugBuild]: Robolectric only ever
+         * compiles this module's debug variant, so `BuildConfig.DEBUG` alone cannot prove "ignored
+         * in a release build" from a unit test. Production code never assigns this. */
+        @Volatile
+        internal var isDebugBuild: () -> Boolean = { BuildConfig.DEBUG }
 
         const val TAG = "SetupActivity"
         const val REQUEST_CODE = 1002

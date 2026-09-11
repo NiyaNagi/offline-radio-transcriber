@@ -12,6 +12,8 @@ import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.rig.RigTransportKind
+import org.ort.rig.descriptor.BundledDescriptors
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -87,6 +89,136 @@ class SettingsPollingTest {
         assert(!state.connected)
         assert(state.descriptorLabel == "No radio configured")
         assert(state.bands.isEmpty())
+    }
+
+    @Test
+    fun `R_845 the title strips the real bundled Kenwood descriptor's own leading manufacturer word`() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val state = SettingsPolling.rig(context)
+        assert(state.descriptorLabel == "TH-D75A") {
+            "expected the manufacturer word dropped, got ${state.descriptorLabel}"
+        }
+    }
+
+    @Test
+    fun `R_845 a descriptor with no digit-bearing word is left unchanged, nothing to strip`() {
+        RigStatus.connected(descriptor = "Generic ASCII CAT", bands = emptyList())
+        val state = SettingsPolling.rig(context)
+        assert(state.descriptorLabel == "Generic ASCII CAT") {
+            "expected no change (no manufacturer prefix to drop), got ${state.descriptorLabel}"
+        }
+    }
+
+    @Test
+    fun `R_845 the pollingClause is unpolled for the real Kenwood descriptor, which declares push`() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val state = SettingsPolling.rig(context)
+        assert(state.pollingClause == "reading both bands unpolled") {
+            "expected the real unsolicited-push clause, got ${state.pollingClause}"
+        }
+    }
+
+    @Test
+    fun `R_845 the pollingClause is a real interval for the generic descriptor, which has no push`() {
+        RigStatus.connected(
+            descriptor = "Generic ASCII CAT",
+            bands = emptyList(),
+            transportKind = RigTransportKind.USB_SERIAL,
+            descriptorId = BundledDescriptors.genericAsciiCat().id,
+        )
+        val state = SettingsPolling.rig(context)
+        assert(state.pollingClause == "polled every 0.5 s") {
+            "expected the real 500ms poll interval, got ${state.pollingClause}"
+        }
+    }
+
+    @Test
+    fun `R_835 an unmatched descriptorId falls back to the honest not-reported label, never invented data`() {
+        RigStatus.connected(descriptor = "Imported Radio", bands = emptyList(), descriptorId = "some-imported-id")
+        val state = SettingsPolling.rig(context)
+        assert(state.rigModuleLabel == NOT_REPORTED_BY_RIG_MODULE)
+        assert(state.pollingClause == NOT_REPORTED_BY_RIG_MODULE)
+        assert(state.autoInformation == null)
+    }
+
+    @Test
+    fun `R_835 the Rig-module row is real from the matched descriptor's own capabilities, not the board mockup`() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val state = SettingsPolling.rig(context)
+        assert(
+            state.rigModuleLabel ==
+                "kenwood-thd75a · built in · verified command set FREQUENCY, SQUELCH_STATE, SUB_BAND",
+        ) {
+            "expected the real capability names, got ${state.rigModuleLabel}"
+        }
+        // The board's own mockup text is raw CAT mnemonics no accessible source in this build
+        // carries — never fabricated here.
+        assert(!state.rigModuleLabel.contains("FQ BY FO BC MR ME AI BL"))
+    }
+
+    @Test
+    fun `R_835 Auto-information is real for the Kenwood descriptor, using its own real poll interval`() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val state = SettingsPolling.rig(context)
+        val ai = state.autoInformation
+        assert(ai != null) { "expected a real Auto-information row for the Kenwood descriptor" }
+        assert(ai!!.label == "Auto-information, AI 1") {
+            "expected the descriptor's own real enable string, got ${ai.label}"
+        }
+        assert(ai.subLine.contains("fallback poll every 2 s if it stops")) {
+            "expected the descriptor's own real 2s poll fallback, got ${ai.subLine}"
+        }
+    }
+
+    @Test
+    fun `R_835 no Auto-information for the generic descriptor, which declares no push block`() {
+        RigStatus.connected(
+            descriptor = "Generic ASCII CAT",
+            bands = emptyList(),
+            transportKind = RigTransportKind.USB_SERIAL,
+            descriptorId = BundledDescriptors.genericAsciiCat().id,
+        )
+        val state = SettingsPolling.rig(context)
+        assert(state.autoInformation == null) { "generic ASCII CAT declares no unsolicited push at all" }
+    }
+
+    @Test
+    fun `R_821 capture reads Not set from an unset CaptureModeFacts, never LOCAL_MICROPHONE`() {
+        val state = SettingsPolling.capture(
+            context,
+            InMemorySettingsStore(),
+            modeFacts = org.ort.app.ui.data.FakeCaptureModeFacts(),
+        )
+        assert(state.mode == null) { "expected a null mode from an unset seam, got ${state.mode}" }
+        assert(state.modeLabel == "Not set") { "expected the honest 'Not set' label, got ${state.modeLabel}" }
+    }
+
+    @Test
+    fun `R_821 modeScreen marks no row current from an unset CaptureModeFacts`() {
+        val state = SettingsPolling.modeScreen(context, modeFacts = org.ort.app.ui.data.FakeCaptureModeFacts())
+        assert(state.rows.none { it.current }) {
+            "expected no row marked current before setup has chosen one, got ${state.rows}"
+        }
     }
 
     @Test

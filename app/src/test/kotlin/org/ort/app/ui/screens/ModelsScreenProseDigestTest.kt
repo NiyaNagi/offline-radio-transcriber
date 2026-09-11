@@ -74,9 +74,10 @@ class ModelsScreenProseDigestTest {
         }
 
         composeTestRule.onNodeWithText("PROSE DIGEST").assertExists()
+        // `Settings-Assets.dc.html` verbatim: "verified e3d981c0" — no "sha256" word.
         composeTestRule
             .onNodeWithContentDescription(
-                "Gemma 3 1B int4 — prose digest. 555 MB · bundled · verified sha256 e3d981c0 · " +
+                "Gemma 3 1B int4 — prose digest. 555 MB · bundled · verified e3d981c0 · " +
                     "stored, loaded only at tier 3 while idle and charging",
             )
             .assertExists()
@@ -225,5 +226,80 @@ class ModelsScreenProseDigestTest {
         }
 
         composeTestRule.onNodeWithText("SPACE").assertDoesNotExist()
+    }
+
+    // --- R-841 (round 1, tour finding): subtitle, section order, and the omitted "Replacing an
+    // asset" section, all audited against `Settings-Assets.dc.html` -----------------------------
+
+    @Test
+    @Requirement("FR-AST-3")
+    fun `R_841 the subtitle is the board's own D35 copy, not the pre-D35 download-and-sideload line`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(rows = listOf(row(ModelId.VAD, ModelRowStatus.INSTALLED, sizeBytes = 1L))),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText("Bundled with the app and verified on first launch. Nothing is downloaded.")
+            .assertExists()
+        composeTestRule
+            .onNodeWithText("Installed by you, from a file", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-AST-3")
+    fun `R_841 the Replacing-an-asset section renders the board's own copy`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(rows = listOf(row(ModelId.VAD, ModelRowStatus.INSTALLED, sizeBytes = 1L))),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("REPLACING AN ASSET").assertExists()
+        composeTestRule.onNodeWithText("Takes effect at the next session").assertExists()
+        composeTestRule
+            .onNodeWithText(
+                "a model or lexicon is never swapped under a running capture · the bundled copy stays as the fallback",
+            )
+            .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-AST-3")
+    fun `R_841 section order is Transcription, Prose digest, Lexicon, Space — matching the board`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(rows = listOf(gemmaRow(ModelRowStatus.INSTALLED))),
+                    onDownload = {},
+                    onSideload = {},
+                    lexicon = org.ort.app.ui.data.LexiconAssetActions(
+                        row = org.ort.app.ui.data.LexiconAssetRowViewState(installed = false, label = "not installed"),
+                        importResult = null,
+                        onInstall = {},
+                        onDismissResult = {},
+                    ),
+                    extras = ModelsExtrasViewState(spaceUsedBytesLabel = "635 MB"),
+                )
+            }
+        }
+
+        val order = listOf("PROSE DIGEST", "LEXICON", "SPACE", "REPLACING AN ASSET")
+        val positions = order.map { label ->
+            composeTestRule.onNodeWithText(label).fetchSemanticsNode().positionInRoot.y
+        }
+        assert(positions == positions.sorted()) {
+            "expected section headers top-to-bottom in board order $order, got y-positions $positions"
+        }
     }
 }

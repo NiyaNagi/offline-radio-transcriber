@@ -1,5 +1,7 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -8,11 +10,13 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 /** E2-E10/E2-E11 (`spec/e2e-capture-modes-plan.md` WPD) — `Setup-Rig-Bluetooth.dc.html` (S10b). */
 @RunWith(RobolectricTestRunner::class)
@@ -241,5 +245,33 @@ class RigBluetoothScreenTest {
 
         composeTestRule.onNodeWithTag("setup-rig-bt-use-usb").performClick()
         assert(usedUsb)
+    }
+
+    /** R-805 (register, tour run): at font scale 2.0 `Refresh` used to render one letter per line
+     * down the right edge because `Pair a device in system settings` took the row's width with
+     * neither action weighted. `Refresh`'s own bounds must stay wider than tall — a vertically
+     * stacked, one-letter-per-line render would instead measure taller than wide. */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_805 Refresh keeps its intrinsic single-line width at font scale 2_0`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    RigBluetoothScreen(
+                        state = state(),
+                        onSelectDevice = {},
+                        onPairInSettings = {},
+                        onRefresh = {},
+                        onContinue = {},
+                        onUseUsbInstead = {},
+                    )
+                }
+            }
+        }
+
+        val size = composeTestRule.onNodeWithTag("setup-rig-bt-refresh").fetchSemanticsNode().size
+        assert(size.width > size.height) {
+            "expected Refresh wider than tall (single line), was ${size.width} x ${size.height}"
+        }
     }
 }

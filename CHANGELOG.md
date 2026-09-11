@@ -164,6 +164,163 @@ need no change.
 
 ---
 
+## 2026-09-10 (WPD follow-up: S10b tour-drive extra, R-802 paired-list refresh on entry, R-805 Refresh single-line at 2x)
+
+### (pending) — EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS, refreshPairedDevices() on every entry to RIG_BLUETOOTH, Refresh keeps its intrinsic width
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{SetupActivity,RigBluetoothScreen}.kt`,
+matching test files under `app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-RIG-14, FR-RIG-15, FR-PLT-2, constitution I.
+
+**What changed:**
+
+1. **`SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` (new, debug-only intent extra) — the
+   tour-builder follow-up.** The screenshot tour can only relaunch `SetupActivity` with intent
+   extras, never tap inside it, so S10b's connect -> identify -> verify checklist and its
+   drop/failure banners (only ever reachable from a tap on a paired-device row,
+   `onSelectRigBluetoothDevice`) were unreachable by the tour. This extra, read once in `onCreate`
+   right after the step resolves (via `applyDebugRigBluetoothAddressExtra`), calls that exact same
+   function when the resolved step is `RIG_BLUETOOTH` — honoured only when the new
+   `SetupActivity.isDebugBuild` seam (identical shape to `DebugRigLinkPortOverride.isDebugBuild`)
+   reports true, so a release build never even reads it. `app/src/debug` untouched — WPI wires the
+   tour's own four new steps to set this extra alongside `DebugRigLinkPortOverride`'s scripted
+   port.
+2. **R-802 (halt) — S10b's paired list rendered empty on a cold/resumed entry.**
+   `refreshPairedDevices()` previously ran only from `onSelectRigTransport`'s forward path and the
+   explicit `Refresh` action, so an operator whose process died mid-S10b (or the tour/debug extra
+   cold-opening straight onto this step) saw an empty list until a manual `Refresh` tap — a real
+   defect, not just a tour gap, since `SetupStateMachine`'s `RIG_BLUETOOTH` gate is resumable by
+   design (unlike `RADIO_USB`/`RADIO_VERIFIED`). `SetupActivity.step` is now a property with a
+   custom setter (backed by a plain `mutableStateOf`) that calls `refreshPairedDevices()` whenever
+   the new value is `RIG_BLUETOOTH` — covering every path that can produce that value
+   (`refreshStep`'s cold/gate resume, `tryOpenAtRequestedStep`'s debug entry, `navigateForward`'s
+   forward action, `onBack`), not only the one `onSelectRigTransport` already called explicitly
+   (left in place — a second, idempotent `pairedDevices()` read, harmless).
+3. **R-805 — S10b's `Refresh` text action rendered one letter per line down the right edge at font
+   scale 2.0.** With neither of the row's two `TextAction`s weighted, `Pair a device in system
+   settings`'s own long single-line text (at 2x scale) claimed almost the entire row's width before
+   `Refresh` was measured at all, squeezing it into a sliver that then wrapped letter-by-letter.
+   `Modifier.weight(1f)` on the left action alone means Compose measures the unweighted `Refresh`
+   first, at its own intrinsic (never-shrunk) natural width, then gives the left action only
+   whatever remains to wrap into.
+
+**Verified:**
+- New tests: `SetupActivityTest`'s `R_802_*` (2: cold-open lists both paired devices without a
+  Refresh tap; cold-open with `denyPermission()` shows `NoPermission` immediately) and
+  `tour-builder EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS *` (2: selects the device in a debug build and
+  drives `InMemoryRigLinkPort`'s scripted sequence to a real `Verified` end-to-end through a real
+  `AndroidComposeTestRule.waitForIdle()`; ignored — no selection at all — when the new
+  `SetupActivity.isDebugBuild` seam reports false). `RigBluetoothScreenTest`'s `R_805_*` (1, under
+  `@GraphicsMode(GraphicsMode.Mode.NATIVE)` — Robolectric's default graphics shadow does not vary
+  `Text` measurement with `LocalDensity`'s `fontScale` at all, the same finding
+  `SetupActivityTest`'s pre-existing `R_TOUR_setup_font_scale` test already made; confirmed as a
+  real discrimination test by reverting the `weight(1f)` fix and re-running — fails with `Refresh`
+  measured `0 x 233`, one letter per line, matching the finding exactly).
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — 240 of 450 requirements covered, up to date.
+**Left open / not done:** the extra's own name/constant for WPI to wire —
+`SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` (a `String` extra carrying the paired device's
+Bluetooth MAC address, e.g. `"AA:BB:CC:11:22:33"`) — reported to the coordinator alongside this
+entry for the four new tour steps that need it.
+
+---
+
+## 2026-09-10 (WPI follow-up: first-tour-run fixes — real bundled-asset install, BLUETOOTH_CONNECT reachability, CaptureConfigurationStore/station/ladder seeding, WPD's RigLinkPort seam)
+
+### 74adf1c — WPI follow-up · reviewer findings from the first tour run, fixed and re-captured
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `tools/ui-audit/{install.ps1,scenario.ps1,tour.json}`, `results/ui-audit/README.md`, `results/coverage-matrix.md` (regenerated), `results/ui-audit/**` (re-captured PNGs + manifest).
+**Requirements/ACs:** R-810, R-811, R-817, R-820, R-821, R-822, R-823, R-827, R-830, R-832, R-841, R-842, R-843; FR-CAP-3a/8/9/10/11/12/13, FR-RIG-13/14/15, FR-AST-3/3a/3b, D33, D34, AC-128/129/130/131/137/138.
+**What changed:**
+1. **R-841/R-842/R-843 (halt) — the real bug behind "not installed · 3 of 3 parts missing" on
+   CF04/S12.** `assets-bundled`/`asset-corrupt` now drive `BundledAssetInstaller` through the REAL
+   `org.ort.app.assets.AndroidBundledAssetSource` (the exact source `OrtApplication.onCreate()`
+   itself installs from) instead of a `FakeBundledAssetSource` with hand-computed sha256 values —
+   `ModelsController.currentState` verifies a marker against `ModelCatalog`'s hardcoded, generated
+   production checksum, which a fabricated-manifest marker could never satisfy regardless of how
+   real the installer call itself was. `asset-corrupt` uses a new `Scenarios.CorruptingBundledAssetSource`
+   wrapper that flips one byte for exactly one entry while every other asset — manifest.json
+   included — reads through the real source untouched, so the digest failure is genuine, not
+   fabricated. `tier0-llm-stored` uses `ScenarioFixtures.installEveryModelFixture` instead (the LLM
+   is genuinely absent from this escape-hatch build's own manifest — no real bytes exist to install
+   for real). `WpiScenariosTest.kt`'s three asset tests now assert `ModelsController.currentState`
+   directly, per the coordinator's instruction, not a file on disk.
+2. **R-810/R-811/R-820/R-830 — S09b/S10b/S11/S04's Bluetooth lane rendered S02c instead.**
+   `install.ps1` now also grants `BLUETOOTH_CONNECT` (API 31+) alongside `RECORD_AUDIO`/
+   `POST_NOTIFICATIONS`, since `SetupActivity.EXTRA_STEP` clamps any requested step back to
+   `stepFor`'s own natural resume point — which stopped at S02c for every Bluetooth-mode scenario
+   while the permission was ungranted. This makes S02c itself unreachable by default in exchange —
+   `results/ui-audit/README.md`'s "Reaching S02c" section now documents the explicit `pm revoke`
+   needed before capturing `setup-bt-permission`'s own steps, and the two-pass tour recipe used to
+   capture both halves in one round (`scenario.ps1`'s own `.NOTES` cross-references it).
+3. **R-821/R-822 (halt) — CF02/CF11 read `CaptureConfigurationStore.current()`, not the session
+   row.** `mode-local-mic`/`mode-usb`/`mode-bluetooth` now each write a real
+   `SharedPreferencesCaptureConfigurationStore.update(...)` (before `ScenarioFixtures.markCapturing`,
+   so it lands as `current`, never `pending`) matching the session/`RigStatus`/`InputStatus` facts
+   each already seeds — `mode-bluetooth`'s carries the paired device's own address in
+   `rigParams[DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS]` (CF02/CF06's Link-row address
+   reads this directly). `mode-change-pending`'s own pending Bluetooth write gained the same
+   `rigParams` address for consistency. New `WpiScenariosTest` cases assert `current()`/`rigParams`
+   per scenario.
+4. **R-823 — `mode-local-mic` showed one station heard on N01b but zero on ST01.** A transmission's
+   own `stationId` is not a `station` catalog row; `mode-local-mic` now also inserts a real
+   `StationEntity` for `W7NPC`, the same way `overnight`/`search-corpus` already do.
+5. **R-832 — F23/F9's own ladder sentence had nothing to render.** `bt-audio-dropped`'s
+   `InputStatus.lost(...)` and `rig-bt-lost`'s `RigStatus.stale(...)` now both pass a real
+   reconnect-ladder position (`attempt = 3`, `ofTotal = 8`, `nextRetryInMillis = 20_000`, the
+   coordinator's own specified numbers) instead of the honest-but-blank defaulted-null fields.
+6. **R-817/R-827 — `@2x-end` steps for R-744's pair rule.** Added
+   `setup-bt-permission/S02c-bluetooth-permission@2x-end` and `mode-local-mic/N01b-now@2x-end` to
+   `tour.json`. Both genuinely captured their plain and `@2x` siblings; the `@2x-end` (`scroll:
+   "end"`) variant itself errors on both — `"no vertically-scrollable container found"` — the same
+   way five pre-existing `setup-verified/*@2x-end` steps already do, because neither screen actually
+   needs to scroll even at font scale 2.0. Documented as a known, non-blocking tour-mechanism gap in
+   the README, not a defect in either scenario.
+7. **WPD's `DebugRigLinkPortOverride` seam (coordinator-assigned) closes S10b's paired-device-list
+   gap.** `setup-rig-bluetooth` now calls `DebugRigLinkPortOverride.show(InMemoryRigLinkPort(...))`
+   with two real, scripted paired devices (`TH-D75A`, SPP-capable; `Handheld BT`, headset-class
+   only) and a working default connect → identify → verify script — S10b's own paired-device list
+   now renders real rows. **What still cannot be reached, reported not faked:** the checklist
+   progression and a dropped-link banner need a tap on a paired-device row
+   (`SetupActivity.onSelectRigBluetoothDevice`), and neither the tour's setup-step renderer nor any
+   `SetupActivity` extra can drive that today (`rigBluetoothSelectedAddress` is unpersisted `Activity`
+   state, confirmed by reading `SetupActivity.kt`) — the README's own section now names the exact
+   hook needed (a tap capability in `ScreenshotTourActivity`, or a new `SetupActivity.EXTRA_*`) for
+   whoever picks it up. `Scenarios.resetProcessWideFacets` now also clears
+   `DebugRigLinkPortOverride` so it never leaks across scenario loads. Two new `WpiScenariosTest`
+   cases assert the scenario installs the override with both devices, and that it is ignored the
+   moment `isDebugBuild` reports `false` (the general gate is `DebugRigLinkPortOverrideTest`'s own
+   row).
+**Verified:**
+- `:app:testDebugUnitTest --tests "org.ort.app.debug.*"` — green, every new and pre-existing case.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`, 20 modules; `platformGuards: OK`, 20 modules.
+- `-PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `-PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 240 covered, no orphan
+  line at all this round.
+- `-PortAllowMissingBundledAssets=true coverageMatrixCheck` — up to date (240 of 450).
+- Screenshot tour, port 5558, two passes (`install.ps1 -Port 5558 -Clear` first, which now grants
+  `BLUETOOTH_CONNECT` too): pass A (`BLUETOOTH_CONNECT` explicitly revoked)
+  `tour.ps1 -Port 5558 -Only "setup-bt-permission/*"` — **steps: 3 ok: 3 errors: 0**; pass B
+  (`BLUETOOTH_CONNECT` re-granted) `tour.ps1 -Port 5558` (no filter) — **steps: 193 ok: 186
+  errors: 7**, all seven the known `@2x-end`-on-a-short-screen pattern above, none a regression.
+**Left open / not done:**
+- The tap-driven S10b checklist/drop states — needs either a tap capability in the tour's own
+  setup-step renderer or a new `SetupActivity.EXTRA_*`, both named exactly in the README for
+  whoever picks it up.
+- The `scroll: "end"` no-op-vs-error gap for a screen that already fits — a small
+  `ScreenshotTourActivity` fix, not attempted this round (documented, not blocking).
+- `checklist.md`'s rows for R-810/811/817/820/821/822/823/827/830/832/841/842/843 are left for the
+  lead to mark, per this package's file ownership.
+
+---
+
 ## 2026-09-10 (WPD follow-up: the tour-injection seam for S10b, and reviewer findings R-812..R-816)
 
 ### (pending) — DebugRigLinkPortOverride (tour seam) + R-812/R-813/R-814/R-815/R-816
@@ -340,6 +497,131 @@ special case baked into one banner's own layout; the live-rig-name lookup reuses
   register's own status column notes each row `fixed`, not `closed` (constitution VIII: closing
   needs a capture, not a builder's report).
 - Not merged to `main`; the lead merges builder branches.
+## 2026-09-10 (WPE round 3: tour findings R-840/R-841 and register findings R-821/R-826/R-835/R-839/R-845)
+
+### (pending) — settings modes: R-840 Digest nav seed, R-841 CF04 copy audit, R-821 honest not-set mode, R-826 CF02 live-bar clearance, R-835/R-839/R-845 CF06's missing board and retired build-limitation copy
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/**` (`SettingsViewData.kt`, `SettingsPolling.kt`,
+`SettingsCaptureScreen.kt`, `SettingsRigScreen.kt`), `app/.../ui/data/SettingsViewData.kt`
+(`CaptureModeFacts` seam), `app/.../ui/screens/ModelsScreen.kt`, `app/.../ui/navigation/NavSeed.kt`
+and `OrtNavHost.kt` (new `ReviewSessionView`/`reviewSessionView` seed field), and tests. One
+targeted, minimal edit outside this round's usual boundary — `app/.../ui/digest/SessionsContent.kt`
+gained a single new `openDigest: Boolean = false` parameter (see point 1 and "Left open" below):
+`ui/digest` is this package's explicitly off-limits territory, but R-840's own instruction
+("`OrtNavHost` dispatches to the Digest screen for the seeded session") has no path that does not
+touch that composable's own `page` seed — there is no seam to land on `SessionsPage.Digest` from
+outside it. Flagged here rather than silently crossed.
+
+**Requirements/ACs:** FR-CAP-12, FR-RIG-14, FR-RIG-15, FR-AST-3, FR-DIG-3b, AC-139, AC-131,
+constitution I/II/VIII.
+
+**What changed:**
+
+*Constitution Check.* I (R-821/R-835/R-839 are all the same failure mode in different places — a
+holder's own collapsed default, or an absent producer, rendered as though it were a real chosen or
+measured fact; each now reads "not set"/"not reported by this rig module" instead). II (every fix
+below ships a discrimination test in this same round — reverted, shown to fail for the right
+reason, restored; see Verified). VIII (R-841 is a byte-level audit of `ModelsScreen.kt` against
+`Settings-Assets.dc.html`, `Settings-Rig.dc.html` re-read in full for R-835/R-839/R-845).
+
+1. **R-840**: `NavSeed` gains `reviewSessionView: ReviewSessionView? = null`
+   (`ReviewSessionView { SESSION, DIGEST }`, extra key `nav_review_session_view`) — companion to the
+   existing `pendingReviewSessionId`, the same relationship `frequencyInitialView` already has to
+   `openFrequencyHz`. `OrtNavHost` threads it through `NavHostNavState`/`DestinationInitialState`
+   into `SessionsContent`'s new `openDigest` parameter. **The exact seed for the tour**:
+   `NavSeed(pendingReviewSessionId = <id>, reviewSessionView = ReviewSessionView.DIGEST)`, or via
+   intent extras `nav_pending_review_session_id=<id> nav_review_session_view=DIGEST`. New
+   `ReaderActivityDestinationSmokeTest` case asserts the real `Digest` header ("Back to Session")
+   renders, not the `Session` detail's own ("Back to Earlier nights").
+2. **R-841**: audited every string on CF04 against `Settings-Assets.dc.html` byte-for-byte. Fixed:
+   the subtitle (was the pre-D35 "Installed by you, from a file…" line, now "Bundled with the app
+   and verified on first launch. Nothing is downloaded."); section order (Transcription → Prose
+   digest → Lexicon → Space → Replacing an asset, was Transcription → Lexicon → Prose digest →
+   Space, missing Replacing an asset entirely); a new `ReplacingAnAssetSection` composable (the
+   board's own copy, verbatim); `LexiconAssetRow`'s caption changed from a plain styled `Text` to a
+   real `SectionHeader` (the board's own `.lbl` treatment, which `LexiconAssetRow` never had); the
+   VAD row's sub-line formula dropped the word "sha256" and the trailing tier clause (board-verbatim
+   for that one row, not the universal formula every other row still uses correctly); a bundled,
+   not-yet-verified row now says "not yet verified on this launch" rather than the generic
+   "not installed", and `GroupedAssetRow`'s "N of 3 parts missing" now leads with the same honest,
+   per-row-state phrase instead of a blanket "not installed".
+3. **R-821 (halt)**: `CaptureModeFacts.currentMode()` is now `CaptureMode?` — `null` exactly when
+   the operator has never chosen a mode (the raw `SharedPreferences` key underneath
+   `CaptureConfigurationStore.current()`, `"current.mode"`, absent — that store's own contract
+   collapses "never written" and "written, LOCAL_MICROPHONE" to the identical
+   `CaptureConfiguration.DEFAULT`, confirmed by reading `SharedPreferencesCaptureConfigurationStore
+   .current` before writing this fix). CF02's Capture-mode row and CF11's picker both now read
+   "Not set"/mark no row current in that case, never a fabricated "Built-in microphone". Flagged as
+   a coupling risk in `SettingsViewData.kt`'s own doc comment: the raw key is a literal mirror of
+   `:pipeline`'s own private constant, not an exposed accessor — a real
+   `CaptureConfigurationStore.hasBeenConfigured(): Boolean` is the robust long-term fix, owed to
+   WPC2, not built here (`:pipeline` is outside this package's ownership).
+4. **R-826**: CF02's closing paragraph was clipped behind the live bar at font scale 1.0. Fixed the
+   R-613 shape (`CaptureStatusScreen.kt`'s own precedent): a static `44.dp` trailing padding on the
+   scroll container itself, not the live bar's real measured height from `NavHostBody`'s own R-262
+   mechanism — `SettingsCaptureScreen` has no `liveBar` parameter of its own to make that
+   conditional the way `CaptureStatusScreen` does, so this floor applies unconditionally (cheap even
+   when unused, the same defence that file's own doc comment already makes).
+5. **R-835/R-839/R-845 (CF06, `Settings-Rig.dc.html` re-read in full)**: retired "No radio support
+   in this build yet" for "No rig configured — overs are logged against the frequency you set"
+   (R-839), with a real, live `Change radio` button now shown beside `Reconnect` in every state, not
+   only a dead FailedState. Added the "How overs are attributed to a band" row (static app policy,
+   board-verbatim), a real "Rig module" row (`<descriptor id> · built in · verified command set
+   <caps>` — real `RigCapability` names from the matched bundled descriptor, `BundledDescriptors`,
+   never the board mockup's raw CAT mnemonics `FQ BY FO BC MR ME AI BL`, which no accessible source
+   in this build carries), a fuller Link sub-line ("paired in system settings" for a Bluetooth link,
+   the descriptor's other declared transport named plainly with real vid/pid only when the
+   descriptor itself states them — `kenwood-thd75a.json` leaves both `null`, "still to verify", so
+   this never invents the board's own `vid 0x0451 pid 0x16a8`), an "Auto-information" row (only when
+   the matched descriptor declares an `unsolicited` push block — a plain `KeyValueRow` reading "On",
+   not `ToggleRow`: this build has no real preference behind the fact, and a live-looking toggle
+   with no effect would be a worse dishonesty than a solid value), and a "Radio battery, BL" row
+   (always the honest `not reported by this rig module` fallback — no battery reader exists
+   anywhere in `:pipeline` today). Band tiles gained a per-band over-count line — also always the
+   honest fallback (see "Left open"). R-845: the title strips the connected descriptor's own leading
+   manufacturer word ("Kenwood TH-D75A" → "TH-D75A") via a general rule (keep from the first
+   space-separated word containing a digit onward), not a hardcoded `"Kenwood "` replace; the
+   subtitle's "reading both bands unpolled" clause now comes from `pollingClause`, real from the
+   matched descriptor's own `unsolicited`/`poll` blocks (`"polled every N s"` from the descriptor's
+   own real `poll.intervalMs` when it declares no push — e.g. the generic ASCII CAT descriptor's
+   real `0.5 s`), never a hardcoded claim.
+
+**Verified** (every command with `-PortAllowMissingBundledAssets=true`):
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"` — green (R-840).
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.screens.ModelsScreen*Test"` — green (R-841).
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.settings.*" --tests "org.ort.app.ui.data.CaptureModeFactsTest"` — green (R-821/R-826/R-835/R-839/R-845).
+- `:app:testDebugUnitTest` (full) and `:app:smokeTestDebugUnitTest` (full) — green.
+- `:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck` — green (after `ktlintMainSourceSetFormat`/`ktlintTestSourceSetFormat`).
+- `:app:detekt` — green (`NavSeed.putExtras` split into `putExtras`/`putRemainingExtras` — R-840's new field pushed its `CyclomaticComplexMethod` to the threshold).
+- `build dependencyRules platformGuards` — green.
+- `-p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `coverageMatrix` then `coverageMatrixCheck` (run separately) — green.
+- **Discrimination, R-821**: reverted `RealCaptureModeFacts.currentMode()` to the unconditional
+  `store.current().mode` → `CaptureModeFactsTest`/`SettingsPollingTest`'s R-821 cases failed for the
+  right reason → restored → passed again.
+- **Discrimination, R-826**: reverted the trailing scroll padding → the new geometry test (real
+  max-scroll, sibling live-bar box, `getUnclippedBoundsInRoot`) failed with less than the expected
+  clearance → restored → passed again.
+- **Discrimination, R-835/R-845**: reverted `matchedDescriptor` to always return `null` and
+  `stripManufacturerPrefix` to identity → five `SettingsPollingTest` cases (title, both polling
+  clauses, rig-module label, auto-information) failed for the right reason → restored → passed.
+
+**Left open / not done:**
+- **Per-band over counts** (R-835's "318 overs"/"94 overs") are always the honest
+  `not reported by this rig module` fallback: the real, correct attribution needs
+  `RigSupervisor.bandAtTransmissionStart`'s own logic (band-at-record-time, not a naive match
+  against a band's *current* frequency, which would silently mis-count a band retuned mid-session)
+  — no `:pipeline`/`:data` accessor exposes the already-attributed count, and adding one is outside
+  this package's ownership (`:pipeline`/`:data` both off-limits). A real
+  `RigStatus.State.Connected.bandOverCounts`, or a `:data` DAO query, is the right fix, owed to
+  WPC2/WPF.
+- **`SessionsContent.openDigest`** (point 1) is the one line landed outside this round's own file
+  list — a minimal, additive, backward-compatible parameter (default `false`, every existing caller
+  unchanged), not a rewrite of that package's own navigation. Flagged for the lead's review rather
+  than silently absorbed into "routine WPE work."
+- **A real `CaptureConfigurationStore.hasBeenConfigured()`** (R-821's own doc comment) would replace
+  this round's raw-`SharedPreferences`-key mirror with a real, stable accessor — owed to WPC2.
 
 ---
 
@@ -28945,6 +29227,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

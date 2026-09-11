@@ -128,6 +128,36 @@ class SettingsModeScreenTest {
     }
 
     @Test
+    @Requirement("FR-CAP-12")
+    fun `R_821 no row is marked current when nothing has been chosen — never a fabricated LOCAL_MICROPHONE default`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsModeScreen(
+                    state = SettingsModeViewState(
+                        rows = CaptureMode.entries.map { mode ->
+                            SettingsModeRowViewState(mode = mode, descriptionLabel = "description", current = false)
+                        },
+                        sessionLive = false,
+                        audioRoute = SettingsModeSetRowViewState("Audio route", "not yet selected"),
+                        rigLink = SettingsModeSetRowViewState("Rig link", "no radio configured"),
+                    ),
+                    onBack = {},
+                    onSelectMode = {},
+                    onChangeAudioRoute = {},
+                    onChangeRigLink = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Local microphone · current").assertDoesNotExist()
+        composeTestRule.onNodeWithText("USB-connected radio · current").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Bluetooth-connected radio · current").assertDoesNotExist()
+        // Every row still renders its own plain (unmarked) label — the picker itself is never empty,
+        // only honestly un-committed.
+        composeTestRule.onNodeWithText("Local microphone").assertExists()
+    }
+
+    @Test
     @Requirement("FR-CAP-9")
     fun `E2_F02 picking a mode calls back with that mode`() {
         var picked: CaptureMode? = null

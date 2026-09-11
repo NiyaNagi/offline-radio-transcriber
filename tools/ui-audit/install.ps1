@@ -68,12 +68,24 @@ if ($Clear) {
 
 # RECORD_AUDIO/POST_NOTIFICATIONS are runtime permissions on API 34 (the ort_audit AVD); granting
 # them here means a validator's scenario/screenshot run never blocks on an OS permission dialog.
+# R-810/R-811/R-820/R-830: BLUETOOTH_CONNECT (API 31+, this AVD is API 34) gates
+# `SetupStep.BLUETOOTH_PERMISSION` (S02c) in Bluetooth capture mode -- left ungranted, EVERY other
+# Bluetooth-mode setup step (S04's Bluetooth lane, S09b, S10b, S11) clamps back to S02c instead,
+# since `SetupActivity.EXTRA_STEP` only ever honors a request at or before `stepFor`'s own natural
+# resume point (`SetupActivity.kt`'s own doc comment). Granting it here, alongside the other two,
+# is what makes every OTHER Bluetooth-mode step reachable by default.
+#
+# This one grant makes S02c itself (the `setup-bt-permission` scenario's own board) UNREACHABLE by
+# default, since that step exists to show the permission NOT yet granted -- see
+# `results/ui-audit/README.md`'s "Reaching S02c" section for the explicit `pm revoke` recipe needed
+# before capturing that one scenario's own steps, and `scenario.ps1`'s own `.NOTES` for the same.
 & $adb -s $serial shell pm grant $packageId android.permission.RECORD_AUDIO
 & $adb -s $serial shell pm grant $packageId android.permission.POST_NOTIFICATIONS
+& $adb -s $serial shell pm grant $packageId android.permission.BLUETOOTH_CONNECT
 
 if ($Clear) {
-    Write-Output "Installed $packageId on $serial, cleared its on-device data, and granted RECORD_AUDIO/POST_NOTIFICATIONS."
+    Write-Output "Installed $packageId on $serial, cleared its on-device data, and granted RECORD_AUDIO/POST_NOTIFICATIONS/BLUETOOTH_CONNECT."
 }
 else {
-    Write-Output "Installed $packageId on $serial and granted RECORD_AUDIO/POST_NOTIFICATIONS."
+    Write-Output "Installed $packageId on $serial and granted RECORD_AUDIO/POST_NOTIFICATIONS/BLUETOOTH_CONNECT."
 }

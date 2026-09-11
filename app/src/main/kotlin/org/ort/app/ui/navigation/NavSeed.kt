@@ -33,6 +33,10 @@ import org.ort.app.ui.settings.SettingsScreenId
  * needs to build, rather than a `NavSeed` for drill-ins plus a second, separate parameter for
  * `Settings`.
  */
+/** R-840: the two screens `Earlier nights`' [NavSeed.pendingReviewSessionId] can land a seeded
+ * session detail on — see [NavSeed.reviewSessionView]'s own doc comment. */
+public enum class ReviewSessionView { SESSION, DIGEST }
+
 public data class NavSeed(
     val openTransmissionId: String? = null,
     val openStationId: String? = null,
@@ -73,6 +77,15 @@ public data class NavSeed(
     // which this seam exists precisely to avoid). `null`/`false` (every existing caller) changes
     // nothing — same "unseeded behaviour by default" contract every other field here already has.
     val openDrawer: Boolean? = null,
+    // R-840 (tour finding, round 3): no seed field opened the Digest for a session at all — the
+    // tour landed on `Earlier nights`'s own `Session` (DG04) detail every time, via
+    // [pendingReviewSessionId], never DG01/DG05. Only meaningful alongside [pendingReviewSessionId]
+    // (the same companion relationship [frequencyInitialView] already has to [openFrequencyHz]) —
+    // `null`/`SESSION` (every existing caller) is `SessionsContent`'s own existing `Detail` default,
+    // unchanged; `DIGEST` lands on the same `Digest` screen that session's own `Digest` button
+    // opens (`SessionsContent.openDigest`, WP10's own small addition to accept this seed — confirmed
+    // by reading `ui/digest/SessionsContent.kt` before wiring this).
+    val reviewSessionView: ReviewSessionView? = null,
 ) {
     /**
      * The [ReaderDestination] this seed's own state is actually read under. The four drill-in ids
@@ -114,7 +127,10 @@ public data class NavSeed(
     }
 
     /** Writes this seed's own non-null fields onto [intent] as the same extras [fromIntent]
-     * reads back — [org.ort.app.debug.ScenarioReaderActivity]'s own forwarding half. */
+     * reads back — [org.ort.app.debug.ScenarioReaderActivity]'s own forwarding half. Split into
+     * [putExtras]/[putRemainingExtras] purely to keep this under detekt's `CyclomaticComplexMethod`
+     * limit (R-840's own new [reviewSessionView] field is what pushed the single-function shape
+     * over it) — no change to what either half actually writes. */
     public fun putExtras(intent: Intent) {
         openTransmissionId?.let { intent.putExtra(EXTRA_OPEN_TRANSMISSION_ID, it) }
         openStationId?.let { intent.putExtra(EXTRA_OPEN_STATION_ID, it) }
@@ -126,6 +142,10 @@ public data class NavSeed(
         openCaptureLevelMeter?.let { intent.putExtra(EXTRA_OPEN_CAPTURE_LEVEL_METER, it) }
         pendingReviewSessionId?.let { intent.putExtra(EXTRA_PENDING_REVIEW_SESSION_ID, it) }
         frequencyInitialView?.let { intent.putExtra(EXTRA_FREQUENCY_INITIAL_VIEW, it.name) }
+        putRemainingExtras(intent)
+    }
+
+    private fun putRemainingExtras(intent: Intent) {
         openStationSubScreen?.let { intent.putExtra(EXTRA_OPEN_STATION_SUB_SCREEN, it.name) }
         settingsScreen?.let { intent.putExtra(EXTRA_SETTINGS_SCREEN, it.name) }
         searchQuery?.let { intent.putExtra(EXTRA_SEARCH_QUERY, it) }
@@ -134,6 +154,7 @@ public data class NavSeed(
         logSheetOpen?.let { intent.putExtra(EXTRA_LOG_SHEET_OPEN, it) }
         openTransmissionRevisions?.let { intent.putExtra(EXTRA_OPEN_TRANSMISSION_REVISIONS, it) }
         openDrawer?.let { intent.putExtra(EXTRA_OPEN_DRAWER, it) }
+        reviewSessionView?.let { intent.putExtra(EXTRA_REVIEW_SESSION_VIEW, it.name) }
     }
 
     public companion object {
@@ -175,6 +196,12 @@ public data class NavSeed(
 
         // WP12 — see [openDrawer]'s own doc comment.
         public const val EXTRA_OPEN_DRAWER: String = "nav_open_drawer"
+
+        // R-840 — see [ReviewSessionView]/[NavSeed.reviewSessionView]'s own doc comments. Named
+        // extra value is the enum's own name, `SESSION` or `DIGEST` — `adb shell am start -n
+        // org.ort.app/.debug.ScenarioReaderActivity --es nav_pending_review_session_id <id> --es
+        // nav_review_session_view DIGEST` lands directly on that session's Digest.
+        public const val EXTRA_REVIEW_SESSION_VIEW: String = "nav_review_session_view"
 
         /**
          * Parses [intent]'s own seed extras (any subset, including none) into a [NavSeed] — `null`
@@ -219,6 +246,8 @@ public data class NavSeed(
                 logSheetOpen = intent.getBooleanExtraOrNull(EXTRA_LOG_SHEET_OPEN),
                 openTransmissionRevisions = intent.getBooleanExtraOrNull(EXTRA_OPEN_TRANSMISSION_REVISIONS),
                 openDrawer = intent.getBooleanExtraOrNull(EXTRA_OPEN_DRAWER),
+                reviewSessionView = intent.getStringExtra(EXTRA_REVIEW_SESSION_VIEW)
+                    ?.let { name -> ReviewSessionView.entries.firstOrNull { it.name == name } },
             )
             return if (seed == NavSeed()) null else seed
         }
