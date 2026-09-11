@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -17,7 +18,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.data.ModelsViewState
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.pipeline.capture.RigStatus
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
@@ -284,6 +287,84 @@ class ReadyScreenTest {
         }
         val heightDp = composeTestRule.onNodeWithText("Install").fetchSemanticsNode().size.height
         assert(heightDp >= 44) { "expected Install >= 44dp at scale 2.0 (density 1.0px/dp here), was ${heightDp}px" }
+    }
+
+    /**
+     * R-882 reopened (register, reviewer A4 run 6, halt): the exact real-device shape from
+     * `results/ui-audit/rig-bt-connected/S12-ready-bt@2x.png`+`@2x-end.png` — a real
+     * `readyRowsFor` output (never a hand-built `ReadyRow`, so this exercises the exact production
+     * `radioRowForCatRig` combination this row is built from) at the tour AVD's own real width and
+     * density, `@Config(qualifiers = "w390dp-h844dp-420dpi")` (1080px / 2.769 px per dp ≈ 390dp,
+     * the coordinator's own arithmetic) — narrower than the 360dp this register line was first
+     * (insufficiently) verified against. A debug dump against this exact shape, before the stacked
+     * second-line fix, measured the Radio value column at 41px wide by 1120px tall (one character
+     * per line) while every sibling — the label, `verified`, `Change` — measured normally; this
+     * test keeps that exact width/density/scale combination as the permanent regression proof.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_882 the real rig-bt-connected Radio row wraps at words, not characters, at 390dp 420dpi`() {
+        val actions = ReadyActions(
+            onFixInput = {},
+            onFixLevel = {},
+            onFixOvernight = {},
+            onFixRadio = {},
+            onChangeRadio = {},
+            onInstallModel = {},
+            onChangeMode = {},
+        )
+        val store = InMemorySetupStore(
+            captureMode = org.ort.core.capture.CaptureMode.BLUETOOTH_RADIO,
+            selectedInputLabel = "Wired headset",
+            inputVerified = true,
+            levelInBand = true,
+            levelPeakDbfs = -14.0,
+            radioChoice = RadioChoice.TH_D75A,
+        )
+        val band1 = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
+        val band2 = RigStatus.BandState("B", 146_960_000L, "FM", squelchOpen = false)
+        val connected = RigStatus.State.Connected("Kenwood TH-D75A", listOf(band1, band2))
+        val rows = readyRowsFor(store, batteryExempt = false, connected, ModelsViewState(emptyList()), actions)
+        composeTestRule.setContent {
+            val real = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(real.density, 2f)) {
+                OrtTheme { ReadyScreen(state = ReadyViewState(rows), onStartCapture = {}) }
+            }
+        }
+
+        // Input's own row also reads "verified" and Mode's own row also reads "Change" -- scoped
+        // by testTag (unique per row, unlike the plain text both rows can legitimately share) to
+        // avoid ambiguity, rather than a bare onNodeWithText that would match either row.
+        composeTestRule.onNodeWithTag("setup-ready-row-radio-label", useUnmergedTree = true).assertIsDisplayed()
+        val rowBounds = composeTestRule.onNodeWithTag("setup-ready-row-radio").fetchSemanticsNode().boundsInRoot
+        val valueNode = composeTestRule.onNodeWithTag("setup-ready-row-radio-value", useUnmergedTree = true)
+            .fetchSemanticsNode()
+        val valueSize = valueNode.size
+        val valueBounds = valueNode.boundsInRoot
+        assert(valueSize.width > valueSize.height) {
+            "expected the Radio value wider than tall (not one character per line), was $valueSize"
+        }
+        assert(
+            valueBounds.left >= rowBounds.left &&
+                valueBounds.right <= rowBounds.right &&
+                valueBounds.top >= rowBounds.top &&
+                valueBounds.bottom <= rowBounds.bottom,
+        ) { "expected the value node inside its row, row=$rowBounds value=$valueBounds" }
+
+        // "verified" still renders, on the row's own second line (this fix's own stacked branch),
+        // not dropped -- checked by bounds-within-the-row since the text itself is shared with
+        // Input's row.
+        val verifiedInRadioRow = composeTestRule.onAllNodesWithText("verified", useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .any { node ->
+                val b = node.boundsInRoot
+                b.left >= rowBounds.left &&
+                    b.right <= rowBounds.right &&
+                    b.top >= rowBounds.top &&
+                    b.bottom <= rowBounds.bottom
+            }
+        assert(verifiedInRadioRow) { "expected \"verified\" to still render inside the Radio row" }
     }
 
     // --- R-882 (register, validator V11, halt): every fact row's value stays a real, wrapping ------

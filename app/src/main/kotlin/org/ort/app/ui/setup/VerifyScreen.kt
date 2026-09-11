@@ -309,8 +309,15 @@ private fun CheckRow(
  * [RouteCheckState.Passed.levelBars] built up during the [RouteCheckStage.SIGNAL] listen, drawn the
  * same proportional-bar way [LevelScreen]'s own meter draws S07's (constitution I: an honest flat
  * line — [bars] empty — before listening has produced any real sample at all, never a fabricated
- * waveform). [signalHeard] only ever reads the caption once [RouteCheckStage.SIGNAL] has genuinely
- * passed — never claimed early.
+ * waveform). [signalHeard] only ever reads "signal heard" once [RouteCheckStage.SIGNAL] has
+ * genuinely passed — never claimed early.
+ *
+ * R-981 (register, design, reopened): the board's own right-hand caption (lines 87–90) is a real
+ * `space-between` row with the left-hand noise-floor fact, not a "heard" badge that only exists in
+ * the illustrated case — this card used to render nothing at all on that side while [signalHeard]
+ * was `false` (`results/ui-audit/setup-verified/S05-verify.png`, still mid-listen, drew only the
+ * noise floor). It now always names the real fact: "signal heard" once true, an honest "not yet"
+ * (never invented, never a decoration) while [signalHeard] is still `false`.
  */
 @Composable
 private fun InputWaveformCard(
@@ -343,9 +350,17 @@ private fun InputWaveformCard(
                 style = OrtType.axis,
                 color = OrtColors.textLow,
             )
-            if (signalHeard) {
-                Text(text = "signal heard", style = OrtType.axis, color = OrtColors.accentGreenDim)
-            }
+            // R-981 (register, design): the board's own right-hand label (lines 87-90, one
+            // space-between row) is not decoration to show only in the illustrated "heard" case —
+            // it names the real route-check fact either way, honestly "not yet" while still
+            // listening rather than rendering nothing at all (this card's own previous shape,
+            // `results/ui-audit/setup-verified/S05-verify.png`, only ever drew the left half).
+            Text(
+                text = if (signalHeard) "signal heard" else "not yet",
+                style = OrtType.axis,
+                color = if (signalHeard) OrtColors.accentGreenDim else OrtColors.textLow,
+                modifier = Modifier.testTag("setup-verify-input-waveform-signal-caption"),
+            )
         }
     }
 }

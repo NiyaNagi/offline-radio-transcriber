@@ -434,6 +434,40 @@ class VerifyScreenTest {
         composeTestRule.onNodeWithText("signal heard").assertDoesNotExist()
     }
 
+    /**
+     * R-981 (register, design, reopened): the board's own right-hand caption
+     * (`Setup-Verify.dc.html` lines 87–90) is a real `space-between` row, not a badge that only
+     * exists once heard — `results/ui-audit/setup-verified/S05-verify.png` (still mid-listen)
+     * showed the left-hand noise floor with nothing at all on the right, a real gap this test
+     * closes: an honest "not yet" — never invented, never blank — while genuinely still listening.
+     */
+    @Test
+    fun `R_981 the waveform card names the real not-yet-heard fact, never rendering blank`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(
+                            setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
+                            48_000,
+                            4_000L,
+                        ),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-verify-input-waveform-signal-caption")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithText("not yet").performScrollTo().assertIsDisplayed()
+    }
+
     @Test
     fun `R_943 signal heard caption renders once the signal stage has passed`() {
         composeTestRule.setContent {
