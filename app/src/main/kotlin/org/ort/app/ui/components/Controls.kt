@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
@@ -95,7 +96,31 @@ import org.ort.app.ui.theme.OrtType
  * shape [FilterChip]'s own R-383 doc comment already named as this package's known-broken order.
  * `requiredHeightIn`, [FilterChip]'s own R-510 fix, closes both failure modes at once (a caller's
  * own tighter modifier, and a measurement-relevant modifier later in the same chain) since it does
- * not coerce its own floor into whatever surrounds it either way. */
+ * not coerce its own floor into whatever surrounds it either way.
+ *
+ * R-863 (register, design, validator V9 — the same defect class WPD already found and fixed
+ * locally on S10b's own `Refresh`, R-805): an unweighted `TextAction` sitting after a plain, non-
+ * weighted leading sibling in a `Row` (`Settings-Assets.dc.html`'s "Install from a file" after a
+ * long asset-part label, `Digest-Prose.dc.html`'s "Read the overs" after the over-count label) let
+ * that sibling's own wrap claim the row's width first, squeezing this action's own text down to one
+ * word — sometimes one letter — per line.
+ *
+ * `Modifier.width(IntrinsicSize.Max)` was tried first and does not hold here: measured `0` wide at
+ * font scale 2.0 on both real sites (`ModelsScreenTest`/`DigestScreensTest`'s own `R_863` cases
+ * caught this directly — the fix was reverted only after failing its own new tests, never merged
+ * unverified). `Modifier.wrapContentWidth(unbounded = true)`, applied here once, is what actually
+ * holds: it measures this action's content against an *unbounded* width regardless of whatever the
+ * incoming constraint offers, so it always lays out on one line at its own true text width — the
+ * same proven technique `ActivityPatternChart`'s own hour-axis labels already use for an equivalent
+ * "never let a tight column force-wrap this label" defect. Because this action now always reports
+ * its own real, unwrapped width to the `Row` it sits in, a `Row` with no other flexible child left
+ * simply overflows onto whichever sibling has nowhere else to shrink — matching S10b's own manual
+ * `weight(1f)`-on-the-sibling fix (a `Row` still correctly gives a *weighted* sibling only the
+ * remainder once this action's own real width is known), without requiring every call site to
+ * remember to add it. Placed *before* [modifier] is fully applied — i.e., inside the caller's own
+ * chain — so a caller that deliberately stretches this action (`Modifier.weight(1f)`, S10b's own
+ * *leading* action) still can: `weight` is read by the parent `Row` from the outside and hands this
+ * node a fixed constraint before this modifier ever runs. */
 @Composable
 public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -103,6 +128,8 @@ public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Mo
     val color = if (!enabled) OrtColors.textDisabled else OrtColors.accentGreen
     Box(
         modifier = modifier
+            // R-863: see this composable's own doc comment above.
+            .wrapContentWidth(align = Alignment.Start, unbounded = true)
             // R-510-class: `requiredHeightIn`, not `heightIn` — see this composable's own doc
             // comment.
             .requiredHeightIn(min = 44.dp)

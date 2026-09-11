@@ -32,6 +32,86 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPF: R-863 — TextAction never shrinks below its own text's intrinsic width)
+
+### (pending) — status modes: TextAction (Controls.kt) fixed once so a trailing action never wraps to one word per line when a leading sibling squeezes it — CF04, DG05 and (already fixed locally) S10b all covered by the one change
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Controls.kt`, matching test files
+`app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/digest/DigestScreensTest.kt`. `results/ui-audit/register.md`
+row R-863 updated in place. Branch only — not merged to `main`.
+
+**Requirements/ACs:** none new (a rendering-defect fix, register row R-863; guide §5's own "44dp
+target, real affordance" rule is what it restores).
+
+**What changed:**
+
+*Constitution Check.* II (Test-Backed Change) is the whole story here: `Modifier.width
+(IntrinsicSize.Max)` was the first thing tried, following the coordinator's own suggested
+technique — both new tests (`ModelsScreenTest`/`DigestScreensTest`) were written and run against
+it *before* it was declared done, and both **failed** (measured `0` wide, not merely "still
+wrapped") on the real CF04/DG05 sites, while the pre-existing `RigBluetoothScreenTest.R_805` case
+kept passing throughout (that site pairs `TextAction` with a `weight(1f)`-ed sibling, which masked
+the same underlying problem). This is exactly the discipline constitution II names: a fix is not
+reported done because it matches the suggested technique or reads as though it should work; it is
+done once its own test is seen to pass, and here that meant discovering the first technique does
+not actually hold and revising it before landing anything. VIII (Visual Conformance) — the register
+row itself records both the failed attempt and why, not just the final fix, so the next reader does
+not re-try the same dead end.
+
+1. **The failed attempt, kept in the doc comment as a record.** `Modifier.width(IntrinsicSize.Max)`
+   on `TextAction`'s own `Box`, placed before the caller's modifier is folded in — CF04's "Install
+   from a file" (the Whisper family's still-missing-part row, its own long leading label "Whisper
+   tiny.en — encoder") and DG05's "Read the overs" (its own leading "from overs HH:MM – HH:MM"
+   label) both reproduced `0 x 471`/`0 x 607` — a *worse* failure than the original bug (zero
+   width, not just excessive height), while S10b's own `Refresh` (paired with a `weight(1f)`
+   leading sibling) stayed correctly wide. Reverted once the new tests proved it wrong, not kept as
+   a partial fix.
+2. **The real fix:** `Modifier.wrapContentWidth(align = Alignment.Start, unbounded = true)` in its
+   place — the identical technique `ActivityPatternChart`'s own hour-axis labels already use in
+   this codebase for an equivalent "a tight column forces this label to wrap" defect (confirmed by
+   reading that file before reusing its pattern, not guessed). Measuring this action's own content
+   against an unbounded width means it always lays out on one line at its real text width,
+   regardless of what the incoming `Row` constraint offers; a `Row` with no other flexible child
+   then has nowhere to put the leading content but to let it wrap, matching S10b's own manual
+   `weight(1f)`-on-the-sibling fix without requiring every call site to remember it. Placed before
+   the caller's own modifier in the chain, so S10b's own leading `Refresh`-sibling `weight(1f)` call
+   still works unchanged (`weight` is read by the parent `Row` from outside and hands this node a
+   fixed constraint the new modifier cannot exceed either way).
+3. **Tests**, both `@GraphicsMode(NATIVE)` at font scale 2.0 (this package's own established
+   discipline — the default graphics mode does not reliably reproduce real glyph-wrap
+   measurement) and both driving the real production path, not a hand-built row list standing in
+   for it: `ModelsScreenTest.R_863_*` uses `ModelsController.currentState` on a genuinely clean
+   Robolectric context (the same one `R_443_clean_install_groups` already proves reaches this exact
+   nested Whisper-family row); `DigestScreensTest.R_863_*` uses a real `DigestProseSectionViewState`
+   through `DigestScreen`. Both assert the action's own fetched semantics-node bounds are wider than
+   tall (single line), the same shape `RigBluetoothScreenTest.R_805` already established — confirmed
+   still green, unchanged, after this session's edit.
+
+**Verified** (all on this workstation, `JAVA_HOME`/`ANDROID_HOME` as this session's own preamble,
+`-PortAllowMissingBundledAssets=true` on every invocation):
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.screens.ModelsScreenTest" --tests
+  "org.ort.app.ui.digest.DigestScreensTest" --tests "org.ort.app.ui.setup.RigBluetoothScreenTest"`
+  — the discrimination run: FAILED with `IntrinsicSize.Max` (2 of 34), BUILD SUCCESSFUL (34 of 34)
+  with `wrapContentWidth(unbounded = true)`.
+- `./gradlew :app:testDebugUnitTest` — BUILD SUCCESSFUL, full suite, no regression across
+  `TextAction`'s many other call sites.
+- `./gradlew :app:smokeTestDebugUnitTest` — BUILD SUCCESSFUL.
+- `./gradlew build dependencyRules platformGuards` — BUILD SUCCESSFUL; `dependencyRules: OK`, 20
+  modules; `platformGuards: OK`, 20 modules.
+- `./gradlew -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix` — 240 of 450 covered; no orphan-test line.
+- `./gradlew coverageMatrixCheck` — up to date (240 of 450).
+- `./gradlew :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL, no new findings.
+
+**Left open / not done:**
+- Device/tour re-capture of `validation/V9/assets-bundled/` and `llm-enabled-prose/` — this session
+  is unit-only; the register row is `fixed`, not `closed` (constitution VIII).
+- Not merged to `main`; the lead merges builder branches.
+
+---
+
 ## 2026-09-11 (WPI: R-840 Digest review-session view, the rig-Bluetooth checklist's four states, E2-A07 v10 seeding)
 
 ### b0edcc06 — DG05/DG01 land on Digest not Session (R-840); setup-rig-bluetooth's connect/identify/verify/drop checklist reachable via a new SetupActivity extra; every real TH-D75A scenario seeds the v10 session-route-facts columns
