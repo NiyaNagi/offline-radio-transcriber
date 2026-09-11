@@ -1,15 +1,19 @@
 package org.ort.app.ui.digest
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * `Digest-Prose.dc.html` (E2-G07, FR-DIG-3, FR-DIG-6, FR-DIG-11): [DigestScreen] is a pure
@@ -71,6 +75,36 @@ class DigestScreensTest {
         composeTestRule.onNodeWithText("Reported running low power", substring = true).assertExists()
         composeTestRule.onNodeWithText("from overs 02:17 – 02:41", substring = true).assertExists()
         composeTestRule.onNodeWithText("Written on this phone", substring = true).assertExists()
+    }
+
+    /** R-863 (register, design, validator V9): at font scale 2.0, "Read the overs" (DG05) used to
+     * wrap one word per line down the right edge because the card's own leading over-range label
+     * ("from overs 02:17 – 02:41") took the row's width with neither side weighted — R-805's exact
+     * defect class, fixed once and centrally in `TextAction` itself now (`Controls.kt`), never
+     * per call site. `GraphicsMode.NATIVE`: the default graphics mode does not reliably reproduce
+     * real glyph-wrap measurement (this package's own established discipline,
+     * `RigBluetoothScreenTest`'s `R_805` case). */
+    @Test
+    @Requirement("R-863")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_863 DG05 Read the overs keeps its intrinsic single-line width at font scale 2_0`() {
+        val prose = DigestProseSectionViewState(
+            cards = listOf(card()),
+            footnote = "Written on this phone by the bundled language model from the resolved overs only.",
+        )
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    DigestScreen(state = baseState(prose), onBack = {}, onOpenItem = {}, onFullLog = {})
+                }
+            }
+        }
+
+        val size = composeTestRule.onNodeWithText("Read the overs").fetchSemanticsNode().size
+        assert(size.width > size.height) {
+            "expected 'Read the overs' wider than tall (single line), was ${size.width} x ${size.height}"
+        }
     }
 
     @Test
