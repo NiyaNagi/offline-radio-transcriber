@@ -108,19 +108,31 @@ import org.ort.app.ui.theme.OrtType
  * `Modifier.width(IntrinsicSize.Max)` was tried first and does not hold here: measured `0` wide at
  * font scale 2.0 on both real sites (`ModelsScreenTest`/`DigestScreensTest`'s own `R_863` cases
  * caught this directly — the fix was reverted only after failing its own new tests, never merged
- * unverified). `Modifier.wrapContentWidth(unbounded = true)`, applied here once, is what actually
- * holds: it measures this action's content against an *unbounded* width regardless of whatever the
- * incoming constraint offers, so it always lays out on one line at its own true text width — the
- * same proven technique `ActivityPatternChart`'s own hour-axis labels already use for an equivalent
- * "never let a tight column force-wrap this label" defect. Because this action now always reports
- * its own real, unwrapped width to the `Row` it sits in, a `Row` with no other flexible child left
- * simply overflows onto whichever sibling has nowhere else to shrink — matching S10b's own manual
- * `weight(1f)`-on-the-sibling fix (a `Row` still correctly gives a *weighted* sibling only the
- * remainder once this action's own real width is known), without requiring every call site to
- * remember to add it. Placed *before* [modifier] is fully applied — i.e., inside the caller's own
- * chain — so a caller that deliberately stretches this action (`Modifier.weight(1f)`, S10b's own
- * *leading* action) still can: `weight` is read by the parent `Row` from the outside and hands this
- * node a fixed constraint before this modifier ever runs. */
+ * unverified). `Modifier.wrapContentWidth(unbounded = true)` landed next and held R-863's own two
+ * sites, but overcorrected: it measures this action's content against an *unbounded* width
+ * regardless of whatever the incoming constraint offers, so it always lays out on one line at its
+ * own true text width *even when the row genuinely has no room for that* — R-874 (register, spec,
+ * validator V10) caught this once a real 390dp card was too narrow for "Read the overs" beside its
+ * own over-range label at font scale 2.0: unbounded measurement pushed the action straight past the
+ * card's own right edge instead of wrapping, and nothing clips it back in, so it renders truncated
+ * ("Read th…").
+ *
+ * **R-874's fix**: plain `Modifier.wrapContentWidth(align = Alignment.Start)` (bounded — no
+ * `unbounded`), which hugs this action's own content width up to whatever incoming max the `Row` it
+ * sits in actually offers, never less and never more. [text]'s own `Text` below already has no
+ * `maxLines`/`softWrap` override, so Compose's own default text layout does the rest: single line
+ * when the incoming max is enough, wrapped at real word boundaries (never one letter per line, since
+ * a `Row` only ever offers this action a *reasonable* remaining width) when it is not, and never
+ * past the incoming max at all. R-863's own "leading sibling squeezes this to nothing" failure mode
+ * is closed at the call site, not by this component overriding its own measurement: the two known
+ * sites (`Digest-Prose.dc.html`'s over-range label, S10b's own `Refresh` row) give their *leading*
+ * sibling `Modifier.weight(1f, fill = false)` on a `Row.fillMaxWidth()`, which the Compose `Row`
+ * measure policy already handles correctly on its own — every non-weighted child (this action,
+ * un-weighted, exactly as before) is measured *before* any weighted sibling, so it always gets first
+ * claim on the row's own real width, and the weighted leading sibling only ever receives the
+ * remainder. `ModelsScreenTest`/`DigestScreensTest`/`RigBluetoothScreenTest`'s own `R_805`/`R_863`
+ * cases (still green) prove this holds without any per-letter regression; `DigestScreensTest`'s new
+ * `R_874` case proves the card-width overflow this replaces is gone too. */
 @Composable
 public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -128,8 +140,9 @@ public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Mo
     val color = if (!enabled) OrtColors.textDisabled else OrtColors.accentGreen
     Box(
         modifier = modifier
-            // R-863: see this composable's own doc comment above.
-            .wrapContentWidth(align = Alignment.Start, unbounded = true)
+            // R-874: bounded — see this composable's own doc comment above for why R-863's
+            // `unbounded = true` overcorrected.
+            .wrapContentWidth(align = Alignment.Start)
             // R-510-class: `requiredHeightIn`, not `heightIn` — see this composable's own doc
             // comment.
             .requiredHeightIn(min = 44.dp)
@@ -445,6 +458,19 @@ public fun FilterChipRow(modifier: Modifier = Modifier, content: @Composable Row
 /** guide §6.14's complete badge set. A badge never carries the only copy of a fact. */
 public enum class BadgeKind { NEW, REVISED, CORRECTED, TIER, COUNT }
 
+/**
+ * R-970 (register, spec, reviewer A3): beside a title in a `Row` with neither weighted, [Badge]'s
+ * own real text ("ACTIVE") stacked one character per line at the right edge once the title grew
+ * wide enough at font scale 2.0 — the same defect class [TextAction]'s own R-874/R-863 doc comment
+ * names: a plain `Box` (this composable's own shape, unmodified) hugs its content correctly on its
+ * own, but a non-weighted trailing sibling in a `Row` where the leading one is *also* non-weighted
+ * gets whatever sliver is left once the leading sibling's own uncompressed width is measured first.
+ * The fix is the same rule, applied at the call site (never inside this composable, which has
+ * nothing to shrink): give the *title* `Modifier.weight(1f, fill = false)` on a `Row.fillMaxWidth()`
+ * (`ui/screens/ModelsScreen.kt`'s three title-plus-badge rows) so Compose measures this
+ * non-weighted [Badge] first, at its own real width, and the weighted title wraps into whatever
+ * remains — never the reverse.
+ */
 @Composable
 public fun Badge(text: String, kind: BadgeKind, modifier: Modifier = Modifier) {
     val shape = if (kind == BadgeKind.COUNT) RoundedCornerShape(9.dp) else RoundedCornerShape(3.dp)

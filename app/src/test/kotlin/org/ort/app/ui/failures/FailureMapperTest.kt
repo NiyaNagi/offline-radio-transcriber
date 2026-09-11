@@ -466,6 +466,19 @@ class FailureMapperTest {
         assertEquals("TH-D75A", (presentation as FailurePresentation.Rig).state.deviceLabel)
     }
 
+    // R-870 (register, polish): the shared `stripRigManufacturerPrefix` helper (R-845/R-916/R-920)
+    // drops the descriptor's own leading manufacturer word everywhere else — F9's own banner title
+    // was the one caller still rendering it verbatim.
+    @Test
+    @Requirement("R-870")
+    fun `R_870 F9 drops the descriptor's own leading manufacturer word, matching every other screen`() {
+        val connected = RigStatus.State.Connected("Kenwood TH-D75A", emptyList())
+        val presentation = FailureMapper.map(
+            signals(rigStatus = RigStatus.State.Stale(connected, sinceMillis = 900_000L)),
+        )
+        assertEquals("TH-D75A", (presentation as FailurePresentation.Rig).state.deviceLabel)
+    }
+
     // checklist row E2-G06 (F9's transport naming).
     @Test
     @Requirement("FR-RIG-15")

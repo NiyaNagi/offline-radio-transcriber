@@ -563,6 +563,28 @@ class WpiScenariosTest {
         assertEquals(20_000L, state.nextRetryInMillis)
     }
 
+    /**
+     * R-872 (register, halt): validator V10 found `rig-bt-lost`'s own live bar meter reading as
+     * the same muted flat dots `bt-audio-dropped`'s genuine input-lost drop shows — not because
+     * `LiveBarPolling` fails to distinguish them (`LiveBarPollingTest.R_836 a rig-only drop keeps
+     * the real live meter...` already proves it does, given a real `LevelStatus.Measured` reading
+     * to show), but because this scenario never seeds one at all, so the meter's own honest
+     * "nothing measured yet" floor reads identically to a genuine drop on a real screen. This is
+     * an audio-only-fine, rig-control-only drop (FR-RIG-15) — the session's own real
+     * `WIRED_HEADSET` v7 columns already say the audio route is verified; the live process-wide
+     * holders must agree, the same way every other "audio is fine" scenario seeds them.
+     */
+    @Test
+    @Requirement("R-872")
+    fun `R_872_rig-bt-lost seeds a real Measured level and an opened, not lost, InputStatus`() = runTest {
+        Scenarios.load(context, "rig-bt-lost")
+
+        val input = InputStatus.state
+        assertTrue("expected InputStatus.Opened, got $input", input is InputStatus.State.Opened)
+        val level = LevelStatus.state
+        assertTrue("expected LevelStatus.Measured, got $level", level is LevelStatus.State.Measured)
+    }
+
     @Test
     @Requirement("FR-CAP-12", "AC-131")
     fun `AC_131_mode-change-pending writes a pending configuration without disturbing current`() = runTest {
