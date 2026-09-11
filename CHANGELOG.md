@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (WPI run 7: closing run — R-982 scroll fix plus the WPD/WPE/WPF nav-host round, 219/219 ok on main f3cc17c)
 
-### <pending> — run 7: 25 steps re-captured (R-982's own four screens, S12-ready-bt, CF06, F09, plus five nav-host regression checks), 219/219 ok, one severe host-contention episode mid-run recovered by an emulator reboot
+### f26ab8a8 — run 7: 25 steps re-captured (R-982's own four screens, S12-ready-bt, CF06, F09, plus five nav-host regression checks), 219/219 ok, one severe host-contention episode mid-run recovered by an emulator reboot
 
 **Scope:** `results/ui-audit/tour-manifest.json` + the 25 PNGs this round's own step list names. No app
 code touched this round. Merged `main` fast-forward to `f3cc17c` first (WPF R-883 F9 banner cap, WPD
