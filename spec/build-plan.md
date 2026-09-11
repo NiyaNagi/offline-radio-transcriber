@@ -326,8 +326,13 @@ The prompts below are the summaries; the plan is authoritative where they differ
   edge, and a capture started in each mode is distinguishable in the stored record without
   reading its audio.
 
-- [ ] **P20 · Bundle every asset into the artifact** *(build config, `:app`, `:asr-sherpa`,
-  `:net`)* — D35/D36. Amends the delivery half of P18, not its lifecycle half.
+- [x] **P20 · Bundle every asset into the artifact** *(build config, `:app`, `:asr-sherpa`,
+  `:net`)* — D35/D36. Amends the delivery half of P18, not its lifecycle half. **Done
+  2026-09-11:** AC-136..140 closed in `results/e2e-audit/checklist.md` (E2-H01..H09, E2-I01..I06);
+  one variant; `fetchBundledAssets` 5/5 with `HF_TOKEN` (local and the GitHub secret) and the
+  complete size measured on a device — APK 611,029,854 B, ≈1.18 GiB installed
+  (`results/e2e-audit/installed-size.md`); FR-AST-3a's packs TODO stays open with that cost
+  recorded (the LLM is 84 % of the bundled bytes).
 
   **Read first:** FR-AST-3, FR-AST-3a, FR-AST-3b, FR-DIG-3a, FR-DIG-3b, AC-136..140, R18.
   Constitution V and VII.
