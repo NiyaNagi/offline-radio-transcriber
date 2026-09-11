@@ -32,6 +32,92 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPD follow-up: S11's marker/title/duration/AC-133 clause, S04's pre-select and override fix, S00's Bluetooth icon, S04's subtitle — R-902, R-903, R-850, R-851, R-852)
+
+### (pending) — presetInputRouteFor/isAudioRouteOverride, RadioVerifiedScreen's marker+duration+AC-133 clause, OrtIcons.bluetooth
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{InputScreen,SetupActivity,SetupScaffold,RadioVerifiedScreen,ModeScreen}.kt`,
+`app/src/main/kotlin/org/ort/app/ui/components/OrtIcons.kt` (lead-approved mechanical exception —
+see below), matching test files under `app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-CAP-9, FR-RIG-14, AC-133.
+
+**What changed:**
+
+1. **R-902 (spec, reviewer A2 run 3) — S04 pre-selected the preset route's *first* enumerated
+   match, never asking whether it was the only one.** Under `mode-local-mic`, the chip claimed
+   "preset by Local microphone" with nothing actually selected and `Verify` disabled — the real bug
+   was `onChooseMode`'s own `firstOrNull`, which always picks *a* match regardless of ambiguity.
+   `presetInputRouteFor(captureMode, routes)` (new, pure, `InputScreen.kt`) pre-selects only when
+   `routes.singleOrNull { it.routeKind == presetKind }` finds exactly one match — several matches
+   pre-select none (constitution I: no honest single "the" preset route to guess at). Wired through
+   a new `SetupActivity.applyPresetInputIfUnselected()`, called from both `refreshInputRoutes()`
+   (a cold/resumed entry straight onto S04, or a debug scenario that seeds `captureMode` directly
+   without ever calling `onChooseMode`) and `onChooseMode`'s own already-enumerated-routes path —
+   not only the interactive tap path the old logic only ever ran from.
+2. **R-903 (design, reviewer A2 run 3) — S11 was missing the connected marker, showed the full
+   manufacturer-prefixed descriptor, and never named a measured verify duration or AC-133's "same
+   command set as USB" clause.** `SetupScaffold` gains a `titleLeading` parameter (a small
+   composable rendered before the title text, centre-aligned per the board's own `align-items:
+   center` sub-row) — S11's own 9dp green `Box`. Both S11 titles now go through
+   `SettingsPolling.stripManufacturerPrefix` (`internal`, same module, R-845's own CF06 fix reused
+   rather than duplicated) — "Kenwood TH-D75A connected" → "TH-D75A connected". `SetupActivity` now
+   times S10b's real open → identify → verify handshake with `org.ort.core.Clock.monotonicNanos()`
+   (never `wallMillis` — that interface's own doc comment is explicit wall time can jump and is
+   never honest for a duration), started in `onSelectRigBluetoothDevice` and stopped the instant
+   `onRigLinkStateChanged` first sees `RigLinkState.Verified`; `null` (never a fabricated number)
+   for the USB lane, which has no equivalent timed probe, and reset on `onChangeRadio`/the USB
+   branch of `onConnectRigTransport` so a later visit never inherits an abandoned attempt's timing.
+   `radioVerifiedSubtitle`/`sameCommandSetAsUsb` (new, pure, `RadioVerifiedScreen.kt`) assemble the
+   board's own worked example — `"Bluetooth SPP · identified and verified in 1.2 s · same command
+   set as USB"` — the last clause true only when the rig's own catalogue entry declares both
+   `BLUETOOTH_SPP` and `USB_SERIAL` with an identical, non-empty capability set (AC-133).
+3. **R-850 (design, validator V8, device)** — S04's subtitle read "Which of these is the radio?";
+   the board's own copy is "Which of these carries the radio's audio?" (S04 asks which *input*
+   carries the audio, not which device the radio itself is).
+4. **R-851 (design, validator V8, device) — lead-approved mechanical exception in
+   `ui/components/OrtIcons.kt`, outside this package's own ownership**, the same kind of exception
+   already granted once this program for `Scenarios.kt`: S00's Bluetooth-connected-radio row
+   rendered with no leading icon at all (`icon = null`), unlike the other two rows.
+   `OrtIcons.bluetooth` (new) is `design/canvas/Setup-Mode.dc.html`'s own glyph verbatim (`M7 7l10
+   10-5 5V2l5 5L7 17`, the classic Bluetooth "bowtie", sourced directly from the live design canvas
+   markup, not a written transcription). `NavigationRow`'s own icon gained a `testTag` (invisible to
+   TalkBack) purely so a test can assert one actually rendered — a bare `Icon` carries no semantics
+   of its own to query otherwise.
+5. **R-852 (spec, validator V8, device, FR-CAP-9)** — `RenderInput`'s override-tracking guarded on
+   `presetRouteId != null`, so picking a route under R-816's own "none attached, choose a route"
+   chip (no enumerated route matched the preset at all) never recorded an override, and that chip
+   could never change afterward. `isAudioRouteOverride(captureMode, presetRouteId, selectedId)`
+   (new, pure, `InputScreen.kt`) fires whenever the pick is not literally the one honest preset
+   match — including every pick when there was no such match to begin with — sharing
+   `presetInputRouteFor`'s own "exactly one match" rule for what counts as "the" preset in the first
+   place (an ambiguous multi-match case is exactly as unresolved for override-detection as it is for
+   pre-selection).
+
+**Verified:**
+- New tests: `InputScreenTest`'s `R_850_*` (1), `R_902_*` (4: exactly one match pre-selects, several
+  pre-select none, no match pre-selects none, no capture mode pre-selects none), `R_852_*` (4: no
+  match is an override, the exact preset match is never an override, a different pick is an
+  override, no capture mode is never an override); `ModeScreenTest`'s `R_851_*` (1: all three rows
+  render a leading icon); `RadioVerifiedScreenTest`'s `R_903_*` (7: the marker dot renders on
+  Connected and never on Stale, a measured duration renders, no duration renders the plain clause,
+  the AC-133 clause renders only when asked, plus three pure `radioVerifiedSubtitle`/`sameCommandSetAsUsb`
+  cases) and its two pre-existing title assertions updated to the now-stripped-prefix wording — all
+  green. Robolectric's own `AudioManager` shadow reports no real input devices by default (confirmed
+  directly — a first attempt at an activity-level "cold-opened S04 pre-selects the built-in mic"
+  test failed on this, not the fix), so R-902's own regression proof stays at the pure-function
+  level, the same shape this file's pre-existing `presetChipStateFor` tests already use.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — up to date.
+**Left open / not done:** R-853 (Now's idle body against a live bar/no F23 banner under
+`bt-audio-dropped`) is WPF's file, not touched here.
+
+---
+
 ## 2026-09-11 (WPD follow-up: S12 44dp Install floor, the Models row's optional-LLM gate — R-866, R-862/AC-138)
 
 ### (pending) — ReadySetupRow's row-level 44dp floor; modelsRow no longer gates green on the optional Gemma model

@@ -1,9 +1,11 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
@@ -50,6 +52,25 @@ class InputScreenTest {
         composeTestRule.onNodeWithTag("setup-input-verify").assertIsNotEnabled()
         composeTestRule.onNodeWithTag("setup-input-route-usb-1").performClick()
         assert(selected == "usb-1")
+    }
+
+    /** R-850 (validator V8, device): the subtitle read "Which of these is the radio?" — the board's
+     * own copy is "Which of these carries the radio's audio?" (S04 asks which INPUT carries the
+     * audio, not which device the radio itself is). */
+    @Test
+    fun `R_850 the subtitle matches the board's own copy`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                InputScreen(
+                    state = InputViewState(routes = listOf(usb), selectedId = null),
+                    onSelect = {},
+                    onRefresh = {},
+                    onVerify = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Which of these carries the radio's audio?").assertIsDisplayed()
     }
 
     @Test
@@ -279,5 +300,48 @@ class InputScreenTest {
         val route = presetInputRouteFor(captureMode = null, routes = listOf(usbRoute))
 
         assert(route == null) { "got $route" }
+    }
+
+    // --- R-852 (validator V8, spec, FR-CAP-9): an explicit pick with no matching preset route ----
+    // --- is still a real override, not silently ignored --------------------------------------------
+
+    @Test
+    fun `R_852 no route matched the preset at all -- any pick is an override`() {
+        val isOverride = isAudioRouteOverride(
+            captureMode = org.ort.core.capture.CaptureMode.USB_RADIO,
+            presetRouteId = null,
+            selectedId = "mic-0",
+        )
+
+        assert(isOverride) { "picking a route under the -none attached- chip must record an override" }
+    }
+
+    @Test
+    fun `R_852 picking exactly the preset route is never an override`() {
+        val isOverride = isAudioRouteOverride(
+            captureMode = org.ort.core.capture.CaptureMode.USB_RADIO,
+            presetRouteId = "usb-1",
+            selectedId = "usb-1",
+        )
+
+        assert(!isOverride) { "the honest preset match itself must never read as an override" }
+    }
+
+    @Test
+    fun `R_852 picking a different route than the preset match is an override`() {
+        val isOverride = isAudioRouteOverride(
+            captureMode = org.ort.core.capture.CaptureMode.USB_RADIO,
+            presetRouteId = "usb-1",
+            selectedId = "mic-0",
+        )
+
+        assert(isOverride)
+    }
+
+    @Test
+    fun `R_852 no capture mode chosen at all is never an override`() {
+        val isOverride = isAudioRouteOverride(captureMode = null, presetRouteId = null, selectedId = "mic-0")
+
+        assert(!isOverride)
     }
 }

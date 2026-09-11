@@ -220,7 +220,11 @@ class RadioVerifiedScreenTest {
     fun `radioVerifiedSubtitle omits the duration clause when nothing was measured`() {
         assertEquals(
             "USB serial · identified and verified",
-            radioVerifiedSubtitle(transportLabel = "USB serial", verifyDurationSeconds = null, sameCommandSetAsUsb = false),
+            radioVerifiedSubtitle(
+                transportLabel = "USB serial",
+                verifyDurationSeconds = null,
+                sameCommandSetAsUsb = false,
+            ),
         )
     }
 

@@ -445,7 +445,13 @@ public fun NavigationRow(
                 imageVector = icon,
                 contentDescription = null,
                 tint = iconTint ?: if (enabled) OrtColors.accentGreen else OrtColors.textIconDim,
-                modifier = Modifier.size(20.dp),
+                // R-851 (validator V8, device): a bare Icon carries no semantics of its own (its
+                // contentDescription is deliberately null, per this row's own merged-node
+                // announcement above), so a test asserting one actually rendered — not merely that
+                // NavigationRow was called with a non-null icon — needs a real node to query;
+                // this testTag is invisible to TalkBack/real users, same as every other test-only
+                // tag in this package.
+                modifier = Modifier.size(20.dp).testTag("navigation-row-icon"),
             )
         }
         Column(modifier = Modifier.weight(1f)) {

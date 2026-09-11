@@ -47,7 +47,7 @@ public fun ModeScreen(onChoose: (CaptureMode) -> Unit) {
                 subtitle = "CAT over Bluetooth · audio by cable or Bluetooth, your choice",
                 onClick = { onChoose(CaptureMode.BLUETOOTH_RADIO) },
                 modifier = Modifier.testTag("setup-mode-bluetooth"),
-                icon = null,
+                icon = OrtIcons.bluetooth,
             )
         }
         Text(

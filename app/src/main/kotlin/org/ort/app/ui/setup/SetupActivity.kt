@@ -832,8 +832,10 @@ public class SetupActivity : ComponentActivity() {
     @Composable
     private fun RenderInput() {
         val chipState = presetChipStateFor(store.captureMode, store.modeOverriddenAudio, inputRoutes)
-        val presetRouteId = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRouteKind
-            ?.let { kind -> inputRoutes.firstOrNull { it.routeKind == kind }?.id }
+        // R-902: the same "exactly one match" rule presetInputRouteFor's own pre-select uses --
+        // several equally-preferred routes are exactly as ambiguous for override-detection as they
+        // are for pre-selection, never treated as if the first one enumerated were "the" preset.
+        val presetRouteId = presetInputRouteFor(store.captureMode, inputRoutes)?.id
         InputScreen(
             state = InputViewState(
                 routes = inputRoutes,
@@ -842,7 +844,7 @@ public class SetupActivity : ComponentActivity() {
                 presetUnavailableText = chipState.presetUnavailableText,
             ),
             onSelect = {
-                if (presetRouteId != null && it != presetRouteId) store.modeOverriddenAudio = true
+                if (isAudioRouteOverride(store.captureMode, presetRouteId, it)) store.modeOverriddenAudio = true
                 onSelectInput(it)
             },
             onRefresh = ::refreshInputRoutes,

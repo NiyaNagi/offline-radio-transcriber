@@ -49,7 +49,7 @@ public fun InputScreen(
     SetupScaffold(
         step = SetupStep.INPUT,
         title = "Input",
-        subtitle = "Which of these is the radio?",
+        subtitle = "Which of these carries the radio's audio?",
         onBack = onBack,
         titleTrailing = {
             TextAction(text = "Refresh", onClick = onRefresh, modifier = Modifier.testTag("setup-input-refresh"))
@@ -170,6 +170,21 @@ public fun presetInputRouteFor(captureMode: CaptureMode?, routes: List<InputRout
     val presetKind = captureMode?.let(CaptureModePresets::presetsFor)?.preferredRouteKind ?: return null
     return routes.singleOrNull { it.routeKind == presetKind }
 }
+
+/**
+ * R-852 (validator V8, spec, FR-CAP-9): [SetupActivity.RenderInput]'s own override-tracking used to
+ * fire only when [presetRouteId] was non-null, so picking a route under the "none attached, choose
+ * a route" chip ([presetChipStateFor]'s own [PresetChipState.presetUnavailableText] case —
+ * [presetInputRouteFor] returning `null` because nothing matched, or several did) never recorded an
+ * override at all, and that chip could never change afterward. An explicit pick is an override the
+ * instant it is not literally the one honest preset match — including every pick when there was no
+ * such match to begin with (constitution I: the operator's own choice, once made, must never keep
+ * reading as "still on the preset"). `false` with no [captureMode] at all — there is no preset to
+ * override yet (never reachable through [SetupActivity]'s own dispatch, since S04 is gated on a
+ * capture mode already being chosen, but honest regardless).
+ */
+public fun isAudioRouteOverride(captureMode: CaptureMode?, presetRouteId: String?, selectedId: String): Boolean =
+    captureMode != null && selectedId != presetRouteId
 
 private fun audioRouteKindLabel(kind: AudioRouteKind): String = when (kind) {
     AudioRouteKind.BUILT_IN_MIC -> "Built-in microphone"
