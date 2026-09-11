@@ -62,7 +62,14 @@ import org.ort.rig.RigTransportKind as RigModuleTransportKind
  * [ScenariosTest] (the same detekt `LargeClass` split that file's own header already documents
  * having done once, for the same reason: a self-contained cluster, not entangled with the rest of
  * what that file covers).
+ *
+ * `LargeClass` suppressed (this round, R-944's own two new cases pushed it over the threshold):
+ * this file is already the product of one `LargeClass` split, and it stays the same kind of
+ * self-contained cluster that split was for — one scenario's fixture facts, requirement by
+ * requirement — the same reasoning [DigestPollingTest]/[ModelsScreenTest]/[FailureScreensTest]
+ * each already documented for their own suppression rather than a further split.
  */
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 class WpiScenariosTest {
 
@@ -101,6 +108,10 @@ class WpiScenariosTest {
         ).edit().clear().commit()
         context.getSharedPreferences(
             SharedPreferencesProseDigestSettingsStore.PREFS_NAME,
+            android.content.Context.MODE_PRIVATE,
+        ).edit().clear().commit()
+        context.getSharedPreferences(
+            "org.ort.app.debug.active_scenario",
             android.content.Context.MODE_PRIVATE,
         ).edit().clear().commit()
     }
@@ -585,6 +596,113 @@ class WpiScenariosTest {
         assertTrue("expected LevelStatus.Measured, got $level", level is LevelStatus.State.Measured)
     }
 
+    /**
+     * R-873 (register, validator V10): proves the actual mechanism, not just that
+     * [ActiveScenarioMarker] records a name — loads a live scenario, then does exactly what a real
+     * debug process restart does (resets every process-wide holder to its own default, the same
+     * facets [WpiScenariosTest.resetProcessWideFacets] itself resets between tests, standing in for
+     * the OS tearing the process down), then constructs [ActiveScenarioRepublishProvider] the
+     * Robolectric way (`Robolectric.buildContentProvider`, which calls `onCreate()` the same way the
+     * OS does at real process start) and asserts the holders are back — not because they were never
+     * cleared, but because the provider re-published them.
+     */
+    @Test
+    @Requirement("R-873")
+    fun `R_873_a debug process restart re-publishes the active scenario's process-wide holders`() = runTest {
+        Scenarios.load(context, "rig-bt-lost")
+        assertTrue(InputStatus.state is InputStatus.State.Opened)
+        assertTrue(LevelStatus.state is LevelStatus.State.Measured)
+
+        // Simulate the OS tearing the process down: every process-wide holder a real restart would
+        // lose goes back to its own default, exactly like this file's own `resetProcessWideFacets`.
+        InputStatus.reset()
+        LevelStatus.reset()
+        RigStatus.reset()
+        CaptureState.idle(clearSession = true)
+        assertEquals(InputStatus.State.None, InputStatus.state)
+        assertEquals(LevelStatus.State.NotMeasured, LevelStatus.state)
+
+        org.robolectric.Robolectric.buildContentProvider(ActiveScenarioRepublishProvider::class.java).create()
+
+        assertTrue(
+            "expected InputStatus.Opened restored by the provider, got ${InputStatus.state}",
+            InputStatus.state is InputStatus.State.Opened,
+        )
+        assertTrue(
+            "expected LevelStatus.Measured restored by the provider, got ${LevelStatus.state}",
+            LevelStatus.state is LevelStatus.State.Measured,
+        )
+    }
+
+    /**
+     * R-873: a fresh install (or one just `pm clear`'d) has no marker at all — the provider's own
+     * `onCreate` must do nothing, never crash, and never fabricate a scenario nobody asked for.
+     */
+    @Test
+    @Requirement("R-873")
+    fun `R_873_the republish provider is a no-op when no scenario has ever loaded`() = runTest {
+        assertEquals(CaptureState.State.Idle, CaptureState.state)
+
+        org.robolectric.Robolectric.buildContentProvider(ActiveScenarioRepublishProvider::class.java).create()
+
+        assertEquals(
+            "no marker was ever written -- this must stay untouched",
+            CaptureState.State.Idle,
+            CaptureState.state,
+        )
+    }
+
+    /**
+     * R-944: `setup-level`'s `peakHistoryDbfs` must be a real, non-constant speech-shaped envelope
+     * — not the flat `-20f + (it % 5)` cycle that drew as alternating full-height amber/green blocks
+     * once WPD's `levelBarRects` made S07's meter a real proportional envelope. Every sample stays
+     * within the real noise-floor/peak bounds this scenario seeds, and the samples are not all equal
+     * (a genuine rise and fall, not a fabricated flat line).
+     */
+    @Test
+    @Requirement("R-944")
+    fun `R_944_setup-level seeds a non-constant speech-shaped level envelope`() = runTest {
+        Scenarios.load(context, "setup-level")
+
+        val history = LevelStatus.peakHistoryDbfs
+        assertTrue("expected a few seconds' worth of samples, got ${history.size}", history.size >= 60)
+        assertTrue(
+            "expected every sample within the noise floor/peak bounds, got $history",
+            history.all { it in -58f..-14f },
+        )
+        assertTrue("expected a non-constant envelope, got $history", history.toSet().size > 1)
+        assertTrue(
+            "expected the envelope to actually reach near its real peak, got $history",
+            history.max() >= -16f,
+        )
+        assertTrue(
+            "expected the envelope to actually reach near the real noise floor, got $history",
+            history.min() <= -50f,
+        )
+    }
+
+    /**
+     * R-944: `setup-verified`'s own S05 raw-signal listen now draws an `InputWaveformCard` from the
+     * same [LevelStatus] holder S07's meter reads (WPD `64081712`/merge `7706d0ab`) — this scenario
+     * must seed the same real, non-constant envelope, not leave the holder at its default (empty)
+     * state the way it did before this round.
+     */
+    @Test
+    @Requirement("R-944")
+    fun `R_944_setup-verified seeds the same non-constant speech-shaped level envelope for S05`() = runTest {
+        Scenarios.load(context, "setup-verified")
+
+        val level = LevelStatus.state
+        assertTrue("expected LevelStatus.Measured, got $level", level is LevelStatus.State.Measured)
+        val history = LevelStatus.peakHistoryDbfs
+        assertTrue("expected a few seconds' worth of samples, got ${history.size}", history.size >= 60)
+        assertTrue(
+            "expected every sample within the noise floor/peak bounds, got $history",
+            history.all { it in -58f..-14f },
+        )
+        assertTrue("expected a non-constant envelope, got $history", history.toSet().size > 1)
+    }
+
     @Test
     @Requirement("FR-CAP-12", "AC-131")
     fun `AC_131_mode-change-pending writes a pending configuration without disturbing current`() = runTest {
@@ -796,6 +914,28 @@ class WpiScenariosTest {
         nonGatedModelIds.filter { it != ModelId.ASR_ENCODER }.forEach { id ->
             assertEquals("$id must still read INSTALLED", ModelRowStatus.INSTALLED, rows.getValue(id).status)
         }
+    }
+
+    /**
+     * R-866 (register, reviewer D3): `assets-bundled/S12` reads green now (R-862), so it can no
+     * longer measure the amber `Install` action at all — `asset-corrupt`'s own Models row is
+     * genuinely amber (one entry `Failed`), and now resumes at [SetupStep.READY] the same way
+     * `assets-bundled` already does, so a tour step can actually reach and capture it.
+     */
+    @Test
+    @Requirement("R-866")
+    fun `R_866_asset-corrupt seeds a resumable setup store, stepFor resumes at READY`() = runTest {
+        Scenarios.load(context, "asset-corrupt")
+
+        val store = setupStore()
+        assertEquals(CaptureMode.USB_RADIO, store.captureMode)
+        assertTrue(store.inputVerified)
+        val step = SetupStateMachine.stepFor(
+            fullyGrantedBluetooth(),
+            micPermanentlyDenied = false,
+            snapshot = store.snapshot(),
+        )
+        assertEquals(SetupStep.READY, step)
     }
 
     // R-865 follow-up (WPG, coordinator-assigned, same reopened bug this scenario itself

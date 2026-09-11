@@ -226,6 +226,12 @@ public object Scenarios {
 
     public suspend fun load(context: Context, name: String): LoadResult {
         require(name in NAMES) { "unknown scenario '$name' — known scenarios: $NAMES" }
+        // R-873: recorded before the load's own work below so a scenario whose builder throws
+        // partway still names itself as "active" for a later debug-process-start re-publish — the
+        // same honest position `clearPriorScenarioData`/`resetProcessWideFacets` already take (a
+        // half-applied load is this call's own caller's problem, not a reason to leave the marker
+        // pointing at whatever loaded before it).
+        ActiveScenarioMarker.write(context, name)
         val db = OrtDatabase.create(context.applicationContext)
         clearPriorScenarioData(context, db)
         resetProcessWideFacets()
@@ -1501,6 +1507,23 @@ public object Scenarios {
         store.rigTransport = RigTransportKind.USB_SERIAL
         store.manualFrequencyHz = 145_230_000L
         store.setupComplete = false
+        // R-944 (WPD `64081712`/merge `7706d0ab`, not yet on this branch but the fact this seeds is
+        // branch-independent): S05's own raw-signal listen now draws an `InputWaveformCard` from the
+        // same live `LevelStatus` holder S07's meter already reads (see [setupLevel]'s own doc
+        // comment) — left unseeded, S05 drew nothing real either. Seeded with the same
+        // [speechShapedPeakHistoryDbfs] envelope so both steps show one honest, real signal shape.
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = speechShapedPeakHistoryDbfs(),
+        )
         return LoadResult(0, 0, null)
     }
 
@@ -1521,6 +1544,12 @@ public object Scenarios {
         // independent of `SetupStore.levelInBand` (left unset above, on purpose, so `stepFor` still
         // resumes at S07 rather than skipping past it) — a real reading the operator has not yet
         // confirmed is exactly the state this step exists to show.
+        //
+        // R-944 (validator/reviewer, this round): the flat `-20f + (it % 5)` cycle this used to pass
+        // produced alternating full-height amber/green blocks once WPD proved S07's meter is a real
+        // proportional envelope (`levelBarRects`) — a shape no real signal ever draws. Replaced with
+        // [speechShapedPeakHistoryDbfs]'s genuine rise-and-fall between the noise floor and a real
+        // peak, the same envelope [setupVerified]'s own S05 listen now seeds too.
         LevelStatus.update(
             LevelStatus.State.Measured(
                 peakDbfs = -14f,
@@ -1531,9 +1560,35 @@ public object Scenarios {
                 sampleRateHz = 48_000,
                 updatedAtMillis = SystemClock.wallMillis(),
             ),
-            peakHistoryDbfs = List(60) { -20f + (it % 5) },
+            peakHistoryDbfs = speechShapedPeakHistoryDbfs(),
         )
         return LoadResult(0, 0, null)
+    }
+
+    /**
+     * R-944: a genuine speech-shaped envelope for [LevelStatus.update]'s own `peakHistoryDbfs` —
+     * two syllable-like rises from the noise floor (-58 dBFS) toward a real peak (-14 dBFS) and back
+     * down, a few seconds' worth of samples (60, matching every other caller's own history length),
+     * never a flat or mechanically-alternating cycle (the bug this fixes: a repeating
+     * `-20f + (it % 5)` pattern drew as alternating full-height amber/green blocks once WPD's
+     * `levelBarRects` made S07's meter a real proportional envelope, not the honest waveform this
+     * board is meant to show). A raised-cosine lobe centered on each rise keeps every sample a real,
+     * continuously-varying dBFS value — no two adjacent samples equal, both real floor and peak
+     * values actually hit — rather than a synthetic sawtooth or sine no speech envelope looks like.
+     */
+    private fun speechShapedPeakHistoryDbfs(): List<Float> {
+        val floorDbfs = -58f
+        val peakDbfs = -14f
+        val sampleCount = 60
+        fun lobe(index: Int, center: Int, halfWidth: Int): Float {
+            val distance = kotlin.math.abs(index - center)
+            if (distance > halfWidth) return 0f
+            return 0.5f * (1f + kotlin.math.cos(Math.PI.toFloat() * distance / halfWidth))
+        }
+        return List(sampleCount) { i ->
+            val envelope = maxOf(lobe(i, center = 14, halfWidth = 10), lobe(i, center = 38, halfWidth = 13) * 0.8f)
+            floorDbfs + envelope * (peakDbfs - floorDbfs)
+        }
     }
 
     /**
@@ -2837,9 +2892,34 @@ public object Scenarios {
     /** `asset-corrupt` — AC-137: one entry ([ModelId.ASR_ENCODER]) genuinely fails its post-copy
      * digest check ([BundledAssetState.Failed]); every other real, non-gated entry still installs for
      * real (R-841's fix — see [installRealBundledAssets]'s own kdoc for why the real source, not a
-     * fabricated manifest, is what makes [org.ort.app.ui.data.ModelsController.currentState] agree). */
+     * fabricated manifest, is what makes [org.ort.app.ui.data.ModelsController.currentState] agree).
+     *
+     * R-866 (register, reviewer D3): a real, resumable `SetupStore` — the same verified-input/level/
+     * overnight base [assetsBundled] seeds, USB radio never a genuine conflict with the asset-install
+     * facts above — so `SetupStateMachine.stepFor` resumes at [SetupStep.READY] (S12) directly, the
+     * one place this scenario's own amber `Install` action (the failed [ModelId.ASR_ENCODER] entry)
+     * can actually be captured: `assets-bundled/S12` went green once R-862 landed, so it can no longer
+     * measure the amber form at all. Left unseeded before this round because no tour step reached S12
+     * under this scenario yet, not because seeding it would have been wrong.
+     */
     private fun assetCorrupt(context: Context): LoadResult {
         installRealBundledAssets(context, corruptId = ModelId.ASR_ENCODER)
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.USB_RADIO
+        store.notificationsSkipped = true
+        store.selectedInputId = "usb-1"
+        store.selectedInputLabel = "USB Audio Device"
+        store.inputVerified = true
+        store.verifiedNativeRateHz = 48_000
+        store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.NONE
+        store.rigTransport = null
+        store.manualFrequencyHz = 145_230_000L
+        store.setupComplete = false
         return LoadResult(0, 0, null)
     }
 

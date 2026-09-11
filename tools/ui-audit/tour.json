@@ -192,6 +192,7 @@
     { "id": "setup-rig-bluetooth/S10b-headset-only-selected", "setup": "S10b", "scenario": "setup-rig-bluetooth", "drillIn": { "rigBluetoothAddress": "11:22:33:AA:BB:CC" } },
     { "id": "rig-bt-connected/S11-radio-verified", "setup": "S11", "scenario": "rig-bt-connected" },
     { "id": "assets-bundled/S12-ready-bundled", "setup": "S12", "scenario": "assets-bundled" },
+    { "id": "asset-corrupt/S12-ready-corrupt", "setup": "S12", "scenario": "asset-corrupt" },
 
     { "id": "mode-local-mic/S04-input-local-mic", "setup": "S04", "scenario": "mode-local-mic" },
     { "id": "mode-usb/S04-input-usb", "setup": "S04", "scenario": "mode-usb" },
@@ -225,6 +226,8 @@
     { "id": "rig-bt-connected/CF06-settings-rig", "scenario": "rig-bt-connected", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" } },
 
     { "id": "mode-change-pending/CF11-settings-mode", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "MODE" } },
+    { "id": "mode-change-pending/CF02-settings-capture", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" } },
+    { "id": "mode-change-pending/CF02-settings-capture@2x", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "fontScale": 2.0 },
 
     { "id": "assets-bundled/CF04-settings-assets", "scenario": "assets-bundled", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
     { "id": "assets-bundled/CF04-settings-assets@2x", "scenario": "assets-bundled", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" }, "fontScale": 2.0 },

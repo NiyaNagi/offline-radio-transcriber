@@ -39,5 +39,15 @@
              ScenarioReaderActivity above already are - see ScreenshotTourActivity's own doc
              comment. -->
         <activity android:name=".debug.tour.ScreenshotTourActivity" android:exported="true" />
+
+        <!-- R-873 (register, validator V10): re-publishes the active scenario's process-wide
+             holders at debug process start - see ActiveScenarioRepublishProvider's own doc comment.
+             exported="false": this provider's whole contract is its onCreate() side effect, never a
+             real ContentResolver call from another package - every query/insert/delete/update
+             override above is a stub. -->
+        <provider
+            android:name=".debug.ActiveScenarioRepublishProvider"
+            android:authorities="org.ort.app.debug.activescenariorepublish"
+            android:exported="false" />
     </application>
 </manifest>

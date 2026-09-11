@@ -100,6 +100,167 @@ before assuming a clean retry, not attempted here since no such device is reacha
 worktree).
 
 ---
+## 2026-09-11 (WPI queued items: R-861 mode-change-pending CF02, R-866 asset-corrupt S12, R-873 debug-process-restart holder republish, R-876 scenario.ps1 stray-session quoting)
+
+### 6b04159b — R-861/R-866 new tour steps, R-873 ActiveScenarioRepublishProvider, R-876 scenario.ps1's stray-session check fixed and made non-fatal
+
+**Scope:** `app/src/debug/{AndroidManifest.xml,kotlin/org/ort/app/debug/{Scenarios.kt,ActiveScenarioMarker.kt,ActiveScenarioRepublishProvider.kt}}`,
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `tools/ui-audit/{tour.json,scenario.ps1}`,
+`results/ui-audit/{README.md,tour-manifest.json,mode-change-pending/CF02-settings-capture*.png,asset-corrupt/S12-ready-corrupt.png}`,
+`results/coverage-matrix.md` (regenerated).
+
+**Requirements/ACs:** R-861, R-866, R-873, R-876.
+
+**What changed:**
+
+1. **R-861.** `mode-change-pending/CF02-settings-capture` had no tour step at all (only its own
+   `CF11-settings-mode` did) — added at 1.0 and 2.0 (`tour.json`), captured, merged into the manifest.
+
+2. **R-866.** `assets-bundled/S12` reads green since R-862, so it can no longer measure the amber
+   `Install` action `asset-corrupt`'s own Models row genuinely carries. `Scenarios.assetCorrupt()`
+   now also seeds a real, resumable `SetupStore` (the same verified-input/level/overnight base
+   `assetsBundled()` already seeds) so `SetupStateMachine.stepFor` resumes at `SetupStep.READY` —
+   previously this scenario touched no `SetupStore` field at all, so `S12` was unreachable through
+   it. New `asset-corrupt/S12-ready-corrupt` tour step, captured (Models row amber, `Install` visible,
+   confirmed in the PNG); new `WpiScenariosTest` case proves `stepFor` resumes at `READY`.
+
+3. **R-873.** A debug process restart (`force-stop` + relaunch, which a validator or the tour driver
+   can trigger at any point) used to lose every process-wide capture holder (`CaptureState`,
+   `InputStatus`, `RigStatus`, `LevelStatus`, the rig-link state where seeded) back to their own
+   defaults while the session row and heartbeat a scenario seeded both persisted in the real
+   database — V10's own root-cause for R-853, a state production cannot itself produce, so no
+   product fix applied; this package's own gap instead. `ActiveScenarioMarker` (a small
+   `SharedPreferences` file) now records which scenario `Scenarios.load` most recently applied.
+   `ActiveScenarioRepublishProvider`, a new debug-only `ContentProvider` registered in
+   `app/src/debug/AndroidManifest.xml` (merged into the debug variant only), runs at process start —
+   before any `Activity`, the same mechanism WorkManager/Firebase's own auto-init providers use — and
+   re-loads that scenario, republishing its holders exactly as a fresh load would (`Scenarios.load`'s
+   own clear+upsert writes are already idempotent). `adb shell pm clear` wipes this marker's own prefs
+   file along with everything else the app owns, so a fresh install needs no separate "reset" branch.
+   Two new `WpiScenariosTest` cases: one loads a scenario, resets every holder the way a real restart
+   would, constructs the provider the Robolectric way (`Robolectric.buildContentProvider`, which
+   calls `onCreate()` exactly as the OS does), and asserts the holders are back; the other proves the
+   no-marker (fresh install) case is a genuine no-op. `results/ui-audit/README.md` gained its own
+   "R-873 (fixed)" section explaining the mechanism, right after the R-853 section it closes.
+
+4. **R-876.** `scenario.ps1`'s stray-real-session check handed its SQL text to `sqlite3` as a quoted
+   CLI argument — on this device image that reached `sqlite3` as `in prepare, incomplete input`
+   (reproduced directly against `emulator-5558`), because the SQL's own embedded single-quoted string
+   literal (`'scenario-%'`) needs a correctly-nested second layer of shell-quote escaping once the
+   whole thing is also wrapped for `adb shell`'s own argv-joining — exactly the class of quoting this
+   repo's own tooling has hit before. Fixed by piping the SQL through `adb shell`'s stdin instead
+   (`tour.ps1`'s own `spec.json`-write already establishes this pattern) — no shell-argument quoting
+   at all, on either side. Also wrapped the call in a local `$ErrorActionPreference = "Continue"`
+   swap (restored after): a native command's stderr, even redirected to `$null`, still raises a
+   terminating `NativeCommandError` under this script's own top-level `"Stop"` — the exact "aborts on
+   this image" failure the register named, confirmed and now fixed. Verified end to end against
+   `emulator-5558`: `.\scenario.ps1 -Port 5558 -Name empty` completes without a stray-session warning
+   or an abort (the on-device `sqlite3` query itself, tested directly via stdin, returns exit 0).
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`
+— **BUILD SUCCESSFUL**, all tests including the four new cases above. `coverageMatrix` then
+`coverageMatrixCheck` (separate invocations) both green (240/450, unchanged — no new requirement ids
+this round map to a fold `spec-check` tracks). `tools\ui-audit\install.ps1 -Port 5558` (fresh
+`assembleDebug` + reinstall) then `tools\ui-audit\tour.ps1 -Port 5558` for the two new step groups —
+3/3 ok, merged into the master manifest (now 207/207 ok, 0 errors, three more than run 4b's 204).
+`.\scenario.ps1 -Port 5558 -Name empty` run directly against `emulator-5558` to confirm R-876's fix
+end to end.
+
+**Left open / not done:** R-971 as its own separate rule (already superseded by R-973's generalisation
+in the prior round). Run 5 (the full tour, every step, with the revoked-permission `S02c` pass) still
+queued, per the coordinator's own explicit sequencing, after merging the latest `main`.
+
+## 2026-09-11 (WPI run 4b: live-session screenshot tour, R-910/R-911's mode-usb/mode-bluetooth timeout diagnosed as environmental, R-944 level envelope, R-973 generalised settle)
+
+### 3dc6f99b — run 4b: full tour green (204/204), R-910/R-911 timeout root-caused to host/emulator resource starvation not a product defect, R-944 speech-shaped level envelope, R-973 generalises R-971's settle into a stable-snapshot rule
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios.kt,tour/ScreenshotTourActivity.kt,tour/TourAccessibilityScroll.kt}`,
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `results/ui-audit/**` (204-entry manifest
++ PNGs), `results/coverage-matrix.md` (regenerated). Merged `main` twice this round: `8fb57ad6` (WPF's
+`rememberDrawerLiveState` fix — the live bar is now keyed on `ReaderPolling.effectiveSessionId`, never
+a bare `CaptureState.sessionId == sessionId` equality — plus WPE's R-934) and `7eb69a75` (WPF's R-872,
+landing directly in this package's own `Scenarios.rigBtLost()`).
+
+**Requirements/ACs:** R-910, R-911 (both re-confirmed, and their one remaining open question —
+mode-usb/mode-bluetooth's `N04`/`CF02` live-bar timeout — closed as environmental, not a scenario or
+product defect), R-944, R-973 (supersedes/generalises R-971, not yet separately implemented), R-872
+(confirmed on device via `rig-bt-lost/F09`).
+
+**What changed:**
+
+1. **Run 4b step captures (204/204 ok, 0 errors).** Every live-session screen the coordinator listed
+   (`N01b`/`N04`/`DG04`/`L01`/`T01`/`ST01`/`F09`/`F23` under `mode-*`/`bt-audio-*`/`rig-bt-lost`) plus
+   `asset-corrupt/CF04*` and a third round on `mode-bluetooth/CF02*`. The master manifest now covers
+   every one of `tour.json`'s 204 declared steps for the first time this session.
+
+2. **R-910/R-911's own open question, answered.** `mode-bluetooth/CF02-settings-capture` (and, found
+   unprompted while cross-checking, `mode-usb/N04-capture-status`/`mode-bluetooth/N04-capture-status`)
+   reproducibly timed out waiting for the live bar across three separate rounds, with every underlying
+   fact independently confirmed correct via an enhanced diagnostic error message added to
+   `ScreenshotTourActivity.renderDestinationStep` (`sessionId`, `CaptureState.sessionId`,
+   `CaptureState.isCapturing`, `InputStatus.state` — all correct: `isCapturing=true`, session ids
+   matched, `InputStatus.Opened` with `routeVerified=true`). Reading `LiveBarPolling.current`/
+   `rememberDrawerLiveState` end to end ruled out a code-level hang (the function is a bounded,
+   exception-free computation plus one suspend DB read; nothing in its call path can return `null`
+   indefinitely once `isCapturing`/`InputStatus` are correct). Mid-round, the same emulator's
+   `system_server` crashed outright (`DeadSystemException`, zygote restart) under severe host
+   CPU/resource starvation (many concurrent builder rounds sharing the host); after the emulator
+   recovered, all three previously-timing-out steps passed cleanly and repeatedly with the *identical*
+   unchanged code. Conclusion, recorded in the manifest's own `note` field for these three ids: the
+   20-second timeouts were a host/emulator resource-starvation artifact, not a scenario-seeding gap
+   (this package's own territory) and not a live-bar composition/polling defect (WPF's). No code
+   change was made to chase this once the environmental cause was confirmed.
+
+3. **R-944 (level envelope).** `setupLevel()`'s own `peakHistoryDbfs` — previously a mechanically
+   repeating `-20f + (it % 5)` cycle that drew as alternating full-height amber/green blocks once
+   WPD's `levelBarRects` made S07's meter a real proportional envelope — replaced with
+   `speechShapedPeakHistoryDbfs()`, two raised-cosine lobes rising from the real noise floor (-58
+   dBFS) to a real peak (-14 dBFS) and back down, 60 samples. `setupVerified()` now seeds the same
+   envelope (previously none at all), for S05's own `InputWaveformCard` (WPD `64081712`/merge
+   `7706d0ab`, not yet on this branch, but the `LevelStatus` fact it reads is branch-independent).
+   Two new `WpiScenariosTest` cases assert the samples are non-constant, bounded to
+   `[-58f, -14f]`, and actually reach near both the real floor and the real peak.
+
+4. **R-973 (generalises R-971, implemented directly rather than R-971's narrower text-only version
+   first — WPE's own report showed R-971's "wait for 'Loading…' absence" class would not have caught
+   `model-missing/CF04`'s truncation, since every row there composes with no such text ever on
+   screen).** `TourAccessibilityScroll.snapshot(rootView)` walks the same accessibility bridge
+   `scrollToEnd` already does, returning every node's own `text`/`contentDescription` concatenated
+   into one order-stable string plus whether any node carries the one known placeholder marker
+   ("loading", case-insensitive — the only such marker anywhere in this codebase; checked before
+   writing this). `ScreenshotTourActivity.awaitStableSemantics` (new, called right before every
+   `drawToBitmap()` in both `renderDestinationStep` and `renderSetupStep`) captures only once two
+   snapshots taken ≥500ms apart agree and neither carries a placeholder — bounded at 15s, an honest
+   `error()` on timeout with the last snapshot's own text. `llm-enabled-prose/DG05*` (this round's own
+   re-capture) shows the full digest prose, not a `Loading…` frame.
+
+5. **Mechanical.** Fixed a ktlint `MaxLineLength` violation in my own R-910/R-911-era diagnostic
+   error-message edit (split across shorter concatenated segments). Suppressed detekt's `LargeClass`
+   on `WpiScenariosTest` (R-944's own two new cases pushed it over the threshold) — the same
+   established pattern `DigestPollingTest`/`ModelsScreenTest`/`FailureScreensTest` already use, not a
+   further split: this file already is one `LargeClass` split's own result, and stays the same kind
+   of self-contained cluster that split was for.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`
+— **BUILD SUCCESSFUL**, all Robolectric unit tests including the two new R-944 cases; `coverageMatrix`
+then `coverageMatrixCheck` (separate invocations — same task-ordering rule as every prior round) both
+green (240/450 covered, unchanged). `tools\ui-audit\install.ps1 -Port 5558` (fresh `assembleDebug` +
+reinstall) then `tools\ui-audit\tour.ps1 -Port 5558` across the run 4b step list (on-device manifest
+deleted before each `-Only` invocation) — 204/204 steps ok in the merged master manifest, 0 errors.
+`mode-usb/N04-capture-status`, `mode-bluetooth/N04-capture-status`, `mode-bluetooth/CF02-settings-capture`
+each independently re-run to a clean pass after the emulator's mid-round crash/recovery (see item 2).
+
+**Left open / not done:** R-861 (`mode-change-pending/CF02-settings-capture` step, 1.0/2.0), R-866
+(`asset-corrupt/S12-ready-corrupt` step), R-873 (debug scenario holder re-publish on process start),
+R-876 (`scenario.ps1`'s stray-session check made non-fatal), R-971 as its own separate text-only rule
+(superseded by R-973's generalisation instead of being implemented first). A minor, unprompted
+observation from this round's own diagnostic reading: `mode-usb`/`mode-bluetooth` never call
+`LevelStatus.update(...)`, so their own Settings screen reads "Speech: Not measured" while genuinely
+capturing (visible in `mode-bluetooth/CF02-settings-capture.png`) — cosmetically inconsistent with
+`rig-bt-lost`'s own R-872 fix, but not raised as a defect since it was not asked for and the live bar
+itself (this round's actual subject) does not depend on it. Run 5 (the full tour, every step, with the
+revoked-permission `S02c` pass) queued after the remaining items above land, per the coordinator's own
+explicit sequencing.
 
 ## 2026-09-11 (WPE R-865 render half: CF04 renders WPG's truncated-asset guard)
 
@@ -164,6 +325,104 @@ verified).
 
 **Left open / not done:** none for this finding — this was the last piece of R-865 (both the guard
 and the render half are now landed and confirmed).
+
+---
+
+## 2026-09-11 (WPF run-4 validator findings: R-870/872/874/875/942/970 fixed, R-871 diagnosed and routed to WPE, R-873/876 left to WPI)
+
+### <pending> — status modes: R-870/R-872/R-874/R-875/R-942/R-970 fixed; R-871 diagnosed (CF06/CF11, WPE's); R-873/R-876 unaddressed (WPI's)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/{failures/FailureMapper.kt,components/Controls.kt,components/ActivityPatternChart.kt,digest/DigestScreens.kt,screens/ModelsScreen.kt,setup/RigBluetoothScreen.kt (test only)}`,
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, matching test files. Merged `main` twice this
+round (first fast-forward to `c2b11e47` — V10's device-validation report, findings R-870..R-876, and
+confirmation the prior round's R-910/R-911/R-912/R-913 fixes hold on a real device; second, a real
+merge to `ee3b027f` after committing this round's own work-in-progress first per this repo's own
+rule, bringing reviewer A3/D3's run-4a findings R-940..R-944/R-970..R-974 into the register).
+
+**Requirements/ACs:** R-870, R-871 (diagnosed, not fixed here), R-872, R-874, R-875, R-942, R-970,
+R-836 (F9 half, closed by R-872), R-863/R-805 (both revisited by R-874/R-942).
+
+**What changed:** *Constitution check.* II (a discriminating test precedes every fix, each watched
+to fail for the stated reason before the code landed). VIII (rows below move to `fixed` on this
+report's own tests; R-853/R-910/R-911/R-912/R-913 were already confirmed `closed` by V10's own
+device capture in the merge that preceded this round, not by this round's own claim).
+
+1. **R-872 (halt)** — the real defect was not `LiveBarPolling` (already correctly discriminates
+   `RigStatus.Stale` from `InputStatus.Lost`, proven by the pre-existing, still-green
+   `LiveBarPollingTest.R_836` rig-only-drop case) but the `rig-bt-lost` scenario itself, which never
+   opened `InputStatus` or published a `LevelStatus` reading at all — the live bar's own honest
+   "nothing measured yet" floor read identically to F23's genuine mute on a real device.
+   `Scenarios.rigBtLost()` now opens a real wired-headset `InputStatus` and a real
+   `LevelStatus.Measured` reading, the same shape every other "audio is fine" scenario already uses.
+2. **R-870 (polish)** — `FailureMapper.mapThermalOrBacklogOrRigBanner` was the one caller of the
+   shared `stripRigManufacturerPrefix` (`ui/data/RigDisplayName.kt`, R-845/R-916/R-920) that never
+   applied it — F9's own banner title kept "Kenwood" where N04/DG04/CF06 all read "TH-D75A". Fixed.
+3. **R-874 (spec)** — R-863's own `TextAction` fix (`wrapContentWidth(unbounded = true)`) traded a
+   per-letter wrap for silent clipping past the row's real edge once a real 390dp card was too
+   narrow for the action beside its own leading label at font scale 2.0. Reverted to bounded
+   `wrapContentWidth(align = Alignment.Start)` and gave the two call sites that needed R-863's
+   protection their own `Modifier.weight(1f, fill = false)` leading sibling on a `Row.fillMaxWidth()`
+   (DG05's over-range label; CF04's grouped-family part label, `ui/screens/ModelsScreen.kt` — this
+   file is `ui/screens`, this round's own ownership, not `ui/settings`) — Compose's own `Row`
+   measure policy then reliably gives the non-weighted action first claim on the row's real width,
+   wrapping at word boundaries only if it alone still does not fit. S10b's own `Refresh` row already
+   used this exact shape (R-805) and needed no change.
+4. **R-875 (design)** — `ActivityPatternChart`'s axis row measures the real axis-start/axis-end/
+   caption strings (`rememberTextMeasurer`, the same real-font-metrics pattern
+   `ui/components/Rows.kt`'s column-width helpers use) against the row's own real available width:
+   unchanged when all three genuinely fit, the caption drops to its own centred row below the axis
+   labels when they do not, rather than overlapping the right axis time.
+5. **R-871 (spec)** — investigated, not fixed: "Set the frequency by hand" opens CF02
+   (`SettingsPolling.capture()`), which has no rig-facts row at all. The exact raw-epoch-millis
+   defect this row names is real in two places, both `ui/settings` (WPE's, not touched here):
+   `SettingsPolling.modeScreen()`'s own CF11 "Rig link" row and `SettingsPolling.rig()`'s own CF06
+   `staleSinceLabel` — the latter confirms this row's own question ("if it is CF06's, WPE").
+6. **R-942 (design)** — reviewer A3's own run-4a capture of a *real* regression R-874's fix already
+   closes: S10b's "Pair a device in system settings"/"Refresh" overlapped at font scale 2.0 because
+   of R-863's same unbounded `TextAction` measurement. S10b's own row already gave its leading
+   action `weight(1f)` on `Row.fillMaxWidth()` (R-805's own shape) — it only needed `TextAction`
+   itself to stop overriding that with unbounded single-line measurement. Confirmed with a new real
+   390dp-screen test; no code change beyond R-874's own `Controls.kt` fix was needed here.
+7. **R-970 (spec)** — the same defect class as R-874, this time on `Badge` (`ui/components/
+   Controls.kt`): CF04's "ACTIVE" badge stacked one character per line beside a wrapped Whisper
+   family title at font scale 2.0. `Badge` itself carries no width override to revert (it is, and
+   was, a plain content-hugging `Box`) — the real defect was all three title-plus-badge `Row`s in
+   `ui/screens/ModelsScreen.kt` (the single asset row, the grouped-family row, the lexicon row)
+   sharing a `Row` with neither side weighted and no `fillMaxWidth()`. Each title now yields
+   (`Modifier.weight(1f, fill = false)` on `Row.fillMaxWidth()`), and `Badge`'s own kdoc states the
+   shared rule for future callers.
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green (full suite, twice:
+  once per fix batch, once after the final line-length cleanup).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true build dependencyRules platformGuards ktlintCheck` —
+  green.
+- `./gradlew -PortAllowMissingBundledAssets=true detekt` — green (after fixing two `MaxLineLength`
+  violations this round's own new tests introduced).
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`.
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 240 covered, no
+  orphan-test line (`R-870`/`R-872`/`R-874`/`R-875`/`R-942`/`R-970` all resolve to their own real
+  test classes); `coverageMatrixCheck` — up to date.
+- Exact new test names: `WpiScenariosTest.R_872_rig-bt-lost seeds a real Measured level and an
+  opened, not lost, InputStatus`; `FailureMapperTest.R_870 F9 drops the descriptor's own leading
+  manufacturer word, matching every other screen`; `DigestScreensTest.R_874 DG05 Read the overs
+  wraps within the card at font scale 2_0, never past its edge`; `ModelsScreenTest.R_874 CF04
+  Install from a file wraps within a real 390dp screen at font scale 2_0, never past its edge`;
+  `ActivityPatternChartTest.R_875 the not-listening caption stacks under the axis row rather than
+  colliding with it at 2_0` and its own `...a short caption at normal scale stays on the same row...`
+  regression guard; `RigBluetoothScreenTest.R_942 Pair in system settings and Refresh never overlap
+  on a real 390dp screen at font scale 2_0`; `ModelsScreenTest.R_970 the ACTIVE badge stays whole
+  and inside the row beside a wrapped Whisper title at 2_0` (reproduced the 0-width per-letter
+  collapse directly by reverting its own fix before restoring it).
+
+**Left open / not done:**
+- **R-871**: diagnosed and routed to WPE (CF06/CF11, `ui/settings`), not fixed here.
+- **R-873, R-876**: WPI's (scenario-holder process-restart survival; `scenario.ps1`'s own SQL
+  hygiene check) — unaddressed, out of this round's scope.
+- No device re-capture was performed this round (emulator confirmation is V-series validators' own
+  job); rows above are `fixed` on this report's own tests, not `closed`.
 
 ---
 
@@ -30957,6 +31216,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 
