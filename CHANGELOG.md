@@ -326,6 +326,70 @@ other invented/garbled fact would be).
   verifying no other stray `", ,"` remained anywhere in `SettingsRigScreenTest`'s own suite.
 
 **Left open / not done:** none for these two findings.
+## 2026-09-11 (WPD R-882: every `ReadyScreen` fact row keeps its label and lets its value wrap)
+
+### <pending> — setup modes: R-882 — every ReadyScreen fact row keeps its label visible and its value word-wrapping, Radio's value drops the manufacturer prefix
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/ReadyScreen.kt`, matching test files
+(`app/src/test/kotlin/org/ort/app/ui/setup/ReadyScreenTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/setup/ReadyRowsForTest.kt`). Merged local `main` fast-forward
+to `2c08de56` first (register-only change, no conflict).
+
+**Requirements/ACs:** R-882 (register, validator V11, halt — `results/ui-audit/validation/V11/
+rig-bt-connected/S11-radio-verified.png`+`.xml`: at font scale 2.0 S12's Radio row value ("Kenwood
+TH-D75A · 2 bands, verified") rendered one letter per line with the "Radio" label not visible).
+
+**What changed:** *Constitution check.* I (the value shown is still exactly the real descriptor,
+now shortened by the same manufacturer-prefix strip already trusted elsewhere in this codebase,
+never a fabricated shorter string). II (every change here is covered by a passing test; the
+layout fix was checked against a genuine revert-and-confirm-failure before being kept — see
+Verified). VII (the fix stays entirely inside this file's own ownership: WP2's shared
+`KeyValueRow` component, identified as the likely structural root cause, was read but never
+edited — `ReadySetupRow` simply stopped calling it).
+
+1. **`ReadyFactColumns`** (new, private, replaces `ReadySetupRow`'s use of WP2's
+   `org.ort.app.ui.components.KeyValueRow` for every fact row — Mode, Input, Level, Overnight,
+   Radio, Models): the label gets `Modifier.wrapContentWidth(unbounded = true)` before the
+   existing `widthIn(min = 96.dp)` floor (R-226) — the identical technique `TextAction` already
+   uses (R-863) so it always measures at its own true single-line width regardless of how little
+   the incoming `Row` constraint offers; `ReadyRow.statusText` gets the same protection. The value
+   stays the sole `weight(1f)` sibling, so it reliably receives whatever real width is left and
+   wraps at word boundaries the normal way, rather than collapsing to zero and falling back to one
+   character per line. New testTags per row: `setup-ready-row-<label>-label` /
+   `setup-ready-row-<label>-value`.
+2. **`radioRowForCatRig`** (`Connected` and `Stale` branches): the value now runs the rig
+   descriptor through `org.ort.app.ui.settings.SettingsPolling.stripManufacturerPrefix` before
+   building the row string — "Kenwood TH-D75A" reads "TH-D75A", the same helper R-845/R-903/R-941
+   already reuse rather than duplicate, and it shortens exactly the value string this row's fix
+   must fit into its `weight(1f)` column.
+
+**Verified:** `:app:testDebugUnitTest --tests ReadyScreenTest --tests ReadyRowsForTest` — 41
+tests, all green, including two new `@Config(qualifiers = "w360dp-h800dp-xhdpi")` +
+`@GraphicsMode(NATIVE)` tests at font scale 2.0 asserting every named row's value node is wider
+than tall and sits inside its own row's bounds (the Radio row's exact real shape — `statusText`
+and `actionLabel` together — gets its own dedicated case). The layout fix (the two
+`wrapContentWidth(unbounded = true)` calls) was temporarily reverted and the same two tests were
+confirmed to fail identically before being restored — a genuine discrimination, not a vacuous
+assertion. `:app:testDebugUnitTest` (full app suite) and `:app:smokeTestDebugUnitTest` both green
+(one unrelated `NavSeedTest` Robolectric `ActivityController.windowFocusChanged` flake reproduced
+on the combined run and was confirmed to pass cleanly in isolation — `ui/navigation`, not this
+package). `./gradlew build dependencyRules platformGuards` green.
+`python tools/spec-check/spec_check.py` — all 8 checks pass. `coverageMatrix`/
+`coverageMatrixCheck` — 241 of 450 covered, unchanged, no drift.
+
+**Left open:** the real on-device collapse from `S11-radio-verified.png`/`.xml` could not be
+reproduced in Robolectric under any configuration tried — an isolated render at Robolectric's own
+narrower unconfigured default (320dp) squeezed the value identically whether or not the fix's
+`wrapContentWidth` calls were present (320dp is simply too narrow to discriminate anything here);
+at the real device's own validated width (360dp, read directly off `S11-radio-verified.xml`'s
+root node bounds `[0,0][1080,2400]` at 3x density), even the exact old shape — rebuilt from the
+real, unmodified `KeyValueRow`/`TextAction` — measured the real un-stripped "Kenwood TH-D75A · 2
+bands" string as a plain single line, never collapsing. This matches this program's own
+established "could not reproduce" class (R-866, R-940 carry the same honest finding for their own
+halts). The coordinator's literally instructed fix (label-yields / value-keeps-width /
+wraps-at-words on every row, the shared prefix helper on Radio's value) is applied anyway,
+defensively, and is now covered by tests that would catch a regression of the reported shape even
+though the original collapse itself was never reproduced here.
 
 ---
 
@@ -31283,6 +31347,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

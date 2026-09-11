@@ -204,6 +204,33 @@ class ReadyRowsForTest {
         assertEquals("verified", row.statusText)
     }
 
+    /** R-882 (register, validator V11, halt): the value string this row carries is what
+     * [ReadyFactColumns] must fit into its `weight(1f)` column at font scale 2.0 -- the same
+     * manufacturer-prefix strip [org.ort.app.ui.settings.SettingsPolling.stripManufacturerPrefix]
+     * already gives S09b's title (R-941) and S11's row (R-903), so "Kenwood TH-D75A" reads
+     * "TH-D75A" here too, shortening the exact value that used to collapse to one letter per
+     * line on the real device. */
+    @Test
+    fun `R_882 a connected rig's value strips the manufacturer prefix from the descriptor`() {
+        val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
+        val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
+        val connected = RigStatus.State.Connected("Kenwood TH-D75A", listOf(band))
+        val row = rows(store, rigStatus = connected).first { it.label == "Radio" }
+
+        assertEquals("TH-D75A · 1 band", row.value)
+    }
+
+    @Test
+    fun `R_882 a stale rig's value also strips the manufacturer prefix from its last-known descriptor`() {
+        val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
+        val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
+        val lastKnown = RigStatus.State.Connected("Kenwood TH-D75A", listOf(band))
+        val stale = RigStatus.State.Stale(lastKnown, sinceMillis = 0L)
+        val row = rows(store, rigStatus = stale).first { it.label == "Radio" }
+
+        assertEquals("TH-D75A · stale", row.value)
+    }
+
     /** R-285 (validator pass 3): a genuinely connected rig is still `ok` -- no `Fix` makes sense --
      * but must still offer `Change`, the one row in this whole screen where [ReadyRow.statusText]
      * and [ReadyRow.actionLabel] are both set together ([radioRow]'s own doc comment), wired to
