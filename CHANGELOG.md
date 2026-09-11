@@ -32,6 +32,50 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPG follow-up: E2-H08's replace-then-roll-back case)
+
+### (pending) — bundled assets: side-load replaces a bundled model, BundledAssetInstaller.reinstall rolls it back
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerTest.kt` only (coordinator-
+assigned follow-up on the same WPG package, same file this branch already owns).
+
+**Requirements/ACs:** FR-AST-1 ("roll back" is a real lifecycle stage, not just install/verify),
+FR-AST-3b (a bundled asset is still replaceable/roll-back-able), FR-AST-4 (a mid-session
+replacement is staged, not activated). Closes E2-H08's own missing half (the existing suite
+already proved side-load and download-refusal; this adds the replace-then-roll-back scenario the
+checklist row names explicitly).
+
+**What changed:** two new tests, both self-contained (no dependency on `VAD`'s real published
+digest — this file's own established pattern of injecting a `specFor`/fake bundled source with a
+digest the test controls end to end):
+
+1. `WPG sideloading a replacement over a bundled asset replaces it, and reinstall rolls back` —
+   installs a real bundled copy through `BundledAssetInstaller.installAll` (a `FakeBundledAssetSource`,
+   the exact destination `ModelCatalog.entry(VAD).destination(...)` resolves to), side-loads a
+   replacement over that same destination through `ModelsController.sideload` (verified against the
+   replacement's own digest — the existing, unchanged path), asserts the row now reports the
+   replacement and that the bundled bytes remain genuinely fetchable from their own source (the real
+   fallback FR-AST-3b describes, even though the on-disk destination itself was overwritten), then
+   calls `BundledAssetInstaller.reinstall("VAD", ...)` and asserts the original bundled bytes and
+   `.sha256` marker are active again.
+2. `WPG replacing a bundled asset via sideload mid-session stages, never activates immediately` —
+   the same replacement, but with `CaptureState.capturing(...)` first: the file lands immediately,
+   the failed transmission stays `FAILED`, and a `StagedActivation` records the deferred reprocess —
+   mirroring the existing `FR_AST_4` tests for `download`, now proven for `sideload` too.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest` — full module, green.
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green
+  (`dependencyRules: OK`, `platformGuards: OK`); see this entry's own commit hash for the exact
+  run this was verified against.
+- **Discrimination:** temporarily dropped the marker/digest half of
+  `BundledAssetInstaller.installOne`'s idempotency check (`if (destination.isFile)` alone) —
+  the roll-back test failed exactly as expected (`reinstall` short-circuited on the replacement's
+  bytes without ever re-copying the bundled ones); restored, reran, green again.
+
+**Left open:** none new — this closes E2-H08's own gap; the row's overall `closed` status is the
+lead's call.
+
 ## 2026-09-10 (WPD follow-up: Scenarios.kt captureMode seed, S12 Models row reads WPG's ModelsController)
 
 ### be0fcc8 — WPD follow-up · lead-approved Scenarios.kt fix; Models row reads real bundled state
