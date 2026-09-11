@@ -19,6 +19,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -29,6 +30,11 @@ import org.robolectric.RobolectricTestRunner
  * font scale, matching `ReaderAccessibilityTest`'s own pattern.
  */
 @RunWith(RobolectricTestRunner::class)
+// WPC3's own F9/F23 retry-ladder cases pushed this over detekt's LargeClass threshold — kept as
+// one class deliberately (this file's own doc comment: every `Fail*` composable's rendering
+// lives here in one place), the same call `ReaderActivityDestinationSmokeTest.kt` already makes
+// for the identical reason.
+@Suppress("LargeClass")
 class FailureScreensTest {
 
     @get:Rule
@@ -293,6 +299,87 @@ class FailureScreensTest {
         composeTestRule.onNodeWithText("Set the frequency by hand").assertIsDisplayed().performClick()
         assert(reconnected)
         assert(setByHand)
+    }
+
+    // WPC3 (FR-RIG-15/FR-CAP-5): F9's and F23's real retry-ladder sentence, the identical
+    // "Retry N of M, next in S s." phrasing on both banners now that RigStatus.State.Stale and
+    // InputStatus.State.Lost both carry the same real fields.
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `FR_RIG_15 F9 renders the real retry ladder sentence when the caller has one`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRigBanner(
+                    state = RigViewState(
+                        deviceLabel = "TH-D75A",
+                        sinceLabel = "04:02",
+                        retryAttempt = 2,
+                        retryTotal = 5,
+                        nextRetrySeconds = 12,
+                    ),
+                    onReconnect = {},
+                    onSetFrequencyByHand = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("Retry 2 of 5, next in 12 s.", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `FR_RIG_15 F9 renders no retry sentence for a caller that predates WPC3, never fabricated`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailRigBanner(
+                    state = RigViewState(deviceLabel = "TH-D75A", sinceLabel = "04:02"),
+                    onReconnect = {},
+                    onSetFrequencyByHand = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("Retry", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 F23 renders the real retry ladder sentence when the caller has one`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailBluetoothAudioDroppedBanner(
+                    state = BluetoothAudioDroppedViewState(
+                        deviceLabel = "Handheld BT",
+                        droppedAtLabel = "04:33",
+                        retryAttempt = 3,
+                        retryTotal = 8,
+                        nextRetrySeconds = 20,
+                        rigLinkStillUp = true,
+                    ),
+                    onRetryNow = {},
+                    onSwitchToWiredInput = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("Retry 3 of 8, next in 20 s.", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 F23 reads Retrying automatically for a caller with no real ladder position`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailBluetoothAudioDroppedBanner(
+                    state = BluetoothAudioDroppedViewState(
+                        deviceLabel = "Handheld BT",
+                        droppedAtLabel = "04:33",
+                        rigLinkStillUp = true,
+                    ),
+                    onRetryNow = {},
+                    onSwitchToWiredInput = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("Retrying automatically.", substring = true).assertIsDisplayed()
     }
 
     @Test

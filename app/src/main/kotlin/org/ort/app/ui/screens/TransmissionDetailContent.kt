@@ -37,6 +37,7 @@ import org.ort.app.ui.data.PropagationOutcome
 import org.ort.app.ui.data.ReaderPolling
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.data.RejectedViewState
+import org.ort.app.ui.data.RoomSessionRouteFactsReader
 import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.data.UnknownTriedContextViewState
@@ -101,6 +102,7 @@ public fun TransmissionDetailContent(
         mutableStateOf<Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState>>(emptyMap())
     }
     var unknownContext by remember(transmissionId) { mutableStateOf<UnknownTriedContextViewState?>(null) }
+    var btAudioMark by remember(transmissionId) { mutableStateOf(false) }
     var destination by remember(transmissionId) {
         mutableStateOf<DetailDestination>(
             if (initialRevisionsOpen) DetailDestination.Revisions else DetailDestination.Main,
@@ -119,6 +121,7 @@ public fun TransmissionDetailContent(
         transcriptCharSpan = polled.transcriptCharSpan
         ambiguousEvidence = polled.ambiguousEvidence
         unknownContext = polled.unknownContext
+        btAudioMark = polled.btAudioMark
     }
     LaunchedEffect(transmissionId) { refresh() }
 
@@ -139,6 +142,7 @@ public fun TransmissionDetailContent(
         transcriptCharSpan = transcriptCharSpan,
         ambiguousEvidence = ambiguousEvidence,
         unknownContext = unknownContext,
+        btAudioMark = btAudioMark,
     )
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
@@ -459,6 +463,11 @@ private data class DetailPollResult(
     val transcriptCharSpan: IntRange?,
     val ambiguousEvidence: Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState>,
     val unknownContext: UnknownTriedContextViewState?,
+    /** The D01-D04 header's own `bt audio` mark (checklist row E2-G04) — this over's own
+     * session's real Bluetooth-audio fact, read through the [org.ort.app.ui.data.SessionRouteFacts]
+     * seam, the same one the Log's own row mark uses. `false` when [detail] is `null` or the
+     * session predates FR-CAP-13's v7 columns. */
+    val btAudioMark: Boolean = false,
 )
 
 /**
@@ -512,6 +521,11 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
     } else {
         null
     }
+    // E2-G04 (D01-D04, FR-CAP-13): the same WPF seam N04/DG04/the Log's row mark read.
+    val btAudioMark = fetched?.sessionId
+        ?.let { RoomSessionRouteFactsReader(context).forSession(it) }
+        ?.isBluetoothAudio
+        ?: false
     return DetailPollResult(
         fetched,
         passFailure,
@@ -520,6 +534,7 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
         transcriptCharSpan,
         ambiguousEvidence,
         unknownContext,
+        btAudioMark,
     )
 }
 

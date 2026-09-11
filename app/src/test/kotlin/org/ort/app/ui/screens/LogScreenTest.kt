@@ -30,6 +30,7 @@ import org.ort.app.ui.data.LogScreenViewState
 import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -626,11 +627,12 @@ class LogScreenTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // E2-G04 (F23, FR-CAP-13): the Bluetooth-audio footnote.
+    // The Bluetooth-audio footnote (checklist row E2-G04, F23).
     // -----------------------------------------------------------------------------------------
 
     @Test
-    fun `E2_G04 the Bluetooth-audio footnote renders when present`() {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 the Bluetooth-audio footnote renders when present`() {
         composeTestRule.setContent {
             OrtTheme {
                 LogScreen(
@@ -649,7 +651,8 @@ class LogScreenTest {
     }
 
     @Test
-    fun `E2_G04 no footnote renders for a non-Bluetooth session`() {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 no footnote renders for a non-Bluetooth session`() {
         composeTestRule.setContent {
             OrtTheme {
                 LogScreen(

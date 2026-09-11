@@ -263,23 +263,23 @@ public object LogItemsMapper {
      * [ReaderTransmissionViewStateMapper.durationLabel] — this used to write "38s" (no space
      * before the unit), which the board never does.
      *
-     * E2-G04 (F23, FR-CAP-5, FR-CAP-13): [bluetoothAudioDropped] — `true` exactly when the gap is
-     * still open ([CaptureGapEntity.endedAt] `null`) on a session whose audio route is Bluetooth
-     * SCO and the cause is [CaptureGapCause.INPUT_LOST] — reads `Fail-Bluetooth-Audio.dc.html`'s
-     * own "not listening · N and counting · Bluetooth audio dropped" instead of the generic
-     * cause prose, computed from [nowMillis] against [CaptureGapEntity.startedAt] the same way
-     * every other "so far" figure in this reader is. There is no dedicated `CaptureGapCause` value
-     * for a Bluetooth-audio drop yet (`:data` still records it as `INPUT_LOST` — a later `:data`
-     * change owes a distinct cause); this is deliberately named as an inference from the session's
-     * own route, not a new fact `:data` records, and is reported as such (see this package's
-     * report). A closed gap, or one whose cause is not `INPUT_LOST`, is never rewritten this way.
+     * E2-G04/WPC3 (F23, FR-CAP-5, FR-CAP-13): a gap still open ([CaptureGapEntity.endedAt] `null`)
+     * whose own [CaptureGapEntity.cause] is [CaptureGapCause.BLUETOOTH_AUDIO_LOST] reads
+     * `Fail-Bluetooth-Audio.dc.html`'s own "not listening · N and counting · Bluetooth audio
+     * dropped" instead of the generic cause prose, computed from [nowMillis] against
+     * [CaptureGapEntity.startedAt] the same way every other "so far" figure in this reader is.
+     * **Round 2 (WPC3, schema v9):** this used to take a caller-supplied `bluetoothAudioDropped`
+     * boolean and special-case `INPUT_LOST`, because no dedicated cause existed yet and the gap's
+     * own route had to be inferred from the *session's* live facts ([SessionRouteFacts]) rather
+     * than read off the gap itself. `:data`'s own [CaptureGapCause.BLUETOOTH_AUDIO_LOST] (schema
+     * v9, `GapPersister.causeFor`) is now the real, gap-level fact — reading it directly here is
+     * strictly more honest than the session-level inference it replaces (a session that changed
+     * route mid-night could previously have mislabelled an old, non-Bluetooth gap), so the
+     * parameter is removed rather than kept alongside a fact that has superseded it. A closed
+     * gap, or one whose cause is not `BLUETOOTH_AUDIO_LOST`, is never rewritten this way.
      */
-    public fun gapLabel(
-        gap: CaptureGapEntity,
-        nowMillis: Long? = null,
-        bluetoothAudioDropped: Boolean = false,
-    ): String {
-        if (bluetoothAudioDropped && gap.endedAt == null && gap.cause == CaptureGapCause.INPUT_LOST) {
+    public fun gapLabel(gap: CaptureGapEntity, nowMillis: Long? = null): String {
+        if (gap.endedAt == null && gap.cause == CaptureGapCause.BLUETOOTH_AUDIO_LOST) {
             val elapsed = (nowMillis ?: SystemClock.wallMillis()) - gap.startedAt
             return "not listening · ${ReaderTransmissionViewStateMapper.durationLabel(elapsed)} and counting · " +
                 "Bluetooth audio dropped"
@@ -298,11 +298,11 @@ public object LogItemsMapper {
     private fun gapCauseProse(cause: CaptureGapCause): String = when (cause) {
         CaptureGapCause.CALL -> "incoming call"
         CaptureGapCause.INPUT_LOST -> "input lost"
-        // WPC3 (FR-CAP-5, F23): out-of-row fix reported to the lead -- adding CaptureGapCause
-        // .BLUETOOTH_AUDIO_LOST (schema v9) broke this when's exhaustiveness. No board names this
-        // string yet (E2-G05 is still `open`); "Bluetooth audio lost" follows this same function's
-        // own INPUT_LOST wording exactly, distinguished only by naming the route, pending WPF's
-        // real F23 board text.
+        // WPC3/WPF (FR-CAP-5, F23): a *closed* Bluetooth-audio-lost gap falls through to this
+        // generic prose (the live "N and counting · Bluetooth audio dropped" wording above only
+        // ever applies to an open one) — no board names distinct closed-row text for this cause,
+        // so "Bluetooth audio lost" follows this same function's own INPUT_LOST wording exactly,
+        // distinguished only by naming the route.
         CaptureGapCause.BLUETOOTH_AUDIO_LOST -> "Bluetooth audio lost"
         CaptureGapCause.OS_STOPPED -> "app stopped by the OS"
         CaptureGapCause.ROUTE_LOST -> "route lost"
@@ -473,7 +473,6 @@ public object LogItemsMapper {
     private fun gapsAsTimed(
         gaps: List<CaptureGapEntity>,
         selection: LogFilterSelection,
-        bluetoothAudioSession: Boolean = false,
         nowMillis: Long? = null,
     ): List<Timed> {
         if (!selection.showGaps) return emptyList()
@@ -485,7 +484,11 @@ public object LogItemsMapper {
                     LogListItem.Gap(
                         id = gap.id,
                         timeLabel = ReaderTransmissionViewStateMapper.timeLabel(gap.startedAt),
-                        label = gapLabel(gap, nowMillis, bluetoothAudioSession),
+                        // WPC3: gapLabel reads its own Bluetooth-audio wording straight off
+                        // gap.cause now (CaptureGapCause.BLUETOOTH_AUDIO_LOST, schema v9) — no
+                        // longer needs the session-level bluetoothAudioSession fact this call once
+                        // threaded through (see gapLabel's own doc comment, "Round 2").
+                        label = gapLabel(gap, nowMillis),
                     ),
                     null,
                 )
@@ -541,7 +544,7 @@ public object LogItemsMapper {
         val merged = (
             rowsAsTimed(details, selection, firstHeardIds, bluetoothAudioSession) +
                 rejectedAsTimed(details, selection) +
-                gapsAsTimed(gaps, selection, bluetoothAudioSession, nowMillis)
+                gapsAsTimed(gaps, selection, nowMillis)
             ).sortedBy { it.atMillis }
         return groupRuns(merged)
     }

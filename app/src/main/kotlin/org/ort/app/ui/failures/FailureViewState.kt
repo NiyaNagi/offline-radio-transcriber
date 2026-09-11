@@ -67,11 +67,12 @@ public data class DisconnectViewState(public val deviceLabel: String, public val
 
 /**
  * `Fail-Bluetooth-Audio.dc.html` (FR-CAP-5, FR-CAP-11, FR-CAP-13, FR-RUN-12). [retryAttempt],
- * [retryTotal] and [nextRetrySeconds] are `null` — not yet measured — until WPC2's own
- * reconnect-with-backoff signal (FR-RIG-15's ladder) is published somewhere this package can read;
- * no such counter exists in `:pipeline` today (checked before writing this), so this reports the
- * drop honestly without a fabricated attempt count rather than inventing one (constitution I) —
- * see this package's report. [rigLinkStillUp] is real: the rig-control transport is a separate
+ * [retryTotal] and [nextRetrySeconds] are WPC3's real
+ * [org.ort.pipeline.ReconnectLadderPosition] fields, read straight off
+ * [org.ort.pipeline.capture.InputStatus.State.Lost] — see that type's own kdoc for why they are a
+ * one-time snapshot of the *first* retry's own numbers, not a live countdown. `null` for a caller
+ * that predates WPC3 (a debug scenario, an older test) or genuinely has none to publish — never
+ * fabricated (constitution I). [rigLinkStillUp] is real: the rig-control transport is a separate
  * signal (`RigStatus`) from the audio route, and FR-RIG-15/D34 both require this be stated, not
  * merely implied by the banner's own silence about it.
  */
@@ -181,11 +182,22 @@ public data class BacklogViewState(
 
 /** `Fail-Rig.dc.html`. [transportLabel] (E2-G06, FR-RIG-15, WPC2's `RigStatus.transportKind`)
  * names the transport that dropped — "the Bluetooth SPP transport", "the USB serial transport" —
- * `null` (every caller before this existed) when the transport is not known. */
+ * `null` (every caller before this existed) when the transport is not known. [retryAttempt],
+ * [retryTotal] and [nextRetrySeconds] (WPC3, FR-RIG-15) are the identical
+ * [org.ort.pipeline.ReconnectLadderPosition] shape F23's own
+ * [BluetoothAudioDroppedViewState] carries, read off
+ * [org.ort.pipeline.capture.RigStatus.State.Stale] the same way — `null` for a caller that
+ * predates WPC3 or has none to publish, never fabricated. The board itself
+ * (`Fail-Rig.dc.html`) predates the reconnect ladder and names no retry sentence; [FailRigBanner]
+ * appends the identical "Retry N of M, next in S s." phrasing F23's own board already shows,
+ * reported here rather than left silently absent now that the real numbers exist. */
 public data class RigViewState(
     public val deviceLabel: String,
     public val sinceLabel: String,
     public val transportLabel: String? = null,
+    public val retryAttempt: Int? = null,
+    public val retryTotal: Int? = null,
+    public val nextRetrySeconds: Int? = null,
 )
 
 // -------------------------------------------------------------------------------------------

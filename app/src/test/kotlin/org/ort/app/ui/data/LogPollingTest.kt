@@ -21,6 +21,7 @@ import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.RigStatus
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -137,10 +138,11 @@ class LogPollingTest {
         assertTrue(gap.label.contains("incoming call"))
     }
 
-    // -- E2-G04 (F23, FR-CAP-13): the `bt audio` row mark, gap wording and footnote -------------
+    // -- the `bt audio` row mark, gap wording and footnote (checklist row E2-G04) ---------------
 
     @Test
-    fun `E2_G04 every row from a Bluetooth-audio session carries the bt audio mark`(): Unit = runTest {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 every row from a Bluetooth-audio session carries the bt audio mark`(): Unit = runTest {
         db.sessionDao().insert(session("BT-1", captureMode = "BLUETOOTH_RADIO", audioRouteKind = "BLUETOOTH_SCO"))
         db.transmissionDao().insert(transmission("TX1", sessionId = "BT-1", samplePosition = 1L))
 
@@ -152,7 +154,8 @@ class LogPollingTest {
     }
 
     @Test
-    fun `E2_G04 a cabled-radio session never carries the bt audio mark or the footnote`(): Unit = runTest {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 a cabled-radio session never carries the bt audio mark or the footnote`(): Unit = runTest {
         db.sessionDao().insert(session("USB-1", captureMode = "USB_RADIO", audioRouteKind = "USB"))
         db.transmissionDao().insert(transmission("TX1", sessionId = "USB-1", samplePosition = 1L))
 
@@ -163,8 +166,38 @@ class LogPollingTest {
         assertEquals(null, state.bluetoothAudioFootnote)
     }
 
+    // WPC3 (schema v9): seeds the real CaptureGapCause.BLUETOOTH_AUDIO_LOST directly — this test
+    // used to seed the generic INPUT_LOST cause and rely on the session's own Bluetooth-audio
+    // route to infer the wording (`gapLabel`'s own doc comment, "Round 2", records why that
+    // session-level inference is retired now that `:data`/`:pipeline` produce the real cause).
     @Test
-    fun `E2_G04 an open INPUT_LOST gap on a Bluetooth-audio session reads Bluetooth audio dropped`(): Unit = runTest {
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 an open BLUETOOTH_AUDIO_LOST gap reads Bluetooth audio dropped`(): Unit = runTest {
+        db.sessionDao().insert(session("BT-1", captureMode = "BLUETOOTH_RADIO", audioRouteKind = "BLUETOOTH_SCO"))
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "G1",
+                sessionId = "BT-1",
+                startedAt = 0L,
+                endedAt = null,
+                cause = CaptureGapCause.BLUETOOTH_AUDIO_LOST,
+                recoveredAutomatically = false,
+            ),
+        )
+
+        val state = LogPolling.screenState(context, "BT-1", LogFilterSelection(), LogQuickFilterId.All)
+
+        val gap = state.items.single() as LogListItem.Gap
+        assertTrue(gap.label.contains("Bluetooth audio dropped"))
+        assertTrue(gap.label.contains("and counting"))
+    }
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 an open INPUT_LOST gap on a Bluetooth session never reads Bluetooth audio dropped`(): Unit = runTest {
+        // The session's own route is Bluetooth audio, but this particular gap's own real cause is
+        // the generic INPUT_LOST — proves the wording comes from the gap's own cause column, never
+        // re-derived from the session it belongs to.
         db.sessionDao().insert(session("BT-1", captureMode = "BLUETOOTH_RADIO", audioRouteKind = "BLUETOOTH_SCO"))
         db.captureGapDao().insert(
             CaptureGapEntity(
@@ -180,8 +213,8 @@ class LogPollingTest {
         val state = LogPolling.screenState(context, "BT-1", LogFilterSelection(), LogQuickFilterId.All)
 
         val gap = state.items.single() as LogListItem.Gap
-        assertTrue(gap.label.contains("Bluetooth audio dropped"))
-        assertTrue(gap.label.contains("and counting"))
+        assertTrue(!gap.label.contains("Bluetooth audio dropped"))
+        assertTrue(gap.label.contains("input lost"))
     }
 
     @Test

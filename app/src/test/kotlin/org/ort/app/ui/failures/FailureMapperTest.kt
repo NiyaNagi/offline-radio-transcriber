@@ -138,14 +138,14 @@ class FailureMapperTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // E2-G05 (F23, FR-CAP-5): a Bluetooth-audio drop is F23, never the generic F2 disconnect.
+    // A Bluetooth-audio drop is F23, never the generic F2 disconnect (checklist row E2-G05).
     // -----------------------------------------------------------------------------------------
 
     private val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
 
     @Test
-    @Requirement("E2-G05", "FR-CAP-5")
-    fun `E2_G05 an input lost on a Bluetooth route is F23, not the generic F2 disconnect`() {
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 an input lost on a Bluetooth route is F23, not the generic F2 disconnect`() {
         val opened = InputStatus.State.Opened(btDevice, 16_000, "none", true, true, 0L)
         val presentation = FailureMapper.map(
             signals(inputStatus = InputStatus.State.Lost(opened, sinceMillis = 900_000L)),
@@ -156,8 +156,8 @@ class FailureMapperTest {
     }
 
     @Test
-    @Requirement("E2-G05")
-    fun `E2_G05 F23 states whether the rig link is still up, independent of the audio drop`() {
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 F23 states whether the rig link is still up, independent of the audio drop`() {
         val opened = InputStatus.State.Opened(btDevice, 16_000, "none", true, true, 0L)
         val stillConnected = RigStatus.State.Connected("TH-D75A", emptyList())
 
@@ -178,9 +178,45 @@ class FailureMapperTest {
         assertTrue(!(presentationRigDown as FailurePresentation.BluetoothAudioDropped).state.rigLinkStillUp)
     }
 
+    // WPC3 (schema v9): InputStatus.State.Lost's real ladder-position fields, threaded straight
+    // through onto BluetoothAudioDroppedViewState — no session read, no re-derivation.
     @Test
-    @Requirement("E2-G05")
-    fun `E2_G05 a takeover still outranks F23, matching the same priority every other banner has`() {
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 F23 reports the real retry ladder position when the caller has one`() {
+        val opened = InputStatus.State.Opened(btDevice, 16_000, "none", true, true, 0L)
+        val presentation = FailureMapper.map(
+            signals(
+                inputStatus = InputStatus.State.Lost(
+                    opened,
+                    sinceMillis = 900_000L,
+                    attempt = 3,
+                    ofTotal = 8,
+                    nextRetryInMillis = 20_000L,
+                ),
+            ),
+        )
+        val state = (presentation as FailurePresentation.BluetoothAudioDropped).state
+        assertEquals(3, state.retryAttempt)
+        assertEquals(8, state.retryTotal)
+        assertEquals(20, state.nextRetrySeconds)
+    }
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 F23 reports no retry ladder position for a caller that predates WPC3, never fabricated`() {
+        val opened = InputStatus.State.Opened(btDevice, 16_000, "none", true, true, 0L)
+        val presentation = FailureMapper.map(
+            signals(inputStatus = InputStatus.State.Lost(opened, sinceMillis = 900_000L)),
+        )
+        val state = (presentation as FailurePresentation.BluetoothAudioDropped).state
+        assertEquals(null, state.retryAttempt)
+        assertEquals(null, state.retryTotal)
+        assertEquals(null, state.nextRetrySeconds)
+    }
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 a takeover still outranks F23, matching the same priority every other banner has`() {
         val presentation = FailureMapper.map(
             signals(inputStatus = InputStatus.State.Mismatch(usbDevice, btDevice)),
         )
@@ -430,9 +466,10 @@ class FailureMapperTest {
         assertEquals("TH-D75A", (presentation as FailurePresentation.Rig).state.deviceLabel)
     }
 
+    // checklist row E2-G06 (F9's transport naming).
     @Test
-    @Requirement("E2-G06", "FR-RIG-15")
-    fun `E2_G06 F9 names the Bluetooth transport when that is what dropped`() {
+    @Requirement("FR-RIG-15")
+    fun `FR_RIG_15 F9 names the Bluetooth transport when that is what dropped`() {
         val connected = RigStatus.State.Connected(
             "TH-D75A",
             emptyList(),
@@ -445,13 +482,49 @@ class FailureMapperTest {
     }
 
     @Test
-    @Requirement("E2-G06")
-    fun `E2_G06 F9 names no transport for a caller that predates WPC2, never fabricated`() {
+    @Requirement("FR-RIG-15")
+    fun `FR_RIG_15 F9 names no transport for a caller that predates WPC2, never fabricated`() {
         val connected = RigStatus.State.Connected("TH-D75A", emptyList())
         val presentation = FailureMapper.map(
             signals(rigStatus = RigStatus.State.Stale(connected, sinceMillis = 900_000L)),
         )
         assertEquals(null, (presentation as FailurePresentation.Rig).state.transportLabel)
+    }
+
+    // WPC3 (schema v9): RigStatus.State.Stale's own real ladder-position fields, the identical
+    // shape F23 reads off InputStatus.State.Lost.
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `FR_RIG_15 F9 reports the real retry ladder position when the caller has one`() {
+        val connected = RigStatus.State.Connected("TH-D75A", emptyList())
+        val presentation = FailureMapper.map(
+            signals(
+                rigStatus = RigStatus.State.Stale(
+                    connected,
+                    sinceMillis = 900_000L,
+                    attempt = 2,
+                    ofTotal = 5,
+                    nextRetryInMillis = 12_000L,
+                ),
+            ),
+        )
+        val state = (presentation as FailurePresentation.Rig).state
+        assertEquals(2, state.retryAttempt)
+        assertEquals(5, state.retryTotal)
+        assertEquals(12, state.nextRetrySeconds)
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `FR_RIG_15 F9 reports no retry ladder position for a caller that predates WPC3, never fabricated`() {
+        val connected = RigStatus.State.Connected("TH-D75A", emptyList())
+        val presentation = FailureMapper.map(
+            signals(rigStatus = RigStatus.State.Stale(connected, sinceMillis = 900_000L)),
+        )
+        val state = (presentation as FailurePresentation.Rig).state
+        assertEquals(null, state.retryAttempt)
+        assertEquals(null, state.retryTotal)
+        assertEquals(null, state.nextRetrySeconds)
     }
 
     @Test

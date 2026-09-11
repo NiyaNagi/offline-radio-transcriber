@@ -60,10 +60,16 @@ public data class FailureHostActions(
      * nothing while F21 is even showing and takes real effect only once the session it was staged
      * behind has actually ended — never a forced mid-session activation. */
     public val onActivateStagedAsset: () -> Unit = {},
-    /** E2-G05 (F23, `Fail-Bluetooth-Audio.dc.html`): "Switch to a wired input" → S04 — WPE is
-     * adding the destination; defaulted to a no-op so both packages compile independently until
-     * it is wired. Deliberately its own callback, not [onChooseAnotherInput]: F23's own action
-     * names a specific route (wired), not "pick anything else" the way F2's generic recovery does. */
+    /** E2-G05/E2-F08 (F23, `Fail-Bluetooth-Audio.dc.html`): "Switch to a wired input" → Setup's
+     * `Input` step. `ReaderActivity.kt` wires this for real (its own doc comment names the exact
+     * call), to the same [org.ort.app.ui.navigation.ReaderNavigator.openSetupInput] entry
+     * [onChooseAnotherInput] already uses — Setup's `Input` step is the one real surface that lets
+     * the operator choose a wired device. Defaulted to a no-op here so a caller that builds this
+     * type directly (a test, a future package) compiles unchanged. Deliberately its own callback,
+     * not [onChooseAnotherInput]: F23's own action names a specific route (wired), not "pick
+     * anything else" the way F2's generic recovery does — both happen to resolve to the same real
+     * destination today, which is a fact about Setup's own current shape, not a reason to merge
+     * the two callbacks. */
     public val onSwitchToWiredInput: () -> Unit = {},
 )
 

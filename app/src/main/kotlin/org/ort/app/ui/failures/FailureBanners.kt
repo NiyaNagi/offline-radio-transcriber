@@ -397,10 +397,21 @@ public fun FailRigBanner(
     onSetFrequencyByHand: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // WPC3 (FR-RIG-15): the identical "Retry N of M, next in S s." sentence F23's own
+    // FailBluetoothAudioDroppedBanner appends, now that RigStatus.State.Stale carries the same
+    // real ladder-position fields — omitted, not "Retrying automatically.", when neither
+    // attempt/total is known: unlike a Bluetooth-audio drop (always mid-retry the instant it is
+    // shown), a caller that predates WPC3 has nothing honest to say about retrying at all.
+    val retryClause = if (state.retryAttempt != null && state.retryTotal != null) {
+        " Retry ${state.retryAttempt} of ${state.retryTotal}" +
+            (state.nextRetrySeconds?.let { ", next in $it s." } ?: ".")
+    } else {
+        ""
+    }
     Banner(
         title = "Radio disconnected at ${state.sinceLabel} — frequency is stale",
         body = "Capture continues. Overs since then are logged against the last frequency the rig reported, " +
-            "and marked so. If you changed channel, they are wrong until the rig is back.",
+            "and marked so. If you changed channel, they are wrong until the rig is back.$retryClause",
         tone = BannerTone.DEGRADED,
         primaryActionLabel = "Reconnect",
         onPrimaryAction = onReconnect,

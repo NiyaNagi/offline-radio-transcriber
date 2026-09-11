@@ -2,6 +2,10 @@ package org.ort.app.ui
 
 import android.view.Window
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -9,9 +13,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.setup.SetupActivity
+import org.ort.app.ui.setup.SetupStep
+import org.ort.capture.android.AudioDeviceDescriptor
+import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.SystemClock
+import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.digest.ForegroundActivityTracker
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 
 /**
  * R-001 and R-007 (ui-conformance-plan WP1).
@@ -34,6 +45,15 @@ class ReaderActivityTest {
 
     @get:Rule
     val composeTestRule = createAndroidComposeRule<ReaderActivity>()
+
+    // WPF (checklist row E2-F08, F23): a process-wide holder this class's own new cases below set
+    // — reset here, not just relied on to be clean, the same discipline every other test in this
+    // suite that touches a process-wide signal already follows (`FailureHostTest.resetHolders`,
+    // `ReaderActivityDestinationSmokeTest`'s per-case `finally` blocks).
+    @After
+    fun resetInputStatus() {
+        InputStatus.reset()
+    }
 
     // --- E2-I03 (spec/e2e-capture-modes-plan.md, "owed by WPE") ------------------------------------
 
@@ -95,5 +115,54 @@ class ReaderActivityTest {
             "intent-session",
             resolveSessionId(intentSessionId = "intent-session", liveSessionId = "stale-leftover", isCapturing = false),
         )
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // WPF (checklist row E2-F08): F23's own two recovery actions carry a real `FailureHostActions`
+    // lambda in production, not the type's own no-op default — driven end to end through this real,
+    // launched `ReaderActivity` (the composeTestRule's own default intent, no `EXTRA_SESSION_ID`, so
+    // `resolveSessionId` resolves `null` and starts no session-gated polling loop — the same
+    // real-Activity-with-no-session shape `E2_I03`/`R_001`/`R_007` above already use) rather than by
+    // constructing `FailureHostActions` directly the way `FailureHostTest`'s own equivalent case
+    // does for `FailureHost` in isolation. `InputStatus` is set from inside the test body, after the
+    // rule's own `before()` has already launched and resumed the Activity, so this never risks the
+    // non-null-session-id polling-loop hazard `resolveSessionId`'s own doc comment records.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 F23 Retry now opens Setup's real Input step, not a no-op`() {
+        val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
+        InputStatus.opened(btDevice, 16_000, "none", true, true, 0L)
+        InputStatus.lost(sinceMillis = 0L)
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithText("Retry now", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText("Retry now", substring = true).performClick()
+
+        val started = shadowOf(composeTestRule.activity).nextStartedActivity
+        assertNotNull("expected onRetryInput to start an Activity, not silently do nothing", started)
+        assertEquals(SetupActivity::class.java.name, started!!.component?.className)
+        assertEquals(SetupStep.INPUT.name, started.getStringExtra(SetupActivity.EXTRA_STEP))
+    }
+
+    @Test
+    @Requirement("FR-CAP-5")
+    fun `FR_CAP_5 F23 Switch to a wired input opens Setup's real Input step, not a no-op`() {
+        val btDevice = AudioDeviceDescriptor("bt-1", AudioDeviceKind.BLUETOOTH, "Handheld BT")
+        InputStatus.opened(btDevice, 16_000, "none", true, true, 0L)
+        InputStatus.lost(sinceMillis = 0L)
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithText("Switch to a wired input", substring = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText("Switch to a wired input", substring = true).performClick()
+
+        val started = shadowOf(composeTestRule.activity).nextStartedActivity
+        assertNotNull("expected onSwitchToWiredInput to start an Activity, not silently do nothing", started)
+        assertEquals(SetupActivity::class.java.name, started!!.component?.className)
+        assertEquals(SetupStep.INPUT.name, started.getStringExtra(SetupActivity.EXTRA_STEP))
     }
 }

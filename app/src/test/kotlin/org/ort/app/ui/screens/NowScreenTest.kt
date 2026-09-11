@@ -63,12 +63,12 @@ class NowScreenTest {
     )
 
     // -----------------------------------------------------------------------------------------
-    // E2-G02 (N01b, FR-CAP-3a/FR-CAP-10): the room-audio disclosure chip.
+    // The room-audio disclosure chip (checklist row E2-G02, N01b, FR-CAP-3a/FR-CAP-10).
     // -----------------------------------------------------------------------------------------
 
     @Test
-    @Requirement("E2-G02", "FR-CAP-10")
-    fun `E2_G02 the room-audio chip renders under the title for a local-microphone session`() {
+    @Requirement("FR-CAP-10")
+    fun `FR_CAP_10 the room-audio chip renders under the title for a local-microphone session`() {
         composeTestRule.setContent {
             OrtTheme { NowScreen(state = activeState(isLocalMicrophone = true)) }
         }
@@ -79,8 +79,8 @@ class NowScreenTest {
     }
 
     @Test
-    @Requirement("E2-G02")
-    fun `E2_G02 no chip renders for a radio session`() {
+    @Requirement("FR-CAP-10")
+    fun `FR_CAP_10 no chip renders for a radio session`() {
         composeTestRule.setContent {
             OrtTheme { NowScreen(state = activeState(isLocalMicrophone = false)) }
         }
@@ -89,8 +89,8 @@ class NowScreenTest {
     }
 
     @Test
-    @Requirement("E2-G02", "FR-CAP-12")
-    fun `E2_G02 tapping the chip opens the settings Capture-mode screen`() {
+    @Requirement("FR-CAP-12")
+    fun `FR_CAP_12 tapping the chip opens the settings Capture-mode screen`() {
         var opened = false
         composeTestRule.setContent {
             OrtTheme {

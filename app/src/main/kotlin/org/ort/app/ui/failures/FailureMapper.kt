@@ -222,13 +222,17 @@ public object FailureMapper {
             // descriptor kind (WPC1's `AudioDeviceDescriptor.kind`) — not a session column, so
             // this reads correctly the instant the drop happens, before any session-level read
             // could catch up. [BluetoothAudioDroppedViewState.retryAttempt]/[retryTotal]/
-            // [nextRetrySeconds] stay `null` — no reconnect-with-backoff counter is published by
-            // `:pipeline` yet (see that type's own kdoc); reported, not fabricated.
+            // [nextRetrySeconds] (WPC3) are `input`'s own real ladder-position fields — `null`
+            // exactly when `input` itself carries `null` (a caller that predates WPC3), never
+            // fabricated.
             if (input.lastKnown.descriptor.kind == AudioDeviceKind.BLUETOOTH) {
                 return FailurePresentation.BluetoothAudioDropped(
                     BluetoothAudioDroppedViewState(
                         deviceLabel = input.lastKnown.descriptor.label,
                         droppedAtLabel = clockLabel(input.sinceMillis),
+                        retryAttempt = input.attempt,
+                        retryTotal = input.ofTotal,
+                        nextRetrySeconds = retrySecondsLabel(input.nextRetryInMillis),
                         rigLinkStillUp = signals.rigStatus !is RigStatus.State.Stale,
                     ),
                 )
@@ -341,11 +345,22 @@ public object FailureMapper {
                     // E2-G06 (F9, FR-RIG-15): WPC2's own live `RigStatus.transportKind` — `null`
                     // for a caller that predates it (a debug scenario), never fabricated.
                     transportLabel = rigTransportLabel(rig.lastKnown.transportKind),
+                    // WPC3 (F9, FR-RIG-15): the identical ladder-position shape F23 reads, off
+                    // `rig`'s own fields this time — `null` for a caller that predates WPC3.
+                    retryAttempt = rig.attempt,
+                    retryTotal = rig.ofTotal,
+                    nextRetrySeconds = retrySecondsLabel(rig.nextRetryInMillis),
                 ),
             )
         }
         return null
     }
+
+    /** WPC3 (F23/F9, FR-CAP-5/FR-RIG-15): whole seconds from a real
+     * [org.ort.pipeline.ReconnectLadderPosition.nextRetryInMillis] — `null` in, `null` out, never
+     * a fabricated `0`. */
+    private fun retrySecondsLabel(nextRetryInMillis: Long?): Int? =
+        nextRetryInMillis?.let { (it / 1000).coerceAtLeast(0).toInt() }
 
     /** E2-G06: the transport named in F9's own banner copy — "the Bluetooth SPP transport" /
      * "the USB serial transport" — `null` when [transport] is `null` or [org.ort.rig.RigTransportKind.NONE]. */

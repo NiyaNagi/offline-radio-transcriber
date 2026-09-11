@@ -135,9 +135,10 @@ class NowContentTest {
         composeTestRule.onNodeWithText("1 overs · 0 stations", substring = true).assertDoesNotExist()
     }
 
+    // checklist row E2-G02 (N01b's persistent room-audio disclosure).
     @Test
-    @Requirement("E2-G02", "FR-CAP-3a")
-    fun `E2_G02 a local-microphone session shows the room-audio chip through the real read path`() {
+    @Requirement("FR-CAP-3a")
+    fun `FR_CAP_3a a local-microphone session shows the room-audio chip through the real read path`() {
         runBlocking {
             db.sessionDao().insert(session("ROOM-1", captureMode = "LOCAL_MICROPHONE"))
             db.transmissionDao().insert(transmission("ROOM-1-tx1", "ROOM-1", 1L))

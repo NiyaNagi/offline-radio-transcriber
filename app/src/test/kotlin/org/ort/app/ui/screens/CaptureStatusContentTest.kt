@@ -238,9 +238,10 @@ class CaptureStatusContentTest {
         )
     }
 
+    // checklist row E2-G01 (N04's Input/Radio sub-lines).
     @Test
-    @Requirement("E2-G01", "FR-CAP-13")
-    fun `E2_G01 the Input sub-line names the session's own mode and route from the v7 columns`() {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 the Input sub-line names the session's own mode and route from the v7 columns`() {
         runBlocking {
             db.sessionDao().insert(
                 session("BT-1").copy(

@@ -63,7 +63,8 @@ class TransmissionDetailScreenTest {
         inspection = inspection,
     )
 
-    private fun state(detail: TransmissionDetailViewState = detail()) = DetailViewStateMapper.from(detail)
+    private fun state(detail: TransmissionDetailViewState = detail(), btAudioMark: Boolean = false) =
+        DetailViewStateMapper.from(detail, btAudioMark = btAudioMark)
 
     @Test
     fun `FR_UI_5 the play control asks the player for this transmission's audio`() {
@@ -662,5 +663,81 @@ class TransmissionDetailScreenTest {
         val styled = result.spanStyles.single()
         assertEquals(0, styled.start)
         assertEquals(5, styled.end)
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The `bt audio` header mark, beside the attribution row — §6.14's badge shape, the same one
+    // the Log's own row mark uses (checklist row E2-G04, D01-D04).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `FR_CAP_13 D02 INFERRED carries the bt audio badge beside the attribution row`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(state = state(btAudioMark = true), player = FakeTransmissionAudioPlayer())
+            }
+        }
+
+        composeTestRule.onNodeWithTag("detail-bt-audio-badge").assertExists()
+    }
+
+    @Test
+    fun `FR_CAP_13 no badge renders for a cabled or room-audio session`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(state = state(btAudioMark = false), player = FakeTransmissionAudioPlayer())
+            }
+        }
+
+        composeTestRule.onNodeWithText("bt audio", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `FR_CAP_13 D01 CONFIRMED carries the bt audio badge too`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(Attribution.confirmed("W7NPC", 0.94)), btAudioMark = true),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("detail-bt-audio-badge").assertExists()
+    }
+
+    @Test
+    fun `FR_CAP_13 D03 AMBIGUOUS carries the bt audio badge too`() {
+        val inspection = InspectionViewState(
+            lattice = null,
+            candidates = listOf(
+                CandidateInspectionViewState("KE7QRS", 0, 0.51, true, true, false, emptyList()),
+                CandidateInspectionViewState("KE7QRF", 1, 0.46, true, false, false, emptyList()),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(Attribution.ambiguous(), inspection = inspection), btAudioMark = true),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("detail-bt-audio-badge").assertExists()
+    }
+
+    @Test
+    fun `FR_CAP_13 D04 UNKNOWN carries the bt audio badge too`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(Attribution.unknown()), btAudioMark = true),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("detail-bt-audio-badge").assertExists()
     }
 }

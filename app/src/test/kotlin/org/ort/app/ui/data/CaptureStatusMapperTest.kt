@@ -339,9 +339,13 @@ class CaptureStatusMapperTest {
         openedAtMillis = 0L,
     )
 
+    // -----------------------------------------------------------------------------------------
+    // N04's Input/Radio sub-lines (checklist row E2-G01, FR-CAP-13).
+    // -----------------------------------------------------------------------------------------
+
     @Test
-    @Requirement("E2-G01", "FR-CAP-13")
-    fun `E2_G01 the Input sub-line names the mode and audio-by-cable route before the rate and resampler`() {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 the Input sub-line names the mode and audio-by-cable route before the rate and resampler`() {
         val view = state(
             input = opened(),
             routeFacts = SessionRouteFacts(
@@ -359,8 +363,8 @@ class CaptureStatusMapperTest {
     }
 
     @Test
-    @Requirement("E2-G01", "FR-CAP-10")
-    fun `E2_G01 the Input sub-line names room audio for a local-microphone session`() {
+    @Requirement("FR-CAP-10")
+    fun `FR_CAP_10 the Input sub-line names room audio for a local-microphone session`() {
         val view = state(
             input = opened("Built-in Microphone"),
             routeFacts = SessionRouteFacts(
@@ -376,8 +380,8 @@ class CaptureStatusMapperTest {
     }
 
     @Test
-    @Requirement("E2-G01", "FR-CAP-11")
-    fun `E2_G01 the Input sub-line names Bluetooth audio for a Bluetooth-audio session`() {
+    @Requirement("FR-CAP-11")
+    fun `FR_CAP_11 the Input sub-line names Bluetooth audio for a Bluetooth-audio session`() {
         val view = state(
             input = opened("Handheld BT"),
             routeFacts = SessionRouteFacts(
@@ -392,8 +396,8 @@ class CaptureStatusMapperTest {
     }
 
     @Test
-    @Requirement("E2-G01")
-    fun `E2_G01 with no route facts tracked the Input sub-line still carries the rate and resampler alone`() {
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 with no route facts tracked the Input sub-line still carries the rate and resampler alone`() {
         val view = state(input = opened())
         assertTrue(view.input.subLine!!.contains("48 kHz"))
         assertTrue(view.input.subLine!!.contains("a41c"))
@@ -401,8 +405,8 @@ class CaptureStatusMapperTest {
     }
 
     @Test
-    @Requirement("E2-G01", "FR-RIG-14")
-    fun `E2_G01 the Radio sub-line names the transport before the band states`() {
+    @Requirement("FR-RIG-14")
+    fun `FR_RIG_14 the Radio sub-line names the transport before the band states`() {
         val connected = RigStatus.State.Connected(
             "TH-D75A",
             listOf(
@@ -427,8 +431,8 @@ class CaptureStatusMapperTest {
     }
 
     @Test
-    @Requirement("E2-G01", "FR-RIG-14")
-    fun `E2_G01 RigStatus own live transportKind (WPC2) wins over the session column fallback`() {
+    @Requirement("FR-RIG-14")
+    fun `FR_RIG_14 RigStatus own live transportKind (WPC2) wins over the session column fallback`() {
         val connected = RigStatus.State.Connected(
             "TH-D75A",
             listOf(RigStatus.BandState("A", 145_230_000L, null, squelchOpen = true)),
@@ -449,8 +453,8 @@ class CaptureStatusMapperTest {
     }
 
     @Test
-    @Requirement("E2-G01")
-    fun `E2_G01 with no transport tracked the Radio sub-line falls back to the band states alone`() {
+    @Requirement("FR-RIG-14")
+    fun `FR_RIG_14 with no transport tracked the Radio sub-line falls back to the band states alone`() {
         val connected = RigStatus.State.Connected(
             "TH-D75A",
             listOf(RigStatus.BandState("A", 145_230_000L, null, squelchOpen = true)),

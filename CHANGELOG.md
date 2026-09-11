@@ -32,6 +32,124 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPF follow-up: D01–D04 bt audio detail-header mark, orphan test renames, F23 action wiring, WPC3 retry-ladder rendering)
+
+### (pending) — status modes: the D01–D04 bt audio detail-header mark, renaming every E2-G0n-prefixed orphan test to its real requirement id, F23's onRetryInput/onSwitchToWiredInput wired to Setup's real Input step, and — added mid-session once WPC3 merged — the real retry-ladder sentence on F23's and F9's banners and the gap-row wording keyed off the real BLUETOOTH_AUDIO_LOST cause
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/{data/DetailViewState,screens/TransmissionDetailContent,screens/TransmissionDetailScreen,data/LogViewData,failures/FailureViewState,failures/FailureMapper,failures/FailureBanners,ReaderActivity}.kt`,
+matching test files under `app/src/test/kotlin/...` plus renames across
+`components/LiveBarTest`, `data/{CaptureStatusMapperTest,DetailViewStateMapperTest,LiveBarPollingTest,LogPollingTest,LogViewDataTest}`,
+`digest/{DigestPollingTest,DigestScreensTest,SessionsContentTest,SessionsScreensTest}`,
+`failures/{FailureHostTest,FailureMapperTest,FailureScreensTest}`,
+`screens/{CaptureStatusContentTest,LogScreenTest,NowContentTest,NowScreenTest,TransmissionDetailContentTest,TransmissionDetailScreenTest}`,
+`ReaderActivityTest.kt`. `results/e2e-audit/checklist.md`/`results/coverage-matrix.md` regenerated. Branch only — not merged to `main`.
+
+**Requirements/ACs:** FR-CAP-5, FR-CAP-10, FR-CAP-11, FR-CAP-12, FR-CAP-13, FR-RIG-14, FR-RIG-15,
+FR-DIG-3a, FR-DIG-6, FR-DIG-11, AC-129.
+
+**What changed:**
+
+*Constitution Check.* I (the `bt audio` badge and both retry-ladder sentences render only from a
+real signal — `SessionRouteFacts`, `InputStatus.State.Lost`, `RigStatus.State.Stale` — and are
+absent, never fabricated, for a caller with none). II (coverage-matrix's own orphan-test line is
+the discriminator here: present before this session's renames, absent after — verified by running
+`coverageMatrix` both ways, not assumed; the F23/F9 banner tests are new, not renamed, since no
+composable-level case existed for either before). IV (unchanged — no capture-path file touched).
+VI (F23's/F9's retry numbers carry through only the whole-second value the real ladder position
+computed; `null` in, `null` out). VII (`onRetryInput`/`onSwitchToWiredInput` reuse the existing
+`ReaderNavigator.openSetupInput()` structural seam rather than adding a new one).
+
+1. **D01–D04 `bt audio` detail-header mark (E2-G04's owed half).** `DetailViewState.btAudioMark`
+   (additive, default `false`) threads through `DetailViewStateMapper.from`
+   (`@Suppress("LongParameterList")`, added alongside the other post-`P2` optional facts) into
+   `HeaderSection`'s own badge, beside the attribution row — guide §6.14's `CORRECTED` shape, the
+   identical one the Log's own row mark (`Rows.kt`) uses, so the fact is never carried by only one
+   surface. `TransmissionDetailContent.pollDetail` reads it through
+   `RoomSessionRouteFactsReader`/`SessionRouteFacts` off the over's own session id — the same real
+   seam N04/DG04/the Log row already read. Tests: `DetailViewStateMapperTest` (D01–D04, one case per
+   attribution state, plus the `false`-by-default/non-Bluetooth cases), `TransmissionDetailScreenTest`
+   (badge renders for all four states), `TransmissionDetailContentTest` (a real Bluetooth-audio and a
+   real cabled session, end to end through Room).
+2. **Orphan-test renames (coverage-matrix hygiene).** Every test named `E2_G0n_...` (parsed by
+   `spec-check`/`coverageMatrix` as if `E2-G0n` were a functional-spec requirement id, which it is
+   not — it is a `results/e2e-audit/checklist.md` row id) renamed to lead with the real id it
+   establishes: `FR_CAP_13`/`FR_CAP_10`/`FR_CAP_11`/`FR_RIG_14` (E2-G01's N04 sub-lines),
+   `FR_CAP_3a`/`FR_CAP_10`/`FR_CAP_12` (E2-G02's room-audio disclosure — `AC-129` is the closer-fitting
+   acceptance criterion for the disclosure as a whole, but each test asserts one functional rule, so
+   the more specific `FR-CAP-*` id was kept per case), `FR_CAP_13` (E2-G03's DG04 facts),
+   `FR_CAP_13`/`FR_CAP_5` (E2-G04's row mark and gap wording), `FR_CAP_5` (E2-G05's F23 banner),
+   `FR_RIG_14`/`FR_RIG_15` (E2-G01's/E2-G06's transport naming — `FR-RIG-14` for *naming* the
+   transport, `FR-RIG-15` for F9's own disconnection handling), `FR_DIG_6`/`FR_DIG_3a`/`FR_DIG_11`
+   (E2-G07's prose section). The checklist row id itself is kept as a plain-prose reference inside
+   each block's own leading comment, never inside a test name. `git grep -n "E2_G0"` and
+   `git grep -n '@Requirement("E2-'` both now return nothing under `app/src/test`.
+   `results/e2e-audit/checklist.md`'s own "verification" columns for E2-G01/G02/G03/G07 updated to
+   name the real prefixes too, not just the test files.
+3. **F23's two actions wired end to end (E2-F08's owed half).** `ReaderActivity.kt`'s
+   `FailureHostActions(onRetryInput = { navigator.openSetupInput() }, onSwitchToWiredInput = {
+   navigator.openSetupInput() })` — both reuse the exact
+   `ReaderNavigator.openSetupInput()`/`SetupActivity.EXTRA_STEP = SetupStep.INPUT.name` route
+   `onChooseAnotherInput` already used; `onRetryInput` is shared with F2's `FailDisconnectBanner`
+   ("Retry"), which gets the identical real behaviour in the same change (checked directly — no F2
+   test regressed). `FailureHostTest`'s existing case already asserted both callbacks fire from the
+   real F23 banner; two new `ReaderActivityTest` cases (`FR_CAP_5`) drive a real, launched
+   `ReaderActivity` end to end — `InputStatus` set from inside the test body, after the rule's own
+   `before()` already resumed the Activity with a `null` session id (so no session-gated polling
+   loop starts) — tap "Retry now"/"Switch to a wired input", and assert via
+   `shadowOf(activity).nextStartedActivity` that a real `SetupActivity` intent with
+   `EXTRA_STEP=INPUT` was actually started, not a silent no-op.
+4. **WPC3 addendum (coordinator-directed mid-session, after `git merge --no-edit main` pulled in
+   `8e40041`): the real retry-ladder counter on F23's and F9's banners, and the gap-row wording keyed
+   off the real cause.** `InputStatus.State.Lost`/`RigStatus.State.Stale` now carry real
+   `attempt`/`ofTotal`/`nextRetryInMillis` (WPC3, `org.ort.pipeline.ReconnectLadderPosition`).
+   `FailureMapper` threads these straight onto `BluetoothAudioDroppedViewState`/`RigViewState`
+   (`retrySecondsLabel`, whole seconds, `null` in → `null` out); `FailBluetoothAudioDroppedBanner`
+   already rendered "Retry N of M, next in S s." from those fields (built ahead of the real data
+   existing) — no board change needed there. `FailRigBanner` had no such sentence at all (its own
+   `Fail-Rig.dc.html` predates the reconnect ladder and names no retry text): appended the identical
+   phrasing F23's own board already shows, reported here rather than left silently absent now that
+   the real numbers exist. `LogItemsMapper.gapLabel` no longer takes a caller-supplied
+   `bluetoothAudioDropped` boolean inferred from the session's own route — it reads
+   `CaptureGapCause.BLUETOOTH_AUDIO_LOST` (schema v9, `GapPersister.causeFor`) directly off the gap
+   itself, which is strictly more honest than the session-level inference it replaces (a session that
+   changed route mid-night could previously have mislabelled an old, non-Bluetooth gap).
+   `gapsAsTimed`/`buildItems` updated to match; `bluetoothAudioSession` stays for the row mark alone
+   (a genuinely session-wide fact `rowsAsTimed` still needs). Tests: `FailureMapperTest`
+   (`FR_CAP_5`/`FR_RIG_15`, real ladder position present and absent, for both F23 and F9),
+   `FailureScreensTest` (new composable-level cases — first-ever direct render test for
+   `FailBluetoothAudioDroppedBanner`; `FailRigBanner`'s new sentence rendered and honestly absent for
+   a pre-WPC3 caller; `@Suppress("LargeClass")` added, matching
+   `ReaderActivityDestinationSmokeTest`'s own precedent, once this pushed the file over detekt's
+   threshold), `LogViewDataTest`/`LogPollingTest` (rewritten to construct the real
+   `BLUETOOTH_AUDIO_LOST` cause directly rather than pairing `INPUT_LOST` with the retired boolean,
+   plus a new case proving an `INPUT_LOST` gap on a Bluetooth-audio session still never reads the
+   Bluetooth wording — the row mark and the gap wording are independent facts).
+
+**Verified** (all on this workstation, `JAVA_HOME`/`ANDROID_HOME` as this session's own preamble,
+`-PortAllowMissingBundledAssets=true` on every invocation):
+- `./gradlew :app:testDebugUnitTest` — BUILD SUCCESSFUL in 5m 53s (full suite).
+- `./gradlew :app:smokeTestDebugUnitTest` — BUILD SUCCESSFUL in 3m 24s.
+- `./gradlew build dependencyRules platformGuards` — BUILD SUCCESSFUL in 52s;
+  `dependencyRules: OK`, 20 modules; `platformGuards: OK`, 20 modules.
+- `./gradlew -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix` — 239 of 450 covered; **no orphan-test line** (present before this
+  session's renames, confirmed absent after — the actual before/after check, not an assumption).
+- `./gradlew coverageMatrixCheck` — up to date (239 of 450).
+- `./gradlew :app:detekt :app:ktlintCheck` — BUILD SUCCESSFUL (two real style fixes made along the
+  way: `DetailViewStateMapper.from`'s `LongParameterList`, two wrapped lines over 120 chars, and
+  `FailureScreensTest`'s new `LargeClass`).
+
+**Left open / not done:**
+- Tour/device captures for E2-G04/E2-G05/E2-G06/E2-F08 stay open — this session is unit-only, per
+  its own scope.
+- F9's `Fail-Rig.dc.html` artboard itself is not redrawn with the new retry sentence — the banner
+  renders real text the board does not yet depict; reported, not silently mismatched.
+- The `bluetoothAudioDropped`/`isBluetoothAudioRoute` session-level inference stays load-bearing
+  for the Log row's own `bt audio` mark (a fact no gap-level cause can carry, since ordinary
+  transmission rows have no gap at all) — only the gap-wording use of it was retired.
+- Not merged to `main`; the lead merges builder branches.
+
 ## 2026-09-10 (WPD follow-up: Scenarios.kt captureMode seed, S12 Models row reads WPG's ModelsController)
 
 ### be0fcc8 — WPD follow-up · lead-approved Scenarios.kt fix; Models row reads real bundled state
