@@ -18,6 +18,7 @@ import org.ort.data.entity.ThreadKind
 import org.ort.data.entity.ThreadKindSource
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.rig.descriptor.BundledDescriptors
 
 /**
  * `overnight`, `gap-call` and `overnight-live` (spec/ui-conformance-plan.md §E's V3 set; register
@@ -80,7 +81,16 @@ internal object OvernightScenario {
         val end = SystemClock.wallMillis() - 8 * 60_000L
         val start = end - SESSION_DURATION_MILLIS
         db.sessionDao().insert(
-            ScenarioFixtures.session(sessionId, startedAt = start, endedAt = if (live) null else end),
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = start,
+                endedAt = if (live) null else end,
+                // E2-A07 (schema v10): every variant here (`overnight`/`overnight-live`/`gap-call`)
+                // is the same real TH-D75A overnight session, captured over a verified route.
+                rigDescriptorId = BundledDescriptors.kenwoodThD75a().id,
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
+            ),
         )
 
         var sample = 0L

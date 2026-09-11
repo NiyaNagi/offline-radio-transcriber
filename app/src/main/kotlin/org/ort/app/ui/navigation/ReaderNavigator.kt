@@ -32,11 +32,19 @@ import org.ort.app.ui.setup.SetupStep
  * a just-composed screen has actually settled to what a tour step asked for before capturing,
  * rather than capturing on elapsed time alone (the bug class behind a `@2x` step's screenshot
  * showing the still-open drawer over the right destination underneath it).
+ *
+ * [reviewSessionViewState] (R-840, same round): mirrors `OrtNavHost`'s own local
+ * `NavHostNavState.reviewSessionView` — `Earlier nights`' `Session`/`Digest` fact, the second live
+ * value the tour's own settle-wait needs alongside [drawerOpenState] once a step's own seed carries
+ * `pendingReviewSessionId` (a `DG05`/`DG01` step landing on the still-composing `Session` screen,
+ * captured before `Digest` finished swapping in, is the identical race class `drawerOpenState`
+ * exists to close).
  */
 public class ReaderNavigator internal constructor(
     internal val currentState: MutableState<ReaderDestination>,
     internal val settingsScreenState: MutableState<SettingsScreenId?>,
     internal val drawerOpenState: MutableState<Boolean>,
+    internal val reviewSessionViewState: MutableState<ReviewSessionView>,
     private val context: Context,
 ) {
     /** Switches the drawer's current destination — the same effect as tapping its drawer row. */
@@ -112,5 +120,9 @@ public fun rememberReaderNavigator(
     // independently across a process death (a restored "open" with no drawer composed yet to match
     // it would be a stale, unearned fact).
     val drawerOpen = remember { mutableStateOf(seed?.openDrawer == true) }
-    return remember(context) { ReaderNavigator(current, settingsScreen, drawerOpen, context) }
+    // R-840: same reasoning as `drawerOpen` above — never `rememberSaveable`, `OrtNavHost`'s own
+    // `NavHostNavState.reviewSessionView` (itself `rememberSaveable`) is the one source of truth;
+    // this is only ever a live mirror of it.
+    val reviewSessionView = remember { mutableStateOf(seed?.reviewSessionView ?: ReviewSessionView.SESSION) }
+    return remember(context) { ReaderNavigator(current, settingsScreen, drawerOpen, reviewSessionView, context) }
 }

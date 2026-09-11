@@ -5,6 +5,7 @@ import org.ort.app.ui.data.FrequencyDetailView
 import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.data.StationSubScreen
 import org.ort.app.ui.navigation.NavSeed
+import org.ort.app.ui.navigation.ReviewSessionView
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
@@ -38,6 +39,9 @@ import org.ort.data.OrtDatabase
  * - `reviewSession`: `self` (this step's own loaded [sessionId] — `Settings-Storage`'s "Review" link
  *   always seeds *some* session, and the one this step just loaded is the only one a step naming no
  *   other scenario could sensibly mean), or a literal session id.
+ * - `reviewSessionView` (R-840): a [ReviewSessionView] name — `SESSION` (the default, DG04) or
+ *   `DIGEST` (DG01/DG05) — a companion to `reviewSession`, the same relationship `frequencyInitialView`
+ *   has to `frequency`: meaningful only alongside a `reviewSession` key in the same step.
  * - `frequencyInitialView`: `Detail` | `Change`.
  * - `stationSubScreen` (WP8's own seam, round 14): a [StationSubScreen] name — `PATTERN` (ST03) or
  *   `IDENTITY` (ST04) — a companion to `station` the same way `frequencyInitialView` companions
@@ -77,6 +81,10 @@ public object TourIds {
             pendingLogFilter = resolveLogFilter(drillIn),
             openCaptureLevelMeter = drillIn["captureLevelMeter"]?.let { it.equals("true", ignoreCase = true) },
             pendingReviewSessionId = drillIn["reviewSession"]?.let { if (it == "self") sessionId else it },
+            reviewSessionView = drillIn["reviewSessionView"]?.let { name ->
+                ReviewSessionView.entries.firstOrNull { it.name == name }
+                    ?: error("unknown reviewSessionView '$name' — expected SESSION or DIGEST")
+            },
             frequencyInitialView = drillIn["frequencyInitialView"]?.let { name ->
                 FrequencyDetailView.entries.firstOrNull { it.name == name }
                     ?: error("unknown frequencyInitialView '$name' — expected Detail or Change")

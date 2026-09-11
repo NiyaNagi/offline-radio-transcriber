@@ -1,6 +1,8 @@
 package org.ort.app.debug
 
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -18,6 +20,8 @@ import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.setup.DebugRigLinkPortOverride
+import org.ort.app.ui.setup.InMemoryRigLinkPort
+import org.ort.app.ui.setup.RigLinkState
 import org.ort.app.ui.setup.SetupStateMachine
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
@@ -28,6 +32,7 @@ import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.RigTransportKind
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
+import org.ort.data.entity.SessionEntity
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -41,6 +46,7 @@ import org.ort.pipeline.digest.RoomProseSummaryStore
 import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import org.ort.pipeline.rig.DefaultRigTransportFactory
 import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
+import org.ort.rig.descriptor.BundledDescriptors
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import org.ort.rig.RigTransportKind as RigModuleTransportKind
@@ -239,6 +245,62 @@ class WpiScenariosTest {
         assertNull(
             "a release build must never consult this scenario's own override",
             DebugRigLinkPortOverride.activeOverride,
+        )
+    }
+
+    private val rigBluetoothTestAddress = "AA:BB:CC:11:22:33"
+
+    /**
+     * WPD's `EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` seam (this round): the four `setup-rig-bluetooth*`
+     * scenarios below script this address differently, each for one checklist state the screenshot
+     * tour cannot otherwise capture (no tap). `.take(n)` bounds the collect for the two scripts that
+     * hang forever past their own last real emission ([InMemoryRigLinkPort.hang]/
+     * [InMemoryRigLinkPort.hangAfterIdentify]) — cancelling the flow the same way a real
+     * `LaunchedEffect` cancellation would, never letting this test itself hang.
+     */
+    @Test
+    @Requirement("D33", "D34", "FR-RIG-14")
+    fun `setup-rig-bluetooth-connecting scripts the address to hang at Opening`() = runTest {
+        Scenarios.load(context, "setup-rig-bluetooth-connecting")
+
+        val port = requireNotNull(DebugRigLinkPortOverride.activeOverride)
+        val emissions = port.connect(rigBluetoothTestAddress, "kenwood-thd75a").take(1).toList()
+        assertEquals(listOf(RigLinkState.Opening), emissions)
+    }
+
+    @Test
+    @Requirement("D33", "D34", "FR-RIG-14")
+    fun `setup-rig-bluetooth-identified scripts the address to hang at Identified, never Verified`() = runTest {
+        Scenarios.load(context, "setup-rig-bluetooth-identified")
+
+        val port = requireNotNull(DebugRigLinkPortOverride.activeOverride)
+        val emissions = port.connect(rigBluetoothTestAddress, "kenwood-thd75a").take(3).toList()
+        assertEquals(
+            listOf(RigLinkState.Opening, RigLinkState.Open, RigLinkState.Identified("kenwood-thd75a")),
+            emissions,
+        )
+    }
+
+    @Test
+    @Requirement("D33", "D34", "FR-RIG-14", "FR-RIG-15")
+    fun `setup-rig-bluetooth-dropped scripts the address to report Lost after opening`() = runTest {
+        Scenarios.load(context, "setup-rig-bluetooth-dropped")
+
+        val port = requireNotNull(DebugRigLinkPortOverride.activeOverride)
+        val emissions = port.connect(rigBluetoothTestAddress, "kenwood-thd75a").toList()
+        assertTrue("expected a Lost state, got $emissions", emissions.last() is RigLinkState.Lost)
+    }
+
+    @Test
+    @Requirement("D33", "D34", "FR-RIG-14")
+    fun `setup-rig-bluetooth scripts the address through to Verified`() = runTest {
+        Scenarios.load(context, "setup-rig-bluetooth")
+
+        val port = requireNotNull(DebugRigLinkPortOverride.activeOverride)
+        val emissions = port.connect(rigBluetoothTestAddress, "kenwood-thd75a").toList()
+        assertEquals(
+            RigLinkState.Verified(InMemoryRigLinkPort.DEFAULT_VERIFIED_COMMANDS),
+            emissions.last(),
         )
     }
 
@@ -450,6 +512,64 @@ class WpiScenariosTest {
             pending?.rigParams?.get(DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS),
         )
         assertTrue(CaptureState.isCapturing)
+    }
+
+    /**
+     * E2-A07 (schema v10): every real TH-D75A session scenario writes [SessionEntity.rigDescriptorId]
+     * as the real catalogue id, [SessionEntity.audioRouteVerified] `true` (the coordinator's own
+     * seeding instruction — this fixture data claims a session whose route the OS already confirmed,
+     * never the honest-but-unknown `null` a session still opening its route would carry) and
+     * [SessionEntity.audioNativeRateHz] `48_000` (the TH-D75A's own USB/wired-audio native rate,
+     * named uniformly across every transport this list covers, matching the coordinator's own
+     * instruction rather than each scenario's own [InputStatus.opened] native rate, which for
+     * `mode-bluetooth`/`bt-audio-session`/`bt-audio-dropped` is the *audio-path's* 16 kHz SCO rate —
+     * a distinct fact `SessionEntity` does not otherwise carry).
+     */
+    private val kenwoodV10ScenarioNames = listOf(
+        "mode-usb",
+        "mode-bluetooth",
+        "bt-audio-session",
+        "bt-audio-dropped",
+        "rig-bt-connected",
+        "rig-bt-lost",
+        "mode-change-pending",
+        "overnight",
+        "overnight-live",
+        "gap-call",
+    )
+
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-CAP-13")
+    fun `E2_A07_every real TH-D75A session scenario writes the v10 columns`() = runTest {
+        kenwoodV10ScenarioNames.forEach { name ->
+            val result = Scenarios.load(context, name)
+            val session = db.sessionDao().getById(requireNotNull(result.primarySessionId))
+            assertEquals(
+                "'$name' must name the real TH-D75A catalogue id",
+                BundledDescriptors.kenwoodThD75a().id,
+                session?.rigDescriptorId,
+            )
+            assertEquals("'$name' must claim a verified route", true, session?.audioRouteVerified)
+            assertEquals("'$name' must name the TH-D75A's own 48 kHz native rate", 48_000, session?.audioNativeRateHz)
+        }
+    }
+
+    /**
+     * E2-A07 (schema v10): `mode-local-mic` has no rig at all (FR-CAP-2b) — its own
+     * [SessionEntity.rigDescriptorId] stays honestly `null`, while [SessionEntity.audioRouteVerified]
+     * is still `true` (the built-in mic's route is confirmed the same as any other) and
+     * [SessionEntity.audioNativeRateHz] is the mic's own native rate, 48 kHz — the same value
+     * [modeLocalMic]'s own `InputStatus.opened(nativeRateHz = 48_000, ...)` call already publishes.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-CAP-2b")
+    fun `E2_A07_mode-local-mic writes the v10 columns with a null rig descriptor`() = runTest {
+        val result = Scenarios.load(context, "mode-local-mic")
+        val session = db.sessionDao().getById(requireNotNull(result.primarySessionId))
+
+        assertNull("local-mic mode has no rig", session?.rigDescriptorId)
+        assertEquals(true, session?.audioRouteVerified)
+        assertEquals(48_000, session?.audioNativeRateHz)
     }
 
     /** The four non-gated catalog entries — every [ModelId] except the gated LLM, which this build's

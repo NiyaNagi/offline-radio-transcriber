@@ -48,6 +48,10 @@ internal object ScenarioFixtures {
      * `.name` strings, exactly as `RealCaptureService` itself writes them (never a shortcut schema
      * for scenario data). All five default `null` ("not tracked"), matching a pre-v7 row honestly,
      * so every scenario written before P19/WPI keeps compiling and rendering unchanged.
+     *
+     * `rigDescriptorId`/`audioRouteVerified`/`audioNativeRateHz` are E2-A07's v10 columns
+     * (`SessionEntity`'s own kdoc) — also default `null` (a pre-v10 row's own honest state), so a
+     * scenario that never names them keeps rendering exactly as it did before this round.
      */
     @Suppress("LongParameterList")
     fun session(
@@ -62,6 +66,9 @@ internal object ScenarioFixtures {
         audioRouteLabel: String? = null,
         bluetoothProfile: String? = null,
         rigTransport: String? = null,
+        rigDescriptorId: String? = null,
+        audioRouteVerified: Boolean? = null,
+        audioNativeRateHz: Int? = null,
     ): SessionEntity = SessionEntity(
         id = id,
         startedAt = startedAt,
@@ -78,6 +85,9 @@ internal object ScenarioFixtures {
         audioRouteLabel = audioRouteLabel,
         bluetoothProfile = bluetoothProfile,
         rigTransport = rigTransport,
+        rigDescriptorId = rigDescriptorId,
+        audioRouteVerified = audioRouteVerified,
+        audioNativeRateHz = audioNativeRateHz,
     )
 
     /**

@@ -186,10 +186,16 @@ public fun OrtNavHost(
         snapshotFlow { drawerState.isOpen }.collect { navigator.drawerOpenState.value = it }
     }
     val scope = rememberCoroutineScope()
+    val navState = rememberNavHostNavState(seed)
+    // R-840: mirrors `NavHostNavState.reviewSessionView` the same way the drawer's own open/closed
+    // state is mirrored above — the second live fact `ScreenshotTourActivity`'s settle-wait needs
+    // once a step's own seed carries `pendingReviewSessionId`.
+    LaunchedEffect(navState, navigator) {
+        snapshotFlow { navState.reviewSessionView.value }.collect { navigator.reviewSessionViewState.value = it }
+    }
     // Hoisted into `navigator` (round 3) so `ReaderActivity`'s `FailureHostActions`, mounted above
     // this composable, can also switch destinations — see `ReaderNavigator.kt`'s own doc comment.
     var current by navigator.currentState
-    val navState = rememberNavHostNavState(seed)
     val drawerLive = rememberDrawerLiveState(sessionId, context)
     val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
 

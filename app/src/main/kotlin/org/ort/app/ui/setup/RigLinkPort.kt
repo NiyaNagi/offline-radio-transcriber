@@ -87,6 +87,7 @@ public class InMemoryRigLinkPort(
     private sealed interface Script {
         data object Normal : Script
         data object Hang : Script
+        data object HangAfterIdentify : Script
         data class FailToOpen(val reason: String) : Script
         data class DropAfterOpen(val reason: String) : Script
         data object NoPermission : Script
@@ -104,6 +105,22 @@ public class InMemoryRigLinkPort(
     /** [connect] never emits again after [RigLinkState.Opening] — the link seems to hang forever. */
     public fun hang(address: String) {
         scripts[address] = Script.Hang
+    }
+
+    /**
+     * Tour-builder addition (coordinator-approved, this round): [connect] reaches
+     * [RigLinkState.Identified] and never proceeds to [RigLinkState.Verified] — the connect ->
+     * identify boundary held indefinitely, distinct from [hang] (which never even reaches
+     * [RigLinkState.Open]). Exists because [Script.Normal]'s own step delays are milliseconds, not
+     * real Bluetooth latency (`SetupActivityTest`'s own tour-builder test found this directly: under
+     * Compose-for-Robolectric's idling, and equally under the real screenshot tour's own settle
+     * wait, the whole open -> identify -> verify sequence completes before anything could ever
+     * observe the intermediate "identified, not yet verified" checklist state) — this is the one
+     * script that holds there on purpose, so a tour step asking to capture exactly that state has a
+     * real, stable one to land on.
+     */
+    public fun hangAfterIdentify(address: String) {
+        scripts[address] = Script.HangAfterIdentify
     }
 
     /** The link never gets past [RigLinkState.Opening] — reported as [RigLinkState.Failed]. */
@@ -146,6 +163,14 @@ public class InMemoryRigLinkPort(
             }
             Script.Hang -> {
                 emit(RigLinkState.Opening)
+                awaitCancellation()
+            }
+            Script.HangAfterIdentify -> {
+                emit(RigLinkState.Opening)
+                delay(SCRIPT_STEP_DELAY_MILLIS)
+                emit(RigLinkState.Open)
+                delay(SCRIPT_STEP_DELAY_MILLIS)
+                emit(RigLinkState.Identified(expectedRigId))
                 awaitCancellation()
             }
             is Script.FailToOpen -> {
