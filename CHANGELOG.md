@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (WPI R-807 real-asset gate fixes, R-943 DebugRouteCheckOverride for S05 — held for "run 6 go")
 
-### <pending> — R-807: WpiScenariosTest/ScenariosTest fixed for the real-HF_TOKEN gate; R-943: setup-verified/S05 publishes a real RouteCheckState
+### 90abf5f7 — R-807: WpiScenariosTest/ScenariosTest fixed for the real-HF_TOKEN gate; R-943: setup-verified/S05 publishes a real RouteCheckState
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios.kt,DebugBundledAssetSourceOverride.kt}`,
 `app/src/test/kotlin/org/ort/app/debug/{ScenariosTest.kt,WpiScenariosTest.kt}`,
