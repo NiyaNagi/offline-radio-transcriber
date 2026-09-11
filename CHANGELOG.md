@@ -161,6 +161,69 @@ audioRouteVerified `true`, audioNativeRateHz e.g. `48000`) and `mode-local-mic`
 (rigDescriptorId `null`, audioRouteVerified `true`, audioNativeRateHz the mic's own native rate) are
 the natural carriers; `setup-rig-transport`/`setup-rig-bluetooth` do not seed a session row at all so
 need no change.
+## 2026-09-11 (WPE follow-up: R-276/R-432 midnight-anchored smoke seeding)
+
+### (pending) — settings modes: R-276/R-432 test-integrity fix — seedFrequencyOversPattern anchored to a fixed local time, not the real wall clock
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/navigation/ReaderActivityDestinationSmokeTest.kt`
+only (`seedFrequencyOversPattern`, its two `private companion object` constants, and one new
+pinning test).
+
+**Requirements/ACs:** R-276, R-432, constitution II.
+
+**What changed:**
+
+*Constitution Check.* II (a test whose pass/fail depends on what time of day it happens to run is
+not a passing test — this fixes a genuine flake this way, not by loosening the assertion it makes).
+
+Main's own gate run (`9c7eb402`) failed `R_432_activation_thread_route` and
+`R_276_frequency_overs_link_opens_Log_filtered_to_that_frequency_and_window` with "could not find
+any node … 'Busier than usual'", running across a real local midnight. Root cause, confirmed by
+reading both sides: `seedFrequencyOversPattern` anchored each seeded night's own window to the real
+wall clock at test-run time (`ZonedDateTime.now(zone).minusDays(daysAgo)`), with overs at
+`windowStart + 10/25/40/55/70` minutes; `ActivityPatternMapper.buildNightlySequence` buckets by
+local **calendar day**. For roughly the first 80 minutes after local midnight, `windowStart` (90
+minutes before `now`) falls on *yesterday's* calendar day, so every one of "tonight"'s own overs
+landed there instead — "tonight" (`today - 0`) came back with zero heard overs,
+`NightlyDeparture.isBusierThanUsual` read `false`, and `FrequencyHeaderSection`'s "Busier than
+usual" action never rendered.
+
+Fixed by anchoring each night's window to a **fixed local time of that calendar day** — 21:00
+(`NIGHT_WINDOW_END_LOCAL_TIME`) on `today.minusDays(daysAgo)`, where `today` is read once from the
+real wall clock as a *date* only, never as a time-of-day anchor — so every over this seeds lands on
+the same calendar day `buildNightlySequence` buckets it into regardless of what the real wall clock
+reads when the suite happens to run. Added
+`R_276_R_432_seeding_pattern_is_immune_to_a_real_midnight_boundary`: a plain unit test (no
+`Activity`/Robolectric/database) that reproduces the fixed-anchor construction directly against the
+real `ActivityPatternMapper.buildNightlySequence`/`NightlyDeparture` functions with a synthetic
+`now` of 00:05 local — the exact boundary this class's own real-Activity cases cannot
+deterministically exercise on demand — and asserts tonight stays 5, usual stays 1.0, and
+`isBusierThanUsual` stays `true`.
+
+Searched the rest of the smoke-test tree (`app/src/test/**/*SmokeTest.kt`, and every
+`ZonedDateTime.now(`/`LocalDate.now(`/`Instant.now()` occurrence across `app/src/test`) for the same
+anchor-to-the-real-wall-clock-for-a-multi-day-pattern shape: `seedFrequencyOversPattern` is the only
+site in the entire test tree that constructs a multi-night/multi-day pattern at all, so there was
+nothing else to fix.
+
+**Verified** (every command with `-PortAllowMissingBundledAssets=true`):
+- `:app:smokeTestDebugUnitTest --tests "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"` — green, including the new pinning test and both previously-flaky cases.
+- `:app:testDebugUnitTest` (full) and `:app:smokeTestDebugUnitTest` (full) — green.
+- `:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck` — green.
+- `:app:detekt` — green.
+- `build dependencyRules platformGuards` — green.
+- `-p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `coverageMatrix` then `coverageMatrixCheck` (run separately) — green, no changes to
+  `results/coverage-matrix.md` (this round adds no new `@Requirement`-cited test).
+- **Discrimination**: temporarily reverted the new pinning test's own construction to the old,
+  buggy `now.minusDays(daysAgo)` anchor (synthetic `now` still 00:05 local) →
+  `R_276_R_432_seeding_pattern_is_immune_to_a_real_midnight_boundary` failed with "expected
+  tonight's heardCount to stay 5 … got 0" (the count silently moved onto the prior calendar day,
+  exactly R-276/R-432's own report) → restored the fixed-local-time anchor → passed again.
+
+**Left open / not done:** none — this was a scoped test-integrity fix on one file already inside
+this package's ownership.
 
 ---
 
@@ -29306,6 +29369,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 
