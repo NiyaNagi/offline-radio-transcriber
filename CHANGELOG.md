@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (register R-883 F9 half reopened by reviewer E1 on run 6, fixed again: the banner's own height cap was too small for a two-action message at font scale 2.0, and its scroll hint was too small/low-contrast to see)
 
-### (pending) — R-883: F9's banner grows to fit a title + two-sentence body + two actions at font scale 2.0; its scroll hint is now an 18dp amber pill, not a 14dp grey sliver
+### `633e7903` — R-883: F9's banner grows to fit a title + two-sentence body + two actions at font scale 2.0; its scroll hint is now an 18dp amber pill, not a 14dp grey sliver
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureHost.kt`,
 `app/src/test/kotlin/org/ort/app/ui/failures/FailureHostTest.kt`, `results/ui-audit/register.md`.
