@@ -15,11 +15,14 @@ import org.ort.rig.NullRigModule
  * `CaptureConfigurationStore.update`.
  *
  * [CaptureConfiguration.rigParams] carries only what is genuinely known here: the Bluetooth
- * address S10b's checklist verified. USB's `usbVendorId`/`usbProductId`
- * ([DefaultRigTransportFactory.ParamKeys]) are hardware facts no `RigDescriptor` field yet carries
- * and H1 has not verified — left absent rather than guessed (constitution I); `DefaultRigTransportFactory`
- * fails that connect loudly, and `RigSupervisor` degrades it to the null module, exactly like an
- * invalid descriptor (FR-RIG-11), until a later package supplies them.
+ * address S10b's checklist verified ([DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS] — no
+ * `RigDescriptor` field names *which* paired device to use, only what the rig model can do over a
+ * transport). USB's `usbVendorId`/`usbProductId` are, since WPC3, a `TransportSpec` field a
+ * descriptor CAN declare directly — the bundled TH-D75A descriptor still leaves them absent
+ * pending H1's own verification, so this adapter has nothing real to add for them either; left out
+ * of [rigParams] rather than guessed (constitution I). `DefaultRigTransportFactory` fails that
+ * connect loudly when neither the descriptor nor `rigParams` supplies a required value, and
+ * `RigSupervisor` degrades it to the null module, exactly like an invalid descriptor (FR-RIG-11).
  */
 public object SetupCaptureConfigurationAdapter {
     public fun toCaptureConfiguration(store: SetupStore): CaptureConfiguration? {

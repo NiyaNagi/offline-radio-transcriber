@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -92,6 +93,20 @@ class InMemoryRigLinkPortTest {
         )
         val port = InMemoryRigLinkPort(devices)
 
-        assertEquals(devices, port.pairedDevices())
+        val result = port.pairedDevices()
+        assertEquals(devices, result.devices)
+        assertTrue(result.permissionGranted)
+    }
+
+    @Test
+    fun `denyPermission reports an empty list with permissionGranted false, never conflated with nothing paired`() {
+        val devices = listOf(PairedDevice("TH-D75A", "AA:BB", sppCapable = true))
+        val port = InMemoryRigLinkPort(devices)
+
+        port.denyPermission()
+        val result = port.pairedDevices()
+
+        assertEquals(emptyList<PairedDevice>(), result.devices)
+        assertFalse(result.permissionGranted)
     }
 }

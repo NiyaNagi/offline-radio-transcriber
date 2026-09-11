@@ -38,6 +38,7 @@ import org.ort.core.capture.CaptureModePresets
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.rig.CaptureConfigurationStore
+import org.ort.pipeline.rig.DefaultRigLinkBridge
 import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 import org.ort.rig.NullRigModule
 import org.ort.rig.RigTransportKind
@@ -87,7 +88,13 @@ import org.ort.core.capture.RigTransportKind as PresetRigTransportKind
  *
  * Every screen composable this class dispatches to stays a pure function of a view-state (guide's
  * own rule) — all `Context`/coroutine/IO work lives here, in the one place allowed to touch it.
+ * `LargeClass` suppressed for the same reason [SetupStore]'s own `TooManyFunctions` suppression
+ * is: this is deliberately the *one* place every guided-setup `Context`/coroutine/IO concern lives
+ * (D33/P19 added four more screens' worth on top of the pre-existing eight), not a class that
+ * grew by accident — splitting it would scatter that single-responsibility boundary across
+ * several files with no natural seam between them, per this file's own class doc comment above.
  */
+@Suppress("LargeClass")
 public class SetupActivity : ComponentActivity() {
 
     private lateinit var store: SetupStore
@@ -133,11 +140,10 @@ public class SetupActivity : ComponentActivity() {
     private var rigLinkState by mutableStateOf<RigLinkState?>(null)
     private var rigLinkRunToken by mutableStateOf(0)
 
-    /** WPD's own `:app`-local seam (`RigLinkPort.kt`'s doc comment has the full account of why the
-     * real `:rig-bluetooth` adapter cannot yet be wired in here — `:app` is not on `ModuleGraph`'s
-     * allowed-edges list for `:rig-bluetooth`). An empty [InMemoryRigLinkPort] reports no paired
-     * devices at all, honestly, rather than fabricating any. */
-    private val rigLinkPort: RigLinkPort = InMemoryRigLinkPort()
+    /** WPD's own `:app`-local seam (`RigLinkPort.kt`'s doc comment has the full account) — the
+     * real link now runs over WPC3's `RigLinkBridge` (`:pipeline`, merged `8e40041`), never
+     * `:rig-bluetooth` directly (constitution VII); see [BridgeRigLinkPort]'s own doc comment. */
+    private val rigLinkPort: RigLinkPort = BridgeRigLinkPort(DefaultRigLinkBridge(this))
 
     private val openDescriptorLauncher = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -510,9 +516,8 @@ public class SetupActivity : ComponentActivity() {
         store.modeOverriddenRig = presetKind != modePresetKind
         syncCaptureConfiguration()
         if (kind == RigTransportKind.BLUETOOTH_SPP) {
-            rigLinkState = null
             rigBluetoothSelectedAddress = null
-            rigBluetoothDevices = rigLinkPort.pairedDevices()
+            refreshPairedDevices()
             navigateForward(SetupStep.RIG_BLUETOOTH)
         } else {
             // Matches the pre-catalogue onChooseRadio's own dispatch: a genuinely Connected
@@ -542,7 +547,17 @@ public class SetupActivity : ComponentActivity() {
     }
 
     internal fun onRefreshRigBluetoothDevices() {
-        rigBluetoothDevices = rigLinkPort.pairedDevices()
+        refreshPairedDevices()
+    }
+
+    /** FR-PLT-2/constitution I: [RigLinkPort.pairedDevices]' own [PairedDevicesResult.permissionGranted]
+     * drives [RigLinkState.NoPermission] directly — the operator sees the "grant nearby devices"
+     * banner the moment S10b (or a `Refresh`) finds the permission missing, never only after they
+     * have already picked a device and tried to connect. */
+    private fun refreshPairedDevices() {
+        val result = rigLinkPort.pairedDevices()
+        rigBluetoothDevices = result.devices
+        rigLinkState = if (result.permissionGranted) null else RigLinkState.NoPermission
     }
 
     internal fun onPairRigBluetoothInSettings() {
