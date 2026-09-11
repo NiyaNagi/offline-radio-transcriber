@@ -112,6 +112,39 @@ class WpiScenariosTest {
         bluetoothConnectGranted = bluetoothConnectGranted,
     )
 
+    /**
+     * R-804 (halt, coordinator spot-check): before this fix, `overnight/CF02` (and eight other
+     * pre-existing USB-seeding scenarios — every scenario in [usbSeedingScenarioNames]) showed
+     * "Local microphone" above a USB Audio Device input row, because CF02/CF11 read
+     * `CaptureConfigurationStore.current()`, never `SetupStore` or `InputStatus` (which every one of
+     * these scenarios already published correctly). Not limited to the seventeen P19/WPI scenarios
+     * this file otherwise covers — `Scenarios.kt` is this package's file regardless of which wave
+     * first added a given scenario, and CF02/CF11's own read path does not distinguish them either.
+     */
+    private val usbSeedingScenarioNames = listOf(
+        "overnight",
+        "overnight-live",
+        "stations-14-nights",
+        "setup-verified",
+        "setup-level",
+        "setup-radio",
+        "level-low",
+        "level-clip",
+        "input-verified",
+    )
+
+    @Test
+    @Requirement("R-804")
+    fun `R_804_every pre-existing USB-seeding scenario writes CaptureConfigurationStore as USB_RADIO usb-1`() =
+        runTest {
+            usbSeedingScenarioNames.forEach { name ->
+                Scenarios.load(context, name)
+                val config = captureConfigurationStore().current()
+                assertEquals("'$name' must configure USB_RADIO", CaptureMode.USB_RADIO, config.mode)
+                assertEquals("'$name' must select the usb-1 input", "usb-1", config.selectedInputId)
+            }
+        }
+
     @Test
     @Requirement("D33", "FR-CAP-8")
     fun `D33_setup-mode seeds a fresh store so stepFor resumes at MODE`() = runTest {

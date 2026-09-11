@@ -109,6 +109,28 @@ class ScreenshotTourTest {
         assertTrue(File(outputDir, "overnight/N01-now.png").exists())
     }
 
+    /** Coordinator round two: a step whose own capture carries a note (today, exactly the
+     * `scroll: "end"`-on-a-screen-with-nothing-to-scroll case — see [TourAccessibilityScroll.ScrollOutcome])
+     * must still record `ok = true` with `errorMessage = null` — the note is evidence the screen
+     * reached what it claims (it fits without scrolling), never a failure to record as one. */
+    @Test
+    fun `R_TOUR_NOTE_OK a capture carrying a note still reports ok with no error message`() = runTest {
+        val outputDir = File(context.filesDir, "tour-test-note").apply { deleteRecursively() }
+        val spec = TourSpec(listOf(TourStep(id = "overnight/N01-now", scenario = "overnight", destination = "NOW")))
+        val renderer = TourStepRenderer { _, _ -> fakeCapture().copy(note = "no scroll — fits") }
+
+        val entries = TourRunner(context, renderer, outputDir).run(spec)
+
+        assertEquals(1, entries.size)
+        assertTrue("a noted capture must still report ok", entries.single().ok)
+        assertEquals(null, entries.single().errorMessage)
+        assertEquals("no scroll — fits", entries.single().note)
+
+        val manifestEntries = readManifestEntries(File(outputDir, "manifest.json"))
+        assertEquals("no scroll — fits", manifestEntries.single().note)
+        assertTrue(manifestEntries.single().ok)
+    }
+
     @Test
     fun `R_TOUR_UNSUPPORTED_DRILL_IN an unsupported key records an error without invoking the renderer`() = runTest {
         val outputDir = File(context.filesDir, "tour-test-drillin").apply { deleteRecursively() }

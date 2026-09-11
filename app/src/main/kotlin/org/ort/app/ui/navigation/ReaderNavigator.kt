@@ -25,10 +25,18 @@ import org.ort.app.ui.setup.SetupStep
  * SettingsScreenId? = null)` (confirmed by reading `ui/settings/SettingsContent.kt` before wiring
  * this) — a real "land on this sub-screen" entry that the round-3 `openSettingsStorage` (now
  * removed) could not reach. [openSettings] is the new, general call this state backs.
+ *
+ * [drawerOpenState] (R-803, coordinator-approved cross-boundary this round): mirrors
+ * [OrtNavHost]'s own local `DrawerState.isOpen`, the one live fact this handle did not already
+ * expose — `ScreenshotTourActivity` (`app/src/debug`) polls it, alongside [currentState], to prove
+ * a just-composed screen has actually settled to what a tour step asked for before capturing,
+ * rather than capturing on elapsed time alone (the bug class behind a `@2x` step's screenshot
+ * showing the still-open drawer over the right destination underneath it).
  */
 public class ReaderNavigator internal constructor(
     internal val currentState: MutableState<ReaderDestination>,
     internal val settingsScreenState: MutableState<SettingsScreenId?>,
+    internal val drawerOpenState: MutableState<Boolean>,
     private val context: Context,
 ) {
     /** Switches the drawer's current destination — the same effect as tapping its drawer row. */
@@ -99,5 +107,10 @@ public fun rememberReaderNavigator(
 ): ReaderNavigator {
     val current = rememberSaveable { mutableStateOf(seed?.initialDestination() ?: initialDestination) }
     val settingsScreen = rememberSaveable { mutableStateOf(seed?.settingsScreen ?: initialSettingsScreen) }
-    return remember(context) { ReaderNavigator(current, settingsScreen, context) }
+    // R-803: never `rememberSaveable` — the drawer's own open/closed fact is `OrtNavHost`'s own
+    // `DrawerState` to own, mirrored in every time `OrtNavHost` itself (re)composes, never restored
+    // independently across a process death (a restored "open" with no drawer composed yet to match
+    // it would be a stale, unearned fact).
+    val drawerOpen = remember { mutableStateOf(seed?.openDrawer == true) }
+    return remember(context) { ReaderNavigator(current, settingsScreen, drawerOpen, context) }
 }

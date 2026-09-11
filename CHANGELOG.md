@@ -95,6 +95,85 @@ matching test files under `app/src/test/kotlin/org/ort/app/ui/setup/`.
 `SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` (a `String` extra carrying the paired device's
 Bluetooth MAC address, e.g. `"AA:BB:CC:11:22:33"`) — reported to the coordinator alongside this
 entry for the four new tour steps that need it.
+## 2026-09-11 (WPI follow-up: R-803 halt — state-based tour settle; no-scroll-container is ok, not error; R-804 halt — CaptureConfigurationStore for every USB-seeding scenario)
+
+### cdad0d3 — WPI follow-up · state-based tour settle, no-scroll note, CaptureConfigurationStore for nine pre-existing scenarios
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios,tour/ScreenshotTourActivity,tour/TourAccessibilityScroll,tour/TourManifest,tour/TourRunner}.kt`, `app/src/main/kotlin/org/ort/app/ui/navigation/{OrtNavHost,ReaderNavigator}.kt` (coordinator-approved cross-boundary, this round only), `app/src/test/kotlin/org/ort/app/debug/{WpiScenariosTest,tour/{ScreenshotTourTest,TourDrawerSeedTest}}.kt`, `results/coverage-matrix.md` (regenerated).
+**Requirements/ACs:** R-803, R-804, R-802 (awareness only, not fixed here — see "Left open"); constitution I, VIII.
+**What changed:**
+1. **R-803 (halt) — captures taken on elapsed time alone, not observed state.** The coordinator's
+   spot-check found four destination steps (`mode-local-mic/ST01`, `mode-change-pending/CF11`,
+   `assets-bundled/CF04`, `tier0-llm-stored/CF04`) captured the still-open drawer over the right
+   destination, and one setup step (`assets-bundled/S12-ready-bundled`) captured a *different*
+   activity's screen entirely (`setup-rig-bluetooth/S10b` at its own font scale 2, not the requested
+   1) — a real race in `renderSetupStep`'s `onActivityResumed`-completes-a-deferred pattern, not a
+   flake. Fixed with real, bounded (5 s) wait-for-observed-state before every capture, never a fixed
+   delay alone (the existing settle delay stays as a floor for animations, per instruction):
+   - `ReaderNavigator` gained `drawerOpenState: MutableState<Boolean>`, mirrored from `OrtNavHost`'s
+     own real `DrawerState.isOpen` via a `snapshotFlow` `LaunchedEffect` — the one live fact that
+     handle did not already expose (`currentState` already did).
+   - `ScreenshotTourActivity` now publishes the just-composed `ReaderNavigator` via `SideEffect` as
+     `activeNavigator`, cleared before every new step's composition even starts (never read as
+     "already matching" a stale step). `renderDestinationStep` polls it until `currentState` and
+     `drawerOpenState` both match the step's own destination/`openDrawer` request, or times out with
+     an error naming what it actually observed.
+   - `renderSetupStep` polls `SetupActivity.currentStepForTest` (already `internal`, no further
+     main-source change needed) until it matches the requested step, or times out the same way — this
+     is what turns "captured the wrong activity's screen" into a loud, honest error instead of a
+     silently wrong screenshot, whether or not the underlying activity race is fully eliminated.
+   - The lifecycle callback that completes a setup step's `CompletableDeferred` now also requires
+     `!activity.isFinishing` — narrows the race itself (a previous step's own about-to-die activity
+     can no longer complete a *new* step's deferred).
+   - New tests: `TourDrawerSeedTest`'s own `drawerOpenState` mirror case (proves the real plumbing,
+     not just the debug-package half).
+2. **The `@2x-end`-on-a-screen-that-fits fix (queued alongside R-803, same commit).**
+   `TourAccessibilityScroll.scrollToEnd` now returns a `ScrollOutcome` (`Scrolled`/`NothingToScroll`)
+   instead of throwing when a screen has no vertically-scrollable container — a step that already
+   reached the screen it claims proves exactly that, not a failure. `TourManifestEntry`/`TourCapture`
+   gained a `note` field (`"no scroll — fits"` for this case), carried through as `ok = true`, never
+   `error`. New `ScreenshotTourTest` case proves a noted capture still reports `ok` with no error
+   message.
+3. **R-804 (halt) — `overnight/CF02` showed "Local microphone" above a USB Audio Device input row.**
+   CF02/CF11 read `CaptureConfigurationStore.current()`, never `SetupStore`/`InputStatus` — nine
+   pre-existing USB-seeding scenarios (`overnight`, `overnight-live`, `stations-14-nights` via
+   `seedConfiguredDeviceState`; `setup-verified`, `setup-level`, `setup-radio` via
+   `verifiedInputStore`; `level-low`, `level-clip`, `input-verified` individually) never wrote it.
+   Fixed the same way `mode-usb` already did. **Regression caught by this fix's own gate run, also
+   fixed in the same commit:** `overnight-live`/`level-low`/`level-clip`/`input-verified` call
+   `ScenarioFixtures.markCapturing` *before* the new write, so the ordinary store's FR-CAP-12 freeze
+   rule landed it as `pendingConfiguration`, never `current` (nothing in these debug scenarios ever
+   calls `activateForNewSession` to promote it) — `Scenarios.forceCurrentCaptureConfiguration` is a
+   new, `isCapturing`-always-`false` variant used everywhere this pattern applies, documented as
+   distinct from the freeze rule itself (which still applies correctly to `mode-change-pending`'s own
+   deliberate pending write). New `WpiScenariosTest` case asserts `current()` for all nine.
+**Verified:**
+- `:app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests "org.ort.app.ui.navigation.*"` —
+  green, including the new `R_804` case (caught and the fix re-verified the regression above before
+  this entry was written) and `TourDrawerSeedTest`'s new drawer-mirror case.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`, 20 modules; `platformGuards: OK`, 20 modules.
+- `-PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 `[PASS]`.
+- `-PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 240 covered, no new
+  orphan.
+- `-PortAllowMissingBundledAssets=true coverageMatrixCheck` — up to date (240 of 450).
+- **No emulator/tour run this round** — the coordinator's own instruction: run 2's captures are void,
+  and this round waits for WPD's S10b fix and WPC3's v10 columns to land before "run 3" on 5558.
+**Left open / not done (all coordinator-acknowledged, blocked on a main merge this session was told
+to hold off on):**
+- **R-840 (DG05 lands on Session, not Digest)** — WPE's `NavSeed(pendingReviewSessionId,
+  reviewSessionView = ReviewSessionView.DIGEST)` seam is on main (`e867d135`) but not yet merged into
+  this branch; `tour.json`'s `llm-enabled-prose`/`llm-disabled` `DG05` steps and `TourIds`/`TourSpec`'s
+  new `reviewSessionView` drillIn key, plus the settle-check naming it, are queued for the commit that
+  follows the merge.
+- **The four `setup-rig-bluetooth` connect/identified/verified/dropped steps** — WPD's
+  `SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` (main `a62f7056`, not yet merged) is what drives
+  them; queued the same way, including deleting the README's "cannot reach" note for S10b once they
+  land and capture.
+- **R-802** (S10b never refreshed its paired list on resume-entry) — WPD's own fix, awareness only;
+  re-capture S10b once that and the extra above both land.
+- `checklist.md` rows for R-802/803/804 left for the lead to mark.
 
 ---
 
@@ -29095,6 +29174,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 
