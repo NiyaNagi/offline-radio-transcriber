@@ -386,14 +386,16 @@ public object CaptureStatusMapper {
     public fun radioFacts(rig: RigStatus.State, routeFacts: SessionRouteFacts): KeyValueFacts = when (rig) {
         RigStatus.State.Absent -> absentRigFacts(routeFacts)
         is RigStatus.State.Connected -> KeyValueFacts(
-            value = rig.descriptor,
+            // R-916 (register, polish): the shared helper (also CF06/DG04's) drops the leading
+            // manufacturer word — "TH-D75A", never "Kenwood TH-D75A".
+            value = stripRigManufacturerPrefix(rig.descriptor),
             subLine = radioSubLine(rig.transportKind, routeFacts, bandsLabel(rig.bands)),
             trailingDot = CaptureStateTone.NOMINAL,
             trailingText = "connected",
         )
 
         is RigStatus.State.Stale -> KeyValueFacts(
-            value = rig.lastKnown.descriptor,
+            value = stripRigManufacturerPrefix(rig.lastKnown.descriptor),
             subLine = radioSubLine(
                 rig.lastKnown.transportKind,
                 routeFacts,

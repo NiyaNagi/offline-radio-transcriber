@@ -51,13 +51,15 @@ public data class SessionDetailViewState(
     val tierLabel: String,
     val audioSizeLabel: String,
     /** E2-G03 (DG04, FR-CAP-13, *amended 2026-09-10*): "<mode operator label> · <room audio |
-     * audio by cable | Bluetooth audio>" from the session's own v7 columns, or R-450's original
-     * "not tracked per session in this build" for a pre-v7 row — never fabricated for either. */
+     * audio by cable | Bluetooth audio>" from the session's own v7 columns, or (R-914 amendment)
+     * "not recorded for this session" for a row whose own `captureMode` column is null — never
+     * fabricated for either. */
     val modeLabel: String = NOT_TRACKED_LABEL,
     /** E2-G03: "<transport label>" from the session's own `rigTransport` column, "no rig this
      * session" for a v7-onward session that genuinely ran without one (`LOCAL_MICROPHONE`), or
-     * R-450's original not-tracked line for a pre-v7 row. No rig-event history exists in `:data`
-     * today to name a stale span from (constitution I) — always just the transport alone.
+     * (R-914 amendment) the same "not recorded for this session" line for a row with no `rigTransport`
+     * column at all. No rig-event history exists in `:data` today to name a stale span from
+     * (constitution I) — always just the transport alone.
      * **R-833 amendment**: for a *currently live* session ([live]), leads with the rig's own real
      * name read live off `RigStatus` (WPC2) — the same "prefer live, fall back to the session
      * column" pattern N04/F9 already use — since `:data` itself has no persisted rig-descriptor id
@@ -78,9 +80,14 @@ public data class SessionDetailViewState(
     val coverageEndLabel: String? = null,
 ) {
     public companion object {
-        /** R-450's original honest line — reused by [modeLabel]/[rigLinkLabel]'s own defaults so a
-         * caller that predates E2-G03 (a fixture, an older test) reads exactly as it always did. */
-        public const val NOT_TRACKED_LABEL: String = "not tracked per session in this build"
+        /** R-914 (register, spec): R-450's original line claimed the *build* cannot track this,
+         * which stopped being true once schema v7 shipped — a v10 build genuinely does record
+         * `captureMode`/`audioRouteKind`/`rigTransport` at session start, so a `null` column on a
+         * real session row means that session's own row never recorded it (a pre-v7 row migrated
+         * forward, or a genuine gap), never a build-wide limitation. Reused by
+         * [modeLabel]/[rigLinkLabel]'s own defaults so a caller that predates E2-G03 (a fixture, an
+         * older test) still reads a real, honest line — just this corrected one. */
+        public const val NOT_TRACKED_LABEL: String = "not recorded for this session"
     }
 }
 
@@ -98,8 +105,10 @@ public data class DigestNotKnownItemViewState(val headline: String, val subLine:
 /**
  * E2-G07 (DG05, FR-DIG-6, FR-DIG-11): one [org.ort.pipeline.digest.ProseSummary] rendered as a
  * card. [subject] is the thread's own station callsign when every over in it came from one
- * station, else the generic "Thread" — this reader has no other real per-thread label to show
- * (constitution I: never invent a headline the deterministic pass did not produce). [detailLine]
+ * station, else R-931's (register, polish) honest "unnamed thread · N stations" — a real
+ * multi-station QSO has no single station that gets naming rights over it, and this schema tracks
+ * no net name to fall back to; never the bare word "Thread" (constitution I: never invent a
+ * headline the deterministic pass did not produce). [detailLine]
  * is the thread's own real over count. [fromMillis]/[toMillis] are [oversRangeLabel]'s own raw
  * values, carried alongside it so `Read the overs` can seed the Log's existing time-window filter
  * without re-parsing display text.

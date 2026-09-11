@@ -18,6 +18,7 @@ import org.junit.runner.RunWith
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.pipeline.capture.CaptureState
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -263,6 +264,175 @@ class OrtNavHostDestinationDispatchTest {
                 "expected the last row's bottom (${lastRowBottom}px) to clear the live bar's top " +
                     "(${liveBarTop}px) at font scale 2.0 after scrolling to the end (register R-262), " +
                     "got an overlap of ${lastRowBottom - liveBarTop}px"
+            }
+        } finally {
+            CaptureState.idle(clearSession = true)
+        }
+    }
+
+    /**
+     * Register R-910/R-911 (halt): run-3 reviewers found the live bar sometimes absent on a live
+     * session (`mode-local-mic/N01b-now.png`, `ST01-stations.png`) and sometimes a fragment of it
+     * bleeding in above the header, in one case drawn twice (`T01-threads.png`, `DG04-session.png`,
+     * `N04-capture-status.png`). This drives the *real* `OrtNavHost` at every real
+     * [ReaderDestination] via `rememberReaderNavigator`'s own `initialDestination` (this class's
+     * own established seam for the destinations a drawer-row click cannot reliably reach in this
+     * environment — see `IMPROVE_RECORDS`/`CAPTURE` above) with a genuinely live [CaptureState],
+     * and counts real compositions of [org.ort.app.ui.components.LiveBar] via its own stable
+     * `"live-bar"` tag (added alongside this test — every caller's own `now-livebar`/
+     * `capture-status-livebar`/`level-meter-livebar` tag still applies to the same node, so this
+     * does not change what any existing test finds by those tags).
+     *
+     * `NOW`/`CAPTURE` embed their own bar (`NavHostBody`'s own `embedsOwnLiveBar`) — this proves
+     * that embedding, and the host's own suppression of its copy, never together produce zero or
+     * two; every other destination proves the host's own single copy is what shows, never stacked
+     * with a screen's own.
+     */
+    // `ComposeContentTestRule.setContent` may be called at most once per test (a real, enforced
+    // limitation — confirmed directly: a second call throws `IllegalStateException` even across
+    // otherwise-independent iterations), so this is one `@Test` per [ReaderDestination] rather
+    // than a loop over one shared rule — the file's own existing per-destination tests above
+    // already establish that shape for the same reason.
+    private fun assertExactlyOneLiveBar(destination: ReaderDestination) {
+        val sessionId = "r910-live-bar-session-$destination"
+        try {
+            CaptureState.capturing(sessionId)
+            composeTestRule.setContent {
+                OrtTheme {
+                    OrtNavHost(
+                        sessionId = sessionId,
+                        navigator = rememberReaderNavigator(initialDestination = destination),
+                    )
+                }
+            }
+            composeTestRule.waitUntil(15_000) {
+                composeTestRule.onAllNodesWithTag("live-bar", useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            val count = composeTestRule.onAllNodesWithTag("live-bar", useUnmergedTree = true)
+                .fetchSemanticsNodes().size
+            assert(count == 1) {
+                "expected exactly one live bar on $destination while a session is live, found $count"
+            }
+        } finally {
+            CaptureState.idle(clearSession = true)
+        }
+    }
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on NOW, which embeds its own`() = assertExactlyOneLiveBar(ReaderDestination.NOW)
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on CAPTURE, which embeds its own`() =
+        assertExactlyOneLiveBar(ReaderDestination.CAPTURE)
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on LOG, host-rendered`() = assertExactlyOneLiveBar(ReaderDestination.LOG)
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on SEARCH, host-rendered`() = assertExactlyOneLiveBar(ReaderDestination.SEARCH)
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on THREADS, host-rendered`() = assertExactlyOneLiveBar(ReaderDestination.THREADS)
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on STATIONS, host-rendered`() = assertExactlyOneLiveBar(ReaderDestination.STATIONS)
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on FREQUENCIES, host-rendered`() =
+        assertExactlyOneLiveBar(ReaderDestination.FREQUENCIES)
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on EARLIER_NIGHTS, host-rendered`() =
+        assertExactlyOneLiveBar(ReaderDestination.EARLIER_NIGHTS)
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on IMPROVE_RECORDS, host-rendered`() =
+        assertExactlyOneLiveBar(ReaderDestination.IMPROVE_RECORDS)
+
+    @Test
+    @Requirement("R-910")
+    fun `R_910 exactly one live bar on SETTINGS, host-rendered`() = assertExactlyOneLiveBar(ReaderDestination.SETTINGS)
+
+    /**
+     * R-911's own report names this exact drill-in (`mode-local-mic/DG04-session.png`) as one of
+     * the three where a live-bar fragment bled in above the header, and one of the two also drawn
+     * twice at the bottom. `Session` is not its own [ReaderDestination] — it is reached *within*
+     * `EARLIER_NIGHTS` via [NavSeed.pendingReviewSessionId] (`NavHostNavState`'s own seeded field,
+     * not [ReaderNavigator]'s `current`), so [assertExactlyOneLiveBar]'s `initialDestination` seam
+     * cannot reach it — a distinct seed of its own.
+     */
+    @Test
+    @Requirement("R-911")
+    fun `R_911 exactly one live bar on the Session drill-in reached from Earlier nights`() {
+        val sessionId = "r911-live-bar-session"
+        try {
+            CaptureState.capturing(sessionId)
+            composeTestRule.setContent {
+                OrtTheme {
+                    OrtNavHost(
+                        sessionId = sessionId,
+                        seed = NavSeed(
+                            pendingReviewSessionId = sessionId,
+                            reviewSessionView = ReviewSessionView.SESSION,
+                        ),
+                    )
+                }
+            }
+            composeTestRule.waitUntil(15_000) {
+                composeTestRule.onAllNodesWithTag("live-bar", useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
+            }
+            val count = composeTestRule.onAllNodesWithTag("live-bar", useUnmergedTree = true)
+                .fetchSemanticsNodes().size
+            assert(count == 1) {
+                "expected exactly one live bar on the Session drill-in while a session is live, found $count"
+            }
+        } finally {
+            CaptureState.idle(clearSession = true)
+        }
+    }
+
+    /**
+     * R-910 (halt), the "absent on a live session" half (`mode-local-mic/N01b-now.png`,
+     * `ST01-stations.png`): the reader's own `sessionId` argument is fixed at whatever session was
+     * live when `ReaderActivity` launched (`ReaderPolling.effectiveSessionId`'s own kdoc) — a
+     * scenario re-broadcast without restarting the process (`-NoRestart`, R-171's own repro shape)
+     * moves [CaptureState.sessionId] on to a *new* session without ever updating that argument.
+     * `NowContent`/`CaptureStatusContent` already resolve through [ReaderPolling.effectiveSessionId]
+     * for exactly this reason and read correctly regardless; the host's own `rememberDrawerLiveState`
+     * (`OrtNavHost.kt`) required *equality* between the two instead — so a host-rendered destination
+     * (`Threads`, `Stations`, every non-`NOW`/`CAPTURE` id) went dark the moment the two diverged,
+     * even though a session was genuinely, currently live. Proven directly: [CaptureState.sessionId]
+     * is set to a session the host's own `sessionId` argument was never told about.
+     */
+    @Test
+    @Requirement("R-910")
+    fun `R_910 the live bar still shows on a host-rendered destination when the reader's own session id is stale`() {
+        val staleHostSessionId = "r910-stale-host-session"
+        val realLiveSessionId = "r910-real-live-session"
+        try {
+            CaptureState.capturing(realLiveSessionId)
+            composeTestRule.setContent {
+                OrtTheme {
+                    OrtNavHost(
+                        sessionId = staleHostSessionId,
+                        navigator = rememberReaderNavigator(initialDestination = ReaderDestination.THREADS),
+                    )
+                }
+            }
+            composeTestRule.waitUntil(15_000) {
+                composeTestRule.onAllNodesWithTag("live-bar", useUnmergedTree = true)
+                    .fetchSemanticsNodes().isNotEmpty()
             }
         } finally {
             CaptureState.idle(clearSession = true)

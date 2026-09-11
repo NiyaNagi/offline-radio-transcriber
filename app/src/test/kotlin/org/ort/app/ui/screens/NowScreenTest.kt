@@ -1,22 +1,30 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LiveBarTone
+import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.data.CanGetBetterRow
 import org.ort.app.ui.data.EarlierNightRow
 import org.ort.app.ui.data.MissingModelFacts
@@ -374,6 +382,63 @@ class NowScreenTest {
                     "${referenceHeight}px); got ${realHeight}px, consistent with wrapping one character per line"
             }
         }
+    }
+
+    @Test
+    @Requirement("R-922")
+    fun `R_922 at fontscale_2_0 scrolled to the end the last station row clears the live bar`() {
+        // R-922 (register, `bt-audio-dropped/F23-now@2x.png`): `LiveBar` is a plain sibling of
+        // this screen's own scrollable `Column` (like `CaptureStatusScreen`'s own R-613 case) —
+        // Compose's `weight(1f)` already gives that `Column` exactly `total - liveBar's height`,
+        // so its own bottom edge sits flush against the bar's top at *any* scroll offset, with
+        // zero breathing room, before this fix. `CaptureStatusScreen`'s own `LIVE_BAR_CLEARANCE`
+        // (44dp) trailing padding is the established fix for exactly this shape (R-613/R-826) —
+        // this proves `NowScreen` needs, and after the fix has, the same clearance.
+        val liveBar = LiveBarViewState(
+            level = listOf(0.1f, 0.2f, 0.1f),
+            partialText = null,
+            label = "Input lost",
+            tone = LiveBarTone.DEGRADED,
+        )
+        val station = NowStationRow(
+            stationId = "KJ7ABC",
+            marker = AttributionState.CONFIRMED,
+            callsign = "KJ7ABC",
+            countLabel = "3 overs",
+            lastTimeLabel = "03:12",
+        )
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp).height(844.dp)) {
+                        NowScreen(
+                            state = activeState(stations = NowStationsSection(1, listOf(station), null, null)),
+                            liveBar = liveBar,
+                        )
+                    }
+                }
+            }
+        }
+
+        val scrollable = composeTestRule.onNode(hasScrollAction())
+        scrollable.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
+        composeTestRule.waitForIdle()
+
+        val stationBottom = composeTestRule.onNodeWithTag("now-station-KJ7ABC").getUnclippedBoundsInRoot().bottom
+        val liveBarTop = composeTestRule.onNodeWithTag("now-livebar").getUnclippedBoundsInRoot().top
+        // R-922: this screen's own `OrtSpacing.lg` uniform padding already gives ~37dp of natural
+        // trailing gap even with no fix at all (measured directly, without `LIVE_BAR_CLEARANCE`) —
+        // 60dp sits above that natural floor and below the ~81dp the fix's added 44dp clearance
+        // produces, so this genuinely discriminates the fix rather than passing on the baseline
+        // padding alone.
+        val minimumExpectedGap = 60.dp
+        assertTrue(
+            "expected the last station row's own bottom ($stationBottom) to clear the live bar's " +
+                "own top ($liveBarTop) by at least $minimumExpectedGap after a real max scroll at " +
+                "font scale 2.0; got a gap of ${liveBarTop - stationBottom}, consistent with R-922's " +
+                "own report of the last body line sitting flush against the live bar",
+            liveBarTop - stationBottom >= minimumExpectedGap,
+        )
     }
 
     @Test

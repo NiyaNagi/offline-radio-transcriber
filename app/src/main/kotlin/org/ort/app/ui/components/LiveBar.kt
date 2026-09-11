@@ -70,7 +70,12 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
         if (state.localMicrophone) append(", room")
     }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    // R-910/R-911 (register, halt): a stable marker every instance of this composable carries,
+    // independent of whatever `testTag` a caller's own `modifier` sets on the inner clickable Row
+    // below (`now-livebar`/`capture-status-livebar`/`level-meter-livebar`, each screen's own) — so
+    // a cross-destination test can count real compositions of this component in the semantics tree
+    // without knowing which screen embeds it.
+    Column(modifier = Modifier.fillMaxWidth().testTag("live-bar")) {
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(palette.topEdge))
         Row(
             modifier = modifier

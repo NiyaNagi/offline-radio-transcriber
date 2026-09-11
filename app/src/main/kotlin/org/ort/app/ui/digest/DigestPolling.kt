@@ -4,11 +4,11 @@ import android.content.Context
 import org.ort.app.ui.data.ActivityPatternMapper
 import org.ort.app.ui.data.GapWindow
 import org.ort.app.ui.data.HourActivityBucket
-import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.data.NightlyDeparture
 import org.ort.app.ui.data.RoomSessionRouteFactsReader
 import org.ort.app.ui.data.SessionRouteFacts
 import org.ort.app.ui.data.SessionWindow
+import org.ort.app.ui.data.stripRigManufacturerPrefix
 import org.ort.app.ui.improve.Plurals
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
@@ -276,13 +276,17 @@ public object DigestPolling {
         return routeFacts.rigLabel() ?: transportLabel
     }
 
-    /** R-833: the rig's own real name for the *live* transport this session's own row recorded —
-     * `null` when `RigStatus` is `Absent` or has moved on to reporting a different transport than
-     * the one this session started with (a reconfiguration mid-review; never a mismatched guess). */
+    /** R-833/R-920 (register): the rig's own real name for the *live* transport this session's own
+     * row recorded — `null` when `RigStatus` is `Absent` or has moved on to reporting a different
+     * transport than the one this session started with (a reconfiguration mid-review; never a
+     * mismatched guess). [stripRigManufacturerPrefix] drops the leading manufacturer word — the
+     * same shared rule R-845/R-916 apply on CF06/N04. */
     private fun liveRigNameFor(transport: RigTransportKind): String? = when (val rig = RigStatus.state) {
-        is RigStatus.State.Connected -> rig.descriptor.takeIf { rig.transportKind?.name == transport.name }
+        is RigStatus.State.Connected ->
+            rig.descriptor.takeIf { rig.transportKind?.name == transport.name }?.let { stripRigManufacturerPrefix(it) }
         is RigStatus.State.Stale ->
             rig.lastKnown.descriptor.takeIf { rig.lastKnown.transportKind?.name == transport.name }
+                ?.let { stripRigManufacturerPrefix(it) }
         RigStatus.State.Absent -> null
     }
 
@@ -320,36 +324,22 @@ public object DigestPolling {
      * draws one of exactly three states per bucket, never a sub-bar split proportional to how much
      * of the hour the gap actually covered — that honest, hour-granularity limit is unchanged, only
      * which state wins a real conflict.
+     *
+     * R-913 (register, halt): moved to the shared [ActivityPatternMapper.buildSessionElapsedPattern]
+     * — `Now`'s own live chart ([org.ort.app.ui.data.NowViewStateMapper.active]) calls the same
+     * function now, so a live session's chart and this same session's own coverage bar, once it
+     * ends, never disagree about what "listening" means for it. This wrapper stays only so this
+     * file's own call site below reads unchanged.
      */
     private fun sessionCoverageBuckets(
         window: SessionWindow,
         matchingTransmissionTimestamps: List<Long>,
         nowMillis: Long,
-    ): List<HourActivityBucket> {
-        val sessionEnd = window.endedAtUtc ?: nowMillis
-        if (sessionEnd <= window.startedAtUtc) return emptyList()
-        val totalHours = ((sessionEnd - window.startedAtUtc + HOUR_MILLIS - 1) / HOUR_MILLIS)
-            .toInt()
-            .coerceAtLeast(1)
-        return (0 until totalHours).map { hourIndex ->
-            val bucketStart = window.startedAtUtc + hourIndex * HOUR_MILLIS
-            val bucketEnd = minOf(bucketStart + HOUR_MILLIS, sessionEnd)
-            val heardCount = matchingTransmissionTimestamps.count { it in bucketStart until bucketEnd }
-            val hasRealGap = window.gaps.any { gap ->
-                val overlapStart = maxOf(gap.startedAt, bucketStart)
-                val overlapEnd = minOf(gap.endedAt ?: sessionEnd, bucketEnd)
-                overlapEnd > overlapStart
-            }
-            val state = when {
-                hasRealGap -> HourActivityState.NOT_LISTENING
-                heardCount > 0 -> HourActivityState.HEARD
-                else -> HourActivityState.SILENT_WHILE_LISTENING
-            }
-            HourActivityBucket(hourOfDayUtc = hourIndex, state = state, heardCount = heardCount)
-        }
-    }
-
-    private const val HOUR_MILLIS = 3_600_000L
+    ): List<HourActivityBucket> = ActivityPatternMapper.buildSessionElapsedPattern(
+        window = window,
+        matchingTransmissionTimestamps = matchingTransmissionTimestamps,
+        nowMillis = nowMillis,
+    )
 
     public suspend fun digest(context: Context, sessionId: String): DigestViewState? {
         val db = OrtDatabase.create(context.applicationContext)
@@ -422,7 +412,16 @@ public object DigestPolling {
             val toMillis = overs.maxOfOrNull { it.startedAtUtc } ?: fromMillis
             val participants = overs.mapNotNull { it.stationId }.distinct()
             DigestProseCardViewState(
-                subject = participants.singleOrNull() ?: "Thread",
+                // R-931 (register, polish): a single participant still names it directly; two or
+                // more (a real QSO, not one station's own monologue) used to fall back to the bare
+                // word "Thread" the instant `singleOrNull()` failed — the board titles every card
+                // with its own subject, mono weight-600, never a placeholder. No single station
+                // gets naming rights over a multi-station thread, so this says so honestly instead
+                // of picking one arbitrarily or inventing a net name this schema does not track.
+                subject = when (participants.size) {
+                    1 -> participants.single()
+                    else -> "unnamed thread · ${Plurals.count(participants.size, "station")}"
+                },
                 detailLine = Plurals.count(overs.size, "over"),
                 text = summary.text,
                 oversRangeLabel = "from overs ${CLOCK_FORMAT.format(Instant.ofEpochMilli(fromMillis))} – " +
