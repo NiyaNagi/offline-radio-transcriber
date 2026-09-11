@@ -86,11 +86,18 @@ public fun RigBluetoothScreen(
                     )
                 }
             }
+            // R-805 (register, tour run, font scale 2.0): with neither action weighted, both
+            // measured against the row's full width and "Pair a device in system settings"'
+            // own multi-line wrap left "Refresh" placed in whatever sliver `SpaceBetween`
+            // computed from the *wrapped* left block's reported width, not its own text —
+            // one letter per line down the right edge. `weight(1f)` on the left action alone
+            // means Compose measures the unweighted "Refresh" first, at its own intrinsic
+            // (never-shrunk) size, then gives the left action only what remains to wrap into.
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 TextAction(
                     text = "Pair a device in system settings",
                     onClick = onPairInSettings,
-                    modifier = Modifier.testTag("setup-rig-bt-pair-in-settings"),
+                    modifier = Modifier.weight(1f).testTag("setup-rig-bt-pair-in-settings"),
                 )
                 TextAction(text = "Refresh", onClick = onRefresh, modifier = Modifier.testTag("setup-rig-bt-refresh"))
             }

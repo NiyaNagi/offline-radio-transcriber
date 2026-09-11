@@ -60,6 +60,13 @@ class SetupActivityTest {
         InputStatus.reset()
         LevelStatus.reset()
         RigStatus.reset()
+        // R-802/tour-builder follow-up tests flip both debug seams -- a safety net alongside each
+        // test's own try/finally, the same belt-and-suspenders style DebugRigLinkPortOverrideTest
+        // itself uses, so a failing assertion mid-test can never leak a stub port or a flipped
+        // isDebugBuild into an unrelated, later test in this same suite run.
+        DebugRigLinkPortOverride.clear()
+        DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        SetupActivity.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
     }
 
     private fun clearPrefs() {
@@ -490,6 +497,177 @@ class SetupActivityTest {
                 .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE),
         )
         assertEquals(null, store.radioChoice)
+    }
+
+    // --- R-802 (register, tour run 2): refresh the paired list on every entry to RIG_BLUETOOTH ---
+
+    /** Every gate up to and including `RIG_TRANSPORT` satisfied, with a real Bluetooth-SPP rig
+     * already chosen — the natural resume point is [SetupStep.RIG_BLUETOOTH] itself, exactly the
+     * "process died mid-S10b" case R-802 names. */
+    private fun storeGatedAtRigBluetooth() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.BLUETOOTH_RADIO.name)
+            .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
+            .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "wired-1")
+            .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_RADIO_CHOICE, RadioChoice.TH_D75A.name)
+            .putString(
+                SharedPreferencesSetupStore.KEY_RIG_ID,
+                org.ort.rig.descriptor.BundledDescriptors.kenwoodThD75a().id,
+            )
+            .putString(SharedPreferencesSetupStore.KEY_RIG_TRANSPORT, RigTransportKind.BLUETOOTH_SPP.name)
+            .apply()
+        grant(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.POST_NOTIFICATIONS,
+            Manifest.permission.BLUETOOTH_CONNECT,
+        )
+    }
+
+    @Test
+    fun `R_802 cold-opening on RIG_BLUETOOTH lists paired devices without a Refresh tap`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(
+                devices = listOf(
+                    PairedDevice("TH-D75A", "AA:BB:CC:11:22:33", sppCapable = true),
+                    PairedDevice("Handheld BT", "11:22:33:AA:BB:CC", sppCapable = false),
+                ),
+            ),
+        )
+        try {
+            ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    assertEquals(SetupStep.RIG_BLUETOOTH, activity.currentStepForTest)
+                    assertEquals(2, activity.rigBluetoothDevicesForTest.size)
+                    assertEquals("AA:BB:CC:11:22:33", activity.rigBluetoothDevicesForTest[0].address)
+                }
+            }
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
+    @Test
+    fun `R_802 cold-opening on RIG_BLUETOOTH with permission denied shows NoPermission immediately`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        DebugRigLinkPortOverride.show(InMemoryRigLinkPort().apply { denyPermission() })
+        try {
+            ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    assertEquals(SetupStep.RIG_BLUETOOTH, activity.currentStepForTest)
+                    assertEquals(RigLinkState.NoPermission, activity.rigLinkStateForTest)
+                }
+            }
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
+    // --- Tour-builder follow-up: EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS pre-selects a device on S10b ---
+
+    /**
+     * The tour can only relaunch [SetupActivity] with intent extras, never tap inside it —
+     * [SetupActivity.onSelectRigBluetoothDevice] is normally a tap on a paired-device row. This
+     * extra reaches the same function from a cold launch, so the scripted [InMemoryRigLinkPort]
+     * drives the whole open -> identify -> verify sequence with no tap at all — proven here by the
+     * final [RigLinkState.Verified] a real `AndroidComposeTestRule.waitForIdle()` settles on
+     * (`RigBluetoothScreenTest`'s own `E2_E10`/`E2_E11` tests already prove each individual
+     * [RigLinkState] renders its own checklist line correctly; the two `R-802` tests above prove
+     * the synchronous, no-delay entry states this same extra also reaches).
+     */
+    @Test
+    fun `tour-builder EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS selects the device and drives the checklist to Verified`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        SetupActivity.isDebugBuild = { true }
+        val address = "AA:BB:CC:11:22:33"
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(devices = listOf(PairedDevice("TH-D75A", address, sppCapable = true)))
+                .apply { useDefaultBehaviour(address) },
+        )
+        try {
+            val context = ApplicationProvider.getApplicationContext<Application>()
+            val intent = Intent(context, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS, address)
+            val activityRule = ActivityScenarioRule<SetupActivity>(intent)
+            val rule = AndroidComposeTestRule(activityRule) { r ->
+                var activity: SetupActivity? = null
+                r.scenario.onActivity { activity = it }
+                checkNotNull(activity) { "SetupActivity did not reach RESUMED" }
+            }
+            var selectedAddress: String? = null
+            var finalState: RigLinkState? = null
+            val statement = object : Statement() {
+                override fun evaluate() {
+                    // Compose-for-Robolectric's own idling (the same mechanism this file's
+                    // welcomeTitleHeightPx helper relies on) drains the shadow main looper's
+                    // scheduled tasks as part of settling the composition -- by the time this
+                    // returns, InMemoryRigLinkPort's Opening -> Open -> Identified -> Verified
+                    // sequence has already run to completion (its own SCRIPT_STEP_DELAY_MILLIS
+                    // steps are milliseconds, not real device Bluetooth latency), so there is no
+                    // separately-observable "still Opening" moment to assert here — proven instead
+                    // by the immediate, synchronous read at the very top of this file's own R-802
+                    // tests, and by `RigBluetoothScreenTest`'s `E2_E10`/`E2_E11` tests, which prove
+                    // each individual RigLinkState renders its own checklist line correctly. This
+                    // proves the wiring from the debug extra actually reaches all the way to a real
+                    // Verified state, end to end.
+                    rule.waitForIdle()
+                    rule.activityRule.scenario.onActivity { activity ->
+                        selectedAddress = activity.rigBluetoothSelectedAddressForTest
+                        finalState = activity.rigLinkStateForTest
+                    }
+                    rule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+                }
+            }
+            val description = Description.createTestDescription(
+                SetupActivityTest::class.java,
+                "tourBuilderDebugRigBluetoothAddressDrivesChecklist",
+            )
+            rule.apply(statement, description).evaluate()
+
+            assertEquals(address, selectedAddress)
+            assertEquals(RigLinkState.Verified(InMemoryRigLinkPort.DEFAULT_VERIFIED_COMMANDS), finalState)
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+            SetupActivity.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
+    @Test
+    fun `tour-builder EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS is ignored in a release build`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        SetupActivity.isDebugBuild = { false }
+        val address = "AA:BB:CC:11:22:33"
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(devices = listOf(PairedDevice("TH-D75A", address, sppCapable = true)))
+                .apply { useDefaultBehaviour(address) },
+        )
+        try {
+            val context = ApplicationProvider.getApplicationContext<Application>()
+            val intent = Intent(context, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS, address)
+            ActivityScenario.launch<SetupActivity>(intent).use { scenario ->
+                scenario.onActivity { activity ->
+                    assertEquals(SetupStep.RIG_BLUETOOTH, activity.currentStepForTest)
+                    assertEquals(null, activity.rigBluetoothSelectedAddressForTest)
+                }
+            }
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+            SetupActivity.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
     }
 
     // --- WP12 screenshot-tour seam: EXTRA_FONT_SCALE renders Setup at a chosen scale in-process ---
