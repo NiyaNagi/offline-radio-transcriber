@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (WPI R-982: TourAccessibilityScroll.scrollToEnd now repeats to a genuine stable position; two new 1.0 -end steps — held for "run 7 go")
 
-### <pending> — R-982: scrollToEnd was landing one page short on tall screens; fixed with a real scroll-position comparison, verified live on both named screens
+### fa4e4f51 — R-982: scrollToEnd was landing one page short on tall screens; fixed with a real scroll-position comparison, verified live on both named screens
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourAccessibilityScroll.kt`, `tools/ui-audit/tour.json`,
 two new PNGs, `results/ui-audit/tour-manifest.json`. No `main` merge this round (holding per the
