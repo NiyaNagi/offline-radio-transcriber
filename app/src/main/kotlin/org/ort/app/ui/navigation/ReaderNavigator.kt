@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
+import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStep
@@ -39,12 +40,21 @@ import org.ort.app.ui.setup.SetupStep
  * `pendingReviewSessionId` (a `DG05`/`DG01` step landing on the still-composing `Session` screen,
  * captured before `Digest` finished swapping in, is the identical race class `drawerOpenState`
  * exists to close).
+ *
+ * [liveBarState] (R-910/R-911, register — coordinator-approved cross-boundary this round): mirrors
+ * `OrtNavHost`'s own local `rememberDrawerLiveState(...).liveBar` — the host's pinned `LiveBar`, or
+ * `null` on a destination that embeds its own (`Now`/`Capture`, `OrtNavHost`'s own
+ * `embedsOwnLiveBar`). `LiveBarPolling`'s own first read of a just-composed screen can lag a beat
+ * behind `CaptureState.isCapturing` becoming true the same way the drawer's own open/closed state
+ * could — the tour's own settle-wait reads this alongside [drawerOpenState] on a step whose scenario
+ * is genuinely live, so a capture never lands on the one frame before the bar has appeared.
  */
 public class ReaderNavigator internal constructor(
     internal val currentState: MutableState<ReaderDestination>,
     internal val settingsScreenState: MutableState<SettingsScreenId?>,
     internal val drawerOpenState: MutableState<Boolean>,
     internal val reviewSessionViewState: MutableState<ReviewSessionView>,
+    internal val liveBarState: MutableState<LiveBarViewState?>,
     private val context: Context,
 ) {
     /** Switches the drawer's current destination — the same effect as tapping its drawer row. */
@@ -124,5 +134,11 @@ public fun rememberReaderNavigator(
     // `NavHostNavState.reviewSessionView` (itself `rememberSaveable`) is the one source of truth;
     // this is only ever a live mirror of it.
     val reviewSessionView = remember { mutableStateOf(seed?.reviewSessionView ?: ReviewSessionView.SESSION) }
-    return remember(context) { ReaderNavigator(current, settingsScreen, drawerOpen, reviewSessionView, context) }
+    // R-910/R-911: same reasoning as `drawerOpen`/`reviewSessionView` above — never `rememberSaveable`,
+    // `OrtNavHost`'s own `rememberDrawerLiveState(...).liveBar` is the one source of truth; this is
+    // only ever a live mirror of it.
+    val liveBar = remember { mutableStateOf<LiveBarViewState?>(null) }
+    return remember(context) {
+        ReaderNavigator(current, settingsScreen, drawerOpen, reviewSessionView, liveBar, context)
+    }
 }

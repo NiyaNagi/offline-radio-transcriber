@@ -5,6 +5,9 @@ import org.ort.core.AttributionState
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
+import org.ort.core.capture.AudioRouteKind
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.RigTransportKind
 import org.ort.data.OrtDatabase
 import org.ort.data.dao.CorrectionDao
 import org.ort.data.entity.CaptureGapCause
@@ -85,6 +88,18 @@ internal object OvernightScenario {
                 sessionId,
                 startedAt = start,
                 endedAt = if (live) null else end,
+                // R-914 (register, reviewer B2 on run 3): DG04's Mode/Input/Rig-link rows read "not
+                // tracked per session in this build" for a v10 session with only the v10 columns
+                // seeded — a session row's own null v7 columns honestly mean "not recorded for this
+                // session", never "not tracked in this build", so a scenario claiming a real USB
+                // session (this fixture's own long-standing shape — `seedConfiguredDeviceState`
+                // configures `CaptureConfigurationStore`/`InputStatus` to the identical usb-1 USB
+                // route for `overnight`/`overnight-live`/`stations-14-nights`) must seed the v7
+                // columns too, not just v10's.
+                captureMode = CaptureMode.USB_RADIO.name,
+                audioRouteKind = AudioRouteKind.USB.name,
+                audioRouteLabel = "USB Audio Device",
+                rigTransport = RigTransportKind.USB_SERIAL.name,
                 // E2-A07 (schema v10): every variant here (`overnight`/`overnight-live`/`gap-call`)
                 // is the same real TH-D75A overnight session, captured over a verified route.
                 rigDescriptorId = BundledDescriptors.kenwoodThD75a().id,

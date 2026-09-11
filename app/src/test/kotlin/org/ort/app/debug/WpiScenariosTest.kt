@@ -27,7 +27,9 @@ import org.ort.app.ui.setup.SetupStateMachine
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.core.AttributionState
+import org.ort.core.SystemClock
 import org.ort.core.capture.AudioRouteKind
 import org.ort.core.capture.BluetoothAudioProfile
 import org.ort.core.capture.CaptureMode
@@ -422,7 +424,7 @@ class WpiScenariosTest {
     }
 
     @Test
-    @Requirement("F-023", "FR-CAP-5")
+    @Requirement("F-023", "FR-CAP-5", "R-838")
     fun `F23_bt-audio-dropped sets InputStatus Lost with a Bluetooth lastKnown and an open gap`() = runTest {
         val result = Scenarios.load(context, "bt-audio-dropped")
 
@@ -439,7 +441,11 @@ class WpiScenariosTest {
 
         val gaps = db.captureGapDao().listBySession(requireNotNull(result.primarySessionId))
         val gap = gaps.single()
-        assertEquals(CaptureGapCause.INPUT_LOST, gap.cause)
+        assertEquals(
+            "R-838: this schema has carried BLUETOOTH_AUDIO_LOST since v9/E2-A06 — no more INPUT_LOST stand-in",
+            CaptureGapCause.BLUETOOTH_AUDIO_LOST,
+            gap.cause,
+        )
         assertNull("the gap must still be open", gap.endedAt)
     }
 
@@ -595,6 +601,69 @@ class WpiScenariosTest {
         assertNull("local-mic mode has no rig", session?.rigDescriptorId)
         assertEquals(true, session?.audioRouteVerified)
         assertEquals(48_000, session?.audioNativeRateHz)
+    }
+
+    /**
+     * R-914 (register, reviewer B2 on run 3): DG04's Mode/Input/Rig-link rows under `overnight` read
+     * "not tracked per session in this build" — a false claim in a v10 build, where a session row's
+     * own null v7 columns mean "not recorded for this session", never "not tracked in this build".
+     * `overnight`/`overnight-live`/`gap-call` share [OvernightScenario.build]'s one session insert,
+     * now seeding the v7 columns alongside the v10 ones already asserted above.
+     */
+    @Test
+    @Requirement("FR-CAP-13", "R-914")
+    fun `R_914_overnight writes the v7 columns alongside the v10 ones`() = runTest {
+        listOf("overnight", "overnight-live", "gap-call").forEach { name ->
+            val result = Scenarios.load(context, name)
+            val session = db.sessionDao().getById(requireNotNull(result.primarySessionId))
+            assertEquals("'$name' must record captureMode", CaptureMode.USB_RADIO.name, session?.captureMode)
+            assertEquals("'$name' must record audioRouteKind", AudioRouteKind.USB.name, session?.audioRouteKind)
+            assertEquals("'$name' must record audioRouteLabel", "USB Audio Device", session?.audioRouteLabel)
+            assertEquals(
+                "'$name' must record rigTransport",
+                RigTransportKind.USB_SERIAL.name,
+                session?.rigTransport,
+            )
+        }
+    }
+
+    /**
+     * R-913 (WPI half, register): "every live scenario writes a heartbeat so a live session looks
+     * live" — a *current* heartbeat, not merely a present one: `wallMillis` within a bounded window
+     * of real now, proving [ScenarioFixtures.markCapturing] (every scenario below's own real caller)
+     * writes a fresh record on *this* load, not one carried over from a prior scenario's own run in
+     * the same process (`Scenarios.clearPriorScenarioData` deletes `heartbeat.txt` unconditionally
+     * before every load — see that function's own kdoc — so a present-and-fresh heartbeat here is
+     * proof this scenario's own builder wrote it, not evidence of a stale leftover).
+     */
+    /** Generous enough for a slow test machine's own wall-clock read to land inside it, still far
+     * short of ever accepting a heartbeat left over from a genuinely earlier load. */
+    private val heartbeatFreshnessBoundMillis = 60_000L
+
+    private val liveHeartbeatScenarioNames = listOf(
+        "mode-local-mic",
+        "mode-usb",
+        "mode-bluetooth",
+        "mode-change-pending",
+        "overnight-live",
+        "rig-bt-connected",
+        "rig-bt-lost",
+        "bt-audio-dropped",
+    )
+
+    @Test
+    @Requirement("R-913")
+    fun `R_913_every live scenario writes a current heartbeat`() = runTest {
+        liveHeartbeatScenarioNames.forEach { name ->
+            Scenarios.load(context, name)
+            val heartbeat = FileHeartbeatStore(java.io.File(context.filesDir, "heartbeat.txt")).last()
+            assertNotNull("'$name' must write a heartbeat for its own live session", heartbeat)
+            val ageMillis = SystemClock.wallMillis() - requireNotNull(heartbeat).wallMillis
+            assertTrue(
+                "'$name' heartbeat must be current (age ${ageMillis}ms), not stale or from session start",
+                ageMillis in 0..heartbeatFreshnessBoundMillis,
+            )
+        }
     }
 
     /** The four non-gated catalog entries — every [ModelId] except the gated LLM, which this build's

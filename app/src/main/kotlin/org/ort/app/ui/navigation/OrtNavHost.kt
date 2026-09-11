@@ -197,6 +197,16 @@ public fun OrtNavHost(
     // this composable, can also switch destinations — see `ReaderNavigator.kt`'s own doc comment.
     var current by navigator.currentState
     val drawerLive = rememberDrawerLiveState(sessionId, context)
+    // R-910/R-911: mirrors `drawerLive.liveBar` — the same real `LiveBarPolling` fact `Now`/`Capture`
+    // read again through their own, separately-polled embedded bar (`embedsOwnLiveBar` below leaves
+    // this host's own *rendered* bar `null` there, but the underlying "is there a live bar's worth of
+    // real state" fact this mirrors is destination-independent), the same way the drawer's own
+    // open/closed state is mirrored above. `ScreenshotTourActivity`'s settle-wait reads this on a
+    // step whose scenario is genuinely live, so a capture never lands on the one frame before the bar
+    // has appeared — the exact race class `drawerOpenState` already closed for the drawer.
+    LaunchedEffect(drawerLive.liveBar, navigator) {
+        navigator.liveBarState.value = drawerLive.liveBar
+    }
     val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
 
     OrtNavHostBackHandler(current, navigator, navState, drawerState, scope)

@@ -39,7 +39,14 @@ import org.json.JSONObject
  * (F04 `Fail-Hallucination.dc.html`'s own detail) — see [TourIds.resolveSeed]'s own doc comment.
  * **R-840**: `reviewSessionView` (`SESSION`|`DIGEST`) — a companion to `reviewSession`, the same
  * relationship `frequencyInitialView` has to `frequency`; lands `Earlier nights` on the seeded
- * session's `Digest` (DG01/DG05) instead of its `Session` (DG04) detail. A
+ * session's `Digest` (DG01/DG05) instead of its `Session` (DG04) detail. **R-900** (register, A2's
+ * spot-check on tour run 3): `rigLinkState` (`"connecting"`|`"identified"`|`"verified"`|`"dropped"`)
+ * — a *setup*-step-only key, read directly by [ScreenshotTourActivity.renderSetupStep] exactly like
+ * `rigBluetoothAddress` (never through [TourIds.resolveSeed]), naming the checklist's own inner
+ * `RigLinkState` the settle must observe (via `SetupActivity.rigLinkStateForTest`) before capturing —
+ * without it, `S10b-verified`'s own capture could land the instant the address selection landed,
+ * before the scripted port had actually progressed past `Identified` to `Verified`, the exact defect
+ * the register found. A
  * step naming a [drillIn] key outside this set fails loudly (recorded as one
  * `error` line in the manifest, per
  * this file's own contract with [ScreenshotTourActivity] — never a silent skip and never an
@@ -111,6 +118,12 @@ public data class TourStep(
             // own doc comment for why this key is read directly there, never through
             // `TourIds.resolveSeed` (which only ever builds a `NavSeed` for a destination step).
             "rigBluetoothAddress",
+            // R-900 (register, A2's spot-check on run 3): the checklist state the settle must
+            // actually observe before capturing — `"connecting"`/`"identified"`/`"verified"`/
+            // `"dropped"`, resolved against `SetupActivity.rigLinkStateForTest` by
+            // `ScreenshotTourActivity`'s own `RIG_LINK_STATE_PREDICATES`. Read directly, same as
+            // `rigBluetoothAddress` above, never through `TourIds.resolveSeed`.
+            "rigLinkState",
         )
     }
 }

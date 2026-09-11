@@ -2393,10 +2393,16 @@ public object Scenarios {
      * [InputStatus.lost], the only way [InputStatus.lost] ever transitions — see that function's own
      * doc comment), plus a real, open [CaptureGapEntity]. The rig's own *control* link is left
      * `Connected` (still Bluetooth SPP) — this is an audio-only drop, distinct from [rigBtLost]'s
-     * control-only one (FR-RIG-15's own distinction). Cause is [CaptureGapCause.INPUT_LOST], not a
-     * dedicated Bluetooth-audio cause — `CaptureGapCause.BLUETOOTH_AUDIO_LOST` does not exist in this
-     * schema yet (owed to WPC3, checklist E2-A06/E2-D07) — the same honest stand-in the real
-     * `RealCaptureService` itself reports today.
+     * control-only one (FR-RIG-15's own distinction).
+     *
+     * **R-838 (reopened, reviewer C2 on run 3)**: cause is [CaptureGapCause.BLUETOOTH_AUDIO_LOST] —
+     * this schema has carried that value since v9 (E2-A06); the doc comment here previously claimed
+     * otherwise (an honest stand-in that outlived the schema change it was written against) and
+     * `results/ui-audit/README.md` repeated the same now-stale claim, fixed alongside this. `startedAt`
+     * stays [lostSinceMillis] and `endedAt` stays `null` (still genuinely open — a live drop, not one
+     * already recovered), so the Log row's own "ongoing" duration is computed from that real elapsed
+     * time exactly as before; only the cause itself, and therefore the row's own icon/copy
+     * (`LogListItem.Gap`, WPF's own half of this fix), changes.
      */
     private suspend fun btAudioDropped(context: Context, db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("bt-audio-dropped")
@@ -2454,7 +2460,7 @@ public object Scenarios {
                 sessionId = sessionId,
                 startedAt = lostSinceMillis,
                 endedAt = null,
-                cause = CaptureGapCause.INPUT_LOST,
+                cause = CaptureGapCause.BLUETOOTH_AUDIO_LOST,
                 recoveredAutomatically = false,
             ),
         )
