@@ -32,6 +32,98 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI: R-840 Digest review-session view, the rig-Bluetooth checklist's four states, E2-A07 v10 seeding)
+
+### b0edcc06 — DG05/DG01 land on Digest not Session (R-840); setup-rig-bluetooth's connect/identify/verify/drop checklist reachable via a new SetupActivity extra; every real TH-D75A scenario seeds the v10 session-route-facts columns
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios,OvernightScenario,ScenarioFixtures}.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/{ScreenshotTourActivity,TourIds,TourSpec}.kt`,
+`app/src/main/kotlin/org/ort/app/ui/navigation/{OrtNavHost,ReaderNavigator}.kt` and
+`app/src/main/kotlin/org/ort/app/ui/setup/RigLinkPort.kt` (both cross-boundary edits explicitly
+authorized by the coordinator this round), `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`,
+`tools/ui-audit/tour.json`, `results/ui-audit/README.md`. Two merges of `main` landed first: WPE's
+Digest seam (`e867d135`) and WPD's `SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` +
+refresh-on-entry (`a62f7056`), both already in this round's base per the coordinator's own "go";
+then WPC3's v10 (`e92f8565`) and WPE's midnight-flake fix (`5872873d`) partway through this same
+round, both merged in as they landed.
+
+**Requirements/ACs:** R-840, D33, D34, FR-RIG-14, R-802, AC-53, FR-AST-5, FR-AST-6, FR-CAP-13,
+FR-CAP-2b (E2-A07 is this round's own checklist id, cited in doc comments, not in `@Requirement` —
+`coverageMatrix` only resolves ids from the spec's own registry, so the annotations cite the real
+`FR-AST-5`/`FR-AST-6`/`AC-53` ids `MigrationTest`'s own v10 test already established for the same
+columns).
+
+**What changed:** *Constitution check.* I (every seeded fact stays honest — `audioRouteVerified`
+`null` is never fabricated as `true` for a session that never confirmed its route; the
+`RigLinkState.hangAfterIdentify` script exists precisely so a real, distinct "identified, not
+verified" state can be observed rather than skipped past). II (four new `WpiScenariosTest` cases
+drive each rig-Bluetooth scenario's script directly and assert its terminal `RigLinkState`; two more
+prove every v10 column across all ten real TH-D75A scenarios plus `mode-local-mic`'s null-descriptor
+case). VIII (a tour capture's correctness rests on genuinely observed state, never elapsed time —
+this round extends that same polling to the review-session view).
+
+1. **R-840** — `TourIds.resolveSeed` and `TourStep`/`TourSpec` gained a `reviewSessionView`
+   (`SESSION`|`DIGEST`) drill-in key, resolved into `NavSeed.reviewSessionView`. `ReaderNavigator`
+   gained a `reviewSessionViewState` mirror (the same shape as its existing `drawerOpenState`),
+   published by a new `OrtNavHost` `LaunchedEffect(navState, navigator) { snapshotFlow {
+   navState.reviewSessionView.value }.collect { ... } }`. `ScreenshotTourActivity.awaitDestinationSettled`
+   now also polls that state when the step names one, so a DG05/DG01 capture genuinely waits for the
+   Digest to compose rather than assuming it did. `tour.json`'s `llm-enabled-prose/DG05-digest-prose`
+   (plain and `@2x`) and `llm-disabled/DG01-digest` now carry `"reviewSessionView": "DIGEST"`.
+
+2. **The rig-Bluetooth checklist's four states** — `RigLinkPort.hangAfterIdentify(address)` (a new
+   `Script.HangAfterIdentify` case) holds a scripted `InMemoryRigLinkPort` at `Identified`, past
+   `Opening`/`Open` but never reaching `Verified` — the default script's own step delays are
+   milliseconds, so nothing could otherwise ever observe that intermediate row.
+   `ScreenshotTourActivity.renderSetupStep` reads a step's own `rigBluetoothAddress` drillIn key (new
+   in `TourSpec.SUPPORTED_DRILL_IN_KEYS`, read directly, never through `TourIds.resolveSeed`) and
+   passes it as `SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS`, then waits for
+   `setupActivity.rigBluetoothSelectedAddressForTest` to match before capturing. Three new scenarios
+   (`setup-rig-bluetooth-connecting`/`-identified`/`-dropped`, plus the pre-existing
+   `setup-rig-bluetooth` for the verified/`Continue`-enabled state) each script the same address to a
+   different terminal state. Four new `tour.json` steps
+   (`setup-rig-bluetooth/S10b-connecting|identified|verified|dropped`) plus a fifth
+   (`S10b-headset-only-selected`) showing the dim/unselectable headset-class row — documented as a
+   known, honest gap (that device's own address is not separately scripted, so it runs the ordinary
+   connect sequence rather than a genuine "attempted and rejected" one). The README's "cannot reach"
+   note for S10b is deleted; that whole section is rewritten as "checklist E2-J01 — fully closed".
+
+3. **E2-A07 v10 seeding** — `ScenarioFixtures.session(...)` gained `rigDescriptorId`/
+   `audioRouteVerified`/`audioNativeRateHz` parameters (all default `null`, matching a pre-v10 row).
+   Every real TH-D75A session scenario (`mode-usb`, `mode-bluetooth`, `bt-audio-session`,
+   `bt-audio-dropped`, `rig-bt-connected`, `rig-bt-lost`, `mode-change-pending`, `overnight`,
+   `overnight-live`, `gap-call`) now seeds `rigDescriptorId = BundledDescriptors.kenwoodThD75a().id`,
+   `audioRouteVerified = true`, `audioNativeRateHz = 48_000` (named uniformly across every transport
+   per the coordinator's own instruction, not each scenario's own audio-path rate — `mode-bluetooth`'s
+   own SCO path is a distinct 16 kHz fact `InputStatus.opened` already carries separately).
+   `mode-local-mic` seeds `rigDescriptorId = null` (FR-CAP-2b: no rig at all), `audioRouteVerified =
+   true`, `audioNativeRateHz = 48_000` (the built-in mic's own native rate, matching its existing
+   `InputStatus.opened` call). Two new `WpiScenariosTest` cases assert all three columns:
+   `E2_A07_every real TH-D75A session scenario writes the v10 columns` (loops the ten names above) and
+   `E2_A07_mode-local-mic writes the v10 columns with a null rig descriptor`.
+
+**Verified:** `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` —
+green (`BUILD SUCCESSFUL in 9m 59s`, 1107 actionable tasks, `dependencyRules: OK`, `platformGuards:
+OK`) on the tree merged through `4e28500b` (includes WPC3's v10 and WPE's midnight-anchoring fix, so
+`smokeTestDebugUnitTest`'s full 133/133 ran clean — no exclusions, no time-of-day caveat needed).
+`./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — 8/8 PASS.
+`./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (run as two separate invocations —
+combining them in one command line trips a Gradle 8 task-output-without-declared-dependency
+validation error, unrelated to this round's content) — 450 requirements, 240 covered, no orphan-id
+warning, `coverageMatrixCheck: up to date`. `./gradlew :app:testDebugUnitTest --tests
+"org.ort.app.debug.WpiScenariosTest"` — 32/32 green, including the six new/extended cases this round
+added.
+
+**Left open / not done:** the coordinator's instruction said "`TourStepsTest` asserting each" for the
+four rig-Bluetooth checklist states — `TourStepsTest`'s own doc comment excludes every setup step by
+design (`SetupActivity`'s screen rendering has no composable that class can call directly, unlike
+`OrtNavHost`), so literal compliance was impossible; equivalent coverage was substituted directly in
+`WpiScenariosTest` (each scenario's port script driven and its terminal `RigLinkState` asserted)
+instead, reported here rather than silently claimed as the literal ask. The tour itself was not
+re-run this round — the coordinator withheld that until WPC3's v10 landed; it has now landed and been
+merged, but the run-3 tour capture, its manifest, and the PNG commit are this round's immediate next
+step, not part of this entry.
+
 ## 2026-09-10 (E2-A07 follow-up: session-level rig descriptor id, route-verified flag and native rate; R-821 hasBeenConfigured; a heartbeat-store TOCTOU fix)
 
 ### (pending) — FileHeartbeatStore.last()/hadUncleanEnd() catch FileNotFoundException/NumberFormatException instead of throwing into the UI

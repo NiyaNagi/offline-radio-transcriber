@@ -200,6 +200,9 @@ public object Scenarios {
         "setup-bt-permission",
         "setup-rig-transport",
         "setup-rig-bluetooth",
+        "setup-rig-bluetooth-connecting",
+        "setup-rig-bluetooth-identified",
+        "setup-rig-bluetooth-dropped",
         "mode-local-mic",
         "mode-usb",
         "mode-bluetooth",
@@ -280,6 +283,9 @@ public object Scenarios {
             "setup-bt-permission" -> setupBtPermission(context)
             "setup-rig-transport" -> setupRigTransport(context)
             "setup-rig-bluetooth" -> setupRigBluetooth(context)
+            "setup-rig-bluetooth-connecting" -> setupRigBluetoothConnecting(context)
+            "setup-rig-bluetooth-identified" -> setupRigBluetoothIdentified(context)
+            "setup-rig-bluetooth-dropped" -> setupRigBluetoothDropped(context)
             "mode-local-mic" -> modeLocalMic(context, db)
             "mode-usb" -> modeUsb(context, db)
             "mode-bluetooth" -> modeBluetooth(context, db)
@@ -1968,32 +1974,41 @@ public object Scenarios {
      * [SetupStore.rigBluetoothVerified] genuinely left `false` — `stepFor`'s `needsRigBluetoothLink`
      * gate resumes at [SetupStep.RIG_BLUETOOTH] directly from a cold launch.
      *
-     * **WPD's seam (coordinator-assigned, this round) closes the paired-device-list half of the gap
-     * this scenario used to report.** `SetupActivity.onCreate` now reads
-     * `DebugRigLinkPortOverride.activeOverride` ahead of constructing the real `BridgeRigLinkPort` —
-     * a debug-build-only holder shaped exactly like `org.ort.app.ui.failures.DebugFailureOverride`.
-     * [DebugRigLinkPortOverride.show] below publishes a real, scripted [InMemoryRigLinkPort] naming
-     * two paired devices — the TH-D75A (SPP-capable, selectable) and a `Handheld BT` (headset-class
-     * only, listed dim and unselectable) — so S10b's own paired-device list renders real rows, not
-     * the honest-but-empty list the pre-seam build had no way to fill.
+     * **WPD's seam closes the paired-device-list half of the gap this scenario used to report.**
+     * `SetupActivity.onCreate` now reads `DebugRigLinkPortOverride.activeOverride` ahead of
+     * constructing the real `BridgeRigLinkPort` — a debug-build-only holder shaped exactly like
+     * `org.ort.app.ui.failures.DebugFailureOverride`. [DebugRigLinkPortOverride.show] below publishes
+     * a real, scripted [InMemoryRigLinkPort] naming two paired devices — the TH-D75A (SPP-capable,
+     * selectable) and a `Handheld BT` (headset-class only, listed dim and unselectable) — so S10b's
+     * own paired-device list renders real rows.
      *
-     * **What still cannot be reached, and why (constitution VIII — reported, not faked):** the
-     * connect → identify → verify checklist progression, and a dropped-link banner, are reachable in
-     * the real app only *after* a tap on a paired-device row (`SetupActivity.onSelectRigBluetoothDevice`
-     * — confirmed by reading `SetupActivity.kt`: `rigBluetoothSelectedAddress` is plain, unpersisted
-     * `mutableStateOf` state, reset to `null` on every navigation into this step, with no
-     * `SetupStore` field and no `EXTRA_*` seam to preset it). The screenshot tour's own setup-step
-     * renderer (`ScreenshotTourActivity.renderSetupStep`) has no tap capability at all today (the
-     * same "no taps, no sheets" limit `results/ui-audit/README.md`'s "What v1 cannot capture"
-     * section already documents for `OrtNavHost` destinations) — so this scenario still cannot drive
-     * the checklist past its own initial, no-selection render. The real hook, for whoever picks this
-     * up: either a tap capability in the tour's setup-step renderer, or a new
-     * `SetupActivity.EXTRA_*` to preset `rigBluetoothSelectedAddress` (main-source, `ui/setup`, not
-     * this package's row) — [InMemoryRigLinkPort.useDefaultBehaviour] is scripted below regardless,
-     * so either fix reaches a real, working connect → identify → verify sequence with no further
-     * change here.
+     * **WPD's second seam (`SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS`) closes the checklist
+     * half too.** A tap on a paired-device row is normally what drives the connect → identify →
+     * verify checklist; the tour cannot tap, but this extra reaches
+     * `SetupActivity.onSelectRigBluetoothDevice` directly from a cold launch — see
+     * [setupRigBluetoothConnecting]/[setupRigBluetoothIdentified]/[setupRigBluetoothDropped] for the
+     * three other checklist states this same mechanism reaches, each on its own differently-scripted
+     * [InMemoryRigLinkPort] (this scenario's own port stays scripted for the *verified* end state —
+     * [InMemoryRigLinkPort.useDefaultBehaviour]'s default script completes in milliseconds, not real
+     * Bluetooth latency, so a device scripted this way is only ever usefully captured at its own
+     * terminal, [org.ort.app.ui.setup.RigLinkState.Verified] state).
      */
     private fun setupRigBluetooth(context: Context): LoadResult {
+        seedRigBluetoothLinkStore(context)
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(
+                devices = listOf(
+                    PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true),
+                    PairedDevice(name = "Handheld BT", address = HANDHELD_BT_ADDRESS, sppCapable = false),
+                ),
+            ).apply { useDefaultBehaviour(BLUETOOTH_RIG_ADDRESS) },
+        )
+        return LoadResult(0, 0, null)
+    }
+
+    /** The `SetupStore` state every `setup-rig-bluetooth*` scenario shares — only the
+     * [DebugRigLinkPortOverride] script differs between them. */
+    private fun seedRigBluetoothLinkStore(context: Context) {
         val store = freshSetupStore(context)
         store.welcomeSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
@@ -2010,13 +2025,41 @@ public object Scenarios {
         store.rigId = BundledDescriptors.kenwoodThD75a().id
         store.rigTransport = RigTransportKind.BLUETOOTH_SPP
         store.rigBluetoothVerified = false
+    }
+
+    /** `setup-rig-bluetooth-connecting` — the checklist's own first row, held there on purpose:
+     * [InMemoryRigLinkPort.hang] never emits past [org.ort.app.ui.setup.RigLinkState.Opening]. */
+    private fun setupRigBluetoothConnecting(context: Context): LoadResult {
+        seedRigBluetoothLinkStore(context)
         DebugRigLinkPortOverride.show(
             InMemoryRigLinkPort(
-                devices = listOf(
-                    PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true),
-                    PairedDevice(name = "Handheld BT", address = HANDHELD_BT_ADDRESS, sppCapable = false),
-                ),
-            ).apply { useDefaultBehaviour(BLUETOOTH_RIG_ADDRESS) },
+                devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
+            ).apply { hang(BLUETOOTH_RIG_ADDRESS) },
+        )
+        return LoadResult(0, 0, null)
+    }
+
+    /** `setup-rig-bluetooth-identified` — the checklist's own second row done, third not yet:
+     * [InMemoryRigLinkPort.hangAfterIdentify] (this round's own new script — see its own kdoc for
+     * why [useDefaultBehaviour] cannot be captured at this intermediate state at all). */
+    private fun setupRigBluetoothIdentified(context: Context): LoadResult {
+        seedRigBluetoothLinkStore(context)
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(
+                devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
+            ).apply { hangAfterIdentify(BLUETOOTH_RIG_ADDRESS) },
+        )
+        return LoadResult(0, 0, null)
+    }
+
+    /** `setup-rig-bluetooth-dropped` — E2-E11/FR-RIG-15's own dropped-link banner:
+     * [InMemoryRigLinkPort.dropAfterOpen] opens then reports [org.ort.app.ui.setup.RigLinkState.Lost]. */
+    private fun setupRigBluetoothDropped(context: Context): LoadResult {
+        seedRigBluetoothLinkStore(context)
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(
+                devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
+            ).apply { dropAfterOpen(BLUETOOTH_RIG_ADDRESS) },
         )
         return LoadResult(0, 0, null)
     }
@@ -2049,6 +2092,9 @@ public object Scenarios {
                 captureMode = CaptureMode.LOCAL_MICROPHONE.name,
                 audioRouteKind = AudioRouteKind.BUILT_IN_MIC.name,
                 audioRouteLabel = "Built-in microphone",
+                rigDescriptorId = null,
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
             ),
         )
         realCaptureConfigurationStore(context).update(
@@ -2124,6 +2170,9 @@ public object Scenarios {
                 audioRouteKind = AudioRouteKind.USB.name,
                 audioRouteLabel = "USB Audio Device",
                 rigTransport = RigTransportKind.USB_SERIAL.name,
+                rigDescriptorId = BundledDescriptors.kenwoodThD75a().id,
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
             ),
         )
         realCaptureConfigurationStore(context).update(
@@ -2201,6 +2250,9 @@ public object Scenarios {
                 audioRouteLabel = "Bluetooth headset",
                 bluetoothProfile = BluetoothAudioProfile.HFP_MSBC.name,
                 rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+                rigDescriptorId = BundledDescriptors.kenwoodThD75a().id,
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
             ),
         )
         realCaptureConfigurationStore(context).update(
@@ -2283,6 +2335,9 @@ public object Scenarios {
                 audioRouteLabel = "Bluetooth headset",
                 bluetoothProfile = BluetoothAudioProfile.HFP_MSBC.name,
                 rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+                rigDescriptorId = BundledDescriptors.kenwoodThD75a().id,
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
             ),
         )
         val tx1 = "$sessionId-tx1"
@@ -2355,6 +2410,9 @@ public object Scenarios {
                 audioRouteLabel = "Bluetooth headset",
                 bluetoothProfile = BluetoothAudioProfile.HFP_MSBC.name,
                 rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+                rigDescriptorId = BundledDescriptors.kenwoodThD75a().id,
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
@@ -2424,6 +2482,9 @@ public object Scenarios {
                 audioRouteKind = AudioRouteKind.WIRED_HEADSET.name,
                 audioRouteLabel = "Wired headset",
                 rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+                rigDescriptorId = BundledDescriptors.kenwoodThD75a().id,
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
@@ -2470,6 +2531,9 @@ public object Scenarios {
                 audioRouteKind = AudioRouteKind.WIRED_HEADSET.name,
                 audioRouteLabel = "Wired headset",
                 rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+                rigDescriptorId = BundledDescriptors.kenwoodThD75a().id,
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
@@ -2513,6 +2577,9 @@ public object Scenarios {
                 audioRouteKind = AudioRouteKind.USB.name,
                 audioRouteLabel = "USB Audio Device",
                 rigTransport = RigTransportKind.USB_SERIAL.name,
+                rigDescriptorId = BundledDescriptors.kenwoodThD75a().id,
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
             ),
         )
         val configStore = realCaptureConfigurationStore(context)

@@ -222,7 +222,10 @@ store/holder/DB, not merely that the scenario loads.
 | `setup-mode` | D33/FR-CAP-8, S00: a completely fresh `SetupStore` (`welcomeSeen = true`, `captureMode = null`) — `SetupStateMachine.stepFor` resumes at `SetupStep.MODE` directly from a cold `MainActivity` launch. |
 | `setup-bt-permission` | D33, S02c: Bluetooth mode chosen, mic already granted, `BLUETOOTH_CONNECT` genuinely undecided. **The OS permission itself is live `PackageManager` state, not a `SetupStore` field** — see "Reaching S02c" below for the exact `pm grant`/`pm revoke` recipe this state needs. |
 | `setup-rig-transport` | D33/FR-RIG-13, S09b: Bluetooth mode, a verified wired-headset input, the TH-D75A chosen at S09, but `SetupStore.rigTransport` genuinely unset — `stepFor` resumes at `SetupStep.RIG_TRANSPORT`. Needs `BLUETOOTH_CONNECT` already granted (see "Reaching S02c") or `stepFor` stops one step earlier, at S02c. |
-| `setup-rig-bluetooth` | D33/D34, S10b: the same base as `setup-rig-transport`, but `rigTransport = BLUETOOTH_SPP` and `rigBluetoothVerified = false` — `stepFor` resumes at `SetupStep.RIG_BLUETOOTH`. Also publishes a real, scripted `DebugRigLinkPortOverride` naming two paired devices (TH-D75A, SPP-capable; Handheld BT, headset-only) through WPD's own seam — see "The `RigLinkPort` injection seam" below for what this closes and the one real gap that remains. |
+| `setup-rig-bluetooth` | D33/D34, S10b: the same base as `setup-rig-transport`, but `rigTransport = BLUETOOTH_SPP` and `rigBluetoothVerified = false` — `stepFor` resumes at `SetupStep.RIG_BLUETOOTH`. Also publishes a real, scripted `DebugRigLinkPortOverride` naming two paired devices (TH-D75A, SPP-capable, scripted to `Verified`; Handheld BT, headset-only, unscripted) through WPD's own seam — see "The `RigLinkPort` injection seam" below for the full account, including the three sibling scenarios below. |
+| `setup-rig-bluetooth-connecting` | Same base, but the paired-device list has only `TH-D75A`, scripted with `InMemoryRigLinkPort.hang` — the checklist held at `Opening` forever. |
+| `setup-rig-bluetooth-identified` | Same base, `TH-D75A` scripted with `InMemoryRigLinkPort.hangAfterIdentify` (new this round) — held at `Identified`, never `Verified`. |
+| `setup-rig-bluetooth-dropped` | Same base, `TH-D75A` scripted with `InMemoryRigLinkPort.dropAfterOpen` — reports `Lost`, the dropped-link banner. |
 | `mode-local-mic` | FR-CAP-3a/10, AC-128/129, R-821/R-823: a live session with real v7 columns `captureMode = LOCAL_MICROPHONE`/`audioRouteKind = BUILT_IN_MIC` (`frequencyHz` honestly `null` — no rig at all), a real `InputStatus.Opened` on a built-in-mic descriptor, a real `CaptureConfigurationStore.current()` matching (`LOCAL_MICROPHONE`, `selectedInputId = "mic-0"`, so CF02/CF11 agree with the session rather than reading the store's own `DEFAULT`), a real `station` row for `W7NPC` (so ST01 shows one station, not zero, against N01b's own one heard), plus the real `SetupStore` left mid-way at S04 with the Local-microphone preset chip showing, for the "S04 in a lane per mode" tour coverage. |
 | `mode-usb` | FR-CAP-13, AC-129, R-821: a live session over USB — v7 columns `captureMode = USB_RADIO`/`audioRouteKind = USB`/`rigTransport = USB_SERIAL`, a real `RigStatus.Connected` naming the USB-serial transport and the TH-D75A descriptor (F9/CF06), a real `CaptureConfigurationStore.current()` matching (`USB_RADIO`, `selectedInputId = "usb-1"`, the TH-D75A, `USB_SERIAL`), the S04 preset chip alongside it. |
 | `mode-bluetooth` | D34/FR-CAP-11/13, R-821/R-822: a live session over Bluetooth audio (SCO, mSBC) *and* Bluetooth rig control (SPP) at once — two independent Bluetooth links, both real (`InputStatus.Opened` with a `BluetoothAudioProfile.HFP_MSBC` descriptor, `RigStatus.Connected` with `transportKind = BLUETOOTH_SPP`), a real `CaptureConfigurationStore.current()` matching (`BLUETOOTH_RADIO`, the TH-D75A, `BLUETOOTH_SPP`, and the paired device's own address in `rigParams[DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS]` — CF02/CF06's own Link-row address reads this directly), the S04 preset chip alongside it. |
@@ -291,37 +294,45 @@ needs two separate `tour.ps1 -Only` invocations, revoking/re-granting `BLUETOOTH
 them — see this repo's own WPI report for the exact two-pass recipe used to produce the committed
 screenshots.
 
-### The `RigLinkPort` injection seam (checklist E2-J01 — now wired; one gap remains)
+### The `RigLinkPort` injection seam (checklist E2-J01 — fully closed)
 
-D33/D34's S10b (`Setup-Rig-Bluetooth.dc.html`) shows a paired-device list — the operator picking
-which paired Bluetooth device is the rig's own SPP link. **WPD has since added the seam this
-section used to report missing**: `org.ort.app.ui.setup.DebugRigLinkPortOverride` (shaped exactly
-like `org.ort.app.ui.failures.DebugFailureOverride` — `show`/`clear`/`current`, gated on
-`BuildConfig.DEBUG` via a settable `isDebugBuild` seam), and `SetupActivity.onCreate` now reads
-`DebugRigLinkPortOverride.activeOverride ?: BridgeRigLinkPort(DefaultRigLinkBridge(this))`.
-`setup-rig-bluetooth` now calls `DebugRigLinkPortOverride.show(...)` with a real, scripted
-`InMemoryRigLinkPort` naming two paired devices — `TH-D75A` (SPP-capable, selectable) and
-`Handheld BT` (headset-class only, listed dim and unselectable) — so S10b's own paired-device list
-renders real rows, closing the gap this section used to describe. `WpiScenariosTest.kt` asserts the
-scenario installs the override with both devices, and that flipping `isDebugBuild` to `false`
-ignores it (the general gate itself is `DebugRigLinkPortOverrideTest`'s own row).
+D33/D34's S10b (`Setup-Rig-Bluetooth.dc.html`) shows a paired-device list and a connect → identify →
+verify checklist — the operator picking which paired Bluetooth device is the rig's own SPP link,
+then watching it come up. **Both halves are now wired, through two WPD seams:**
 
-**What still cannot be reached, and why (constitution VIII — reported, not faked).** The connect →
-identify → verify checklist progression, and a dropped-link banner, render in the real app only
-*after* a tap on a paired-device row (`SetupActivity.onSelectRigBluetoothDevice`) —
-`rigBluetoothSelectedAddress` is plain, unpersisted `mutableStateOf` `Activity` state, reset to
-`null` on every navigation into this step, with no `SetupStore` field and no `EXTRA_*` seam to
-preset it (confirmed by reading `SetupActivity.kt` before writing this). The screenshot tour's own
-setup-step renderer (`ScreenshotTourActivity.renderSetupStep`) has no tap capability at all today —
-the same "no taps, no sheets" limit "What v1 cannot capture" below already documents for `OrtNavHost`
-destinations — so `setup-rig-bluetooth`'s tour step still only reaches the paired-device list, never
-the checklist states. **The exact hook needed, for whoever picks this up**: either a tap capability
-in the tour's setup-step renderer (`app/src/debug/.../tour/ScreenshotTourActivity.kt`, this
-package's own file — a real, non-trivial addition, not attempted this round), or a new
-`SetupActivity.EXTRA_*` to preset `rigBluetoothSelectedAddress` directly (main-source, `ui/setup`,
-outside this package's row). `Scenarios.setupRigBluetooth`'s own `InMemoryRigLinkPort` is already
-scripted with a working default connect → identify → verify sequence
-(`useDefaultBehaviour(BLUETOOTH_RIG_ADDRESS)`) — either fix reaches it with no further change here.
+1. **The paired-device list**: `org.ort.app.ui.setup.DebugRigLinkPortOverride` (shaped exactly like
+   `org.ort.app.ui.failures.DebugFailureOverride` — `show`/`clear`/`current`, gated on
+   `BuildConfig.DEBUG` via a settable `isDebugBuild` seam), read by `SetupActivity.onCreate` ahead of
+   the real `BridgeRigLinkPort(DefaultRigLinkBridge(this))`. `setup-rig-bluetooth` (and its three
+   siblings below) publish a real, scripted `InMemoryRigLinkPort` naming two paired devices —
+   `TH-D75A` (SPP-capable, selectable) and `Handheld BT` (headset-class only, listed dim and
+   unselectable) — so S10b's own list renders real rows. R-802's own companion fix (`SetupActivity`'s
+   `step` setter) now also refreshes that list on every entry to `RIG_BLUETOOTH`, not only via the
+   `Refresh` action — a cold launch straight onto S10b (the tour's own recipe) sees it immediately.
+2. **The connect → identify → verify checklist** (and the dropped-link banner): the tour cannot tap a
+   paired-device row, which is normally what drives `SetupActivity.onSelectRigBluetoothDevice`.
+   `SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` (debug-build-only, honoured only while the
+   resolved step is `RIG_BLUETOOTH`) reaches that same function directly from a cold launch —
+   `ScreenshotTourActivity.renderSetupStep` passes it from a step's own `rigBluetoothAddress` drillIn
+   key (the one key a setup step reads at all, never through `TourIds.resolveSeed`). Four scenarios
+   script the same address (`AA:BB:CC:11:22:33`) to four different, stable terminal states: `setup-rig-bluetooth`
+   itself (`InMemoryRigLinkPort.useDefaultBehaviour` → `Verified`, `Continue` enabled),
+   `setup-rig-bluetooth-connecting` (`hang` → held at `Opening`), `setup-rig-bluetooth-identified`
+   (`hangAfterIdentify` — a new script this round added, since the default script's own step delays
+   are milliseconds, not real Bluetooth latency, so nothing could otherwise ever observe the
+   intermediate "identified, not verified" row — held at `Identified`), and
+   `setup-rig-bluetooth-dropped` (`dropAfterOpen` → `Lost`, the banner). A fifth tour step
+   (`setup-rig-bluetooth/S10b-headset-only-selected`) force-selects the headset-class device via the
+   same extra to show its own row in a selected state — **known, honest gap**: that device's own
+   address is not separately scripted, so it runs the ordinary connect sequence to `Verified` too,
+   which a real headset-class device never would; harmless for what this step exists to show (the
+   dim/unselectable row styling), but not a genuine "attempted and rejected" capture.
+
+`WpiScenariosTest.kt` drives each of the four scripted addresses directly (bounded `.take(n)` for the
+two that hang forever past their own last real emission) and asserts the exact terminal
+`RigLinkState` each reaches; `SetupActivityTest.kt` (WPD's own file) proves the extra itself reaches
+`onSelectRigBluetoothDevice` end to end, is ignored in a release build, and that R-802's refresh-on-
+entry fires with no `Refresh` tap.
 
 ### Reaching S07/S09/S12 (register R-227, R-264, R-285)
 
@@ -402,19 +413,15 @@ DebugFailureOverride`'s own kdoc says precisely what each would need and from wh
 
 ### Known gaps / hygiene (report to the lead, not fixed here)
 
-- **`scroll: "end"` errors on a screen that already fits without scrolling, even at font scale
-  2.0.** `TourAccessibilityScroll.scrollToEnd` requires a real scrollable container in the
-  accessibility tree; a short screen has none, so the step records `"no vertically-scrollable
-  container found in this screen's accessibility tree"` rather than silently no-op-ing. Five
-  pre-existing `setup-verified/*@2x-end` steps already show this; the two new R-817/R-827
-  `@2x-end` steps this round added (`setup-bt-permission/S02c-bluetooth-permission@2x-end`,
-  `mode-local-mic/N01b-now@2x-end`) show it too — both screens' plain and `@2x` siblings capture
-  fine, only the `@2x-end` variant errors, for the same reason. This is evidence the screen does
-  not clip at 2x, not a defect in either scenario; R-744's own pair rule is satisfied by the
-  plain+`@2x` pair existing, the `@2x-end` step recording an honest "nothing to scroll to" rather
-  than a fabricated screenshot. A future fix (`ScreenshotTourActivity`, this package's own file)
-  would treat "no scrollable container" as a no-op success rather than an error, for a step whose
-  own screen never claimed to be long.
+- ~~`scroll: "end"` errors on a screen that already fits without scrolling, even at font scale
+  2.0.`~~ **Fixed this round.** `TourAccessibilityScroll.scrollToEnd` now returns a
+  `ScrollOutcome` (`Scrolled`/`NothingToScroll`) instead of throwing when the accessibility tree
+  has no scrollable container; `ScreenshotTourActivity` records `NothingToScroll` as an `ok`
+  capture carrying the manifest note `"no scroll — fits"` rather than an `error` line — a real,
+  distinct "no `AccessibilityNodeProvider` at all" condition still throws, since that is a genuine
+  defect, not a short screen. The five pre-existing `setup-verified/*@2x-end` steps and the two
+  R-817/R-827 `@2x-end` steps (`setup-bt-permission/S02c-bluetooth-permission@2x-end`,
+  `mode-local-mic/N01b-now@2x-end`) all now capture `ok` with that note instead of erroring.
 
 - **Scenario reloads never delete a real (non-scenario) capture session.**
   `Scenarios.clearPriorScenarioData` only ever deletes rows whose id starts with `scenario-` — a
@@ -606,9 +613,14 @@ optional object of symbolic keys `TourIds.resolveSeed` (`app/src/debug/.../tour/
 resolves against the step's own just-loaded scenario data into a real `NavSeed` — see that class's
 own doc comment for the full, current list (`transmission`, `station`, `frequency`, `thread`,
 `stationSubScreen`, `logFilterFrequency`/`logFilterFromMillis`/`logFilterToMillis`,
-`captureLevelMeter`, `reviewSession`, `frequencyInitialView`, `settingsScreen`, `searchQuery`/
-`searchSubmit`/`searchFiltersOpen`, `logSheetOpen`, `revisionsOpen`) — this list has grown well past
-the "only `settingsScreen`" v1 state "What v1 cannot capture" below still describes historically.
+`captureLevelMeter`, `reviewSession`, `reviewSessionView` (R-840 — `SESSION`|`DIGEST`, a companion to
+`reviewSession` landing `Earlier nights` on DG01/DG05 instead of DG04), `frequencyInitialView`,
+`settingsScreen`, `searchQuery`/`searchSubmit`/`searchFiltersOpen`, `logSheetOpen`, `revisionsOpen`)
+— this list has grown well past the "only `settingsScreen`" v1 state "What v1 cannot capture" below
+still describes historically. A **setup** step reads exactly one `drillIn` key directly, never
+through `TourIds.resolveSeed` (which only ever builds a `NavSeed` for a destination step):
+`rigBluetoothAddress` (WPD's S10b checklist seam) — the paired-device address to pass as
+`SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS`, see "The `RigLinkPort` injection seam" above.
 `override` is a second scenario
 name, loaded in-process after the destination has composed and settled — the recovery-toast/
 transition shape (`rig-lost` → `rig-reconnected`, `storage-warn` → `storage-fine`). `fontScale`

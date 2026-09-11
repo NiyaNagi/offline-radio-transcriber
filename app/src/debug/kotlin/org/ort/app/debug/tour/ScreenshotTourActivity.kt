@@ -27,6 +27,7 @@ import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.navigation.ReaderNavigator
+import org.ort.app.ui.navigation.ReviewSessionView
 import org.ort.app.ui.navigation.rememberReaderNavigator
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.theme.OrtTheme
@@ -205,18 +206,27 @@ public class ScreenshotTourActivity : ComponentActivity() {
             ?: error("tour step '${step.id}' names unknown destination '${step.destination}'")
         val navSeed = TourIds.resolveSeed(applicationContext, sessionId, step.drillIn)
         val expectDrawerOpen = navSeed?.openDrawer == true
+        // R-840: only meaningful once a step's own seed actually asks for a session review at all —
+        // a step with no `reviewSession` drillIn never touches `Earlier nights`' own Session/Digest
+        // split, so this stays `null` (not checked) for every other step, the same "only alongside
+        // its own companion key" contract `NavSeed.reviewSessionView` itself documents.
+        val expectReviewSessionView = navSeed?.pendingReviewSessionId?.let {
+            navSeed.reviewSessionView
+                ?: ReviewSessionView.SESSION
+        }
         // R-803 (halt): a stale `activeNavigator` from the *previous* step's own, about-to-be-torn-
         // down composition must never be read as "already matching" this step's own destination —
         // cleared before the new `key(resolved.id)` composition even starts, not after.
         activeNavigator = null
         currentDestinationStep = ResolvedDestinationStep(step.id, destination, navSeed, step.fontScale, sessionId)
-        val settled = awaitDestinationSettled(destination, expectDrawerOpen)
+        val settled = awaitDestinationSettled(destination, expectDrawerOpen, expectReviewSessionView)
         if (!settled) {
             val observed = activeNavigator
             error(
                 "tour step '${step.id}' never settled to destination=$destination drawerOpen=$expectDrawerOpen " +
-                    "within ${STATE_WAIT_TIMEOUT_MILLIS}ms — observed " +
-                    "destination=${observed?.currentState?.value} drawerOpen=${observed?.drawerOpenState?.value}",
+                    "reviewSessionView=$expectReviewSessionView within ${STATE_WAIT_TIMEOUT_MILLIS}ms — observed " +
+                    "destination=${observed?.currentState?.value} drawerOpen=${observed?.drawerOpenState?.value} " +
+                    "reviewSessionView=${observed?.reviewSessionViewState?.value}",
             )
         }
         // Composition + the first poll tick: `OrtNavHost`'s own `LaunchedEffect(sessionId)` polling
@@ -256,26 +266,42 @@ public class ScreenshotTourActivity : ComponentActivity() {
      * finding, `mode-local-mic/ST01`/`mode-change-pending/CF11`/`assets-bundled`/`tier0-llm-stored`'s
      * own `CF04`/`CF11` steps). Returns `true` the moment both match; `false` on timeout — the caller
      * decides how to report that, with whatever `activeNavigator` last observed. */
-    private suspend fun awaitDestinationSettled(destination: ReaderDestination, expectDrawerOpen: Boolean): Boolean =
-        withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
-            while (
-                activeNavigator?.currentState?.value != destination ||
-                activeNavigator?.drawerOpenState?.value != expectDrawerOpen
-            ) {
-                delay(STATE_POLL_INTERVAL_MILLIS)
-            }
-            true
-        } == true
+    private suspend fun awaitDestinationSettled(
+        destination: ReaderDestination,
+        expectDrawerOpen: Boolean,
+        expectReviewSessionView: ReviewSessionView?,
+    ): Boolean = withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
+        while (
+            activeNavigator?.currentState?.value != destination ||
+            activeNavigator?.drawerOpenState?.value != expectDrawerOpen ||
+            (
+                expectReviewSessionView != null &&
+                    activeNavigator?.reviewSessionViewState?.value != expectReviewSessionView
+                )
+        ) {
+            delay(STATE_POLL_INTERVAL_MILLIS)
+        }
+        true
+    } == true
 
     private suspend fun renderSetupStep(step: TourStep): TourCapture {
         val stepName = SetupStepIds.setupStepNameFor(requireNotNull(step.setup))
             ?: error("tour step '${step.id}' names unknown setup id '${step.setup}'")
+        // WPD's S10b checklist seam (this round): a setup step can also name which paired device to
+        // drive through `SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS` — the one drillIn key a
+        // setup step reads at all (never through `TourIds.resolveSeed`, which only ever builds a
+        // `NavSeed` for a *destination* step); `TourSpec.SUPPORTED_DRILL_IN_KEYS` still validates it
+        // so a typo fails loudly rather than silently doing nothing.
+        val rigBluetoothAddress = step.drillIn["rigBluetoothAddress"]
         val deferred = CompletableDeferred<SetupActivity>()
         pendingSetupActivity = deferred
         startActivity(
             Intent(this, SetupActivity::class.java)
                 .putExtra(SetupActivity.EXTRA_STEP, stepName)
-                .putExtra(SetupActivity.EXTRA_FONT_SCALE, step.fontScale),
+                .putExtra(SetupActivity.EXTRA_FONT_SCALE, step.fontScale)
+                .apply {
+                    rigBluetoothAddress?.let { putExtra(SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS, it) }
+                },
         )
         val setupActivity = withTimeout(SETUP_LAUNCH_TIMEOUT_MILLIS) { deferred.await() }
         pendingSetupActivity = null
@@ -287,13 +313,28 @@ public class ScreenshotTourActivity : ComponentActivity() {
         // silently accepting whatever that activity happened to be showing.
         val settled = withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
             while (setupActivity.currentStepForTest?.name != stepName) delay(STATE_POLL_INTERVAL_MILLIS)
+            // The S10b checklist itself: wait for the extra's own selection to have actually landed
+            // (never assumed from `startActivity` alone) before this step's own settle floor below.
+            // Every `InMemoryRigLinkPort` script this package installs reaches its own stable,
+            // terminal `RigLinkState` within milliseconds of selection (real Bluetooth latency does
+            // not exist in this fake) — `rigBluetoothSelectedAddress` landing is therefore the one
+            // fact worth an explicit wait; `DESTINATION_SETTLE_MILLIS`'s existing floor (600ms) is
+            // generous cover for the connect flow's own few-millisecond run to whichever state its
+            // script holds at.
+            if (rigBluetoothAddress != null) {
+                while (setupActivity.rigBluetoothSelectedAddressForTest != rigBluetoothAddress) {
+                    delay(STATE_POLL_INTERVAL_MILLIS)
+                }
+            }
             true
         } == true
         if (!settled) {
             error(
-                "tour step '${step.id}' never settled to setup step '$stepName' within " +
-                    "${STATE_WAIT_TIMEOUT_MILLIS}ms — observed step '${setupActivity.currentStepForTest}' " +
-                    "(isFinishing=${setupActivity.isFinishing})",
+                "tour step '${step.id}' never settled to setup step '$stepName'" +
+                    (rigBluetoothAddress?.let { " with rigBluetoothAddress='$it' selected" } ?: "") +
+                    " within ${STATE_WAIT_TIMEOUT_MILLIS}ms — observed step '${setupActivity.currentStepForTest}', " +
+                    "selectedAddress='${setupActivity.rigBluetoothSelectedAddressForTest}', " +
+                    "linkState=${setupActivity.rigLinkStateForTest} (isFinishing=${setupActivity.isFinishing})",
             )
         }
         delay(DESTINATION_SETTLE_MILLIS)

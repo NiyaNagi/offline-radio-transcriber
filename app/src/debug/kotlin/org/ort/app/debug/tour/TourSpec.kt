@@ -36,7 +36,10 @@ import org.json.JSONObject
  * drawer over whichever [destination] the step names — a companion to `NavSeed.openDrawer`, this
  * round's own one-field seam, not a `station`/`transmission`/etc. drill-in, since the drawer is not
  * itself a destination. `transmission` also gained a fifth symbolic value this round, `"rejected"`
- * (F04 `Fail-Hallucination.dc.html`'s own detail) — see [TourIds.resolveSeed]'s own doc comment. A
+ * (F04 `Fail-Hallucination.dc.html`'s own detail) — see [TourIds.resolveSeed]'s own doc comment.
+ * **R-840**: `reviewSessionView` (`SESSION`|`DIGEST`) — a companion to `reviewSession`, the same
+ * relationship `frequencyInitialView` has to `frequency`; lands `Earlier nights` on the seeded
+ * session's `Digest` (DG01/DG05) instead of its `Session` (DG04) detail. A
  * step naming a [drillIn] key outside this set fails loudly (recorded as one
  * `error` line in the manifest, per
  * this file's own contract with [ScreenshotTourActivity] — never a silent skip and never an
@@ -94,6 +97,7 @@ public data class TourStep(
             "logFilterToMillis",
             "captureLevelMeter",
             "reviewSession",
+            "reviewSessionView",
             "frequencyInitialView",
             "stationSubScreen",
             "settingsScreen",
@@ -103,6 +107,10 @@ public data class TourStep(
             "logSheetOpen",
             "revisionsOpen",
             "openDrawer",
+            // WPD's S10b checklist seam (this round) — see `ScreenshotTourActivity.renderSetupStep`'s
+            // own doc comment for why this key is read directly there, never through
+            // `TourIds.resolveSeed` (which only ever builds a `NavSeed` for a destination step).
+            "rigBluetoothAddress",
         )
     }
 }

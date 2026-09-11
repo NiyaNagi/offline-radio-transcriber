@@ -180,6 +180,11 @@
     { "id": "setup-rig-transport/S09b-rig-transport@2x", "setup": "S09b", "scenario": "setup-rig-transport", "fontScale": 2.0 },
     { "id": "setup-rig-bluetooth/S10b-rig-bluetooth", "setup": "S10b", "scenario": "setup-rig-bluetooth" },
     { "id": "setup-rig-bluetooth/S10b-rig-bluetooth@2x", "setup": "S10b", "scenario": "setup-rig-bluetooth", "fontScale": 2.0 },
+    { "id": "setup-rig-bluetooth/S10b-connecting", "setup": "S10b", "scenario": "setup-rig-bluetooth-connecting", "drillIn": { "rigBluetoothAddress": "AA:BB:CC:11:22:33" } },
+    { "id": "setup-rig-bluetooth/S10b-identified", "setup": "S10b", "scenario": "setup-rig-bluetooth-identified", "drillIn": { "rigBluetoothAddress": "AA:BB:CC:11:22:33" } },
+    { "id": "setup-rig-bluetooth/S10b-verified", "setup": "S10b", "scenario": "setup-rig-bluetooth", "drillIn": { "rigBluetoothAddress": "AA:BB:CC:11:22:33" } },
+    { "id": "setup-rig-bluetooth/S10b-dropped", "setup": "S10b", "scenario": "setup-rig-bluetooth-dropped", "drillIn": { "rigBluetoothAddress": "AA:BB:CC:11:22:33" } },
+    { "id": "setup-rig-bluetooth/S10b-headset-only-selected", "setup": "S10b", "scenario": "setup-rig-bluetooth", "drillIn": { "rigBluetoothAddress": "11:22:33:AA:BB:CC" } },
     { "id": "rig-bt-connected/S11-radio-verified", "setup": "S11", "scenario": "rig-bt-connected" },
     { "id": "assets-bundled/S12-ready-bundled", "setup": "S12", "scenario": "assets-bundled" },
 
@@ -220,8 +225,8 @@
     { "id": "asset-corrupt/CF04-settings-assets", "scenario": "asset-corrupt", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
     { "id": "tier0-llm-stored/CF04-settings-assets", "scenario": "tier0-llm-stored", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
 
-    { "id": "llm-enabled-prose/DG05-digest-prose", "scenario": "llm-enabled-prose", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" } },
-    { "id": "llm-enabled-prose/DG05-digest-prose@2x", "scenario": "llm-enabled-prose", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" }, "fontScale": 2.0 },
-    { "id": "llm-disabled/DG01-digest", "scenario": "llm-disabled", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" } }
+    { "id": "llm-enabled-prose/DG05-digest-prose", "scenario": "llm-enabled-prose", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self", "reviewSessionView": "DIGEST" } },
+    { "id": "llm-enabled-prose/DG05-digest-prose@2x", "scenario": "llm-enabled-prose", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self", "reviewSessionView": "DIGEST" }, "fontScale": 2.0 },
+    { "id": "llm-disabled/DG01-digest", "scenario": "llm-disabled", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self", "reviewSessionView": "DIGEST" } }
   ]
 }
