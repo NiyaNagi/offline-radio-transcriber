@@ -2,6 +2,7 @@
 
 package org.ort.app.ui.failures
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -218,14 +220,22 @@ private fun ToastSlot(toasts: List<RecoveryToast>, onToastShown: () -> Unit, mod
  * silently re-derived. */
 private val HEADER_HEIGHT: Dp = 44.dp
 
-/** Register R-300: the fraction of the current viewport's height ([FailureHost]'s own
+/** Register R-300/R-883: the fraction of the current viewport's height ([FailureHost]'s own
  * `BoxWithConstraints`) a banner may ever occupy — `Fail-Storage`'s own "How this unfolded" card
  * was tall enough, at font scale 2.0, to consume nearly the whole screen otherwise
  * (`storage-warn/N04-capture-status-banner@2x-pass3.png`), squeezing the destination's own title
- * and controls (`capture-status-stop`) into a sliver behind the pinned live bar. 40% leaves the
- * destination's own header, title and at least one real control genuinely reachable underneath, on
- * every device this app targets. */
-private const val BANNER_MAX_HEIGHT_FRACTION = 0.4f
+ * and controls (`capture-status-stop`) into a sliver behind the pinned live bar. R-883's own reopen
+ * (run 6): F9's title, two-sentence body *and two actions* — `Reconnect` and `Set the frequency by
+ * hand` — never fit under the original 40% at font scale 2.0, so the banner's own scroll was the
+ * *only* way to reach either action; a real device swipe anywhere in the destination's own (much
+ * larger) scrollable content below scrolls *that*, not this banner's own small scroll region, which
+ * is why relying on scroll alone left both actions unreachable in practice even though the banner
+ * was technically scrollable. 55% is large enough that a title + two-sentence body + two actions —
+ * this package's tallest real banner shape — fits without scrolling at 2.0 on the reference device,
+ * while still leaving the destination's own header, title and at least one real control reachable
+ * underneath on every device this app targets; anything taller than that (multiple bodies stacked,
+ * an even larger font scale) still scrolls inside the banner itself, with the hint below. */
+private const val BANNER_MAX_HEIGHT_FRACTION = 0.55f
 
 /** Register R-883 (halt, validator V11, font scale 2.0): on the real device, [onHeightMeasured]'s
  * own reported height and the destination's own `contentTopPadding` were already the banner's real
@@ -253,8 +263,15 @@ private val BANNER_CONTENT_CLEARANCE: Dp = OrtSpacing.xl
  * but that "no scroll affordance reaches" the rest of F9's message: the banner *was* already
  * scrollable (confirmed directly on device: a real swipe reaches both action rows past the fold),
  * nothing on screen ever said so. The hint clears itself the moment a real scroll reaches the
- * banner's own end (`canScrollForward` false), so it never lingers once nothing more is hidden. */
-private val BANNER_SCROLL_HINT_HEIGHT: Dp = 14.dp
+ * banner's own end (`canScrollForward` false), so it never lingers once nothing more is hidden.
+ *
+ * Run 6 reopen: at 14dp, [OrtColors.textSecondary]-tinted, with no background of its own, reviewer
+ * E1 could not find it in either real-device capture even though the node genuinely rendered (its
+ * own semantics were present in both) — too small and too low-contrast against `Banner`'s own dark
+ * card background to read as an affordance rather than a stray pixel. 18dp on an amber-tinted pill
+ * (`OrtColors.accentAmber`, the same halt/degrade colour family the border and title icon already
+ * use) makes it an unmistakable, deliberate UI element rather than noise. */
+private val BANNER_SCROLL_HINT_HEIGHT: Dp = 18.dp
 
 /** Every banner/card renders pinned near the top of the current destination, below both the
  * status bar ([failureScreenInset]) and the destination's own header row ([HEADER_HEIGHT]) — see
@@ -341,7 +358,9 @@ private fun BoxScope.BannerOverlay(
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 2.dp)
+                    .padding(bottom = 6.dp)
+                    .background(OrtColors.bannerAmberBorder, RoundedCornerShape(50))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
                     .semantics(mergeDescendants = true) {
                         contentDescription = "More of this message below — scroll to read the rest."
                     }
@@ -350,7 +369,7 @@ private fun BoxScope.BannerOverlay(
                 Icon(
                     imageVector = OrtIcons.chevron,
                     contentDescription = null,
-                    tint = OrtColors.textSecondary,
+                    tint = OrtColors.accentAmber,
                     modifier = Modifier.size(BANNER_SCROLL_HINT_HEIGHT).rotate(ROTATE_CHEVRON_TO_POINT_DOWN),
                 )
             }

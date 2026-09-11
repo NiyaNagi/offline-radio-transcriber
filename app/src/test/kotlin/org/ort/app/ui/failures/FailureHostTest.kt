@@ -45,6 +45,7 @@ import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /**
@@ -475,5 +476,83 @@ class FailureHostTest {
                 "end — nothing is left cut off for it to point at",
             composeTestRule.onAllNodesWithTag("failure-banner-scroll-hint").fetchSemanticsNodes().isEmpty(),
         )
+    }
+
+    /**
+     * Register R-883, run 6 reopen: reviewer E1 found F9's own real two-action message (title,
+     * two-sentence body, the WPC3 retry-ladder clause, `Reconnect` and `Set the frequency by hand`)
+     * still uncapped-unreadable on the tour AVD's own real width at font scale 2.0 —
+     * `rig-bt-lost/F09-rig-bt-lost-now@2x` cuts the message at "If you changed" and `@2x-end` (one
+     * second later) shows the identical banner while only the *destination's own* content beneath
+     * scrolled, with no scroll-hint chevron visible in either frame. `w390dp-h844dp-420dpi` is that
+     * AVD's own real width/height/density (not this file's other tests' plain, un-`@Config`'d
+     * Robolectric root, which this session's own investigation already found is hard-fixed at a
+     * tiny 320x470dp regardless of any modifier request on a child). Seeds the exact same
+     * `attempt`/`ofTotal`/`nextRetryInMillis` the real `rig-bt-lost` scenario does, so this test's
+     * own message is exactly as long as the one on screen in the reopened evidence, not the
+     * shorter, `lastKnown`/`sinceMillis`-only message this file's earlier `R_883` tests used.
+     */
+    @Test
+    @Requirement("R-883")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_883 at the tour AVD's own width, F9's own two-action message has a scroll hint inside the banner`() {
+        RigStatus.stale(
+            lastKnown = RigStatus.State.Connected("TH-D75A", emptyList()),
+            sinceMillis = 0L,
+            attempt = 3,
+            ofTotal = 8,
+            nextRetryInMillis = 20_000L,
+        )
+
+        composeTestRule.setContent {
+            // `@Config(qualifiers = "w390dp-h844dp-420dpi")` sets a *real* density for this root
+            // (unlike this file's other `R_883`/`R_178`/`R_300` tests, which run against the plain,
+            // un-`@Config`'d Robolectric root this session's own investigation found is hard-fixed
+            // at a tiny 320x470dp — `density = 1f` there is fine because nothing depends on the
+            // real device's own density, only relative comparisons). Overriding density to `1f`
+            // *here* would silently halve every sp-sized glyph relative to this root's real 420dpi,
+            // making everything fit that would not really fit — this reads the real density the
+            // `@Config` established and keeps it, changing only `fontScale`.
+            val realDensity = LocalDensity.current.density
+            CompositionLocalProvider(LocalDensity provides Density(density = realDensity, fontScale = 2f)) {
+                OrtTheme {
+                    FailureHost(sessionId = null) {
+                        Text("underlying destination", modifier = Modifier.fillMaxSize())
+                    }
+                }
+            }
+        }
+
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag("failure-rig-banner").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val hintNodes = composeTestRule.onAllNodesWithTag("failure-banner-scroll-hint").fetchSemanticsNodes()
+        assertTrue(
+            "expected F9's own real title + two-sentence body + retry clause + two actions, at " +
+                "font scale 2.0 on the tour AVD's own w390dp-h844dp width, to still need scrolling " +
+                "past the banner's own 55% cap, and the scroll hint to exist while it does",
+            hintNodes.isNotEmpty(),
+        )
+
+        val bannerBounds = composeTestRule.onNodeWithTag("failure-banner-overlay").getUnclippedBoundsInRoot()
+        val hintBounds = composeTestRule.onNodeWithTag("failure-banner-scroll-hint").getUnclippedBoundsInRoot()
+        assertTrue(
+            "expected the scroll hint ($hintBounds) to sit inside the banner's own bounds " +
+                "($bannerBounds) — a hint outside its own banner points at nothing",
+            hintBounds.left >= bannerBounds.left &&
+                hintBounds.right <= bannerBounds.right &&
+                hintBounds.top >= bannerBounds.top &&
+                hintBounds.bottom <= bannerBounds.bottom,
+        )
+
+        // The actions themselves must be reachable by the same scroll the hint is pointing at —
+        // the reopen's own complaint was that `Reconnect`/`Set the frequency by hand` were not.
+        composeTestRule.onNodeWithTag("failure-banner-scroll-content")
+            .performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithText("Reconnect", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Set the frequency by hand", substring = true).assertIsDisplayed()
     }
 }
