@@ -9,6 +9,7 @@ import org.ort.app.ui.navigation.StorageFooterViewState
 import org.ort.app.ui.navigation.toGigabyteLabel
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.SystemClock
+import org.ort.core.capture.BluetoothAudioProfile
 import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.CaptureModePresets
 import org.ort.data.OrtDatabase
@@ -22,6 +23,7 @@ import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.collectSessionStorageSummaries
 import org.ort.pipeline.capture.computeNextDeletion
 import org.ort.pipeline.capture.measureStorageAccounting
+import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.rig.DefaultRigTransportFactory
 import java.io.File
 import java.time.Instant
@@ -50,7 +52,7 @@ public object SettingsPolling {
     public suspend fun root(context: Context, store: SettingsStore): SettingsRootViewState {
         val footer = StorageFooterViewState.fromAudioDirectory(context)
         val modelsState = org.ort.app.ui.data.ModelsController.currentState(context)
-        val installedCount = modelsState.rows.count { it.status != org.ort.app.ui.data.ModelRowStatus.NOT_INSTALLED }
+        val lexiconRow = org.ort.app.ui.data.ModelsController.lexiconRow(context)
 
         return SettingsRootViewState(
             sections = listOf(
@@ -73,7 +75,7 @@ public object SettingsPolling {
                         ),
                         SettingsRowViewState(
                             "Models and lexicon",
-                            "$installedCount of ${modelsState.rows.size} assets installed",
+                            modelsAndLexiconSubtitle(modelsState, lexiconRow),
                             SettingsScreenId.ASSETS,
                         ),
                         SettingsRowViewState(
@@ -114,6 +116,56 @@ public object SettingsPolling {
                 ),
             ),
         )
+    }
+
+    /**
+     * Register R-915 (Reviewer B2, run 3, design): CF01's "Models and lexicon" row used to read
+     * "4 of 5 assets installed" — real, but a count where the board names the actual components
+     * and their verification state ("whisper-small · Silero VAD · lexicon 2026.08 · all verified").
+     * Names each real, installed component from [modelsState]/[lexiconRow] — the Whisper family as
+     * one name (never three loose file ids, the same grouping [ModelsScreen]'s own `GroupedAssetRow`
+     * already uses), Silero VAD and Gemma by their own real labels, the lexicon by the real version
+     * parsed out of [org.ort.app.ui.data.LexiconAssetRowViewState.label]'s own stable, already-public
+     * format (`"Callsign lexicon <version> · <count> records"`, the exact string CF04's own lexicon
+     * row already renders verbatim — not a second, private format this reaches into). "all verified"
+     * only when every named component's own real status is fully verified (never
+     * `INSTALLED_UNVERIFIED`), "not all verified" otherwise — never a specific false claim either way.
+     */
+    private fun modelsAndLexiconSubtitle(
+        modelsState: org.ort.app.ui.data.ModelsViewState,
+        lexiconRow: org.ort.app.ui.data.LexiconAssetRowViewState,
+    ): String {
+        val rowsById = modelsState.rows.associateBy { it.id }
+        val whisperRows = listOf(
+            org.ort.app.ui.data.ModelId.ASR_ENCODER,
+            org.ort.app.ui.data.ModelId.ASR_DECODER,
+            org.ort.app.ui.data.ModelId.ASR_TOKENS,
+        ).mapNotNull { rowsById[it] }
+
+        val components = mutableListOf<String>()
+        var allVerified = true
+
+        fun include(label: String, statuses: List<org.ort.app.ui.data.ModelRowStatus>) {
+            if (statuses.isEmpty() || statuses.any { it == org.ort.app.ui.data.ModelRowStatus.NOT_INSTALLED }) return
+            components += label
+            if (statuses.any { it == org.ort.app.ui.data.ModelRowStatus.INSTALLED_UNVERIFIED }) allVerified = false
+        }
+
+        include("Whisper tiny.en", whisperRows.map { it.status })
+        rowsById[org.ort.app.ui.data.ModelId.VAD]?.let { include(it.label, listOf(it.status)) }
+        rowsById[org.ort.app.ui.data.ModelId.LLM_GEMMA3_1B]?.let { include(it.label, listOf(it.status)) }
+
+        if (lexiconRow.installed) {
+            val version = lexiconRow.label
+                .substringAfter("Callsign lexicon ", missingDelimiterValue = "")
+                .substringBefore(" ·")
+                .ifBlank { null }
+            components += version?.let { "lexicon $it" } ?: "lexicon"
+        }
+
+        if (components.isEmpty()) return "Nothing installed yet"
+        val verifiedClause = if (allVerified) "all verified" else "not all verified"
+        return components.joinToString(" · ") + " · $verifiedClause"
     }
 
     private fun inputSummaryLine(): String = when (val state = InputStatus.state) {
@@ -165,7 +217,7 @@ public object SettingsPolling {
         modeFacts: CaptureModeFacts = RealCaptureModeFacts(context),
     ): SettingsCaptureViewState {
         val (inputLabel, inputSub) = when (val state = InputStatus.state) {
-            InputStatus.State.None -> "No input selected" to "select an input to capture"
+            InputStatus.State.None -> configuredInputFallback(context)
             is InputStatus.State.Opened -> {
                 val verified = if (state.routeVerified) "verified" else "not verified"
                 val audioKindNote = if (state.descriptor.kind == AudioDeviceKind.BUILT_IN_MIC) {
@@ -173,10 +225,14 @@ public object SettingsPolling {
                 } else {
                     "radio audio"
                 }
+                val profileClause = bluetoothProfileClause(state.descriptor.bluetoothProfile)
                 state.descriptor.label to
-                    "$verified · ${state.nativeRateHz} Hz native · ${state.resamplerId} · $audioKindNote"
+                    "$verified · ${state.nativeRateHz} Hz native · ${state.resamplerId} · $audioKindNote$profileClause"
             }
-            is InputStatus.State.Lost -> state.lastKnown.descriptor.label to "input lost since ${state.sinceMillis}"
+            is InputStatus.State.Lost -> {
+                val profileClause = bluetoothProfileClause(state.lastKnown.descriptor.bluetoothProfile)
+                state.lastKnown.descriptor.label to "input lost since ${state.sinceMillis}$profileClause"
+            }
             is InputStatus.State.Mismatch -> (state.actual?.label ?: "unknown device") to
                 "expected ${state.expected.label} — route mismatch"
         }
@@ -250,7 +306,18 @@ public object SettingsPolling {
             )
         }
         val audioRoute = when (val state = InputStatus.state) {
-            InputStatus.State.None -> SettingsModeSetRowViewState("Audio route", "not yet selected")
+            InputStatus.State.None -> {
+                val configStore = realCaptureConfigurationStore(context)
+                val configuredLabel = if (configStore.hasBeenConfigured()) {
+                    configuredInputLabel(configStore.current())
+                } else {
+                    null
+                }
+                SettingsModeSetRowViewState(
+                    "Audio route",
+                    configuredLabel?.let { "$it · not verified this session" } ?: "not yet selected",
+                )
+            }
             is InputStatus.State.Opened -> {
                 val verified = if (state.routeVerified) "verified" else "not verified"
                 val kindNote = if (state.descriptor.kind == AudioDeviceKind.BUILT_IN_MIC) {
@@ -258,14 +325,18 @@ public object SettingsPolling {
                 } else {
                     "radio audio, not the room"
                 }
-                SettingsModeSetRowViewState("Audio route", "${state.descriptor.label} · $verified · $kindNote")
+                val profileClause = bluetoothProfileClause(state.descriptor.bluetoothProfile)
+                SettingsModeSetRowViewState(
+                    "Audio route",
+                    "${state.descriptor.label} · $verified · $kindNote$profileClause",
+                )
             }
             is InputStatus.State.Lost ->
                 SettingsModeSetRowViewState("Audio route", "${state.lastKnown.descriptor.label} · input lost")
             is InputStatus.State.Mismatch -> SettingsModeSetRowViewState("Audio route", "route mismatch")
         }
         val rigLink = when (val state = RigStatus.state) {
-            RigStatus.State.Absent -> SettingsModeSetRowViewState("Rig link", "no radio configured")
+            RigStatus.State.Absent -> SettingsModeSetRowViewState("Rig link", configuredRigLinkFallback(context))
             is RigStatus.State.Connected ->
                 SettingsModeSetRowViewState("Rig link", "${state.descriptor} · connected")
             is RigStatus.State.Stale -> SettingsModeSetRowViewState(
@@ -357,6 +428,80 @@ public object SettingsPolling {
         RigLinkTransportKind.NONE, null -> null
     }
 
+    /**
+     * Register R-860/R-861 (halt, Validator V9, device): CF02's Input row and CF11's Audio-route
+     * row used to read only the live [InputStatus] holder — honest for a real process that opened
+     * a device, but a scenario/session whose holder was never opened this process (a fresh process
+     * pointed at an already-configured [org.ort.pipeline.rig.CaptureConfigurationStore], the exact
+     * `mode-change-pending` shape V9 reproduced) then read "No input selected"/"not yet selected"
+     * directly beneath a Capture-mode row correctly reading "USB-connected radio" — a contradiction
+     * on the same screen. [configuredInputLabel] is the one place both rows now fall back to the
+     * *configured* selection when [CaptureConfigurationStore.hasBeenConfigured] — never a live,
+     * verified claim (this function is only ever consulted from the branch that already established
+     * no live status exists), so every caller appends its own "not verified this session" qualifier
+     * rather than this function claiming more than the store itself can support. `null` exactly when
+     * the store has nothing honest to say either (never configured, or configured for a mode with no
+     * explicit input id and not [CaptureMode.LOCAL_MICROPHONE]'s own implicit built-in choice).
+     */
+    private fun configuredInputLabel(config: CaptureConfiguration): String? = config.selectedInputId
+        ?: config.mode.takeIf { it == CaptureMode.LOCAL_MICROPHONE }?.operatorLabel
+
+    /** CF02's own `(label, subLine)` shape for [configuredInputLabel]'s fallback — the honest
+     * "No input selected" pair, unchanged, when the store has nothing configured either. */
+    private fun configuredInputFallback(context: Context): Pair<String, String> {
+        val store = realCaptureConfigurationStore(context)
+        val label = if (store.hasBeenConfigured()) configuredInputLabel(store.current()) else null
+        return label?.let { it to "not verified this session" }
+            ?: ("No input selected" to "select an input to capture")
+    }
+
+    /** The rig-side twin of [configuredInputLabel] — `"<descriptor name> · <transport>"` via
+     * [RigPickerCatalogue] (the same lookup S09/S09b/[org.ort.app.ui.data.SessionRouteFacts] use,
+     * so a fallback name here is never a second, differently-sourced copy of the onboarding
+     * picker's own name), or `null` when the store names no real rig
+     * ([org.ort.rig.NullRigModule.ID], or an id the catalogue does not resolve — an imported
+     * descriptor since removed). */
+    private fun configuredRigLabel(config: CaptureConfiguration): String? {
+        if (config.rigId == org.ort.rig.NullRigModule.ID) return null
+        val descriptorName = org.ort.app.ui.setup.RigPickerCatalogue.build().entries()
+            .firstOrNull { it.id == config.rigId }?.displayName ?: return null
+        return listOfNotNull(descriptorName, transportLabelFor(config.rigTransportKind)).joinToString(" · ")
+    }
+
+    /** CF11's own single-string "Rig link" fallback — "no radio configured" unchanged when the
+     * store has nothing honest to say either. */
+    private fun configuredRigLinkFallback(context: Context): String {
+        val store = realCaptureConfigurationStore(context)
+        val label = if (store.hasBeenConfigured()) configuredRigLabel(store.current()) else null
+        return label?.let { "$it · not verified this session" } ?: "no radio configured"
+    }
+
+    /**
+     * Register R-864 (Validator V9, device): CF02's Input row and CF11's Audio-route row must name
+     * the real negotiated Bluetooth HFP codec exactly as DG04 does (R-834) — "HFP mSBC"/"HFP CVSD"/
+     * "profile not reported" — never the word "Bluetooth" a second time with no codec named at all.
+     * Unlike DG04 (a *past* session, read from `SessionEntity.bluetoothProfile` — no live holder
+     * survives an ended session), CF02/CF11 are always about the *current* process's own live state,
+     * where [org.ort.capture.android.AudioDeviceDescriptor.bluetoothProfile] is already a real,
+     * live fact — `null` for every non-Bluetooth device by that type's own contract (confirmed by
+     * reading `AudioDeviceDescriptor.kt` before writing this), so no [org.ort.rig.NullRigModule]-style
+     * "is this really Bluetooth" gate is needed here: a non-null profile already implies it was.
+     * `""` (no clause appended) exactly when [profile] is `null` — genuinely not a Bluetooth route,
+     * never a fabricated claim about one that is.
+     */
+    private fun bluetoothProfileClause(profile: BluetoothAudioProfile?): String =
+        profile?.let { " · ${bluetoothProfileLabel(it)}" }.orEmpty()
+
+    /** R-864: the same real HFP codec names DG04's own `DigestPolling.bluetoothProfileLabel`
+     * renders (`R-834`) — duplicated here rather than shared, the same "each package's own small
+     * formatting function" precedent that file's own doc comment already established for this
+     * exact mapping (no shared home for it exists yet across packages). */
+    private fun bluetoothProfileLabel(profile: BluetoothAudioProfile): String = when (profile) {
+        BluetoothAudioProfile.HFP_MSBC -> "HFP mSBC"
+        BluetoothAudioProfile.HFP_CVSD -> "HFP CVSD"
+        BluetoothAudioProfile.UNKNOWN -> "profile not reported"
+    }
+
     private fun linkAddressLabel(context: Context): String? {
         val params = realCaptureConfigurationStore(context).current().rigParams
         params[DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS]?.let { return it }
@@ -412,11 +557,22 @@ public object SettingsPolling {
         else -> RigLinkTransportKind.NONE
     }
 
-    /** `<descriptor id> · built in · verified command set <caps>` — [org.ort.rig.RigCapability]
-     * names real for the transport currently in use, from the matched bundled descriptor's own
-     * declared capability list — never the board mockup's raw CAT mnemonics (`FQ BY FO BC...`),
-     * which no accessible source in this build carries (see [SettingsRigViewState]'s own doc
-     * comment). [NOT_REPORTED_BY_RIG_MODULE] for an unmatched (operator-imported) descriptor. */
+    /**
+     * `<descriptor id> · built in · verified command set <caps>` — the descriptor's own real,
+     * declared capabilities for the transport currently in use, rendered as the CAT mnemonics
+     * `Settings-Rig.dc.html`'s own convention uses (`FQ BY …`), never the raw
+     * [org.ort.rig.RigCapability] enum names. [NOT_REPORTED_BY_RIG_MODULE] for an unmatched
+     * (operator-imported) descriptor.
+     *
+     * Register R-923 (Reviewer C2, run 3): this used to join the raw enum names
+     * ("FREQUENCY, SQUELCH_STATE, SUB_BAND") — real, but not the screen's own established
+     * shorthand. [catMnemonicFor] maps each real capability to the real two-letter command
+     * `docs/reference/th-d75a-cat.md`'s own verified command table (read before writing this)
+     * documents for it — never the board mockup's own full eight-command example (`FQ BY FO BC MR
+     * ME AI BL`), which is illustrative of a broader command set no accessible source in this build
+     * actually declares (the real, bundled `kenwood-thd75a.json` capability list is only three:
+     * `FREQUENCY`, `SQUELCH_STATE`, `SUB_BAND`).
+     */
     private fun rigModuleLabel(
         descriptorId: String?,
         descriptor: org.ort.rig.descriptor.RigDescriptor?,
@@ -425,14 +581,43 @@ public object SettingsPolling {
         if (descriptor == null || descriptorId == null) return NOT_REPORTED_BY_RIG_MODULE
         val transport = descriptor.transports.firstOrNull { descriptorTransportKindOf(it.kind) == transportKind }
             ?: descriptor.transports.firstOrNull()
-        val caps = transport?.capabilities?.joinToString(", ") ?: return NOT_REPORTED_BY_RIG_MODULE
+        val rawCaps = transport?.capabilities ?: return NOT_REPORTED_BY_RIG_MODULE
+        val caps = rawCaps.joinToString(" ") { raw ->
+            runCatching { org.ort.rig.RigCapability.valueOf(raw) }.getOrNull()?.let(::catMnemonicFor) ?: raw
+        }
         return "$descriptorId · built in · verified command set $caps"
     }
 
-    /** The descriptor's *other* declared transport, named plainly — real `vid`/`pid` appended only
-     * when the descriptor itself states them (`kenwood-thd75a.json` leaves both `null`, "still to
-     * verify" — this never invents the board mockup's own `vid 0x0451 pid 0x16a8`). `null` when the
-     * descriptor is unmatched or declares only the one transport currently in use. */
+    /** R-923: the real two-letter CAT command `docs/reference/th-d75a-cat.md`'s own verified
+     * command table documents for each [org.ort.rig.RigCapability] this build can actually declare
+     * — never a guessed mnemonic for a capability that table does not cover
+     * ([org.ort.rig.RigCapability.SIGNAL_STRENGTH]/`TIME`/`POSITION`, none of which are in that
+     * table today), which falls back to the enum's own name, honestly, rather than inventing one. */
+    private fun catMnemonicFor(capability: org.ort.rig.RigCapability): String = when (capability) {
+        org.ort.rig.RigCapability.FREQUENCY -> "FQ"
+        org.ort.rig.RigCapability.SQUELCH_STATE -> "BY"
+        org.ort.rig.RigCapability.MODE -> "FO"
+        org.ort.rig.RigCapability.SUB_BAND -> "BC"
+        org.ort.rig.RigCapability.MEMORY_CHANNEL -> "MR"
+        org.ort.rig.RigCapability.CHANNEL_NAME -> "ME"
+        org.ort.rig.RigCapability.SIGNAL_STRENGTH,
+        org.ort.rig.RigCapability.TIME,
+        org.ort.rig.RigCapability.POSITION,
+        -> capability.name
+    }
+
+    /**
+     * The descriptor's *other* declared transport, named plainly — real `vid`/`pid` appended only
+     * when the descriptor itself states them. `null` when the descriptor is unmatched or declares
+     * only the one transport currently in use.
+     *
+     * Register R-835 reopened (Reviewer C2, run 3): `kenwood-thd75a.json` leaves both `null`
+     * ("still to verify", `BundledDescriptors`'s own doc comment — H1, the operator with the radio
+     * in hand over USB, fills them in later) — this used to render as a bare "USB serial also
+     * supported" with no mention of vid/pid at all, silently omitting the fact that the ids are
+     * simply not yet known rather than genuinely inapplicable. Now says so honestly: "vid/pid not
+     * yet verified (H1)" — never the board mockup's own invented `vid 0x0451 pid 0x16a8`.
+     */
     private fun otherTransportLabel(
         descriptor: org.ort.rig.descriptor.RigDescriptor?,
         transportKind: RigLinkTransportKind?,
@@ -443,7 +628,7 @@ public object SettingsPolling {
         val vidPid = if (other.usbVendorId != null && other.usbProductId != null) {
             ", vid 0x%04x pid 0x%04x".format(Locale.ROOT, other.usbVendorId, other.usbProductId)
         } else {
-            ""
+            ", vid/pid not yet verified (H1)"
         }
         return "$label also supported$vidPid"
     }

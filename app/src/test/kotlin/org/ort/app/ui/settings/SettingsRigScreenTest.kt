@@ -291,6 +291,17 @@ class SettingsRigScreenTest {
 
     @Test
     @Requirement("FR-RIG-15")
+    fun `R_835_reopened a known transport with an unknown address states so honestly, never silently drops it`() {
+        val state = connectedState().copy(transportLabel = "Bluetooth SPP", linkAddressLabel = null)
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = state, onBack = {}) } }
+
+        composeTestRule
+            .onNodeWithText("Bluetooth SPP · address not yet reported by this build", substring = true)
+            .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
     fun `R_835 a USB link never claims paired in system settings`() {
         val state = connectedState().copy(transportLabel = "USB serial", linkAddressLabel = "vid 0x0451 pid 0x16a8")
         composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = state, onBack = {}) } }

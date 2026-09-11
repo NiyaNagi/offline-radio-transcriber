@@ -1,15 +1,28 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -110,14 +123,83 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithText("ACTIVE").assertExists()
-        // `Settings-Assets.dc.html` verbatim: "segmentation · 2 MB · bundled · verified
+        // `Settings-Assets.dc.html` verbatim shape: "segmentation · <size> · bundled · verified
         // 9e2449e1" — no "sha256" word, no trailing tiers clause (unlike the Whisper family row,
-        // a different formula — see `assetFactsSubLine`'s own doc comment for why).
+        // a different formula — see `assetFactsSubLine`'s own doc comment for why). R-865
+        // (Validator V9, device): "644 KB" is the catalogue's own real declared VAD size
+        // (`bundled-assets.json`'s `643854` bytes), the row's primary figure now, never this
+        // fixture's own on-disk length alone (`2_100_000L`, deliberately different here to prove
+        // the two are independent) — that real length still renders, honestly, as its own
+        // secondary "on disk" clause.
         composeTestRule
             .onNodeWithContentDescription(
-                "Silero VAD verified. segmentation · 2 MB · bundled · verified 9e2449e1",
+                "Silero VAD verified. segmentation · 644 KB · on disk: 2 MB · bundled · verified 9e2449e1",
             )
             .assertExists()
+    }
+
+    // --- R-865 (Validator V9, device) — a verified-but-zero-byte row is a placeholder, never a
+    // legitimate 0 KB verified asset ---------------------------------------------------------
+
+    @Test
+    @Requirement("FR-AST-3a")
+    fun `R_865 a verified row with 0 real bytes reads as an honest placeholder, never a fabricated 0 KB asset`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(ModelId.VAD, ModelRowStatus.INSTALLED, sizeBytes = 0L, checksumPrefix = "9e2449e1"),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        // The real, declared VAD size still renders (never "size unknown") — only the on-disk/
+        // verified claim is withheld, since 0 real bytes can never back a genuine checksum.
+        composeTestRule
+            .onNodeWithContentDescription(
+                "Silero VAD verified. segmentation · 644 KB · bundled · placeholder — no bytes",
+            )
+            .assertExists()
+        composeTestRule.onNodeWithContentDescription("Silero VAD verified. segmentation · 0 KB", substring = true)
+            .assertDoesNotExist()
+        composeTestRule.onNodeWithText("verified 9e2449e1", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-AST-3a")
+    fun `R_865 a grouped family with even one placeholder part is honestly flagged, not silently averaged away`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            row(ModelId.ASR_ENCODER, ModelRowStatus.INSTALLED, sizeBytes = 0L, checksumPrefix = "aa"),
+                            row(
+                                ModelId.ASR_DECODER,
+                                ModelRowStatus.INSTALLED,
+                                sizeBytes = 1_000_000L,
+                                checksumPrefix = "bb",
+                            ),
+                            row(
+                                ModelId.ASR_TOKENS,
+                                ModelRowStatus.INSTALLED,
+                                sizeBytes = 500_000L,
+                                checksumPrefix = "cc",
+                            ),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Pass B · 104 MB · bundled · placeholder — no bytes").assertExists()
     }
 
     @Test
@@ -220,8 +302,12 @@ class ModelsScreenTest {
             }
         }
 
+        // R-865: "836 KB" is the catalogue's own real declared tokens-file size
+        // (`bundled-assets.json`'s `835554` bytes) — the row's primary figure now; the fixture's
+        // own on-disk length (`500_000L`, deliberately different) still renders, honestly, as its
+        // own secondary "on disk" clause.
         composeTestRule.onNodeWithContentDescription(
-            "Whisper tiny.en — tokens installed, unverified. Pass B · 500 KB · bundled · " +
+            "Whisper tiny.en — tokens installed, unverified. Pass B · 836 KB · on disk: 500 KB · bundled · " +
                 "verified abc12345, not against a published value",
         ).assertExists()
     }
@@ -473,13 +559,16 @@ class ModelsScreenTest {
 
         composeTestRule.onNodeWithText("Whisper tiny.en (speech to text)").assertExists()
         composeTestRule.onNodeWithText("ACTIVE").assertExists()
-        // Aggregate size is the sum of every part's real bytes (1.0 + 2.0 + 0.5 = 3.5 MB, rounds to
-        // 4 MB) — never a per-part number standing in for the whole family, and honestly "not
-        // every part verified" since the tokens file is trust-on-first-use, never a false blanket
-        // "verified" claim. "Pass B · ... · bundled · ..." per `Settings-Assets.dc.html`'s own
-        // "Pass · size · bundled · verified · tiers" formula (redrawn 2026-09-10).
+        // R-865 (Validator V9, device): the primary size is now the sum of every part's own
+        // catalogue-declared size (12,937,772 + 89,853,865 + 835,554 = 103,627,191 bytes, rounds
+        // to 104 MB) — real always, never a sum of on-disk lengths a test/dev fixture's own
+        // placeholder shortcut can zero out. The real on-disk sum (1.0 + 2.0 + 0.5 = 3.5 MB,
+        // rounds to 4 MB, this fixture's own deliberately-different numbers) still renders,
+        // honestly, as its own secondary "on disk" clause — never a per-part number standing in
+        // for the whole family, and honestly "not every part verified" since the tokens file is
+        // trust-on-first-use, never a false blanket "verified" claim.
         composeTestRule.onNodeWithText(
-            "Pass B · 4 MB · bundled · not every part verified against a published checksum",
+            "Pass B · 104 MB · on disk: 4 MB · bundled · not every part verified against a published checksum",
         ).assertExists()
         // No loose per-part action remains once nothing is missing.
         composeTestRule.onNodeWithContentDescription(
@@ -647,5 +736,54 @@ class ModelsScreenTest {
         }
 
         composeTestRule.onNodeWithText("staged · activates when this session ends").assertDoesNotExist()
+    }
+
+    /**
+     * Register R-933 (Reviewer D2, run 3, design — the R-826 shape): under a live session the
+     * Lexicon row's own "not installed" sub-line and "Install a lexicon from a file" action sat
+     * behind the live bar with no way to scroll them clear. Reproduced the same structural way this
+     * codebase's own R-613/R-826 precedents do: a real sibling occupying the live bar's own height
+     * below a `weight(1f)` box holding this screen, then a real maximum scroll, then one node's
+     * bottom checked against the sibling's own top.
+     */
+    @Test
+    @Requirement("FR-AST-3")
+    fun `R_933 scrolled to the end the footer clears a live bar pinned below this screen`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column(modifier = Modifier.width(390.dp).height(500.dp)) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        ModelsScreen(
+                            state = ModelsViewState(rows = listOf(row(ModelId.VAD, ModelRowStatus.NOT_INSTALLED))),
+                            onDownload = {},
+                            onSideload = {},
+                        )
+                    }
+                    Box(modifier = Modifier.height(44.dp).testTag("fake-live-bar"))
+                }
+            }
+        }
+
+        val scrollable = composeTestRule.onNode(hasScrollAction())
+        scrollable.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
+        composeTestRule.waitForIdle()
+
+        val footerBottom = composeTestRule
+            .onNodeWithText("A corrupt file is refused and the old one stays", substring = true)
+            .getUnclippedBoundsInRoot()
+            .bottom
+        val liveBarTop = composeTestRule.onNodeWithTag("fake-live-bar").getUnclippedBoundsInRoot().top
+        // R-933's own fix adds 44dp; this screen's closing text already carried its own pre-existing
+        // `OrtSpacing.lg` (20dp) trailing padding regardless of this fix — the threshold is set
+        // meaningfully above that pre-existing baseline (never a bare `> 0`, which the existing 20dp
+        // alone could already satisfy) so this genuinely discriminates the *new* clearance, not the
+        // screen's own unrelated existing spacing.
+        val minimumExpectedGap = 40.dp
+        assertTrue(
+            "expected the closing footer's own bottom ($footerBottom) to clear the live bar's own top " +
+                "($liveBarTop) by at least $minimumExpectedGap after a real max scroll; got a gap of " +
+                "${liveBarTop - footerBottom}",
+            liveBarTop - footerBottom >= minimumExpectedGap,
+        )
     }
 }

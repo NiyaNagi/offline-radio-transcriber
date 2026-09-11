@@ -116,7 +116,15 @@ public fun ModelsScreen(
         return
     }
 
-    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    // Register R-933 (Reviewer D2, run 3, design — the R-826 shape): under a live session the
+    // Lexicon row's own "not installed" sub-line and "Install a lexicon from a file" action sat
+    // behind the live bar with no way to scroll them clear — this screen had no trailing clearance
+    // of its own for whichever destination host pins a live bar below it, unlike `SettingsCaptureScreen`
+    // (R-826's own fix). Same fixed floor, same reasoning: this screen has no `liveBar` parameter of
+    // its own to make the clearance conditional, so it applies unconditionally.
+    Column(
+        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = LIVE_BAR_CLEARANCE),
+    ) {
         onBack?.let { back -> DrillInHeader(parentLabel = "Settings", onBack = back) }
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             Text(text = "Models and lexicon", style = OrtType.screenTitle, color = OrtColors.textHigh)
@@ -528,6 +536,48 @@ private fun AssetRow(
  * not one nested row per part — [subLine] still honestly names how many parts remain, and the row
  * itself re-renders with the *next* missing part's actions the moment [parts] reports one fewer.
  */
+/** [GroupedAssetRow]'s own `subLine` formula, split out purely to keep that composable under
+ * detekt's `LongMethod` limit (R-865's own placeholder guard is what pushed it over). */
+private fun groupedAssetSubLine(
+    parts: List<ModelRowViewState>,
+    missing: List<ModelRowViewState>,
+    anyBusy: Boolean,
+    fullyInstalled: Boolean,
+    fullyVerified: Boolean,
+    passLabel: String,
+): String = when {
+    anyBusy -> "downloading…"
+    fullyInstalled -> {
+        // R-865: the declared size (catalogue, build-time) is this row's own primary figure —
+        // real always, unlike a sum of real on-disk lengths, which a test/dev fixture's
+        // placeholder shortcut can silently zero out (see `declaredSizeLabel`'s own doc
+        // comment). The real on-disk sum is still shown, secondarily, only when every part's
+        // own real length is itself real (nonzero) — a family with even one placeholder part
+        // is honestly flagged instead.
+        val size = formatAssetSize(parts.sumOf { ModelCatalog.entry(it.id).sizeBytes })
+        val bundledNote = if (parts.all { it.bundled }) "bundled" else "not every part bundled"
+        if (parts.any { isZeroBytePlaceholder(it) }) {
+            "$passLabel · $size · $bundledNote · placeholder — no bytes"
+        } else {
+            val onDisk = onDiskClause(parts.sumOf { it.sizeBytes ?: 0L })?.let { " · $it" }.orEmpty()
+            val tiersLabel = tiersLabelFor(parts.first())
+            if (fullyVerified) {
+                "$passLabel · $size$onDisk · $bundledNote · every part verified · $tiersLabel"
+            } else {
+                "$passLabel · $size$onDisk · $bundledNote · not every part verified against a published checksum"
+            }
+        }
+    }
+    else -> {
+        // R-841 (round 1, tour finding): "not installed" implies an operator owes this an
+        // action, which D35 makes untrue for a bundled family — [notInstalledLabel]'s own
+        // per-part reasoning, folded to the worst (least honest-sounding-as-fine) case among
+        // the missing parts, same as the marker's own aggregate above.
+        val lead = missing.map { notInstalledLeadFor(it) }.distinct().singleOrNull() ?: "not installed"
+        "$lead · ${missing.size} of ${parts.size} parts missing"
+    }
+}
+
 @Composable
 private fun GroupedAssetRow(
     familyLabel: String,
@@ -551,27 +601,7 @@ private fun GroupedAssetRow(
         else -> ModelRowStatus.INSTALLED_UNVERIFIED
     }
     val passLabel = passLabelFor(parts.first().id)
-    val subLine = when {
-        anyBusy -> "downloading…"
-        fullyInstalled -> {
-            val size = formatAssetSize(parts.sumOf { it.sizeBytes ?: 0L })
-            val bundledNote = if (parts.all { it.bundled }) "bundled" else "not every part bundled"
-            val tiersLabel = tiersLabelFor(parts.first())
-            if (fullyVerified) {
-                "$passLabel · $size · $bundledNote · every part verified · $tiersLabel"
-            } else {
-                "$passLabel · $size · $bundledNote · not every part verified against a published checksum"
-            }
-        }
-        else -> {
-            // R-841 (round 1, tour finding): "not installed" implies an operator owes this an
-            // action, which D35 makes untrue for a bundled family — [notInstalledLabel]'s own
-            // per-part reasoning, folded to the worst (least honest-sounding-as-fine) case among
-            // the missing parts, same as the marker's own aggregate above.
-            val lead = missing.map { notInstalledLeadFor(it) }.distinct().singleOrNull() ?: "not installed"
-            "$lead · ${missing.size} of ${parts.size} parts missing"
-        }
-    }
+    val subLine = groupedAssetSubLine(parts, missing, anyBusy, fullyInstalled, fullyVerified, passLabel)
     val description =
         describeStaged("$familyLabel ${if (fullyInstalled) "installed" else "not installed"}. $subLine", staged)
 
@@ -925,6 +955,40 @@ private fun AssetMarker(status: ModelRowStatus, isBusy: Boolean, modifier: Modif
     }
 }
 
+/**
+ * Register R-865 (Validator V9, device): the row's own real on-disk length ([ModelRowViewState
+ * .sizeBytes]) is a real `File.length()` — honest for a genuine install, but a test/dev fixture
+ * that shortcuts installation with an empty placeholder file makes it `0L`, and rendering that as
+ * this row's *primary* size fabricated "0 KB" for an asset that is really tens of megabytes. The
+ * catalogue's own declared size ([org.ort.app.ui.data.ModelCatalogEntry.sizeBytes], build-time,
+ * from the manifest — never dependent on what happens to be on disk this launch) is the stable,
+ * always-real figure every row's own primary size now reads; the real measured length is still
+ * shown, as a clearly-labelled secondary "on disk: N MB" fact, but only when it is itself real
+ * (nonzero) — see [onDiskClause]/[isZeroBytePlaceholder].
+ */
+private fun declaredSizeLabel(id: ModelId): String = formatAssetSize(ModelCatalog.entry(id).sizeBytes)
+
+/** R-865: the honest secondary "on disk" fact — `null` (nothing appended) unless [sizeBytes] is a
+ * real, nonzero measured length. A verified `0L` is never treated as "real bytes on disk" (see
+ * [isZeroBytePlaceholder]) — this function and that one share the exact same `> 0L` test on
+ * purpose, so a row can never disagree with itself about whether its own on-disk file is real. */
+private fun onDiskClause(sizeBytes: Long?): String? =
+    sizeBytes?.takeIf { it > 0L }?.let { "on disk: ${formatAssetSize(it)}" }
+
+/** R-865: `true` exactly when a row claims to be installed/verified (never [ModelRowStatus
+ * .NOT_INSTALLED], which has no size to claim at all) yet its own real, measured length is `0L` —
+ * a fact no genuinely verified file can ever have (a real checksum is never computed over zero
+ * bytes) and therefore the unambiguous signature of a test/dev fixture's placeholder shortcut, not
+ * a legitimate installed asset. Rendered as an honest "placeholder — no bytes" rather than a
+ * fabricated "0 KB · verified <checksum>" (constitution I). */
+private fun isZeroBytePlaceholder(row: ModelRowViewState): Boolean =
+    row.status != ModelRowStatus.NOT_INSTALLED && row.sizeBytes == 0L
+
+/** R-933 — see [ModelsScreen]'s own doc comment on its scroll container. The same 44dp floor
+ * `SettingsCaptureScreen.kt`'s own `LIVE_BAR_CLEARANCE` (R-826) uses — not shared across packages,
+ * that constant is `private` there. */
+private val LIVE_BAR_CLEARANCE = 44.dp
+
 private fun formatAssetSize(bytes: Long): String {
     val mb = bytes / 1_000_000.0
     val kb = bytes / 1_000.0
@@ -945,15 +1009,21 @@ private fun formatAssetSize(bytes: Long): String {
  * uniform shape the board itself does not use.
  */
 private fun assetFactsSubLine(row: ModelRowViewState, passLabel: String): String {
-    val size = row.sizeBytes?.let { formatAssetSize(it) } ?: "size unknown"
+    val size = declaredSizeLabel(row.id)
     val bundledNote = if (row.bundled) "bundled" else "not bundled"
+    // R-865: a verified-but-zero-byte row is a placeholder fixture, never a real 0 KB asset —
+    // say so plainly instead of a fabricated "verified <checksum>" over bytes that do not exist.
+    if (isZeroBytePlaceholder(row)) {
+        return "$passLabel · $size · $bundledNote · placeholder — no bytes"
+    }
+    val onDisk = onDiskClause(row.sizeBytes)?.let { " · $it" }.orEmpty()
     val checksum = row.checksumPrefix?.let { "verified $it" } ?: "checksum unknown"
     val verifiedNote = if (row.status == ModelRowStatus.INSTALLED_UNVERIFIED) {
         "$checksum, not against a published value"
     } else {
         checksum
     }
-    return "$passLabel · $size · $bundledNote · $verifiedNote"
+    return "$passLabel · $size$onDisk · $bundledNote · $verifiedNote"
 }
 
 /** `Settings-Assets.dc.html`'s own per-asset "Pass" label — the same [Pass][org.ort.core.Tier]
@@ -1026,9 +1096,14 @@ private fun ProseDigestModelRow(row: ModelRowViewState, modifier: Modifier = Mod
             // regardless of *this device's* current tier (`row.tierEligible` is never consulted
             // here): AC-138 means "stored, loaded only at tier 3" is permanently true of this
             // asset, not a fact that changes with the phone it happens to run on.
-            val size = row.sizeBytes?.let { formatAssetSize(it) } ?: "size unknown"
-            val checksum = row.checksumPrefix?.let { "verified $it" } ?: "checksum unknown"
-            "$size · bundled · $checksum · stored, loaded only at tier 3 while idle and charging"
+            val size = declaredSizeLabel(row.id)
+            if (isZeroBytePlaceholder(row)) {
+                "$size · bundled · placeholder — no bytes"
+            } else {
+                val onDisk = onDiskClause(row.sizeBytes)?.let { " · $it" }.orEmpty()
+                val checksum = row.checksumPrefix?.let { "verified $it" } ?: "checksum unknown"
+                "$size$onDisk · bundled · $checksum · stored, loaded only at tier 3 while idle and charging"
+            }
         }
     }
     val description = "${row.label}. $subLine"

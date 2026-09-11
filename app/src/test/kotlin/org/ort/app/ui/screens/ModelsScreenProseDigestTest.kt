@@ -75,9 +75,14 @@ class ModelsScreenProseDigestTest {
 
         composeTestRule.onNodeWithText("PROSE DIGEST").assertExists()
         // `Settings-Assets.dc.html` verbatim: "verified e3d981c0" — no "sha256" word.
+        // R-865 (Validator V9, device): the primary size is now the catalogue's own declared size
+        // (never a test/dev fixture's real on-disk length alone — a placeholder shortcut in that
+        // fixture used to render a fabricated "0 KB verified" row) — "555 MB" is real either way
+        // here (the bundled manifest's own real Gemma size, `554_661_243` bytes) — with the real
+        // on-disk length still shown, honestly, as its own secondary "on disk" clause.
         composeTestRule
             .onNodeWithContentDescription(
-                "Gemma 3 1B int4 — prose digest. 555 MB · bundled · verified e3d981c0 · " +
+                "Gemma 3 1B int4 — prose digest. 555 MB · on disk: 555 MB · bundled · verified e3d981c0 · " +
                     "stored, loaded only at tier 3 while idle and charging",
             )
             .assertExists()
@@ -85,6 +90,41 @@ class ModelsScreenProseDigestTest {
         // installed row gets, which would wrongly imply this one is resident too.
         composeTestRule.onNodeWithText("ACTIVE").assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription("Download Gemma 3 1B int4 — prose digest").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-AST-3a")
+    fun `R_865 a placeholder Gemma row reads honestly, never a fabricated 0 KB verified asset`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsScreen(
+                    state = ModelsViewState(
+                        rows = listOf(
+                            ModelRowViewState(
+                                ModelId.LLM_GEMMA3_1B,
+                                ModelId.LLM_GEMMA3_1B.label,
+                                ModelRowStatus.INSTALLED,
+                                detail = null,
+                                sizeBytes = 0L,
+                                checksumPrefix = "e3d981c0",
+                                tierEligible = false,
+                            ),
+                        ),
+                    ),
+                    onDownload = {},
+                    onSideload = {},
+                )
+            }
+        }
+
+        // The catalogue's own real, declared Gemma size (554_661_243 bytes) still renders — only
+        // the on-disk/verified claim is withheld, since 0 real bytes can never back a genuine
+        // checksum (this is `tier0-llm-stored`'s exact real device capture: a no-token build's
+        // Gemma placeholder genuinely has no bytes — see this round's own report).
+        composeTestRule
+            .onNodeWithContentDescription("Gemma 3 1B int4 — prose digest. 555 MB · bundled · placeholder — no bytes")
+            .assertExists()
+        composeTestRule.onNodeWithText("verified e3d981c0", substring = true).assertDoesNotExist()
     }
 
     @Test

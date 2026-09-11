@@ -1,17 +1,23 @@
 package org.ort.app.ui.settings
 
+import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.data.realCaptureConfigurationStore
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.core.capture.BluetoothAudioProfile
+import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.rig.CaptureConfiguration
+import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 import org.ort.rig.RigTransportKind
 import org.ort.rig.descriptor.BundledDescriptors
 import org.robolectric.RobolectricTestRunner
@@ -31,6 +37,7 @@ class SettingsPollingTest {
         LevelStatus.reset()
         RigStatus.reset()
         ShedStatus.reset()
+        clearConfigStore()
     }
 
     @Before
@@ -39,6 +46,16 @@ class SettingsPollingTest {
         LevelStatus.reset()
         RigStatus.reset()
         ShedStatus.reset()
+        clearConfigStore()
+    }
+
+    /** R-860/R-861/R-864: [realCaptureConfigurationStore] always opens the same real
+     * `SharedPreferences` file — cleared before and after every test in this class so a test that
+     * writes a real configuration (to prove the fallback these findings require) can never leak
+     * into, or be polluted by, any other test sharing this JVM worker. */
+    private fun clearConfigStore() {
+        context.getSharedPreferences(SharedPreferencesCaptureConfigurationStore.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().clear().commit()
     }
 
     @Test
@@ -89,6 +106,150 @@ class SettingsPollingTest {
         assert(!state.connected)
         assert(state.descriptorLabel == "No radio configured")
         assert(state.bands.isEmpty())
+    }
+
+    // --- R-860/R-861/R-864 (halt, Validator V9, device) — the configured-but-unverified fallback ---
+
+    @Test
+    fun `R_861 the Input row falls back to the configured selection when no live status is open`() {
+        // The exact device shape V9 reproduced: a real, fully-configured session
+        // (`CaptureConfigurationStore.hasBeenConfigured()`) whose `InputStatus`/`RigStatus`
+        // holders this process never opened — a fresh process pointed at an already-configured
+        // store, not a fabricated test setup.
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-audio-1"),
+        )
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(state.inputLabel == "usb-audio-1") {
+            "expected the configured input id as the Input row's label, got ${state.inputLabel}"
+        }
+        assert(state.inputSubLine == "not verified this session") {
+            "expected the honest qualifier, got ${state.inputSubLine}"
+        }
+    }
+
+    @Test
+    fun `R_861 the Input row still reads honestly not-selected when the store itself has nothing either`() {
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(state.inputLabel == "No input selected") { "expected the honest unset case, got ${state.inputLabel}" }
+        assert(state.inputSubLine == "select an input to capture")
+    }
+
+    @Test
+    fun `R_861 a live InputStatus always wins over the configured store fallback`() {
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-audio-1"),
+        )
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor(id = "2", kind = AudioDeviceKind.USB_DEVICE, label = "Live USB Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "linear",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(state.inputLabel == "Live USB Device") {
+            "expected the real, live device to win over the configured fallback, got ${state.inputLabel}"
+        }
+    }
+
+    @Test
+    fun `R_860 CF11's Audio-route and Rig-link rows fall back to the configured selection`() {
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(
+                mode = CaptureMode.USB_RADIO,
+                selectedInputId = "usb-audio-1",
+                rigId = BundledDescriptors.kenwoodThD75a().id,
+                rigTransportKind = RigTransportKind.USB_SERIAL,
+            ),
+        )
+        val state = SettingsPolling.modeScreen(context)
+        assert(state.audioRoute.subLine == "usb-audio-1 · not verified this session") {
+            "expected the configured audio route, got ${state.audioRoute.subLine}"
+        }
+        assert(state.rigLink.subLine == "Kenwood TH-D75A · USB serial · not verified this session") {
+            "expected the configured rig link, got ${state.rigLink.subLine}"
+        }
+    }
+
+    @Test
+    fun `R_860 CF11 stays honestly unset when the store itself was never configured`() {
+        val state = SettingsPolling.modeScreen(context)
+        assert(state.audioRoute.subLine == "not yet selected")
+        assert(state.rigLink.subLine == "no radio configured")
+    }
+
+    @Test
+    fun `R_860 a configured store naming no real rig still reads no radio configured, never fabricated`() {
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(mode = CaptureMode.LOCAL_MICROPHONE, selectedInputId = null),
+        )
+        val state = SettingsPolling.modeScreen(context)
+        assert(state.rigLink.subLine == "no radio configured") {
+            "expected the honest no-rig case even though the store is configured, got ${state.rigLink.subLine}"
+        }
+        // LOCAL_MICROPHONE's own implicit input (no explicit selectedInputId) is still a real,
+        // sourced fact from the store — the mode's own operator label, not a bare "not selected".
+        assert(state.audioRoute.subLine == "Local microphone · not verified this session") {
+            "expected the mode's own implicit input label, got ${state.audioRoute.subLine}"
+        }
+    }
+
+    @Test
+    fun `R_864 the Input row names the real Bluetooth profile from the live descriptor`() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor(
+                id = "3",
+                kind = AudioDeviceKind.BLUETOOTH,
+                label = "Bluetooth headset",
+                bluetoothProfile = BluetoothAudioProfile.HFP_MSBC,
+            ),
+            nativeRateHz = 16_000,
+            resamplerId = "linear",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(state.inputSubLine.endsWith("· HFP mSBC")) {
+            "expected the real HFP codec name appended, got ${state.inputSubLine}"
+        }
+    }
+
+    @Test
+    fun `R_864 a non-Bluetooth device never carries a profile clause`() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor(id = "4", kind = AudioDeviceKind.USB_DEVICE, label = "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "linear",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
+        assert(!state.inputSubLine.contains("HFP")) { "did not expect any HFP clause, got ${state.inputSubLine}" }
+    }
+
+    @Test
+    fun `R_864 CF11's Audio-route row also names the real Bluetooth profile`() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor(
+                id = "5",
+                kind = AudioDeviceKind.BLUETOOTH,
+                label = "Bluetooth headset",
+                bluetoothProfile = BluetoothAudioProfile.HFP_CVSD,
+            ),
+            nativeRateHz = 8_000,
+            resamplerId = "linear",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = 0L,
+        )
+        val state = SettingsPolling.modeScreen(context)
+        assert(state.audioRoute.subLine.endsWith("· HFP CVSD")) {
+            "expected the real HFP codec name appended, got ${state.audioRoute.subLine}"
+        }
     }
 
     @Test
@@ -152,7 +313,7 @@ class SettingsPollingTest {
     }
 
     @Test
-    fun `R_835 the Rig-module row is real from the matched descriptor's own capabilities, not the board mockup`() {
+    fun `R_835_R_923 the Rig-module row renders the real descriptor's own capabilities as CAT mnemonics`() {
         RigStatus.connected(
             descriptor = "Kenwood TH-D75A",
             bands = emptyList(),
@@ -160,15 +321,31 @@ class SettingsPollingTest {
             descriptorId = BundledDescriptors.kenwoodThD75a().id,
         )
         val state = SettingsPolling.rig(context)
-        assert(
-            state.rigModuleLabel ==
-                "kenwood-thd75a · built in · verified command set FREQUENCY, SQUELCH_STATE, SUB_BAND",
-        ) {
-            "expected the real capability names, got ${state.rigModuleLabel}"
+        // R-923 (Reviewer C2, run 3): `docs/reference/th-d75a-cat.md`'s own verified command
+        // table — FREQUENCY -> FQ, SQUELCH_STATE -> BY, SUB_BAND -> BC — the screen's own
+        // established shorthand, never the raw `RigCapability` enum names, and never the board
+        // mockup's own broader eight-command example (`FQ BY FO BC MR ME AI BL`, illustrative of a
+        // command set no accessible source in this build actually declares).
+        assert(state.rigModuleLabel == "kenwood-thd75a · built in · verified command set FQ BY BC") {
+            "expected the real CAT mnemonics, got ${state.rigModuleLabel}"
         }
-        // The board's own mockup text is raw CAT mnemonics no accessible source in this build
-        // carries — never fabricated here.
         assert(!state.rigModuleLabel.contains("FQ BY FO BC MR ME AI BL"))
+        assert(!state.rigModuleLabel.contains("FREQUENCY"))
+    }
+
+    @Test
+    fun `R_835_reopened otherTransportLabel reads vid-pid not yet verified H1, never the board mockup ids`() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val state = SettingsPolling.rig(context)
+        assert(state.otherTransportLabel == "USB serial also supported, vid/pid not yet verified (H1)") {
+            "expected the honest H1 qualifier, got ${state.otherTransportLabel}"
+        }
+        assert(state.otherTransportLabel?.contains("0x0451") != true)
     }
 
     @Test
@@ -232,6 +409,38 @@ class SettingsPollingTest {
         assert(overridden.isOverridden)
         assert(overridden.overrideLabel == "Held at T2")
     }
+
+    @Test
+    fun `R_915 the root Models-and-lexicon row reads honestly when nothing is installed`(): Unit = runTest {
+        val root = SettingsPolling.root(context, InMemorySettingsStore())
+        val modelsRow = root.sections.flatMap { it.rows }.single { it.screen == SettingsScreenId.ASSETS }
+        assert(modelsRow.subLine == "Nothing installed yet") {
+            "expected the honest empty case, got ${modelsRow.subLine}"
+        }
+    }
+
+    @Test
+    fun `R_915 the root Models-and-lexicon row names the real installed components, not a bare count`(): Unit =
+        runTest {
+            // The same real install path `R_443_clean_install_groups` (`ModelsScreenTest.kt`)
+            // already relies on — a genuinely fresh Robolectric context's own real app assets,
+            // never a synthetic row list standing in for either half.
+            org.ort.app.assets.BundledAssetInstaller.installAll(
+                context.filesDir,
+                org.ort.app.assets.AndroidBundledAssetSource(context),
+            )
+            val root = SettingsPolling.root(context, InMemorySettingsStore())
+            val modelsRow = root.sections.flatMap { it.rows }.single { it.screen == SettingsScreenId.ASSETS }
+            assert(modelsRow.subLine.contains("Whisper tiny.en")) {
+                "expected the real Whisper family name, got ${modelsRow.subLine}"
+            }
+            assert(modelsRow.subLine.contains("Silero VAD")) {
+                "expected the real VAD name, got ${modelsRow.subLine}"
+            }
+            assert(!modelsRow.subLine.contains("of 5 assets installed")) {
+                "expected component names, not the old bare count, got ${modelsRow.subLine}"
+            }
+        }
 
     @Test
     fun `R_131_R_253 the root Tier row is Settings-dc-html verbatim at the real max tier, no override`(): Unit =

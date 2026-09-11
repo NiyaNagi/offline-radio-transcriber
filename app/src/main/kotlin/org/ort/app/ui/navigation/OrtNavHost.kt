@@ -851,7 +851,20 @@ private fun NavHostBody(
         // failure mode to guard there.
         val isSearch = ids.current == ReaderDestination.SEARCH
         val isSettings = ids.current == ReaderDestination.SETTINGS
-        if (!isDrillIn && !isSearch && !isSettings) {
+        // Register R-930 (Reviewer D2, run 3): `EARLIER_NIGHTS` gets the identical `SETTINGS`/
+        // `SEARCH` treatment, for the identical `SETTINGS` reason — `SessionsContent`'s own
+        // sub-screens (`Detail`/`Digest`/`DigestItem`/`Log`, all reached either by a real tap or by
+        // `NavSeed.pendingReviewSessionId`/`reviewSessionView`) each already draw their own
+        // `DrillInHeader`; only the plain `Sessions` list (`SessionsScreen`) had none of its own,
+        // relying on this host's one destination-wide header — correct only for that one state,
+        // exactly `SETTINGS`'s own pre-round-7 shape before `SettingsRootScreen` grew its own
+        // header (round 7's doc comment above). `SessionsScreen.kt` now draws its own `ScreenHeader`
+        // (WPF's file — a small, reported, minimal addition, the same shape [R-840]'s own
+        // `SessionsContent.openDigest` already was) so this host renders neither a header nor a
+        // `DrillInHeader` for the whole destination, root or sub-screen alike, matching `SETTINGS`.
+        val isEarlierNights = ids.current == ReaderDestination.EARLIER_NIGHTS
+        val hostDrawsNoHeader = isSearch || isSettings || isEarlierNights
+        if (!isDrillIn && !hostDrawsNoHeader) {
             // R-003/R-004/R-015: drawer icon, live dot + elapsed while a session is capturing,
             // search icon — no title, the destination content below draws its own (`Main.dc.html`'s
             // 27sp title is `NowScreen`'s, not the header's).
