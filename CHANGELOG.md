@@ -32,18 +32,19 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-11 (WPF run-4 validator findings: R-870/872/874/875 fixed, R-871 diagnosed and routed to WPE, R-873/876 left to WPI)
+## 2026-09-11 (WPF run-4 validator findings: R-870/872/874/875/942/970 fixed, R-871 diagnosed and routed to WPE, R-873/876 left to WPI)
 
-### <pending> — status modes: R-870/R-872/R-874/R-875 fixed; R-871 diagnosed (CF06/CF11, WPE's); R-873/R-876 unaddressed (WPI's)
+### <pending> — status modes: R-870/R-872/R-874/R-875/R-942/R-970 fixed; R-871 diagnosed (CF06/CF11, WPE's); R-873/R-876 unaddressed (WPI's)
 
-**Scope:** `app/src/main/kotlin/org/ort/app/ui/{failures/FailureMapper.kt,components/Controls.kt,components/ActivityPatternChart.kt,digest/DigestScreens.kt,screens/ModelsScreen.kt}`,
-`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, matching test files. Merged `main` first
-(fast-forward to `c2b11e47`, which brought V10's own device-validation report, findings R-870..R-876,
-and confirmation that the prior round's R-910/R-911/R-912/R-913 fixes hold on a real device — nine
-destinations, one live bar each, no fragment, pills labelled, N01b/DG04 coverage agree).
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/{failures/FailureMapper.kt,components/Controls.kt,components/ActivityPatternChart.kt,digest/DigestScreens.kt,screens/ModelsScreen.kt,setup/RigBluetoothScreen.kt (test only)}`,
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, matching test files. Merged `main` twice this
+round (first fast-forward to `c2b11e47` — V10's device-validation report, findings R-870..R-876, and
+confirmation the prior round's R-910/R-911/R-912/R-913 fixes hold on a real device; second, a real
+merge to `ee3b027f` after committing this round's own work-in-progress first per this repo's own
+rule, bringing reviewer A3/D3's run-4a findings R-940..R-944/R-970..R-974 into the register).
 
-**Requirements/ACs:** R-870, R-871 (diagnosed, not fixed here), R-872, R-874, R-875, R-836 (F9 half,
-closed by R-872), R-863 (revisited by R-874).
+**Requirements/ACs:** R-870, R-871 (diagnosed, not fixed here), R-872, R-874, R-875, R-942, R-970,
+R-836 (F9 half, closed by R-872), R-863/R-805 (both revisited by R-874/R-942).
 
 **What changed:** *Constitution check.* II (a discriminating test precedes every fix, each watched
 to fail for the stated reason before the code landed). VIII (rows below move to `fixed` on this
@@ -80,6 +81,20 @@ device capture in the merge that preceded this round, not by this round's own cl
    defect this row names is real in two places, both `ui/settings` (WPE's, not touched here):
    `SettingsPolling.modeScreen()`'s own CF11 "Rig link" row and `SettingsPolling.rig()`'s own CF06
    `staleSinceLabel` — the latter confirms this row's own question ("if it is CF06's, WPE").
+6. **R-942 (design)** — reviewer A3's own run-4a capture of a *real* regression R-874's fix already
+   closes: S10b's "Pair a device in system settings"/"Refresh" overlapped at font scale 2.0 because
+   of R-863's same unbounded `TextAction` measurement. S10b's own row already gave its leading
+   action `weight(1f)` on `Row.fillMaxWidth()` (R-805's own shape) — it only needed `TextAction`
+   itself to stop overriding that with unbounded single-line measurement. Confirmed with a new real
+   390dp-screen test; no code change beyond R-874's own `Controls.kt` fix was needed here.
+7. **R-970 (spec)** — the same defect class as R-874, this time on `Badge` (`ui/components/
+   Controls.kt`): CF04's "ACTIVE" badge stacked one character per line beside a wrapped Whisper
+   family title at font scale 2.0. `Badge` itself carries no width override to revert (it is, and
+   was, a plain content-hugging `Box`) — the real defect was all three title-plus-badge `Row`s in
+   `ui/screens/ModelsScreen.kt` (the single asset row, the grouped-family row, the lexicon row)
+   sharing a `Row` with neither side weighted and no `fillMaxWidth()`. Each title now yields
+   (`Modifier.weight(1f, fill = false)` on `Row.fillMaxWidth()`), and `Badge`'s own kdoc states the
+   shared rule for future callers.
 
 **Verified:**
 - `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green (full suite, twice:
@@ -91,6 +106,9 @@ device capture in the merge that preceded this round, not by this round's own cl
   violations this round's own new tests introduced).
 - `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
 - `python tools/spec-check/spec_check.py` — `spec-check: OK`.
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 240 covered, no
+  orphan-test line (`R-870`/`R-872`/`R-874`/`R-875`/`R-942`/`R-970` all resolve to their own real
+  test classes); `coverageMatrixCheck` — up to date.
 - Exact new test names: `WpiScenariosTest.R_872_rig-bt-lost seeds a real Measured level and an
   opened, not lost, InputStatus`; `FailureMapperTest.R_870 F9 drops the descriptor's own leading
   manufacturer word, matching every other screen`; `DigestScreensTest.R_874 DG05 Read the overs
@@ -98,7 +116,10 @@ device capture in the merge that preceded this round, not by this round's own cl
   Install from a file wraps within a real 390dp screen at font scale 2_0, never past its edge`;
   `ActivityPatternChartTest.R_875 the not-listening caption stacks under the axis row rather than
   colliding with it at 2_0` and its own `...a short caption at normal scale stays on the same row...`
-  regression guard.
+  regression guard; `RigBluetoothScreenTest.R_942 Pair in system settings and Refresh never overlap
+  on a real 390dp screen at font scale 2_0`; `ModelsScreenTest.R_970 the ACTIVE badge stays whole
+  and inside the row beside a wrapped Whisper title at 2_0` (reproduced the 0-width per-letter
+  collapse directly by reverting its own fix before restoring it).
 
 **Left open / not done:**
 - **R-871**: diagnosed and routed to WPE (CF06/CF11, `ui/settings`), not fixed here.

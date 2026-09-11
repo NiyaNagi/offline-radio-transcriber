@@ -325,7 +325,8 @@ class RigBluetoothScreenTest {
         )
         val refreshSize = composeTestRule.onNodeWithTag("setup-rig-bt-refresh").fetchSemanticsNode().size
         assert(refreshSize.width > refreshSize.height) {
-            "expected Refresh wider than tall (single line, whole word), was ${refreshSize.width} x ${refreshSize.height}"
+            "expected Refresh wider than tall (single line, whole word), was " +
+                "${refreshSize.width} x ${refreshSize.height}"
         }
     }
 }

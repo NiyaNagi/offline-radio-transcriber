@@ -46,6 +46,10 @@ import org.robolectric.annotation.GraphicsMode
  * pre-R-093 M3-button, free-text-paragraph rendering this package's `ModelsScreen.kt` no longer
  * produces.
  */
+// This round's own R-863/R-874/R-970 cases pushed this file over detekt's LargeClass threshold —
+// kept as one class deliberately, the same call DigestPollingTest.kt/FailureScreensTest.kt already
+// make (that file's own doc comment: every real screen fact this package's tests own lives here).
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 class ModelsScreenTest {
 
