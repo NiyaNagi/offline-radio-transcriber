@@ -242,6 +242,10 @@ public class SetupActivity : ComponentActivity() {
      * to see the real measured value [onRigLinkStateChanged] computed. */
     internal val rigLinkVerifiedDurationSecondsForTest: Double? get() = rigLinkVerifiedDurationSeconds
 
+    /** Test-only window into [selectedRigTransportKind] — E2-E09's own regression proof needs to
+     * see whether S09b's preset pre-select actually ran, not just that the screen renders. */
+    internal val selectedRigTransportKindForTest: RigTransportKind? get() = selectedRigTransportKind
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)
@@ -290,6 +294,7 @@ public class SetupActivity : ComponentActivity() {
         if (naturalNext != null && requested.ordinal > naturalNext.ordinal) return false
         step = requested
         if (requested == SetupStep.INPUT && inputRoutes.isEmpty()) refreshInputRoutes()
+        if (requested == SetupStep.RIG_TRANSPORT) applyPresetRigTransportIfUnselected()
         return true
     }
 
@@ -326,6 +331,7 @@ public class SetupActivity : ComponentActivity() {
         if (pushCurrent) step?.let { if (it != next) backStack.addLast(it) }
         step = next
         if (next == SetupStep.INPUT && inputRoutes.isEmpty()) refreshInputRoutes()
+        if (next == SetupStep.RIG_TRANSPORT) applyPresetRigTransportIfUnselected()
     }
 
     private fun handBackToMainActivity() {
@@ -560,11 +566,31 @@ public class SetupActivity : ComponentActivity() {
         } else {
             RadioChoice.OTHER_CAT_RIG
         }
-        val modePresetKind = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRigTransportKind
-        selectedRigTransportKind = modePresetKind?.let(RigPickerCatalogue::fromPresetKind)
-            ?: entry.transportCapabilities.keys.firstOrNull { it != RigTransportKind.NONE }
+        // D33/E2-E09: a freshly chosen rig always re-evaluates the preset from scratch -- clearing
+        // the selection first means applyPresetRigTransportIfUnselected() (below) never skips
+        // re-computation because a *previous* rig's own selection was still sitting here.
+        selectedRigTransportKind = null
+        applyPresetRigTransportIfUnselected()
         syncCaptureConfiguration()
         navigateForward(SetupStep.RIG_TRANSPORT)
+    }
+
+    /**
+     * D33/E2-E09 (WPI's `setup-rig-transport-preset` scenario found this gap — the same rule R-902
+     * already applies to S04): S09b's transport pre-selects the mode's own preset only when the
+     * chosen rig's own catalogue entry actually declares support for it (constitution I — never
+     * guessed for a rig that cannot do it) and only while nothing is chosen yet and the axis has
+     * not already been overridden this session. Called from the interactive [onChooseRig] tap *and*
+     * from every cold/resumed entry straight onto [SetupStep.RIG_TRANSPORT] ([refreshStep]/
+     * [tryOpenAtRequestedStep]) — a debug scenario seeding [SetupStore.rigId] directly, or a
+     * process-death resume — the same dual-call-site shape [onChooseMode]'s own S04 pre-select
+     * (`applyPresetInputIfUnselected`) already established.
+     */
+    private fun applyPresetRigTransportIfUnselected() {
+        if (selectedRigTransportKind != null || store.modeOverriddenRig) return
+        val entry = currentRigEntry() ?: return
+        val modePresetKind = store.captureMode?.let(CaptureModePresets::presetsFor)?.preferredRigTransportKind
+        selectedRigTransportKind = presetRigTransportFor(modePresetKind, entry.transportCapabilities.keys)
     }
 
     internal fun onImportRig() {

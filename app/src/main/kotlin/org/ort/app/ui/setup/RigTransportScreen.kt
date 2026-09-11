@@ -22,6 +22,7 @@ import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 import org.ort.rig.RigTransportKind
+import org.ort.core.capture.RigTransportKind as PresetRigTransportKind
 
 /** S09b's whole view-state (`Setup-Rig-Transport.dc.html`, D33, FR-RIG-13/14/17). [options] is
  * only ever the transports [org.ort.rig.catalogue.RigCatalogueEntry.transportCapabilities]
@@ -34,6 +35,22 @@ public data class RigTransportViewState(
     val options: List<RigTransportOption>,
     val selected: RigTransportKind?,
 )
+
+/**
+ * D33/E2-E09 (WPI's `setup-rig-transport-preset` scenario, the same rule R-902 already applies to
+ * S04's own preset route): the mode's preferred rig transport, converted to the picker's own
+ * [RigTransportKind], but only when [supportedTransports] — the chosen rig's own catalogue entry —
+ * actually declares it. `null` for a rig that cannot do it at all (constitution I: never guessed
+ * for a rig this build cannot actually prove supports it) or when the mode has no rig-transport
+ * preset to begin with (local-microphone mode, FR-CAP-8's own table).
+ */
+public fun presetRigTransportFor(
+    modePresetKind: PresetRigTransportKind?,
+    supportedTransports: Set<RigTransportKind>,
+): RigTransportKind? {
+    val preset = modePresetKind?.let(RigPickerCatalogue::fromPresetKind) ?: return null
+    return preset.takeIf { it in supportedTransports }
+}
 
 public data class RigTransportOption(
     val kind: RigTransportKind,
