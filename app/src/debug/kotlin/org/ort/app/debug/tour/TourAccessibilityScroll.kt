@@ -167,4 +167,49 @@ public object TourAccessibilityScroll {
 
     /** See [findTallestScrollableVirtualViewId]'s own doc comment for why this bound is safe. */
     private const val MAX_VIRTUAL_VIEW_ID = 50_000
+
+    /**
+     * R-973 (generalises R-971): a full-tree text/`contentDescription` reading, plus whether any node
+     * carries a known placeholder marker — [ScreenshotTourActivity]'s settle compares two of these
+     * taken ≥500ms apart, capturing only once they agree and no placeholder is present, rather than
+     * trusting the destination/drawer/live-bar/link-state waits alone to prove a screen's own
+     * asynchronous data load (`ModelsController`'s own state, named by WPE's own R-973 report, with
+     * no "Loading…" text to key on) has actually finished landing. [text] deliberately excludes node
+     * bounds — a settled layout's bounds do not move between two checks, so including them would only
+     * add noise a real content change does not need to be caught by.
+     */
+    public data class SemanticsSnapshot(val text: String, val hasPlaceholder: Boolean)
+
+    /** Known placeholder copy this codebase's own screens use while data is still loading (checked
+     * across `SessionsContent.kt`/`DigestContent.kt`/`SettingsContent.kt`/others before writing this)
+     * — the one textual signal available; there is no structural placeholder marker (a testTag or
+     * semantics property) anywhere in this codebase to key on instead. */
+    private const val PLACEHOLDER_TEXT_MARKER = "loading"
+
+    /** A separator no real screen's own text is expected to contain, so two genuinely different
+     * strings can never collide into the same [SemanticsSnapshot.text] by concatenation alone. */
+    private const val SNAPSHOT_SEPARATOR = '\u0001'
+
+    /** Walks the same accessibility bridge [scrollToEnd] does (see this object's own doc comment for
+     * why), collecting every node's own `text`/`contentDescription` into one order-stable string —
+     * cheap, in-process, bounded the same way [findTallestScrollableVirtualViewId] already is. */
+    public fun snapshot(rootView: View): SemanticsSnapshot {
+        val provider = findAccessibilityNodeProvider(rootView) ?: return SemanticsSnapshot("", false)
+        val builder = StringBuilder()
+        var placeholder = false
+        for (virtualViewId in AccessibilityNodeProvider.HOST_VIEW_ID..MAX_VIRTUAL_VIEW_ID) {
+            val node = provider.createAccessibilityNodeInfo(virtualViewId) ?: continue
+            val text = node.text?.toString()
+            val description = node.contentDescription?.toString()
+            if (text != null) {
+                builder.append(text).append(SNAPSHOT_SEPARATOR)
+                if (text.contains(PLACEHOLDER_TEXT_MARKER, ignoreCase = true)) placeholder = true
+            }
+            if (description != null) {
+                builder.append(description).append(SNAPSHOT_SEPARATOR)
+                if (description.contains(PLACEHOLDER_TEXT_MARKER, ignoreCase = true)) placeholder = true
+            }
+        }
+        return SemanticsSnapshot(builder.toString(), placeholder)
+    }
 }

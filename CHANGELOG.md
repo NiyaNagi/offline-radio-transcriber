@@ -32,6 +32,98 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI run 4b: live-session screenshot tour, R-910/R-911's mode-usb/mode-bluetooth timeout diagnosed as environmental, R-944 level envelope, R-973 generalised settle)
+
+### <pending> — run 4b: full tour green (204/204), R-910/R-911 timeout root-caused to host/emulator resource starvation not a product defect, R-944 speech-shaped level envelope, R-973 generalises R-971's settle into a stable-snapshot rule
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios.kt,tour/ScreenshotTourActivity.kt,tour/TourAccessibilityScroll.kt}`,
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `results/ui-audit/**` (204-entry manifest
++ PNGs), `results/coverage-matrix.md` (regenerated). Merged `main` twice this round: `8fb57ad6` (WPF's
+`rememberDrawerLiveState` fix — the live bar is now keyed on `ReaderPolling.effectiveSessionId`, never
+a bare `CaptureState.sessionId == sessionId` equality — plus WPE's R-934) and `7eb69a75` (WPF's R-872,
+landing directly in this package's own `Scenarios.rigBtLost()`).
+
+**Requirements/ACs:** R-910, R-911 (both re-confirmed, and their one remaining open question —
+mode-usb/mode-bluetooth's `N04`/`CF02` live-bar timeout — closed as environmental, not a scenario or
+product defect), R-944, R-973 (supersedes/generalises R-971, not yet separately implemented), R-872
+(confirmed on device via `rig-bt-lost/F09`).
+
+**What changed:**
+
+1. **Run 4b step captures (204/204 ok, 0 errors).** Every live-session screen the coordinator listed
+   (`N01b`/`N04`/`DG04`/`L01`/`T01`/`ST01`/`F09`/`F23` under `mode-*`/`bt-audio-*`/`rig-bt-lost`) plus
+   `asset-corrupt/CF04*` and a third round on `mode-bluetooth/CF02*`. The master manifest now covers
+   every one of `tour.json`'s 204 declared steps for the first time this session.
+
+2. **R-910/R-911's own open question, answered.** `mode-bluetooth/CF02-settings-capture` (and, found
+   unprompted while cross-checking, `mode-usb/N04-capture-status`/`mode-bluetooth/N04-capture-status`)
+   reproducibly timed out waiting for the live bar across three separate rounds, with every underlying
+   fact independently confirmed correct via an enhanced diagnostic error message added to
+   `ScreenshotTourActivity.renderDestinationStep` (`sessionId`, `CaptureState.sessionId`,
+   `CaptureState.isCapturing`, `InputStatus.state` — all correct: `isCapturing=true`, session ids
+   matched, `InputStatus.Opened` with `routeVerified=true`). Reading `LiveBarPolling.current`/
+   `rememberDrawerLiveState` end to end ruled out a code-level hang (the function is a bounded,
+   exception-free computation plus one suspend DB read; nothing in its call path can return `null`
+   indefinitely once `isCapturing`/`InputStatus` are correct). Mid-round, the same emulator's
+   `system_server` crashed outright (`DeadSystemException`, zygote restart) under severe host
+   CPU/resource starvation (many concurrent builder rounds sharing the host); after the emulator
+   recovered, all three previously-timing-out steps passed cleanly and repeatedly with the *identical*
+   unchanged code. Conclusion, recorded in the manifest's own `note` field for these three ids: the
+   20-second timeouts were a host/emulator resource-starvation artifact, not a scenario-seeding gap
+   (this package's own territory) and not a live-bar composition/polling defect (WPF's). No code
+   change was made to chase this once the environmental cause was confirmed.
+
+3. **R-944 (level envelope).** `setupLevel()`'s own `peakHistoryDbfs` — previously a mechanically
+   repeating `-20f + (it % 5)` cycle that drew as alternating full-height amber/green blocks once
+   WPD's `levelBarRects` made S07's meter a real proportional envelope — replaced with
+   `speechShapedPeakHistoryDbfs()`, two raised-cosine lobes rising from the real noise floor (-58
+   dBFS) to a real peak (-14 dBFS) and back down, 60 samples. `setupVerified()` now seeds the same
+   envelope (previously none at all), for S05's own `InputWaveformCard` (WPD `64081712`/merge
+   `7706d0ab`, not yet on this branch, but the `LevelStatus` fact it reads is branch-independent).
+   Two new `WpiScenariosTest` cases assert the samples are non-constant, bounded to
+   `[-58f, -14f]`, and actually reach near both the real floor and the real peak.
+
+4. **R-973 (generalises R-971, implemented directly rather than R-971's narrower text-only version
+   first — WPE's own report showed R-971's "wait for 'Loading…' absence" class would not have caught
+   `model-missing/CF04`'s truncation, since every row there composes with no such text ever on
+   screen).** `TourAccessibilityScroll.snapshot(rootView)` walks the same accessibility bridge
+   `scrollToEnd` already does, returning every node's own `text`/`contentDescription` concatenated
+   into one order-stable string plus whether any node carries the one known placeholder marker
+   ("loading", case-insensitive — the only such marker anywhere in this codebase; checked before
+   writing this). `ScreenshotTourActivity.awaitStableSemantics` (new, called right before every
+   `drawToBitmap()` in both `renderDestinationStep` and `renderSetupStep`) captures only once two
+   snapshots taken ≥500ms apart agree and neither carries a placeholder — bounded at 15s, an honest
+   `error()` on timeout with the last snapshot's own text. `llm-enabled-prose/DG05*` (this round's own
+   re-capture) shows the full digest prose, not a `Loading…` frame.
+
+5. **Mechanical.** Fixed a ktlint `MaxLineLength` violation in my own R-910/R-911-era diagnostic
+   error-message edit (split across shorter concatenated segments). Suppressed detekt's `LargeClass`
+   on `WpiScenariosTest` (R-944's own two new cases pushed it over the threshold) — the same
+   established pattern `DigestPollingTest`/`ModelsScreenTest`/`FailureScreensTest` already use, not a
+   further split: this file already is one `LargeClass` split's own result, and stays the same kind
+   of self-contained cluster that split was for.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`
+— **BUILD SUCCESSFUL**, all Robolectric unit tests including the two new R-944 cases; `coverageMatrix`
+then `coverageMatrixCheck` (separate invocations — same task-ordering rule as every prior round) both
+green (240/450 covered, unchanged). `tools\ui-audit\install.ps1 -Port 5558` (fresh `assembleDebug` +
+reinstall) then `tools\ui-audit\tour.ps1 -Port 5558` across the run 4b step list (on-device manifest
+deleted before each `-Only` invocation) — 204/204 steps ok in the merged master manifest, 0 errors.
+`mode-usb/N04-capture-status`, `mode-bluetooth/N04-capture-status`, `mode-bluetooth/CF02-settings-capture`
+each independently re-run to a clean pass after the emulator's mid-round crash/recovery (see item 2).
+
+**Left open / not done:** R-861 (`mode-change-pending/CF02-settings-capture` step, 1.0/2.0), R-866
+(`asset-corrupt/S12-ready-corrupt` step), R-873 (debug scenario holder re-publish on process start),
+R-876 (`scenario.ps1`'s stray-session check made non-fatal), R-971 as its own separate text-only rule
+(superseded by R-973's generalisation instead of being implemented first). A minor, unprompted
+observation from this round's own diagnostic reading: `mode-usb`/`mode-bluetooth` never call
+`LevelStatus.update(...)`, so their own Settings screen reads "Speech: Not measured" while genuinely
+capturing (visible in `mode-bluetooth/CF02-settings-capture.png`) — cosmetically inconsistent with
+`rig-bt-lost`'s own R-872 fix, but not raised as a defect since it was not asked for and the live bar
+itself (this round's actual subject) does not depend on it. Run 5 (the full tour, every step, with the
+revoked-permission `S02c` pass) queued after the remaining items above land, per the coordinator's own
+explicit sequencing.
+
 ## 2026-09-11 (WPF run-4 validator findings: R-870/872/874/875/942/970 fixed, R-871 diagnosed and routed to WPE, R-873/876 left to WPI)
 
 ### <pending> — status modes: R-870/R-872/R-874/R-875/R-942/R-970 fixed; R-871 diagnosed (CF06/CF11, WPE's); R-873/R-876 unaddressed (WPI's)

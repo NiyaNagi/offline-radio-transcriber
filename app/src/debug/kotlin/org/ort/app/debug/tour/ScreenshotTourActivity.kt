@@ -33,6 +33,7 @@ import org.ort.app.ui.setup.RigLinkState
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.InputStatus
 import java.io.File
 
 /**
@@ -236,7 +237,10 @@ public class ScreenshotTourActivity : ComponentActivity() {
                     "${STATE_WAIT_TIMEOUT_MILLIS}ms — observed destination=${observed?.currentState?.value} " +
                     "drawerOpen=${observed?.drawerOpenState?.value} " +
                     "reviewSessionView=${observed?.reviewSessionViewState?.value} " +
-                    "liveBar=${observed?.liveBarState?.value}",
+                    "liveBar=${observed?.liveBarState?.value} sessionId=$sessionId " +
+                    "captureStateSessionId=${CaptureState.sessionId} " +
+                    "captureStateIsCapturing=${CaptureState.isCapturing} " +
+                    "inputStatus=${InputStatus.state}",
             )
         }
         // Composition + the first poll tick: `OrtNavHost`'s own `LaunchedEffect(sessionId)` polling
@@ -263,6 +267,7 @@ public class ScreenshotTourActivity : ComponentActivity() {
                 TourAccessibilityScroll.ScrollOutcome.NothingToScroll -> scrollNote = NO_SCROLL_NOTE
             }
         }
+        awaitStableSemantics(step.id, window.decorView)
         val bitmap = window.decorView.drawToBitmap()
         currentDestinationStep = null
         activeNavigator = null
@@ -384,9 +389,44 @@ public class ScreenshotTourActivity : ComponentActivity() {
                 TourAccessibilityScroll.ScrollOutcome.NothingToScroll -> scrollNote = NO_SCROLL_NOTE
             }
         }
+        awaitStableSemantics(step.id, setupActivity.window.decorView)
         val bitmap = setupActivity.window.decorView.drawToBitmap()
         setupActivity.finish()
         return TourCapture(bitmap, bitmap.width, bitmap.height, note = scrollNote)
+    }
+
+    /**
+     * R-973 (generalises R-971): the destination/drawer/live-bar/link-state waits above prove a
+     * screen composed *the right thing*, never that its own asynchronous data load has finished
+     * landing — `model-missing/CF04`'s own truncated-mid-word capture (WPE's report: every row
+     * composes once `ModelsController`'s state lands, with no "Loading…" text to key on) is exactly
+     * that gap. Bounded, generic replacement for a text-only "Loading…" wait: captures only once two
+     * [TourAccessibilityScroll.snapshot] readings taken [SEMANTICS_STABLE_INTERVAL_MILLIS] apart carry
+     * the same text/`contentDescription` content and neither carries a known placeholder marker —
+     * never on elapsed time or a fixed delay alone. An honest [error] on timeout, not a silent
+     * capture of whatever the screen happened to show.
+     */
+    private suspend fun awaitStableSemantics(stepId: String, rootView: android.view.View) {
+        var lastSnapshot = TourAccessibilityScroll.snapshot(rootView)
+        val stable = withTimeoutOrNull(SEMANTICS_STABLE_TIMEOUT_MILLIS) {
+            var previous = lastSnapshot
+            while (true) {
+                delay(SEMANTICS_STABLE_INTERVAL_MILLIS)
+                val current = TourAccessibilityScroll.snapshot(rootView)
+                lastSnapshot = current
+                if (current.text == previous.text && !current.hasPlaceholder) break
+                previous = current
+            }
+            true
+        }
+        if (stable != true) {
+            error(
+                "tour step '$stepId' never reached two consecutive stable, placeholder-free " +
+                    "semantics snapshots ${SEMANTICS_STABLE_INTERVAL_MILLIS}ms apart within " +
+                    "${SEMANTICS_STABLE_TIMEOUT_MILLIS}ms — last snapshot had " +
+                    "hasPlaceholder=${lastSnapshot.hasPlaceholder}, text='${lastSnapshot.text.take(300)}'",
+            )
+        }
     }
 
     private data class ResolvedDestinationStep(
@@ -411,6 +451,14 @@ public class ScreenshotTourActivity : ComponentActivity() {
          * above; one frame plus margin, not sized to any poll interval since nothing here waits on a
          * poll tick. */
         private const val SCROLL_SETTLE_MILLIS = 300L
+
+        /** R-973's own explicit ask: two [TourAccessibilityScroll.snapshot] readings "≥500ms apart". */
+        private const val SEMANTICS_STABLE_INTERVAL_MILLIS = 500L
+
+        /** Bounded the same way [STATE_WAIT_TIMEOUT_MILLIS] is — generous enough for a real, slow
+         * asynchronous load (`ModelsController`'s own state, R-973) to finish landing, never so long
+         * a genuinely stuck screen hangs the whole tour run. */
+        private const val SEMANTICS_STABLE_TIMEOUT_MILLIS = 15_000L
 
         /** Coordinator round two: the manifest note for a `scroll: "end"` step whose own screen has
          * no vertically-scrollable container at all — evidence the screen fits, not a failure. */

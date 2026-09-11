@@ -62,7 +62,14 @@ import org.ort.rig.RigTransportKind as RigModuleTransportKind
  * [ScenariosTest] (the same detekt `LargeClass` split that file's own header already documents
  * having done once, for the same reason: a self-contained cluster, not entangled with the rest of
  * what that file covers).
+ *
+ * `LargeClass` suppressed (this round, R-944's own two new cases pushed it over the threshold):
+ * this file is already the product of one `LargeClass` split, and it stays the same kind of
+ * self-contained cluster that split was for — one scenario's fixture facts, requirement by
+ * requirement — the same reasoning [DigestPollingTest]/[ModelsScreenTest]/[FailureScreensTest]
+ * each already documented for their own suppression rather than a further split.
  */
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 class WpiScenariosTest {
 
@@ -583,6 +590,57 @@ class WpiScenariosTest {
         assertTrue("expected InputStatus.Opened, got $input", input is InputStatus.State.Opened)
         val level = LevelStatus.state
         assertTrue("expected LevelStatus.Measured, got $level", level is LevelStatus.State.Measured)
+    }
+
+    /**
+     * R-944: `setup-level`'s `peakHistoryDbfs` must be a real, non-constant speech-shaped envelope
+     * — not the flat `-20f + (it % 5)` cycle that drew as alternating full-height amber/green blocks
+     * once WPD's `levelBarRects` made S07's meter a real proportional envelope. Every sample stays
+     * within the real noise-floor/peak bounds this scenario seeds, and the samples are not all equal
+     * (a genuine rise and fall, not a fabricated flat line).
+     */
+    @Test
+    @Requirement("R-944")
+    fun `R_944_setup-level seeds a non-constant speech-shaped level envelope`() = runTest {
+        Scenarios.load(context, "setup-level")
+
+        val history = LevelStatus.peakHistoryDbfs
+        assertTrue("expected a few seconds' worth of samples, got ${history.size}", history.size >= 60)
+        assertTrue(
+            "expected every sample within the noise floor/peak bounds, got $history",
+            history.all { it in -58f..-14f },
+        )
+        assertTrue("expected a non-constant envelope, got $history", history.toSet().size > 1)
+        assertTrue(
+            "expected the envelope to actually reach near its real peak, got $history",
+            history.max() >= -16f,
+        )
+        assertTrue(
+            "expected the envelope to actually reach near the real noise floor, got $history",
+            history.min() <= -50f,
+        )
+    }
+
+    /**
+     * R-944: `setup-verified`'s own S05 raw-signal listen now draws an `InputWaveformCard` from the
+     * same [LevelStatus] holder S07's meter reads (WPD `64081712`/merge `7706d0ab`) — this scenario
+     * must seed the same real, non-constant envelope, not leave the holder at its default (empty)
+     * state the way it did before this round.
+     */
+    @Test
+    @Requirement("R-944")
+    fun `R_944_setup-verified seeds the same non-constant speech-shaped level envelope for S05`() = runTest {
+        Scenarios.load(context, "setup-verified")
+
+        val level = LevelStatus.state
+        assertTrue("expected LevelStatus.Measured, got $level", level is LevelStatus.State.Measured)
+        val history = LevelStatus.peakHistoryDbfs
+        assertTrue("expected a few seconds' worth of samples, got ${history.size}", history.size >= 60)
+        assertTrue(
+            "expected every sample within the noise floor/peak bounds, got $history",
+            history.all { it in -58f..-14f },
+        )
+        assertTrue("expected a non-constant envelope, got $history", history.toSet().size > 1)
     }
 
     @Test

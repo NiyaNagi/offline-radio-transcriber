@@ -1501,6 +1501,23 @@ public object Scenarios {
         store.rigTransport = RigTransportKind.USB_SERIAL
         store.manualFrequencyHz = 145_230_000L
         store.setupComplete = false
+        // R-944 (WPD `64081712`/merge `7706d0ab`, not yet on this branch but the fact this seeds is
+        // branch-independent): S05's own raw-signal listen now draws an `InputWaveformCard` from the
+        // same live `LevelStatus` holder S07's meter already reads (see [setupLevel]'s own doc
+        // comment) — left unseeded, S05 drew nothing real either. Seeded with the same
+        // [speechShapedPeakHistoryDbfs] envelope so both steps show one honest, real signal shape.
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = speechShapedPeakHistoryDbfs(),
+        )
         return LoadResult(0, 0, null)
     }
 
@@ -1521,6 +1538,12 @@ public object Scenarios {
         // independent of `SetupStore.levelInBand` (left unset above, on purpose, so `stepFor` still
         // resumes at S07 rather than skipping past it) — a real reading the operator has not yet
         // confirmed is exactly the state this step exists to show.
+        //
+        // R-944 (validator/reviewer, this round): the flat `-20f + (it % 5)` cycle this used to pass
+        // produced alternating full-height amber/green blocks once WPD proved S07's meter is a real
+        // proportional envelope (`levelBarRects`) — a shape no real signal ever draws. Replaced with
+        // [speechShapedPeakHistoryDbfs]'s genuine rise-and-fall between the noise floor and a real
+        // peak, the same envelope [setupVerified]'s own S05 listen now seeds too.
         LevelStatus.update(
             LevelStatus.State.Measured(
                 peakDbfs = -14f,
@@ -1531,9 +1554,35 @@ public object Scenarios {
                 sampleRateHz = 48_000,
                 updatedAtMillis = SystemClock.wallMillis(),
             ),
-            peakHistoryDbfs = List(60) { -20f + (it % 5) },
+            peakHistoryDbfs = speechShapedPeakHistoryDbfs(),
         )
         return LoadResult(0, 0, null)
+    }
+
+    /**
+     * R-944: a genuine speech-shaped envelope for [LevelStatus.update]'s own `peakHistoryDbfs` —
+     * two syllable-like rises from the noise floor (-58 dBFS) toward a real peak (-14 dBFS) and back
+     * down, a few seconds' worth of samples (60, matching every other caller's own history length),
+     * never a flat or mechanically-alternating cycle (the bug this fixes: a repeating
+     * `-20f + (it % 5)` pattern drew as alternating full-height amber/green blocks once WPD's
+     * `levelBarRects` made S07's meter a real proportional envelope, not the honest waveform this
+     * board is meant to show). A raised-cosine lobe centered on each rise keeps every sample a real,
+     * continuously-varying dBFS value — no two adjacent samples equal, both real floor and peak
+     * values actually hit — rather than a synthetic sawtooth or sine no speech envelope looks like.
+     */
+    private fun speechShapedPeakHistoryDbfs(): List<Float> {
+        val floorDbfs = -58f
+        val peakDbfs = -14f
+        val sampleCount = 60
+        fun lobe(index: Int, center: Int, halfWidth: Int): Float {
+            val distance = kotlin.math.abs(index - center)
+            if (distance > halfWidth) return 0f
+            return 0.5f * (1f + kotlin.math.cos(Math.PI.toFloat() * distance / halfWidth))
+        }
+        return List(sampleCount) { i ->
+            val envelope = maxOf(lobe(i, center = 14, halfWidth = 10), lobe(i, center = 38, halfWidth = 13) * 0.8f)
+            floorDbfs + envelope * (peakDbfs - floorDbfs)
+        }
     }
 
     /**
