@@ -632,7 +632,12 @@ private fun GroupedAssetRow(
                 modifier = Modifier.padding(top = OrtSpacing.xs, start = MARKER_COLUMN_WIDTH),
                 horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
             ) {
-                Text(text = part.label, style = OrtType.subLine, color = OrtColors.textFaint)
+                // R-934 follow-up: the rejection-aware sentence when this exact part was corrupted
+                // and removed (WPG's persisted `lastRejection`) — the plain label unchanged
+                // otherwise, matching [notInstalledLabel]'s own identical rule for the single-file
+                // case.
+                val partLabel = part.lastRejection?.let { rejectionLabel(part.label, it) } ?: part.label
+                Text(text = partLabel, style = OrtType.subLine, color = OrtColors.textFaint)
                 if (offersDownload(part)) {
                     TextAction(
                         text = "Download",
@@ -1062,12 +1067,35 @@ private fun notInstalledLeadFor(row: ModelRowViewState): String = when {
 
 /** [AssetRow]'s/[ProseDigestModelRow]'s own full `NOT_INSTALLED` sub-line — [notInstalledLeadFor]'s
  * lead phrase, plus the real sideload-only reason when [ModelRowViewState.checksumKnown] is false
- * (unrelated to whether the row is bundled — a checksum-unknown asset needs sideload regardless). */
-private fun notInstalledLabel(row: ModelRowViewState): String = if (!row.checksumKnown) {
-    "not installed · sideload only, " + row.detail.orEmpty()
-} else {
-    notInstalledLeadFor(row)
+ * (unrelated to whether the row is bundled — a checksum-unknown asset needs sideload regardless).
+ * Register R-934 follow-up (WPG's persisted `lastRejection`, `BundledAssetInstaller.kt`): checked
+ * first, ahead of both other branches — a rejected part is still genuinely missing (checksumKnown
+ * and bundled facts are both still true of it), but *why* it is missing is now a real, sourced fact
+ * this build can state, never the generic "not yet verified on this launch" a corrupted copy and a
+ * never-attempted one used to share. */
+private fun notInstalledLabel(row: ModelRowViewState): String {
+    row.lastRejection?.let { return rejectionLabel(row.label, it) }
+    return if (!row.checksumKnown) {
+        "not installed · sideload only, " + row.detail.orEmpty()
+    } else {
+        notInstalledLeadFor(row)
+    }
 }
+
+/**
+ * Register R-934 follow-up: "<label> failed verification on this launch (sha256 <expected>… ≠
+ * <actual>…) and was removed" — [rejection]'s own real `expectedPrefix`/`actualPrefix` (the same
+ * 8-hex-character prefixes every other checksum surface on this screen already shows, never the
+ * full digest), never invented. "on this launch" is real, not approximate:
+ * `BundledAssetInstaller.installAll` re-verifies every entry on every real call
+ * (`OrtApplication.onCreate`, confirmed by reading that file before writing this) and clears a
+ * stale rejection the moment a later attempt verifies — so a `lastRejection` this function is ever
+ * handed was necessarily produced by the *current* process's own most recent install pass, never a
+ * survivor from an earlier one.
+ */
+private fun rejectionLabel(label: String, rejection: org.ort.app.assets.BundledAssetRejection): String =
+    "$label failed verification on this launch (sha256 ${rejection.expectedPrefix}… ≠ " +
+        "${rejection.actualPrefix}…) and was removed"
 
 /**
  * `Settings-Assets.dc.html` (D35, FR-AST-1): a bundled asset already ships inside the installed

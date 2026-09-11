@@ -32,6 +32,61 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPE follow-up: R-934 closed — rendering WPG's persisted rejection on CF04)
+
+### (pending) — settings modes: R-934 closed - CF04 renders the real persisted checksum-mismatch rejection on the affected part
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/ModelsScreen.kt` and a new test file.
+
+**Requirements/ACs:** FR-AST-4, AC-137, constitution I.
+
+**What changed:**
+
+*Constitution Check.* I (a rejected part reads a real, sourced reason now — the exact real
+`expectedPrefix`/`actualPrefix` `BundledAssetInstaller` persisted, never a placeholder or an
+invented pair; the previous round's own report named this gap rather than fabricating a fix, and
+this closes it now that WPG's own half (`ModelRowViewState.lastRejection`, merged `a7a0232c`)
+exists to read).
+
+WPG's `BundledAssetRejection` (`id`, `part`, `expectedPrefix`, `actualPrefix`, `wallTimeMillis`,
+`reason`) is now exposed on `ModelRowViewState.lastRejection`, `null` whenever the row verifies.
+`notInstalledLabel` (the single-file `AssetRow`/`ProseDigestModelRow` sub-line) and
+`GroupedAssetRow`'s own per-part nested line both check it first, ahead of every other
+`NOT_INSTALLED` branch: when set, the line reads `"<label> failed verification on this launch
+(sha256 <expected>… ≠ <actual>…) and was removed"` — the real prefixes, never invented; unchanged
+(the existing "not yet verified on this launch"/plain label) when `lastRejection` is `null`. "on
+this launch" is real, not approximate: `BundledAssetInstaller.installAll` re-verifies every entry
+on every real call (`OrtApplication.onCreate`) and clears a stale rejection the moment a later
+attempt verifies, so a `lastRejection` this code is ever handed was necessarily produced by the
+*current* process's own most recent install pass.
+
+**Verified** (every command with `-PortAllowMissingBundledAssets=true`):
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.screens.ModelsScreenRejectionTest"` — green. Uses
+  the `CorruptingBundledAssetSource`-shaped technique `BundledAssetInstallerTest.kt` (WPG's file)
+  established — one real byte of one real bundled asset flipped, wrapping the real
+  `AndroidBundledAssetSource` so every other real asset installs and verifies for real (the genuine
+  `asset-corrupt` shape) — run through the real `BundledAssetInstaller.installAll` →
+  `ModelsController.currentState` → `ModelsScreen` path end to end, asserting against the real,
+  persisted `expectedPrefix`/`actualPrefix` read back off the row itself (never a hand-typed prefix
+  pair, since the corrupted checksum cannot be predicted ahead of time). A second case proves an
+  uncorrupted real install keeps the plain copy.
+- `:app:testDebugUnitTest` (full) and `:app:smokeTestDebugUnitTest` (full) — green.
+- `:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck` — green.
+- `:app:detekt` — green.
+- `build dependencyRules platformGuards` — green.
+- `-p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `coverageMatrix` then `coverageMatrixCheck` (run separately) — green.
+- **Discrimination**: temporarily reverted the `GroupedAssetRow` per-part line to the plain
+  `part.label` (ignoring `lastRejection`) → the positive rejection test failed (the plain label
+  rendered instead of the rejection sentence), the negative (uncorrupted) test still passed →
+  restored → both passed.
+
+**Left open / not done:** none — R-934 is now fully closed (WPG's persisted fact + WPE's rendering
+of it).
+
+---
+
 ## 2026-09-11 (WPD follow-up: S09b pre-selects the mode preset transport, the same rule R-902 applies to S04, E2-E09)
 
 ### (pending) — presetRigTransportFor, SetupActivity.applyPresetRigTransportIfUnselected
