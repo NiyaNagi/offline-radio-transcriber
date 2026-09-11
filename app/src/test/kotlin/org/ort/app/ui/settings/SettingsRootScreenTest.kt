@@ -89,10 +89,14 @@ class SettingsRootScreenTest {
         // to assert against.
         val icons = SettingsScreenId.entries.associateWith(::iconFor)
 
-        // TIER and ABOUT are the two documented fallbacks (this file's own kdoc); every other row
-        // gets its own distinct glyph.
+        // TIER and ABOUT are the two documented fallbacks (this file's own kdoc). MODE (WPE, CF11)
+        // never appears as its own row in this root list at all — `SettingsPolling.root` never
+        // builds one for it, confirmed by reading that function before adding this exclusion —
+        // `iconFor`'s own `MODE` branch exists only to keep that `when` exhaustive over
+        // `SettingsScreenId`'s closed set, so it shares CAPTURE's icon rather than inventing an
+        // association to a row nothing ever actually shows.
         val distinctExcludingFallbacks = icons.filterKeys {
-            it != SettingsScreenId.TIER && it != SettingsScreenId.ABOUT
+            it != SettingsScreenId.TIER && it != SettingsScreenId.ABOUT && it != SettingsScreenId.MODE
         }
         assert(distinctExcludingFallbacks.values.toSet().size == distinctExcludingFallbacks.size) {
             "expected every non-fallback row to carry its own distinct icon, got $icons"

@@ -1,11 +1,27 @@
 package org.ort.app.ui.settings
 
+import org.ort.core.capture.CaptureMode
+
 /**
  * WP10 (register R-090, FR-CFG-1): every view-state the `Settings` root and its nine sub-screens
  * render. Every screen composable in this package is a pure function of one of these — polling and
  * `Context` stay in [SettingsPolling], never in a screen (ui-conformance-plan's builder rule).
+ *
+ * [MODE] (WPE, `spec/e2e-capture-modes-plan.md`, CF11/`Settings-Mode.dc.html`, FR-CAP-8/9/12/13,
+ * AC-131) — the settings re-entry into the capture mode picker, reachable from CF02's `Change`.
  */
-public enum class SettingsScreenId { CAPTURE, RIG, TIER, STORAGE, ASSETS, EXPORT, CONTRIBUTE, DIAGNOSTICS, ABOUT }
+public enum class SettingsScreenId {
+    CAPTURE,
+    RIG,
+    TIER,
+    STORAGE,
+    ASSETS,
+    EXPORT,
+    CONTRIBUTE,
+    DIAGNOSTICS,
+    ABOUT,
+    MODE,
+}
 
 public data class SettingsRowViewState(val label: String, val subLine: String, val screen: SettingsScreenId)
 public data class SettingsSectionViewState(val label: String, val rows: List<SettingsRowViewState>)
@@ -29,6 +45,10 @@ public data class SettingsRootViewState(val sections: List<SettingsSectionViewSt
 internal data class SettingsCrossPackageActions(
     val onOpenLevelMeter: () -> Unit,
     val onReviewSession: (sessionId: String) -> Unit,
+    // WPE (CF11): CF02's own `Change` → CF11 — not truly cross-package, but joins this bundle for
+    // the identical detekt-threshold reason, once adding it as a bare parameter to
+    // `SettingsSubScreen` pushed that function's own count over the limit.
+    val onOpenModeSettings: () -> Unit = {},
 )
 
 public data class SettingsCaptureToggleActions(
@@ -37,6 +57,13 @@ public data class SettingsCaptureToggleActions(
     val onToggleBandPass: (Boolean) -> Unit,
 )
 
+/**
+ * CF02 (`Settings-Capture.dc.html`, amended 2026-09-10): [mode]/[modeLabel]/[modeSubLine] back the
+ * new leading Capture-mode row (FR-CAP-12) — real from
+ * [org.ort.app.ui.data.CaptureModeFacts.currentMode], which always has a value
+ * ([org.ort.pipeline.rig.CaptureConfiguration.DEFAULT] on a fresh install — a stated default, never
+ * an absent fact, constitution I).
+ */
 public data class SettingsCaptureViewState(
     val inputLabel: String,
     val inputSubLine: String,
@@ -46,6 +73,31 @@ public data class SettingsCaptureViewState(
     val noiseReductionEnabled: Boolean,
     val bandPassEnabled: Boolean,
     val manualFrequencyMhz: String?,
+    val mode: CaptureMode = CaptureMode.LOCAL_MICROPHONE,
+    val modeLabel: String = CaptureMode.LOCAL_MICROPHONE.operatorLabel,
+    val modeSubLine: String = "",
+)
+
+/** CF11 (`Settings-Mode.dc.html`, FR-CAP-8, FR-CAP-9, FR-CAP-12, FR-CAP-13, AC-131) — one radio row
+ * of the three-mode picker. [current] marks [org.ort.app.ui.data.CaptureModeFacts.currentMode];
+ * [pending] marks [org.ort.app.ui.data.CaptureModeFacts.pendingMode] — picked while a session was
+ * live, not yet the session-recorded [current] mode (`org.ort.pipeline.rig.CaptureConfigurationStore`,
+ * WPC2). */
+public data class SettingsModeRowViewState(
+    val mode: CaptureMode,
+    val descriptionLabel: String,
+    val current: Boolean,
+    val pending: Boolean = false,
+)
+
+/** CF11's "What the mode set" section — each row real from `InputStatus`/`RigStatus`. */
+public data class SettingsModeSetRowViewState(val label: String, val subLine: String)
+
+public data class SettingsModeViewState(
+    val rows: List<SettingsModeRowViewState>,
+    val sessionLive: Boolean,
+    val audioRoute: SettingsModeSetRowViewState,
+    val rigLink: SettingsModeSetRowViewState,
 )
 
 public data class SettingsRigBandViewState(
@@ -55,13 +107,23 @@ public data class SettingsRigBandViewState(
     val squelchOpen: Boolean,
 )
 
-/** `Settings-Rig.dc.html`. [connected] is `false` for both `Absent` and `Stale` — [staleSinceLabel]
- * distinguishes them (`null` when [connected] is `true` or the rig has never connected at all). */
+/** `Settings-Rig.dc.html` (amended 2026-09-10, FR-RIG-14/15). [connected] is `false` for both
+ * `Absent` and `Stale` — [staleSinceLabel] distinguishes them (`null` when [connected] is `true` or
+ * the rig has never connected at all).
+ *
+ * [transportLabel] is real from `RigStatus.State.Connected.transportKind` (WPC2, merged `e464820`).
+ * [linkAddressLabel] is real from `CaptureConfigurationStore.current().rigParams`
+ * (`DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS`/`USB_VENDOR_ID`+`USB_PRODUCT_ID`) when
+ * that session's own params carry one — `null` when they do not (an imported/generic descriptor
+ * with no such param, or nothing connected yet), rendered honestly rather than guessed
+ * (constitution I). */
 public data class SettingsRigViewState(
     val descriptorLabel: String,
     val connected: Boolean,
     val staleSinceLabel: String?,
     val bands: List<SettingsRigBandViewState>,
+    val transportLabel: String? = null,
+    val linkAddressLabel: String? = null,
 )
 
 public data class SettingsTierViewState(

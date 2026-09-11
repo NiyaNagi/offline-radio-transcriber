@@ -105,6 +105,10 @@ internal fun iconFor(screen: SettingsScreenId): ImageVector = when (screen) {
     SettingsScreenId.CONTRIBUTE -> OrtIcons.lock
     SettingsScreenId.DIAGNOSTICS -> OrtIcons.diagnostics
     SettingsScreenId.ABOUT -> OrtIcons.settings
+    // WPE (CF11, `spec/e2e-capture-modes-plan.md`): MODE is reached only from CF02's own `Change`
+    // row (and seeded directly for the tour) — it never appears as its own row in this root list,
+    // so this branch exists only to keep `iconFor` exhaustive over `SettingsScreenId`'s closed set.
+    SettingsScreenId.MODE -> SettingsInputAndLevelIcon
 }
 
 /** A tinted status dot for a settings sub-screen row (`Settings-Capture`/`Settings-Rig`'s green/

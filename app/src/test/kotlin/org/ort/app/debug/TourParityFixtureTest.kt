@@ -177,7 +177,7 @@ class TourParityFixtureTest {
         assertEquals("USB Audio Device · verified", inputRow.subLine)
 
         // CF02's own Input row.
-        val capture = SettingsPolling.capture(InMemorySettingsStore())
+        val capture = SettingsPolling.capture(context, InMemorySettingsStore())
         assertEquals("USB Audio Device", capture.inputLabel)
         assertTrue("expected the route to read verified", capture.inputSubLine.contains("verified"))
     }
@@ -193,7 +193,7 @@ class TourParityFixtureTest {
         // is what overnight's own "no rig, 145.230 MHz by hand" configuration actually produces,
         // so that existing copy is what a validator sees, not a fabricated Connected state FR-RIG's
         // own unbuilt module could never really report.
-        val rig = SettingsPolling.rig()
+        val rig = SettingsPolling.rig(context)
         assertTrue("expected RigStatus to stay honestly Absent/not-connected", !rig.connected)
     }
 }

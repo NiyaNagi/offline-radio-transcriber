@@ -107,6 +107,18 @@ class SettingsContentTest {
     }
 
     @Test
+    @Requirement("FR-CAP-12")
+    fun `E2_F08 initialScreen MODE lands directly on CF11, Capture mode`() {
+        composeTestRule.setContent {
+            OrtTheme { SettingsContent(context = context, onDrawer = {}, initialScreen = SettingsScreenId.MODE) }
+        }
+
+        composeTestRule.waitUntilTextExists("Capture mode")
+        composeTestRule.onNodeWithText("Capture mode").assertExists()
+        composeTestRule.onNodeWithText("RECORDS").assertDoesNotExist()
+    }
+
+    @Test
     @Requirement("R-090")
     fun `R_090_settings_root_has_one_header_and_sub_screens_one_drill_in_header — a sub-screen's own header`() {
         // A sub-screen entered directly via `initialScreen` (WP3's own real entry points) draws
