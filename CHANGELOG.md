@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (WPI run 6: R-943/R-944/R-945/R-955/R-956/R-960 steps captured; R-933/R-957 diagnosed — the tour harness is not the suspect)
 
-### <pending> — run 6: 217/217 ok on main a98ecde0; CF02/CF04 verdict — drawToBitmap() and a real screencap agree, both truncated at the same point
+### 0a50bf28 — run 6: 217/217 ok on main a98ecde0; CF02/CF04 verdict — drawToBitmap() and a real screencap agree, both truncated at the same point
 
 **Scope:** `results/ui-audit/tour-manifest.json` + the PNGs run 6's own step list names.
 `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt` was touched twice for a
