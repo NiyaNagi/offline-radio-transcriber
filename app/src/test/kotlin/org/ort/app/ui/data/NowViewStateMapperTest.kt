@@ -60,6 +60,33 @@ class NowViewStateMapperTest {
     }
 
     @Test
+    @Requirement("R-913")
+    fun `R_913 a short live session's chart hatches only real gaps, never every hour-of-day untouched`() {
+        // R-913 (register, halt): `ActivityPatternMapper.buildPattern` folds onto 24 *hour-of-day*
+        // buckets (correct for `Station`/`Frequencies`' multi-night patterns, wrong for one
+        // session's own short span — the exact class of bug `DigestPolling.sessionCoverageBuckets`
+        // (R-449) already fixed for DG04's own coverage bar) — before this fix, a 20-minute session
+        // starting at epoch 0 folded onto hour-of-day 0 alone as real, leaving the other 23 (which
+        // this one session obviously never had a chance to touch) hatched `NOT_LISTENING`, the same
+        // "hatches almost the whole window" shape N01b's own report describes. This session records
+        // no gap at all, so a chart honestly scoped to its own elapsed span must show nothing but
+        // real listening.
+        val view = NowViewStateMapper.active(
+            details = emptyList(),
+            gaps = emptyList(),
+            sessionStartedAtUtc = 0L,
+            sessionEndedAtUtc = null,
+            nowMillis = 20 * 60_000L,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertEquals(1, view.activityPattern.size)
+        assertTrue(view.activityPattern.none { it.state == HourActivityState.NOT_LISTENING })
+    }
+
+    @Test
     fun `R_033 the summary never fabricates a band count`() {
         val view = NowViewStateMapper.active(
             details = listOf(

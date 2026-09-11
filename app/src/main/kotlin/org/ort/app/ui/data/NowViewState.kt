@@ -1,7 +1,6 @@
 package org.ort.app.ui.data
 
 import org.ort.core.AttributionState
-import java.time.ZoneId
 import java.util.Locale
 
 /**
@@ -136,11 +135,15 @@ public object NowViewStateMapper {
             "${pluralize(overCount, "over")} · ${pluralize(stationCount, "station")}"
         }
 
-        val pattern = ActivityPatternMapper.buildPattern(
-            sessions = listOf(SessionWindow(sessionStartedAtUtc, sessionEndedAtUtc, gaps)),
+        // R-913 (register, halt): this session's own live chart and DG04's own past-session
+        // coverage bar (`DigestPolling.sessionDetail`) now derive from the same shared
+        // [ActivityPatternMapper.buildSessionElapsedPattern] — see that function's own kdoc for
+        // why [ActivityPatternMapper.buildPattern]'s 24 hour-of-day buckets are the wrong shape
+        // for one session's own short span.
+        val pattern = ActivityPatternMapper.buildSessionElapsedPattern(
+            window = SessionWindow(sessionStartedAtUtc, sessionEndedAtUtc, gaps),
             matchingTransmissionTimestamps = details.map { it.startedAtUtcMillis },
             nowMillis = nowMillis,
-            zone = ZoneId.systemDefault(),
         )
 
         return NowViewState.Active(

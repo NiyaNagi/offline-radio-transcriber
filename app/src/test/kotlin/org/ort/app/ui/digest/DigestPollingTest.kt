@@ -292,7 +292,9 @@ class DigestPollingTest {
 
             val detail = DigestPolling.sessionDetail(context, "S1")!!
 
-            assert(detail.inputLabel == "not tracked per session in this build") { "got ${detail.inputLabel}" }
+            // R-914 (register, spec): the line changed from a false build-wide claim to an honest
+            // per-session one, once v7 columns existed to genuinely be missing on just this row.
+            assert(detail.inputLabel == "not recorded for this session") { "got ${detail.inputLabel}" }
         }
 
     // -----------------------------------------------------------------------------------------
@@ -349,7 +351,10 @@ class DigestPollingTest {
         assert(detail.inputLabel.contains("verified")) { "got ${detail.inputLabel}" }
         assert(detail.inputLabel.contains("48 kHz")) { "got ${detail.inputLabel}" }
         assert(detail.inputLabel.contains("radio audio")) { "got ${detail.inputLabel}" }
-        assert(detail.rigLinkLabel == "Kenwood TH-D75A · USB serial") { "got ${detail.rigLinkLabel}" }
+        // R-920 (register, polish): the shared `stripRigManufacturerPrefix` helper (R-845/R-916)
+        // drops the descriptor's own leading manufacturer word here too — "TH-D75A", never
+        // "Kenwood TH-D75A" — so this row never disagrees with CF06/N04 about the rig's own name.
+        assert(detail.rigLinkLabel == "TH-D75A · USB serial") { "got ${detail.rigLinkLabel}" }
     }
 
     @Test
@@ -508,14 +513,17 @@ class DigestPollingTest {
 
     @Test
     @Requirement("FR-CAP-13", "R-450")
-    fun `FR_CAP_13 a pre-v7 session with no tracked columns keeps R-450's honest not-tracked line`(): Unit = runTest {
+    fun `FR_CAP_13 a pre-v7 session with no tracked columns keeps R-450s honest not-recorded line`(): Unit = runTest {
         db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
         db.transmissionDao().insert(transmission("TX1", "S1"))
 
         val detail = DigestPolling.sessionDetail(context, "S1")!!
 
-        assert(detail.modeLabel == "not tracked per session in this build") { "got ${detail.modeLabel}" }
-        assert(detail.rigLinkLabel == "not tracked per session in this build") { "got ${detail.rigLinkLabel}" }
+        // R-914 (register, spec): "not recorded for this session", never the retired "not tracked
+        // per session in this build" — a v10 build genuinely does track these columns; a null one
+        // means this row's own capture never recorded it, not a build-wide gap.
+        assert(detail.modeLabel == "not recorded for this session") { "got ${detail.modeLabel}" }
+        assert(detail.rigLinkLabel == "not recorded for this session") { "got ${detail.rigLinkLabel}" }
     }
 
     // -----------------------------------------------------------------------------------------
@@ -581,6 +589,30 @@ class DigestPollingTest {
         )
 
         val detail = DigestPolling.sessionDetail(context, "BT-LIVE")!!
+
+        assert(detail.rigLinkLabel == "TH-D75A · Bluetooth SPP") { "got ${detail.rigLinkLabel}" }
+    }
+
+    // R-920 (register, polish): a past session's own rig link row, resolved from its own recorded
+    // `rigDescriptorId` (schema v10, `SessionRouteFacts.rigLabel()`) — used to render the
+    // catalogue entry's real, *prefixed* display name verbatim ("Kenwood TH-D75A · Bluetooth SPP")
+    // where the board and CF06 (R-845) both read "TH-D75A · Bluetooth SPP". The same shared
+    // `stripRigManufacturerPrefix` helper now applies here too.
+    @Test
+    @Requirement("R-920")
+    fun `R_920 a past session's own recorded rig resolves to its real name, no manufacturer prefix`(): Unit = runTest {
+        db.sessionDao().insert(
+            session("BT-PAST", startedAt = 0L, endedAt = 3_600_000L).copy(
+                captureMode = "BLUETOOTH_RADIO",
+                audioRouteKind = "BLUETOOTH_SCO",
+                audioRouteLabel = "Handheld BT",
+                rigTransport = "BLUETOOTH_SPP",
+                rigDescriptorId = org.ort.rig.descriptor.BundledDescriptors.kenwoodThD75a().id,
+            ),
+        )
+        db.transmissionDao().insert(transmission("TX1", "BT-PAST"))
+
+        val detail = DigestPolling.sessionDetail(context, "BT-PAST")!!
 
         assert(detail.rigLinkLabel == "TH-D75A · Bluetooth SPP") { "got ${detail.rigLinkLabel}" }
     }
@@ -807,6 +839,35 @@ class DigestPollingTest {
         assert(card.oversRangeLabel.contains("02:41")) { "got ${card.oversRangeLabel}" }
         assert(card.fromMillis == overOneAt)
         assert(card.toMillis == overTwoAt)
+    }
+
+    @Test
+    @Requirement("R-931")
+    fun `R_931 a two-station QSO card is titled by its stations, never the bare word Thread`(): Unit = runTest {
+        // R-931 (register, polish): the second "In their words" card used to title itself plain
+        // "Thread" in body weight whenever the thread's overs named more than one station (a real
+        // QSO, not a single station's own monologue) — `participants.singleOrNull()` falls back to
+        // the literal string the instant there are two or more. The board titles every card with
+        // its subject, mono weight-600; an unnamed multi-station thread says so honestly instead.
+        proseSettings().setEnabled(true)
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", stationId = "WA7HJR", threadId = "T1"))
+        db.transmissionDao().insert(transmission("TX2", "S1", stationId = "K7ABC", threadId = "T1"))
+        db.proseSummaryDao().upsert(
+            ProseSummaryEntity(
+                threadId = "T1",
+                text = "Discussed the repeater outage on the west side.",
+                sourceTransmissionIds = listOf("TX1", "TX2"),
+                generatedAtMillis = 3_600_000L,
+                modelId = "gemma3-1b-it-int4",
+            ),
+        )
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val card = digest.prose!!.cards.single()
+        assert(card.subject != "Thread") { "got ${card.subject}" }
+        assert(card.subject == "unnamed thread · 2 stations") { "got ${card.subject}" }
     }
 
     @Test

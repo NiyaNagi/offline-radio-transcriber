@@ -164,7 +164,7 @@ class SessionsScreensTest {
 
     @Test
     @Requirement("FR-CAP-13", "R-450")
-    fun `FR_CAP_13 a pre-v7 session still reads R-450's honest not-tracked line`() {
+    fun `FR_CAP_13 a pre-v7 session still reads R-450's honest not-recorded line`() {
         val state = detailState(
             modeLabel = SessionDetailViewState.NOT_TRACKED_LABEL,
             inputLabel = SessionDetailViewState.NOT_TRACKED_LABEL,
@@ -175,10 +175,13 @@ class SessionsScreensTest {
             OrtTheme { SessionDetailScreen(state = state, onBack = {}, onOpenLog = {}, onOpenDigest = {}) }
         }
 
+        // R-914 (register, spec): "not recorded for this session" — the retired "not tracked per
+        // session in this build" claimed a build-wide gap that stopped being true once schema v7
+        // shipped.
         composeTestRule.onNodeWithTag("session-detail-mode")
-            .assert(hasText("not tracked per session in this build", substring = true))
+            .assert(hasText("not recorded for this session", substring = true))
         composeTestRule.onNodeWithTag("session-detail-rig-link")
-            .assert(hasText("not tracked per session in this build", substring = true))
+            .assert(hasText("not recorded for this session", substring = true))
     }
 
     // -----------------------------------------------------------------------------------------

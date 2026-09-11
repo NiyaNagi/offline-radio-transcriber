@@ -634,6 +634,129 @@ Verified).
 
 **Left open / not done:** none — every half of R-860/R-861/R-864/R-865 named as owed to this
 package landed in this round.
+## 2026-09-11 (WPF run-3 reviewer findings: live-bar session-id consistency, N01b/DG04 coverage unification, R-914/916/920/922/931 fixed; R-912/R-853 investigated, not fixed)
+
+### <pending> — status modes: R-910/R-913/R-914/R-916/R-920/R-922/R-931 fixed; R-911/R-838 confirmed by test; R-912/R-853 investigated, no defect found
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/{navigation/OrtNavHost.kt,data/ReaderPolling.kt,data/ActivityPattern.kt,data/NowViewState.kt,data/CaptureStatusViewState.kt,data/SessionRouteFacts.kt,data/RigDisplayName.kt (new),components/LiveBar.kt,digest/DigestPolling.kt,digest/DigestViewData.kt,settings/SettingsPolling.kt}`,
+matching test files under `app/src/test/kotlin/...`. Merged `main` first (fast-forward to `1c535082`,
+which brought V8's device-validation report and R-850..R-853 into `results/ui-audit/`).
+
+**Requirements/ACs:** R-910, R-911, R-912 (open — no fix), R-913, R-914, R-916, R-920, R-922, R-931,
+R-838 (confirmed, WPI's own half still open), R-853 (open — no fix), FR-CAP-13.
+
+**What changed:** *Constitution check.* I (R-853/R-912 left honestly open rather than a guessed
+product fix; every fixed row's own register note states exactly what was confirmed and what
+wasn't). II (a discriminating test precedes every fix below — each is named and each was watched
+to fail for the stated reason first). VIII (register rows move to `fixed` here on this report's own
+evidence — a builder's own tests and reasoning — never to `closed`, which needs a re-capture this
+round could not obtain; the emulator this round's 5556 assignment stayed unresponsive through a
+full `assembleDebug`+install attempt, confirmed by direct wait rather than assumed).
+
+1. **R-910 (halt)** — real, confirmed bug: `OrtNavHost.kt`'s `rememberDrawerLiveState` (the host's
+   own live bar for every destination other than `NOW`/`CAPTURE`, which embed their own) and
+   `ReaderPolling.drawerBadges` (the header's elapsed badge) both gated on bare
+   `CaptureState.sessionId == sessionId` equality against the reader's own possibly-stale `sessionId`
+   argument — never updated when a scenario re-broadcasts without restarting the process
+   (`-NoRestart`) and moves the live session on. A host-rendered destination (`Threads`, `Stations`,
+   ...) went dark the instant the two diverged, even with a session genuinely, currently live. Both
+   now resolve through `ReaderPolling.effectiveSessionId`, the seam `NowContent`/`CaptureStatusContent`
+   already used. Also added the cross-destination structural test the coordinator asked for
+   (`OrtNavHostDestinationDispatchTest`, one test per `ReaderDestination` plus the `Session` drill-in,
+   composing the real `OrtNavHost` with a genuinely live `CaptureState` and counting `LiveBar`'s own
+   new stable `testTag("live-bar")` in the semantics tree) — every case finds exactly one.
+2. **R-911 (halt)** — investigated; no duplicate composition found anywhere in the code (no
+   animation modifier exists in `LiveBar.kt`/`OrtNavHost.kt` at all, ruling out "entrance animation"
+   as literally coded, and `embedsOwnLiveBar` correctly identifies one composition site per
+   destination). The R-910 test above, run against every destination this row itself names
+   (`Threads`, `Session`/DG04, `Capture-Status`/N04), finds exactly one live bar each time — the
+   composed tree is structurally clean. Recorded as most likely a screenshot-timing artifact
+   (matching this row's own hedge and WPI's own settle-wait remit); not claimed fixed beyond the
+   related R-910 defect.
+3. **R-912 (halt)** — investigated, not fixed. `SessionsScreens.kt`'s `SessionActionChip`/
+   `SessionDetailScreen` carry no live-session gating anywhere (`state.live` used in exactly one
+   place, the header line) — `Digest`/`Log` render `enabled = true` unconditionally regardless of
+   live/ended, so the screen's own styling cannot be the cause. No reproducible defect found to fix;
+   left open with the investigation's own reasoning recorded (most likely the same live-bar
+   settle-timing gap as R-910/R-911).
+4. **R-913 (halt)** — real, confirmed bug and shared fix: `NowViewStateMapper.active` (N01b) called
+   `ActivityPatternMapper.buildPattern`, which folds onto 24 hour-*of-day* buckets (correct for
+   `Station`/`Frequencies`' multi-night patterns) — every hour-of-day one short session never
+   touched reads `NOT_LISTENING`, the exact "almost the whole window hatched" shape reported, and
+   the same bug class `DigestPolling.sessionCoverageBuckets` (R-449) already fixed for DG04 by
+   elapsed-hour bucketing. Moved that function to the shared
+   `ActivityPatternMapper.buildSessionElapsedPattern` (`ui/data/ActivityPattern.kt`) and repointed
+   both `NowViewStateMapper.active` and `DigestPolling`'s own call site to it, so a live session's
+   chart and its own coverage bar once ended can no longer disagree.
+5. **R-914 (spec, copy half)** — `DigestViewData.kt`'s `NOT_TRACKED_LABEL` corrected from "not
+   tracked per session in this build" (false in a v10 build — a null v7 column on a session's own
+   row means that row never recorded it, never a build-wide limitation) to "not recorded for this
+   session"; every doc comment and test updated. WPI's own v7-column-seeding half stays open.
+6. **R-916/R-920 (polish)** — one shared `stripRigManufacturerPrefix` helper
+   (`ui/data/RigDisplayName.kt`, new) replaces three private copies of the same rule: WPE's
+   original in `SettingsPolling.kt` (kept as a one-line delegate, R-845), N04's `CaptureStatusViewState
+   .radioFacts` (R-916), and DG04's `SessionRouteFacts.rigLabel()`/`DigestPolling.liveRigNameFor`
+   (R-920, both the past-session and live-session paths) — none of the three ever stripped the
+   prefix before this.
+7. **R-922 (design)** — confirmed the exact R-613 shape on `NowScreen.kt`: its own scrollable
+   `Column`, a plain `weight(1f)` sibling of `LiveBar`, sits flush (zero breathing room) against the
+   bar's top edge at any scroll position. Mirrored `CaptureStatusScreen.kt`'s own established fix
+   (a fixed 44dp `LIVE_BAR_CLEARANCE` trailing pad, `0.dp` with no bar showing).
+8. **R-931 (polish)** — `DigestPolling.kt`'s prose-card `subject` (previously
+   `participants.singleOrNull() ?: "Thread"`) now reads the single station directly, or the
+   register's own honest "unnamed thread · N stations" for two or more (no single station gets
+   naming rights over a real QSO, and this schema tracks no net name) — never the bare word
+   "Thread". The card's own render already uses the board's mono weight-600 style unconditionally.
+9. **R-838 (design, reopened)** — re-confirmed the WPF half: `LogViewData.kt`'s gap-row copy and
+   interrupted-connector glyph selection both key off the real `CaptureGapCause.BLUETOOTH_AUDIO_LOST`
+   enum value already, never the row's own label prose, with existing `LogViewDataTest` coverage.
+   WPI's own scenario-seeding half (`bt-audio-dropped` still seeds `INPUT_LOST`) has not landed on
+   `main` as of this merge; nothing further for WPF until it does.
+10. **R-853 (halt)** — investigated at length; no root cause confirmed, no product fix made. Traced
+    every candidate read path (`ReaderPolling.nowViewState`/`effectiveSessionId`,
+    `LiveBarPolling.toneAndLabel`, `FailureSignalsPolling.current`/`FailureMapper
+    .mapInputOrLevelBanner`) — all read the same `CaptureState`/`InputStatus` global holders, with no
+    session-id gate on the F23 mapping at all, so they cannot structurally disagree from this code
+    at any single stable instant; no bug producing the reported contradiction was found. The R-910
+    fix (above) is a related, confirmed bug in the same investigation but does not itself explain
+    this row's contradiction, since `Now` embeds its own live bar via the already-correct seam.
+    Cannot say whether the scenario is a contributing cause — no evidence either way was obtainable.
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green (full suite).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green, including
+  every new `OrtNavHostDestinationDispatchTest.R_910`/`R_911` case.
+- `./gradlew -PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`.
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 240 covered, no
+  orphan-test line; `coverageMatrixCheck` — up to date.
+- Exact new/changed test names: `OrtNavHostDestinationDispatchTest.R_910 the live bar still shows on
+  a host-rendered destination when the reader's own session id is stale`; `OrtNavHostDestinationDispatchTest
+  .R_910 exactly one live bar on <NOW|CAPTURE|LOG|SEARCH|THREADS|STATIONS|FREQUENCIES|EARLIER_NIGHTS
+  |IMPROVE_RECORDS|SETTINGS>`; `OrtNavHostDestinationDispatchTest.R_911 exactly one live bar on the
+  Session drill-in reached from Earlier nights`; `NowViewStateMapperTest.R_913 a short live session's
+  chart hatches only real gaps, never every hour-of-day untouched`; `NowScreenTest.R_922 at
+  fontscale_2_0 scrolled to the end the last station row clears the live bar`; `DigestPollingTest
+  .R_931 a two-station QSO card is titled by its stations, never the bare word Thread`;
+  `DigestPollingTest.R_920 a past session's own recorded rig resolves to its real name, no
+  manufacturer prefix`; `CaptureStatusMapperTest.R_916 the Radio row title drops the descriptor's own
+  leading manufacturer word` (and its stale-rig sibling).
+
+**Left open / not done:**
+- **R-912, R-853**: investigated, no product-side defect confirmed; left `open` in the register with
+  the investigation's own reasoning recorded, not force-fixed on a guess.
+- **R-911**: no duplicate composition found; recorded as `fixed (partial)` — the related R-910 bug is
+  fixed and tested, but the specific "fragment bleeds in at the top" mechanism is unconfirmed.
+- **Device confirmation**: none of this round's fixes were confirmed on a real device.
+  `emulator-5556` (the port the coordinator named as free) was unresponsive for the entire session —
+  a scripted `assembleDebug -PortAllowMissingBundledAssets=true` + install hung indefinitely
+  partway through `adb install`, confirmed by direct wait rather than assumed. `5554`/`5558` were not
+  substituted, since another worktree-agent session may be actively using them and this round had no
+  way to confirm otherwise. Register rows above are marked `fixed`, not `closed`, per constitution
+  VIII, pending a device/tour re-capture.
+- **R-910/R-913's own WPI halves** (live-bar settle-wait; scenario heartbeats) are unaffected by this
+  round and remain WPI's to land.
 
 ---
 
@@ -30224,6 +30347,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

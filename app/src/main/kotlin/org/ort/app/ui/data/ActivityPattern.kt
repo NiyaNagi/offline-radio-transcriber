@@ -451,6 +451,48 @@ public object ActivityPatternMapper {
         for (h in first..last) into.add(h)
     }
 
+    /**
+     * R-449/R-913 (register): [buildPattern]'s 24 hour-*of-day* buckets are correct for
+     * `Station`/`Frequencies`' multi-night patterns and wrong for **one session's own short
+     * span** — every hour-of-day that one session never had a chance to touch (most of the clock,
+     * for a session lasting a few hours) folds to [HourActivityState.NOT_LISTENING] by
+     * [buildPattern]'s own honest "never captured at all reads as not-listening" rule, which reads
+     * as almost the whole chart hatched for a session that ran continuously with no real gap at
+     * all. This instead buckets by *elapsed* hour within [window]'s own real span — only as many
+     * bars as the session actually ran, each [HourActivityState.NOT_LISTENING] only when a *real*,
+     * recorded gap actually covers it, never because nothing was heard. The one shared helper
+     * `Now`'s own live chart ([NowViewStateMapper.active]) and a past session's own coverage bar
+     * (`DigestPolling.sessionDetail`) both call, so neither disagrees with the other about what
+     * "listening" means for the same session (R-913's own halt).
+     */
+    public fun buildSessionElapsedPattern(
+        window: SessionWindow,
+        matchingTransmissionTimestamps: List<Long>,
+        nowMillis: Long,
+    ): List<HourActivityBucket> {
+        val sessionEnd = window.endedAtUtc ?: nowMillis
+        if (sessionEnd <= window.startedAtUtc) return emptyList()
+        val totalHours = ((sessionEnd - window.startedAtUtc + HOUR_MILLIS - 1) / HOUR_MILLIS)
+            .toInt()
+            .coerceAtLeast(1)
+        return (0 until totalHours).map { hourIndex ->
+            val bucketStart = window.startedAtUtc + hourIndex * HOUR_MILLIS
+            val bucketEnd = minOf(bucketStart + HOUR_MILLIS, sessionEnd)
+            val heardCount = matchingTransmissionTimestamps.count { it in bucketStart until bucketEnd }
+            val hasRealGap = window.gaps.any { gap ->
+                val overlapStart = maxOf(gap.startedAt, bucketStart)
+                val overlapEnd = minOf(gap.endedAt ?: sessionEnd, bucketEnd)
+                overlapEnd > overlapStart
+            }
+            val state = when {
+                hasRealGap -> HourActivityState.NOT_LISTENING
+                heardCount > 0 -> HourActivityState.HEARD
+                else -> HourActivityState.SILENT_WHILE_LISTENING
+            }
+            HourActivityBucket(hourOfDayUtc = hourIndex, state = state, heardCount = heardCount)
+        }
+    }
+
     /** `[start, end)` with every gap window (clipped to `[start, end)`) removed. */
     private fun subtractGaps(start: Long, end: Long, gaps: List<GapWindow>): List<Pair<Long, Long>> {
         val clipped = gaps

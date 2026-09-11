@@ -49,11 +49,13 @@ public data class SessionRouteFacts(
     public val isLocalMicrophone: Boolean get() = captureMode == CaptureMode.LOCAL_MICROPHONE
 
     /**
-     * E2-A07: `"Kenwood TH-D75A · Bluetooth SPP"` when [rigDescriptorId] resolves against the
-     * bundled/imported catalogue [RigPickerCatalogue] builds (the same lookup S09/S09b use, so a
-     * session's own record names its rig exactly as onboarding would), the transport's own label
-     * alone when the id is `null` or does not resolve (an id from a descriptor since removed, or a
-     * pre-v10 row), and `null` when neither is known at all.
+     * E2-A07/R-920 (register, polish): `"TH-D75A · Bluetooth SPP"` when [rigDescriptorId] resolves
+     * against the bundled/imported catalogue [RigPickerCatalogue] builds (the same lookup S09/S09b
+     * use, so a session's own record names its rig exactly as onboarding would), the transport's
+     * own label alone when the id is `null` or does not resolve (an id from a descriptor since
+     * removed, or a pre-v10 row), and `null` when neither is known at all. [stripRigManufacturerPrefix]
+     * drops the catalogue entry's own leading manufacturer word — the same shared rule R-845/R-916
+     * apply on CF06/N04, so this row never disagrees with either about the rig's own name.
      */
     public fun rigLabel(): String? {
         val transportLabel = rigTransport?.let {
@@ -61,7 +63,7 @@ public data class SessionRouteFacts(
         }
         val descriptorName = rigDescriptorId?.let { id ->
             RigPickerCatalogue.build().entries().firstOrNull { it.id == id }?.displayName
-        }
+        }?.let { stripRigManufacturerPrefix(it) }
         return when {
             descriptorName != null && transportLabel != null -> "$descriptorName · $transportLabel"
             descriptorName != null -> descriptorName

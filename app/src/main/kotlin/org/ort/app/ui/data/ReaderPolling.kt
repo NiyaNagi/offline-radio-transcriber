@@ -110,8 +110,15 @@ public object ReaderPolling {
         if (sessionId == null) return DrawerBadgeViewState.NONE
         val db = OrtDatabase.create(context.applicationContext)
         val logCount = db.transmissionDao().listBySession(sessionId).size
-        val elapsedLabel = if (CaptureState.isCapturing && CaptureState.sessionId == sessionId) {
-            db.sessionDao().getById(sessionId)?.startedAt?.let { startedAt ->
+        // R-910 (register, halt): resolved through [effectiveSessionId], not a bare
+        // `CaptureState.sessionId == sessionId` equality — see that function's own kdoc, and
+        // `OrtNavHost.kt`'s own `rememberDrawerLiveState` `liveBar` computation for the sibling fix
+        // this one matches (a stale, un-restarted reader's own [sessionId] going dark against a
+        // genuinely live but different-id session — the header's own elapsed badge is this same bug
+        // on a different field of the same live bar/badge fact).
+        val liveSessionId = effectiveSessionId(sessionId)
+        val elapsedLabel = if (liveSessionId != null && CaptureState.isCapturing) {
+            db.sessionDao().getById(liveSessionId)?.startedAt?.let { startedAt ->
                 formatElapsedShort(SystemClock.wallMillis() - startedAt)
             }
         } else {

@@ -1057,12 +1057,17 @@ private fun rememberDrawerLiveState(sessionId: String?, context: android.content
             // `DrawerSessionHeaderViewState`'s own doc comment) — `sessionLabel` stays `null`
             // until one exists, rather than this fabricating one.
             sessionHeader = DrawerSessionHeaderViewState.from(sessionLabel = null, rigState = RigStatus.state)
-            // R-022: WP4's real read path, now that it is on this branch. Gated the same way
-            // `NowContent`/`CaptureStatusContent` (WP4's own callers) gate it — only while this
-            // exact session is actually capturing, never a bar built for a session that has ended
-            // or one that never started.
-            liveBar = if (sessionId != null && CaptureState.isCapturing && CaptureState.sessionId == sessionId) {
-                LiveBarPolling.current(context, sessionId)
+            // R-022/R-910 (register, halt): resolved through `ReaderPolling.effectiveSessionId`,
+            // the same seam `NowContent`/`CaptureStatusContent` already read through (that
+            // function's own kdoc) — never a bare `CaptureState.sessionId == sessionId` equality.
+            // That equality used to mean a host-rendered destination (`Threads`, `Stations`, every
+            // id other than `NOW`/`CAPTURE`, which embed their own bar via this same seam already)
+            // went dark the moment a scenario re-broadcast without restarting the process
+            // (`-NoRestart`) moved `CaptureState.sessionId` on to a *new* session this argument was
+            // never told about — a session genuinely, currently live, reported as if none were.
+            val liveSessionId = ReaderPolling.effectiveSessionId(sessionId)
+            liveBar = if (liveSessionId != null && CaptureState.isCapturing) {
+                LiveBarPolling.current(context, liveSessionId)
             } else {
                 null
             }

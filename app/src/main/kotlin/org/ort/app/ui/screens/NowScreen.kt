@@ -87,12 +87,21 @@ public fun NowScreen(
     // compiling unchanged until `OrtNavHost.kt` (out of this package's row) wires it.
     onOpenCaptureMode: () -> Unit = {},
 ) {
+    // R-922 (register, `bt-audio-dropped/F23-now@2x.png`): `LiveBar` below is a plain sibling of
+    // this scrollable `Column`, the same shape `CaptureStatusScreen`'s own R-613/R-826 fix
+    // addressed — Compose's `weight(1f)` already gives this `Column` exactly `total - liveBar's
+    // height`, so its own bottom edge sits flush against the bar's top at any scroll offset,
+    // with only this screen's own baseline `OrtSpacing.lg` for breathing room. The same
+    // `LIVE_BAR_CLEARANCE` (44dp) constant that fix established, `0.dp` when no live bar shows
+    // (never a fabricated gap for a screen with nothing pinned below it).
+    val liveBarClearance = if (liveBar != null && state is NowViewState.Active) LIVE_BAR_CLEARANCE else 0.dp
     Column(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(OrtSpacing.lg),
+                .padding(OrtSpacing.lg)
+                .padding(bottom = liveBarClearance),
         ) {
             when (state) {
                 is NowViewState.Idle -> IdleContent(state = state, onStartCapture = onStartCapture)
@@ -536,6 +545,10 @@ private fun FirstSessionChartBaseline(axisStart: String?, axisEnd: String?, modi
 }
 
 private const val FIRST_SESSION_BASELINE_BAR_COUNT = 16
+
+/** R-922: matches `CaptureStatusScreen`'s own `LIVE_BAR_CLEARANCE` (R-613/R-826) — the same fixed
+ * trailing-gap constant, not a re-derivation of the live bar's own measured height. */
+private val LIVE_BAR_CLEARANCE = 44.dp
 
 @Composable
 private fun WorthKnowingRow(item: WorthKnowingItem) {

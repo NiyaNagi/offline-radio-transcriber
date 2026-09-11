@@ -426,6 +426,27 @@ class CaptureStatusMapperTest {
         assertFalse(view.input.subLine!!.contains("·  ·"))
     }
 
+    // R-916 (register, polish): N04's own Radio row title used to render the descriptor's real,
+    // *prefixed* display name verbatim ("Kenwood TH-D75A") where the board and CF06 (R-845) both
+    // read "TH-D75A" — the shared `stripRigManufacturerPrefix` helper (`ui/data`) now applies here
+    // too, so N04 never disagrees with CF06/DG04 about the rig's own name.
+    @Test
+    @Requirement("R-916")
+    fun `R_916 the Radio row title drops the descriptor's own leading manufacturer word`() {
+        val connected = RigStatus.State.Connected("Kenwood TH-D75A", emptyList())
+        val view = state(rig = connected)
+        assertEquals("TH-D75A", view.radio.value)
+    }
+
+    @Test
+    @Requirement("R-916")
+    fun `R_916 a stale rig also drops the leading manufacturer word, from its own last-known name`() {
+        val connected = RigStatus.State.Connected("Kenwood TH-D75A", emptyList())
+        val stale = RigStatus.State.Stale(connected, sinceMillis = 0L)
+        val view = state(rig = stale)
+        assertEquals("TH-D75A", view.radio.value)
+    }
+
     @Test
     @Requirement("FR-RIG-14")
     fun `FR_RIG_14 the Radio sub-line names the transport before the band states`() {
