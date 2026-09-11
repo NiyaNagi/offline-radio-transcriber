@@ -3,6 +3,7 @@ package org.ort.app.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -28,6 +29,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.data.ActivityBucket
 import org.ort.app.ui.data.HourActivityState
@@ -126,21 +128,86 @@ public fun ActivityPatternChart(
             }
         }
         if (axisStart != null || axisEnd != null || notListeningHours > 0) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.xs),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(text = axisStart.orEmpty(), style = OrtType.axis, color = OrtColors.textLow)
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    if (notListeningHours > 0) {
-                        NotListeningLegend(notListeningLabel)
-                    }
+            AxisAndLegendRow(
+                axisStart = axisStart,
+                axisEnd = axisEnd,
+                showLegend = notListeningHours > 0,
+                notListeningLabel = notListeningLabel,
+            )
+        }
+    }
+}
+
+/**
+ * R-875 (register, design, validator V10): `Session.dc.html`'s coverage caption used to sit
+ * unconditionally centred *between* the axis start/end labels — real at 1.0, but a long caption
+ * ("not listening · 12 gaps · 58m 42s") at font scale 2.0 has nowhere to shrink to (`maxLines = 1`/
+ * `softWrap = false` on [NotListeningLegend]'s own text is deliberate — see that composable's own
+ * kdoc; a truncated duration or gap count is a fabricated one, constitution I) and collided with
+ * the right axis time instead. [rememberTextMeasurer] measures the three real strings' own single-
+ * line widths against the row's real, current available width (the same real-font-metrics pattern
+ * `ui/components/Rows.kt`'s column-width helpers already use, never a guessed constant) — when all
+ * three fit side by side, this renders exactly as before; when they do not, the caption drops to
+ * its own centred row *below* the axis labels instead of overlapping either one.
+ */
+@Composable
+private fun AxisAndLegendRow(axisStart: String?, axisEnd: String?, showLegend: Boolean, notListeningLabel: String?) {
+    if (!showLegend) {
+        Box(modifier = Modifier.padding(top = OrtSpacing.xs)) {
+            AxisRow(axisStart = axisStart, axisEnd = axisEnd, embedLegend = false, notListeningLabel = null)
+        }
+        return
+    }
+    val textMeasurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val legendText = legendText(notListeningLabel)
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.xs)) {
+        val availablePx = with(density) { maxWidth.roundToPx() }
+        val axisStartPx = axisStart?.let { textMeasurer.measure(it, OrtType.axis).size.width } ?: 0
+        val axisEndPx = axisEnd?.let { textMeasurer.measure(it, OrtType.axis).size.width } ?: 0
+        val legendPx = textMeasurer.measure(legendText, OrtType.subLine).size.width +
+            with(density) { LEGEND_SWATCH_RESERVED_WIDTH.roundToPx() }
+        val fitsBesideAxis = axisStartPx + legendPx + axisEndPx <= availablePx
+        if (fitsBesideAxis) {
+            AxisRow(axisStart = axisStart, axisEnd = axisEnd, embedLegend = true, notListeningLabel = notListeningLabel)
+        } else {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                AxisRow(axisStart = axisStart, axisEnd = axisEnd, embedLegend = false, notListeningLabel = null)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.xs),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    NotListeningLegend(notListeningLabel)
                 }
-                Text(text = axisEnd.orEmpty(), style = OrtType.axis, color = OrtColors.textLow)
             }
         }
     }
 }
+
+/** The axis row alone — [embedLegend] `true` draws [NotListeningLegend] centred between
+ * [axisStart]/[axisEnd] (the fits-on-one-line case); `false` draws the axis labels alone (no
+ * legend at all, or the legend has already moved to its own row below — [AxisAndLegendRow]'s own
+ * two call sites, never both at once). */
+@Composable
+private fun AxisRow(axisStart: String?, axisEnd: String?, embedLegend: Boolean, notListeningLabel: String?) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(text = axisStart.orEmpty(), style = OrtType.axis, color = OrtColors.textLow)
+        Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            if (embedLegend) NotListeningLegend(notListeningLabel)
+        }
+        Text(text = axisEnd.orEmpty(), style = OrtType.axis, color = OrtColors.textLow)
+    }
+}
+
+/** [NotListeningLegend]'s own composed string — shared with [AxisAndLegendRow]'s own width
+ * measurement so the two never drift apart on what is actually being measured/rendered. */
+private fun legendText(notListeningLabel: String?): String =
+    if (notListeningLabel != null) "not listening · $notListeningLabel" else "not listening"
+
+/** [NotListeningLegend]'s own hatch swatch (9dp) plus its `spacedBy(5.dp)` gap to the caption text
+ * — the fixed-width part of its own layout [AxisAndLegendRow]'s text-only measurement does not
+ * otherwise account for. */
+private val LEGEND_SWATCH_RESERVED_WIDTH = 14.dp
 
 @Composable
 private fun NotListeningLegend(notListeningLabel: String?, modifier: Modifier = Modifier) {

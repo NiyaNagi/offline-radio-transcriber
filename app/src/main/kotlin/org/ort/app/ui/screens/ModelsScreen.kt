@@ -478,8 +478,17 @@ private fun AssetRow(
         ) {
             AssetMarker(status = row.status, isBusy = isBusy)
             Column(modifier = Modifier.weight(1f)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs)) {
-                    Text(text = row.label, style = OrtType.rowTitle, color = OrtColors.textHigh)
+                // R-970 (register, spec): the same rule R-874 established for `TextAction` — the
+                // leading title yields (`Modifier.weight(1f, fill = false)` on `Row.fillMaxWidth()`)
+                // so the trailing `Badge` is measured first, at its own real width, and never
+                // squeezed to a per-letter collapse at font scale 2.0.
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs)) {
+                    Text(
+                        text = row.label,
+                        style = OrtType.rowTitle,
+                        color = OrtColors.textHigh,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
                     if (row.status != ModelRowStatus.NOT_INSTALLED) {
                         Badge(text = "active", kind = BadgeKind.TIER)
                     }
@@ -612,8 +621,14 @@ private fun GroupedAssetRow(
         ) {
             AssetMarker(status = aggregateStatus, isBusy = anyBusy)
             Column(modifier = Modifier.weight(1f)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs)) {
-                    Text(text = familyLabel, style = OrtType.rowTitle, color = OrtColors.textHigh)
+                // R-970 (register, spec): see the single-row `AssetRow`'s own identical fix above.
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs)) {
+                    Text(
+                        text = familyLabel,
+                        style = OrtType.rowTitle,
+                        color = OrtColors.textHigh,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
                     if (fullyInstalled) Badge(text = "active", kind = BadgeKind.TIER)
                 }
                 Text(
@@ -628,8 +643,13 @@ private fun GroupedAssetRow(
         // R-761: exactly one nested row, for the next still-missing part only — see this
         // composable's own doc comment for why three (one per part) is not shown at once.
         missing.firstOrNull()?.let { part ->
+            // R-874 (register, spec): `fillMaxWidth()` plus `weight(1f, fill = false)` on the
+            // leading part label — `TextAction`'s own doc comment (`ui/components/Controls.kt`)
+            // names this the required shape so "Install from a file" is measured against the
+            // row's own real width first and wraps at word boundaries, never past the row's edge,
+            // when this long a leading label ("Whisper tiny.en — encoder") does not also fit.
             Row(
-                modifier = Modifier.padding(top = OrtSpacing.xs, start = MARKER_COLUMN_WIDTH),
+                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.xs, start = MARKER_COLUMN_WIDTH),
                 horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
             ) {
                 // R-934 follow-up: the rejection-aware sentence when this exact part was corrupted
@@ -637,7 +657,12 @@ private fun GroupedAssetRow(
                 // otherwise, matching [notInstalledLabel]'s own identical rule for the single-file
                 // case.
                 val partLabel = part.lastRejection?.let { rejectionLabel(part.label, it) } ?: part.label
-                Text(text = partLabel, style = OrtType.subLine, color = OrtColors.textFaint)
+                Text(
+                    text = partLabel,
+                    style = OrtType.subLine,
+                    color = OrtColors.textFaint,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
                 if (offersDownload(part)) {
                     TextAction(
                         text = "Download",
@@ -690,8 +715,14 @@ private fun LexiconAssetRow(
                 isBusy = false,
             )
             Column(modifier = Modifier.weight(1f)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs)) {
-                    Text(text = "Callsign lexicon", style = OrtType.rowTitle, color = OrtColors.textHigh)
+                // R-970 (register, spec): see the asset row's own identical fix above.
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(OrtSpacing.xs)) {
+                    Text(
+                        text = "Callsign lexicon",
+                        style = OrtType.rowTitle,
+                        color = OrtColors.textHigh,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
                     if (row.installed) Badge(text = "active", kind = BadgeKind.TIER)
                 }
                 Text(

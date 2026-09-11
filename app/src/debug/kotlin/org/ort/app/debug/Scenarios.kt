@@ -2614,6 +2614,34 @@ public object Scenarios {
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        // R-872 (register, halt): FR-RIG-15's own distinction is audio-only-fine, rig-control-only
+        // dropped — this session's own real `WIRED_HEADSET` v7 columns already say the audio route
+        // is verified, but nothing here ever opened `InputStatus` or published a `LevelStatus`
+        // reading, so the live bar's own honest "nothing measured yet" floor read identically to a
+        // genuine input-lost drop on a real device (validator V10's own capture). `InputStatus`
+        // stays open and `LevelStatus` stays real throughout this drop — only `RigStatus` goes
+        // stale — the same "audio is fine" shape `LiveBarPollingTest.R_836`'s own rig-only-drop
+        // test already proves the live bar renders correctly, given a real reading to show.
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("wired-1", AudioDeviceKind.WIRED_HEADSET, "Wired headset"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis() - 5 * 3_600_000L,
+        )
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -16f,
+                rmsDbfs = -22f,
+                noiseFloorDbfs = -52f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = List(60) { -20f + (it % 5) },
+        )
         val lastKnown = RigStatus.State.Connected(
             descriptor = "Kenwood TH-D75A",
             bands = listOf(

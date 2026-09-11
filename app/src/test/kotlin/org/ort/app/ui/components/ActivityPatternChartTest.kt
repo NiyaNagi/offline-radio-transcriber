@@ -5,6 +5,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -21,6 +22,7 @@ import org.ort.app.ui.data.HourActivityBucket
 import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.app.ui.theme.OrtType
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import java.time.DayOfWeek
 
@@ -111,6 +113,91 @@ class ActivityPatternChartTest {
 
         composeTestRule.onNodeWithText("22:00").assertIsDisplayed()
         composeTestRule.onNodeWithText("06:00").assertIsDisplayed()
+    }
+
+    /** R-875 (register, design, validator V10): DG04's own coverage caption ("not listening · 1
+     * gap · …") sat centred between the axis start/end labels — at font scale 2.0, on a real
+     * 390dp card, it collides with the right-edge axis time ("11:25") instead of clearing it. The
+     * fix stacks the caption under the axis row once it genuinely does not fit beside both labels,
+     * rather than overlapping either. */
+    @Test
+    @Requirement("R-875")
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    fun `R_875 the not-listening caption stacks under the axis row rather than colliding with it at 2_0`() {
+        val pattern = (0..23).map { hour ->
+            if (hour == 3) {
+                bucket(hour, HourActivityState.NOT_LISTENING)
+            } else {
+                bucket(hour, HourActivityState.SILENT_WHILE_LISTENING)
+            }
+        }
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    // 350dp, not 390: `SessionDetailScreen`'s own `OrtSpacing.lg` (20dp) horizontal
+                    // padding on each side of a 390dp card is what this chart actually gets on
+                    // device — the real width V10's own capture measured against, not the chart's
+                    // own unpadded parent.
+                    androidx.compose.foundation.layout.Box(modifier = Modifier.width(350.dp)) {
+                        ActivityPatternChart(
+                            pattern = pattern,
+                            axisStart = "10:48",
+                            axisEnd = "11:25",
+                            notListeningLabel = "12 gaps · 58m 42s",
+                        )
+                    }
+                }
+            }
+        }
+
+        val legendBounds = composeTestRule.onNodeWithText("not listening", substring = true, useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val axisEndBounds = composeTestRule.onNodeWithText("11:25", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertTrue(
+            "expected the not-listening caption (right ${legendBounds.right}) to clear the right axis " +
+                "label's own left edge (${axisEndBounds.left}) at font scale 2.0 — either beside it with " +
+                "room, or stacked on its own line below — got an overlap",
+            legendBounds.right <= axisEndBounds.left || legendBounds.top >= axisEndBounds.bottom,
+        )
+    }
+
+    /** R-875's own fix only stacks the caption once it genuinely does not fit — a short caption at
+     * a normal font scale must stay on the *same* row as the axis labels, exactly as before this
+     * fix (never an over-eager stack that wastes a line the board never draws for the common
+     * case). */
+    @Test
+    @Requirement("R-875")
+    fun `R_875 a short caption at normal scale stays on the same row as the axis labels`() {
+        val pattern = (0..23).map { hour ->
+            if (hour == 3) {
+                bucket(hour, HourActivityState.NOT_LISTENING)
+            } else {
+                bucket(hour, HourActivityState.SILENT_WHILE_LISTENING)
+            }
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                androidx.compose.foundation.layout.Box(modifier = Modifier.width(350.dp)) {
+                    ActivityPatternChart(
+                        pattern = pattern,
+                        axisStart = "22:00",
+                        axisEnd = "06:00",
+                        notListeningLabel = "38 s",
+                    )
+                }
+            }
+        }
+
+        val legendBounds = composeTestRule.onNodeWithText("not listening", substring = true, useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val axisEndBounds = composeTestRule.onNodeWithText("06:00", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        assertTrue(
+            "expected the short caption to stay on the same row as the axis labels (legend top " +
+                "${legendBounds.top}, axis top ${axisEndBounds.top}), never an over-eager stack",
+            legendBounds.top == axisEndBounds.top,
+        )
     }
 
     @Test
