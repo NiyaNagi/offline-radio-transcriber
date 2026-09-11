@@ -222,4 +222,251 @@ class VerifyScreenTest {
 
         composeTestRule.onNodeWithTag("setup-verify-choose-different").assertDoesNotExist()
     }
+
+    // --- R-943 (register, reviewer A3 run 4a, design): checklist markers, the mono meta lines, ---
+    // --- the elapsed counter and the Input waveform card, `Setup-Verify.dc.html` lines 40-91 --------
+
+    @Test
+    fun `R_943 a not-yet-reached check shows the board's dim pending ring, never an invisible fill`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-verify-check-resampler-pending-ring").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-verify-check-route-match-pending-ring")
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_943 the native-rate detail formats Hz with grouped thousands, mono`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("48 000 Hz · mono · 16-bit").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_943 the routed device detail line names the real routed device once matched`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(
+                            passed = setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
+                            nativeRateHz = 48_000,
+                            elapsedListeningMillis = 0L,
+                            routedDeviceLabel = "USB Audio Device",
+                        ),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("getRoutedDevice() → USB Audio Device").assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_943 no routed device label yet renders no detail line at all, never a placeholder`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("getRoutedDevice", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_943 the elapsed counter renders beside Listening for signal while still listening`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(
+                            setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
+                            48_000,
+                            elapsedListeningMillis = 11_000L,
+                        ),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0:11").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_943 the elapsed counter disappears once the signal check has passed`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(
+                            setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH, RouteCheckStage.SIGNAL),
+                            48_000,
+                            elapsedListeningMillis = 11_000L,
+                        ),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("0:11").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_943 the Input waveform card renders with the real level samples`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(
+                            passed = setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
+                            nativeRateHz = 48_000,
+                            elapsedListeningMillis = 4_000L,
+                            levelBars = listOf(0.1f, 0.5f, 0.9f),
+                            noiseFloorDbfs = -58.0,
+                        ),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-verify-input-waveform").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-verify-input-waveform-canvas").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("noise floor −58 dBFS").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_943 no real sample yet renders the honest dash, never a fabricated noise floor`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("noise floor —").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_943 signal heard caption renders only once the signal stage has genuinely passed`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(
+                            setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
+                            48_000,
+                            4_000L,
+                        ),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("signal heard").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_943 signal heard caption renders once the signal stage has passed`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.Passed(48_000, null),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("signal heard").performScrollTo().assertIsDisplayed()
+    }
+
+    // --- formatHzGrouped/formatElapsed: pure formatting helpers -----------------------------------
+
+    @Test
+    fun `formatHzGrouped groups thousands with a space, matching the board`() {
+        assert(formatHzGrouped(48_000) == "48 000") { formatHzGrouped(48_000) }
+        assert(formatHzGrouped(16_000) == "16 000") { formatHzGrouped(16_000) }
+        assert(formatHzGrouped(999) == "999") { formatHzGrouped(999) }
+    }
+
+    @Test
+    fun `formatElapsed formats minutes and zero-padded seconds, matching the board's 0_11`() {
+        assert(formatElapsed(11_000L) == "0:11") { formatElapsed(11_000L) }
+        assert(formatElapsed(65_000L) == "1:05") { formatElapsed(65_000L) }
+        assert(formatElapsed(0L) == "0:00") { formatElapsed(0L) }
+    }
 }

@@ -16,6 +16,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.components.referenceLineY
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
@@ -181,6 +182,55 @@ class LevelScreenTest {
         // fraction 0.0 is the mirror case at the bottom edge (a noise floor at CHART_FLOOR_DBFS).
         val y = referenceLineY(fraction = 0f, heightPx = 96f, edgeClearancePx = 4f)
         assert(y == 92f) { "expected the line inset up from the bottom edge by the full clearance, got y=$y" }
+    }
+
+    // --- R-944 (register, reviewer A3 run 4a, design): the meter is a genuine proportional -------
+    // --- envelope from real level samples, never a fixed/alternating pattern -----------------------
+
+    @Test
+    fun `R_944 bar heights are proportional to their own real sample, never a fixed alternating pattern`() {
+        val rects = levelBarRects(
+            bars = listOf(0.1f, 0.9f, 0.3f, 0.3f, 0.05f),
+            widthPx = 200f,
+            heightPx = 100f,
+            gapPx = 0f,
+        )
+
+        // A taller real sample (0.9) draws with a smaller topY (closer to the canvas top) than a
+        // shorter one (0.1) beside it -- proportional, not alternating short/tall/short/tall.
+        assert(rects[1].topY < rects[0].topY) { "the 0.9 sample must draw taller than the 0.1 sample" }
+        // Two bars with the *identical* real sample must draw at the identical height -- an
+        // alternating pattern would instead force every other bar tall regardless of its own value.
+        assert(rects[2].topY == rects[3].topY) {
+            "equal samples must draw equal heights, got ${rects[2].topY} and ${rects[3].topY}"
+        }
+        // Monotonic ordering across a genuinely descending real sequence -- a fixed alternating
+        // pattern could never reproduce this shape.
+        assert(rects[3].topY < rects[4].topY) { "a smaller sample must draw shorter than a larger one" }
+    }
+
+    @Test
+    fun `R_944 the tinted target band colours a bar within it, above and below read differently`() {
+        val topFraction = levelBarFraction(org.ort.app.ui.data.LevelViewState.TARGET_BAND_TOP_DBFS.toDouble())
+        val bottomFraction = levelBarFraction(org.ort.app.ui.data.LevelViewState.TARGET_BAND_BOTTOM_DBFS.toDouble())
+        val midBand = (topFraction + bottomFraction) / 2f
+        val rects = levelBarRects(
+            bars = listOf(0.0f, midBand, 1.0f),
+            widthPx = 30f,
+            heightPx = 100f,
+            gapPx = 0f,
+        )
+
+        assert(rects[0].color == OrtColors.meterWarn) { "below the target band must read the warn colour" }
+        assert(rects[1].color == OrtColors.chartGreenRamp[1]) { "inside the target band must read its own colour" }
+        assert(rects[2].color == OrtColors.accentGreen) { "at or above the band top must read full accent green" }
+    }
+
+    @Test
+    fun `R_944 an empty sample history draws no bars at all, never a fabricated one`() {
+        val rects = levelBarRects(bars = emptyList(), widthPx = 100f, heightPx = 100f, gapPx = 1.5f)
+
+        assert(rects.isEmpty())
     }
 
     @Test

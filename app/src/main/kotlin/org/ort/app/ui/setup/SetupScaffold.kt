@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -148,6 +149,11 @@ public fun SetupScaffold(
             )
         }.map { it.measure(looseConstraints) }
         val barHeightPx = barPlaceables.maxOfOrNull { it.height } ?: 0
+        // R-940 (register, reviewer A3 run 4a): the pinned action block's own real height, as
+        // trailing padding on the scrollable body below (R-613's shape) -- a defensive buffer so
+        // the last real content (S02c's third bullet, the decline banner) settles fully clear of
+        // where the fixed bar visually starts rather than flush against it, at any font scale.
+        val barHeightDp = barHeightPx.toDp()
 
         val contentHeightPx = (constraints.maxHeight - barHeightPx).coerceAtLeast(0)
         val contentConstraints = Constraints(
@@ -196,8 +202,11 @@ public fun SetupScaffold(
                         .weight(1f)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(OrtSpacing.md),
-                    content = content,
-                )
+                ) {
+                    content()
+                    // R-940: see this function's own barHeightDp doc comment above.
+                    Spacer(modifier = Modifier.height(barHeightDp))
+                }
             }
         }.map { it.measure(contentConstraints) }
 
