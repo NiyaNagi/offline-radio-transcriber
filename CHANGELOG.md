@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (WPI queued items: R-861 mode-change-pending CF02, R-866 asset-corrupt S12, R-873 debug-process-restart holder republish, R-876 scenario.ps1 stray-session quoting)
 
-### 3c2c67ff — R-861/R-866 new tour steps, R-873 ActiveScenarioRepublishProvider, R-876 scenario.ps1's stray-session check fixed and made non-fatal
+### 6b04159b — R-861/R-866 new tour steps, R-873 ActiveScenarioRepublishProvider, R-876 scenario.ps1's stray-session check fixed and made non-fatal
 
 **Scope:** `app/src/debug/{AndroidManifest.xml,kotlin/org/ort/app/debug/{Scenarios.kt,ActiveScenarioMarker.kt,ActiveScenarioRepublishProvider.kt}}`,
 `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `tools/ui-audit/{tour.json,scenario.ps1}`,
