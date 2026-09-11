@@ -536,9 +536,19 @@ class WpiScenariosTest {
         assertEquals(20_000L, state.nextRetryInMillis)
     }
 
+    /**
+     * R-945 (register, coordinator round): this test's own name used to claim "setup left at
+     * RADIO_VERIFIED" without ever actually asserting it through [SetupStateMachine.stepFor] — read
+     * directly, every field `stepFor` checks before returning [SetupStep.READY] is already seeded
+     * here (`selectedInputId`/`inputVerified`/`levelInBand`/`overnightStepSeen`/`radioChoice`/
+     * `rigTransport`/`rigBluetoothVerified`, `setupComplete = false`), so this scenario has always
+     * resumed at S12/READY, not S11 — the stale title just never checked. Corrected here rather than
+     * left uncorrected, so `S12-ready-bt`'s own tour step (added this round) rests on a real
+     * assertion, not an assumption.
+     */
     @Test
-    @Requirement("F-009")
-    fun `CF06_rig-bt-connected sets RigStatus Connected over Bluetooth SPP, setup left at RADIO_VERIFIED`() = runTest {
+    @Requirement("F-009", "R-945")
+    fun `CF06_rig-bt-connected sets RigStatus Connected over Bluetooth SPP, setup resumes at READY`() = runTest {
         Scenarios.load(context, "rig-bt-connected")
 
         val state = RigStatus.state
@@ -549,6 +559,12 @@ class WpiScenariosTest {
         val store = setupStore()
         assertTrue(store.rigBluetoothVerified)
         assertFalse(store.setupComplete)
+        val step = SetupStateMachine.stepFor(
+            fullyGrantedBluetooth(),
+            micPermanentlyDenied = false,
+            snapshot = store.snapshot(),
+        )
+        assertEquals(SetupStep.READY, step)
     }
 
     @Test
@@ -658,6 +674,14 @@ class WpiScenariosTest {
      * once WPD's `levelBarRects` made S07's meter a real proportional envelope. Every sample stays
      * within the real noise-floor/peak bounds this scenario seeds, and the samples are not all equal
      * (a genuine rise and fall, not a fabricated flat line).
+     *
+     * **The last 15 samples specifically** (`RealLevelCheck.DEFAULT_BAR_COUNT`, via
+     * `levelReadingFrom`'s own `history.takeLast(barCount)` — S07's board never reads more of the
+     * history than that): A4's own device report ("a decaying spike," not a rise-and-fall) found
+     * this round's first version of the envelope centered both lobes *outside* that window, so the
+     * displayed 15 samples showed only a lobe's trailing decay into the floor, never its rise —
+     * asserted directly here so a future regression of the same class fails this test, not only a
+     * validator's own eye.
      */
     @Test
     @Requirement("R-944")
@@ -678,6 +702,16 @@ class WpiScenariosTest {
         assertTrue(
             "expected the envelope to actually reach near the real noise floor, got $history",
             history.min() <= -50f,
+        )
+        val displayed = history.takeLast(15)
+        assertTrue(
+            "expected the displayed 15-sample window itself to reach near the real peak, got $displayed",
+            displayed.max() >= -16f,
+        )
+        assertTrue(
+            "expected the displayed window to show a genuine rise, not just a decay into the floor " +
+                "(A4's own device finding) -- the window's own first sample must sit well below its peak",
+            displayed.first() < displayed.max() - 10f,
         )
     }
 

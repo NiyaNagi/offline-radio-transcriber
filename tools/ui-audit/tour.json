@@ -159,6 +159,7 @@
     { "id": "setup-radio/S09-radio", "setup": "S09", "scenario": "setup-radio" },
     { "id": "setup-verified/S12-ready", "setup": "S12", "scenario": "setup-verified" },
     { "id": "setup-verified-local-mic/S12-ready-local-mic", "setup": "S12", "scenario": "setup-verified-local-mic" },
+    { "id": "rig-bt-connected/S12-ready-bt", "setup": "S12", "scenario": "rig-bt-connected" },
 
     { "id": "setup-verified/S01-welcome@2x", "setup": "S01", "scenario": "setup-verified", "fontScale": 2.0 },
     { "id": "setup-verified/S03-notify@2x", "setup": "S03", "scenario": "setup-verified", "fontScale": 2.0 },
@@ -166,6 +167,8 @@
     { "id": "setup-level/S07-level@2x", "setup": "S07", "scenario": "setup-level", "fontScale": 2.0 },
     { "id": "setup-verified/S08-battery@2x", "setup": "S08", "scenario": "setup-verified", "fontScale": 2.0 },
     { "id": "setup-verified/S12-ready@2x", "setup": "S12", "scenario": "setup-verified", "fontScale": 2.0 },
+    { "id": "rig-bt-connected/S12-ready-bt@2x", "setup": "S12", "scenario": "rig-bt-connected", "fontScale": 2.0 },
+    { "id": "rig-bt-connected/S12-ready-bt@2x-end", "setup": "S12", "scenario": "rig-bt-connected", "fontScale": 2.0, "scroll": "end" },
 
     { "id": "setup-verified/S01-welcome@2x-end", "setup": "S01", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-verified/S03-notify@2x-end", "setup": "S03", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
@@ -223,11 +226,18 @@
     { "id": "bt-audio-dropped/F23-log", "scenario": "bt-audio-dropped", "destination": "LOG" },
 
     { "id": "rig-bt-lost/F09-rig-bt-lost-now", "scenario": "rig-bt-lost", "destination": "NOW" },
+    { "id": "rig-bt-lost/F09-rig-bt-lost-now@2x", "scenario": "rig-bt-lost", "destination": "NOW", "fontScale": 2.0 },
+    { "id": "rig-bt-lost/F09-rig-bt-lost-now@2x-end", "scenario": "rig-bt-lost", "destination": "NOW", "fontScale": 2.0, "scroll": "end" },
     { "id": "rig-bt-connected/CF06-settings-rig", "scenario": "rig-bt-connected", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" } },
+    { "id": "rig-bt-connected/CF06-settings-rig@2x", "scenario": "rig-bt-connected", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" }, "fontScale": 2.0 },
+    { "id": "rig-bt-connected/CF06-settings-rig@2x-end", "scenario": "rig-bt-connected", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" }, "fontScale": 2.0, "scroll": "end" },
+    { "id": "rig-bt-lost/CF06-settings-rig", "scenario": "rig-bt-lost", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" } },
+    { "id": "mode-bluetooth/CF11-settings-mode", "scenario": "mode-bluetooth", "destination": "SETTINGS", "drillIn": { "settingsScreen": "MODE" } },
 
     { "id": "mode-change-pending/CF11-settings-mode", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "MODE" } },
     { "id": "mode-change-pending/CF02-settings-capture", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" } },
     { "id": "mode-change-pending/CF02-settings-capture@2x", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "fontScale": 2.0 },
+    { "id": "mode-change-pending/CF02-settings-capture@2x-end", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "fontScale": 2.0, "scroll": "end" },
 
     { "id": "assets-bundled/CF04-settings-assets", "scenario": "assets-bundled", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
     { "id": "assets-bundled/CF04-settings-assets@2x", "scenario": "assets-bundled", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" }, "fontScale": 2.0 },
