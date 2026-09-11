@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
@@ -151,7 +152,19 @@ internal fun readyFooterText(rows: List<ReadyRow>): String {
 @Composable
 private fun ReadySetupRow(row: ReadyRow) {
     Row(
-        modifier = Modifier.fillMaxWidth().testTag("setup-ready-row-${row.label.lowercase()}"),
+        // R-866 (register, validator V9): the Models row's amber `Install` measured 95px/34.3dp
+        // tall on a real device -- under the 44dp floor every other action met -- with no
+        // reproducible cause found in Robolectric across an isolated render, a real-device-width
+        // render and a forced multi-line wrap (this file's own report has the fuller account); a
+        // `requiredHeightIn` floor on the row itself, first in the chain (`Controls.kt`'s own
+        // R-510-class doc comment on why `requiredHeightIn` before later modifiers is what makes
+        // this actually hold), closes the gap defensively at the row level in addition to
+        // `TextAction`'s own existing floor, so the row's whole clickable/visual band -- action
+        // included -- can never render shorter than 44dp regardless of its sibling content's shape.
+        modifier = Modifier
+            .fillMaxWidth()
+            .requiredHeightIn(min = 44.dp)
+            .testTag("setup-ready-row-${row.label.lowercase()}"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
