@@ -32,6 +32,79 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI run 6: R-943/R-944/R-945/R-955/R-956/R-960 steps captured; R-933/R-957 diagnosed — the tour harness is not the suspect)
+
+### <pending> — run 6: 217/217 ok on main a98ecde0; CF02/CF04 verdict — drawToBitmap() and a real screencap agree, both truncated at the same point
+
+**Scope:** `results/ui-audit/tour-manifest.json` + the PNGs run 6's own step list names.
+`app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt` was touched twice for a
+temporary, fully-reverted diagnostic (a `delay()` inserted right before `drawToBitmap()`, holding
+the exact pre-capture frame on screen for a real `adb shell screencap` to compare against — see
+item 2 below); `git diff` on that file is empty at commit time. Merged `main` fast-forward to
+`a98ecde0` first (every builder round; the no-escape gate was green on `ee97a720`, nothing but
+tests/docs since).
+
+**Requirements/ACs:** R-943, R-944, R-945, R-955, R-956, R-960 (all captured); R-933/R-957
+(diagnosed — see item 2).
+
+**What changed:**
+
+1. **Full gate, then the tour.** `build dependencyRules platformGuards` + `coverageMatrix`/
+   `coverageMatrixCheck` (two invocations) — all green on `a98ecde0` before any capture ran, per
+   the coordinator's own sequencing. Fresh `install.ps1 -Port 5558 -Clear`, then `tour.ps1 -Only`
+   for nine step groups: `setup-verified/S05*` (1), `setup-level/S07*` (2), `rig-bt-connected/
+   S12-ready-bt*` (3), `rig-bt-connected/CF06*` (3), `rig-bt-lost/CF06*` (1), `rig-bt-lost/F09*`
+   (3), `mode-bluetooth/CF11*` (1), `mode-change-pending/CF02*` (3), `model-missing/CF04*` (3) — 20
+   steps, **20/20 ok, 0 errors, 0 timeouts, no manifest note on any of them**. Merged into the
+   master manifest (217/217 ok across the whole tour now — the ten steps run 6 prep added plus
+   `setup-verified/S05`/`setup-level/S07` re-captured with R-943/R-944's own fixes). `S05`'s own PNG
+   now shows the genuine InputWaveformCard rise-and-fall (`RouteCheckState.InProgress`); `S07`'s own
+   meter shows a genuine speech-shaped rise-and-fall, not a decaying spike. apkHash `a98ecde` on all
+   20 fresh captures; the other 197 (untouched by this round) keep run 5's own `686212f`.
+
+2. **R-933/R-957 diagnosis: the tour's own capture path is cleared.** Reproduced both suspects
+   directly with a temporary diagnostic (a `delay()` inserted immediately before
+   `window.decorView.drawToBitmap()` in `renderDestinationStep`, holding that exact composed frame
+   on screen): for both `mode-change-pending/CF02-settings-capture` and `model-missing/
+   CF04-settings-assets`, an `adb shell screencap` taken *during* that hold window produced a
+   byte-for-byte-equivalent rendering to the tour's own `drawToBitmap()` output — the same
+   paragraph cut off at the same point for CF02, the same "Callsign lexicon" row cut off with no
+   Space/Replacing rows for CF04, in both the harness capture and the real screencap. **Verdict:
+   both agree — the tour's own capture mechanism is not the suspect.** (First attempt at this
+   diagnostic put the `delay()` *after* `runTour()` returns instead of before the specific step's
+   own `drawToBitmap()` call — that landed the screencap after `renderDestinationStep`'s own cleanup
+   already cleared `currentDestinationStep`/`activeNavigator` to `null`, which stops the composable
+   from rendering `OrtNavHost` at all, so the screencap caught a blank themed background instead of
+   the real content — an honestly-reported dead end, not the finding, before the delay was moved to
+   the correct place.) The remaining, genuinely open question — why WPE's own real-device dump
+   (`emulator-5556`, real swipes) shows this same content complete without the cutoff CF02/CF04 show
+   here — is a device/resolution/font-metrics question this round did not chase further: both boards
+   are honestly scrollable (`scroll: "end"` variants already exist for CF02 and CF04), and the fold
+   line simply falls in a different place on a `1080x2400` AVD than on WPE's own device. One
+   additional, unprompted observation from reading the `CF04-settings-assets@2x-end` capture during
+   this same investigation: at font scale 2.0, the scroll-to-end board still cuts off the `LEXICON`
+   section's own header mid-row — worth a future round's own look at whether `TourAccessibilityScroll`
+   genuinely reaches the true end at 2.0 scale on this particular board, not raised as a defect here
+   (out of this round's own asked scope).
+3. **Diagnostic revert, confirmed clean.** Both temporary `delay()` insertions (the wrong-place one
+   and the corrected one) were reverted in full before this commit — `git diff` against the
+   previously-committed `ScreenshotTourActivity.kt` is empty.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`
+— BUILD SUCCESSFUL on `main` merged to `a98ecde0`. `coverageMatrix`/`coverageMatrixCheck` (separate
+invocations) — both green. `tools\ui-audit\install.ps1 -Port 5558 -Clear` then nine `tour.ps1 -Only`
+invocations (on-device manifest deleted before each) — 20/20 ok. Two direct `adb shell screencap`
+comparisons against the tour's own `drawToBitmap()` output, read side by side (not assumed from file
+size alone) — pixel-identical content in both CF02 and CF04's own truncation. `git diff` on
+`ScreenshotTourActivity.kt` confirmed empty before commit.
+
+**Left open / not done:** the device/font-metrics question behind why WPE's real device shows CF02/
+CF04 complete without scrolling (not this round's own scope — the harness verdict was). The 2.0-scale
+scroll-to-end depth observation on `model-missing/CF04-settings-assets@2x-end` (unprompted finding,
+not investigated further this round).
+
+---
+
 ## 2026-09-11 (WPG follow-up: R-807(c) — daemon OOM on the first genuine 5/5-asset gate)
 
 ### 85a0520c — R-807(c) fixed: -Xmx4g, streaming audited clean, no CI heap to align
