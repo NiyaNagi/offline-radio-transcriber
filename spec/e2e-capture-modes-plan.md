@@ -234,6 +234,44 @@ protocol and a prediction (and a result where the operator has run it); `design-
 2026-09-10 rows read `drawn + built`; the installed size is recorded; the CHANGELOG has one entry
 per merged package plus a close-out entry; memory updated.
 
+### Phase G record — closed 2026-09-11
+
+**Built and merged:** WP0', WPA, WPB, WPC1, WPC2, WPC3, WPD, WPE, WPF, WPG, WPH, WPI — thirty-odd
+rounds in all, each merged to `main` behind a full gate (`build dependencyRules platformGuards`,
+`coverageMatrix`/`coverageMatrixCheck`, `spec_check.py`); coverage 241 of 450 requirement ids.
+The last product merge is `e5b084ec`; the last gate with every asset present and no escape hatch
+is green on `ee97a720`.
+
+**Evidence:** screenshot tour runs 1–7 — run 2 was void (the tour settled on wall-clock time,
+R-803) and the settle was rebuilt on observed state; run 5 (207/207, apk `686212f`) was the full
+closing tour, runs 6–7 targeted re-captures (20/20, 25/25); the manifest stands at 219/219.
+Capture reviewers A–D, A2–D2, A3/B3/D3, A4/B4/C3/D4, E1, E2 filed and confirmed register rows
+R-810..R-985; validators V8 (setup, three lanes), V9 (settings, assets, LLM), V10 (status,
+session, digest, failures) and V11 (accessibility at 2.0, semantics dumps, greyscale) ran on real
+emulators with taps. Register section E2: 109 rows — 87 closed on evidence, 4 rejected with a
+stated reason (R-867 API-34 non-linear font scaling; R-901 the Bluetooth mode's cabled preset;
+R-952 the tier card until P11's detector; R-972 an OCR slip), 2 handed to hardware (R-884/R-946
+renderer ghost → H14), R-801 the pre-existing guide gaps, and R-985 a non-blocking process note.
+Checklist: 104 rows — 90 closed, 14 hardware.
+
+**Found on the way, fixed:** the heartbeat file read after its existence check (E2-A08a); a
+smoke test anchored to the wall clock across midnight (E2-A08b); every Room migration lacking the
+driver-native `migrate(SQLiteConnection)` the real open path calls — an upgrade crash the legacy
+test helper never exercised (R-885, hardware H15); the live bar keyed on the raw session id
+(R-910); a double live-bar reservation in the nav host (R-957); two tests and a 2 g daemon heap
+that assumed the no-token build (R-807); a scenario whose seeded level envelope fell outside the
+drawn window (R-944); layout tests at 360 dp for a 390 dp device (now test-plan §7.5).
+
+**Installed size, measured:** APK 611,029,854 B; 583 M code + 629 M data on the device with all
+five assets (`results/e2e-audit/installed-size.md`); FR-AST-3a's packs TODO stays open with that
+cost recorded (the LLM is 84 % of the bundled bytes).
+
+**Open by design, for the operator:** hardware H1–H15 (H6 tests the D75A-as-audio-source
+prediction; H15 the upgrade over an older install); the CI half of E2-K08 — `main` is unpushed;
+`HF_TOKEN` is set locally and as the repository secret. Deferred with reasons recorded:
+`usb-serial-for-android` 3.11 (needs compileSdk 35), the TH-D75A descriptor's `MODE` and USB
+vid/pid until H1, the `20m`-shaped false positive in `CallsignShapeFilter`.
+
 ## Concurrency and safety
 
 As [`ui-conformance-plan.md`](ui-conformance-plan.md) § Concurrency and safety, plus: the

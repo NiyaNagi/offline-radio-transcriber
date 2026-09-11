@@ -32,6 +32,48 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (close-out: the capture-modes, Bluetooth, bundled-assets and LLM program)
+
+### close-out — P19 · P20 · P21 · the D33–D36 program is complete on evidence
+
+**Scope:** the whole program — `spec/` (D33–D36, FR-CAP-2b/8..13, FR-RIG-13..19, FR-AST-3/3a/3b,
+FR-DIG-3b, AC-127..140, R17, R18), `design/` (nine new artboards, eight redrawn, the canvas
+republished), `:core`, `:data` (v7–v10), `:rig`, `:rig-usb`, new `:rig-bluetooth`, `:llm-api`,
+`:llm-mediapipe`, `:capture-android`, `:pipeline`, `:app` (setup, settings, status, digest,
+failures, debug scenarios and the screenshot tour), `buildSrc` (the build-time asset fetch),
+`results/` (register section E2, the e2e checklist, hardware checklist, validation V8–V11,
+installed size). Lead: Fable 5.1; builders, reviewers and validators: Sonnet 5 in worktrees.
+**Requirements/ACs:** AC-127 (device lanes proven to S05; the real listen is hardware H1/H2/H12),
+AC-128..140 closed; D33, D34, D35, D36; R17, R18 re-assessed with measured numbers.
+**What changed:** onboarding offers three capture modes (local microphone, USB-connected radio,
+Bluetooth-connected radio) presetting two independent axes — audio route and rig link — each
+editable, changeable later from settings and applied at the next session; the built-in mic is a
+real, marked choice; Bluetooth carries both CAT (SPP) and, where a headset-class device offers it,
+audio (marked per session, profile named); the rig catalogue is generated from descriptors
+(TH-D75A over both transports, generic ASCII CAT, the null rig, file import); every session row
+records mode, route, label, profile, transport, rig id, verified flag and native rate; every
+asset — Whisper tiny.en, Silero VAD and Gemma 3 1B int4 — is fetched at build time against a
+pinned sha256 and bundled in one variant, verified and copied on first launch with markers,
+rejections and truncations persisted; the LLM runs post-hoc through MediaPipe at tier 3 while
+idle and charging, its output badged and filtered so no callsign absent from the deterministic
+digest is ever shown. See `spec/e2e-capture-modes-plan.md` § Phase G record for the counts.
+**Verified:** every merge behind a full green gate on `main` (last product merge `e5b084ec`; the
+gate with every asset and no escape hatch green on `ee97a720`); screenshot tour runs 5–7 green
+(207/207 at `686212f`, 20/20 at `a98ecde`, 25/25 at `f3cc17c`; manifest 219/219); validators
+V8–V11 on emulators with real taps (`results/ui-audit/validation/`); register section E2 — 87 of
+109 rows closed on captures or device dumps, 4 rejected with reasons, 2 to hardware, R-801 and
+R-985 documented; e2e checklist 90 of 104 closed, 14 hardware; installed size measured with all
+five assets on `emulator-5554` — APK 611,029,854 B, ≈1.18 GiB installed; `spec_check.py` 8/8.
+**Left open / not done:** the fifteen hardware rows (H1–H15) for the operator with the TH-D75A —
+above all H6 (whether the D75A can be the phone's Bluetooth audio source; predicted not) and H15
+(an upgrade over an older install after R-885); the CI half of E2-K08 (`main` unpushed; the
+`HF_TOKEN` secret is set); FR-AST-3a's asset-packs TODO with its measured cost; the TH-D75A
+descriptor's `MODE` and USB vid/pid until H1 verifies them; R-985 (one mid-scroll tour step);
+R-801 (guide gaps predating this wave); the `20m`-shaped `CallsignShapeFilter` false positive;
+`usb-serial-for-android` 3.11 (compileSdk 35). Nothing in this program was left half-built.
+
+---
+
 ## 2026-09-11 (WPI run 7: closing run — R-982 scroll fix plus the WPD/WPE/WPF nav-host round, 219/219 ok on main f3cc17c)
 
 ### f26ab8a8 — run 7: 25 steps re-captured (R-982's own four screens, S12-ready-bt, CF06, F09, plus five nav-host regression checks), 219/219 ok, one severe host-contention episode mid-run recovered by an emulator reboot
