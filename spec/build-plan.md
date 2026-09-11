@@ -285,12 +285,20 @@ are individually green.*
 `results/e2e-audit/checklist.md`; the artboards are inventoried in `design/design-intent.md` §15.
 The prompts below are the summaries; the plan is authoritative where they differ.
 
-- [ ] **P19 · Capture modes and the onboarding mode picker** *(`:app`, `:core`, `:data`,
+- [x] **P19 · Capture modes and the onboarding mode picker** *(`:app`, `:core`, `:data`,
   `:capture-android`, `:pipeline`, `:rig`, `:rig-usb`, new `:rig-bluetooth`)* — D33/D34. Turns
   the two unnamed, sequential setup axes into a named mode chosen up front and changeable
   afterwards. Packages WPA, WPB, WPC1, WPC2, WPD, WPE, WPF in the plan. **Artboards drawn
   2026-09-10** (S00, S02c, S09b, S10b, N01b, CF11, F23, FL7; S04/S09/S11/S12/CF02/CF06/N04/DG04
-  redrawn) — the Principle VIII prerequisite below is met.
+  redrawn) — the Principle VIII prerequisite below is met. **Done 2026-09-11:** AC-128..135 closed
+  in `results/e2e-audit/checklist.md` (E2-B..G) on unit tests shown to discriminate, the
+  state-settled screenshot tour (run 5: 207/207 at `686212f`) and four device validators (V8–V11);
+  AC-127's end-to-end lanes are proven on the emulator up to S05, whose real 30 s listen cannot
+  pass on a silent AVD microphone — the operator's hardware pass (H1/H2/H12) completes it;
+  `dependencyRules` forbids every `:capture-* → :asr-*`/`:llm-*` edge (E2-A04, D10); every
+  session row carries mode, route, label, profile and transport (v7) plus rig id, verified flag and
+  native rate (v10, E2-A07). Left open on purpose: the TH-D75A descriptor claims no `MODE` and no
+  USB vid/pid until H1 verifies them on the radio.
 
   **Read first:** functional spec §7.1a (FR-CAP-8..13), FR-CAP-2b, CON-CAP-1 *as amended*,
   FR-RIG-13..19, §9.1a, AC-127..135. Constitution I, IV, VII, VIII.
@@ -361,9 +369,18 @@ The prompts below are the summaries; the plan is authoritative where they differ
   554,661,243 bytes, gated — the build needs `HF_TOKEN`). Larger-tier ASR models join the
   manifest when the tier system selects them (P11/M10), not before.
 
-- [ ] **P21 · The LLM — contract, fake, MediaPipe engine, prose digest** *(new `:llm-api`,
+- [x] **P21 · The LLM — contract, fake, MediaPipe engine, prose digest** *(new `:llm-api`,
   new `:llm-mediapipe`, `:pipeline/digest`, `:data` v8, `:app` digest and settings)* — D36.
-  Packages WPH (with WPE/WPF for the screens) in the plan.
+  Packages WPH (with WPE/WPF for the screens) in the plan. **Done 2026-09-11:** DG05 renders
+  stored summaries badged `generated`, italic, each card titled by its stations and citing its
+  overs (run 5, reviewer D4; V9 on device, incl. `Read the overs` filtering the Log to the cited
+  overs); CF05's toggle disables the engine and releases it (E2-I03/I04, `ProseDigestWorkRunnerTest`
+  `FR_DIG_3b_disabling_mid_run_releases_the_engine`); the digest with the engine off is unchanged
+  (E2-I05, AC-140); `CallsignShapeFilter` rejects an invented callsign (E2-G08, FR-DIG-4; the
+  documented `20m`-shaped false positive sacrifices recall, never precision); `dependencyRules`
+  forbids `:capture-* → :llm-*` (E2-A04). The engine runs Gemma 3 1B int4 through MediaPipe
+  `tasks-genai` 0.10.35 — bundled, stored on every tier, loaded only at tier 3 while idle and
+  charging (AC-138, V9 `tier0-llm-stored`). Hardware H11 exercises it on the phone.
 
   **Read first:** FR-DIG-3, FR-DIG-3a, FR-DIG-3b, FR-DIG-4, FR-DIG-5, FR-DIG-6, FR-DIG-11,
   FR-DIG-12, FR-ASR-15/16 (deferred — rescoring is not in this prompt), AC-84, AC-86, AC-87,
