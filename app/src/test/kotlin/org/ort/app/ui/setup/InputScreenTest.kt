@@ -168,4 +168,72 @@ class InputScreenTest {
 
         composeTestRule.onNodeWithTag("setup-input-preset-chip").assertDoesNotExist()
     }
+
+    // --- R-816 (reviewer finding, halt, FR-CAP-9): presetChipStateFor never claims a preset -----
+    // --- that matched no enumerated route ----------------------------------------------------------
+
+    @Test
+    fun `R_816 the mode's preferred route present reads the normal preset-by chip`() {
+        val usbRoute = usb.copy(routeKind = org.ort.core.capture.AudioRouteKind.USB)
+        val state = presetChipStateFor(
+            captureMode = org.ort.core.capture.CaptureMode.USB_RADIO,
+            modeOverridden = false,
+            routes = listOf(usbRoute),
+        )
+
+        assert(state.modeLabel == "USB-connected radio") { "got $state" }
+        assert(state.presetUnavailableText == null) { "got $state" }
+    }
+
+    @Test
+    fun `R_816 no capture mode chosen yet reads no chip at all`() {
+        val state = presetChipStateFor(captureMode = null, modeOverridden = false, routes = listOf(usb))
+
+        assert(state.modeLabel == null && state.presetUnavailableText == null) { "got $state" }
+    }
+
+    @Test
+    fun `R_816 an overridden axis reads no chip, even if the preset route is present`() {
+        val usbRoute = usb.copy(routeKind = org.ort.core.capture.AudioRouteKind.USB)
+        val state = presetChipStateFor(
+            captureMode = org.ort.core.capture.CaptureMode.USB_RADIO,
+            modeOverridden = true,
+            routes = listOf(usbRoute),
+        )
+
+        assert(state.modeLabel == null && state.presetUnavailableText == null) { "got $state" }
+    }
+
+    /**
+     * The exact scenario named in the reviewer finding: a device offering only the built-in mic
+     * under USB-connected-radio mode. Driven through the real [InputRouteEnumerator] over
+     * [org.ort.capture.android.fake.FakeAudioIo] (constitution II — the same fake capture's own
+     * tests use), not a hand-authored [InputRouteOption] list, so this proves the real
+     * `routeKind` resolution feeds [presetChipStateFor] honestly end to end.
+     */
+    @Test
+    fun `R_816 USB mode with only the built-in mic attached shows the none-attached chip, never a false preset`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.app.Application>()
+        val io = org.ort.capture.android.fake.FakeAudioIo(
+            devices = listOf(
+                org.ort.capture.android.AudioDeviceDescriptor(
+                    "mic-0",
+                    org.ort.capture.android.AudioDeviceKind.BUILT_IN_MIC,
+                    "Built-in microphone",
+                ),
+            ),
+        )
+        val routes = InputRouteEnumerator(context, io).list()
+
+        val state = presetChipStateFor(
+            captureMode = org.ort.core.capture.CaptureMode.USB_RADIO,
+            modeOverridden = false,
+            routes = routes,
+        )
+
+        assert(state.modeLabel == null) { "must never claim a preset that matched no route, got $state" }
+        assert(
+            state.presetUnavailableText == "preset USB audio — none attached, choose a route",
+        ) { "got $state" }
+    }
 }

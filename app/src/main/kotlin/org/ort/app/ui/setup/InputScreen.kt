@@ -18,6 +18,9 @@ import org.ort.app.ui.components.RowTone
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
+import org.ort.core.capture.AudioRouteKind
+import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.CaptureModePresets
 
 /**
  * S04 (`Setup-Input.dc.html`, R-081) — every real route [InputRouteEnumerator] found, each as a
@@ -60,7 +63,13 @@ public fun InputScreen(
             )
         },
     ) {
-        state.presetLabel?.let { PresetChip(modeLabel = it, modifier = Modifier.testTag("setup-input-preset-chip")) }
+        if (state.presetLabel != null || state.presetUnavailableText != null) {
+            PresetChip(
+                modeLabel = state.presetLabel,
+                unavailableText = state.presetUnavailableText,
+                modifier = Modifier.testTag("setup-input-preset-chip"),
+            )
+        }
         if (state.routes.isEmpty()) {
             Text(
                 text = "No input devices were found. Connect the radio's audio adapter and tap Refresh.",
@@ -114,4 +123,41 @@ public fun InputScreen(
 private fun RouteAdvisory?.dimsTheRow(): Boolean = when (this) {
     RouteAdvisory.UNRECOGNISED_TYPE, RouteAdvisory.NOT_A_CAPTURE_SOURCE -> true
     RouteAdvisory.ROOM_AUDIO, RouteAdvisory.BLUETOOTH_DEGRADED, null -> false
+}
+
+/** S04's preset chip, as the two mutually-exclusive facts [InputViewState] carries. */
+public data class PresetChipState(val modeLabel: String?, val presetUnavailableText: String?)
+
+/**
+ * R-816 (reviewer finding, FR-CAP-9, halt): the chip used to claim "preset by <mode>" the instant
+ * a [captureMode] was chosen, regardless of whether [CaptureModePresets.presetsFor]'s preferred
+ * route was actually among [routes] — a device offering only the built-in mic under USB-radio mode
+ * still showed "preset by USB-connected radio" with nothing preselected, a preset that named a
+ * route the operator's own hardware does not have. Pure and Context-free so it is testable without
+ * Robolectric's `InputRouteEnumerator` seam: pass it real [InputRouteOption]s from a
+ * [org.ort.capture.android.fake.FakeAudioIo]-backed enumerator instead.
+ */
+public fun presetChipStateFor(
+    captureMode: CaptureMode?,
+    modeOverridden: Boolean,
+    routes: List<InputRouteOption>,
+): PresetChipState {
+    if (captureMode == null || modeOverridden) return PresetChipState(null, null)
+    val presetKind = CaptureModePresets.presetsFor(captureMode).preferredRouteKind
+    return if (routes.any { it.routeKind == presetKind }) {
+        PresetChipState(modeLabel = captureMode.operatorLabel, presetUnavailableText = null)
+    } else {
+        PresetChipState(
+            modeLabel = null,
+            presetUnavailableText = "preset ${audioRouteKindLabel(presetKind)} — none attached, choose a route",
+        )
+    }
+}
+
+private fun audioRouteKindLabel(kind: AudioRouteKind): String = when (kind) {
+    AudioRouteKind.BUILT_IN_MIC -> "Built-in microphone"
+    AudioRouteKind.USB -> "USB audio"
+    AudioRouteKind.WIRED_HEADSET -> "Wired headset"
+    AudioRouteKind.BLUETOOTH_SCO -> "Bluetooth"
+    AudioRouteKind.UNKNOWN -> "input"
 }

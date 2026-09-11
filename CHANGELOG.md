@@ -32,6 +32,84 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPD follow-up: the tour-injection seam for S10b, and reviewer findings R-812..R-816)
+
+### (pending) — DebugRigLinkPortOverride (tour seam) + R-812/R-813/R-814/R-815/R-816
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{DebugRigLinkPortOverride,SetupActivity,
+ReadyScreen,RadioScreen,SetupScaffold,InputScreen,SetupViewStates,BridgeRigLinkPort}.kt` (new/
+changed), matching test files under `app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-RIG-14, FR-CAP-9, FR-CAP-2b, E2-E10.
+
+**What changed:**
+
+1. **Tour-injection seam.** `DebugRigLinkPortOverride` (new) — the identical shape
+   `org.ort.app.ui.failures.DebugFailureOverride` already establishes: `current`/`show`/`clear`,
+   `isDebugBuild` a settable test seam defaulting to `BuildConfig.DEBUG`, `activeOverride` reading
+   `null` outright in any non-debug build. `SetupActivity.rigLinkPort` is now a `lateinit var` read
+   once in `onCreate` (`DebugRigLinkPortOverride.activeOverride ?: BridgeRigLinkPort(DefaultRigLinkBridge(this))`)
+   instead of a `val` initializer with no injection point — the tour cannot reach S10b's
+   paired-device states over real Bluetooth hardware no AVD has, and this is the seam
+   `results/ui-audit/README.md` documents for exactly that problem. `app/src/debug` untouched — the
+   tour package wires its own scripted port to `show`.
+2. **R-812** (halt) — S12's footer hardcoded "The two amber items are worth fixing" regardless of
+   the real count. `readyFooterText(rows)` generates the second sentence from
+   `rows.count { !it.ok }`: 0 → dropped entirely, 1 → "The amber item…", N → "The N amber items…";
+   the first sentence is `Setup-Done.dc.html`'s own unconditional copy, replacing the old
+   fabricated "Capture works without a model…" paragraph.
+3. **R-813** — S09's null-catalogue-entry row rendered `NullRigModule.DISPLAY_NAME` ("Manual (no
+   rig connected)") instead of the board's own row copy. `displayNameFor(entry)` renders "No radio
+   — I will enter the frequency" for that one entry id regardless of the catalogue's own
+   `displayName`.
+4. **R-814** — S09's "Have a descriptor file for another rig?" / `Import it` line is now one flex
+   row (`Arrangement.spacedBy(8.dp)`, `verticalAlignment = CenterVertically`), matching
+   `Setup-Rig.dc.html`'s own `display: flex; align-items: center; gap: 8px` markup — previously an
+   unaligned, ungapped `Row`.
+5. **R-815** — S09 now emphasizes exactly one row (weight 500/`text/high`/green icon, as the board
+   draws the TH-D75A): the currently chosen/preset rig (`SetupStore.rigId`) if one is recorded,
+   else the catalogue's own verified entry. `NavigationRow` (`SetupScaffold.kt`) gains an
+   `iconTint: Color? = null` parameter, decoupled from `enabled` (a non-emphasized row stays fully
+   clickable while rendered with the muted `textIconDim` tint) — every other caller (S00's
+   `ModeScreen`, unaffected per the lead-accepted "S00 stays unemphasised before a choice"
+   deviation) keeps its exact prior rendering via the `null` default.
+6. **R-816** (halt, FR-CAP-9) — S04's preset chip claimed "preset by <mode>" even when the mode's
+   preferred route was never actually enumerated (a USB-only preset with only the built-in mic
+   attached still read "preset by USB-connected radio", naming a route the device does not have).
+   `presetChipStateFor(captureMode, modeOverridden, routes)` (new, pure, `InputScreen.kt`) checks
+   `CaptureModePresets.presetsFor(mode).preferredRouteKind` against the real enumerated
+   `routeKind`s and returns either the normal `modeLabel` or a `presetUnavailableText` — "preset
+   USB audio — none attached, choose a route" (mode-appropriate wording via a small
+   `AudioRouteKind` label map). `PresetChip` (`SetupScaffold.kt`) gains an `unavailableText`
+   parameter rendering that sentence in place of the normal two-span "preset by" text. Nothing is
+   preselected in this case (`onChooseMode`'s own `firstOrNull` match already guaranteed that,
+   unchanged) and `Verify` stays disabled, since `InputScreen`'s own `enabled = state.selectedId != null`
+   gate was already correct.
+
+**Verified:**
+- New/changed tests: `DebugRigLinkPortOverrideTest` (5), `ReadyScreenTest`'s `R_812_*` (3),
+  `RadioScreenTest`'s `R_813_*`/`R_815_*` (3, plus the pre-existing `E2_E08` row-name assertion
+  updated to the board's own null-entry copy), `InputScreenTest`'s `R_816_*` (4, including one
+  driven through the real `InputRouteEnumerator` over `FakeAudioIo` with only the built-in mic
+  attached under USB mode, the exact scenario named in the finding) — all green.
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.setup.*"` — green.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — 240 of 450 requirements covered, up to date, **no
+  orphan-tests line** (the pre-existing `E2-G0x` orphans from WPF's own test annotations, reported
+  in this package's previous entry as outside its ownership, are gone as of this merge — resolved
+  upstream, not by this package).
+**Left open / not done:** the R-815 emphasis styling itself (title color / icon tint) is proven at
+the "renders without crashing, every row stays clickable regardless of emphasis" level — Compose's
+semantics tree does not expose rendered text/icon colour cheaply for a Robolectric assertion, so
+the actual visual weight/colour is left for the next tour capture to confirm against the artboard,
+per constitution VIII's own "when a test and a screenshot disagree, the screenshot wins" rule.
+
+---
+
 ## 2026-09-10 (WPG follow-up: E2-H08's replace-then-roll-back case)
 
 ### (pending) — bundled assets: side-load replaces a bundled model, BundledAssetInstaller.reinstall rolls it back
@@ -788,6 +866,82 @@ confirming the seam did its job.
   this package closes only the `unit` half of each.
 
 ---
+## 2026-09-10 (WPC3 follow-up: RigLinkBridge no longer leaks a :rig-bluetooth type into its public API)
+
+### (pending) — rig and data follow-up: RigLinkSppSupport replaces the leaked org.ort.rig.bluetooth.SppSupport on PairedRigDevice
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/rig/RigLinkBridge.kt`, new
+`pipeline/src/test/kotlin/org/ort/pipeline/rig/RigLinkBridgePublicApiTest.kt`. Found after
+`RigLinkBridge` merged (`8e40041`) and the setup package adapted to it (`162dd62`, `BridgeRigLinkPort`).
+
+**Requirements/ACs:** constitution VII (module boundaries are structural). No functional
+requirement changes; this is an API-surface correctness fix.
+
+**What changed:**
+
+*Constitution Check.* VII — `:app` may depend on `:pipeline`/`:rig`/`:core` only (`ModuleGraph`'s
+`allowed[":app"]`); `:pipeline` declares `:rig-bluetooth`/`:rig-usb` `implementation`, correctly,
+so making either `api` was never the fix (it would leak the forbidden module transitively to every
+`:pipeline` consumer, `:app` included, without a declared edge). II — a discriminating test now
+guards this boundary going forward.
+
+- `PairedRigDevice.sppSupport` was declared as `org.ort.rig.bluetooth.SppSupport` — a type `:app`
+  cannot even `import`, confirmed live by `BridgeRigLinkPort`'s own reflection workaround
+  (`Class.getMethod("getSppSupport").invoke(...)`, matched against the enum's `toString()`).
+  Replaced with a new type this bridge owns: `RigLinkSppSupport { YES, NO, UNKNOWN }`, defined in
+  `RigLinkBridge.kt` next to `PairedRigDevice`. `DefaultRigLinkBridge` maps
+  `org.ort.rig.bluetooth.SppSupport` to it with one exhaustive `when` (`toRigLinkSppSupport`,
+  private to that class) — the only place the `:rig-bluetooth` type is named anywhere in this file
+  now.
+- Audited the rest of the bridge's public surface (`RigLinkBridge`, `DefaultRigLinkBridge`,
+  `FakeRigLinkBridge`, `PairedRigDevicesResult`, `RigLinkProbeState` and its seven variants): every
+  other type is already `:pipeline`'s own, `:rig`'s (`RigTransportKind`, `RigCapability`), `:core`,
+  a Kotlin stdlib/coroutines type, or `android.content.Context` — no other leak found.
+- New `RigLinkBridgePublicApiTest`: walks every public constructor/method/field's generic type
+  (recursing through `List<...>`, arrays, wildcards) across the bridge's entire public surface and
+  fails if any resolves to a class in `org.ort.rig.bluetooth`/`org.ort.rig.usb`. A permanent
+  regression guard — the next accidental leak fails a test instead of surfacing as a builder's
+  reflection workaround three commits later.
+- `BridgeRigLinkPort.kt` (`:app`, WPD's file) is untouched — out of this package's ownership. Its
+  existing reflection still runs correctly (it matched on the enum's `toString()`, which is
+  `"YES"`/`"NO"`/`"UNKNOWN"` either way), so nothing broke; the setup builder can now delete the
+  reflection and write a plain `when (device.sppSupport) { RigLinkSppSupport.YES -> true; ... }`,
+  and — since `RigLinkSppSupport` is a `:pipeline` type — construct a real `PairedRigDevice` in its
+  own tests for the first time (`BridgeRigLinkPortTest`'s own kdoc names this as a known gap today).
+
+**Discrimination.** `PairedRigDevice.sppSupport` was reverted to `org.ort.rig.bluetooth.SppSupport`
+(and the one call site along with it); `RigLinkBridgePublicApiTest` failed, naming every leak point
+precisely — the constructor, `copy()`, `copy$default()`, `component3()` and `getSppSupport()`, each
+resolving to `org.ort.rig.bluetooth.SppSupport`. Restored; the same test passed again, and the full
+`org.ort.pipeline.rig.*` suite and `:app`'s `BridgeRigLinkPortTest` were reconfirmed green.
+
+**Verified:**
+- `./gradlew :rig:test :data:testDebugUnitTest :pipeline:testDebugUnitTest -PortAllowMissingBundledAssets=true` — green.
+- `./gradlew :pipeline:testDebugUnitTest --tests org.ort.pipeline.rig.* -PortAllowMissingBundledAssets=true` — green (includes the new test).
+- `./gradlew :app:testDebugUnitTest --tests org.ort.app.ui.setup.BridgeRigLinkPortTest -PortAllowMissingBundledAssets=true` — green, confirming the type change does not break the reflection workaround it makes obsolete.
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green in 9m32s; `dependencyRules: OK`; `platformGuards: OK`.
+- `./gradlew -p buildSrc test -PortAllowMissingBundledAssets=true` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `./gradlew coverageMatrix -PortAllowMissingBundledAssets=true` then, **separately**,
+  `./gradlew coverageMatrixCheck -PortAllowMissingBundledAssets=true` — both green (450
+  requirements, 240 covered; running them in one invocation trips an unrelated, pre-existing Gradle
+  task-graph validation warning about `coverageMatrixCheck` reading `coverageMatrix`'s output
+  without a declared task dependency — not a coverage failure, and not touched here since neither
+  task is in this package's ownership).
+
+**Left open / not done:**
+- `coverageMatrix` reports six pre-existing orphan tests (`E2-G01`, `E2-G02`, `E2-G03`, `E2-G05`,
+  `E2-G06`, `E2-G07`) naming checklist ids instead of real spec ids — confirmed present in `main` at
+  `1d402a3` (the commit this session merged in) already, entirely in `app/` files this package does
+  not own (`NowContentTest`, `CaptureStatusMapperTest`, `DigestPollingTest`, `LiveBarTest`, etc. —
+  WPF/WPE territory per `results/e2e-audit/checklist.md`'s own "F23 action wiring handed to WPF"
+  note). Not fixed here: outside this package's ownership and outside the coordinator's request.
+- `BridgeRigLinkPort.kt`'s reflection is left in place — the setup builder's file, their call to
+  simplify.
+- The Gradle task-graph validation gap between `coverageMatrix`/`coverageMatrixCheck` when run in
+  one invocation is pre-existing and outside this package's ownership (neither task's build script
+  is under `rig/`, `data/`, or `pipeline/rig/`); reported, not fixed.
+
 ## 2026-09-10 (WPC3: descriptor-declared USB/Bluetooth transport facts, schema v9, band-scoped frequency attribution, RigLinkBridge, reconnect-ladder counters)
 
 ### (pending) — rig and data follow-up: TransportSpec VID/PID/lineTerminator, schema v9 (rigStateChangedMidTransmission, BLUETOOTH_AUDIO_LOST), D23 band-scoped attribution, RigLinkBridge, F9/F23 ladder position

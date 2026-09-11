@@ -23,14 +23,32 @@ import org.ort.rig.descriptor.DescriptorRigModule
 import org.ort.rig.descriptor.RigDescriptor
 import org.ort.rig.usb.UsbSerialTransport
 
+/**
+ * Whether a bonded device advertises the SPP UUID, expressed at this bridge's own boundary — the
+ * `:rig-bluetooth` [SppSupport] this is mapped from ([DefaultRigLinkBridge.pairedDevices]) is not
+ * on `:app`'s classpath at all (`ModuleGraph`'s `allowed[":app"]` names `:pipeline`, `:rig`,
+ * `:core`, never `:rig-bluetooth`/`:rig-usb` — constitution VII), and `pipeline/build.gradle.kts`
+ * deliberately declares `:rig-bluetooth` `implementation`, not `api`, so it must not leak
+ * transitively through a public return type either. Found live: before this type existed,
+ * [PairedRigDevice.sppSupport] was declared as the `:rig-bluetooth` type directly, and the one
+ * real consumer (`:app`'s `BridgeRigLinkPort`) could not even `import` it to write a `when` —
+ * confirmed by reading that class's own reflection workaround, now obsolete (see this bridge's
+ * report). [UNKNOWN] is deliberate here too, for the same reason [SppSupport.UNKNOWN] is: some
+ * Android stacks report no UUIDs at all for a bonded device until it has connected once, and
+ * reporting that as [NO] would be a guess (constitution I).
+ */
+public enum class RigLinkSppSupport { YES, NO, UNKNOWN }
+
 /** One bonded (paired) Bluetooth device as the setup UI's rig-pairing picker needs it (FR-RIG-14,
  * S10b) — the same shape [org.ort.rig.bluetooth.PairedBluetoothDevice] carries, renamed into this
  * package so `:app` (WPD) never needs to import `:rig-bluetooth` directly (constitution VII: the
- * setup UI may not depend on `:rig-usb`/`:rig-bluetooth`, only on this bridge). */
+ * setup UI may not depend on `:rig-usb`/`:rig-bluetooth`, only on this bridge). [sppSupport] is
+ * [RigLinkSppSupport] — this bridge's own type, not `:rig-bluetooth`'s [SppSupport] — see
+ * [RigLinkSppSupport]'s own kdoc for why. */
 public data class PairedRigDevice(
     public val name: String?,
     public val address: String,
-    public val sppSupport: SppSupport,
+    public val sppSupport: RigLinkSppSupport,
 )
 
 /**
@@ -122,7 +140,7 @@ public class DefaultRigLinkBridge(
         val link = AndroidBluetoothLink(context)
         if (!link.hasConnectPermission()) return PairedRigDevicesResult(emptyList(), permissionGranted = false)
         val devices = BluetoothSppTransport.pairedDevices(link).map {
-            PairedRigDevice(name = it.name, address = it.address, sppSupport = it.advertisesSpp)
+            PairedRigDevice(name = it.name, address = it.address, sppSupport = toRigLinkSppSupport(it.advertisesSpp))
         }
         return PairedRigDevicesResult(devices, permissionGranted = true)
     }
@@ -213,6 +231,16 @@ public class DefaultRigLinkBridge(
             UsbSerialTransport.Reason.PERMISSION_DENIED,
             UsbSerialTransport.Reason.PERMISSION_LOST,
         )
+
+        /** The one place `:rig-bluetooth`'s [SppSupport] is named at all in this file — everything
+         * past this function's return sees only [RigLinkSppSupport] (see that type's own kdoc). An
+         * exhaustive `when`, not an `else`, so a future [SppSupport] value fails this file's own
+         * compile rather than silently mapping to [RigLinkSppSupport.UNKNOWN]. */
+        fun toRigLinkSppSupport(support: SppSupport): RigLinkSppSupport = when (support) {
+            SppSupport.YES -> RigLinkSppSupport.YES
+            SppSupport.NO -> RigLinkSppSupport.NO
+            SppSupport.UNKNOWN -> RigLinkSppSupport.UNKNOWN
+        }
     }
 }
 
