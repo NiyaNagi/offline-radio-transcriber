@@ -38,7 +38,7 @@ an identical second AVD for port 5556; at most two AVDs run at once
 |---|---|
 | `boot.ps1 -Avd <name> -Port <n>` | Boots the named AVD headless and waits for `sys.boot_completed`. |
 | `create-avd.ps1 -Name <name>` | Creates a Pixel 6 / API 34 / x86_64 / google_apis AVD (`ort_audit_2` for port 5556). |
-| `install.ps1 -Port <n> [-Clear]` | `:app:assembleDebug`, installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`. `-Clear` runs `adb shell pm clear org.ort.app` right after install and re-grants both permissions — see "Known gaps / hygiene" below for why. |
+| `install.ps1 -Port <n> [-Clear]` | `:app:assembleDebug`, installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`/`BLUETOOTH_CONNECT` (the last one R-810/R-811's own fix — see "Reaching S02c" below, since it makes S02c itself unreachable by default). `-Clear` runs `adb shell pm clear org.ort.app` right after install and re-grants all three permissions — see "Known gaps / hygiene" below for why. |
 | `scenario.ps1 -Port <n> -Name <scenario> [-NoRestart]` | Force-stops the app (unless `-NoRestart`), broadcasts the scenario, waits for the confirming logcat line, prints `session=<id>`, then a best-effort warning if a real (non-scenario) session is still in the app's own database (see "Known gaps / hygiene"). |
 | `shoot.ps1 -Port <n> -Scenario <s> -Screen <name>` | `screencap -p` to a device file, then `adb pull` — to `results/ui-audit/<s>/<name>.png`. |
 | `nav.ps1 -Port <n> -Screen <name>` | Replays the tap sequence for `<name>` from `screens.json`. |
@@ -222,7 +222,7 @@ store/holder/DB, not merely that the scenario loads.
 | `setup-mode` | D33/FR-CAP-8, S00: a completely fresh `SetupStore` (`welcomeSeen = true`, `captureMode = null`) — `SetupStateMachine.stepFor` resumes at `SetupStep.MODE` directly from a cold `MainActivity` launch. |
 | `setup-bt-permission` | D33, S02c: Bluetooth mode chosen, mic already granted, `BLUETOOTH_CONNECT` genuinely undecided. **The OS permission itself is live `PackageManager` state, not a `SetupStore` field** — see "Reaching S02c" below for the exact `pm grant`/`pm revoke` recipe this state needs. |
 | `setup-rig-transport` | D33/FR-RIG-13, S09b: Bluetooth mode, a verified wired-headset input, the TH-D75A chosen at S09, but `SetupStore.rigTransport` genuinely unset — `stepFor` resumes at `SetupStep.RIG_TRANSPORT`. Needs `BLUETOOTH_CONNECT` already granted (see "Reaching S02c") or `stepFor` stops one step earlier, at S02c. |
-| `setup-rig-bluetooth` | D33/D34, S10b: the same base as `setup-rig-transport`, but `rigTransport = BLUETOOTH_SPP` and `rigBluetoothVerified = false` — `stepFor` resumes at `SetupStep.RIG_BLUETOOTH`. **The one real gap this package found and reported, not worked around** — see "The `RigLinkPort` injection seam" below. |
+| `setup-rig-bluetooth` | D33/D34, S10b: the same base as `setup-rig-transport`, but `rigTransport = BLUETOOTH_SPP` and `rigBluetoothVerified = false` — `stepFor` resumes at `SetupStep.RIG_BLUETOOTH`. Also publishes a real, scripted `DebugRigLinkPortOverride` naming two paired devices (TH-D75A, SPP-capable; Handheld BT, headset-only) through WPD's own seam — see "The `RigLinkPort` injection seam" below for what this closes and the one real gap that remains. |
 | `mode-local-mic` | FR-CAP-3a/10, AC-128/129, R-821/R-823: a live session with real v7 columns `captureMode = LOCAL_MICROPHONE`/`audioRouteKind = BUILT_IN_MIC` (`frequencyHz` honestly `null` — no rig at all), a real `InputStatus.Opened` on a built-in-mic descriptor, a real `CaptureConfigurationStore.current()` matching (`LOCAL_MICROPHONE`, `selectedInputId = "mic-0"`, so CF02/CF11 agree with the session rather than reading the store's own `DEFAULT`), a real `station` row for `W7NPC` (so ST01 shows one station, not zero, against N01b's own one heard), plus the real `SetupStore` left mid-way at S04 with the Local-microphone preset chip showing, for the "S04 in a lane per mode" tour coverage. |
 | `mode-usb` | FR-CAP-13, AC-129, R-821: a live session over USB — v7 columns `captureMode = USB_RADIO`/`audioRouteKind = USB`/`rigTransport = USB_SERIAL`, a real `RigStatus.Connected` naming the USB-serial transport and the TH-D75A descriptor (F9/CF06), a real `CaptureConfigurationStore.current()` matching (`USB_RADIO`, `selectedInputId = "usb-1"`, the TH-D75A, `USB_SERIAL`), the S04 preset chip alongside it. |
 | `mode-bluetooth` | D34/FR-CAP-11/13, R-821/R-822: a live session over Bluetooth audio (SCO, mSBC) *and* Bluetooth rig control (SPP) at once — two independent Bluetooth links, both real (`InputStatus.Opened` with a `BluetoothAudioProfile.HFP_MSBC` descriptor, `RigStatus.Connected` with `transportKind = BLUETOOTH_SPP`), a real `CaptureConfigurationStore.current()` matching (`BLUETOOTH_RADIO`, the TH-D75A, `BLUETOOTH_SPP`, and the paired device's own address in `rigParams[DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS]` — CF02/CF06's own Link-row address reads this directly), the S04 preset chip alongside it. |
@@ -291,28 +291,37 @@ needs two separate `tour.ps1 -Only` invocations, revoking/re-granting `BLUETOOTH
 them — see this repo's own WPI report for the exact two-pass recipe used to produce the committed
 screenshots.
 
-### The `RigLinkPort` injection seam (checklist E2-J01 — reported, not fixed here)
+### The `RigLinkPort` injection seam (checklist E2-J01 — now wired; one gap remains)
 
 D33/D34's S10b (`Setup-Rig-Bluetooth.dc.html`) shows a paired-device list — the operator picking
-which paired Bluetooth device is the rig's own SPP link. `setup-rig-bluetooth` seeds every real
-`SetupStore` fact needed to *resume* at S10b, but the list itself renders honestly empty on this
-build: `org.ort.app.ui.setup.SetupActivity` constructs its own `RigLinkPort` as a hardcoded field —
-`private val rigLinkPort: RigLinkPort = InMemoryRigLinkPort()`, an **empty** paired-device list —
-with no companion `var`, no test-only setter, and no debug-build conditional, unlike every other
-process-wide fact a scenario seeds (`RigStatus`, `InputStatus`, `CaptureState`, ... or
-`org.ort.app.ui.failures.DebugFailureOverride`/`org.ort.app.ui.data.DebugSearchOverride`, both
-*main*-source, debug-settable holders `Scenarios.kt` already writes to). There is therefore no seam
-`app/src/debug` can reach to publish a scripted `InMemoryRigLinkPort` (`TH-D75A` SPP-capable,
-`Handheld BT` headset-only, exactly as this package's brief asked for) into a real `SetupActivity`
-composition without a change to `app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt` —
-outside this package's file ownership (`app/src/debug/**`, `tools/ui-audit/**`, this README, tests
-under `app/src/test/.../debug/`). **The exact hook needed**: a small main-source holder mirroring
-`DebugFailureOverride`'s own shape — `@Volatile public var override: RigLinkPort? = null` in a new
-or existing debug-reachable object, gated on `BuildConfig.DEBUG` (or an `isDebugBuild` check
-matching this codebase's existing convention), read by `SetupActivity` in place of the hardcoded
-`InMemoryRigLinkPort()` when non-null. `setup-rig-bluetooth`'s tour steps (S10b, S10b@2x) still
-capture the real screen — its paired-device list section, honestly empty — this is a known,
-reported exclusion (constitution VIII), not a fake.
+which paired Bluetooth device is the rig's own SPP link. **WPD has since added the seam this
+section used to report missing**: `org.ort.app.ui.setup.DebugRigLinkPortOverride` (shaped exactly
+like `org.ort.app.ui.failures.DebugFailureOverride` — `show`/`clear`/`current`, gated on
+`BuildConfig.DEBUG` via a settable `isDebugBuild` seam), and `SetupActivity.onCreate` now reads
+`DebugRigLinkPortOverride.activeOverride ?: BridgeRigLinkPort(DefaultRigLinkBridge(this))`.
+`setup-rig-bluetooth` now calls `DebugRigLinkPortOverride.show(...)` with a real, scripted
+`InMemoryRigLinkPort` naming two paired devices — `TH-D75A` (SPP-capable, selectable) and
+`Handheld BT` (headset-class only, listed dim and unselectable) — so S10b's own paired-device list
+renders real rows, closing the gap this section used to describe. `WpiScenariosTest.kt` asserts the
+scenario installs the override with both devices, and that flipping `isDebugBuild` to `false`
+ignores it (the general gate itself is `DebugRigLinkPortOverrideTest`'s own row).
+
+**What still cannot be reached, and why (constitution VIII — reported, not faked).** The connect →
+identify → verify checklist progression, and a dropped-link banner, render in the real app only
+*after* a tap on a paired-device row (`SetupActivity.onSelectRigBluetoothDevice`) —
+`rigBluetoothSelectedAddress` is plain, unpersisted `mutableStateOf` `Activity` state, reset to
+`null` on every navigation into this step, with no `SetupStore` field and no `EXTRA_*` seam to
+preset it (confirmed by reading `SetupActivity.kt` before writing this). The screenshot tour's own
+setup-step renderer (`ScreenshotTourActivity.renderSetupStep`) has no tap capability at all today —
+the same "no taps, no sheets" limit "What v1 cannot capture" below already documents for `OrtNavHost`
+destinations — so `setup-rig-bluetooth`'s tour step still only reaches the paired-device list, never
+the checklist states. **The exact hook needed, for whoever picks this up**: either a tap capability
+in the tour's setup-step renderer (`app/src/debug/.../tour/ScreenshotTourActivity.kt`, this
+package's own file — a real, non-trivial addition, not attempted this round), or a new
+`SetupActivity.EXTRA_*` to preset `rigBluetoothSelectedAddress` directly (main-source, `ui/setup`,
+outside this package's row). `Scenarios.setupRigBluetooth`'s own `InMemoryRigLinkPort` is already
+scripted with a working default connect → identify → verify sequence
+(`useDefaultBehaviour(BLUETOOTH_RIG_ADDRESS)`) — either fix reaches it with no further change here.
 
 ### Reaching S07/S09/S12 (register R-227, R-264, R-285)
 
@@ -392,6 +401,20 @@ own trigger requires). The seven scenarios this table's last block adds
 DebugFailureOverride`'s own kdoc says precisely what each would need and from which package.
 
 ### Known gaps / hygiene (report to the lead, not fixed here)
+
+- **`scroll: "end"` errors on a screen that already fits without scrolling, even at font scale
+  2.0.** `TourAccessibilityScroll.scrollToEnd` requires a real scrollable container in the
+  accessibility tree; a short screen has none, so the step records `"no vertically-scrollable
+  container found in this screen's accessibility tree"` rather than silently no-op-ing. Five
+  pre-existing `setup-verified/*@2x-end` steps already show this; the two new R-817/R-827
+  `@2x-end` steps this round added (`setup-bt-permission/S02c-bluetooth-permission@2x-end`,
+  `mode-local-mic/N01b-now@2x-end`) show it too — both screens' plain and `@2x` siblings capture
+  fine, only the `@2x-end` variant errors, for the same reason. This is evidence the screen does
+  not clip at 2x, not a defect in either scenario; R-744's own pair rule is satisfied by the
+  plain+`@2x` pair existing, the `@2x-end` step recording an honest "nothing to scroll to" rather
+  than a fabricated screenshot. A future fix (`ScreenshotTourActivity`, this package's own file)
+  would treat "no scrollable container" as a no-op success rather than an error, for a step whose
+  own screen never claimed to be long.
 
 - **Scenario reloads never delete a real (non-scenario) capture session.**
   `Scenarios.clearPriorScenarioData` only ever deletes rows whose id starts with `scenario-` — a

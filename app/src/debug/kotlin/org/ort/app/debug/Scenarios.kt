@@ -28,6 +28,9 @@ import org.ort.app.ui.failures.ReconcileRecord
 import org.ort.app.ui.failures.ReconcileViewState
 import org.ort.app.ui.failures.UsbViewState
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
+import org.ort.app.ui.setup.DebugRigLinkPortOverride
+import org.ort.app.ui.setup.InMemoryRigLinkPort
+import org.ort.app.ui.setup.PairedDevice
 import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.capture.android.AudioDeviceDescriptor
@@ -479,6 +482,10 @@ public object Scenarios {
      * this value directly. */
     private const val BLUETOOTH_RIG_ADDRESS = "AA:BB:CC:11:22:33"
 
+    /** WPD's seam: the headset-class-only paired device `setup-rig-bluetooth`'s own list also names
+     * (S10b's own dim, unselectable row) — a distinct address from [BLUETOOTH_RIG_ADDRESS]. */
+    private const val HANDHELD_BT_ADDRESS = "11:22:33:AA:BB:CC"
+
     /** R-832: the coordinator's own specified reconnect-ladder position for both `bt-audio-dropped`
      * (F23) and `rig-bt-lost` (F9) — a mid-ladder attempt, not the first or the terminal one, so
      * both boards' ladder sentences have a genuinely non-trivial position to render. */
@@ -517,6 +524,9 @@ public object Scenarios {
         // scenario loads next, the same cross-contamination concern every process-wide facet reset
         // here already exists to prevent.
         DebugSearchOverride.clear()
+        // WPD's seam (coordinator-assigned, this round): a scripted RigLinkPort from a prior
+        // `setup-rig-bluetooth` load must not leak into a later scenario's own S10b render.
+        DebugRigLinkPortOverride.clear()
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1895,23 +1905,30 @@ public object Scenarios {
      * [SetupStore.rigBluetoothVerified] genuinely left `false` — `stepFor`'s `needsRigBluetoothLink`
      * gate resumes at [SetupStep.RIG_BLUETOOTH] directly from a cold launch.
      *
-     * **The one real gap this package found and reported, not worked around**
-     * (`spec/e2e-capture-modes-plan.md` WPI's own instruction): [org.ort.app.ui.setup.SetupActivity]
-     * constructs its own `RigLinkPort` as a hardcoded field —
-     * `private val rigLinkPort: RigLinkPort = InMemoryRigLinkPort()`, an *empty* paired-device list,
-     * with no companion `var`, no test-only setter, no debug-build conditional — unlike every other
-     * process-wide fact a scenario seeds ([RigStatus], [InputStatus], [CaptureState], ... or
-     * `org.ort.app.ui.failures.DebugFailureOverride`/`org.ort.app.ui.data.DebugSearchOverride`, both
-     * *main*-source, debug-settable holders this same file already writes to). There is therefore no
-     * seam `app/src/debug` can reach to publish a scripted [org.ort.app.ui.setup.InMemoryRigLinkPort]
-     * (`TH-D75A` SPP-capable, `Handheld BT` headset-only) into a real `SetupActivity` composition —
-     * doing so needs a **main-source change to `app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt`**
-     * (WPD's file, outside this package's row), e.g. a small main-source holder mirroring
-     * `DebugFailureOverride`'s own shape (`@Volatile var override: RigLinkPort? = null`, gated on
-     * `isDebugBuild`, read by `SetupActivity` in place of the hardcoded `InMemoryRigLinkPort()`).
-     * This scenario still seeds every real `SetupStore` fact S10b needs to *resume* here — only the
-     * paired-device list itself renders honestly empty until that hook exists. Reported in this
-     * package's own report, not fixed here.
+     * **WPD's seam (coordinator-assigned, this round) closes the paired-device-list half of the gap
+     * this scenario used to report.** `SetupActivity.onCreate` now reads
+     * `DebugRigLinkPortOverride.activeOverride` ahead of constructing the real `BridgeRigLinkPort` —
+     * a debug-build-only holder shaped exactly like `org.ort.app.ui.failures.DebugFailureOverride`.
+     * [DebugRigLinkPortOverride.show] below publishes a real, scripted [InMemoryRigLinkPort] naming
+     * two paired devices — the TH-D75A (SPP-capable, selectable) and a `Handheld BT` (headset-class
+     * only, listed dim and unselectable) — so S10b's own paired-device list renders real rows, not
+     * the honest-but-empty list the pre-seam build had no way to fill.
+     *
+     * **What still cannot be reached, and why (constitution VIII — reported, not faked):** the
+     * connect → identify → verify checklist progression, and a dropped-link banner, are reachable in
+     * the real app only *after* a tap on a paired-device row (`SetupActivity.onSelectRigBluetoothDevice`
+     * — confirmed by reading `SetupActivity.kt`: `rigBluetoothSelectedAddress` is plain, unpersisted
+     * `mutableStateOf` state, reset to `null` on every navigation into this step, with no
+     * `SetupStore` field and no `EXTRA_*` seam to preset it). The screenshot tour's own setup-step
+     * renderer (`ScreenshotTourActivity.renderSetupStep`) has no tap capability at all today (the
+     * same "no taps, no sheets" limit `results/ui-audit/README.md`'s "What v1 cannot capture"
+     * section already documents for `OrtNavHost` destinations) — so this scenario still cannot drive
+     * the checklist past its own initial, no-selection render. The real hook, for whoever picks this
+     * up: either a tap capability in the tour's setup-step renderer, or a new
+     * `SetupActivity.EXTRA_*` to preset `rigBluetoothSelectedAddress` (main-source, `ui/setup`, not
+     * this package's row) — [InMemoryRigLinkPort.useDefaultBehaviour] is scripted below regardless,
+     * so either fix reaches a real, working connect → identify → verify sequence with no further
+     * change here.
      */
     private fun setupRigBluetooth(context: Context): LoadResult {
         val store = freshSetupStore(context)
@@ -1930,6 +1947,14 @@ public object Scenarios {
         store.rigId = BundledDescriptors.kenwoodThD75a().id
         store.rigTransport = RigTransportKind.BLUETOOTH_SPP
         store.rigBluetoothVerified = false
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(
+                devices = listOf(
+                    PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true),
+                    PairedDevice(name = "Handheld BT", address = HANDHELD_BT_ADDRESS, sppCapable = false),
+                ),
+            ).apply { useDefaultBehaviour(BLUETOOTH_RIG_ADDRESS) },
+        )
         return LoadResult(0, 0, null)
     }
 

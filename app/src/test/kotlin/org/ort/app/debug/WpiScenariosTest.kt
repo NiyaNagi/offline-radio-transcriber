@@ -17,6 +17,7 @@ import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.failures.DebugFailureOverride
+import org.ort.app.ui.setup.DebugRigLinkPortOverride
 import org.ort.app.ui.setup.SetupStateMachine
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
@@ -79,6 +80,8 @@ class WpiScenariosTest {
         LevelStatus.reset()
         InputStatus.reset()
         DebugFailureOverride.clear()
+        DebugRigLinkPortOverride.clear()
+        DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
         context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE)
             .edit().clear().commit()
         context.getSharedPreferences(
@@ -172,6 +175,38 @@ class WpiScenariosTest {
             snapshot = store.snapshot(),
         )
         assertEquals(SetupStep.RIG_BLUETOOTH, step)
+    }
+
+    /** WPD's seam (coordinator-assigned): the real paired-device list S10b now renders. */
+    @Test
+    @Requirement("D33", "D34", "FR-RIG-14")
+    fun `D33_setup-rig-bluetooth installs a real DebugRigLinkPortOverride naming both paired devices`() = runTest {
+        Scenarios.load(context, "setup-rig-bluetooth")
+
+        val override = DebugRigLinkPortOverride.activeOverride
+        assertNotNull("setup-rig-bluetooth must publish a real override", override)
+        val devices = override!!.pairedDevices()
+        assertTrue("BLUETOOTH_CONNECT is granted in this scenario", devices.permissionGranted)
+        assertEquals(2, devices.devices.size)
+        val sppCapable = devices.devices.single { it.name == "TH-D75A" }
+        assertEquals(true, sppCapable.sppCapable)
+        val headsetOnly = devices.devices.single { it.name == "Handheld BT" }
+        assertEquals(false, headsetOnly.sppCapable)
+    }
+
+    /** The gate itself is `DebugRigLinkPortOverrideTest`'s own row to prove in general; this proves
+     * the scenario's own published port participates in it correctly. */
+    @Test
+    @Requirement("D33", "D34")
+    fun `D33_setup-rig-bluetooth own override is ignored the moment isDebugBuild reports false`() = runTest {
+        Scenarios.load(context, "setup-rig-bluetooth")
+        assertNotNull(DebugRigLinkPortOverride.current)
+
+        DebugRigLinkPortOverride.isDebugBuild = { false }
+        assertNull(
+            "a release build must never consult this scenario's own override",
+            DebugRigLinkPortOverride.activeOverride,
+        )
     }
 
     @Test
