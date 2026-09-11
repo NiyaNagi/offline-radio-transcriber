@@ -32,6 +32,47 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (E2-A07 follow-up: session-level rig descriptor id, route-verified flag and native rate; R-821 hasBeenConfigured; a heartbeat-store TOCTOU fix)
+
+### (pending) — FileHeartbeatStore.last()/hadUncleanEnd() catch FileNotFoundException/NumberFormatException instead of throwing into the UI
+
+**Scope:** `capture-android/src/main/kotlin/org/ort/capture/android/heartbeat/HeartbeatStore.kt`,
+`capture-android/src/test/kotlin/org/ort/capture/android/heartbeat/HeartbeatStoreTest.kt`. A
+separate, small commit ahead of the E2-A07 v10 round below, per the coordinator's request (main's
+own gate at `1e95a754` failed on `TourStepsTest`).
+
+**Requirements/ACs:** AC-5, FR-PLT-1.
+
+**What changed:** *Constitution check.* II (test-first: three new tests reproduce the crash before
+the fix, shown to discriminate — reverting the `try/catch` makes all three fail with the exact
+exception the bug report named). IV (a status read must never throw into the UI; a vanished
+heartbeat is data — "no heartbeat" — not a crash). `FileHeartbeatStore.last()` and `.hadUncleanEnd()`
+each did `file.exists()` then `file.readLines()` as two separate calls — a TOCTOU race: a scenario
+reset, `clear()`, or a real device's `pm clear` can delete the file between the two, on another
+coroutine polling the same store (`ReaderPolling.captureStatus`), throwing an uncaught
+`FileNotFoundException`. `last()` additionally parsed four numeric fields with no protection against
+a line torn mid-write (`NumberFormatException`). Both methods now wrap the read in
+`try { … } catch (FileNotFoundException) { … } catch (NumberFormatException) { … }` (the second catch
+only on `last()`, which is the only one that parses numbers) and return the same honest "nothing to
+report" answer (`null`/`false`) either way — never a fabricated value, never a crash.
+`HeartbeatStoreTest` adds a private `ExistsButGoneFile` (a `File` subclass whose `exists()` always
+answers `true` while the real path has been deleted) to reproduce the race deterministically, plus a
+truncated-line case for the parse path.
+
+**Verified:** `./gradlew -PortAllowMissingBundledAssets=true :capture-android:testDebugUnitTest
+--tests "org.ort.capture.android.heartbeat.HeartbeatStoreTest"` — 8/8 green (all 3 new tests shown to
+fail with the reported exception before the fix, pass after); `./gradlew
+-PortAllowMissingBundledAssets=true :capture-android:test` — green; full gate (`build
+dependencyRules platformGuards`, `-p buildSrc test`, `spec_check.py`, `coverageMatrix`,
+`coverageMatrixCheck`) run together with the E2-A07 round below — see that entry's own Verified line
+for the combined result, since both rounds landed in the same working tree before either was
+committed.
+
+**Left open / not done:** none for this fix; `TourStepsTest`'s own device-side rerun is the
+lead's/WPI's to confirm.
+
+---
+
 ## 2026-09-10 (WPD follow-up: the tour-injection seam for S10b, and reviewer findings R-812..R-816)
 
 ### (pending) — DebugRigLinkPortOverride (tour seam) + R-812/R-813/R-814/R-815/R-816
