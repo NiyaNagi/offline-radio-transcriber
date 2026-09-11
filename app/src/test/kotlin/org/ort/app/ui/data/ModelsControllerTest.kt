@@ -11,6 +11,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.assets.BundledAssetInstaller
+import org.ort.app.assets.BundledAssetState
+import org.ort.app.assets.FakeBundledAssetSource
 import org.ort.core.AttributionState
 import org.ort.core.PassId
 import org.ort.core.SystemClock
@@ -355,6 +358,159 @@ class ModelsControllerTest {
         val gemmaAtT3 = ModelsController.currentState(context, currentTierLabel = { "T3" })
             .rows.first { it.id == ModelId.LLM_GEMMA3_1B }
         assertTrue("Gemma must be eligible at tier 3", gemmaAtT3.tierEligible)
+    }
+
+    // WPG follow-up (coordinator-assigned, same session): E2-H08's own missing case —
+    // side-load/replacement still work through ModelAcquisition for a bundled asset, and the
+    // bundled copy remains the real fallback (FR-AST-1's "roll back", FR-AST-3b). `VAD`'s real
+    // published checksum is irrelevant to either test below — both drive `BundledAssetInstaller`
+    // (a fake, self-contained "bundled" source) and `ModelsController` (a `specFor` override
+    // pointed at the identical real destination) against bytes this test controls end to end,
+    // exactly this file's own established pattern (see the class KDoc).
+    private val vadRelativeDestination = "models/silero-vad/silero_vad.onnx"
+
+    private fun bundledManifestJson(sha256: String) = """
+        {"assets": [{"id": "VAD", "destination": "$vadRelativeDestination", "sha256": "$sha256",
+        "sizeBytes": 64, "tiers": ["T0"], "missing": false}]}
+    """.trimIndent()
+
+    @Test
+    @Requirement("FR-AST-1", "FR-AST-3b")
+    fun `WPG sideloading a replacement over a bundled asset replaces it, and reinstall rolls back`(): Unit = runTest {
+        val tempFilesDir = Files.createTempDirectory("models-controller-rollback-test").toFile()
+        val fakeContext = object : android.content.ContextWrapper(context) {
+            override fun getFilesDir(): File = tempFilesDir
+        }
+        val destination = ModelCatalog.entry(ModelId.VAD).destination(tempFilesDir)
+        val marker = File(destination.parentFile, destination.name + ".sha256")
+
+        // 1. Install the real bundled copy — the same object OrtApplication calls on launch.
+        val bundledBytes = ByteArray(64) { it.toByte() }
+        val bundledSha256 = sha256(bundledBytes)
+        val bundledAssetPath = "bundled/$vadRelativeDestination"
+        val bundledSource = FakeBundledAssetSource(
+            mapOf(
+                "bundled/manifest.json" to bundledManifestJson(bundledSha256).toByteArray(),
+                bundledAssetPath to bundledBytes,
+            ),
+        )
+        val installed = BundledAssetInstaller.installAll(tempFilesDir, bundledSource).single()
+        assertTrue("expected Installed, got $installed", installed is BundledAssetState.Installed)
+        assertEquals(bundledSha256, marker.readText())
+
+        // 2. Side-load a replacement over the same real destination, verified against the
+        //    replacement's OWN digest — the existing sideload path, unchanged.
+        val replacementBytes = ByteArray(64) { (it + 1).toByte() }
+        val replacementChecksum = Checksum(value = sha256(replacementBytes))
+        val replacementSpecFor: (ModelId, File) -> ModelFetchSpec? = { id, _ ->
+            if (id == ModelId.VAD) {
+                ModelFetchSpec(
+                    url = "https://example.invalid/VAD-replacement",
+                    destination = destination,
+                    checksum = replacementChecksum,
+                )
+            } else {
+                null
+            }
+        }
+        val replacementSourceFile = File(tempFilesDir, "replacement-vad.onnx").apply {
+            writeBytes(replacementBytes)
+        }
+
+        val sideloadResult = ModelsController.sideload(
+            fakeContext,
+            ModelId.VAD,
+            replacementSourceFile,
+            specFor = replacementSpecFor,
+        )
+        assertTrue("expected a Success, got $sideloadResult", sideloadResult is ModelActionResult.Success)
+
+        val afterSideload = ModelsController.currentState(fakeContext, specFor = replacementSpecFor)
+        val replacedRow = afterSideload.rows.first { it.id == ModelId.VAD }
+        assertEquals(ModelRowStatus.INSTALLED, replacedRow.status)
+        assertEquals(replacementChecksum.value.take(8), replacedRow.checksumPrefix)
+        assertEquals(replacementBytes.toList(), destination.readBytes().toList())
+
+        // The bundled copy is no longer the file *on disk at the destination* (the replacement
+        // overwrote it, exactly as a real replacement should) but remains genuinely re-copyable
+        // from its own source — the real fallback FR-AST-3b/FR-AST-1's "roll back" describes.
+        assertEquals(
+            "the bundled copy must still be fetchable from its own source, untouched by the sideload",
+            bundledBytes.toList(),
+            bundledSource.open(bundledAssetPath).readBytes().toList(),
+        )
+
+        // 3. Roll back via BundledAssetInstaller.reinstall — the bundled copy (and its own
+        //    marker) becomes active again, from that same still-available source.
+        val rolledBack = BundledAssetInstaller.reinstall("VAD", tempFilesDir, bundledSource)
+        assertTrue("expected Installed after rollback, got $rolledBack", rolledBack is BundledAssetState.Installed)
+        assertEquals(bundledBytes.toList(), destination.readBytes().toList())
+        assertEquals(
+            "the marker must read the bundled digest again, not the replacement's",
+            bundledSha256,
+            marker.readText(),
+        )
+    }
+
+    @Test
+    @Requirement("FR-AST-4")
+    fun `WPG replacing a bundled asset via sideload mid-session stages, never activates immediately`(): Unit = runTest {
+        val tempFilesDir = Files.createTempDirectory("models-controller-rollback-staged-test").toFile()
+        val fakeContext = object : android.content.ContextWrapper(context) {
+            override fun getFilesDir(): File = tempFilesDir
+        }
+        val destination = ModelCatalog.entry(ModelId.VAD).destination(tempFilesDir)
+        val replacementBytes = ByteArray(64) { (it + 2).toByte() }
+        val replacementChecksum = Checksum(value = sha256(replacementBytes))
+        val replacementSpecFor: (ModelId, File) -> ModelFetchSpec? = { id, _ ->
+            if (id == ModelId.VAD) {
+                ModelFetchSpec(
+                    url = "https://example.invalid/VAD-replacement-staged",
+                    destination = destination,
+                    checksum = replacementChecksum,
+                )
+            } else {
+                null
+            }
+        }
+        val replacementSourceFile = File(tempFilesDir, "replacement-vad-staged.onnx").apply {
+            writeBytes(replacementBytes)
+        }
+
+        db.sessionDao().insert(session("S-ROLLBACK-STAGED"))
+        db.transmissionDao().insert(transmission("TX-ROLLBACK-STAGED-1", "S-ROLLBACK-STAGED"))
+        val queue = WorkQueue(db, SystemClock, maxAttempts = 1)
+        queue.enqueue("TX-ROLLBACK-STAGED-1", PassId.B_OFFLINE)
+        val leased = queue.leaseBatch("run-rollback-staged-1", limit = 10) { 60_000L }.single()
+        queue.failPass(leased, "ASR unavailable: no ASR model installed")
+
+        CaptureState.capturing("S-ROLLBACK-STAGED")
+        val result = ModelsController.sideload(
+            fakeContext,
+            ModelId.VAD,
+            replacementSourceFile,
+            specFor = replacementSpecFor,
+        )
+
+        val success = result as ModelActionResult.Success
+        assertEquals(
+            "nothing was really requeued yet — the file installed, only the reprocess is staged",
+            0,
+            success.requeuedCount,
+        )
+        assertEquals(
+            "the failed item must stay FAILED, never silently reprocessed mid-session (FR-AST-4)",
+            TransmissionState.FAILED,
+            db.transmissionDao().getById("TX-ROLLBACK-STAGED-1")!!.processingState,
+        )
+        assertEquals(
+            "the replacement bytes land immediately — only reprocessing is deferred (FR-AST-4)",
+            replacementBytes.toList(),
+            destination.readBytes().toList(),
+        )
+        val staged = ModelsController.stagedActivation.value
+        assertTrue("expected a staged activation, got null", staged != null)
+        assertEquals(ModelId.VAD.name, staged!!.assetId)
     }
 
     private fun session(id: String) = SessionEntity(
