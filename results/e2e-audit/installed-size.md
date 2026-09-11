@@ -1,107 +1,93 @@
-# Installed size — WPG bundled assets (R18, FR-AST-3a)
+# Installed size — bundled assets (R18, FR-AST-3a)
 
-E2-H09. Measured against a real `assembleDebug` artifact installed on a real emulator, not
-estimated. **`HF_TOKEN` was not set on this measurement machine**, so this run used the
-local-development escape hatch (`-PortAllowMissingBundledAssets=true`) — see "What this number
-does not include" below. `fetchBundledAssets`'s own log for this run is quoted in full so the gap
-is auditable, not just asserted.
+E2-H09. Two measurements, both against a real `assembleDebug` artifact installed on a real
+emulator, never estimated. **The 2026-09-11 measurement is the complete one** — every manifest
+entry fetched with a real `HF_TOKEN`, no escape hatch — and supersedes the 2026-09-10 baseline,
+which is kept below for its provenance (constitution VI: no number without how it was obtained).
 
-## Build
+## 2026-09-11 — complete (5 of 5 assets, `HF_TOKEN` set)
 
 | Field | Value |
 |---|---|
-| Commit | `7dc81be` (parent of this session's WPG commit — `git rev-parse --short=7 HEAD` before committing) |
-| Date | 2026-09-10 |
-| Command | `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` |
-| Variant | `debug` (`app-debug.apk`) |
-| `HF_TOKEN` | **absent** on this machine — Gemma 3 1B could not be fetched (see below) |
-| Device | Android emulator `emulator-5556`, API 34 (`ro.build.version.release=14`), `x86_64` |
+| Commit | `686212f4` (main, every capture-modes package merged; full gate green) |
+| Date | 2026-09-11 10:08 local |
+| Fetch | `./gradlew fetchBundledAssets` with `HF_TOKEN` in the environment — `fetchBundledAssets: 5/5 assets verified and packaged under app/src/main/assets/bundled`, 1 m 36 s (the token was verified beforehand: a headers-only request for the gated file returned `302` with `X-Linked-Size: 554661243` and an ETag equal to the pinned sha256; the same request without the token is `401`) |
+| Build | `./gradlew :app:assembleDebug` — **no `-PortAllowMissingBundledAssets`** |
+| Variant | `debug` (`app-debug.apk`, sha256 `0c7e1ecb6914…`) |
+| Device | Android emulator `emulator-5554` (`ort_audit`, Pixel 6), API 34, `x86_64`, `/data` 5.8 GB with 4.2 GB free before install |
 
-`fetchBundledAssets`'s own output for this run, verbatim:
+Packaged under `app/src/main/assets/bundled/` (gitignored — `.gitignore:44`), byte for byte the
+manifest's declared sizes:
 
 ```
-> Task :app:fetchBundledAssets
-fetchBundledAssets: WARNING — LLM_GEMMA3_1B could not be fetched (fetchBundledAssets: HF_TOKEN is
-required to fetch LLM_GEMMA3_1B (a gated model) — accept the licence for
-https://huggingface.co/litert-community/Gemma3-1B-IT/resolve/main/gemma3-1b-it-int4.task on
-HuggingFace, then set the HF_TOKEN environment variable and rerun the build.); packaging WITHOUT
-it because the local-only allow-missing escape hatch is set. This is not a complete offline
-install — never do this for a release build or in CI (FR-AST-3).
-fetchBundledAssets: 4/5 assets verified and packaged under
-<repo>/app/src/main/assets/bundled (1 marked missing)
+bundled/manifest.json                                             1,421
+bundled/models/llm/gemma3-1b-it-int4.task                   554,661,243
+bundled/models/silero-vad/silero_vad.onnx                       643,854
+bundled/models/whisper-tiny-en-int8/tiny.en-decoder.int8.onnx  89,853,865
+bundled/models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx  12,937,772
+bundled/models/whisper-tiny-en-int8/tiny.en-tokens.txt            835,554
 ```
 
-## Numbers measured
+### Numbers measured
 
 | Figure | Value | How measured |
 |---|---|---|
-| APK size (`app-debug.apk`) | **204,558,738 bytes (≈195 MB)** | `Get-Item app/build/outputs/apk/debug/app-debug.apk` |
-| Installed code size (`codePath`) | **≈195 MB** (`du -sh`) | `adb -s emulator-5556 shell du -sh <codePath>` after `dumpsys package org.ort.app \| findstr codePath` |
-| App data dir after first launch | **100 MB** (`/data/data/org.ort.app`) | `adb -s emulator-5556 shell run-as org.ort.app du -sh /data/data/org.ort.app`, measured ~8 s after `am start` (enough for `BundledAssetInstaller.installAll`'s background copy to finish) |
-| `files/` alone (the copied models) | **100 MB** | `du -sh /data/data/org.ort.app/files` |
-| **Total installed footprint (code + data)** | **≈295 MB** | sum of the two `du` figures above |
+| APK size (`app-debug.apk`) | **611,029,854 bytes (≈583 MiB)** | `Get-Item app/build/outputs/apk/debug/app-debug.apk`; `ls -l …/base.apk` on the device agrees byte for byte |
+| Installed code (`codePath`) | **583 M** (`du -sh`) | `adb shell du -sh <codePath>` after `dumpsys package org.ort.app` |
+| App data after first launch | **629 M** (`/data/data/org.ort.app`) | `run-as org.ort.app du -sh`, taken once `bundled_assets.manifest` existed (the Gemma copy took ≈ 60 s on this emulator; at 25 s it was still `gemma3-1b-it-int4.task.part` with no manifest — the installer writes the manifest last, so its presence is the completion signal) |
+| of which `files/models/llm` | **529 M** | `du -sh` |
+| **Total installed footprint (code + data)** | **≈1,212 M ≈ 1.18 GiB** | sum of the two `du` figures |
 
-The four non-gated assets landed exactly where the existing locators expect, each with its
-`.sha256` marker (`ModelAcquisition`'s own convention, reused — `rowFor` reports `INSTALLED`
-through the one existing code path, per this package's own design KDoc), plus
-`bundled_assets.manifest` (the filesystem contract `measureStorageAccounting` reads,
-FR-AST-3a/AC-139):
+Every copied file matches its declared size exactly and carries its `.sha256` marker; no `.part`
+or `.rejected` file remains:
 
 ```
-files/models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx(.sha256)
-files/models/whisper-tiny-en-int8/tiny.en-decoder.int8.onnx(.sha256)
-files/models/whisper-tiny-en-int8/tiny.en-tokens.txt(.sha256)
-files/models/silero-vad/silero_vad.onnx(.sha256)
-files/bundled_assets.manifest      # exactly these four relative paths, sorted; no Gemma line
+files/models/llm/gemma3-1b-it-int4.task                   554,661,243  + .sha256
+files/models/silero-vad/silero_vad.onnx                       643,854  + .sha256
+files/models/whisper-tiny-en-int8/tiny.en-decoder.int8.onnx  89,853,865  + .sha256
+files/models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx  12,937,772  + .sha256
+files/models/whisper-tiny-en-int8/tiny.en-tokens.txt            835,554  + .sha256
+files/bundled_assets.manifest   223 bytes — five relative paths, sorted, Gemma included
 ```
 
-## Per-asset breakdown (from `bundled-assets.json`, the manifest's own declared sizes)
+### Per-asset breakdown (declared = measured)
 
-| Asset | Tiers | Gated | Size (declared) | Present in this build |
+| Asset | Tiers | Gated | Size | Present |
 |---|---|---|---|---|
-| Whisper tiny.en encoder | T0–T3 | no | 12,937,772 B (≈12.3 MB) | yes |
-| Whisper tiny.en decoder | T0–T3 | no | 89,853,865 B (≈85.7 MB) | yes |
-| Whisper tiny.en tokens | T0–T3 | no | 835,554 B (≈0.8 MB) | yes |
-| Silero VAD | T0–T3 | no | 643,854 B (≈0.6 MB) | yes |
-| Gemma 3 1B int4 | **T3 only** | **yes** | 554,661,243 B (≈529 MB) | **no — HF_TOKEN absent, escape hatch used** |
-| **Sum, all five** | | | **658,932,288 B (≈629 MB)** | — |
+| Whisper tiny.en encoder | T0–T3 | no | 12,937,772 B (≈12.3 MiB) | yes, verified |
+| Whisper tiny.en decoder | T0–T3 | no | 89,853,865 B (≈85.7 MiB) | yes, verified |
+| Whisper tiny.en tokens | T0–T3 | no | 835,554 B (≈0.8 MiB) | yes, verified |
+| Silero VAD | T0–T3 | no | 643,854 B (≈0.6 MiB) | yes, verified |
+| Gemma 3 1B int4 | **T3 only** | **yes** | 554,661,243 B (≈529 MiB) | **yes, verified** — stored on every tier, loaded only at tier 3 while idle and charging (AC-138) |
+| **Sum, all five** | | | **658,932,288 B (≈628 MiB)** | — |
 
-## What this number does not include
+### Against the 2026-09-10 projection
 
-Gemma 3 1B (≈529 MB) is the large majority of the bundled-asset weight and is **absent from this
-specific measurement** because this machine has no `HF_TOKEN`. A real CI or release build (which
-sets `HF_TOKEN` from a secret and never sets the escape hatch — `.github/workflows/*.yml`) would
-fetch and package it too, so the true, complete numbers are:
+The baseline projected ≈724 MB APK / ≈1.35 GB installed by adding Gemma's declared size to the
+four-asset measurement. The measured APK is **611 MB, ≈113 MB smaller than projected**: the APK
+container compresses the `.task` file (the projection assumed it would be stored uncompressed like
+the ONNX files). The installed data (629 M) matches the projection (≈629 MB) because the installer
+copies every asset out uncompressed. Total footprint ≈1.18 GiB against the projected ≈1.35 GB.
 
-| Figure | This measurement (Gemma absent) | Projected complete (Gemma present) |
-|---|---|---|
-| APK size | 204,558,738 B (≈195 MB) | **≈195 MB + 529 MB ≈ 724 MB** |
-| Installed data after first launch | 100 MB | **≈100 MB + 529 MB ≈ 629 MB** |
-| Total installed footprint | ≈295 MB | **≈1.35 GB** |
+## R18, re-assessed with the complete number
 
-The projection is arithmetic (declared size added to the measured baseline), not a second
-measurement — the Gemma `.task` file is not re-compressed inside the APK any differently than the
-other model files (AGP does not recompress already-compressed model binaries by default under
-`noCompress`-eligible extensions, and every existing entry's on-disk `files/` size already matches
-its declared `sizeBytes` exactly, byte for byte, in the table above), so the projection should be
-accurate to within normal APK-container overhead (a few hundred KB).
+At 611 MB APK / ≈1.18 GiB installed this is a large app but not undistributable: self-distribution
+(D11 — GitHub releases / F-Droid-style) has no hard APK cap, and the device headroom the reference
+phone has (hundreds of GB) is not the constraint. The mitigations R18 names are in place and now
+measured for real: sizes reported per asset (this table and CF04's rows), bundled storage excluded
+from the operator's retention budget and reported separately (FR-AST-3a, AC-139), and the
+tier-ineligible model stored but never loaded (AC-138). **FR-AST-3a's TODO — optional asset packs
+so a tier-0/1 phone need not carry 529 MiB it will never load — stays open, now with its
+measured cost: the LLM is 84 % of the bundled bytes and 87 % of the APK.** Revisit when a
+distribution channel with a size ceiling is chosen (D11).
 
-**A future session with `HF_TOKEN` set should re-run this measurement for real** and replace the
-projected row with a measured one — this file's own report is explicit about which rows are which,
-per constitution VI ("no number without its provenance").
+---
 
-## R18's own risk, re-assessed with a real number
+## 2026-09-10 — baseline (4 of 5 assets, `HF_TOKEN` absent, escape hatch) — superseded
 
-R18 asks whether bundling every asset "makes the install too large to distribute or install". At
-the projected complete size (≈724 MB APK, ≈1.35 GB installed), this is a **large** app by mobile
-standards but not obviously undistributable: Android's per-APK size ceilings (App Bundles aside)
-and typical device storage headroom both accommodate it, and F-Droid/GitHub-releases-style
-self-distribution (D11) has no App Store-style hard cap the way Play's classic APK limit once did.
-The mitigations R18 names are in place and measured here directly: sizes are reported per asset
-(the table above), bundled storage is excluded from the operator's retention budget and reported
-separately (FR-AST-3a, AC-139 — see `StorageAccountingTest`'s own `AC_139` tests), and a
-tier-ineligible model is stored but never loaded (AC-138 — the LLM's own `tiers = ["T3"]`, checked
-by `ModelsControllerTest`'s `WPG a tier-3-only bundled asset reports tierEligible false...` test).
-**Left open:** the real, complete (Gemma-included) measurement, and R18's own "revisit if it
-exceeds what the distribution channel allows" — no distribution channel has been chosen yet to
-check that against (D11 keeps this open pending the Play-path decision).
+Commit `7dc81be`, `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`,
+`emulator-5556` API 34 x86_64. `fetchBundledAssets` reported `4/5 assets verified and packaged …
+(1 marked missing)` with the one-line `HF_TOKEN` instruction. Measured: APK **204,558,738 B
+(≈195 MB)**, installed code ≈195 MB, app data after first launch **100 MB** (`files/` 100 MB),
+total ≈295 MB; the four non-gated files landed byte-exact with markers and a four-line manifest
+(no Gemma). The projection made then (≈724 MB / ≈1.35 GB) is corrected by the measurement above.
