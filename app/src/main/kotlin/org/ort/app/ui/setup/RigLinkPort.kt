@@ -6,23 +6,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
 /**
- * S10b's own, `:app`-local seam onto a Bluetooth rig link (D33/D34, FR-RIG-14, FR-RIG-15). Real
- * hardware access lives in `:rig-bluetooth` (`BluetoothSppTransport`/`AndroidBluetoothLink`,
- * `PairedBluetoothDevice`, `SppSupport`, all landed on `main` at `898b8b6`) — but `:app` is not
- * permitted to depend on `:rig-bluetooth` at all (`buildSrc/.../ModuleGraph.kt`'s
- * `allowed[":app"]` lists `:pipeline, :data, :net, :core, :lexicon, :rig, :llm-api` only;
- * `:rig-bluetooth` is not among them, and `ModuleGraph.kt` is outside this package's ownership to
- * change). This interface — and [PairedDevice]/[RigLinkState], deliberately shaped like
- * `:rig-bluetooth`'s own [org.ort.rig.bluetooth.PairedBluetoothDevice]/[org.ort.rig.bluetooth.SppSupport]
- * and `TransportState` so the eventual adapter is a thin, mechanical translation rather than a
- * redesign — is therefore where the boundary has to sit: **the real
- * `BluetoothSppTransport`/`DescriptorRigModule` wiring can only be built once either `:pipeline`
- * exposes it (WPC2's `pipeline/.../rig` package, per `spec/e2e-capture-modes-plan.md`'s WPC2 row) or the
- * lead amends `ModuleGraph.kt` to admit the edge** — this package's own report says so explicitly,
- * so the gap is decided rather than silently worked around. Until then, every S10b behaviour is
- * proven against [InMemoryRigLinkPort], scripted the same way `FakeBluetoothLink`/`FakeRigTransport`
- * script theirs (constitution II: a fake that cannot hang, fail or drop tests nothing about
- * FR-RIG-15).
+ * S10b's own, `:app`-local seam onto a Bluetooth rig link (D33/D34, FR-RIG-14, FR-RIG-15). `:app`
+ * is not permitted to depend on `:rig-bluetooth`/`:rig-usb` directly (`buildSrc/.../ModuleGraph.kt`'s
+ * `allowed[":app"]` lists `:pipeline, :data, :net, :core, :lexicon, :rig, :llm-api` only —
+ * constitution VII). [BridgeRigLinkPort] is the real implementation, over WPC3's
+ * `org.ort.pipeline.rig.RigLinkBridge` (`:pipeline`, merged `8e40041`) — exactly the seam this
+ * interface's own doc comment once said was still missing. [InMemoryRigLinkPort] remains the
+ * behavioural fake every screen-level test drives (constitution II: a fake that cannot hang, fail
+ * or drop tests nothing about FR-RIG-15).
  */
 public data class PairedDevice(
     public val name: String,
@@ -31,6 +22,18 @@ public data class PairedDevice(
      * selectable (`Setup-Rig-Bluetooth.dc.html`'s dim row). `null` — the stack reported nothing
      * either way; shown as unknown, still selectable (never guessed as `false` — constitution I). */
     public val sppCapable: Boolean?,
+)
+
+/**
+ * FR-PLT-2's discipline applied to pairing (mirrors WPC3's own `PairedRigDevicesResult`, S10b's
+ * side of the same fact): an empty [devices] list alone is ambiguous — "nothing is paired" and
+ * "`BLUETOOTH_CONNECT` is absent, so nothing CAN be listed" must not read the same
+ * (constitution I). [permissionGranted] defaults `true` so every existing screen-level test that
+ * only cares about the device list is unaffected.
+ */
+public data class PairedDevicesResult(
+    public val devices: List<PairedDevice>,
+    public val permissionGranted: Boolean = true,
 )
 
 /** Every state S10b's open -> identify -> verify checklist can be in (`Setup-Rig-Bluetooth.dc.html`).
@@ -54,7 +57,7 @@ public sealed interface RigLinkState {
 
 /** S10b's port onto the paired-device list and the connect/identify/verify sequence. */
 public interface RigLinkPort {
-    public fun pairedDevices(): List<PairedDevice>
+    public fun pairedDevices(): PairedDevicesResult
 
     /** Opens a link to [address], expecting [expectedRigId] (`descriptor.id`) to answer — a real
      * adapter drives this from `DescriptorRigModule`/`BluetoothSppTransport`; see this file's own
@@ -70,7 +73,16 @@ public interface RigLinkPort {
  * partway through the checklist (FR-RIG-15 — capture-side this is exactly F9/F23's shape; here it
  * is S10b's own banner, never a blank screen).
  */
-public class InMemoryRigLinkPort(private val devices: List<PairedDevice> = emptyList()) : RigLinkPort {
+public class InMemoryRigLinkPort(
+    private val devices: List<PairedDevice> = emptyList(),
+    private var permissionGranted: Boolean = true,
+) : RigLinkPort {
+
+    /** `BLUETOOTH_CONNECT` is absent — [pairedDevices] reports an empty list with
+     * [PairedDevicesResult.permissionGranted] `false`, never conflated with "nothing is paired". */
+    public fun denyPermission() {
+        permissionGranted = false
+    }
 
     private sealed interface Script {
         data object Normal : Script
@@ -115,7 +127,11 @@ public class InMemoryRigLinkPort(private val devices: List<PairedDevice> = empty
         verifiedCommands = commands
     }
 
-    override fun pairedDevices(): List<PairedDevice> = devices
+    override fun pairedDevices(): PairedDevicesResult = if (permissionGranted) {
+        PairedDevicesResult(devices, permissionGranted = true)
+    } else {
+        PairedDevicesResult(emptyList(), permissionGranted = false)
+    }
 
     override fun connect(address: String, expectedRigId: String): Flow<RigLinkState> = flow {
         when (val script = scripts[address] ?: Script.Normal) {

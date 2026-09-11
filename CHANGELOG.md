@@ -32,6 +32,82 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-10 (WPD follow-up: the real RigLinkPort over WPC3's RigLinkBridge)
+
+### (pending) — BridgeRigLinkPort: the real S10b link, over :pipeline's RigLinkBridge
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{RigLinkPort,BridgeRigLinkPort,SetupActivity,
+SetupCaptureConfigurationAdapter}.kt`, `app/src/test/kotlin/org/ort/app/ui/setup/
+{BridgeRigLinkPortTest,InMemoryRigLinkPortTest}.kt` (new/changed).
+**Requirements/ACs:** FR-RIG-14, FR-RIG-15, FR-PLT-2, E2-E10, E2-E11.
+**What changed:**
+1. `RigLinkPort.pairedDevices()` now returns `PairedDevicesResult(devices, permissionGranted: Boolean = true)`
+   instead of a bare list — mirrors WPC3's own `PairedRigDevicesResult` (`:pipeline`'s
+   `RigLinkBridge`, merged `8e40041`): an empty list and "permission absent, nothing CAN be
+   listed" must not read the same (constitution I). `InMemoryRigLinkPort` gains `denyPermission()`.
+2. `BridgeRigLinkPort` (new) is the real `RigLinkPort`, over `org.ort.pipeline.rig.RigLinkBridge`:
+   `pairedDevices()` maps `PairedRigDevice`/`permissionGranted` straight through;
+   `connect(address, expectedRigId)` always probes `RigTransportKind.BLUETOOTH_SPP` with
+   `DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS = address` (S10b is Bluetooth-only) and
+   maps `RigLinkProbeState` 1:1 onto `RigLinkState` (`Verified(capabilities)` → `Verified(commands)`
+   via `RigPickerCatalogue.capabilityLabel`). `SetupActivity` now constructs
+   `BridgeRigLinkPort(DefaultRigLinkBridge(this))`; `refreshPairedDevices()` (both S10b entry and
+   `Refresh`) sets `rigLinkState = RigLinkState.NoPermission` directly from
+   `PairedDevicesResult.permissionGranted == false`, so the banner shows the moment the permission
+   is found missing, not only after a connect attempt.
+3. **Known, reported gap, honestly worked around, not silently**: `PairedRigDevice.sppSupport`'s
+   declared type (`org.ort.rig.bluetooth.SppSupport`) is not resolvable from `:app` at all —
+   `pipeline/build.gradle.kts` declares `implementation(project(":rig-bluetooth"))`, which Gradle
+   does not expose to `:pipeline`'s own consumers' compile classpath (only `api` would); confirmed
+   by attempting a direct import and reading the compiler's own "Cannot access class ... Check
+   your module classpath" error. `BridgeRigLinkPort.toSppCapable` reads the value through
+   `java.lang.reflect` instead (`Class.getMethod("getSppSupport").invoke(device)`, matched against
+   the literal strings `"YES"`/`"NO"`), which needs no compile-time reference to that type at all —
+   documented in the function's own kdoc, including the exact one-line `pipeline/build.gradle.kts`
+   fix (`implementation` → `api` for `:rig-bluetooth`) that would let this collapse to a plain
+   `when` and delete the reflection lookup entirely. `SetupCaptureConfigurationAdapter` already
+   passed the chosen device's address into `CaptureConfiguration.rigParams` (this package's own
+   earlier commit); confirmed unchanged and correct against the merged `DefaultRigTransportFactory.ParamKeys`.
+4. `SetupActivity` suppresses detekt's `LargeClass` (mirrors `SetupStore`'s own `TooManyFunctions`
+   suppression) — D33/P19 added four more screens' worth of `Context`/coroutine/IO glue onto the
+   one class the guide's own rule says must own all of it; documented in the class's own kdoc.
+**Verified:**
+- `BridgeRigLinkPortTest` (6 tests: happy path to `Verified`, `NoPermission`, `Lost` after
+  `Identified`, an unknown rig id's `Failed`, the Bluetooth-SPP/address params sent, and
+  `permissionGranted` passed straight through) — green, driven over `FakeRigLinkBridge`
+  (`:pipeline`, constitution II).
+- `InMemoryRigLinkPortTest` (9 tests, including the new `denyPermission` case) — green.
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.setup.*"` — green.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**
+  (1508 tests).
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK` (`:app`'s declared edges are still exactly `:core, :data, :lexicon,
+  :llm-api, :net, :pipeline, :rig` — no `:rig-bluetooth`/`:rig-usb` edge added, confirming the
+  reflection workaround above kept the module boundary honest rather than routing around it);
+  `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — 239 of 450 requirements covered, up to date.
+  **Orphan line present but pre-existing and outside this package's ownership**: `coverageMatrix`
+  prints `orphan tests naming unknown requirements: [E2-G01, E2-G02, E2-G03, E2-G05, E2-G06,
+  E2-G07]` — these are `@Requirement("E2-Gxx")` annotations in WPF's own test files
+  (`CaptureStatusContentTest`, `NowScreenTest`, `DigestPollingTest`, `FailureMapperTest`, …, none
+  under `ui/setup`), already present in `results/coverage-matrix.md` before this package's own
+  commits (confirmed by reading the file at the merge-base). This package's own test names
+  (`E2_E01`.."E2_E15`) do not trigger the orphan check at all — they are embedded in
+  backtick-quoted function names, never `@Requirement(...)` annotations, so `CoverageMatrix.kt`'s
+  `NAME_ID` regex (which only matches `FR|AC|NFR|CON` prefixes) does not extract them as
+  requirement citations either way. Not fixed here: the WPF test files are outside
+  `app/src/main/kotlin/org/ort/app/ui/setup/**`/`app/src/test/kotlin/org/ort/app/ui/setup/**`,
+  this package's only owned paths.
+**Left open / not done:** `pipeline/build.gradle.kts`'s `implementation(project(":rig-bluetooth"))`
+→ `api` (one line, outside this package's ownership) to retire the reflection workaround in
+`BridgeRigLinkPort.toSppCapable`; the pre-existing `E2-G0x` orphan lines (WPF's own test
+annotations, outside this package's ownership).
+
+---
+
 ## 2026-09-10 (WPD follow-up: Scenarios.kt captureMode seed, S12 Models row reads WPG's ModelsController)
 
 ### be0fcc8 — WPD follow-up · lead-approved Scenarios.kt fix; Models row reads real bundled state
