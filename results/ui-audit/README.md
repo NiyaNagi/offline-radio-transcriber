@@ -40,7 +40,7 @@ an identical second AVD for port 5556; at most two AVDs run at once
 | `create-avd.ps1 -Name <name>` | Creates a Pixel 6 / API 34 / x86_64 / google_apis AVD (`ort_audit_2` for port 5556). |
 | `install.ps1 -Port <n> [-Clear] [-PortAllowMissingBundledAssets:$false]` | `:app:assembleDebug` (R-868: passes `-PortAllowMissingBundledAssets=true` through to Gradle by default — a local validator tool, never CI's own build, so the gated-LLM escape hatch is on unless explicitly turned off), installs on `emulator-<n>`, grants `RECORD_AUDIO`/`POST_NOTIFICATIONS`/`BLUETOOTH_CONNECT` (the last one R-810/R-811's own fix — see "Reaching S02c" below, since it makes S02c itself unreachable by default). `-Clear` runs `adb shell pm clear org.ort.app` right after install and re-grants all three permissions — see "Known gaps / hygiene" below for why. |
 | `scenario.ps1 -Port <n> -Name <scenario> [-NoRestart]` | Force-stops the app (unless `-NoRestart`), broadcasts the scenario, waits for the confirming logcat line, prints `session=<id>`, then a best-effort warning if a real (non-scenario) session is still in the app's own database (see "Known gaps / hygiene"). |
-| `shoot.ps1 -Port <n> -Scenario <s> -Screen <name>` | `screencap -p` to a device file, then `adb pull` — to `results/ui-audit/<s>/<name>.png`. |
+| `shoot.ps1 -Port <n> -Scenario <s> -Screen <name>` | `screencap -p /sdcard/…` to a device file, then `adb pull` — to `results/ui-audit/<s>/<name>.png`. **This is the only supported way to pull a screenshot by hand** — see "PowerShell corrupts binary `adb` output" below before reaching for `adb exec-out` yourself. |
 | `nav.ps1 -Port <n> -Screen <name>` | Replays the tap sequence for `<name>` from `screens.json`. |
 | `run-set.ps1 -Port <n> -Set <V3\|V5>` | Runs every (scenario, screen) pair of one phase-E set from `sets.json`, end to end. |
 
@@ -196,6 +196,7 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `setup-verified` | Seeds `org.ort.app.setup`'s real `SharedPreferences` (through `SharedPreferencesSetupStore`, not a duplicated key set) so `SetupStateMachine.stepFor` lands at `SetupStep.READY` (S12) directly, its Level row already green (register R-227) — see "Reaching S07/S12" below. |
 | `setup-level` | The same verified-input base as `setup-verified`, but `levelInBand`/`levelPeakDbfs` are left honestly unset so `stepFor` lands at `SetupStep.LEVEL` (S07) directly, from a cold launch (register R-264) — see "Reaching S07/S12" below. Also publishes a real `LevelStatus` (peak −14 dBFS, noise floor −58, no clipping) so S07's own meter has real bars/facts to render on a clean install instead of the honest-but-empty "no bars, noise —" state (register R-411) — independent of `levelInBand` itself, which stays unset on purpose so `stepFor` still resumes here. |
 | `setup-radio` | The same verified-input/level/overnight base as `setup-verified`, but `radioChoice`/`manualFrequencyHz` are left honestly unset (explicitly cleared — `SharedPreferences` persist across scenario loads, unlike `:data`) so `stepFor` lands at `SetupStep.RADIO` (S09) directly, from a cold launch (register R-285) — see "Reaching S07/S09/S12" below. |
+| `setup-verified-local-mic` | E2-J04: the one local-mic-mode setup base — `setup-verified`/`setup-level`/`setup-radio` all share a `USB_RADIO`/`usb-1` base, so no scenario reached S07..S12 under `LOCAL_MICROPHONE` before this. `stepFor` resumes at `SetupStep.READY` (S12); Mode row reads "Local microphone · frequency by hand" (`radioChoice = NONE`), no Rig rows at all (`needsRigTransport` gates on `radioChoice`, never `captureMode`). |
 | `clock-dst` | F14 (`Fail-Clock.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Clock`. No runtime signal exists; see "Known gaps" below. |
 | `usb-permission` | F16 (`Fail-Usb.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Usb`. No runtime signal exists. |
 | `interrupted-pass` | F17 (`Fail-Interrupted.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Interrupted`. No runtime signal exists. |
@@ -222,6 +223,7 @@ store/holder/DB, not merely that the scenario loads.
 | `setup-mode` | D33/FR-CAP-8, S00: a completely fresh `SetupStore` (`welcomeSeen = true`, `captureMode = null`) — `SetupStateMachine.stepFor` resumes at `SetupStep.MODE` directly from a cold `MainActivity` launch. |
 | `setup-bt-permission` | D33, S02c: Bluetooth mode chosen, mic already granted, `BLUETOOTH_CONNECT` genuinely undecided. **The OS permission itself is live `PackageManager` state, not a `SetupStore` field** — see "Reaching S02c" below for the exact `pm grant`/`pm revoke` recipe this state needs. |
 | `setup-rig-transport` | D33/FR-RIG-13, S09b: Bluetooth mode, a verified wired-headset input, the TH-D75A chosen at S09, but `SetupStore.rigTransport` genuinely unset — `stepFor` resumes at `SetupStep.RIG_TRANSPORT`. Needs `BLUETOOTH_CONNECT` already granted (see "Reaching S02c") or `stepFor` stops one step earlier, at S02c. |
+| `setup-rig-transport-preset` | E2-J04: same base as `setup-rig-transport` today — a **known, honest gap**, not a duplicate by accident: S09b's own pre-selected radio marker (`SetupActivity.selectedRigTransportKind`) is seeded only on the forward-navigation path (`onSelectRadio`), never on a cold `EXTRA_STEP` landing, so no scenario can reach S09b with a row genuinely pre-selected without a `SetupActivity.kt` fix (the same class R-802 gave S10b's paired-device list) this round's coordinator message did not pre-approve. The preset *label* ("preset by your mode") already shows correctly — computed from `captureMode` alone — only the pre-selected *marker* is unreachable. |
 | `setup-rig-bluetooth` | D33/D34, S10b: the same base as `setup-rig-transport`, but `rigTransport = BLUETOOTH_SPP` and `rigBluetoothVerified = false` — `stepFor` resumes at `SetupStep.RIG_BLUETOOTH`. Also publishes a real, scripted `DebugRigLinkPortOverride` naming two paired devices (TH-D75A, SPP-capable, scripted to `Verified`; Handheld BT, headset-only, unscripted) through WPD's own seam — see "The `RigLinkPort` injection seam" below for the full account, including the three sibling scenarios below. |
 | `setup-rig-bluetooth-connecting` | Same base, but the paired-device list has only `TH-D75A`, scripted with `InMemoryRigLinkPort.hang` — the checklist held at `Opening` forever. |
 | `setup-rig-bluetooth-identified` | Same base, `TH-D75A` scripted with `InMemoryRigLinkPort.hangAfterIdentify` (new this round) — held at `Identified`, never `Verified`. |
@@ -230,7 +232,7 @@ store/holder/DB, not merely that the scenario loads.
 | `mode-usb` | FR-CAP-13, AC-129, R-821: a live session over USB — v7 columns `captureMode = USB_RADIO`/`audioRouteKind = USB`/`rigTransport = USB_SERIAL`, a real `RigStatus.Connected` naming the USB-serial transport and the TH-D75A descriptor (F9/CF06), a real `CaptureConfigurationStore.current()` matching (`USB_RADIO`, `selectedInputId = "usb-1"`, the TH-D75A, `USB_SERIAL`), the S04 preset chip alongside it. |
 | `mode-bluetooth` | D34/FR-CAP-11/13, R-821/R-822: a live session over Bluetooth audio (SCO, mSBC) *and* Bluetooth rig control (SPP) at once — two independent Bluetooth links, both real (`InputStatus.Opened` with a `BluetoothAudioProfile.HFP_MSBC` descriptor, `RigStatus.Connected` with `transportKind = BLUETOOTH_SPP`), a real `CaptureConfigurationStore.current()` matching (`BLUETOOTH_RADIO`, the TH-D75A, `BLUETOOTH_SPP`, and the paired device's own address in `rigParams[DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS]` — CF02/CF06's own Link-row address reads this directly), the S04 preset chip alongside it. |
 | `bt-audio-session` | FR-CAP-13: an *ended* session captured over Bluetooth audio, two real overs, for the Log's `bt audio` row mark (E2-G04) and DG04's session-review facts. |
-| `bt-audio-dropped` | F23, FR-CAP-5, R-832: a *live* Bluetooth session whose audio just stopped — `InputStatus.State.Lost` with a genuine Bluetooth `lastKnown` (via `InputStatus.opened` then `InputStatus.lost`, the only way `lost` ever transitions) and a real reconnect-ladder position (`attempt = 3`, `ofTotal = 8`, `nextRetryInMillis = 20_000`, so F23's own ladder sentence has real numbers to render), plus a real, **open** `CaptureGapEntity` (`cause = INPUT_LOST` — `CaptureGapCause.BLUETOOTH_AUDIO_LOST` does not exist in this schema yet, owed to WPC3, checklist E2-A06/E2-D07; the same honest stand-in the real `RealCaptureService` itself reports today). The rig's own *control* link stays `Connected` — an audio-only drop, distinct from `rig-bt-lost`'s control-only one. |
+| `bt-audio-dropped` | F23, FR-CAP-5, R-832, R-838: a *live* Bluetooth session whose audio just stopped — `InputStatus.State.Lost` with a genuine Bluetooth `lastKnown` (via `InputStatus.opened` then `InputStatus.lost`, the only way `lost` ever transitions) and a real reconnect-ladder position (`attempt = 3`, `ofTotal = 8`, `nextRetryInMillis = 20_000`, so F23's own ladder sentence has real numbers to render), plus a real, **open** `CaptureGapEntity` (`cause = BLUETOOTH_AUDIO_LOST` — this schema has carried that value since v9/E2-A06; R-838 reopened after this file previously, wrongly, still claimed it did not exist and seeded the pre-v9 stand-in `INPUT_LOST`). The rig's own *control* link stays `Connected` — an audio-only drop, distinct from `rig-bt-lost`'s control-only one. |
 | `rig-bt-connected` | CF06: a live session whose rig link is `RigStatus.Connected` over Bluetooth SPP, transport and descriptor both named; also leaves the real `SetupStore` at S11/`SetupStep.RADIO_VERIFIED` (a genuinely resumable state — `SetupActivity.EXTRA_STEP`'s own "at or before the natural resume point" rule honours it). |
 | `rig-bt-lost` | F9, FR-RIG-15, R-832: `RigStatus.State.Stale` whose own `lastKnown` names the Bluetooth SPP transport and the TH-D75A descriptor — unlike the pre-P19 `rig-lost` (transport/descriptor both `null`), F9's board can now name what dropped — plus the same real reconnect-ladder position `bt-audio-dropped` seeds for F23 (`attempt = 3`, `ofTotal = 8`, `nextRetryInMillis = 20_000`). |
 | `mode-change-pending` | FR-CAP-12, AC-131, R-822: a live USB-radio session, plus a real `CaptureConfigurationStore` write requesting Bluetooth (with its own address in `rigParams`) for the *next* session, written after the session is marked capturing so the store's own freeze rule genuinely lands it as `pendingConfiguration`, never touching `current` (CF11's amber banner). |
@@ -279,6 +281,44 @@ five rows read `INSTALLED`, masking the gate's own blind spot rather than exerci
 production-code gap in `ReadyScreen.kt`/`ModelsViewData.kt` (both outside this package's `app/src/debug`
 ownership), not a scenario-seeding defect — reported per the coordinator's own instruction rather than
 fixed here.
+
+### R-853 (halt, investigated, not reproduced from this package's own seeding)
+
+Validator V8: opening the real reader (not the tour) after broadcasting `bt-audio-dropped` shows an
+**idle** `Now` body and **no F23 banner**, while the live bar reads **live** — self-contradictory,
+since `Now`'s own idle/active split and F23's own banner both read the identical process-wide
+`CaptureState.isCapturing`/`InputStatus.state` the live bar itself reads (`LiveBarPolling.current`
+imports and reads the same three holders — confirmed by reading that file before writing this). Run
+3's own tour capture of `bt-audio-dropped/F23-now.png` does show the banner correctly.
+
+Checked, both come back clean:
+
+1. **The scenario seeds every fact the real `Now`/F23 read path needs**: `ScenarioFixtures.markCapturing`
+   (`CaptureState.capturing(sessionId)` + a real, current heartbeat) runs, then `InputStatus.opened`
+   immediately followed by `InputStatus.lost` (the real `InputStatus.State.Lost` shape F23's own
+   `FailureMapper.map` reads), and the session row itself is inserted with `endedAt = null` — all
+   four facts the coordinator's own message named (`CaptureState`, `InputStatus`, the session row,
+   the heartbeat) are genuinely present after `Scenarios.load(context, "bt-audio-dropped")` returns.
+2. **The tour reaches F23 through no shortcut** — `bt-audio-dropped` never calls
+   `DebugFailureOverride.show(...)` (confirmed by reading every call site in `Scenarios.kt`); F23's
+   banner comes from the same real, unoverridden `FailureMapper.map(InputStatus.state, ...)` path
+   both the tour's in-process `OrtNavHost` composition and the real reader's own would read.
+
+Since both come back clean, and since `Now`/F23/the live bar all read the *same* three process-wide
+holders (not different ones that could legitimately disagree), a genuine three-way split like the
+one V8 reports cannot come from anything this scenario seeds or fails to seed — those holders would
+have to already disagree with *each other* before any of the three screens read them, which is a
+product-side state-consistency question, not a seeding gap. The most likely explanation this
+package can name without a device to reproduce on: `CaptureState`/`InputStatus` are deliberately
+non-persisted, in-memory-only facts (constitution: liveness proven by heartbeat, never faked) — a
+process restart between the `scenario.ps1` broadcast and the validator's own separate "open the
+real reader" gesture (the documented ColorOS background-kill behavior, `AGENTS.md`'s own "Things
+that will surprise you") would reset them to their idle/absent defaults, which *would* explain an
+idle `Now` and an absent F23 banner — but would need the live bar to *also* read not-live from the
+same reset holders, which is the one fact that does not fit and needs a device repro to explain,
+not a reading of this package's own scenario code. Routed to WPF per the coordinator's own
+delegation ("WPF is looking at the product side") — not fixed here, since nothing in
+`app/src/debug` can be shown to be at fault.
 
 ### Reaching S02c (register/plan D33, checklist E2-J01, R-810/R-811)
 
@@ -609,13 +649,30 @@ $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
 .\tools\ui-audit\tour.ps1 -Port 5554 -Only "overnight/*"
 ```
 
-`tour.ps1` pushes `tools/ui-audit/tour.json` to the device, launches the activity, polls the
-on-device `<filesDir>/tour/manifest.json` (via `run-as`, since it is app-private storage) for its
-trailing `{"done": true, ...}` line (15-minute hard cap), then stages the whole `tour/` directory out
-to a world-readable `/sdcard` path with `run-as ... cp -r` and pulls it with a plain `adb pull` —
-never `adb exec-out` redirected to a file (brief-common.md's own rule). Screenshots land at
+`tour.ps1` pushes `tools/ui-audit/tour.json` to the device (via `run-as ... sh -c 'cat >
+files/tour/spec.json'`, the app's own private storage), launches the activity, polls the on-device
+`files/tour/manifest.json` (via `run-as ... cat`) for its trailing `{"done": true, ...}` line (15
+minutes, hard cap), then pulls every `ok` step's own PNG through `run-as ... base64` and decodes it
+locally — **not** `run-as ... cp -r` to `/sdcard` (both that and a direct `adb pull` of
+`/data/data`/`/data/user/0` were tried first and both fail `Permission denied` on API 30+ scoped
+storage — see this script's own `.DESCRIPTION` for the full account) and never `adb exec-out`
+redirected to a file either way (brief-common.md's own rule, restated below). Screenshots land at
 `results/ui-audit/<scenario>/<screen>.png`, the same layout `shoot.ps1` already uses; the manifest
 lands at `results/ui-audit/tour-manifest.json`.
+
+### PowerShell corrupts binary `adb` output — `screencap -p <device path>` then `adb pull` only
+
+Validator finding (V8): `adb exec-out screencap -p > out.png` (or any PowerShell `>`/`>>`
+redirection of a binary `adb` stream) corrupts the file — Windows PowerShell 5.1's own redirection
+operators write text-mode, inserting a byte-order mark and translating line endings, so the PNG's
+own binary bytes never survive the trip. **The only supported way to pull a screenshot by hand is
+`shoot.ps1`'s own two-step form**: `adb shell screencap -p /sdcard/<name>.png` (writes a real file
+*on the device*, no redirection involved) then a plain `adb pull /sdcard/<name>.png <local path>`
+(binary-safe by construction — `pull` is not a shell redirection at all). Never `adb exec-out`
+piped or redirected through PowerShell for a screenshot, and never `>`/`>>` on any other binary
+`adb` output (a PNG, an APK, a raw DB file) for the identical reason — this is the same rule
+`tour.ps1`'s own base64-then-decode step exists to honor for a *private* file `adb pull` cannot
+reach directly (see immediately above).
 
 ### `tour.json`'s schema
 

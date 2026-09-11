@@ -181,6 +181,160 @@ settles (this file's own investigation could not rule out a transient mid-scroll
 capture as the real cause).
 
 ---
+## 2026-09-11 (WPI: E2-J04 local-mic/preset setup scenarios, R-853 investigated and routed to WPF, README screencap warning)
+
+### e0f14db0 — E2-J04 setup-verified-local-mic and setup-rig-transport-preset; R-853 bt-audio-dropped discrepancy investigated, not reproduced from this package's own seeding; README documents the only supported screencap pull
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`,
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `tools/ui-audit/tour.json`,
+`results/ui-audit/README.md`.
+
+**Requirements/ACs:** E2-J04, FR-CAP-2b, AC-128, FR-RIG-13, R-853 (investigated, routed, not
+fixed), FR-CAP-5, FR-CAP-13.
+
+**What changed:** *Constitution check.* I (the known pre-selection gap in `setup-rig-transport-preset`
+is reported in its own doc comment, the README's scenario table, and this entry — never silently
+duplicated as if it closed the checklist row). II (`setup-verified-local-mic` gets its own
+discriminating `stepFor` assertion; `setup-rig-transport-preset` gets one proving it loads and
+resumes correctly, honestly scoped to not claim more).
+
+1. **E2-J04** — no scenario reached S07..S12 under `LOCAL_MICROPHONE` (`setup-verified`/
+   `setup-level`/`setup-radio` all share a `USB_RADIO`/`usb-1` base via `verifiedInputStore`).
+   `setup-verified-local-mic` is the missing base: `captureMode = LOCAL_MICROPHONE`,
+   `selectedInputId = "mic-0"`, verified, `radioChoice = NONE` — `stepFor` resumes at
+   `SetupStep.READY` (S12), Mode row reading "Local microphone · frequency by hand", no Rig rows
+   (`needsRigTransport` gates on `radioChoice` alone, confirmed by reading `SetupStateMachine`
+   before writing this). `setup-rig-transport-preset` is the second half of the same checklist
+   row — investigated and found **not fully closeable from a scenario alone**: S09b's own
+   pre-selected radio marker (`SetupActivity.selectedRigTransportKind`) is seeded only on the
+   forward-navigation path (`onSelectRadio`), never on a cold `EXTRA_STEP` landing, the same class
+   of gap R-802 found and fixed for S10b's paired-device list — but that fix needed a
+   `SetupActivity.kt` change this round's coordinator message did not pre-approve. The scenario is
+   added anyway (functionally identical to `setup-rig-transport` today, its own doc comment and the
+   README's scenario table both say so plainly) so the tour has a stably-named step ready to
+   re-point once the `SetupActivity.kt` fix lands, and so the gap is visible in the tour's own step
+   list rather than silently absent. Two new tour.json steps
+   (`setup-verified-local-mic/S12-ready-local-mic`, `setup-rig-transport-preset/S09b-rig-transport-preset`)
+   and two new `WpiScenariosTest` cases.
+
+2. **R-853 (investigated, routed to WPF, not fixed)** — validator V8: the real reader shows an idle
+   `Now` and no F23 banner for `bt-audio-dropped` while the live bar reads live; run 3's own tour
+   capture shows the banner correctly. Checked both halves the coordinator named: the scenario seeds
+   all four facts (`CaptureState.capturing`, `InputStatus.opened` then `.lost`, the session row with
+   `endedAt = null`, a real current heartbeat via `ScenarioFixtures.markCapturing`), and the tour
+   reaches F23 through no shortcut (`bt-audio-dropped` never calls `DebugFailureOverride.show`,
+   confirmed by reading every call site in `Scenarios.kt` — F23's banner is the same real,
+   unoverridden `FailureMapper.map(InputStatus.state, ...)` path both the tour and the real reader
+   read). Since `Now`/F23/the live bar all read the identical three process-wide holders, a
+   three-way split cannot come from anything this scenario seeds or omits; full diagnosis — including
+   the one fact that does not fit a simple "process restart between broadcast and open" explanation
+   (the live bar would need to read not-live from the same reset holders too) — is in
+   `results/ui-audit/README.md`'s new "R-853" section, routed to WPF per the coordinator's own
+   delegation.
+
+3. **README** — states `shoot.ps1`'s `screencap -p /sdcard/… ; adb pull` form as the only supported
+   way to pull a screenshot by hand (a new "PowerShell corrupts binary `adb` output" section);
+   corrects the stale `tour.ps1` paragraph, which still described an old `cp -r`-to-`/sdcard`
+   mechanism superseded rounds ago by the current `run-as ... base64` pull.
+
+**Verified:** `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` —
+green (`BUILD SUCCESSFUL in 10m 51s`, 1107 actionable tasks, `dependencyRules: OK`, `platformGuards:
+OK`). `./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — 8/8 PASS.
+`./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` — 450 requirements, 240 covered, no
+orphan-id warning. `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.WpiScenariosTest"
+--tests "org.ort.app.debug.tour.*"` — every test green, including the two new
+`setup-verified-local-mic`/`setup-rig-transport-preset` cases and every pre-existing tour test.
+
+**Left open / not done:** `setup-rig-transport-preset`'s own visual pre-selection gap — a
+`SetupActivity.kt` fix, not something `app/src/debug` can close alone; reported for the coordinator
+to route to WPD, same pattern as R-862/R-902/R-903. R-853 is likewise routed to WPF, not fixed — see
+above for exactly what was ruled out and what remains unexplained.
+
+## 2026-09-11 (WPI: tour settles on RigLinkState and the live bar, R-838 BLUETOOTH_AUDIO_LOST, R-913/R-914 live-scenario heartbeats and v7 columns, R-904/R-921/R-933 -end frames)
+
+### ed28a976 — R-900 settle on rigLinkState; R-904/R-921/R-933 four new @2x-end steps; R-838 bt-audio-dropped seeds BLUETOOTH_AUDIO_LOST; R-910/R-911 settle on the live bar; R-913 live scenarios write a current heartbeat; R-914 overnight seeds its v7 columns
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/{Scenarios,OvernightScenario}.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/{ScreenshotTourActivity,TourSpec}.kt`,
+`app/src/main/kotlin/org/ort/app/ui/navigation/{ReaderNavigator,OrtNavHost}.kt` (coordinator-approved
+cross-boundary edits), `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`,
+`tools/ui-audit/tour.json`, `results/ui-audit/README.md`. Merged `main` twice this round — through
+`ef470837` (WPF's R-863 `TextAction` fix plus the reviewer-A2/B2/C2/D2 register rows this round
+answers) and again through the local `main` branch's own further advance while this round was in
+flight (WPF round 3, register R-910..R-934 filed).
+
+**Requirements/ACs:** R-900, R-904, R-838, R-910, R-911, R-913, R-914, R-921, R-933, FR-CAP-5,
+FR-CAP-13, FR-RIG-14, R-744.
+
+**What changed:** *Constitution check.* I (every settle-wait either observes the real fact or times
+out honestly — never assumes a scripted port has reached its terminal state, or that a live bar has
+appeared, from elapsed time alone). II (a discriminating test per fix: `WpiScenariosTest` drives each
+scripted `RigLinkState` and asserts the exact terminal shape; `R_913`/`R_914` assert the heartbeat's
+own freshness and the v7 columns directly).
+
+1. **R-900** — `setup-rig-bluetooth/S10b-verified.png` was pixel-identical to `S10b-identified.png`:
+   the settle waited on the setup step and the address selection, never on the checklist's own inner
+   `RigLinkState`, so a capture could land the instant the address landed, before the scripted port
+   had actually progressed past `Identified` to `Verified`. `SetupActivity.rigLinkStateForTest` was
+   already exposed (a prior round's own seam) but never read by the settle — a new `rigLinkState`
+   drillIn key (`"connecting"`/`"identified"`/`"verified"`/`"dropped"`, read directly by
+   `renderSetupStep`, never through `TourIds.resolveSeed`, exactly like `rigBluetoothAddress`) now
+   drives a real wait via `RIG_LINK_STATE_PREDICATES` before capturing; the four S10b steps in
+   `tour.json` each declare theirs.
+
+2. **R-904/R-921/R-933** — three missing `@2x-end` frames added: `setup-mode/S00-mode@2x-end`,
+   `setup-rig-bluetooth/S10b-rig-bluetooth@2x-end`, `bt-audio-dropped/F23-now@2x-end`,
+   `model-missing/CF04-settings-assets@2x-end` (four total, R-904 named two and R-921/R-933 one each).
+
+3. **R-838 (reopened)** — `bt-audio-dropped` seeded `CaptureGapCause.INPUT_LOST` with a doc comment
+   claiming `BLUETOOTH_AUDIO_LOST` did not exist in this schema; it has, since v9/E2-A06. Seeds the
+   real cause now (`startedAt`/`endedAt` unchanged — still a genuinely open, live gap, so the Log
+   row's own "ongoing" duration stays real); the README's identical stale claim is fixed alongside.
+
+4. **R-910/R-911** — a live scenario's own live bar can lag a beat behind `CaptureState.isCapturing`
+   the same race class the drawer's own open/closed state already had (R-803). `ReaderNavigator`
+   gained `liveBarState: MutableState<LiveBarViewState?>`, mirroring `OrtNavHost`'s own
+   `rememberDrawerLiveState(...).liveBar` (the same real `LiveBarPolling` fact `Now`/`Capture`'s own
+   embedded bars also derive from, destination-independent even though the *host's own rendered* bar,
+   `shownLiveBar`, is `null` there by design). `ScreenshotTourActivity`'s settle now also waits for a
+   non-null live bar whenever `CaptureState.isCapturing` is true for the step's own just-loaded
+   scenario — no new `drillIn` key needed, since "is this scenario live" is already a real,
+   already-true-or-false process-wide fact by the time the settle starts.
+
+5. **R-913** — every live scenario already called `ScenarioFixtures.markCapturing` (which writes a
+   real heartbeat) before this round; `R_913_every live scenario writes a current heartbeat` now
+   proves this directly (age-bounded, not merely present) for `mode-local-mic`/`mode-usb`/
+   `mode-bluetooth`/`mode-change-pending`/`overnight-live`/`rig-bt-connected`/`rig-bt-lost`/
+   `bt-audio-dropped` — closing WPI's own half of the register's ask with a real assertion rather than
+   a fixture change, since the underlying facts were already correct.
+
+6. **R-914** — `overnight`/`overnight-live`/`gap-call` (one shared `OvernightScenario.build`) seeded
+   only the v10 session-route-facts columns, leaving the v7 ones (`captureMode`/`audioRouteKind`/
+   `audioRouteLabel`/`rigTransport`) null — DG04 read a v10 session's own null v7 columns as "not
+   tracked per session in this build", a false claim in a v10 build (null there means "not recorded
+   for this session"). Seeded now, matching the USB session `seedConfiguredDeviceState` already
+   configures for the same three scenario names.
+
+**Verified:** `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` —
+green (`BUILD SUCCESSFUL in 10m 19s`, 1107 actionable tasks, `dependencyRules: OK`, `platformGuards:
+OK`). `./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — 8/8 PASS.
+`./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (two separate invocations) — 450
+requirements, 240 covered, no orphan-id warning. `./gradlew :app:testDebugUnitTest --tests
+"org.ort.app.debug.WpiScenariosTest" --tests "org.ort.app.debug.tour.*" --tests
+"org.ort.app.ui.navigation.*"` — every test green, including the four new/changed
+`WpiScenariosTest` cases this round (`R_900`'s own coverage is the four existing
+`setup-rig-bluetooth*` scenario tests, unchanged in shape; `F23_bt-audio-dropped...` updated for
+R-838; `R_913_every live scenario writes a current heartbeat`; `R_914_overnight writes the v7
+columns alongside the v10 ones`) and every pre-existing tour/nav test (`TourSpecTest`,
+`TourStepsTest`, `TourDrawerSeedTest`, `TourIdsTest`, `TourParityTest`, `ScreenshotTourTest`,
+`OrtNavHostDestinationDispatchTest`, `ReaderActivityTest`, `DrawerContentTest`, and more).
+
+**Left open / not done:** R-914's own scope stayed at `overnight`/`overnight-live`/`gap-call` — the
+register's own cited defect (DG04 under `overnight`) — not literally "every session scenario"
+(`stations-14-nights` and the smaller ended-session fixtures still carry null v7 columns); flagged
+here rather than silently narrowed. The tour has not been re-run this round — holding for the
+coordinator's "go" per the standing rule, since main was still gating when this round's own merges
+landed.
 
 ## 2026-09-11 (WPI: mode-change-pending's live holders, tier0-llm-stored's real installer, install.ps1's escape hatch; R-862 reported, not fixed)
 
@@ -29769,6 +29923,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

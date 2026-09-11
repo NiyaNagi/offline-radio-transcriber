@@ -29,8 +29,10 @@ import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.navigation.ReaderNavigator
 import org.ort.app.ui.navigation.ReviewSessionView
 import org.ort.app.ui.navigation.rememberReaderNavigator
+import org.ort.app.ui.setup.RigLinkState
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.pipeline.capture.CaptureState
 import java.io.File
 
 /**
@@ -214,19 +216,27 @@ public class ScreenshotTourActivity : ComponentActivity() {
             navSeed.reviewSessionView
                 ?: ReviewSessionView.SESSION
         }
+        // R-910/R-911: `CaptureState.isCapturing` is process-wide, already true the instant this
+        // step's own scenario finished loading (every live scenario marks it via
+        // `ScenarioFixtures.markCapturing` — see `WpiScenariosTest.R_913_*`) — the same real fact a
+        // live bar's own presence depends on, read directly rather than duplicated as a new `drillIn`
+        // key no step needs to name.
+        val expectLiveBar = CaptureState.isCapturing
         // R-803 (halt): a stale `activeNavigator` from the *previous* step's own, about-to-be-torn-
         // down composition must never be read as "already matching" this step's own destination —
         // cleared before the new `key(resolved.id)` composition even starts, not after.
         activeNavigator = null
         currentDestinationStep = ResolvedDestinationStep(step.id, destination, navSeed, step.fontScale, sessionId)
-        val settled = awaitDestinationSettled(destination, expectDrawerOpen, expectReviewSessionView)
+        val settled = awaitDestinationSettled(destination, expectDrawerOpen, expectReviewSessionView, expectLiveBar)
         if (!settled) {
             val observed = activeNavigator
             error(
                 "tour step '${step.id}' never settled to destination=$destination drawerOpen=$expectDrawerOpen " +
-                    "reviewSessionView=$expectReviewSessionView within ${STATE_WAIT_TIMEOUT_MILLIS}ms — observed " +
-                    "destination=${observed?.currentState?.value} drawerOpen=${observed?.drawerOpenState?.value} " +
-                    "reviewSessionView=${observed?.reviewSessionViewState?.value}",
+                    "reviewSessionView=$expectReviewSessionView expectLiveBar=$expectLiveBar within " +
+                    "${STATE_WAIT_TIMEOUT_MILLIS}ms — observed destination=${observed?.currentState?.value} " +
+                    "drawerOpen=${observed?.drawerOpenState?.value} " +
+                    "reviewSessionView=${observed?.reviewSessionViewState?.value} " +
+                    "liveBar=${observed?.liveBarState?.value}",
             )
         }
         // Composition + the first poll tick: `OrtNavHost`'s own `LaunchedEffect(sessionId)` polling
@@ -270,6 +280,7 @@ public class ScreenshotTourActivity : ComponentActivity() {
         destination: ReaderDestination,
         expectDrawerOpen: Boolean,
         expectReviewSessionView: ReviewSessionView?,
+        expectLiveBar: Boolean,
     ): Boolean = withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
         while (
             activeNavigator?.currentState?.value != destination ||
@@ -277,7 +288,12 @@ public class ScreenshotTourActivity : ComponentActivity() {
             (
                 expectReviewSessionView != null &&
                     activeNavigator?.reviewSessionViewState?.value != expectReviewSessionView
-                )
+                ) ||
+            // R-910/R-911 (register, reviewer B2 on run 3): a live scenario's own bar can lag a
+            // beat behind `CaptureState.isCapturing` the same way the drawer's own open/closed state
+            // could — never checked when the scenario is not live, since [ReaderNavigator.liveBarState]
+            // makes no promise about being `null` then (only about being non-`null` once one is real).
+            (expectLiveBar && activeNavigator?.liveBarState?.value == null)
         ) {
             delay(STATE_POLL_INTERVAL_MILLIS)
         }
@@ -293,6 +309,19 @@ public class ScreenshotTourActivity : ComponentActivity() {
         // `NavSeed` for a *destination* step); `TourSpec.SUPPORTED_DRILL_IN_KEYS` still validates it
         // so a typo fails loudly rather than silently doing nothing.
         val rigBluetoothAddress = step.drillIn["rigBluetoothAddress"]
+        // R-900 (register, A2's spot-check on run 3): `S10b-verified` == `S10b-identified` — the
+        // settle above waited on `currentStepForTest` and `rigBluetoothSelectedAddressForTest`, never
+        // on the checklist's own inner `RigLinkState`, so the capture could land the instant the
+        // address selection landed, before the scripted port had actually progressed past
+        // `Identified` to `Verified`. A step names the terminal state it expects here — resolved
+        // against `SetupActivity.rigLinkStateForTest` (already exposed, WPD's own prior round) below,
+        // never assumed from `rigBluetoothAddress` alone.
+        val expectedRigLinkState = step.drillIn["rigLinkState"]?.let { name ->
+            RIG_LINK_STATE_PREDICATES[name]
+                ?: error(
+                    "tour step '${step.id}' names unknown rigLinkState '$name' — expected one of ${RIG_LINK_STATE_PREDICATES.keys}",
+                )
+        }
         val deferred = CompletableDeferred<SetupActivity>()
         pendingSetupActivity = deferred
         startActivity(
@@ -326,12 +355,21 @@ public class ScreenshotTourActivity : ComponentActivity() {
                     delay(STATE_POLL_INTERVAL_MILLIS)
                 }
             }
+            // R-900: the checklist's own inner state — see this function's own note above on why
+            // `rigBluetoothSelectedAddressForTest` landing is not, by itself, proof the connect flow
+            // reached the specific state this step means to capture.
+            if (expectedRigLinkState != null) {
+                while (!expectedRigLinkState(setupActivity.rigLinkStateForTest)) {
+                    delay(STATE_POLL_INTERVAL_MILLIS)
+                }
+            }
             true
         } == true
         if (!settled) {
             error(
                 "tour step '${step.id}' never settled to setup step '$stepName'" +
                     (rigBluetoothAddress?.let { " with rigBluetoothAddress='$it' selected" } ?: "") +
+                    (step.drillIn["rigLinkState"]?.let { " with rigLinkState='$it'" } ?: "") +
                     " within ${STATE_WAIT_TIMEOUT_MILLIS}ms — observed step '${setupActivity.currentStepForTest}', " +
                     "selectedAddress='${setupActivity.rigBluetoothSelectedAddressForTest}', " +
                     "linkState=${setupActivity.rigLinkStateForTest} (isFinishing=${setupActivity.isFinishing})",
@@ -387,5 +425,19 @@ public class ScreenshotTourActivity : ComponentActivity() {
         /** How often those same waits re-check the observed state — cheap in-process reads
          * (`MutableState`/a plain field), never worth a longer interval. */
         private const val STATE_POLL_INTERVAL_MILLIS = 30L
+
+        /** R-900: every `rigLinkState` a setup step can name, resolved against the real
+         * [RigLinkState] shapes [org.ort.app.ui.setup.InMemoryRigLinkPort]'s own scripts reach —
+         * `"connecting"`/`"identified"`/`"dropped"` are each held forever by their own scenario's
+         * script (`hang`/`hangAfterIdentify`/`dropAfterOpen`), `"verified"` is the terminal state
+         * `useDefaultBehaviour` actually reaches. A predicate, not an equality check, since
+         * [RigLinkState.Identified]/[RigLinkState.Verified] both carry a payload this map does not
+         * know or need to know the value of — only the shape matters here. */
+        private val RIG_LINK_STATE_PREDICATES: Map<String, (RigLinkState?) -> Boolean> = mapOf(
+            "connecting" to { state -> state is RigLinkState.Opening },
+            "identified" to { state -> state is RigLinkState.Identified },
+            "verified" to { state -> state is RigLinkState.Verified },
+            "dropped" to { state -> state is RigLinkState.Lost },
+        )
     }
 }

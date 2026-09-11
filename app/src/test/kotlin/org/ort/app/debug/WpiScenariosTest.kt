@@ -22,12 +22,15 @@ import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.setup.DebugRigLinkPortOverride
 import org.ort.app.ui.setup.InMemoryRigLinkPort
+import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.RigLinkState
 import org.ort.app.ui.setup.SetupStateMachine
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.core.AttributionState
+import org.ort.core.SystemClock
 import org.ort.core.capture.AudioRouteKind
 import org.ort.core.capture.BluetoothAudioProfile
 import org.ort.core.capture.CaptureMode
@@ -192,6 +195,68 @@ class WpiScenariosTest {
 
         val store = setupStore()
         assertTrue(store.inputVerified)
+        assertNotNull(store.radioChoice)
+        assertNull(store.rigTransport)
+        val step = SetupStateMachine.stepFor(
+            fullyGrantedBluetooth(),
+            micPermanentlyDenied = false,
+            snapshot = store.snapshot(),
+        )
+        assertEquals(SetupStep.RIG_TRANSPORT, step)
+    }
+
+    /**
+     * E2-J04 (checklist row, coordinator round): `setup-verified`/`setup-level`/`setup-radio` all
+     * share [org.ort.app.debug.Scenarios]'s own `USB_RADIO`/`usb-1` base — no scenario ever reached
+     * S07..S12 under `LOCAL_MICROPHONE`. `setup-verified-local-mic` is that missing base:
+     * `stepFor` resumes at [SetupStep.READY] (a fully-verified, `setupComplete = false` snapshot,
+     * same as `setup-verified` itself), with a real `radioChoice = NONE` — the honest "no rig chosen"
+     * fact S12's own Mode row reads regardless of capture mode.
+     */
+    @Test
+    @Requirement("FR-CAP-2b", "AC-128")
+    fun `setup-verified-local-mic seeds a verified local-mic input, stepFor resumes at READY`() = runTest {
+        Scenarios.load(context, "setup-verified-local-mic")
+
+        val store = setupStore()
+        assertEquals(CaptureMode.LOCAL_MICROPHONE, store.captureMode)
+        assertTrue(store.inputVerified)
+        assertEquals("mic-0", store.selectedInputId)
+        assertEquals(RadioChoice.NONE, store.radioChoice)
+        assertNull("local-mic mode has no rig transport to choose", store.rigTransport)
+        val step = SetupStateMachine.stepFor(
+            fullyGrantedBluetooth(),
+            micPermanentlyDenied = false,
+            snapshot = store.snapshot(),
+        )
+        assertEquals(SetupStep.READY, step)
+
+        val config = captureConfigurationStore().current()
+        assertEquals(
+            "R-804's own class: CF02/CF11 read the store, not SetupStore",
+            CaptureMode.LOCAL_MICROPHONE,
+            config.mode,
+        )
+        assertEquals("mic-0", config.selectedInputId)
+    }
+
+    /**
+     * E2-J04 (checklist row, coordinator round): `setup-rig-transport-preset` is, today, functionally
+     * identical to [setupRigTransport] — see that scenario's own doc comment for the known, honest
+     * gap this test documents rather than papers over: `SetupActivity.selectedRigTransportKind` (the
+     * field driving S09b's own pre-selected radio marker) is seeded only on the forward-navigation
+     * path, never on a cold `EXTRA_STEP` landing, so no scenario can make S09b open with a row
+     * genuinely pre-selected without a `SetupActivity.kt` fix this round's coordinator message did
+     * not pre-approve. This test only proves the scenario names load and resolve to the same real
+     * `stepFor`/preset-eligible state `setup-rig-transport` already does — not that the visual
+     * pre-selection gap is closed.
+     */
+    @Test
+    @Requirement("FR-RIG-13")
+    fun `setup-rig-transport-preset loads and resumes at RIG_TRANSPORT, same as setup-rig-transport`() = runTest {
+        Scenarios.load(context, "setup-rig-transport-preset")
+
+        val store = setupStore()
         assertNotNull(store.radioChoice)
         assertNull(store.rigTransport)
         val step = SetupStateMachine.stepFor(
@@ -422,7 +487,7 @@ class WpiScenariosTest {
     }
 
     @Test
-    @Requirement("F-023", "FR-CAP-5")
+    @Requirement("F-023", "FR-CAP-5", "R-838")
     fun `F23_bt-audio-dropped sets InputStatus Lost with a Bluetooth lastKnown and an open gap`() = runTest {
         val result = Scenarios.load(context, "bt-audio-dropped")
 
@@ -439,7 +504,11 @@ class WpiScenariosTest {
 
         val gaps = db.captureGapDao().listBySession(requireNotNull(result.primarySessionId))
         val gap = gaps.single()
-        assertEquals(CaptureGapCause.INPUT_LOST, gap.cause)
+        assertEquals(
+            "R-838: this schema has carried BLUETOOTH_AUDIO_LOST since v9/E2-A06 — no more INPUT_LOST stand-in",
+            CaptureGapCause.BLUETOOTH_AUDIO_LOST,
+            gap.cause,
+        )
         assertNull("the gap must still be open", gap.endedAt)
     }
 
@@ -595,6 +664,69 @@ class WpiScenariosTest {
         assertNull("local-mic mode has no rig", session?.rigDescriptorId)
         assertEquals(true, session?.audioRouteVerified)
         assertEquals(48_000, session?.audioNativeRateHz)
+    }
+
+    /**
+     * R-914 (register, reviewer B2 on run 3): DG04's Mode/Input/Rig-link rows under `overnight` read
+     * "not tracked per session in this build" — a false claim in a v10 build, where a session row's
+     * own null v7 columns mean "not recorded for this session", never "not tracked in this build".
+     * `overnight`/`overnight-live`/`gap-call` share [OvernightScenario.build]'s one session insert,
+     * now seeding the v7 columns alongside the v10 ones already asserted above.
+     */
+    @Test
+    @Requirement("FR-CAP-13", "R-914")
+    fun `R_914_overnight writes the v7 columns alongside the v10 ones`() = runTest {
+        listOf("overnight", "overnight-live", "gap-call").forEach { name ->
+            val result = Scenarios.load(context, name)
+            val session = db.sessionDao().getById(requireNotNull(result.primarySessionId))
+            assertEquals("'$name' must record captureMode", CaptureMode.USB_RADIO.name, session?.captureMode)
+            assertEquals("'$name' must record audioRouteKind", AudioRouteKind.USB.name, session?.audioRouteKind)
+            assertEquals("'$name' must record audioRouteLabel", "USB Audio Device", session?.audioRouteLabel)
+            assertEquals(
+                "'$name' must record rigTransport",
+                RigTransportKind.USB_SERIAL.name,
+                session?.rigTransport,
+            )
+        }
+    }
+
+    /**
+     * R-913 (WPI half, register): "every live scenario writes a heartbeat so a live session looks
+     * live" — a *current* heartbeat, not merely a present one: `wallMillis` within a bounded window
+     * of real now, proving [ScenarioFixtures.markCapturing] (every scenario below's own real caller)
+     * writes a fresh record on *this* load, not one carried over from a prior scenario's own run in
+     * the same process (`Scenarios.clearPriorScenarioData` deletes `heartbeat.txt` unconditionally
+     * before every load — see that function's own kdoc — so a present-and-fresh heartbeat here is
+     * proof this scenario's own builder wrote it, not evidence of a stale leftover).
+     */
+    /** Generous enough for a slow test machine's own wall-clock read to land inside it, still far
+     * short of ever accepting a heartbeat left over from a genuinely earlier load. */
+    private val heartbeatFreshnessBoundMillis = 60_000L
+
+    private val liveHeartbeatScenarioNames = listOf(
+        "mode-local-mic",
+        "mode-usb",
+        "mode-bluetooth",
+        "mode-change-pending",
+        "overnight-live",
+        "rig-bt-connected",
+        "rig-bt-lost",
+        "bt-audio-dropped",
+    )
+
+    @Test
+    @Requirement("R-913")
+    fun `R_913_every live scenario writes a current heartbeat`() = runTest {
+        liveHeartbeatScenarioNames.forEach { name ->
+            Scenarios.load(context, name)
+            val heartbeat = FileHeartbeatStore(java.io.File(context.filesDir, "heartbeat.txt")).last()
+            assertNotNull("'$name' must write a heartbeat for its own live session", heartbeat)
+            val ageMillis = SystemClock.wallMillis() - requireNotNull(heartbeat).wallMillis
+            assertTrue(
+                "'$name' heartbeat must be current (age ${ageMillis}ms), not stale or from session start",
+                ageMillis in 0..heartbeatFreshnessBoundMillis,
+            )
+        }
     }
 
     /** The four non-gated catalog entries — every [ModelId] except the gated LLM, which this build's
