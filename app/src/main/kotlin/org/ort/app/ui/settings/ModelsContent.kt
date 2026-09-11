@@ -18,6 +18,7 @@ import org.ort.app.ui.data.LexiconAssetActions
 import org.ort.app.ui.data.LexiconAssetRowViewState
 import org.ort.app.ui.data.LexiconImportViewState
 import org.ort.app.ui.data.ModelActionResult
+import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.data.ModelDownloadFailureViewState
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelsController
@@ -25,11 +26,8 @@ import org.ort.app.ui.data.ModelsScreenStatus
 import org.ort.app.ui.screens.ModelsExtrasViewState
 import org.ort.app.ui.screens.ModelsScreen
 import org.ort.app.ui.screens.ProseDigestSectionViewState
-import org.ort.data.OrtDatabase
-import org.ort.pipeline.capture.measureStorageAccounting
 import org.ort.pipeline.digest.ProseDigestRunner
 import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
-import java.io.File
 import java.io.IOException
 
 /**
@@ -162,13 +160,13 @@ public fun ModelsContent(context: android.content.Context, modifier: Modifier, o
 private fun rememberModelsExtras(context: android.content.Context): ModelsExtrasViewState {
     val proseDigestStore = remember(context) { SharedPreferencesProseDigestSettingsStore(context) }
     var proseDigestEnabled by remember { mutableStateOf(proseDigestStore.isEnabled()) }
-    var bundledBytesLabel by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) {
-        val dbFile = context.getDatabasePath(OrtDatabase.DATABASE_NAME)
-        val databaseFiles = listOf(dbFile, File(dbFile.path + "-wal"), File(dbFile.path + "-shm"))
-        val accounting = measureStorageAccounting(context.filesDir, databaseFiles)
-        bundledBytesLabel = formatBundledBytes(accounting.bundledBytes)
-    }
+    // Register R-865 (Validator V9, device): this used to be `measureStorageAccounting(...)
+    // .bundledBytes` — a real sum of on-disk file lengths, which a test/dev fixture's
+    // placeholder-file install shortcut can silently zero out (exactly what `tier0-llm-stored`'s
+    // capture showed: "0 MB" total). `ModelCatalog`'s own declared sizes (build-time, from the
+    // manifest) are the stable figure this row now reads instead — real always, and a plain,
+    // synchronous sum (no file I/O, no `LaunchedEffect` needed for it any more).
+    val bundledBytesLabel = remember { formatBundledBytes(ModelCatalog.entries.sumOf { it.sizeBytes }) }
     return ModelsExtrasViewState(
         proseDigest = ProseDigestSectionViewState(
             enabled = proseDigestEnabled,

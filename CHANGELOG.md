@@ -32,6 +32,83 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPE follow-up: Validator V9 device findings R-860/R-861/R-864/R-865)
+
+### (pending) — settings modes: R-860/R-861 configured-selection fallback, R-864 Bluetooth profile naming, R-865 catalogue-declared asset sizes
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsPolling.kt`,
+`app/.../ui/screens/ModelsScreen.kt`, `app/.../ui/settings/ModelsContent.kt`, and tests. One
+targeted, minimal edit reused from a shared read-only path (`org.ort.app.ui.setup.RigPickerCatalogue`,
+already a cross-package dependency of `org.ort.app.ui.data.SessionRouteFacts`) — no file outside
+this round's own list was touched.
+
+**Requirements/ACs:** FR-CAP-11, FR-CAP-12, FR-RIG-14, FR-AST-3a, constitution I/II.
+
+**What changed:**
+
+*Constitution Check.* I (R-860/R-861's whole root cause was a live-only holder read standing in
+for "nothing is configured" when the honest fact was "configured, just not verified this
+process" — CF02/CF11 now say exactly that, never more; R-865's root cause was a real, measured
+`0` standing in for "not measured yet" — both are the same failure shape the register's own R-821
+already named once). II (every fix ships a discrimination-tested case in this round; see
+Verified).
+
+1. **R-860/R-861 (halt)**: CF02's Input row and CF11's Audio-route/Rig-link rows used to read
+   only the live `InputStatus`/`RigStatus` holders — honest for a real process that opened a
+   device, but a process whose holders were never opened this run (V9's exact `mode-change-pending`
+   reproduction: a real, fully `CaptureConfigurationStore.hasBeenConfigured()` session) then read
+   "No input selected"/"not yet selected"/"no radio configured" directly beneath a Capture-mode
+   row correctly reading "USB-connected radio" — a contradiction on the same screen. Both rows now
+   fall back to the *configured* selection (`configuredInputLabel`/`configuredRigLabel`,
+   `SettingsPolling.kt`) — the store's own `selectedInputId` (or, for `LOCAL_MICROPHONE`'s own
+   implicit choice, that mode's real operator label) for input, the rig id resolved to a real
+   display name via `RigPickerCatalogue` (the same lookup `SessionRouteFacts`/S09/S09b already use)
+   for the rig — each qualified "not verified this session", never a live claim. A live holder,
+   when open, always wins (the fallback is read only from the branch that already established no
+   live status exists); a genuinely unconfigured store still reads the honest, unchanged "not
+   selected"/"no radio configured".
+2. **R-864**: CF02's Input row and CF11's Audio-route row now name the real negotiated Bluetooth
+   HFP codec — "HFP mSBC"/"HFP CVSD"/"profile not reported" — exactly as DG04 does (R-834).
+   Simpler than DG04's own session-row read: `org.ort.capture.android.AudioDeviceDescriptor
+   .bluetoothProfile` is already a live fact on the *current* process's own live `InputStatus`
+   holder (confirmed by reading that type before writing this) — no database/session-row read
+   needed for the live case CF02/CF11 are always about.
+3. **R-865**: CF04's per-asset size and the Space total now read the catalogue's own declared size
+   (`ModelCatalog.entry(id).sizeBytes`/`ModelCatalog.entries.sumOf { it.sizeBytes }`, build-time,
+   from the manifest) as their primary figure — real always, never a real on-disk `File.length()`
+   a test/dev fixture's placeholder-install shortcut can silently zero out (V9's exact
+   `tier0-llm-stored` capture: every row and the Space total read "0 KB"/"0 MB"). The real measured
+   length is still shown, honestly, as a secondary "on disk: N MB" clause — but only when it is
+   itself real (nonzero); a row that claims installed/verified yet reports `0` real bytes (a
+   placeholder, never a genuine checksum-verified file) now reads "placeholder — no bytes" instead
+   of a fabricated "0 KB · verified `<checksum>`". Applied to `AssetRow` (VAD), `GroupedAssetRow`
+   (Whisper family — a placeholder in even one part flags the whole family, never silently averaged
+   into the aggregate), `ProseDigestModelRow` (Gemma), and the Space row (now a plain, synchronous
+   sum with no file I/O at all, replacing `measureStorageAccounting(...).bundledBytes`).
+
+**Verified** (every command with `-PortAllowMissingBundledAssets=true`):
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.settings.SettingsPollingTest"` — green (R-860/R-861/R-864 cases).
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.screens.ModelsScreen*Test" --tests "org.ort.app.ui.settings.ModelsContentTest"` — green (R-865 cases, including the new `ModelsContentTest.kt`).
+- `:app:testDebugUnitTest` (full) and `:app:smokeTestDebugUnitTest` (full) — green.
+- `:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck` — green (after `ktlintMainSourceSetFormat`/`ktlintTestSourceSetFormat`).
+- `:app:detekt` — green (`GroupedAssetRow`'s own sub-line formula extracted to `groupedAssetSubLine` — R-865's own placeholder guard pushed it over `LongMethod`).
+- `build dependencyRules platformGuards` — green.
+- `-p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `coverageMatrix` then `coverageMatrixCheck` (run separately) — green.
+- **Discrimination, R-860/R-861**: temporarily made `configuredInputLabel` return `null`
+  unconditionally → three `SettingsPollingTest` cases (the input fallback, the LOCAL_MICROPHONE
+  implicit case, the audio-route CF11 case) failed for the right reason → restored → passed.
+  Repeated for `configuredRigLabel` → one case failed → restored → passed.
+- **Discrimination, R-865**: temporarily made `isZeroBytePlaceholder` return `false`
+  unconditionally → the three new placeholder-detection tests (`AssetRow`/`GroupedAssetRow`/
+  `ProseDigestModelRow`) failed with a fabricated "0 KB · verified ..." claim → restored → passed.
+
+**Left open / not done:** none — every half of R-860/R-861/R-864/R-865 named as owed to this
+package landed in this round.
+
+---
+
 ## 2026-09-11 (WPI: R-840 Digest review-session view, the rig-Bluetooth checklist's four states, E2-A07 v10 seeding)
 
 ### b0edcc06 — DG05/DG01 land on Digest not Session (R-840); setup-rig-bluetooth's connect/identify/verify/drop checklist reachable via a new SetupActivity extra; every real TH-D75A scenario seeds the v10 session-route-facts columns

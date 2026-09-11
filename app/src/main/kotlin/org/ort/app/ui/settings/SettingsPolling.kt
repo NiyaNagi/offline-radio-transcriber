@@ -9,6 +9,7 @@ import org.ort.app.ui.navigation.StorageFooterViewState
 import org.ort.app.ui.navigation.toGigabyteLabel
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.SystemClock
+import org.ort.core.capture.BluetoothAudioProfile
 import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.CaptureModePresets
 import org.ort.data.OrtDatabase
@@ -22,6 +23,7 @@ import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.collectSessionStorageSummaries
 import org.ort.pipeline.capture.computeNextDeletion
 import org.ort.pipeline.capture.measureStorageAccounting
+import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.rig.DefaultRigTransportFactory
 import java.io.File
 import java.time.Instant
@@ -165,7 +167,7 @@ public object SettingsPolling {
         modeFacts: CaptureModeFacts = RealCaptureModeFacts(context),
     ): SettingsCaptureViewState {
         val (inputLabel, inputSub) = when (val state = InputStatus.state) {
-            InputStatus.State.None -> "No input selected" to "select an input to capture"
+            InputStatus.State.None -> configuredInputFallback(context)
             is InputStatus.State.Opened -> {
                 val verified = if (state.routeVerified) "verified" else "not verified"
                 val audioKindNote = if (state.descriptor.kind == AudioDeviceKind.BUILT_IN_MIC) {
@@ -173,10 +175,14 @@ public object SettingsPolling {
                 } else {
                     "radio audio"
                 }
+                val profileClause = bluetoothProfileClause(state.descriptor.bluetoothProfile)
                 state.descriptor.label to
-                    "$verified · ${state.nativeRateHz} Hz native · ${state.resamplerId} · $audioKindNote"
+                    "$verified · ${state.nativeRateHz} Hz native · ${state.resamplerId} · $audioKindNote$profileClause"
             }
-            is InputStatus.State.Lost -> state.lastKnown.descriptor.label to "input lost since ${state.sinceMillis}"
+            is InputStatus.State.Lost -> {
+                val profileClause = bluetoothProfileClause(state.lastKnown.descriptor.bluetoothProfile)
+                state.lastKnown.descriptor.label to "input lost since ${state.sinceMillis}$profileClause"
+            }
             is InputStatus.State.Mismatch -> (state.actual?.label ?: "unknown device") to
                 "expected ${state.expected.label} — route mismatch"
         }
@@ -250,7 +256,18 @@ public object SettingsPolling {
             )
         }
         val audioRoute = when (val state = InputStatus.state) {
-            InputStatus.State.None -> SettingsModeSetRowViewState("Audio route", "not yet selected")
+            InputStatus.State.None -> {
+                val configStore = realCaptureConfigurationStore(context)
+                val configuredLabel = if (configStore.hasBeenConfigured()) {
+                    configuredInputLabel(configStore.current())
+                } else {
+                    null
+                }
+                SettingsModeSetRowViewState(
+                    "Audio route",
+                    configuredLabel?.let { "$it · not verified this session" } ?: "not yet selected",
+                )
+            }
             is InputStatus.State.Opened -> {
                 val verified = if (state.routeVerified) "verified" else "not verified"
                 val kindNote = if (state.descriptor.kind == AudioDeviceKind.BUILT_IN_MIC) {
@@ -258,14 +275,18 @@ public object SettingsPolling {
                 } else {
                     "radio audio, not the room"
                 }
-                SettingsModeSetRowViewState("Audio route", "${state.descriptor.label} · $verified · $kindNote")
+                val profileClause = bluetoothProfileClause(state.descriptor.bluetoothProfile)
+                SettingsModeSetRowViewState(
+                    "Audio route",
+                    "${state.descriptor.label} · $verified · $kindNote$profileClause",
+                )
             }
             is InputStatus.State.Lost ->
                 SettingsModeSetRowViewState("Audio route", "${state.lastKnown.descriptor.label} · input lost")
             is InputStatus.State.Mismatch -> SettingsModeSetRowViewState("Audio route", "route mismatch")
         }
         val rigLink = when (val state = RigStatus.state) {
-            RigStatus.State.Absent -> SettingsModeSetRowViewState("Rig link", "no radio configured")
+            RigStatus.State.Absent -> SettingsModeSetRowViewState("Rig link", configuredRigLinkFallback(context))
             is RigStatus.State.Connected ->
                 SettingsModeSetRowViewState("Rig link", "${state.descriptor} · connected")
             is RigStatus.State.Stale -> SettingsModeSetRowViewState(
@@ -355,6 +376,80 @@ public object SettingsPolling {
         RigLinkTransportKind.BLE -> "Bluetooth LE"
         RigLinkTransportKind.NETWORK -> "network"
         RigLinkTransportKind.NONE, null -> null
+    }
+
+    /**
+     * Register R-860/R-861 (halt, Validator V9, device): CF02's Input row and CF11's Audio-route
+     * row used to read only the live [InputStatus] holder — honest for a real process that opened
+     * a device, but a scenario/session whose holder was never opened this process (a fresh process
+     * pointed at an already-configured [org.ort.pipeline.rig.CaptureConfigurationStore], the exact
+     * `mode-change-pending` shape V9 reproduced) then read "No input selected"/"not yet selected"
+     * directly beneath a Capture-mode row correctly reading "USB-connected radio" — a contradiction
+     * on the same screen. [configuredInputLabel] is the one place both rows now fall back to the
+     * *configured* selection when [CaptureConfigurationStore.hasBeenConfigured] — never a live,
+     * verified claim (this function is only ever consulted from the branch that already established
+     * no live status exists), so every caller appends its own "not verified this session" qualifier
+     * rather than this function claiming more than the store itself can support. `null` exactly when
+     * the store has nothing honest to say either (never configured, or configured for a mode with no
+     * explicit input id and not [CaptureMode.LOCAL_MICROPHONE]'s own implicit built-in choice).
+     */
+    private fun configuredInputLabel(config: CaptureConfiguration): String? = config.selectedInputId
+        ?: config.mode.takeIf { it == CaptureMode.LOCAL_MICROPHONE }?.operatorLabel
+
+    /** CF02's own `(label, subLine)` shape for [configuredInputLabel]'s fallback — the honest
+     * "No input selected" pair, unchanged, when the store has nothing configured either. */
+    private fun configuredInputFallback(context: Context): Pair<String, String> {
+        val store = realCaptureConfigurationStore(context)
+        val label = if (store.hasBeenConfigured()) configuredInputLabel(store.current()) else null
+        return label?.let { it to "not verified this session" }
+            ?: ("No input selected" to "select an input to capture")
+    }
+
+    /** The rig-side twin of [configuredInputLabel] — `"<descriptor name> · <transport>"` via
+     * [RigPickerCatalogue] (the same lookup S09/S09b/[org.ort.app.ui.data.SessionRouteFacts] use,
+     * so a fallback name here is never a second, differently-sourced copy of the onboarding
+     * picker's own name), or `null` when the store names no real rig
+     * ([org.ort.rig.NullRigModule.ID], or an id the catalogue does not resolve — an imported
+     * descriptor since removed). */
+    private fun configuredRigLabel(config: CaptureConfiguration): String? {
+        if (config.rigId == org.ort.rig.NullRigModule.ID) return null
+        val descriptorName = org.ort.app.ui.setup.RigPickerCatalogue.build().entries()
+            .firstOrNull { it.id == config.rigId }?.displayName ?: return null
+        return listOfNotNull(descriptorName, transportLabelFor(config.rigTransportKind)).joinToString(" · ")
+    }
+
+    /** CF11's own single-string "Rig link" fallback — "no radio configured" unchanged when the
+     * store has nothing honest to say either. */
+    private fun configuredRigLinkFallback(context: Context): String {
+        val store = realCaptureConfigurationStore(context)
+        val label = if (store.hasBeenConfigured()) configuredRigLabel(store.current()) else null
+        return label?.let { "$it · not verified this session" } ?: "no radio configured"
+    }
+
+    /**
+     * Register R-864 (Validator V9, device): CF02's Input row and CF11's Audio-route row must name
+     * the real negotiated Bluetooth HFP codec exactly as DG04 does (R-834) — "HFP mSBC"/"HFP CVSD"/
+     * "profile not reported" — never the word "Bluetooth" a second time with no codec named at all.
+     * Unlike DG04 (a *past* session, read from `SessionEntity.bluetoothProfile` — no live holder
+     * survives an ended session), CF02/CF11 are always about the *current* process's own live state,
+     * where [org.ort.capture.android.AudioDeviceDescriptor.bluetoothProfile] is already a real,
+     * live fact — `null` for every non-Bluetooth device by that type's own contract (confirmed by
+     * reading `AudioDeviceDescriptor.kt` before writing this), so no [org.ort.rig.NullRigModule]-style
+     * "is this really Bluetooth" gate is needed here: a non-null profile already implies it was.
+     * `""` (no clause appended) exactly when [profile] is `null` — genuinely not a Bluetooth route,
+     * never a fabricated claim about one that is.
+     */
+    private fun bluetoothProfileClause(profile: BluetoothAudioProfile?): String =
+        profile?.let { " · ${bluetoothProfileLabel(it)}" }.orEmpty()
+
+    /** R-864: the same real HFP codec names DG04's own `DigestPolling.bluetoothProfileLabel`
+     * renders (`R-834`) — duplicated here rather than shared, the same "each package's own small
+     * formatting function" precedent that file's own doc comment already established for this
+     * exact mapping (no shared home for it exists yet across packages). */
+    private fun bluetoothProfileLabel(profile: BluetoothAudioProfile): String = when (profile) {
+        BluetoothAudioProfile.HFP_MSBC -> "HFP mSBC"
+        BluetoothAudioProfile.HFP_CVSD -> "HFP CVSD"
+        BluetoothAudioProfile.UNKNOWN -> "profile not reported"
     }
 
     private fun linkAddressLabel(context: Context): String? {
