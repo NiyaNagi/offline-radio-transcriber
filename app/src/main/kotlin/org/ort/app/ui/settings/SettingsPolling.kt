@@ -229,7 +229,7 @@ public object SettingsPolling {
             }
             is InputStatus.State.Lost -> {
                 val profileClause = bluetoothProfileClause(state.lastKnown.descriptor.bluetoothProfile)
-                state.lastKnown.descriptor.label to "input lost since ${state.sinceMillis}$profileClause"
+                state.lastKnown.descriptor.label to "input lost ${sinceClockLabel(state.sinceMillis)}$profileClause"
             }
             is InputStatus.State.Mismatch -> (state.actual?.label ?: "unknown device") to
                 "expected ${state.expected.label} — route mismatch"
@@ -346,7 +346,7 @@ public object SettingsPolling {
                     state.lastKnown.descriptor,
                     state.lastKnown.transportKind,
                     context,
-                    "stale since ${state.sinceMillis}",
+                    "stale ${sinceClockLabel(state.sinceMillis)}",
                 ),
             )
         }

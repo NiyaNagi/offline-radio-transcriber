@@ -2,11 +2,28 @@ package org.ort.app.ui.settings
 
 import android.content.Context
 import org.ort.app.ui.data.realCaptureConfigurationStore
+import org.ort.app.ui.failures.FailureMapper
+import org.ort.core.SystemClock
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.rig.DefaultRigTransportFactory
 import java.util.Locale
 import org.ort.rig.RigTransportKind as RigLinkTransportKind
+
+/**
+ * Register R-871 (Reviewer/Validator V10, spec; diagnosed by WPF to this exact file, run 5):
+ * "Stale since 1789125179230" — a raw epoch-millisecond value where every other fact on this
+ * screen (and every board example) is a clock time or a duration. [FailureMapper.clockLabel]/
+ * [FailureMapper.durationLabel] are the real, already-tested formatters `ui/failures` itself uses
+ * for the identical shape (`F9`'s own "disconnected ... at 04:12:59" title) — read across package
+ * (never edited; both are `public`), rather than a second, differently-formatted copy invented
+ * here. `"since <clock> · <duration>"`, e.g. "since 04:12:59 · 3 m 12 s" — [millis] itself never
+ * appears in the result.
+ */
+internal fun sinceClockLabel(millis: Long): String {
+    val elapsed = (SystemClock.wallMillis() - millis).coerceAtLeast(0L)
+    return "since ${FailureMapper.clockLabel(millis)} · ${FailureMapper.durationLabel(elapsed)}"
+}
 
 /**
  * CF06 ("Rig link") and CF11's own Rig-link row (`Settings-Rig.dc.html`, `Settings-Mode.dc.html`) —
@@ -77,7 +94,7 @@ internal object SettingsRigFacts {
             SettingsRigViewState(
                 descriptorLabel = stripManufacturerPrefix(state.lastKnown.descriptor),
                 connected = false,
-                staleSinceLabel = "since ${state.sinceMillis}",
+                staleSinceLabel = sinceClockLabel(state.sinceMillis),
                 bands = state.lastKnown.bands.map { it.toViewState(stale = true) },
                 transportLabel = transportLabelFor(transportKind),
                 linkAddressLabel = linkAddressLabel(context),
