@@ -184,6 +184,9 @@ public object Scenarios {
         "setup-verified",
         "setup-level",
         "setup-radio",
+        // E2-J04 (checklist row, coordinator round): the one local-mic-mode setup base — see
+        // [setupVerifiedLocalMic]'s own doc comment.
+        "setup-verified-local-mic",
         "clock-dst",
         "usb-permission",
         "interrupted-pass",
@@ -199,6 +202,9 @@ public object Scenarios {
         "setup-mode",
         "setup-bt-permission",
         "setup-rig-transport",
+        // E2-J04: same base as `setup-rig-transport` — see [setupRigTransportPreset]'s own doc
+        // comment for the known, honest gap this scenario reports rather than works around.
+        "setup-rig-transport-preset",
         "setup-rig-bluetooth",
         "setup-rig-bluetooth-connecting",
         "setup-rig-bluetooth-identified",
@@ -271,6 +277,7 @@ public object Scenarios {
             "setup-verified" -> setupVerified(context)
             "setup-level" -> setupLevel(context)
             "setup-radio" -> setupRadio(context)
+            "setup-verified-local-mic" -> setupVerifiedLocalMic(context)
             "clock-dst" -> clockDst(context, db)
             "usb-permission" -> usbPermission(context, db)
             "interrupted-pass" -> interruptedPass(context, db)
@@ -282,6 +289,7 @@ public object Scenarios {
             "setup-mode" -> setupMode(context)
             "setup-bt-permission" -> setupBtPermission(context)
             "setup-rig-transport" -> setupRigTransport(context)
+            "setup-rig-transport-preset" -> setupRigTransportPreset(context)
             "setup-rig-bluetooth" -> setupRigBluetooth(context)
             "setup-rig-bluetooth-connecting" -> setupRigBluetoothConnecting(context)
             "setup-rig-bluetooth-identified" -> setupRigBluetoothIdentified(context)
@@ -1556,6 +1564,69 @@ public object Scenarios {
         store.manualFrequencyHz = null
         return LoadResult(0, 0, null)
     }
+
+    /**
+     * `setup-verified-local-mic` — E2-J04 (checklist row, coordinator round): [setupVerified] and its
+     * two siblings all share [verifiedInputStore]'s `USB_RADIO`/`usb-1` base, so no scenario ever
+     * reached S07..S12 under `LOCAL_MICROPHONE` — the register's own finding. A verified, fully-
+     * configured local-mic setup: `SetupStep.READY` (S12) shows the Mode row as "Local microphone ·
+     * frequency by hand" (`radioChoice = NONE` + a real `manualFrequencyHz`, the same honest
+     * no-rig-module-built-yet pairing [assetsBundled]/[seedConfiguredDeviceState] already establish
+     * for a USB session — FR-CAP-2b's own fact that local-mic mode has no rig at all does not change
+     * how the Mode row itself reports "no radio chosen", the identical fact any other no-rig mode
+     * would), and — since [SetupStateMachine.needsRigTransport] gates on `radioChoice` alone, never
+     * on `captureMode` — no S09b/S10b Rig rows at all, confirmed by reading that function before
+     * writing this.
+     */
+    private fun setupVerifiedLocalMic(context: Context): LoadResult {
+        val prefs = context.applicationContext.getSharedPreferences(
+            SharedPreferencesSetupStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        )
+        val store = SharedPreferencesSetupStore(prefs)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.LOCAL_MICROPHONE
+        store.notificationsSkipped = true
+        store.selectedInputId = "mic-0"
+        store.selectedInputLabel = "Built-in microphone"
+        store.inputVerified = true
+        store.verifiedNativeRateHz = 48_000
+        store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        // R-804's own class: CF02/CF11 read CaptureConfigurationStore.current(), not SetupStore.
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(mode = CaptureMode.LOCAL_MICROPHONE, selectedInputId = "mic-0"),
+        )
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.NONE
+        store.manualFrequencyHz = 145_230_000L
+        store.setupComplete = false
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-rig-transport-preset` — E2-J04 (checklist row, coordinator round): [setupRigTransport]
+     * already makes S09b's own preset label (`RigTransportOption.isPreset`, computed automatically
+     * from `SetupStore.captureMode` via `CaptureModePresets.presetsFor` — confirmed by reading
+     * `SetupActivity.onSelectRadio`/`RenderRigTransport` before writing this) show "preset by your
+     * mode" against Bluetooth SPP, since it already sets `captureMode = BLUETOOTH_RADIO`. **What no
+     * scenario reaches**: the row actually *pre-selected* (its own radio marker filled), because
+     * `SetupActivity.selectedRigTransportKind` — the field `RenderRigTransport` reads for which row
+     * shows selected — is a transient, `SetupStore`-independent `mutableStateOf` the real Activity
+     * only ever seeds from the preset on the *forward* navigation path (`onSelectRadio`, S09→S09b);
+     * a scenario landing cold on S09b via `EXTRA_STEP` (this scenario's own base, same as
+     * [setupRigTransport]) never runs that path, so `selectedRigTransportKind` stays its own honest
+     * `null` default regardless of what this scenario seeds — **a known, honest gap, reported here
+     * rather than worked around**: closing it needs the same class of fix R-802 gave S10b's own
+     * paired-device list (refresh/seed a transient Activity field on cold entry to a step, not only
+     * on the forward-nav path that already sets it) — a `SetupActivity.kt` change this round's own
+     * coordinator message did not pre-approve, unlike R-900's `rigLinkStateForTest` seam. This
+     * scenario is therefore functionally identical to [setupRigTransport] today; it exists so the
+     * tour has a stably-named step to re-point at once that fix lands, and so this gap is visible in
+     * the tour's own step list rather than silently absent.
+     */
+    private fun setupRigTransportPreset(context: Context): LoadResult = setupRigTransport(context)
 
     /** The one `SetupStore` state [setupVerified] and [setupLevel] share — a real, verified input
      * selection, welcome already seen, notifications skipped (diagnostic-only — constitution: R-002

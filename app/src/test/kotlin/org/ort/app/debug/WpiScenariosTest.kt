@@ -22,6 +22,7 @@ import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.setup.DebugRigLinkPortOverride
 import org.ort.app.ui.setup.InMemoryRigLinkPort
+import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.RigLinkState
 import org.ort.app.ui.setup.SetupStateMachine
 import org.ort.app.ui.setup.SetupStep
@@ -194,6 +195,68 @@ class WpiScenariosTest {
 
         val store = setupStore()
         assertTrue(store.inputVerified)
+        assertNotNull(store.radioChoice)
+        assertNull(store.rigTransport)
+        val step = SetupStateMachine.stepFor(
+            fullyGrantedBluetooth(),
+            micPermanentlyDenied = false,
+            snapshot = store.snapshot(),
+        )
+        assertEquals(SetupStep.RIG_TRANSPORT, step)
+    }
+
+    /**
+     * E2-J04 (checklist row, coordinator round): `setup-verified`/`setup-level`/`setup-radio` all
+     * share [org.ort.app.debug.Scenarios]'s own `USB_RADIO`/`usb-1` base — no scenario ever reached
+     * S07..S12 under `LOCAL_MICROPHONE`. `setup-verified-local-mic` is that missing base:
+     * `stepFor` resumes at [SetupStep.READY] (a fully-verified, `setupComplete = false` snapshot,
+     * same as `setup-verified` itself), with a real `radioChoice = NONE` — the honest "no rig chosen"
+     * fact S12's own Mode row reads regardless of capture mode.
+     */
+    @Test
+    @Requirement("FR-CAP-2b", "AC-128")
+    fun `setup-verified-local-mic seeds a verified local-mic input, stepFor resumes at READY`() = runTest {
+        Scenarios.load(context, "setup-verified-local-mic")
+
+        val store = setupStore()
+        assertEquals(CaptureMode.LOCAL_MICROPHONE, store.captureMode)
+        assertTrue(store.inputVerified)
+        assertEquals("mic-0", store.selectedInputId)
+        assertEquals(RadioChoice.NONE, store.radioChoice)
+        assertNull("local-mic mode has no rig transport to choose", store.rigTransport)
+        val step = SetupStateMachine.stepFor(
+            fullyGrantedBluetooth(),
+            micPermanentlyDenied = false,
+            snapshot = store.snapshot(),
+        )
+        assertEquals(SetupStep.READY, step)
+
+        val config = captureConfigurationStore().current()
+        assertEquals(
+            "R-804's own class: CF02/CF11 read the store, not SetupStore",
+            CaptureMode.LOCAL_MICROPHONE,
+            config.mode,
+        )
+        assertEquals("mic-0", config.selectedInputId)
+    }
+
+    /**
+     * E2-J04 (checklist row, coordinator round): `setup-rig-transport-preset` is, today, functionally
+     * identical to [setupRigTransport] — see that scenario's own doc comment for the known, honest
+     * gap this test documents rather than papers over: `SetupActivity.selectedRigTransportKind` (the
+     * field driving S09b's own pre-selected radio marker) is seeded only on the forward-navigation
+     * path, never on a cold `EXTRA_STEP` landing, so no scenario can make S09b open with a row
+     * genuinely pre-selected without a `SetupActivity.kt` fix this round's coordinator message did
+     * not pre-approve. This test only proves the scenario names load and resolve to the same real
+     * `stepFor`/preset-eligible state `setup-rig-transport` already does — not that the visual
+     * pre-selection gap is closed.
+     */
+    @Test
+    @Requirement("FR-RIG-13")
+    fun `setup-rig-transport-preset loads and resumes at RIG_TRANSPORT, same as setup-rig-transport`() = runTest {
+        Scenarios.load(context, "setup-rig-transport-preset")
+
+        val store = setupStore()
         assertNotNull(store.radioChoice)
         assertNull(store.rigTransport)
         val step = SetupStateMachine.stepFor(

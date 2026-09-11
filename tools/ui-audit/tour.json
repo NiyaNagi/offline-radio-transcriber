@@ -158,6 +158,7 @@
     { "id": "setup-verified/S08-battery", "setup": "S08", "scenario": "setup-verified" },
     { "id": "setup-radio/S09-radio", "setup": "S09", "scenario": "setup-radio" },
     { "id": "setup-verified/S12-ready", "setup": "S12", "scenario": "setup-verified" },
+    { "id": "setup-verified-local-mic/S12-ready-local-mic", "setup": "S12", "scenario": "setup-verified-local-mic" },
 
     { "id": "setup-verified/S01-welcome@2x", "setup": "S01", "scenario": "setup-verified", "fontScale": 2.0 },
     { "id": "setup-verified/S03-notify@2x", "setup": "S03", "scenario": "setup-verified", "fontScale": 2.0 },
@@ -180,6 +181,7 @@
     { "id": "setup-bt-permission/S02c-bluetooth-permission@2x-end", "setup": "S02c", "scenario": "setup-bt-permission", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-rig-transport/S09b-rig-transport", "setup": "S09b", "scenario": "setup-rig-transport" },
     { "id": "setup-rig-transport/S09b-rig-transport@2x", "setup": "S09b", "scenario": "setup-rig-transport", "fontScale": 2.0 },
+    { "id": "setup-rig-transport-preset/S09b-rig-transport-preset", "setup": "S09b", "scenario": "setup-rig-transport-preset" },
     { "id": "setup-rig-bluetooth/S10b-rig-bluetooth", "setup": "S10b", "scenario": "setup-rig-bluetooth" },
     { "id": "setup-rig-bluetooth/S10b-rig-bluetooth@2x", "setup": "S10b", "scenario": "setup-rig-bluetooth", "fontScale": 2.0 },
     { "id": "setup-rig-bluetooth/S10b-rig-bluetooth@2x-end", "setup": "S10b", "scenario": "setup-rig-bluetooth", "fontScale": 2.0, "scroll": "end" },

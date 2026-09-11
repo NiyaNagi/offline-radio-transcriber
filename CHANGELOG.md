@@ -32,6 +32,75 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI: E2-J04 local-mic/preset setup scenarios, R-853 investigated and routed to WPF, README screencap warning)
+
+### e0f14db0 — E2-J04 setup-verified-local-mic and setup-rig-transport-preset; R-853 bt-audio-dropped discrepancy investigated, not reproduced from this package's own seeding; README documents the only supported screencap pull
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`,
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `tools/ui-audit/tour.json`,
+`results/ui-audit/README.md`.
+
+**Requirements/ACs:** E2-J04, FR-CAP-2b, AC-128, FR-RIG-13, R-853 (investigated, routed, not
+fixed), FR-CAP-5, FR-CAP-13.
+
+**What changed:** *Constitution check.* I (the known pre-selection gap in `setup-rig-transport-preset`
+is reported in its own doc comment, the README's scenario table, and this entry — never silently
+duplicated as if it closed the checklist row). II (`setup-verified-local-mic` gets its own
+discriminating `stepFor` assertion; `setup-rig-transport-preset` gets one proving it loads and
+resumes correctly, honestly scoped to not claim more).
+
+1. **E2-J04** — no scenario reached S07..S12 under `LOCAL_MICROPHONE` (`setup-verified`/
+   `setup-level`/`setup-radio` all share a `USB_RADIO`/`usb-1` base via `verifiedInputStore`).
+   `setup-verified-local-mic` is the missing base: `captureMode = LOCAL_MICROPHONE`,
+   `selectedInputId = "mic-0"`, verified, `radioChoice = NONE` — `stepFor` resumes at
+   `SetupStep.READY` (S12), Mode row reading "Local microphone · frequency by hand", no Rig rows
+   (`needsRigTransport` gates on `radioChoice` alone, confirmed by reading `SetupStateMachine`
+   before writing this). `setup-rig-transport-preset` is the second half of the same checklist
+   row — investigated and found **not fully closeable from a scenario alone**: S09b's own
+   pre-selected radio marker (`SetupActivity.selectedRigTransportKind`) is seeded only on the
+   forward-navigation path (`onSelectRadio`), never on a cold `EXTRA_STEP` landing, the same class
+   of gap R-802 found and fixed for S10b's paired-device list — but that fix needed a
+   `SetupActivity.kt` change this round's coordinator message did not pre-approve. The scenario is
+   added anyway (functionally identical to `setup-rig-transport` today, its own doc comment and the
+   README's scenario table both say so plainly) so the tour has a stably-named step ready to
+   re-point once the `SetupActivity.kt` fix lands, and so the gap is visible in the tour's own step
+   list rather than silently absent. Two new tour.json steps
+   (`setup-verified-local-mic/S12-ready-local-mic`, `setup-rig-transport-preset/S09b-rig-transport-preset`)
+   and two new `WpiScenariosTest` cases.
+
+2. **R-853 (investigated, routed to WPF, not fixed)** — validator V8: the real reader shows an idle
+   `Now` and no F23 banner for `bt-audio-dropped` while the live bar reads live; run 3's own tour
+   capture shows the banner correctly. Checked both halves the coordinator named: the scenario seeds
+   all four facts (`CaptureState.capturing`, `InputStatus.opened` then `.lost`, the session row with
+   `endedAt = null`, a real current heartbeat via `ScenarioFixtures.markCapturing`), and the tour
+   reaches F23 through no shortcut (`bt-audio-dropped` never calls `DebugFailureOverride.show`,
+   confirmed by reading every call site in `Scenarios.kt` — F23's banner is the same real,
+   unoverridden `FailureMapper.map(InputStatus.state, ...)` path both the tour and the real reader
+   read). Since `Now`/F23/the live bar all read the identical three process-wide holders, a
+   three-way split cannot come from anything this scenario seeds or omits; full diagnosis — including
+   the one fact that does not fit a simple "process restart between broadcast and open" explanation
+   (the live bar would need to read not-live from the same reset holders too) — is in
+   `results/ui-audit/README.md`'s new "R-853" section, routed to WPF per the coordinator's own
+   delegation.
+
+3. **README** — states `shoot.ps1`'s `screencap -p /sdcard/… ; adb pull` form as the only supported
+   way to pull a screenshot by hand (a new "PowerShell corrupts binary `adb` output" section);
+   corrects the stale `tour.ps1` paragraph, which still described an old `cp -r`-to-`/sdcard`
+   mechanism superseded rounds ago by the current `run-as ... base64` pull.
+
+**Verified:** `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` —
+green (`BUILD SUCCESSFUL in 10m 51s`, 1107 actionable tasks, `dependencyRules: OK`, `platformGuards:
+OK`). `./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — 8/8 PASS.
+`./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` — 450 requirements, 240 covered, no
+orphan-id warning. `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.WpiScenariosTest"
+--tests "org.ort.app.debug.tour.*"` — every test green, including the two new
+`setup-verified-local-mic`/`setup-rig-transport-preset` cases and every pre-existing tour test.
+
+**Left open / not done:** `setup-rig-transport-preset`'s own visual pre-selection gap — a
+`SetupActivity.kt` fix, not something `app/src/debug` can close alone; reported for the coordinator
+to route to WPD, same pattern as R-862/R-902/R-903. R-853 is likewise routed to WPF, not fixed — see
+above for exactly what was ruled out and what remains unexplained.
+
 ## 2026-09-11 (WPI: tour settles on RigLinkState and the live bar, R-838 BLUETOOTH_AUDIO_LOST, R-913/R-914 live-scenario heartbeats and v7 columns, R-904/R-921/R-933 -end frames)
 
 ### ed28a976 — R-900 settle on rigLinkState; R-904/R-921/R-933 four new @2x-end steps; R-838 bt-audio-dropped seeds BLUETOOTH_AUDIO_LOST; R-910/R-911 settle on the live bar; R-913 live scenarios write a current heartbeat; R-914 overnight seeds its v7 columns
