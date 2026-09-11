@@ -3,7 +3,9 @@ package org.ort.app.ui.settings
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -267,7 +269,7 @@ class SettingsRigScreenTest {
         composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = state, onBack = {}) } }
 
         composeTestRule
-            .onNodeWithContentDescription("Rig module, , $NOT_REPORTED_BY_RIG_MODULE")
+            .onNodeWithContentDescription("Rig module, $NOT_REPORTED_BY_RIG_MODULE")
             .assertExists()
     }
 
@@ -338,8 +340,33 @@ class SettingsRigScreenTest {
         composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = connectedState(), onBack = {}) } }
 
         composeTestRule
-            .onNodeWithContentDescription("Radio battery, BL, , $NOT_REPORTED_BY_RIG_MODULE")
+            .onNodeWithContentDescription("Radio battery, $NOT_REPORTED_BY_RIG_MODULE, BL")
             .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_881 the Radio-battery row names the label plainly and the mnemonic never truncates it`() {
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = connectedState(), onBack = {}) } }
+
+        composeTestRule.onNodeWithText("Radio battery").assertExists()
+        composeTestRule.onNodeWithText("Radio battery, BL").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_881 no real CF06 row's content-desc carries a stray empty segment`() {
+        composeTestRule.setContent { OrtTheme { SettingsRigScreen(state = connectedState(), onBack = {}) } }
+
+        composeTestRule
+            .onAllNodes(SemanticsMatcher("any") { true }, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .mapNotNull { it.config.getOrNull(SemanticsProperties.ContentDescription)?.joinToString(" ") }
+            .forEach { description ->
+                assert(!description.contains(", ,") && !description.contains(",  ,")) {
+                    "expected no stray empty segment, got: $description"
+                }
+            }
     }
 
     @Test

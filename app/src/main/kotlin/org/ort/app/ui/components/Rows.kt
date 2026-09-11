@@ -479,19 +479,16 @@ public fun KeyValueRow(
     // `padding(vertical = OrtSpacing.xs)` this chain also carries, the instant `focusable()`/
     // `semantics(...)` were appended after it) — the same defect `LogRow`/`GapRow`/`RejectedRow`/
     // `LogGroupHeader`/`DrillInHeader`/`ScreenHeader` already carry this exact structural fix for.
-    val description = buildString {
-        append(key)
-        append(", ")
-        append(value)
-        subLine?.let {
-            append(", ")
-            append(it)
-        }
-        onClickLabel?.let {
-            append(", ")
-            append(it)
-        }
-    }
+    // Register R-881 (Validator V11, device, spec): a caller with no discrete value fact of its own
+    // (several real rows across `ui/settings` — a key plus only a sub-line description) passes
+    // `value = ""` rather than `null` (this composable's own [value] parameter is non-nullable,
+    // unlike [subLine]) — the old `append(", ")` between every segment unconditionally produced a
+    // stray empty slot for it ("Radio battery, BL, , not reported by this rig module", the finding's
+    // own exact dump). Every segment is filtered to non-blank before joining, so an empty [value]
+    // (or, in principle, a blank [subLine]/[onClickLabel]) is dropped whole, never a bare ", ,".
+    val description = listOfNotNull(key, value, subLine, onClickLabel)
+        .filter { it.isNotBlank() }
+        .joinToString(", ")
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -524,9 +521,16 @@ public fun KeyValueRow(
                 },
             ),
     ) {
+        // Register R-880 (Validator V11, device, spec): centred against the value+sub-line column,
+        // the key floated mid-caption once a real sub-line ("used only while the rig is
+        // disconnected or absent", CF02's own "Log overs against" row) wrapped to several lines at
+        // font scale 2.0 — every caller of this shared row shares the same shape, so `Alignment.Top`
+        // fixes all of them at once, not only CF02's. `key` and `value` share the same `OrtType
+        // .control` style, so top-aligning the row lines their first lines up exactly; at 1.0 (or
+        // any single-line value) this is visually identical to the previous centred layout.
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
             horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
         ) {
             Text(

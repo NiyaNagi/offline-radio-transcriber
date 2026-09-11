@@ -261,6 +261,73 @@ capturing (visible in `mode-bluetooth/CF02-settings-capture.png`) — cosmetical
 itself (this round's actual subject) does not depend on it. Run 5 (the full tour, every step, with the
 revoked-permission `S02c` pass) queued after the remaining items above land, per the coordinator's own
 explicit sequencing.
+## 2026-09-11 (WPE V11 device findings: R-880/R-881 fixed)
+
+### <pending> — settings modes: R-880/R-881 fixed — KeyValueRow top-aligns its label; CF06's Radio-battery row assembly fixed
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Rows.kt` (`KeyValueRow`, shared —
+justified crossing, the finding's own root cause), `app/src/main/kotlin/org/ort/app/ui/settings/SettingsRigScreen.kt`,
+matching test files (`RowsTest.kt`, `SettingsRigScreenTest.kt`).
+
+**Requirements/ACs:** R-880, R-881.
+
+**What changed:** *Constitution check.* I (the Radio-battery row now states its own three real
+facts — label, value, mnemonic — in three real slots, never a jammed key or a stray empty one).
+II (both fixes watched failing first: R-880's geometry test drifted 81dp before the alignment
+change; R-881's own pre-existing test literally asserted the malformed double-comma string, now
+corrected, plus a new general "no stray empty segment" invariant test). VIII (a wrapped caption no
+longer strands its own label, and a content-desc with a bare `, ,` is quietly wrong the way any
+other invented/garbled fact would be).
+
+1. **R-880 (design)** — CF02's "Log overs against" label sat vertically centred against its own
+   value+sub-line column; fine for a one-line value, but the row's real sub-line ("used only while
+   the rig is disconnected or absent") wraps to 5–9 lines at font scale 2.0, so the label floated
+   mid-caption. Root cause is `KeyValueRow` itself (`ui/components/Rows.kt`, 13 real callers across
+   `ui/setup`/`ui/settings`/`ui/digest`/`ui/screens`) — its `Row`'s `verticalAlignment` was
+   `Alignment.CenterVertically`; changed to `Alignment.Top`. `key` and `value` share the identical
+   `OrtType.control` style, so top-aligning the row lines their first lines up exactly — visually
+   unchanged for any single-line value (every 1.0 case, and most 2.0 cases), and fixes "any sibling
+   with the same shape" (the finding's own phrase) in one place rather than only CF02's.
+2. **R-881 (spec)** — CF06's "Radio battery" row assembled its facts as
+   `KeyValueRow(key = "Radio battery, BL", value = "", subLine = state.batteryLabel)` — the
+   mnemonic jammed into the key (visibly truncating at font scale 2.0) and an empty `value`
+   producing a malformed content-desc ("Radio battery, BL, , not reported by this rig module", the
+   finding's own exact dump — a stray separator either side of the empty slot). Two independent
+   fixes: (a) the row's own three facts now get three real slots — `key = "Radio battery"`,
+   `value = state.batteryLabel`, `subLine = "BL"`; (b) `KeyValueRow`'s own description builder
+   (already being touched for R-880) now joins `key`/`value`/`subLine`/`onClickLabel` filtered to
+   non-blank rather than unconditionally interposing `", "` between every one — the *general* fix
+   the finding's own "assert the content-desc has no empty segment" phrasing asks for, since the
+   same `value = ""` idiom (a key plus only a sub-line, no discrete value fact) is used by several
+   other real rows in this file (`Rig module`, `By squelch state, BY`) that carried the identical
+   latent defect, only not yet reported. A second pre-existing test (`Rig module`'s own) asserted
+   the old malformed string and needed the same correction.
+
+**Verified:**
+- `./gradlew -PortAllowMissingBundledAssets=true :app:testDebugUnitTest` — green, full suite
+  (8m5s).
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green (3m27s).
+- `./gradlew -PortAllowMissingBundledAssets=true ktlintMainSourceSetFormat
+  ktlintTestSourceSetFormat detekt` — green.
+- `./gradlew -PortAllowMissingBundledAssets=true dependencyRules platformGuards` — green (20
+  modules checked, both OK).
+- `./gradlew -PortAllowMissingBundledAssets=true -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK` (all 8 checks pass).
+- `./gradlew -PortAllowMissingBundledAssets=true coverageMatrix` — 450 requirements, 241 covered;
+  `coverageMatrixCheck` — up to date.
+- R-880 discrimination: `RowsTest.R_880...` (real font-scale-2.0, `@GraphicsMode.NATIVE`, unmerged
+  tree) failed with "drifted 81.0dp" before the `Alignment.Top` change, passes now (drift < 4dp).
+- R-881 discrimination: the pre-existing `SettingsRigScreenTest.R_835 the Radio-battery row always
+  renders...` literally asserted the malformed `"Radio battery, BL, , ..."` string (failed once the
+  assembly fix landed, exactly as expected, then corrected to the honest joined string); two new
+  tests (`R_881 the Radio-battery row names the label plainly...`, `R_881 no real CF06 row's
+  content-desc carries a stray empty segment`) fail without the fix and pass with it. A second
+  latent instance (`Rig module`'s own pre-existing test) was found and corrected the same way while
+  verifying no other stray `", ,"` remained anywhere in `SettingsRigScreenTest`'s own suite.
+
+**Left open / not done:** none for these two findings.
+
+---
 
 ## 2026-09-11 (WPE R-865 render half: CF04 renders WPG's truncated-asset guard)
 
@@ -31216,6 +31283,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 
