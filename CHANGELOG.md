@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (WPI run 5: closing evidence — the full 207-step screenshot tour, every step green, on the final merged main)
 
-### <pending> — run 5: full tour green (207/207) on main 686212f4, both permission passes for S02c, closing evidence for the WPI program
+### aa510f44 — run 5: full tour green (207/207) on main 686212f4, both permission passes for S02c, closing evidence for the WPI program
 
 **Scope:** `results/ui-audit/tour-manifest.json` + every PNG the tour's own 207 steps name (existing
 paths only — the unrelated historical/device-validation screenshots already in `results/ui-audit/`
