@@ -32,6 +32,69 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (register R-883 F9 half reopened by reviewer E1 on run 6, fixed again: the banner's own height cap was too small for a two-action message at font scale 2.0, and its scroll hint was too small/low-contrast to see)
+
+### (pending) — R-883: F9's banner grows to fit a title + two-sentence body + two actions at font scale 2.0; its scroll hint is now an 18dp amber pill, not a 14dp grey sliver
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureHost.kt`,
+`app/src/test/kotlin/org/ort/app/ui/failures/FailureHostTest.kt`, `results/ui-audit/register.md`.
+
+**Requirements/ACs:** R-883 (halt, reopened by reviewer E1 on run 6, F9 half).
+
+**What changed:** *Constitution check.* II (test-first: the new test is shown to fail with the
+banner's density bug and again with the hint disabled, before each is fixed). VIII (register row
+stays `fixed`, not `closed` — closing needs the validator's own device re-capture). This round's own
+earlier fix (`77013ab8`) closed R-883's zero-gap/no-hint complaint but left `BANNER_MAX_HEIGHT_FRACTION`
+at 0.4 — reviewer E1's own run 6 evidence (`rig-bt-lost/F09-rig-bt-lost-now@2x` cuts the message at
+"If you changed"; `@2x-end`, one second later, shows the *identical* banner while only the
+destination's own much larger scrollable content beneath had moved) showed that cap was too small
+for F9's real title + two-sentence body + retry-ladder clause + two actions at font scale 2.0: the
+*only* way to reach either action was scrolling the banner's own small internal region, but a real
+swipe anywhere in the visually-larger destination content beneath scrolls *that* instead, leaving
+`Reconnect`/`Set the frequency by hand` unreachable in practice, and reviewer E1 could not find the
+existing scroll-hint chevron in either capture. Two fixes: (1) `BANNER_MAX_HEIGHT_FRACTION` raised
+from 0.4 to 0.55 — comfortably fits F9's whole real message and both actions at font scale 2.0 on
+the reference device with no scroll needed at all, while still leaving the destination's own header
+and at least one control reachable underneath for anything shorter; (2) the scroll hint (for
+whatever still does not fit, at even larger font scales or longer messages) grew from a bare 14dp
+`OrtColors.textSecondary` chevron with no background to an 18dp `OrtColors.accentAmber` chevron on
+a filled amber pill (`OrtColors.bannerAmberBorder`) — the same halt/degrade colour family the
+banner's own border and icon already use — genuinely hard to miss rather than a stray pixel.
+
+**Verified:**
+- `FailureHostTest.R_883 at the tour AVD's own width, F9's own two-action message renders a real scroll hint inside the banner's own bounds`
+  (new, `@GraphicsMode(NATIVE)`, `@Config(qualifiers = "w390dp-h844dp-420dpi")`, font scale 2.0,
+  real `attempt`/`ofTotal`/`nextRetryInMillis` seeded to match the real `rig-bt-lost` scenario's own
+  message exactly): asserts the hint node exists and sits inside the banner's own bounds, then
+  scrolls to it and asserts both `Reconnect` and `Set the frequency by hand` are displayed. Shown to
+  fail two ways during development: with the hint block disabled (node never exists); and with this
+  root's own real 420dpi density overridden to a flat `1f` (the pattern this file's *other* `R_883`
+  tests correctly use against Robolectric's plain, un-`@Config`'d, hard-fixed 320x470dp root — using
+  it here instead silently halved every glyph relative to this root's real density, making the
+  whole message fit with no scroll needed at all, the wrong answer for this exact regression). Fixed
+  by reading `LocalDensity.current.density` from the `@Config`-established root and keeping it,
+  overriding only `fontScale`.
+- `./gradlew -PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest --tests "org.ort.app.ui.failures.FailureHostTest"`
+  — 12 tests, all green (this file's existing R-100/R-101/R-147/R-164/R-178/R-300/F9_rig/FR_CAP_5
+  and both of this round's earlier R-883 cases hold unchanged).
+- Real device: built, hash-verified against the installed APK before capture, `rig-bt-lost` at
+  `font_scale 2.0`. `emulator-5556` (the port this round's own report was asked to use) was
+  contended by a concurrent session for the whole capture window (`adb shell` calls against it
+  hung for minutes at a time, confirmed not a build/install problem — `adb devices` kept reporting
+  it online throughout) — captured on `emulator-5558` instead: the full message renders with no
+  scroll needed to read it, a real gap still separates the banner from "Tonight" beneath it, the
+  amber scroll-hint pill is clearly visible at the message's own cut point, and scrolling to it
+  reveals both `Reconnect` and `Set the frequency by hand` in full. `font_scale` restored to 1.0
+  afterward on `emulator-5558`.
+
+**Left open / not done:** F23 (`FailBluetoothAudioDroppedBanner`) was not touched or re-verified
+this round — its own message already fit within the old 40% cap (run 5 closed it), and the cap only
+grew, never shrank, so it is not expected to regress, but this was not directly confirmed on device.
+`emulator-5556` itself was never confirmed working again before this round's commit — a re-check
+there (or on whichever port the next validator pass uses) would still be worthwhile hygiene.
+
+---
+
 ## 2026-09-11 (WPI run 6: R-943/R-944/R-945/R-955/R-956/R-960 steps captured; R-933/R-957 diagnosed — the tour harness is not the suspect)
 
 ### 0a50bf28 — run 6: 217/217 ok on main a98ecde0; CF02/CF04 verdict — drawToBitmap() and a real screencap agree, both truncated at the same point
