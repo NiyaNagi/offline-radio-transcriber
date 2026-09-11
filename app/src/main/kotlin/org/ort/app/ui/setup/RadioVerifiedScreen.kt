@@ -18,9 +18,12 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.settings.SettingsPolling
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 import org.ort.pipeline.capture.RigStatus
+import org.ort.rig.RigCapability
+import org.ort.rig.RigTransportKind
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -43,6 +46,9 @@ import java.util.Locale
  * simulator poking [RigStatus] directly (WP0) — see [RadioUsbScreen]'s doc comment for the full
  * accounting of what is and is not reachable with real hardware right now (nothing).
  */
+@Suppress("LongParameterList") // R-903: two more real, load-bearing facts joined transportLabel --
+// see this function's own doc comment for why each earns its place, the same standing exception
+// SetupScaffold's own class doc already grants this package.
 @Composable
 public fun RadioVerifiedScreen(
     state: RigStatus.State,
@@ -55,9 +61,28 @@ public fun RadioVerifiedScreen(
      * report yet (never reachable through [SetupActivity]'s own dispatch, which always knows
      * [SetupStore.rigTransport] by the time this screen renders). */
     transportLabel: String? = null,
+    /** R-903 (reviewer A2, run 3, design): the real elapsed seconds S10b's own open -> identify ->
+     * verify checklist measured (`SetupActivity`'s own timer, started the moment a paired device
+     * was picked, stopped the moment `RigLinkState.Verified` was reached) — `null` whenever no such
+     * probe ran (the USB-serial lane has no equivalent timed handshake today), which
+     * [radioVerifiedSubtitle] renders as the plain "identified and verified" clause, never a
+     * fabricated duration (constitution I). */
+    verifyDurationSeconds: Double? = null,
+    /** AC-133: `true` only when the connected rig's own catalogue entry declares *both*
+     * `BLUETOOTH_SPP` and `USB_SERIAL` transports with an identical, non-empty
+     * [org.ort.rig.RigCapability] set — [sameCommandSetAsUsb] is the pure check; never asserted
+     * for a rig this build cannot actually prove it for. */
+    sameCommandSetAsUsb: Boolean = false,
 ) {
     when (state) {
-        is RigStatus.State.Connected -> RadioVerifiedConnected(state, transportLabel, onContinue, onChangeRadio)
+        is RigStatus.State.Connected -> RadioVerifiedConnected(
+            state,
+            transportLabel,
+            verifyDurationSeconds,
+            sameCommandSetAsUsb,
+            onContinue,
+            onChangeRadio,
+        )
         is RigStatus.State.Stale -> RadioVerifiedStale(state, onReconnect, onChangeRadio)
         is RigStatus.State.Absent -> {
             // See this file's own doc comment: the caller routes Absent away before ever
@@ -67,20 +92,68 @@ public fun RadioVerifiedScreen(
     }
 }
 
+/**
+ * R-903 (reviewer A2, run 3): S11's subtitle clause build, pure so the three real facts it can
+ * carry — the transport, a genuinely *measured* verify duration, and AC-133's "same command set as
+ * USB" — are each testable without a screen. `Setup-Rig-Verified.dc.html`'s own worked example:
+ * `"Bluetooth SPP · identified and verified in 1.2 s · same command set as USB"`. A `null`
+ * [transportLabel] (never reachable through [SetupActivity]'s own dispatch — see [RadioVerifiedScreen]'s
+ * own doc comment) still returns a real sentence, capitalised as the board's own fallback case reads.
+ */
+internal fun radioVerifiedSubtitle(
+    transportLabel: String?,
+    verifyDurationSeconds: Double?,
+    sameCommandSetAsUsb: Boolean,
+): String {
+    val verifyClause = if (verifyDurationSeconds != null) {
+        "identified and verified in %.1f s".format(verifyDurationSeconds)
+    } else {
+        "identified and verified"
+    }
+    if (transportLabel == null) return verifyClause.replaceFirstChar { it.uppercase() }
+    val clauses = mutableListOf(transportLabel, verifyClause)
+    if (sameCommandSetAsUsb) clauses += "same command set as USB"
+    return clauses.joinToString(" · ")
+}
+
+/**
+ * AC-133: the one honest source for "same command set as USB" — a rig whose catalogue entry
+ * declares both [RigTransportKind.BLUETOOTH_SPP] and [RigTransportKind.USB_SERIAL] with an
+ * identical, non-empty capability set (the TH-D75A's own descriptor, `docs/reference/th-d75a-cat.md`).
+ * `false` whenever [currentTransport] is not Bluetooth at all (the clause only ever compares
+ * Bluetooth *against* USB, never the other way around), either transport is undeclared, or the two
+ * sets differ or are both empty — never guessed from the rig's name or verified flag alone.
+ */
+internal fun sameCommandSetAsUsb(
+    transportCapabilities: Map<RigTransportKind, Set<RigCapability>>,
+    currentTransport: RigTransportKind?,
+): Boolean {
+    if (currentTransport != RigTransportKind.BLUETOOTH_SPP) return false
+    val bluetooth = transportCapabilities[RigTransportKind.BLUETOOTH_SPP] ?: return false
+    val usb = transportCapabilities[RigTransportKind.USB_SERIAL] ?: return false
+    return bluetooth.isNotEmpty() && bluetooth == usb
+}
+
 @Composable
 private fun RadioVerifiedConnected(
     connected: RigStatus.State.Connected,
     transportLabel: String?,
+    verifyDurationSeconds: Double?,
+    sameCommandSetAsUsb: Boolean,
     onContinue: () -> Unit,
     onChangeRadio: () -> Unit,
 ) {
     SetupScaffold(
         step = SetupStep.RADIO_VERIFIED,
-        title = "${connected.descriptor} connected",
-        subtitle = if (transportLabel != null) {
-            "$transportLabel · identified and verified"
-        } else {
-            "Identified and verified"
+        title = "${SettingsPolling.stripManufacturerPrefix(connected.descriptor)} connected",
+        subtitle = radioVerifiedSubtitle(transportLabel, verifyDurationSeconds, sameCommandSetAsUsb),
+        titleLeading = {
+            Box(
+                modifier = Modifier
+                    .size(9.dp)
+                    .background(OrtColors.accentGreen, CircleShape)
+                    .testTag("setup-radio-verified-marker"),
+            )
         },
         onBack = null,
         bottomActions = {
@@ -107,7 +180,7 @@ private fun RadioVerifiedStale(stale: RigStatus.State.Stale, onReconnect: () -> 
     val sinceLabel = STALE_SINCE_FORMAT.format(Instant.ofEpochMilli(stale.sinceMillis).atZone(ZoneId.systemDefault()))
     SetupScaffold(
         step = SetupStep.RADIO_VERIFIED,
-        title = "${stale.lastKnown.descriptor} — last known",
+        title = "${SettingsPolling.stripManufacturerPrefix(stale.lastKnown.descriptor)} — last known",
         subtitle = "Stale since $sinceLabel",
         onBack = null,
         bottomActions = {

@@ -116,6 +116,10 @@ public fun SetupScaffold(
     modifier: Modifier = Modifier,
     titleOptional: Boolean = false,
     titleTrailing: (@Composable () -> Unit)? = null,
+    /** R-903: a small composable rendered before the title text, centre-aligned against it — S11's
+     * own 9dp connected marker (`Setup-Rig-Verified.dc.html`), never used by an existing caller
+     * (`null` default), so every screen but S11 renders exactly as before this parameter existed. */
+    titleLeading: (@Composable () -> Unit)? = null,
     bottomActions: @Composable ColumnScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -184,7 +188,7 @@ public fun SetupScaffold(
                                 .padding(horizontal = OrtSpacing.lg),
                         )
                     }
-                    ScaffoldTitleRow(title, subtitle, titleOptional, titleTrailing)
+                    ScaffoldTitleRow(title, subtitle, titleOptional, titleTrailing, titleLeading)
                 }
                 Column(
                     modifier = Modifier
@@ -209,12 +213,16 @@ private enum class SetupScaffoldSlot { Content, Bar }
 /** The title/subtitle pair (+ optional trailing composable) — split out of [SetupScaffold] itself
  * purely to keep it under detekt's `LongMethod` threshold, the same reason [ScaffoldHeaderRow]/
  * [SegmentBars] already are (this file's own precedent); no state or behaviour of its own. */
+@Suppress("LongParameterList") // R-903 added titleLeading -- see SetupScaffold's own class doc for
+// why this file keeps every real, load-bearing title-row fact as its own parameter rather than a
+// wrapper type.
 @Composable
 private fun ScaffoldTitleRow(
     title: String,
     subtitle: String,
     titleOptional: Boolean,
     titleTrailing: (@Composable () -> Unit)?,
+    titleLeading: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
@@ -222,6 +230,13 @@ private fun ScaffoldTitleRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                // R-903 (`Setup-Rig-Verified.dc.html`'s own connected marker): a leading composable
+                // sitting *before* the title text, centre-aligned against it rather than this row's
+                // own bottom/baseline default -- the board's own dot+title sub-row is its own
+                // `align-items: center` flex container, not baseline-anchored like the title itself.
+                titleLeading?.let { leading ->
+                    Box(modifier = Modifier.align(Alignment.CenterVertically)) { leading() }
+                }
                 Text(
                     text = title,
                     style = OrtType.screenTitle,

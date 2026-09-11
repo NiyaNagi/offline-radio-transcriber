@@ -236,4 +236,48 @@ class InputScreenTest {
             state.presetUnavailableText == "preset USB audio — none attached, choose a route",
         ) { "got $state" }
     }
+
+    // --- R-902 (reviewer A2, run 3, spec): presetInputRouteFor pre-selects only an unambiguous ---
+    // --- single match, never guessing among several ------------------------------------------------
+
+    @Test
+    fun `R_902 exactly one enumerated route of the preset kind pre-selects it`() {
+        val usbRoute = usb.copy(routeKind = org.ort.core.capture.AudioRouteKind.USB)
+        val route = presetInputRouteFor(
+            captureMode = org.ort.core.capture.CaptureMode.USB_RADIO,
+            routes = listOf(usbRoute, mic),
+        )
+
+        assert(route?.id == "usb-1") { "got $route" }
+    }
+
+    @Test
+    fun `R_902 several routes of the preset kind pre-select none, never guessing which one`() {
+        val usbA = usb.copy(id = "usb-1", routeKind = org.ort.core.capture.AudioRouteKind.USB)
+        val usbB = usb.copy(id = "usb-2", routeKind = org.ort.core.capture.AudioRouteKind.USB)
+        val route = presetInputRouteFor(
+            captureMode = org.ort.core.capture.CaptureMode.USB_RADIO,
+            routes = listOf(usbA, usbB),
+        )
+
+        assert(route == null) { "got $route" }
+    }
+
+    @Test
+    fun `R_902 no route of the preset kind pre-selects none`() {
+        val route = presetInputRouteFor(
+            captureMode = org.ort.core.capture.CaptureMode.USB_RADIO,
+            routes = listOf(mic),
+        )
+
+        assert(route == null) { "got $route" }
+    }
+
+    @Test
+    fun `R_902 no capture mode chosen yet pre-selects none`() {
+        val usbRoute = usb.copy(routeKind = org.ort.core.capture.AudioRouteKind.USB)
+        val route = presetInputRouteFor(captureMode = null, routes = listOf(usbRoute))
+
+        assert(route == null) { "got $route" }
+    }
 }

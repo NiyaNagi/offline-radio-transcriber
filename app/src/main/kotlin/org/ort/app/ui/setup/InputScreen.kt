@@ -154,6 +154,23 @@ public fun presetChipStateFor(
     }
 }
 
+/**
+ * R-902 (reviewer A2, run 3, spec): under `mode-local-mic` S04 named "Local microphone" as the
+ * preset in [presetChipStateFor]'s own chip but pre-selected no row at all, leaving `Verify this
+ * input` disabled — nothing the operator did wrong, since [SetupActivity]'s own pre-select logic
+ * used `firstOrNull`, which always picks *a* match, never asking whether it was the only one.
+ * Constitution I: with two-or-more routes of the preset's own kind enumerated (two USB devices,
+ * say), there is no honest single "the" preset route to guess at — pre-selecting the first one
+ * anyway would silently choose *for* the operator among options this mode's own preset does not
+ * actually distinguish between. [routes.singleOrNull] is the whole fix: exactly one match
+ * pre-selects it, zero or several leave [InputViewState.selectedId] `null`, same as an unresolved
+ * preset today — the operator's own tap remains how a genuine choice gets made either way.
+ */
+public fun presetInputRouteFor(captureMode: CaptureMode?, routes: List<InputRouteOption>): InputRouteOption? {
+    val presetKind = captureMode?.let(CaptureModePresets::presetsFor)?.preferredRouteKind ?: return null
+    return routes.singleOrNull { it.routeKind == presetKind }
+}
+
 private fun audioRouteKindLabel(kind: AudioRouteKind): String = when (kind) {
     AudioRouteKind.BUILT_IN_MIC -> "Built-in microphone"
     AudioRouteKind.USB -> "USB audio"
