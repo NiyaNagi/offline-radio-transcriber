@@ -4,6 +4,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeProvider
+import kotlinx.coroutines.delay
 
 /**
  * spec/ui-conformance-plan.md WP12 v5, register R-460: scrolls a composed screen's own primary
@@ -104,19 +105,60 @@ public object TourAccessibilityScroll {
      * scrollable node found (the same "biggest region, not a narrow chip row" heuristic an earlier
      * draft used for a proper tree walk), then drives *that* id's scrolling through
      * [AccessibilityNodeProvider.performAction] exactly as the host-level case above already does.
+     *
+     * **R-982 (register, reviewer E1): one page was never "the end" on a screen taller than two —
+     * `performAction`'s own `moved` return can go `true` on the first call and then `false` on the
+     * very next one, on a screen that genuinely still has real content further down (reproduced
+     * directly: `rig-bt-connected/CF06-settings-rig@2x-end` stopped inside the Link row's own
+     * sub-line, `model-missing/CF04-settings-assets@2x-end` stopped with the `LEXICON` header a
+     * sliver at the bottom edge, both screens' own real content plainly continuing past that point
+     * once actually scrolled by hand).** `performAction` only *enqueues* the scroll — it returns
+     * before Compose's own layout pass for that scroll has necessarily run, so calling it a second
+     * time immediately can read the *pre-scroll* extent and honestly (not falsely) report "moved
+     * nothing further" for a screen that has, in fact, moved nothing further **yet**. The fix: after
+     * each action, `delay` (letting the coroutine yield back to the main-thread `Choreographer` so
+     * Compose's own layout actually runs) and compare [scrollPositionOf]'s own real position against
+     * the value from before this action — `Compose`'s own semantics `verticalScrollAxisRange`
+     * (`ScrollAxisRange.value`, `SemanticsProperties.VerticalScrollAxisRange`) surfaces as
+     * `AccessibilityNodeInfo.rangeInfo.current`, a genuine numeric scroll offset (confirmed
+     * present on both `Modifier.verticalScroll` and `LazyColumn` containers by reading a live
+     * `rig-bt-connected/CF06-settings-rig@2x` dump before writing this) — the loop only stops once
+     * that position holds steady for one full action (not merely once one `performAction` call
+     * happens to report `false`), bounded by [MAX_SCROLL_ACTIONS] the same as before.
      */
-    public fun scrollToEnd(rootView: View): ScrollOutcome {
+    public suspend fun scrollToEnd(rootView: View): ScrollOutcome {
         val provider = findAccessibilityNodeProvider(rootView)
             ?: error("no AccessibilityNodeProvider anywhere under the root view — nothing to scroll")
         val targetId = findTallestScrollableVirtualViewId(provider) ?: return ScrollOutcome.NothingToScroll
+        var previousPosition = scrollPositionOf(provider, targetId)
         var steps = 0
         while (steps < MAX_SCROLL_ACTIONS) {
             val moved = provider.performAction(targetId, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, null)
             if (!moved) break
             steps++
+            delay(SCROLL_STEP_SETTLE_MILLIS)
+            val currentPosition = scrollPositionOf(provider, targetId)
+            // `null` (no `rangeInfo` reported at all) falls back to `performAction`'s own signal
+            // alone, exactly like this function's pre-R-982 behavior — never worse than before,
+            // only ever more precise when a real position is actually available.
+            if (currentPosition != null && previousPosition != null && currentPosition == previousPosition) break
+            previousPosition = currentPosition
         }
         return ScrollOutcome.Scrolled
     }
+
+    /** [AccessibilityNodeInfo.getRangeInfo]'s own `current` value — a plain field read, unsealed-safe
+     * for the identical reason [findTallestScrollableVirtualViewId]'s own `isScrollable`/
+     * `getBoundsInScreen` reads are (this object's own class-level doc comment). `null` when this
+     * particular scrollable container reports no range at all (falls back to the pre-R-982 signal —
+     * see [scrollToEnd]'s own doc comment). */
+    private fun scrollPositionOf(provider: AccessibilityNodeProvider, virtualViewId: Int): Float? =
+        provider.createAccessibilityNodeInfo(virtualViewId)?.rangeInfo?.current
+
+    /** R-982: long enough for Compose's own layout pass following one `ACTION_SCROLL_FORWARD` to
+     * actually run before the next position read — short enough that even [MAX_SCROLL_ACTIONS]
+     * worth of them stays a sub-second cost per step. */
+    private const val SCROLL_STEP_SETTLE_MILLIS = 80L
 
     /** Breadth-first over the plain [View]/[ViewGroup] tree (not the accessibility tree — that
      * search only becomes possible once a provider is already in hand) for the first descendant

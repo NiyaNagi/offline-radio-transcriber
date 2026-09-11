@@ -107,6 +107,7 @@
     { "id": "model-missing/CF04-settings-assets", "scenario": "model-missing", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
     { "id": "model-missing/CF04-settings-assets@2x", "scenario": "model-missing", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" }, "fontScale": 2.0 },
     { "id": "model-missing/CF04-settings-assets@2x-end", "scenario": "model-missing", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" }, "fontScale": 2.0, "scroll": "end" },
+    { "id": "model-missing/CF04-settings-assets-end", "scenario": "model-missing", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" }, "scroll": "end" },
     { "id": "overnight/CF05-settings-tier", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "TIER" } },
     { "id": "overnight/CF06-settings-rig", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" } },
     { "id": "rig-lost/CF06-settings-rig", "scenario": "rig-lost", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" } },
@@ -238,6 +239,7 @@
     { "id": "mode-change-pending/CF02-settings-capture", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" } },
     { "id": "mode-change-pending/CF02-settings-capture@2x", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "fontScale": 2.0 },
     { "id": "mode-change-pending/CF02-settings-capture@2x-end", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "fontScale": 2.0, "scroll": "end" },
+    { "id": "mode-change-pending/CF02-settings-capture-end", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "scroll": "end" },
 
     { "id": "assets-bundled/CF04-settings-assets", "scenario": "assets-bundled", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
     { "id": "assets-bundled/CF04-settings-assets@2x", "scenario": "assets-bundled", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" }, "fontScale": 2.0 },
