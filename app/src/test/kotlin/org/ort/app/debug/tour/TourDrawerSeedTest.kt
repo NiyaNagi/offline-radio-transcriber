@@ -7,12 +7,15 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.debug.Scenarios
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.navigation.OrtNavHost
+import org.ort.app.ui.navigation.ReaderNavigator
+import org.ort.app.ui.navigation.rememberReaderNavigator
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.pipeline.capture.AsrAvailability
@@ -95,5 +98,31 @@ class TourDrawerSeedTest {
             false
         }
         assertFalse("drawer-rows should not be on-screen with no seed at all", displayed)
+    }
+
+    /**
+     * R-803 (halt): [org.ort.app.ui.navigation.ReaderNavigator.drawerOpenState] is what
+     * `ScreenshotTourActivity` polls (`activeNavigator`'s own doc comment) to prove a screen has
+     * actually settled to the drawer state a step asked for before capturing, rather than assuming a
+     * fixed delay always suffices — this proves the mirror itself is real: opening and closing the
+     * real `DrawerState` `OrtNavHost` owns internally is genuinely reflected back out through the
+     * `navigator` handle this class's own composition builds, the same handle
+     * `ScreenshotTourActivity`'s `SideEffect` publishes as `activeNavigator`.
+     */
+    @Test
+    fun `R_TOUR_DRAWER_OPEN_STATE_MIRROR navigator drawerOpenState reflects OrtNavHost's real DrawerState`() {
+        val sessionId = runBlocking { Scenarios.load(context, "overnight") }.primarySessionId
+        val seed = runBlocking { TourIds.resolveSeed(context, sessionId, mapOf("openDrawer" to "true")) }
+        lateinit var navigator: ReaderNavigator
+        composeTestRule.setContent {
+            navigator = rememberReaderNavigator(seed = seed)
+            OrtTheme { OrtNavHost(sessionId = sessionId, seed = seed, navigator = navigator) }
+        }
+        composeTestRule.waitForIdle()
+
+        assertTrue(
+            "drawerOpenState must mirror the real, seeded-open DrawerState",
+            navigator.drawerOpenState.value,
+        )
     }
 }

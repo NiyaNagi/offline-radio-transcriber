@@ -17,6 +17,12 @@ public data class TourManifestEntry(
     public val ok: Boolean,
     public val errorMessage: String?,
     public val apkHash: String,
+    /** Coordinator round two (the seven-error first-tour-run finding): a step that captured
+     * successfully but has something worth recording alongside it — today, exactly
+     * `"no scroll — fits"` for a `scroll: "end"` step whose screen has no vertically-scrollable
+     * container ([TourAccessibilityScroll.ScrollOutcome.NothingToScroll]). `null` for every ordinary
+     * step, `ok`-and-error-message are otherwise unaffected by this field. */
+    public val note: String? = null,
 ) {
     public fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -28,6 +34,7 @@ public data class TourManifestEntry(
         put("ok", ok)
         put("errorMessage", errorMessage ?: JSONObject.NULL)
         put("apkHash", apkHash)
+        put("note", note ?: JSONObject.NULL)
     }
 
     public companion object {
@@ -38,6 +45,7 @@ public data class TourManifestEntry(
             width: Int,
             height: Int,
             apkHash: String,
+            note: String? = null,
         ): TourManifestEntry = TourManifestEntry(
             id,
             scenario,
@@ -48,6 +56,7 @@ public data class TourManifestEntry(
             ok = true,
             errorMessage = null,
             apkHash = apkHash,
+            note = note,
         )
 
         public fun failure(
@@ -70,6 +79,7 @@ public data class TourManifestEntry(
 
         public fun fromJson(obj: JSONObject): TourManifestEntry {
             val hasError = obj.has("errorMessage") && !obj.isNull("errorMessage")
+            val hasNote = obj.has("note") && !obj.isNull("note")
             return TourManifestEntry(
                 id = obj.getString("id"),
                 scenario = obj.getString("scenario"),
@@ -80,6 +90,7 @@ public data class TourManifestEntry(
                 ok = obj.getBoolean("ok"),
                 errorMessage = obj.optString("errorMessage").takeIf { hasError },
                 apkHash = obj.optString("apkHash", "unknown"),
+                note = obj.optString("note").takeIf { hasNote },
             )
         }
     }

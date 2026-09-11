@@ -32,10 +32,32 @@ import android.view.accessibility.AccessibilityNodeProvider
 public object TourAccessibilityScroll {
 
     /**
+     * What [scrollToEnd] actually did — a closed pair (constitution I), never a thrown exception for
+     * the honest "this screen has nothing to scroll" case (coordinator round two, the seven-error
+     * first-tour-run finding): a `scroll: "end"` step exists to *prove reachability*, and a screen
+     * that already fits without scrolling, even at font scale 2.0, proves exactly that — it is
+     * evidence the screen does not clip, not a failure to record as one.
+     */
+    public sealed interface ScrollOutcome {
+        /** A real scrollable container was found and driven to its end. */
+        public data object Scrolled : ScrollOutcome
+
+        /** No vertically-scrollable container exists in this screen's accessibility tree — the
+         * screen's whole content already fits on one page, even at this font scale. Never thrown:
+         * [ScreenshotTourActivity] captures the screen exactly as it stands and records a note, not
+         * an error (see that class's own call sites). */
+        public data object NothingToScroll : ScrollOutcome
+    }
+
+    /**
      * Scrolls [rootView]'s screen to the end of its primary vertical scroll container, by driving
      * repeated `ACTION_SCROLL_FORWARD` accessibility actions against the accessibility root node,
      * stopping once an action reports it moved nothing further (never a fixed step count guessing
-     * "the end").
+     * "the end"). Returns [ScrollOutcome.NothingToScroll] rather than throwing when the screen has no
+     * scrollable container at all — a real, common case (a short screen at 2x font scale can still
+     * fit on one page) distinct from [error]'s own genuine-defect case below (no accessibility
+     * bridge present at all, which would mean nothing on this screen — scrollable or not — could ever
+     * be found this way).
      *
      * **Why this walks the *View* hierarchy first, found only by actually running this on a real
      * device, not by inspection**: `View.getAccessibilityNodeProvider()` is a plain per-View getter,
@@ -83,17 +105,17 @@ public object TourAccessibilityScroll {
      * draft used for a proper tree walk), then drives *that* id's scrolling through
      * [AccessibilityNodeProvider.performAction] exactly as the host-level case above already does.
      */
-    public fun scrollToEnd(rootView: View) {
+    public fun scrollToEnd(rootView: View): ScrollOutcome {
         val provider = findAccessibilityNodeProvider(rootView)
             ?: error("no AccessibilityNodeProvider anywhere under the root view — nothing to scroll")
-        val targetId = findTallestScrollableVirtualViewId(provider)
-            ?: error("no vertically-scrollable container found in this screen's accessibility tree")
+        val targetId = findTallestScrollableVirtualViewId(provider) ?: return ScrollOutcome.NothingToScroll
         var steps = 0
         while (steps < MAX_SCROLL_ACTIONS) {
             val moved = provider.performAction(targetId, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, null)
             if (!moved) break
             steps++
         }
+        return ScrollOutcome.Scrolled
     }
 
     /** Breadth-first over the plain [View]/[ViewGroup] tree (not the accessibility tree — that

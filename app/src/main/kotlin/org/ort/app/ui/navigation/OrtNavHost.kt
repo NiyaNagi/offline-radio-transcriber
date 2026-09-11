@@ -22,6 +22,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
@@ -174,6 +175,16 @@ public fun OrtNavHost(
     // open on first composition — `NavSeed.openDrawer`'s own doc comment for why this, not a
     // synthesised tap on the header's drawer icon.
     val drawerState = rememberDrawerState(if (seed?.openDrawer == true) DrawerValue.Open else DrawerValue.Closed)
+    // R-803 (halt, coordinator-approved cross-boundary — screenshot-tour package, this round):
+    // mirrors the drawer's real open/closed state into `navigator.drawerOpenState` so a caller with
+    // no composition of its own (`ScreenshotTourActivity`, which only ever gets `navigator` back,
+    // never `drawerState`) can poll whether a just-composed screen's drawer has actually settled to
+    // the state it asked for, instead of capturing on elapsed time alone (the exact bug class behind
+    // `mode-local-mic/ST01`/`mode-change-pending/CF11`/... capturing the open drawer over the right
+    // destination).
+    LaunchedEffect(drawerState, navigator) {
+        snapshotFlow { drawerState.isOpen }.collect { navigator.drawerOpenState.value = it }
+    }
     val scope = rememberCoroutineScope()
     // Hoisted into `navigator` (round 3) so `ReaderActivity`'s `FailureHostActions`, mounted above
     // this composable, can also switch destinations — see `ReaderNavigator.kt`'s own doc comment.

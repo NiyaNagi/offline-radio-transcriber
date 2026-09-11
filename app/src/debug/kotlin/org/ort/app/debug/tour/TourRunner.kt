@@ -8,8 +8,15 @@ import java.io.FileOutputStream
 
 /** What one [TourStep] produced, before it is written to disk — [TourRunner] owns the disk I/O so
  * a [TourStepRenderer] stays a pure "compose it, capture it" step, independently testable (see
- * `ScreenshotTourTest`'s own fake). */
-public data class TourCapture(public val bitmap: Bitmap, public val width: Int, public val height: Int)
+ * `ScreenshotTourTest`'s own fake). [note] (coordinator round two) carries forward to
+ * [TourManifestEntry.note] unchanged — today, exactly `"no scroll — fits"` when a `scroll: "end"`
+ * step's own screen had nothing to scroll ([TourAccessibilityScroll.ScrollOutcome.NothingToScroll]). */
+public data class TourCapture(
+    public val bitmap: Bitmap,
+    public val width: Int,
+    public val height: Int,
+    public val note: String? = null,
+)
 
 /**
  * Produces one [TourCapture] for a [TourStep] whose base scenario [TourRunner] has already loaded.
@@ -78,7 +85,15 @@ public class TourRunner(
         val loadResult = Scenarios.load(context, step.scenario)
         val capture = renderer.render(step, loadResult.primarySessionId)
         writePng(capture.bitmap, File(outputDir, "${step.id}.png"))
-        TourManifestEntry.success(step.id, step.scenario, step.fontScale, capture.width, capture.height, apkHash)
+        TourManifestEntry.success(
+            step.id,
+            step.scenario,
+            step.fontScale,
+            capture.width,
+            capture.height,
+            apkHash,
+            note = capture.note,
+        )
     } catch (e: Exception) {
         TourManifestEntry.failure(step.id, step.scenario, step.fontScale, e.message ?: e.toString(), apkHash)
     }

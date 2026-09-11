@@ -7,6 +7,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -19,11 +20,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.ort.app.BuildConfig
 import org.ort.app.debug.Scenarios
 import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.OrtNavHost
 import org.ort.app.ui.navigation.ReaderDestination
+import org.ort.app.ui.navigation.ReaderNavigator
 import org.ort.app.ui.navigation.rememberReaderNavigator
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.theme.OrtTheme
@@ -85,9 +88,26 @@ public class ScreenshotTourActivity : ComponentActivity() {
     private var currentDestinationStep by mutableStateOf<ResolvedDestinationStep?>(null)
     private var pendingSetupActivity: CompletableDeferred<SetupActivity>? = null
 
+    /** R-803: the [ReaderNavigator] the currently-composed destination step actually built, written
+     * once per fresh `key(resolved.id)` composition via [SideEffect] (below) — the one handle
+     * [renderDestinationStep] (a plain suspend function, outside composition) can poll to prove a
+     * screen has actually settled to what the step asked for, rather than assuming a fixed delay
+     * always suffices. `@Volatile` because the write happens on the composition/UI thread and the
+     * read happens from `lifecycleScope`'s own coroutine — both are the main thread in practice, but
+     * this makes that safe rather than assumed. */
+    @Volatile
+    private var activeNavigator: ReaderNavigator? = null
+
     private val lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityResumed(activity: Activity) {
-            if (activity is SetupActivity) pendingSetupActivity?.takeIf { !it.isCompleted }?.complete(activity)
+            // R-803: an activity already finishing (this same class's own `finish()` call for the
+            // *previous* setup step, mid-teardown) must never complete a *new* step's deferred — the
+            // exact race behind a captured screenshot showing the previous step's own screen/font
+            // scale instead of the one just requested (`assets-bundled/S12-ready-bundled` showing
+            // `setup-rig-bluetooth/S10b` at its own 2x scale, found by the coordinator's spot-check).
+            if (activity is SetupActivity && !activity.isFinishing) {
+                pendingSetupActivity?.takeIf { !it.isCompleted }?.complete(activity)
+            }
         }
 
         override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
@@ -116,6 +136,11 @@ public class ScreenshotTourActivity : ComponentActivity() {
                                 initialSettingsScreen = resolved.navSeed?.settingsScreen,
                                 seed = resolved.navSeed,
                             )
+                            // R-803: published for `renderDestinationStep` to poll — see
+                            // `activeNavigator`'s own doc comment. Runs after every successful
+                            // composition of this exact `key(resolved.id)` subtree, so a step that is
+                            // still mid-render never publishes a half-built navigator.
+                            SideEffect { activeNavigator = navigator }
                             OrtNavHost(sessionId = resolved.sessionId, seed = resolved.navSeed, navigator = navigator)
                         }
                     }
@@ -179,12 +204,28 @@ public class ScreenshotTourActivity : ComponentActivity() {
         val destination = ReaderDestination.entries.firstOrNull { it.name == step.destination }
             ?: error("tour step '${step.id}' names unknown destination '${step.destination}'")
         val navSeed = TourIds.resolveSeed(applicationContext, sessionId, step.drillIn)
+        val expectDrawerOpen = navSeed?.openDrawer == true
+        // R-803 (halt): a stale `activeNavigator` from the *previous* step's own, about-to-be-torn-
+        // down composition must never be read as "already matching" this step's own destination —
+        // cleared before the new `key(resolved.id)` composition even starts, not after.
+        activeNavigator = null
         currentDestinationStep = ResolvedDestinationStep(step.id, destination, navSeed, step.fontScale, sessionId)
+        val settled = awaitDestinationSettled(destination, expectDrawerOpen)
+        if (!settled) {
+            val observed = activeNavigator
+            error(
+                "tour step '${step.id}' never settled to destination=$destination drawerOpen=$expectDrawerOpen " +
+                    "within ${STATE_WAIT_TIMEOUT_MILLIS}ms — observed " +
+                    "destination=${observed?.currentState?.value} drawerOpen=${observed?.drawerOpenState?.value}",
+            )
+        }
         // Composition + the first poll tick: `OrtNavHost`'s own `LaunchedEffect(sessionId)` polling
         // loops run their body once, synchronously, before their first `delay(2_000)` (confirmed by
         // reading `OrtNavHost.kt`'s `rememberDrawerLiveState` before writing this), so the initial
         // read completes well inside this window on a real, continuously-rendering window — not a
-        // blind multi-second sleep, a bound sized to "one recomposition + one local DB read".
+        // blind multi-second sleep, a bound sized to "one recomposition + one local DB read". Kept
+        // as a floor for animations even now that the state match above proves the right screen
+        // composed (R-803's own coordinator instruction).
         delay(DESTINATION_SETTLE_MILLIS)
         if (step.override != null) {
             Scenarios.load(applicationContext, step.override)
@@ -195,14 +236,36 @@ public class ScreenshotTourActivity : ComponentActivity() {
             delay(OVERRIDE_SETTLE_MILLIS)
         }
         if (step.waitMillis > 0) delay(step.waitMillis)
+        var scrollNote: String? = null
         if (step.scroll == "end") {
-            TourAccessibilityScroll.scrollToEnd(window.decorView)
-            delay(SCROLL_SETTLE_MILLIS)
+            when (TourAccessibilityScroll.scrollToEnd(window.decorView)) {
+                TourAccessibilityScroll.ScrollOutcome.Scrolled -> delay(SCROLL_SETTLE_MILLIS)
+                TourAccessibilityScroll.ScrollOutcome.NothingToScroll -> scrollNote = NO_SCROLL_NOTE
+            }
         }
         val bitmap = window.decorView.drawToBitmap()
         currentDestinationStep = null
-        return TourCapture(bitmap, bitmap.width, bitmap.height)
+        activeNavigator = null
+        return TourCapture(bitmap, bitmap.width, bitmap.height, note = scrollNote)
     }
+
+    /** R-803 (halt): polls [activeNavigator] (bounded, [STATE_WAIT_TIMEOUT_MILLIS]) until it reports
+     * exactly the destination and drawer-open state this step asked for, rather than assuming a
+     * fixed delay always suffices — the fix for a `@2x` capture showing the previous step's own
+     * still-open drawer over the right destination underneath it (the coordinator's own spot-check
+     * finding, `mode-local-mic/ST01`/`mode-change-pending/CF11`/`assets-bundled`/`tier0-llm-stored`'s
+     * own `CF04`/`CF11` steps). Returns `true` the moment both match; `false` on timeout — the caller
+     * decides how to report that, with whatever `activeNavigator` last observed. */
+    private suspend fun awaitDestinationSettled(destination: ReaderDestination, expectDrawerOpen: Boolean): Boolean =
+        withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
+            while (
+                activeNavigator?.currentState?.value != destination ||
+                activeNavigator?.drawerOpenState?.value != expectDrawerOpen
+            ) {
+                delay(STATE_POLL_INTERVAL_MILLIS)
+            }
+            true
+        } == true
 
     private suspend fun renderSetupStep(step: TourStep): TourCapture {
         val stepName = SetupStepIds.setupStepNameFor(requireNotNull(step.setup))
@@ -216,15 +279,35 @@ public class ScreenshotTourActivity : ComponentActivity() {
         )
         val setupActivity = withTimeout(SETUP_LAUNCH_TIMEOUT_MILLIS) { deferred.await() }
         pendingSetupActivity = null
+        // R-803 (halt): the resolved `setupActivity` reference can, in principle, still be the
+        // *previous* step's own instance if `onActivityResumed` raced its teardown (the `isFinishing`
+        // guard above narrows that, does not eliminate it) — this is the check that turns "captured
+        // the wrong activity's screen" into an honest, loud error instead: a stale activity's own
+        // `currentStepForTest` never advances to `stepName`, so this bound times out rather than
+        // silently accepting whatever that activity happened to be showing.
+        val settled = withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
+            while (setupActivity.currentStepForTest?.name != stepName) delay(STATE_POLL_INTERVAL_MILLIS)
+            true
+        } == true
+        if (!settled) {
+            error(
+                "tour step '${step.id}' never settled to setup step '$stepName' within " +
+                    "${STATE_WAIT_TIMEOUT_MILLIS}ms — observed step '${setupActivity.currentStepForTest}' " +
+                    "(isFinishing=${setupActivity.isFinishing})",
+            )
+        }
         delay(DESTINATION_SETTLE_MILLIS)
         if (step.waitMillis > 0) delay(step.waitMillis)
+        var scrollNote: String? = null
         if (step.scroll == "end") {
-            TourAccessibilityScroll.scrollToEnd(setupActivity.window.decorView)
-            delay(SCROLL_SETTLE_MILLIS)
+            when (TourAccessibilityScroll.scrollToEnd(setupActivity.window.decorView)) {
+                TourAccessibilityScroll.ScrollOutcome.Scrolled -> delay(SCROLL_SETTLE_MILLIS)
+                TourAccessibilityScroll.ScrollOutcome.NothingToScroll -> scrollNote = NO_SCROLL_NOTE
+            }
         }
         val bitmap = setupActivity.window.decorView.drawToBitmap()
         setupActivity.finish()
-        return TourCapture(bitmap, bitmap.width, bitmap.height)
+        return TourCapture(bitmap, bitmap.width, bitmap.height, note = scrollNote)
     }
 
     private data class ResolvedDestinationStep(
@@ -249,5 +332,19 @@ public class ScreenshotTourActivity : ComponentActivity() {
          * above; one frame plus margin, not sized to any poll interval since nothing here waits on a
          * poll tick. */
         private const val SCROLL_SETTLE_MILLIS = 300L
+
+        /** Coordinator round two: the manifest note for a `scroll: "end"` step whose own screen has
+         * no vertically-scrollable container at all — evidence the screen fits, not a failure. */
+        private const val NO_SCROLL_NOTE = "no scroll — fits"
+
+        /** R-803 (halt): the bound `awaitDestinationSettled`/`renderSetupStep`'s own settle-wait use
+         * before giving up and reporting an honest error — generous (well past a single dropped
+         * frame or a backlogged dispatcher under tour load) but still a real bound, never an
+         * indefinite wait. */
+        private const val STATE_WAIT_TIMEOUT_MILLIS = 5_000L
+
+        /** How often those same waits re-check the observed state — cheap in-process reads
+         * (`MutableState`/a plain field), never worth a longer interval. */
+        private const val STATE_POLL_INTERVAL_MILLIS = 30L
     }
 }

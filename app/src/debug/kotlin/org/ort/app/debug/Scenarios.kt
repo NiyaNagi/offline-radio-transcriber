@@ -1300,6 +1300,15 @@ public object Scenarios {
             routedDeviceMatches = true,
             openedAtMillis = SystemClock.wallMillis(),
         )
+        // R-804 (halt): CF02/CF11 read CaptureConfigurationStore.current(), not InputStatus — a USB
+        // session with nothing written here left them reading the store's own honest DEFAULT
+        // (LOCAL_MICROPHONE), inconsistent with the USB descriptor just published above.
+        // `markCapturing` above already flipped `CaptureState.isCapturing`, so this must be the
+        // force-current variant, not the ordinary store — see that function's own kdoc.
+        forceCurrentCaptureConfiguration(
+            context,
+            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
+        )
         LevelStatus.update(
             LevelStatus.State.Measured(
                 peakDbfs = -38f,
@@ -1364,6 +1373,12 @@ public object Scenarios {
             routedDeviceMatches = true,
             openedAtMillis = SystemClock.wallMillis(),
         )
+        // R-804 (halt): see `levelLow`'s own identical comment — the force-current variant, since
+        // `markCapturing` above already flipped `CaptureState.isCapturing`.
+        forceCurrentCaptureConfiguration(
+            context,
+            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
+        )
         LevelStatus.update(
             LevelStatus.State.Measured(
                 peakDbfs = 0f,
@@ -1401,6 +1416,12 @@ public object Scenarios {
             routeVerified = true,
             routedDeviceMatches = true,
             openedAtMillis = SystemClock.wallMillis(),
+        )
+        // R-804 (halt): see `levelLow`'s own identical comment — the force-current variant, since
+        // `markCapturing` above already flipped `CaptureState.isCapturing`.
+        forceCurrentCaptureConfiguration(
+            context,
+            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
         )
         return LoadResult(0, 1, sessionId)
     }
@@ -1559,6 +1580,18 @@ public object Scenarios {
         )
         SharedPreferencesSettingsStore(settingsPrefs).audioBudgetGb = 60
         ScenarioFixtures.installEveryModelFixture(context)
+        // R-804 (halt): the real fix for "overnight/CF02 shows Local microphone above a USB Audio
+        // Device input row" — CF02/CF11 read CaptureConfigurationStore.current(), never SetupStore
+        // or InputStatus, so a scenario naming a USB session must write it here too. Every caller of
+        // this shared base (overnight/overnight-live/stations-14-nights) selects the same usb-1
+        // input this function already publishes to InputStatus below. `overnight-live` has already
+        // marked `CaptureState` capturing by the time this runs — [forceCurrentCaptureConfiguration],
+        // not the ordinary store, is what keeps this landing as `current` regardless (see that
+        // function's own kdoc for the regression this fixes).
+        forceCurrentCaptureConfiguration(
+            context,
+            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
+        )
         // R-494 (register, Reviewer D round 2): `SettingsPolling`'s own Input rows (CF01/CF02 —
         // `inputSummaryLine`/`capture()`) never read `SetupStore` at all — confirmed by reading
         // that file before assuming the register's own guess — they read the live `InputStatus`
@@ -1602,6 +1635,12 @@ public object Scenarios {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        // R-804 (halt): CF02/CF11 read CaptureConfigurationStore.current(), not SetupStore — every
+        // caller of this shared base (setup-verified/setup-level/setup-radio) selects the same
+        // usb-1 input above, so each must agree with the real store those two boards actually read.
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
+        )
         return store
     }
 
@@ -1840,6 +1879,30 @@ public object Scenarios {
                 Context.MODE_PRIVATE,
             ),
         )
+
+    /**
+     * R-804 (halt, regression found by this fix's own gate run): [SharedPreferencesCaptureConfigurationStore.update]'s
+     * freeze rule (FR-CAP-12) reads the real, live [CaptureState.isCapturing] — correct for a caller
+     * asking to *change* a running session's configuration mid-flight, wrong for a scenario simply
+     * *establishing the baseline* a fixture session already reflects, called *after*
+     * [ScenarioFixtures.markCapturing] has already flipped that flag (`overnight-live`'s own
+     * `seedConfiguredDeviceState` call site, `levelLow`/`levelClip`/`inputVerified`'s own). Using the
+     * ordinary store there landed the write as `pendingConfiguration` instead of `current` — CF02/CF11
+     * would have read the store's own honest `DEFAULT` (`LOCAL_MICROPHONE`) forever, since nothing in
+     * these debug-only scenarios ever calls `activateForNewSession` to promote it. This variant's own
+     * `isCapturing` seam always reports `false`, so [SharedPreferencesCaptureConfigurationStore.update]
+     * always lands the write as `current`, regardless of what the real, process-wide [CaptureState]
+     * happens to read at the moment this runs.
+     */
+    private fun forceCurrentCaptureConfiguration(context: Context, configuration: CaptureConfiguration) {
+        SharedPreferencesCaptureConfigurationStore(
+            context.applicationContext.getSharedPreferences(
+                SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+                Context.MODE_PRIVATE,
+            ),
+            isCapturing = { false },
+        ).update(configuration)
+    }
 
     /** `setup-mode` — D33/FR-CAP-8, S00: a completely fresh install, so
      * [SetupStateMachine.stepFor] resumes at [SetupStep.MODE] directly from a cold `MainActivity`
