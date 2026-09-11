@@ -20,18 +20,26 @@ class BundledAssetInstallerTest {
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    private fun manifestJson(entries: List<Triple<String, String, String>>, missingIds: Set<String> = emptySet()) =
-        buildString {
-            append("{\"assets\": [")
-            entries.forEachIndexed { index, (id, destination, sha) ->
-                append(
-                    """{"id": "$id", "destination": "$destination", "sha256": "$sha", "sizeBytes": 1, """ +
-                        """"tiers": ["T0"], "missing": ${id in missingIds}}""",
-                )
-                if (index != entries.lastIndex) append(",")
-            }
-            append("]}")
+    /** [sizeBytes] is the manifest's own declared size (R-865) — it gates
+     * [BundledAssetInstaller]'s idempotency shortcut, so a test relying on that shortcut (an
+     * already-installed part must not be re-copied) needs this to genuinely match the on-disk
+     * fixture's real byte count; every other test is free to use any value here, since the
+     * fresh-copy-then-verify path never consults it (only the real sha256 of what it actually
+     * copied). */
+    private data class AssetFixture(val id: String, val destination: String, val sha256: String, val sizeBytes: Long)
+
+    private fun manifestJson(entries: List<AssetFixture>, missingIds: Set<String> = emptySet()) = buildString {
+        append("{\"assets\": [")
+        entries.forEachIndexed { index, entry ->
+            append(
+                """{"id": "${entry.id}", "destination": "${entry.destination}", """ +
+                    """"sha256": "${entry.sha256}", "sizeBytes": ${entry.sizeBytes}, """ +
+                    """"tiers": ["T0"], "missing": ${entry.id in missingIds}}""",
+            )
+            if (index != entries.lastIndex) append(",")
         }
+        append("]}")
+    }
 
     @Test
     @Requirement("AC-136")
@@ -40,8 +48,13 @@ class BundledAssetInstallerTest {
         val encoderBytes = byteArrayOf(1, 2, 3, 4, 5)
         val vadBytes = byteArrayOf(9, 8, 7)
         val entries = listOf(
-            Triple("ASR_ENCODER", "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx", sha256(encoderBytes)),
-            Triple("VAD", "models/silero-vad/silero_vad.onnx", sha256(vadBytes)),
+            AssetFixture(
+                "ASR_ENCODER",
+                "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx",
+                sha256(encoderBytes),
+                encoderBytes.size.toLong(),
+            ),
+            AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", sha256(vadBytes), vadBytes.size.toLong()),
         )
         val source = FakeBundledAssetSource(
             mapOf(
@@ -78,7 +91,7 @@ class BundledAssetInstallerTest {
         val source = FakeBundledAssetSource(
             mapOf(
                 "bundled/manifest.json" to manifestJson(
-                    listOf(Triple("VAD", "models/silero-vad/silero_vad.onnx", correctSha)),
+                    listOf(AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", correctSha, 4)),
                 ).toByteArray(),
                 "bundled/models/silero-vad/silero_vad.onnx" to corruptBytes,
             ),
@@ -112,7 +125,7 @@ class BundledAssetInstallerTest {
         val filesDir = Files.createTempDirectory("bundled-installer-reinstall").toFile()
         val correctBytes = byteArrayOf(4, 5, 6, 7)
         val correctSha = sha256(correctBytes)
-        val manifest = manifestJson(listOf(Triple("VAD", "models/silero-vad/silero_vad.onnx", correctSha)))
+        val manifest = manifestJson(listOf(AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", correctSha, 4)))
 
         val corruptSource = FakeBundledAssetSource(
             mapOf(
@@ -142,7 +155,7 @@ class BundledAssetInstallerTest {
     fun `an asset marked missing in the manifest reports NotBundledInThisBuild honestly, never Failed`() {
         val filesDir = Files.createTempDirectory("bundled-installer-missing").toFile()
         val manifest = manifestJson(
-            listOf(Triple("LLM_GEMMA3_1B", "models/llm/gemma3-1b-it-int4.task", "a".repeat(64))),
+            listOf(AssetFixture("LLM_GEMMA3_1B", "models/llm/gemma3-1b-it-int4.task", "a".repeat(64), 554661243)),
             missingIds = setOf("LLM_GEMMA3_1B"),
         )
         val source = FakeBundledAssetSource(mapOf("bundled/manifest.json" to manifest.toByteArray()))
@@ -169,7 +182,7 @@ class BundledAssetInstallerTest {
         val source = FakeBundledAssetSource(
             mapOf(
                 "bundled/manifest.json" to manifestJson(
-                    listOf(Triple("VAD", relativeDestination, correctSha)),
+                    listOf(AssetFixture("VAD", relativeDestination, correctSha, correctBytes.size.toLong())),
                 ).toByteArray(),
                 "bundled/$relativeDestination" to corruptBytes,
             ),
@@ -201,7 +214,9 @@ class BundledAssetInstallerTest {
         val correctBytes = byteArrayOf(4, 5, 6, 7)
         val correctSha = sha256(correctBytes)
         val relativeDestination = "models/silero-vad/silero_vad.onnx"
-        val manifest = manifestJson(listOf(Triple("VAD", relativeDestination, correctSha)))
+        val manifest = manifestJson(
+            listOf(AssetFixture("VAD", relativeDestination, correctSha, correctBytes.size.toLong())),
+        )
         val destination = java.io.File(filesDir, relativeDestination)
 
         val corruptSource = FakeBundledAssetSource(
@@ -252,7 +267,9 @@ class BundledAssetInstallerTest {
 
         val source = FakeBundledAssetSource(
             mapOf(
-                "bundled/manifest.json" to manifestJson(listOf(Triple("VAD", relativeDestination, sha))).toByteArray(),
+                "bundled/manifest.json" to manifestJson(
+                    listOf(AssetFixture("VAD", relativeDestination, sha, bytes.size.toLong())),
+                ).toByteArray(),
             ),
         )
 
@@ -278,8 +295,13 @@ class BundledAssetInstallerTest {
         val encoderBytes = byteArrayOf(1, 2, 3, 4, 5)
         val vadBytes = byteArrayOf(9, 8, 7)
         val entries = listOf(
-            Triple("ASR_ENCODER", "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx", sha256(encoderBytes)),
-            Triple("VAD", "models/silero-vad/silero_vad.onnx", sha256(vadBytes)),
+            AssetFixture(
+                "ASR_ENCODER",
+                "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx",
+                sha256(encoderBytes),
+                encoderBytes.size.toLong(),
+            ),
+            AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", sha256(vadBytes), vadBytes.size.toLong()),
         )
         val corruptAssetPath = "bundled/models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx"
         val realSource = FakeBundledAssetSource(
@@ -331,7 +353,14 @@ class BundledAssetInstallerTest {
         val source = FakeBundledAssetSource(
             mapOf(
                 "bundled/manifest.json" to manifestJson(
-                    listOf(Triple("VAD", "models/silero-vad/silero_vad.onnx", sha256(bytes))),
+                    listOf(
+                        AssetFixture(
+                            "VAD",
+                            "models/silero-vad/silero_vad.onnx",
+                            sha256(bytes),
+                            bytes.size.toLong(),
+                        ),
+                    ),
                 ).toByteArray(),
             ),
         )
@@ -339,5 +368,43 @@ class BundledAssetInstallerTest {
         val result = BundledAssetInstaller.installAll(filesDir, source).single()
 
         assertTrue(result is BundledAssetState.Installed)
+    }
+
+    // ---- R-865 (register, reopened by reviewer D3 on run 4a): a marker whose *text* still matches
+    // is not proof the real bytes are still there — installAll's own idempotency shortcut must not
+    // trust a truncated/deleted file forever; it must re-copy and re-verify for real.
+
+    @Test
+    @Requirement("R-865")
+    fun `R_865 installAll does not trust a marker over a truncated file — it re-copies and re-verifies`() {
+        val filesDir = Files.createTempDirectory("bundled-installer-r865-reverify").toFile()
+        val correctBytes = byteArrayOf(4, 5, 6, 7, 8, 9)
+        val correctSha = sha256(correctBytes)
+        val relativeDestination = "models/silero-vad/silero_vad.onnx"
+        val destination = java.io.File(filesDir, relativeDestination)
+
+        // Exactly the reopened bug's own shape: a marker holding the REAL, correct digest, over a
+        // 0-byte file — never a real install through this class.
+        destination.parentFile?.mkdirs()
+        destination.writeBytes(ByteArray(0))
+        java.io.File(destination.parentFile, destination.name + ".sha256").writeText(correctSha)
+
+        val source = FakeBundledAssetSource(
+            mapOf(
+                "bundled/manifest.json" to manifestJson(
+                    listOf(AssetFixture("VAD", relativeDestination, correctSha, correctBytes.size.toLong())),
+                ).toByteArray(),
+                "bundled/$relativeDestination" to correctBytes,
+            ),
+        )
+
+        val result = BundledAssetInstaller.installAll(filesDir, source).single()
+
+        assertTrue("expected a real re-install, got $result", result is BundledAssetState.Installed)
+        assertEquals(
+            "the truncated placeholder must be replaced with the real bytes, not left alone",
+            correctBytes.toList(),
+            destination.readBytes().toList(),
+        )
     }
 }

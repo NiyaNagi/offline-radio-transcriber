@@ -32,6 +32,88 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPG follow-up: R-865 reopened — currentState refuses verified for a truncated bundled part)
+
+### (pending) — bundled assets: a marker text match is no longer enough; ModelsController compares on-disk length against the manifest's declared size
+
+**Scope:** `app/src/main/kotlin/org/ort/app/assets/BundledAssetInstaller.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (the `ModelRowViewState`/`rowFor`/
+`currentState` half only — no screen file touched),
+`app/src/test/kotlin/org/ort/app/assets/BundledAssetInstallerTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerTest.kt`. Also one existing test in
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt` (not `ui/`, but WPI's own logical
+territory) — see item 4 below; flagged, not silently absorbed.
+
+**Requirements/ACs:** R-865 (register, reopened by reviewer D3 on run 4a — `tier0-llm-stored`
+read "555 MB · on disk: 0 KB · bundled · verified e3d981c0"), FR-AST-3a. WPE's and WPI's earlier
+partial fixes (`85965b00`, `ccc12ce3`) addressed the declared-size display and the scenario's own
+fixture; this closes the deeper gap the reviewer actually found — `ModelsController.currentState`
+itself still called a 0-byte file "verified" because its own check never compared length against
+anything.
+
+**What changed:**
+
+1. **`BundledAssetInstaller.installOne`'s idempotency shortcut** now requires
+   `destination.length() == entry.sizeBytes` (a new field on the internal `ManifestEntry`, parsed
+   from the manifest's own `sizeBytes`) in addition to the existing marker-text match, split into
+   `isAlreadyVerified` to stay under detekt's condition-complexity threshold. A marker whose *text*
+   still matches over a truncated or deleted file no longer short-circuits — the next
+   `installAll`/`reinstall` falls through to the real copy-then-verify path and either repairs the
+   part for real or (if the source is *also* bad) produces a proper R-934 rejection, never a silent
+   "still installed".
+2. **`ModelsController.currentState`/`rowFor`** gained the same floor at the reporting layer, which
+   is what the reopened bug actually named: both the Known- and Unknown-checksum branches (split
+   out of `rowFor` into `knownChecksumRow`/`unknownChecksumRow` plus a shared `truncatedAssetOrNull`
+   helper, purely to stay under detekt's cyclomatic-complexity threshold) now compare the real
+   on-disk length against `expectedSizeBytes` (a new seam parameter on `currentState`, defaulting to
+   `ModelCatalogEntry.sizeBytes` — the manifest's own declared size) before ever reporting
+   `INSTALLED`/`INSTALLED_UNVERIFIED`. On a mismatch, the row reports the existing `NOT_INSTALLED`
+   status (accurate — the bytes genuinely are not there) plus a new `TruncatedAsset(onDiskBytes,
+   expectedBytes)` on a new `ModelRowViewState.truncated` field — the distinct fact the reviewer
+   asked for ("marker present, bytes missing"), never conflated with "never attempted"
+   (`truncated` stays `null` for that case) or with a checksum rejection (`lastRejection`, R-934 —
+   both facts coexist independently). WPE renders it; no `ui/` file touched.
+3. **Four existing tests, retroactively given `expectedSizeBytes = { null }`** (mirroring how
+   `isBundled = { false }` was added when D35 landed): each proves a *mechanism* (the fetch-through-
+   the-fake path, the trust-on-first-use sideload path, the R-934 rejection path, the E2-H08
+   replace/roll-back path) against synthetic destinations or deliberately small bodies that were
+   never meant to match a real catalogue entry's real declared size — commented at each site with
+   why.
+4. **Boundary crossing, reported not hidden.** `WpiScenariosTest.R_842_tier0-llm-stored...` asserted
+   the exact pre-fix bug this round closes: `ScenarioFixtures.installModelFixture`'s own 64-byte
+   Gemma placeholder (its own doc comment, written believing R-865 already closed, says the
+   placeholder is "real enough for... the tier distinction, same as this function always did for
+   every entry before R-865") used to read `ModelRowStatus.INSTALLED`; after this fix it correctly
+   reads `NOT_INSTALLED` with a `truncated` fact. Updated the one assertion (and the test's own
+   name) to the corrected expectation — AC-138's real concern (tier-ineligible ⇒ never loaded)
+   does not depend on `status` at all, so nothing about what that test actually proves is weakened.
+   This file lives in `app/src/test/.../debug/`, not `ui/`, but is WPI's logical territory; flagged
+   here for WPI/the lead to confirm, and `ScenarioFixtures.kt` itself (the fixture's now-stale doc
+   comment) was left untouched, per not owning `app/src/debug/**`.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest` — full module, green (including the pre-existing WPE/WPI
+  `R_865`-tagged tests in `ui/screens`/`ui/settings`/`ui/digest`/debug scenarios, confirmed
+  together with these new ones — orthogonal, not conflicting: those test the screen's own
+  "0 bytes ⇒ placeholder" rendering heuristic, this fixes the data layer one level below it).
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green.
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — regenerated, confirmed up to date.
+- `python tools/spec-check/spec_check.py` — 8/8.
+- **Discrimination, two rounds, matching the two layers changed:** (1) disabled the size check in
+  `BundledAssetInstaller.isAlreadyVerified` — exactly the one test naming that path failed
+  (`installAll does not trust a marker over a truncated file`), restored, green again. (2) disabled
+  `ModelsViewData.truncatedAssetOrNull`'s comparison — exactly the two tests naming the empty/
+  partial-file cases failed, the full-length and no-marker cases (correctly) did not, restored,
+  green again. Also caught and fixed a real regression from an earlier edit in this same session: a
+  `part.delete()` call had been dropped from the checksum-mismatch branch during a since-reverted
+  intermediate edit — `AC_137 a corrupted bundled asset is refused...` failed on "no leftover
+  partial file" until it was restored; this is called out explicitly since it was a genuine bug
+  this round's own testing caught, not the reopened R-865 issue itself.
+
+**Left open:** WPE's own rendering of `ModelRowViewState.truncated` (this package does not touch
+`ui/screens`/`ui/settings`, per the coordinator's own instruction); the register row's `closed`
+status is the lead's call.
+
 ## 2026-09-11 (WPE follow-up: R-934 closed — rendering WPG's persisted rejection on CF04)
 
 ### (pending) — settings modes: R-934 closed - CF04 renders the real persisted checksum-mismatch rejection on the affected part

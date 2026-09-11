@@ -176,7 +176,13 @@ public object BundledAssetInstaller {
 
         val destination = File(filesDir, entry.destination)
         val marker = markerFile(destination)
-        if (destination.isFile && marker.isFile && marker.readText() == entry.sha256) {
+        // R-865: a marker match alone is not enough — this is the exact shape of the reopened
+        // register bug (a fixture, or in production a truncation/deletion after the marker was
+        // written, leaves a marker whose *text* still matches while the real bytes do not). The
+        // size check is cheap (no re-hash) and catches it; a genuinely corrupt file whose length
+        // happens to survive intact still needs the real digest check the copy-then-verify path
+        // below does — this is a fast, honest floor, not a replacement for that.
+        if (isAlreadyVerified(destination, marker, entry)) {
             rejectionFile(destination).delete() // R-934: a part that verifies is no longer "rejected"
             return BundledAssetState.Installed(entry.id, destination)
         }
@@ -218,6 +224,14 @@ public object BundledAssetInstaller {
             part.delete()
             BundledAssetState.Failed(entry.id, "could not read the bundled copy of ${entry.id}: ${e.message}")
         }
+    }
+
+    /** R-865: the idempotency shortcut's own condition, split out purely to keep it under
+     * detekt's complexity threshold — a marker match alone is not enough (see [installOne]'s own
+     * comment at the call site for the full reasoning). */
+    private fun isAlreadyVerified(destination: File, marker: File, entry: ManifestEntry): Boolean {
+        if (!destination.isFile || destination.length() != entry.sizeBytes) return false
+        return marker.isFile && marker.readText() == entry.sha256
     }
 
     private fun markerFile(destination: File): File = File(destination.parentFile, destination.name + ".sha256")
@@ -298,7 +312,13 @@ public object BundledAssetInstaller {
 
     private const val CHECKSUM_PREFIX_LENGTH = 8
 
-    private data class ManifestEntry(val id: String, val destination: String, val sha256: String, val missing: Boolean)
+    private data class ManifestEntry(
+        val id: String,
+        val destination: String,
+        val sha256: String,
+        val sizeBytes: Long,
+        val missing: Boolean,
+    )
 
     /** The minimal, dependency-free JSON reader for `bundled/manifest.json`'s own flat shape
      * (produced by buildSrc's `BundledAssetManifest.renderResolved` — see that function's own
@@ -313,6 +333,7 @@ public object BundledAssetInstaller {
                 id = obj.requiredString("id"),
                 destination = obj.requiredString("destination"),
                 sha256 = obj.requiredString("sha256"),
+                sizeBytes = obj.requiredNumber("sizeBytes"),
                 missing = (obj.fields["missing"] as? Json.JBool)?.value ?: false,
             )
         }
@@ -325,6 +346,9 @@ public object BundledAssetInstaller {
         value as? Json.JArray ?: throw IOException("bundled/manifest.json: $message")
 
     private fun Json.JObject.requiredString(key: String): String = (fields[key] as? Json.JString)?.value
+        ?: throw IOException("bundled/manifest.json: entry missing \"$key\"")
+
+    private fun Json.JObject.requiredNumber(key: String): Long = (fields[key] as? Json.JNumber)?.value?.toLong()
         ?: throw IOException("bundled/manifest.json: entry missing \"$key\"")
 
     private object Json {
