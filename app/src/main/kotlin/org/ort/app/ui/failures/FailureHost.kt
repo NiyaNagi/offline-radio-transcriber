@@ -5,12 +5,15 @@ package org.ort.app.ui.failures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,14 +22,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.Toast
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 
 /**
@@ -218,6 +227,35 @@ private val HEADER_HEIGHT: Dp = 44.dp
  * every device this app targets. */
 private const val BANNER_MAX_HEIGHT_FRACTION = 0.4f
 
+/** Register R-883 (halt, validator V11, font scale 2.0): on the real device, [onHeightMeasured]'s
+ * own reported height and the destination's own `contentTopPadding` were already the banner's real
+ * measured content height, and the offset math this file's own R-178/R-300 comments describe is
+ * genuinely correct — but that measurement is deliberately taken *inside* [HEADER_HEIGHT] (R-178's
+ * own doc comment: "excluding `HEADER_HEIGHT`, already accounted for by the content column's own
+ * natural position, right after its header"), while the real device's own `ScreenHeader` and this
+ * banner's own `failureScreenInset() + HEADER_HEIGHT` clearance are two independently-measured
+ * quantities that do not exactly cancel (confirmed directly, on device, via an `onGloballyPositioned`
+ * probe on both the banner and the destination content: they differ by roughly 20dp worth of real
+ * pixels on the reference device) — so a banner tall enough to hit [BANNER_MAX_HEIGHT_FRACTION]'s
+ * own cap left *just enough* slack for the destination's own heading to land flush against the
+ * banner's last (cut-off) line, reading as it bleeding into the heading below even though nothing
+ * ever painted past the banner's own bottom. A raw `+0dp` fix (just reporting the true measured
+ * height, R-178/R-300's own shape) is therefore not sufficient on its own — this needs to clear
+ * both that structural slack *and* leave real, visible daylight on top of it. [OrtSpacing.xl] (30dp)
+ * comfortably clears the ~20dp slack measured on the reference device with margin to spare; see
+ * [BANNER_SCROLL_HINT_HEIGHT] for this fix's other half — nothing on screen said the rest of a cut
+ * message was one scroll away. */
+private val BANNER_CONTENT_CLEARANCE: Dp = OrtSpacing.xl
+
+/** Register R-883: the size of the down-chevron hint [BannerOverlay] shows, pinned to its own
+ * bottom edge, whenever [androidx.compose.foundation.ScrollState.canScrollForward] says real
+ * content is still hidden past the cap — V11's own complaint was not just the zero-gap look above
+ * but that "no scroll affordance reaches" the rest of F9's message: the banner *was* already
+ * scrollable (confirmed directly on device: a real swipe reaches both action rows past the fold),
+ * nothing on screen ever said so. The hint clears itself the moment a real scroll reaches the
+ * banner's own end (`canScrollForward` false), so it never lingers once nothing more is hidden. */
+private val BANNER_SCROLL_HINT_HEIGHT: Dp = 14.dp
+
 /** Every banner/card renders pinned near the top of the current destination, below both the
  * status bar ([failureScreenInset]) and the destination's own header row ([HEADER_HEIGHT]) — see
  * class kdoc for why an overlay is this package's only placement option. Register R-164 (halt):
@@ -235,12 +273,23 @@ private const val BANNER_MAX_HEIGHT_FRACTION = 0.4f
  * (`Fail-Storage`'s "How this unfolded" card at font scale 2.0) pushed the destination almost
  * entirely off screen. [viewportHeight] ([FailureHost]'s own `BoxWithConstraints` height, scaled
  * here by [BANNER_MAX_HEIGHT_FRACTION]) caps this box's own height — content taller than that now
- * scrolls *inside the banner itself* (`Modifier.verticalScroll`, clipped to the cap) rather than
- * growing the box, and [onHeightMeasured] therefore never reports more than the cap either, so
- * `contentTopPadding` downstream is bounded the same way. `heightIn(max = …)` sits *outside*
- * `onGloballyPositioned` in the chain (so the reported size already reflects the cap) but
- * *outside* `verticalScroll` too (so the cap constrains the scrollable viewport, not just its
- * virtual content) — see the modifier order below.
+ * scrolls *inside the banner itself* (`Modifier.verticalScroll`) rather than growing the box, and
+ * [onHeightMeasured] therefore never reports more than the cap either, so `contentTopPadding`
+ * downstream is bounded the same way. `heightIn(max = …)` sits *outside* `onGloballyPositioned` in
+ * the chain (so the reported size already reflects the cap) but *outside* `verticalScroll` too (so
+ * the cap constrains the scrollable viewport, not just its virtual content) — see the modifier
+ * order below.
+ *
+ * Register R-883 (halt, validator V11, font scale 2.0): [clipToBounds] still sits directly after
+ * `heightIn` — a scrolled child taller than the cap must never *paint* past it, only `heightIn`'s
+ * own layout bounds do not guarantee that on their own. What V11 actually found on the device was
+ * two things layout-correctness alone does not fix: (1) at rest, the cut lands *mid-line* exactly
+ * on the shared edge with the destination content below, with zero gap between them, which reads
+ * as the banner bleeding into it even though nothing really paints past its own bottom — see
+ * [BANNER_CONTENT_CLEARANCE]; (2) nothing on screen ever said the rest of the message was one
+ * scroll away — see [BANNER_SCROLL_HINT_HEIGHT]. `onHeightMeasured` reports its own capped size
+ * plus that clearance, so `contentTopPadding` downstream always leaves real daylight, never just
+ * an exact touch.
  */
 @Composable
 private fun BoxScope.BannerOverlay(
@@ -256,21 +305,62 @@ private fun BoxScope.BannerOverlay(
             .failureScreenInset()
             .padding(top = HEADER_HEIGHT)
             .heightIn(max = viewportHeight * BANNER_MAX_HEIGHT_FRACTION)
+            // R-883: see this function's own doc comment — layout bounds alone do not stop a
+            // scrolled child from painting past them.
+            .clipToBounds()
             // `onGloballyPositioned` reports the size of the node *at this point in the chain* —
             // everything to its right (the scroll, padding(lg) and the content) but nothing to its
             // left, so this deliberately sits between `heightIn` and `verticalScroll`: it measures
             // `min(lg + content + lg, the cap above)`, excluding `HEADER_HEIGHT` (already accounted
-            // for by the content column's own natural position, right after its header).
+            // for by the content column's own natural position, right after its header). R-883
+            // adds `BANNER_CONTENT_CLEARANCE` on top so the destination below is never flush
+            // against this box's own bottom, only ever its measured height.
             .onGloballyPositioned { coordinates ->
-                onHeightMeasured(with(density) { coordinates.size.height.toDp() })
+                onHeightMeasured(with(density) { coordinates.size.height.toDp() } + BANNER_CONTENT_CLEARANCE)
             }
-            .verticalScroll(rememberScrollState())
-            .padding(OrtSpacing.lg)
             .testTag("failure-banner-overlay"),
     ) {
-        content()
+        // R-883: `verticalScroll` moved one level in, off the measured/capped box itself, so a
+        // second, small sibling (the scroll hint) can sit `Alignment.BottomCenter` within the same
+        // capped rectangle without itself scrolling away — a modifier chain has exactly one node's
+        // worth of children, and both this scroll box and the hint need to be that box's own
+        // direct children to share its bottom edge.
+        val scrollState = rememberScrollState()
+        Box(
+            modifier = Modifier
+                .verticalScroll(scrollState)
+                .padding(OrtSpacing.lg)
+                // R-883: the scroll semantics (and its `ScrollBy` action) live on this node now,
+                // one level in from `failure-banner-overlay` itself — see this function's own
+                // kdoc for why `verticalScroll` moved off the measured/capped box.
+                .testTag("failure-banner-scroll-content"),
+        ) {
+            content()
+        }
+        if (scrollState.canScrollForward) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 2.dp)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = "More of this message below — scroll to read the rest."
+                    }
+                    .testTag("failure-banner-scroll-hint"),
+            ) {
+                Icon(
+                    imageVector = OrtIcons.chevron,
+                    contentDescription = null,
+                    tint = OrtColors.textSecondary,
+                    modifier = Modifier.size(BANNER_SCROLL_HINT_HEIGHT).rotate(ROTATE_CHEVRON_TO_POINT_DOWN),
+                )
+            }
+        }
     }
 }
+
+/** [OrtIcons.chevron] is drawn pointing right (a disclosure arrow); rotated a quarter turn
+ * clockwise it points down — "more below", not "more detail this way". */
+private const val ROTATE_CHEVRON_TO_POINT_DOWN = 90f
 
 /** Register R-147: bundles the four dismissable-banner labels (F5/F15) and, now, the two
  * "OK, continue" full screens (F14/F17) into one value so [FailurePresentationOverlay] stays under
