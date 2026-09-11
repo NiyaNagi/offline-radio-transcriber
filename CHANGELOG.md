@@ -32,6 +32,70 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPD follow-up: S12 44dp Install floor, the Models row's optional-LLM gate — R-866, R-862/AC-138)
+
+### (pending) — ReadySetupRow's row-level 44dp floor; modelsRow no longer gates green on the optional Gemma model
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/ReadyScreen.kt`, matching test files under
+`app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-AST-3a, AC-138.
+
+**What changed:**
+
+1. **R-866 (register, validator V9) — S12's amber `Install` measured 95px/34.3dp on a real device,
+   under the 44dp floor every other action met.** Not reproduced under any Robolectric configuration
+   tried (isolated render, a real-device-width `360.dp` render, and a forced multi-line wrapped
+   value all measured `Install` at exactly 44px/44dp under `@GraphicsMode(NATIVE)` — `TextAction`'s
+   own existing `requiredHeightIn(min = 44.dp)` already held every time) — reported honestly rather
+   than claimed as a reproduced defect. `ReadySetupRow`'s outer row now also carries an explicit
+   `requiredHeightIn(min = 44.dp)`, first in its own modifier chain (the same R-510-class ordering
+   this file's `TextAction`/`KeyValueRow` already document), as a defensive floor on the row's whole
+   clickable/visual band in addition to `TextAction`'s own — matching "the TextAction/row pattern the
+   rest of S12 uses" per the coordinator's own instruction. New bounds tests prove the floor holds
+   for the exact `Install` row shape at font scale 1.0 and 2.0 (the latter with the value forced to
+   wrap across several lines).
+2. **R-862 (halt, AC-138) — the Models row was an all-or-nothing gate with no "genuinely not offered
+   in this build" state.** `modelsRow` required *every* `ModelId` — the gated, tier-3-only
+   `LLM_GEMMA3_1B` included — to read `INSTALLED` before ever showing green; a no-`HF_TOKEN` build
+   (real installer, every real transcription asset genuinely installed, Gemma honestly never fetched
+   at build time) read "No transcription model yet" forever regardless of how many real entries were
+   installed (WPI's diagnosis, `results/ui-audit/README.md`'s own R-862 section, confirmed by reading
+   `ModelsViewData.kt`/`ModelsController.currentState` before writing this). Amber is now reserved
+   for what it should have always meant: an asset needed for tier ≥1 transcription (every `ModelId`
+   but the gated LLM) missing or unverified — mirroring `ModelsScreen.kt`'s own established
+   `ModelId.LLM_GEMMA3_1B` carve-out (`rows.filterNot { it.id == ModelId.LLM_GEMMA3_1B }`). Once that
+   required set is complete the row is green regardless of the LLM's own state: `"N bundled ·
+   checksums verified"` when it too is installed (or entirely absent from a synthetic, non-production
+   `rows` list — never regressing the existing minimal-fixture tests), or `"N of M bundled · ready —
+   Gemma 3 1B not in this build"` — the board's own worked example (`Setup-Done.dc.html`) — when it
+   is genuinely gated and absent. A missing/corrupt *required* asset still reads amber and now names
+   it (`"No transcription model yet — <label> not installed"`) when the failure is partial, keeping
+   the plain, pre-existing "No transcription model yet" wording only when nothing at all is
+   installed.
+
+**Verified:**
+- New tests: `ReadyScreenTest`'s `R_866_*` (2: font scale 1.0 and 2.0, the latter with a forced
+  multi-line wrapped value), `ReadyRowsForTest`'s `R_862_*` (4: 5 of 5 green; 4 of 5 with only the
+  gated Gemma model absent — green, names it; 3 of 5 with the encoder corrupt and Gemma also absent
+  — amber, names the encoder, not Gemma; 0 of 5 — the plain amber line, unchanged) — all green, and
+  every pre-existing `ReadyRowsForTest`/`ReadyScreenTest` case (including the single-row,
+  no-Gemma-present minimal fixtures the new logic must not regress) still passes.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` — `BUILD SUCCESSFUL`;
+  `dependencyRules: OK`; `platformGuards: OK`.
+- `:app:detekt` / `:app:ktlintCheck` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `coverageMatrix` / `coverageMatrixCheck` — up to date.
+**Left open / not done:** R-866's own real-device 34.3dp measurement could not be reproduced in
+Robolectric under any configuration tried — the row-level floor is a defensive hardening per the
+coordinator's own instruction, not a proven discrimination fix; if a future real-device dump repeats
+it, the next validator pass should capture a fresh uiautomator dump immediately after the scroll
+settles (this file's own investigation could not rule out a transient mid-scroll/mid-recomposition
+capture as the real cause).
+
+---
+
 ## 2026-09-11 (WPI: mode-change-pending's live holders, tier0-llm-stored's real installer, install.ps1's escape hatch; R-862 reported, not fixed)
 
 ### adedd40c — R-860/R-861 mode-change-pending opens InputStatus/RigStatus; R-865 tier0-llm-stored installs its four non-gated entries for real; R-868 install.ps1 passes -PortAllowMissingBundledAssets through

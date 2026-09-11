@@ -23,7 +23,10 @@ import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.data.ModelCatalog
+import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
+import org.ort.app.ui.data.ModelRowViewState
 import org.ort.app.ui.data.ModelsViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
@@ -399,30 +402,65 @@ private fun radioRowForCatRig(
  * D33/E2-E13, WPG follow-up: "Models" (renamed from "Model") reads WPG's real bundled-asset state
  * (`ModelsController.currentState`, `app/.../ui/data/ModelsViewData.kt`) — [modelsState] is built by
  * [SetupActivity] (the one place allowed to touch `Context`) and handed in here as plain data, per
- * this file's own established pattern for every other row. Every row bundled and verified
- * ([org.ort.app.ui.data.ModelRowStatus.INSTALLED]) is `Setup-Done.dc.html`'s "N bundled · checksums
- * verified" green row; anything short of that (not yet installed, a failed verification, or a
- * genuinely non-bundled entry not yet fetched) is the amber `Install` row, exactly as before.
+ * this file's own established pattern for every other row.
+ *
+ * R-862 (register, halt, AC-138): this row used to be an all-or-nothing gate requiring *every*
+ * [ModelId] — [ModelId.LLM_GEMMA3_1B] included — to read [ModelRowStatus.INSTALLED] before it would
+ * ever show green, so a no-`HF_TOKEN` build (Gemma genuinely never fetched at build time, per
+ * [org.ort.app.ui.data.ModelCatalogEntry.gated]) read "No transcription model yet" forever even with
+ * every real transcription asset installed and verified — a real production gap
+ * (`results/ui-audit/README.md`'s own R-862 diagnosis has the fuller account), not a scenario
+ * artefact. Amber is now reserved for what it should have always meant: an asset [requiredRows]
+ * needs for tier ≥1 transcription (every [ModelId] but the gated, tier-3-only prose-digest model)
+ * missing or unverified — [ModelsScreen.kt]'s own `ModelId.LLM_GEMMA3_1B` carve-out
+ * (`rows.filterNot { it.id == ModelId.LLM_GEMMA3_1B }`) is the established precedent this mirrors.
+ * Once that required set is complete, the row is green regardless of Gemma's own state — [rows]
+ * missing it altogether (a synthetic single-row test double, never real production output) reads the
+ * plain "N bundled" line unchanged; a real 5-row state with Gemma genuinely absent names it ("N of M
+ * bundled · ready — Gemma 3 1B not in this build", the board's own worked example, `Setup-Done.dc.html`)
+ * rather than silently overstating "N bundled" as if the model even shipped.
  */
 private fun modelsRow(modelsState: ModelsViewState, onInstallModel: () -> Unit): ReadyRow {
     val rows = modelsState.rows
-    val allBundledAndVerified = rows.isNotEmpty() && rows.all { it.bundled && it.status == ModelRowStatus.INSTALLED }
-    return if (allBundledAndVerified) {
-        ReadyRow(
+    if (rows.isEmpty()) {
+        return noModelInstalledRow("No transcription model yet", onInstallModel)
+    }
+    fun isReady(row: ModelRowViewState) = row.bundled && row.status == ModelRowStatus.INSTALLED
+    val requiredRows = rows.filterNot { it.id == ModelId.LLM_GEMMA3_1B }
+    val missingRequired = requiredRows.filterNot(::isReady)
+    if (missingRequired.isNotEmpty()) {
+        val value = if (missingRequired.size == requiredRows.size) {
+            "No transcription model yet"
+        } else {
+            "No transcription model yet — ${missingRequired.first().label} not installed"
+        }
+        return noModelInstalledRow(value, onInstallModel)
+    }
+    val gemmaRow = rows.firstOrNull { it.id == ModelId.LLM_GEMMA3_1B }
+    if (gemmaRow == null || isReady(gemmaRow)) {
+        return ReadyRow(
             label = "Models",
             value = "${rows.size} bundled · checksums verified",
             ok = true,
             statusText = "ready",
             actionLabel = null,
         )
-    } else {
-        ReadyRow(
-            label = "Models",
-            value = "No transcription model yet",
-            ok = false,
-            statusText = null,
-            actionLabel = "Install",
-            onAction = onInstallModel,
-        )
     }
+    val gemmaReason = if (ModelCatalog.entry(ModelId.LLM_GEMMA3_1B).gated) "not in this build" else "not installed"
+    return ReadyRow(
+        label = "Models",
+        value = "${requiredRows.size} of ${rows.size} bundled · ready — Gemma 3 1B $gemmaReason",
+        ok = true,
+        statusText = "ready",
+        actionLabel = null,
+    )
 }
+
+private fun noModelInstalledRow(value: String, onInstallModel: () -> Unit): ReadyRow = ReadyRow(
+    label = "Models",
+    value = value,
+    ok = false,
+    statusText = null,
+    actionLabel = "Install",
+    onAction = onInstallModel,
+)
