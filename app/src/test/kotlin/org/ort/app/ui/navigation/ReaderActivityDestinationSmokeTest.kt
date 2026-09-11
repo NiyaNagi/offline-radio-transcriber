@@ -728,6 +728,38 @@ class ReaderActivityDestinationSmokeTest {
     }
 
     /**
+     * Register R-930 (Reviewer D2, run 3): the seeded `Digest` route used to render this host's own
+     * generic `ScreenHeader` (drawer icon, `"Open navigation"`) stacked *above* `DigestScreen`'s own
+     * `DrillInHeader` chevron — the R-003/R-130 double-header class, on `EARLIER_NIGHTS` specifically
+     * because that destination was never added to `NavHostBody`'s own `SETTINGS`/`SEARCH`
+     * header-exemption list even after `SessionsContent`'s sub-screens (`Detail`/`Digest`/
+     * `DigestItem`/`Log`) started drawing their own headers. Fixed by adding `EARLIER_NIGHTS` to
+     * that exemption (`OrtNavHost.kt`) and giving `SessionsScreen` (the one sub-screen actually
+     * missing a header of its own) its own `ScreenHeader` (`SessionsScreens.kt`, WPF's file — a
+     * small, minimal, reported addition, the same shape R-840's own `SessionsContent.openDigest`
+     * already was). Proves both halves: zero drawer icons on the seeded `Digest` (only its own
+     * chevron), exactly one on the plain `Sessions` list (its own, not the host's).
+     */
+    @Test
+    fun `R_930_EARLIER_NIGHTS_never_stacks_the_host_header_over_a_sub-screens_own_DrillInHeader`() {
+        runReaderActivity(
+            ReaderDestination.EARLIER_NIGHTS,
+            seed = NavSeed(pendingReviewSessionId = sessionId, reviewSessionView = ReviewSessionView.DIGEST),
+        ) { rule ->
+            rule.waitUntilContentDescriptionExists("Back to Session")
+            val drawerIcons = rule.onAllNodes(hasContentDescription("Open navigation", substring = true))
+                .fetchSemanticsNodes().size
+            check(drawerIcons == 0) {
+                "expected no host drawer icon over the seeded Digest's own chevron header, found $drawerIcons"
+            }
+        }
+        runReaderActivity(ReaderDestination.EARLIER_NIGHTS) { rule ->
+            rule.waitUntilTextExists("Earlier nights")
+            rule.assertExactlyOneContentDescription("Open navigation")
+        }
+    }
+
+    /**
      * Register R-350 (round 12's host wire, round 14 updated now that the pipeline half is real
      * too): `ImproveContent` gained `onOpenModels` (WP10's `94c946c`), and `OrtNavHost.kt`'s
      * `IMPROVE_RECORDS` dispatch passes it the same real `NavHostCallbacks.onOpenModels`

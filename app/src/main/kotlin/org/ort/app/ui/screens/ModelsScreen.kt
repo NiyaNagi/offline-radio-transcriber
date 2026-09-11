@@ -116,7 +116,15 @@ public fun ModelsScreen(
         return
     }
 
-    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    // Register R-933 (Reviewer D2, run 3, design — the R-826 shape): under a live session the
+    // Lexicon row's own "not installed" sub-line and "Install a lexicon from a file" action sat
+    // behind the live bar with no way to scroll them clear — this screen had no trailing clearance
+    // of its own for whichever destination host pins a live bar below it, unlike `SettingsCaptureScreen`
+    // (R-826's own fix). Same fixed floor, same reasoning: this screen has no `liveBar` parameter of
+    // its own to make the clearance conditional, so it applies unconditionally.
+    Column(
+        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = LIVE_BAR_CLEARANCE),
+    ) {
         onBack?.let { back -> DrillInHeader(parentLabel = "Settings", onBack = back) }
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             Text(text = "Models and lexicon", style = OrtType.screenTitle, color = OrtColors.textHigh)
@@ -975,6 +983,11 @@ private fun onDiskClause(sizeBytes: Long?): String? =
  * fabricated "0 KB · verified <checksum>" (constitution I). */
 private fun isZeroBytePlaceholder(row: ModelRowViewState): Boolean =
     row.status != ModelRowStatus.NOT_INSTALLED && row.sizeBytes == 0L
+
+/** R-933 — see [ModelsScreen]'s own doc comment on its scroll container. The same 44dp floor
+ * `SettingsCaptureScreen.kt`'s own `LIVE_BAR_CLEARANCE` (R-826) uses — not shared across packages,
+ * that constant is `private` there. */
+private val LIVE_BAR_CLEARANCE = 44.dp
 
 private fun formatAssetSize(bytes: Long): String {
     val mb = bytes / 1_000_000.0

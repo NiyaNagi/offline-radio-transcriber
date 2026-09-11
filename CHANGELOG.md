@@ -32,6 +32,122 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPE follow-up: run-3 reviewer findings R-835 reopened, R-915, R-923, R-930, R-932, R-933, R-934)
+
+### (pending) — settings modes: R-835 Link address/vid-pid honesty, R-915 CF01 real component subtitle, R-923 CAT mnemonics, R-930 Digest double-header, R-932 tier prose, R-933 CF04 live-bar clearance, R-934 reported not fixed
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/{SettingsPolling,SettingsRigScreen,SettingsTierScreen}.kt`,
+`app/.../ui/screens/ModelsScreen.kt`, `app/.../ui/navigation/OrtNavHost.kt`, and tests. Two small,
+targeted, reported edits outside this round's own file list: `app/.../ui/digest/SessionsScreens.kt`
+(`SessionsScreen` gained its own `ScreenHeader` — WPF's file, the same shape R-840's own
+`SessionsContent.openDigest` addition already was) — both needed to fix R-930's double header, since
+the real fix is a matched pair (host stops drawing one for `EARLIER_NIGHTS`; the one sub-screen that
+actually needs one draws its own).
+
+**Requirements/ACs:** FR-RIG-14, FR-RIG-15, FR-AST-3, FR-AST-3a, FR-AST-4, FR-DIG-3b, constitution I.
+
+**What changed:**
+
+*Constitution Check.* I (R-835/R-915/R-923/R-934 are all the same failure shape once more: a real
+fact silently dropped or generalized past what this build can actually support — the Link row's own
+address, the root subtitle's real component names, the descriptor's own real CAT mnemonics, the
+installer's own real-but-unpersisted rejection reason). VIII (`Settings-Rig.dc.html`,
+`docs/reference/th-d75a-cat.md` and `results/ui-audit/register.md`'s own rows re-read in full before
+each fix).
+
+1. **R-835 reopened (Reviewer C2)**: CF06's Link row used to fold the address into the transport
+   clause (`transport + (address?.let { " · $it" } ?: "")`) — when the address was unknown, the
+   *whole* fact vanished with no trace. Now states it explicitly either way: `"<transport> ·
+   <address or 'address not yet reported by this build'>"`. `otherTransportLabel`'s own vid/pid
+   clause, previously silently omitted when the descriptor states neither (`kenwood-thd75a.json`
+   leaves both `null`, "still to verify"), now reads `", vid/pid not yet verified (H1)"`.
+2. **R-915 (Reviewer B2, design)**: CF01's "Models and lexicon" row read "4 of 5 assets installed" —
+   real, but a bare count where the board names the actual components and their verification state.
+   `modelsAndLexiconSubtitle` (`SettingsPolling.kt`) now names each real installed component — the
+   Whisper family as one name (matching `GroupedAssetRow`'s own grouping), Silero VAD and Gemma by
+   their own real labels, the lexicon by the real version parsed from
+   `LexiconAssetRowViewState.label`'s own stable, already-public format — with "all verified"/"not
+   all verified" from the real per-component status, never a specific false claim either way.
+3. **R-923 (Reviewer C2, polish)**: CF06's "Rig module" row read the raw `RigCapability` enum names
+   ("FREQUENCY, SQUELCH_STATE, SUB_BAND") where the board's own convention is CAT mnemonics ("FQ BY
+   FO BC MR ME AI BL"). `catMnemonicFor` maps each real, declared capability to the real two-letter
+   command `docs/reference/th-d75a-cat.md`'s own verified command table documents for it (FQ, BY,
+   FO, BC, MR, ME) — never the board's own broader eight-command example, which no accessible source
+   in this build's real descriptor actually declares (only three: FREQUENCY, SQUELCH_STATE,
+   SUB_BAND); a capability with no documented mnemonic (`SIGNAL_STRENGTH`/`TIME`/`POSITION`) falls
+   back to its own enum name, honestly, never a guessed code.
+4. **R-930 (Reviewer D2, design)**: the `Digest`/`Detail`/`DigestItem`/`Log` sub-screens under
+   `EARLIER_NIGHTS` each already draw their own `DrillInHeader`, but `NavHostBody` was never added to
+   the `SETTINGS`/`SEARCH` header-exemption list, so its own generic `ScreenHeader` rendered stacked
+   above them — the R-003/R-130 double-header class, latent since before the `Digest`/`Log`
+   sub-screens existed (R-840's own new `reviewSessionView = DIGEST` route is what exposed it via a
+   real capture; the pre-existing `Detail` route, R-133's Review link, had the identical defect,
+   never visually caught). Fixed the matched pair: `OrtNavHost.kt` adds `EARLIER_NIGHTS` to the
+   header exemption (`SETTINGS`/`SEARCH`'s own established pattern); `SessionsScreen` (`ui/digest`,
+   WPF's file — the one sub-screen that had no header of its own, the plain list root) now draws its
+   own `ScreenHeader`, matching `SettingsRootScreen`'s own precedent.
+5. **R-932 (Reviewer D2, polish)**: CF05's override rows read "Hold at T0"/"T1"/"T2" — abbreviations
+   against this same screen's own "tier 1/2/3" prose and the guide's "enum values are prose" rule.
+   Now reads "Hold at tier 0"/"tier 1"/"tier 2" — the board's own `Settings-Tier.dc.html` example
+   verbatim — while the underlying override identifier (`SettingsStore.tierOverrideName`, "T0"/"T1"/
+   "T2", read verbatim elsewhere, e.g. the root row's "held at T2") is unchanged. Every sub-maximum
+   tier renders (T0..T2, `MAX_TIER` 3 excluded — holding at the max is what "Let the phone choose"
+   already does) since this build has no per-device tier-ceiling detector to further restrict
+   against (`SettingsTierScreen`'s own "No measured tier detector exists yet" notice already states
+   this).
+6. **R-933 (Reviewer D2, design — the R-826 shape)**: under a live session the Lexicon row's own
+   "not installed" sub-line and action, and the closing footer, sat behind the live bar with no way
+   to scroll them clear. `ModelsScreen`'s own scroll container gets the identical 44dp trailing
+   clearance `SettingsCaptureScreen` (R-826) already has — this screen has no `liveBar` parameter of
+   its own to make it conditional, so it applies unconditionally.
+7. **R-934 (Reviewer D2, polish) — investigated, not fabricated**: the corrupted-encoder case reads
+   identically to never-installed. Read `BundledAssetInstaller.kt` in full: a checksum-mismatch copy
+   *is* detected and returns a real, distinguishing `BundledAssetState.Failed` reason ("... failed
+   integrity verification after copying ... — not activated (AC-137)") — but that file's own doc
+   comment states plainly "No marker is ever written for a failed copy," and the `Failed` result is
+   only ever returned once, transiently, to whichever caller invoked `installAll`/`reinstall` at that
+   moment (`OrtApplication.onCreate`, in production) — `ModelsController.currentState` (read later,
+   whenever the operator opens Settings-Assets) has no access to it and no durable record to read
+   either. **Owed installer fact, reported per the finding's own instruction, not invented here**: a
+   real fix needs `BundledAssetInstaller`/its own caller (WPG) to persist the rejection reason
+   somewhere `ModelsController` can read later — no code changed for this row.
+
+**Verified** (every command with `-PortAllowMissingBundledAssets=true`):
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.settings.*"` — green (R-835/R-915/R-923/R-932 cases).
+- `:app:testDebugUnitTest --tests "org.ort.app.ui.screens.ModelsScreenTest"` — green (R-933).
+- `:app:smokeTestDebugUnitTest --tests "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"` — green (R-930, real `ReaderActivity`, zero drawer icons on the seeded Digest, exactly one on the plain list).
+- `:app:testDebugUnitTest` (full) and `:app:smokeTestDebugUnitTest` (full) — green.
+- `:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck` — green.
+- `:app:detekt` — green (`OrtNavHost.kt`'s new four-way header condition folded into one
+  `hostDrawsNoHeader` boolean — `ComplexCondition`).
+- `build dependencyRules platformGuards` — green.
+- `-p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `coverageMatrix` then `coverageMatrixCheck` (run separately) — green.
+- **Discrimination, R-835 reopened**: reverted the Link row's own address fold and the
+  `otherTransportLabel` vid/pid clause → both new tests failed with the fact silently missing →
+  restored → passed.
+- **Discrimination, R-915**: reverted `modelsAndLexiconSubtitle` to a placeholder → both new root-row
+  tests failed → restored → passed.
+- **Discrimination, R-923**: reverted `catMnemonicFor` to the raw enum name → the mnemonic test
+  failed with "FREQUENCY" instead of "FQ" → restored → passed.
+- **Discrimination, R-930**: reverted the `isEarlierNights` exemption to `false` → the real
+  `ReaderActivity` smoke test failed (a stray "Open navigation" node over the seeded Digest) →
+  restored → passed.
+- **Discrimination, R-932**: reverted the row label back to `"Hold at $tierId"` → both new tests
+  failed (found "Hold at T2", not "Hold at tier 2") → restored → passed.
+- **Discrimination, R-933**: reverted the trailing padding → the geometry test failed with less than
+  the expected 40dp clearance (a real, meaningfully-above-baseline threshold — this screen's own
+  closing text already carries a pre-existing, unrelated 20dp `OrtSpacing.lg` padding, so the
+  threshold is set well above that to actually discriminate the *new* 44dp fix, not the screen's own
+  existing spacing) → restored → passed.
+
+**Left open / not done:**
+- R-934: no code change — see point 7 above. The durable-rejection-record gap is owed to WPG
+  (`BundledAssetInstaller`/its caller).
+
+---
+
 ## 2026-09-11 (WPE follow-up: Validator V9 device findings R-860/R-861/R-864/R-865)
 
 ### (pending) — settings modes: R-860/R-861 configured-selection fallback, R-864 Bluetooth profile naming, R-865 catalogue-declared asset sizes

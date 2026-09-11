@@ -158,9 +158,15 @@ private fun RigConnectionSection(
         KeyValueRow(
             key = "Link",
             value = "",
+            // Register R-835 reopened (Reviewer C2, run 3): the address clause used to be folded
+            // silently into the transport clause (`transport + (address?.let { " · $it" } ?: "")`)
+            // — when [state.linkAddressLabel] was `null`, the *whole* address fact vanished with no
+            // trace, reading as though it were never expected at all rather than genuinely unknown.
+            // Now every real transport clause states the address fact explicitly, honest either way
+            // (constitution I) — never silently dropped the way the old fold did.
             subLine = listOfNotNull(
                 state.transportLabel?.let { transport ->
-                    transport + (state.linkAddressLabel?.let { " · $it" } ?: "")
+                    "$transport · " + (state.linkAddressLabel ?: "address not yet reported by this build")
                 } ?: "transport and address not yet reported by this build",
                 "paired in system settings".takeIf { state.transportLabel?.contains("Bluetooth") == true },
                 state.otherTransportLabel,

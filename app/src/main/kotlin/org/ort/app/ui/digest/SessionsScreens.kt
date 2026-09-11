@@ -29,6 +29,7 @@ import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.OrtIcons
+import org.ort.app.ui.components.ScreenHeader
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.components.drawHatchRegion
@@ -40,13 +41,19 @@ import org.ort.app.ui.theme.OrtType
 /** `Sessions.dc.html` (R-092, R-107, FR-UI-1, FR-RUN-12): earlier nights, each with span, counts,
  * gaps — the `TIER 1` chip and "can be improved" when [SessionRowViewState.canBeImproved].
  *
- * R-130 (round 4, System validator): draws no `ScreenHeader` of its own — `OrtNavHost`'s
- * `NavHostBody` already renders one for the whole `EARLIER_NIGHTS` destination before dispatching
- * to `SessionsContent`, so a second one here stacked two bare drawer-icon rows. [onDrawer] stays a
- * parameter (unused in this file) only so `SessionsContent`'s signature and `OrtNavHost.kt`'s call
- * site — outside this package's row — need no edit.
+ * Register R-930 (Reviewer D2, run 3 — reopens R-130's own premise): this used to draw no
+ * `ScreenHeader` of its own, relying on `OrtNavHost`'s `NavHostBody` to render one for the whole
+ * `EARLIER_NIGHTS` destination — correct only while this list was the *only* screen that
+ * destination could ever show. Once `SessionsContent`'s own `Detail`/`Digest`/`DigestItem`/`Log`
+ * sub-screens existed (each drawing its own `DrillInHeader`), that host-wide header became a
+ * second, stacked one whenever any of them composed — reviewer D2's own report, for the `Digest`
+ * route specifically, but the identical shape already existed for `Detail` (R-133's own Review
+ * link), never previously visually reviewed closely enough to be caught. `OrtNavHost.kt`'s own
+ * doc comment records the matching host-side half (`EARLIER_NIGHTS` now gets the identical
+ * `SETTINGS`/`SEARCH` treatment: no host header at all for the whole destination) — this list is
+ * the one sub-screen under it that actually needs a header of its own, exactly the way
+ * `SettingsRootScreen` draws its own once `SettingsContent`'s root/sub-screen split needed it.
  */
-@Suppress("UnusedParameter") // onDrawer: kept only so SessionsContent's signature needs no edit — see kdoc above.
 @Composable
 public fun SessionsScreen(
     state: SessionsViewState,
@@ -55,6 +62,7 @@ public fun SessionsScreen(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
+        ScreenHeader(onDrawer = onDrawer)
         Column(
             modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = OrtSpacing.lg),
         ) {

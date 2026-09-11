@@ -75,12 +75,24 @@ public fun SettingsTierScreen(
                 onClick = { onSelectOverride(null) },
                 subtitle = "drops a tier when warm or behind, comes back when it can, tells you both times",
             )
-            listOf("T0", "T1", "T2").forEach { tier ->
+            // Register R-932 (Reviewer D2, run 3, polish): "Hold at T0"/"T1"/"T2" were abbreviations
+            // against this same screen's own "tier 1/2/3" prose above and the guide's "enum values
+            // are prose" rule — `Settings-Tier.dc.html`'s own example reads "Hold at tier 2". The
+            // underlying override identifier (`SettingsStore.tierOverrideName`, "T0"/"T1"/"T2" —
+            // read verbatim elsewhere, e.g. the root Settings row's "held at T2") is unchanged;
+            // only this row's own displayed label is prose now. "The tiers this device can hold"
+            // (the finding's own phrase) is every sub-maximum tier — T0..T2, `MAX_TIER` (3) excluded
+            // since holding at the max is what "Let the phone choose" already does whenever nothing
+            // sheds — there is no per-device tier ceiling below that to further restrict against:
+            // `SettingsTierScreen`'s own "No measured tier detector exists yet (FR-TIER-1)" notice
+            // already states this build has no such detector, so every device offers the same three.
+            listOf(0, 1, 2).forEach { tier ->
+                val tierId = "T$tier"
                 RadioRow(
-                    label = "Hold at $tier",
-                    selected = state.isOverridden && state.overrideLabel == "Held at $tier",
-                    onClick = { onSelectOverride(tier) },
-                    subtitle = OVERRIDE_CONSEQUENCES[tier],
+                    label = "Hold at tier $tier",
+                    selected = state.isOverridden && state.overrideLabel == "Held at $tierId",
+                    onClick = { onSelectOverride(tierId) },
+                    subtitle = OVERRIDE_CONSEQUENCES[tierId],
                 )
             }
             Column(modifier = Modifier.padding(bottom = OrtSpacing.lg)) {}

@@ -52,7 +52,7 @@ public object SettingsPolling {
     public suspend fun root(context: Context, store: SettingsStore): SettingsRootViewState {
         val footer = StorageFooterViewState.fromAudioDirectory(context)
         val modelsState = org.ort.app.ui.data.ModelsController.currentState(context)
-        val installedCount = modelsState.rows.count { it.status != org.ort.app.ui.data.ModelRowStatus.NOT_INSTALLED }
+        val lexiconRow = org.ort.app.ui.data.ModelsController.lexiconRow(context)
 
         return SettingsRootViewState(
             sections = listOf(
@@ -75,7 +75,7 @@ public object SettingsPolling {
                         ),
                         SettingsRowViewState(
                             "Models and lexicon",
-                            "$installedCount of ${modelsState.rows.size} assets installed",
+                            modelsAndLexiconSubtitle(modelsState, lexiconRow),
                             SettingsScreenId.ASSETS,
                         ),
                         SettingsRowViewState(
@@ -116,6 +116,56 @@ public object SettingsPolling {
                 ),
             ),
         )
+    }
+
+    /**
+     * Register R-915 (Reviewer B2, run 3, design): CF01's "Models and lexicon" row used to read
+     * "4 of 5 assets installed" — real, but a count where the board names the actual components
+     * and their verification state ("whisper-small · Silero VAD · lexicon 2026.08 · all verified").
+     * Names each real, installed component from [modelsState]/[lexiconRow] — the Whisper family as
+     * one name (never three loose file ids, the same grouping [ModelsScreen]'s own `GroupedAssetRow`
+     * already uses), Silero VAD and Gemma by their own real labels, the lexicon by the real version
+     * parsed out of [org.ort.app.ui.data.LexiconAssetRowViewState.label]'s own stable, already-public
+     * format (`"Callsign lexicon <version> · <count> records"`, the exact string CF04's own lexicon
+     * row already renders verbatim — not a second, private format this reaches into). "all verified"
+     * only when every named component's own real status is fully verified (never
+     * `INSTALLED_UNVERIFIED`), "not all verified" otherwise — never a specific false claim either way.
+     */
+    private fun modelsAndLexiconSubtitle(
+        modelsState: org.ort.app.ui.data.ModelsViewState,
+        lexiconRow: org.ort.app.ui.data.LexiconAssetRowViewState,
+    ): String {
+        val rowsById = modelsState.rows.associateBy { it.id }
+        val whisperRows = listOf(
+            org.ort.app.ui.data.ModelId.ASR_ENCODER,
+            org.ort.app.ui.data.ModelId.ASR_DECODER,
+            org.ort.app.ui.data.ModelId.ASR_TOKENS,
+        ).mapNotNull { rowsById[it] }
+
+        val components = mutableListOf<String>()
+        var allVerified = true
+
+        fun include(label: String, statuses: List<org.ort.app.ui.data.ModelRowStatus>) {
+            if (statuses.isEmpty() || statuses.any { it == org.ort.app.ui.data.ModelRowStatus.NOT_INSTALLED }) return
+            components += label
+            if (statuses.any { it == org.ort.app.ui.data.ModelRowStatus.INSTALLED_UNVERIFIED }) allVerified = false
+        }
+
+        include("Whisper tiny.en", whisperRows.map { it.status })
+        rowsById[org.ort.app.ui.data.ModelId.VAD]?.let { include(it.label, listOf(it.status)) }
+        rowsById[org.ort.app.ui.data.ModelId.LLM_GEMMA3_1B]?.let { include(it.label, listOf(it.status)) }
+
+        if (lexiconRow.installed) {
+            val version = lexiconRow.label
+                .substringAfter("Callsign lexicon ", missingDelimiterValue = "")
+                .substringBefore(" ·")
+                .ifBlank { null }
+            components += version?.let { "lexicon $it" } ?: "lexicon"
+        }
+
+        if (components.isEmpty()) return "Nothing installed yet"
+        val verifiedClause = if (allVerified) "all verified" else "not all verified"
+        return components.joinToString(" · ") + " · $verifiedClause"
     }
 
     private fun inputSummaryLine(): String = when (val state = InputStatus.state) {
@@ -507,11 +557,22 @@ public object SettingsPolling {
         else -> RigLinkTransportKind.NONE
     }
 
-    /** `<descriptor id> · built in · verified command set <caps>` — [org.ort.rig.RigCapability]
-     * names real for the transport currently in use, from the matched bundled descriptor's own
-     * declared capability list — never the board mockup's raw CAT mnemonics (`FQ BY FO BC...`),
-     * which no accessible source in this build carries (see [SettingsRigViewState]'s own doc
-     * comment). [NOT_REPORTED_BY_RIG_MODULE] for an unmatched (operator-imported) descriptor. */
+    /**
+     * `<descriptor id> · built in · verified command set <caps>` — the descriptor's own real,
+     * declared capabilities for the transport currently in use, rendered as the CAT mnemonics
+     * `Settings-Rig.dc.html`'s own convention uses (`FQ BY …`), never the raw
+     * [org.ort.rig.RigCapability] enum names. [NOT_REPORTED_BY_RIG_MODULE] for an unmatched
+     * (operator-imported) descriptor.
+     *
+     * Register R-923 (Reviewer C2, run 3): this used to join the raw enum names
+     * ("FREQUENCY, SQUELCH_STATE, SUB_BAND") — real, but not the screen's own established
+     * shorthand. [catMnemonicFor] maps each real capability to the real two-letter command
+     * `docs/reference/th-d75a-cat.md`'s own verified command table (read before writing this)
+     * documents for it — never the board mockup's own full eight-command example (`FQ BY FO BC MR
+     * ME AI BL`), which is illustrative of a broader command set no accessible source in this build
+     * actually declares (the real, bundled `kenwood-thd75a.json` capability list is only three:
+     * `FREQUENCY`, `SQUELCH_STATE`, `SUB_BAND`).
+     */
     private fun rigModuleLabel(
         descriptorId: String?,
         descriptor: org.ort.rig.descriptor.RigDescriptor?,
@@ -520,14 +581,43 @@ public object SettingsPolling {
         if (descriptor == null || descriptorId == null) return NOT_REPORTED_BY_RIG_MODULE
         val transport = descriptor.transports.firstOrNull { descriptorTransportKindOf(it.kind) == transportKind }
             ?: descriptor.transports.firstOrNull()
-        val caps = transport?.capabilities?.joinToString(", ") ?: return NOT_REPORTED_BY_RIG_MODULE
+        val rawCaps = transport?.capabilities ?: return NOT_REPORTED_BY_RIG_MODULE
+        val caps = rawCaps.joinToString(" ") { raw ->
+            runCatching { org.ort.rig.RigCapability.valueOf(raw) }.getOrNull()?.let(::catMnemonicFor) ?: raw
+        }
         return "$descriptorId · built in · verified command set $caps"
     }
 
-    /** The descriptor's *other* declared transport, named plainly — real `vid`/`pid` appended only
-     * when the descriptor itself states them (`kenwood-thd75a.json` leaves both `null`, "still to
-     * verify" — this never invents the board mockup's own `vid 0x0451 pid 0x16a8`). `null` when the
-     * descriptor is unmatched or declares only the one transport currently in use. */
+    /** R-923: the real two-letter CAT command `docs/reference/th-d75a-cat.md`'s own verified
+     * command table documents for each [org.ort.rig.RigCapability] this build can actually declare
+     * — never a guessed mnemonic for a capability that table does not cover
+     * ([org.ort.rig.RigCapability.SIGNAL_STRENGTH]/`TIME`/`POSITION`, none of which are in that
+     * table today), which falls back to the enum's own name, honestly, rather than inventing one. */
+    private fun catMnemonicFor(capability: org.ort.rig.RigCapability): String = when (capability) {
+        org.ort.rig.RigCapability.FREQUENCY -> "FQ"
+        org.ort.rig.RigCapability.SQUELCH_STATE -> "BY"
+        org.ort.rig.RigCapability.MODE -> "FO"
+        org.ort.rig.RigCapability.SUB_BAND -> "BC"
+        org.ort.rig.RigCapability.MEMORY_CHANNEL -> "MR"
+        org.ort.rig.RigCapability.CHANNEL_NAME -> "ME"
+        org.ort.rig.RigCapability.SIGNAL_STRENGTH,
+        org.ort.rig.RigCapability.TIME,
+        org.ort.rig.RigCapability.POSITION,
+        -> capability.name
+    }
+
+    /**
+     * The descriptor's *other* declared transport, named plainly — real `vid`/`pid` appended only
+     * when the descriptor itself states them. `null` when the descriptor is unmatched or declares
+     * only the one transport currently in use.
+     *
+     * Register R-835 reopened (Reviewer C2, run 3): `kenwood-thd75a.json` leaves both `null`
+     * ("still to verify", `BundledDescriptors`'s own doc comment — H1, the operator with the radio
+     * in hand over USB, fills them in later) — this used to render as a bare "USB serial also
+     * supported" with no mention of vid/pid at all, silently omitting the fact that the ids are
+     * simply not yet known rather than genuinely inapplicable. Now says so honestly: "vid/pid not
+     * yet verified (H1)" — never the board mockup's own invented `vid 0x0451 pid 0x16a8`.
+     */
     private fun otherTransportLabel(
         descriptor: org.ort.rig.descriptor.RigDescriptor?,
         transportKind: RigLinkTransportKind?,
@@ -538,7 +628,7 @@ public object SettingsPolling {
         val vidPid = if (other.usbVendorId != null && other.usbProductId != null) {
             ", vid 0x%04x pid 0x%04x".format(Locale.ROOT, other.usbVendorId, other.usbProductId)
         } else {
-            ""
+            ", vid/pid not yet verified (H1)"
         }
         return "$label also supported$vidPid"
     }

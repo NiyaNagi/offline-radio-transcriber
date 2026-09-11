@@ -313,7 +313,7 @@ class SettingsPollingTest {
     }
 
     @Test
-    fun `R_835 the Rig-module row is real from the matched descriptor's own capabilities, not the board mockup`() {
+    fun `R_835_R_923 the Rig-module row renders the real descriptor's own capabilities as CAT mnemonics`() {
         RigStatus.connected(
             descriptor = "Kenwood TH-D75A",
             bands = emptyList(),
@@ -321,15 +321,31 @@ class SettingsPollingTest {
             descriptorId = BundledDescriptors.kenwoodThD75a().id,
         )
         val state = SettingsPolling.rig(context)
-        assert(
-            state.rigModuleLabel ==
-                "kenwood-thd75a · built in · verified command set FREQUENCY, SQUELCH_STATE, SUB_BAND",
-        ) {
-            "expected the real capability names, got ${state.rigModuleLabel}"
+        // R-923 (Reviewer C2, run 3): `docs/reference/th-d75a-cat.md`'s own verified command
+        // table — FREQUENCY -> FQ, SQUELCH_STATE -> BY, SUB_BAND -> BC — the screen's own
+        // established shorthand, never the raw `RigCapability` enum names, and never the board
+        // mockup's own broader eight-command example (`FQ BY FO BC MR ME AI BL`, illustrative of a
+        // command set no accessible source in this build actually declares).
+        assert(state.rigModuleLabel == "kenwood-thd75a · built in · verified command set FQ BY BC") {
+            "expected the real CAT mnemonics, got ${state.rigModuleLabel}"
         }
-        // The board's own mockup text is raw CAT mnemonics no accessible source in this build
-        // carries — never fabricated here.
         assert(!state.rigModuleLabel.contains("FQ BY FO BC MR ME AI BL"))
+        assert(!state.rigModuleLabel.contains("FREQUENCY"))
+    }
+
+    @Test
+    fun `R_835_reopened otherTransportLabel reads vid-pid not yet verified H1, never the board mockup ids`() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val state = SettingsPolling.rig(context)
+        assert(state.otherTransportLabel == "USB serial also supported, vid/pid not yet verified (H1)") {
+            "expected the honest H1 qualifier, got ${state.otherTransportLabel}"
+        }
+        assert(state.otherTransportLabel?.contains("0x0451") != true)
     }
 
     @Test
@@ -393,6 +409,38 @@ class SettingsPollingTest {
         assert(overridden.isOverridden)
         assert(overridden.overrideLabel == "Held at T2")
     }
+
+    @Test
+    fun `R_915 the root Models-and-lexicon row reads honestly when nothing is installed`(): Unit = runTest {
+        val root = SettingsPolling.root(context, InMemorySettingsStore())
+        val modelsRow = root.sections.flatMap { it.rows }.single { it.screen == SettingsScreenId.ASSETS }
+        assert(modelsRow.subLine == "Nothing installed yet") {
+            "expected the honest empty case, got ${modelsRow.subLine}"
+        }
+    }
+
+    @Test
+    fun `R_915 the root Models-and-lexicon row names the real installed components, not a bare count`(): Unit =
+        runTest {
+            // The same real install path `R_443_clean_install_groups` (`ModelsScreenTest.kt`)
+            // already relies on — a genuinely fresh Robolectric context's own real app assets,
+            // never a synthetic row list standing in for either half.
+            org.ort.app.assets.BundledAssetInstaller.installAll(
+                context.filesDir,
+                org.ort.app.assets.AndroidBundledAssetSource(context),
+            )
+            val root = SettingsPolling.root(context, InMemorySettingsStore())
+            val modelsRow = root.sections.flatMap { it.rows }.single { it.screen == SettingsScreenId.ASSETS }
+            assert(modelsRow.subLine.contains("Whisper tiny.en")) {
+                "expected the real Whisper family name, got ${modelsRow.subLine}"
+            }
+            assert(modelsRow.subLine.contains("Silero VAD")) {
+                "expected the real VAD name, got ${modelsRow.subLine}"
+            }
+            assert(!modelsRow.subLine.contains("of 5 assets installed")) {
+                "expected component names, not the old bare count, got ${modelsRow.subLine}"
+            }
+        }
 
     @Test
     fun `R_131_R_253 the root Tier row is Settings-dc-html verbatim at the real max tier, no override`(): Unit =
