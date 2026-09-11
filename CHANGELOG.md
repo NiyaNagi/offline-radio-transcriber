@@ -87,6 +87,91 @@ tour itself — every new step above, plus the run-5 carryover list (`setup-veri
 `setup-level/S07*`, `mode-change-pending/CF02*`, `model-missing/CF04*`) — held until the
 coordinator's own explicit "run 6 go", after WPD's S05/S07 fix and WPE's CF02/CF04 fixes land on
 `main`.
+## 2026-09-11 (WPD reviewer A4 run 5: R-943 DebugRouteCheckOverride, R-944 reopened colour fix)
+
+### <pending> — setup modes: R-943 - DebugRouteCheckOverride seams S05 for the tour; R-944 reopened - levelBarRects colour mapping fixed
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/DebugRouteCheckOverride.kt` (new),
+`app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt`,
+`app/src/main/kotlin/org/ort/app/ui/setup/LevelScreen.kt`, matching test files
+(`DebugRouteCheckOverrideTest.kt`, `SetupActivityVerifyOverrideTest.kt` — both new — and
+`LevelScreenTest.kt`). Merged local `main` fast-forward to `30bb0d8c` first (brought in reviewer
+A4's register entries and the run-5 tour evidence; no conflict with this round's files).
+
+**Requirements/ACs:** R-943 (register, reviewer A4 run 5, halt), R-944 (register, reopened by
+reviewer A4 run 5 — the design half WPD's own `64081712` had already landed once).
+
+**What changed:** *Constitution check.* I (every seeded fact WPI can now show on S05 — device
+label, native rate, elapsed seconds, level bars, noise floor — is still a real `RouteCheckState`
+shape, never a fabricated one this file invents; the bar colours below come from real thresholds
+already established elsewhere in this file, never a guessed palette). II (both fixes are
+test-backed — the colour fix specifically via a temporarily-reverted-and-confirmed-failing check
+during R-882's own prior round's methodology, applied again here: every new colour-band test was
+run and shown to fail against the pre-fix mapping before the fix landed). VII (`Scenarios.kt`,
+where the *other* half of R-944 — the seeded envelope's own shape — actually lived, was read but
+never touched; WPI's own `bff4910f` fixes that half, confirmed by the coordinator's own message
+mid-round).
+
+1. **`DebugRouteCheckOverride`** (new) — the exact `show(state)`/`clear()`/`activeOverride` shape
+   `DebugRigLinkPortOverride` already establishes for S10b's own hardware-shaped gap: a debug
+   scenario can seed any real `RouteCheckState` (typically an `InProgress` "still listening"
+   snapshot) for S05 to render, gated on `BuildConfig.DEBUG` via the same settable `isDebugBuild`
+   seam (Robolectric always compiles the debug variant, so the bare constant can't prove the
+   release-ignored case).
+2. **`SetupActivity.RenderVerify`** — reads `DebugRouteCheckOverride.activeOverride` *ahead of*
+   ever starting `RealRouteCheck`: when set, it emits once via the existing `onVerifyStateChanged`
+   and the real check never launches at all, regardless of whether a real `selectedDescriptor()`
+   exists. This is the actual fix for the register's diagnosis — the tour opens S05 by a cold
+   `EXTRA_STEP` launch, before any S04 selection ever ran, so `selectedDescriptor()` was `null` and
+   `RealRouteCheck`'s listen loop never even started; none of R-943's own prior-round S05 elements
+   (the waveform card, the elapsed counter, the routed-device/native-rate lines) could ever be
+   captured by the tour.
+3. **`levelBarRects`'s colour mapping** (`LevelScreen.kt`) — the prior 3-way banding (bright green
+   at/above the 10 dB-wide target band, a fixed mid-green *inside* it, `OrtColors.meterWarn` — an
+   amber-family tone — for everything else) rendered nearly every bar of a genuine speech envelope
+   amber, since the target band is narrow and most real samples fall outside it.
+   `results/ui-audit/setup-level/S07-level.png`/`@2x` showed exactly this: a decaying spike with
+   every bar amber and a green "in the band" status dot beside it — a direct contradiction of guide
+   §8 ("amber is for anomalies") and `Setup-Level.dc.html` lines 47–64 (read directly, not
+   re-guessed: quiet bars its own illustrative grey, `oklch(0.42 0.04 250)`; every louder bar a
+   shade of the green ramp; no amber anywhere on the board). Replaced with `levelBarColorFor`: bars
+   below a documented `QUIET_BELOW_FRACTION` policy threshold (0.30, chosen to land between the
+   board's own grey bars topping out near 0.24 and its green ones starting near 0.44) read
+   `OrtColors.chartNeutralRamp[0]`; louder bars pick a `chartGreenRamp` shade scaled linearly by how
+   close they sit to the target band's own top (dimmest ramp entry at the quiet floor, brightest —
+   `accentGreen` — at or above the band top); a bar that actually reaches the chart's own ceiling
+   (`clamped >= 1f`, true 0 dBFS clipping) is the one place this chart still draws red
+   (`OrtColors.haltFill`). Amber never appears in this chart's bars again — the live status dot
+   below it (`colorFor(band)`) is untouched and still legitimately carries that meaning for
+   `TOO_QUIET`/`CLIPPING`.
+
+**Verified:** `:app:testDebugUnitTest --tests DebugRouteCheckOverrideTest --tests
+SetupActivityVerifyOverrideTest --tests LevelScreenTest --tests SetupActivityTest` — all green,
+including: five `DebugRouteCheckOverrideTest` cases mirroring `DebugRigLinkPortOverrideTest`
+exactly (shown/active, ignored once `isDebugBuild` reports false, cleared, unset reads null
+regardless); two `SetupActivityVerifyOverrideTest` end-to-end cases (a cold `EXTRA_STEP=VERIFY`
+launch with no real matching audio device under Robolectric — the exact register shape — renders
+the seeded `RouteCheckState` via a new `verifyStateForTest` accessor; the same launch with
+`isDebugBuild` false stays `null`, never the seed); seven new `LevelScreenTest` cases (a quiet bar
+reads grey never amber, a bar at/above the target band top reads full `accentGreen`, a mid-range
+bar reads a real `chartGreenRamp` member never `meterWarn`/`accentAmber`, the ramp brightens
+monotonically as loudness rises, a bar at the chart ceiling reads `haltFill`, no bar across a full
+0..1 sweep ever reads amber, and a genuine rise-and-fall input renders as a rise then a fall by its
+own topY ordering — not a decaying spike — proving `levelBarRects` draws whatever `bars` it is
+given in full, with no windowing/truncation of its own). Full app test suite
+(`:app:testDebugUnitTest`) and smoke suite (`:app:smokeTestDebugUnitTest`) both green.
+`./gradlew build dependencyRules platformGuards` green (one `SetupActivityTest` detekt `LargeClass`
+warning from the two R-943 cases originally added there was resolved by splitting them into the
+new `SetupActivityVerifyOverrideTest.kt`, matching this package's own established
+one-seam-per-file test style). `python tools/spec-check/spec_check.py` — all 8 checks pass.
+`coverageMatrix`/`coverageMatrixCheck` — 241 of 450 covered, unchanged, no drift.
+
+**Left open:** R-944's *other* half — why the seeded envelope showed only a decaying tail rather
+than its own real rise-and-fall — was root-caused by the coordinator/WPI mid-round as a
+`Scenarios.kt` seeding issue (the two lobes sat at samples 14/38 of 60 while `levelReadingFrom`
+draws `takeLast(15)`, so only the second lobe's decay ever fell inside the visible window) and is
+fixed in WPI's own `bff4910f`, outside this package's ownership — not re-verified here since that
+commit had not yet reached local `main` at the time of this round's own gate run.
 
 ---
 
@@ -31528,6 +31613,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

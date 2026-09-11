@@ -247,6 +247,11 @@ public class SetupActivity : ComponentActivity() {
      * see whether S09b's preset pre-select actually ran, not just that the screen renders. */
     internal val selectedRigTransportKindForTest: RigTransportKind? get() = selectedRigTransportKind
 
+    /** Test-only window into [verifyState] — R-943's own regression proof needs to see that
+     * [DebugRouteCheckOverride.activeOverride] actually reached S05's rendered state, not just
+     * that [SetupStep.VERIFY] itself was reached. */
+    internal val verifyStateForTest: RouteCheckState? get() = verifyState
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)
@@ -957,10 +962,21 @@ public class SetupActivity : ComponentActivity() {
         )
     }
 
+    /**
+     * R-943 (register, reviewer A4 run 5, halt): [DebugRouteCheckOverride.activeOverride] is read
+     * *ahead of* ever starting the real check — see that object's own class kdoc for why (the tour
+     * opens this step by a cold [EXTRA_STEP] launch, before any S04 selection ever ran, so
+     * [selectedDescriptor] is `null` and [RealRouteCheck] would never even start). A seeded override
+     * emits once and [RealRouteCheck] never runs at all this composition, matching
+     * [DebugRigLinkPortOverride]'s own "override wins outright" shape in [onCreate].
+     */
     @Composable
     private fun RenderVerify() {
+        val override = DebugRouteCheckOverride.activeOverride
         val selection = selectedDescriptor()
-        if (selection != null) {
+        if (override != null) {
+            LaunchedEffect(override) { onVerifyStateChanged(override) }
+        } else if (selection != null) {
             LaunchedEffect(verifyRunToken) {
                 RealRouteCheck().run(audioIo, selection).collect { onVerifyStateChanged(it) }
             }

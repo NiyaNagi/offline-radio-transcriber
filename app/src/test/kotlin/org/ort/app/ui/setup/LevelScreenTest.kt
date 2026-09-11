@@ -209,21 +209,102 @@ class LevelScreenTest {
         assert(rects[3].topY < rects[4].topY) { "a smaller sample must draw shorter than a larger one" }
     }
 
+    // --- R-944 reopened (register, reviewer A4 run 5, halt): quiet bars grey, the speech ramp -----
+    // --- green, red only at clip -- amber is for anomalies (guide §8), never this chart's own bars -
+
+    private val bandTopFraction =
+        levelBarFraction(org.ort.app.ui.data.LevelViewState.TARGET_BAND_TOP_DBFS.toDouble())
+
     @Test
-    fun `R_944 the tinted target band colours a bar within it, above and below read differently`() {
-        val topFraction = levelBarFraction(org.ort.app.ui.data.LevelViewState.TARGET_BAND_TOP_DBFS.toDouble())
-        val bottomFraction = levelBarFraction(org.ort.app.ui.data.LevelViewState.TARGET_BAND_BOTTOM_DBFS.toDouble())
-        val midBand = (topFraction + bottomFraction) / 2f
+    fun `R_944 a quiet bar reads the neutral grey ramp, never the warn amber colour`() {
+        val rects = levelBarRects(bars = listOf(0.05f, 0.1f), widthPx = 20f, heightPx = 100f, gapPx = 0f)
+
+        rects.forEach { assert(it.color == OrtColors.chartNeutralRamp[0]) { "expected grey, got ${it.color}" } }
+    }
+
+    @Test
+    fun `R_944 a bar at or above the target band top reads full accent green`() {
         val rects = levelBarRects(
-            bars = listOf(0.0f, midBand, 1.0f),
-            widthPx = 30f,
+            bars = listOf(bandTopFraction, (bandTopFraction + 1f) / 2f),
+            widthPx = 20f,
             heightPx = 100f,
             gapPx = 0f,
         )
 
-        assert(rects[0].color == OrtColors.meterWarn) { "below the target band must read the warn colour" }
-        assert(rects[1].color == OrtColors.chartGreenRamp[1]) { "inside the target band must read its own colour" }
-        assert(rects[2].color == OrtColors.accentGreen) { "at or above the band top must read full accent green" }
+        rects.forEach { assert(it.color == OrtColors.accentGreen) { "expected accentGreen, got ${it.color}" } }
+    }
+
+    @Test
+    fun `R_944 a bar between quiet and the target band top reads a real chartGreenRamp shade, never amber`() {
+        val midway = levelBarColorFor((0.30f + bandTopFraction) / 2f, bandTopFraction)
+
+        assert(midway in OrtColors.chartGreenRamp) { "expected a chartGreenRamp shade, got $midway" }
+        assert(midway != OrtColors.meterWarn && midway != OrtColors.accentAmber) {
+            "the speech ramp must never render amber (guide §8) -- amber is for anomalies, got $midway"
+        }
+    }
+
+    @Test
+    fun `R_944 the green ramp brightens monotonically as the bar gets louder, never darker`() {
+        val quiet = levelBarColorFor(0.35f, bandTopFraction)
+        val louder = levelBarColorFor((0.35f + bandTopFraction) / 2f, bandTopFraction)
+        val loudest = levelBarColorFor(bandTopFraction, bandTopFraction)
+        val ramp = OrtColors.chartGreenRamp
+
+        assert(ramp.indexOf(louder) <= ramp.indexOf(quiet)) { "a louder bar must never be dimmer" }
+        assert(ramp.indexOf(loudest) <= ramp.indexOf(louder)) { "the loudest bar must be the brightest" }
+        assert(loudest == OrtColors.accentGreen)
+    }
+
+    @Test
+    fun `R_944 a bar that actually reaches the chart ceiling reads red, the one anomaly this chart shows`() {
+        val rects = levelBarRects(bars = listOf(1.0f), widthPx = 20f, heightPx = 100f, gapPx = 0f)
+
+        assert(rects[0].color == OrtColors.haltFill) { "expected haltFill at true clip, got ${rects[0].color}" }
+    }
+
+    @Test
+    fun `R_944 no bar across the whole real range ever renders amber`() {
+        val samples = (0..20).map { it / 20f }
+        val rects = levelBarRects(bars = samples, widthPx = 200f, heightPx = 100f, gapPx = 0f)
+
+        rects.forEach { rect ->
+            assert(rect.color != OrtColors.meterWarn && rect.color != OrtColors.accentAmber) {
+                "expected never amber across the sampled range, got ${rect.color} for a sample"
+            }
+        }
+    }
+
+    /**
+     * R-944 reopened: a genuine two-syllable rise-and-fall envelope (the same shape
+     * `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`'s own `speechShapedPeakHistoryDbfs`
+     * seeds) must render left to right as a real rise then fall -- never the "single monotonically
+     * decaying spike" the validator screenshotted -- proving this chart draws whatever [bars] it is
+     * handed in full, with no windowing/truncation of its own, so the shape reaching it is the
+     * shape shown.
+     */
+    @Test
+    fun `R_944 a rise-and-fall input renders as a rise then a fall, not a decaying spike`() {
+        val riseAndFall = listOf(0.05f, 0.10f, 0.25f, 0.45f, 0.65f, 0.75f, 0.60f, 0.40f, 0.20f, 0.08f)
+        val rects = levelBarRects(bars = riseAndFall, widthPx = 200f, heightPx = 100f, gapPx = 0f)
+
+        val peakIndex = rects.indices.minByOrNull { rects[it].topY }!!
+        assert(peakIndex in 4..6) { "expected the peak (smallest topY) near the middle, got index $peakIndex" }
+        // Strictly falling topY (rising height) up to the peak...
+        for (i in 1..peakIndex) {
+            assert(rects[i].topY <= rects[i - 1].topY) {
+                "expected a monotonic rise up to the peak at $peakIndex, broke at $i: ${rects.map { it.topY }}"
+            }
+        }
+        // ...then strictly rising topY (falling height) after it -- never still decaying from the
+        // very first bar, the exact defect class this register line reopened over.
+        for (i in (peakIndex + 1) until rects.size) {
+            assert(rects[i].topY >= rects[i - 1].topY) {
+                "expected a monotonic fall after the peak at $peakIndex, broke at $i: ${rects.map { it.topY }}"
+            }
+        }
+        assert(rects.first().topY > rects[peakIndex].topY) { "the first bar must be shorter than the peak" }
+        assert(rects.last().topY > rects[peakIndex].topY) { "the last bar must be shorter than the peak" }
     }
 
     @Test

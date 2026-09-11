@@ -256,29 +256,77 @@ internal data class LevelBarRect(
  * never a fixed/alternating pattern regardless of what was actually measured — is directly
  * testable without a `DrawScope`/pixel comparison. Each [LevelBarRect.topY] is this bar's own real
  * [LevelReading.bars] fraction mapped onto the canvas height (`0f..1f`, floor..ceiling, unclamped
- * beyond `coerceIn` — a bar's own rectangle is meant to reach the true edge); the 3-way colour
- * banding is the same real threshold comparison [LevelMeter] always drew, just relocated.
+ * beyond `coerceIn` — a bar's own rectangle is meant to reach the true edge); colour comes from
+ * [levelBarColorFor].
+ *
+ * R-944 reopened (register, reviewer A4 run 5, halt, `results/ui-audit/setup-level/S07-level.png`):
+ * the original 3-way banding above (bright green at/above the target band, a fixed mid-green
+ * *inside* it, [OrtColors.meterWarn] — an amber-family tone — for literally everything else, which
+ * is most of any real envelope, since the target band is only 10 dB wide) rendered nearly every
+ * bar amber on a genuine speech envelope, with a green top only right at the very peak. Read
+ * `Setup-Level.dc.html` lines 47–64 (its own 16 illustrative bars) directly rather than
+ * re-guessing: quiet bars (under roughly a third of the chart) are
+ * [OrtColors.chartNeutralRamp]'s own grey, `oklch(0.42 0.04 250)`; every louder bar is a shade of
+ * [OrtColors.chartGreenRamp] scaled by how close it sits to the target band (brightest —
+ * [OrtColors.accentGreen] — at or above it, dimmest just past the grey floor); nothing on the
+ * board is ever amber. Amber is for anomalies (guide §8) — this meter's own live status dot
+ * ([colorFor]) already carries that meaning for [LevelBand.TOO_QUIET]/[LevelBand.CLIPPING]; the
+ * bars themselves are never that signal. Red ([OrtColors.haltFill]) is reserved for the one real
+ * anomaly a bar chart can show on its own: a sample that actually reached
+ * [LevelViewState.CHART_CEILING_DBFS] (fraction `1f`, true clipping), never the target band's own
+ * upper edge.
  */
 internal fun levelBarRects(bars: List<Float>, widthPx: Float, heightPx: Float, gapPx: Float): List<LevelBarRect> {
     if (bars.isEmpty()) return emptyList()
     val barWidth = (widthPx - gapPx * (bars.size - 1)) / bars.size
     val bandTopFraction = levelBarFraction(LevelViewState.TARGET_BAND_TOP_DBFS.toDouble())
-    val bandBottomFraction = levelBarFraction(LevelViewState.TARGET_BAND_BOTTOM_DBFS.toDouble())
     return bars.mapIndexed { index, fraction ->
         val clamped = fraction.coerceIn(0f, 1f)
-        val color = when {
-            clamped >= bandTopFraction -> OrtColors.accentGreen
-            clamped >= bandBottomFraction -> OrtColors.chartGreenRamp[1]
-            else -> OrtColors.meterWarn
-        }
         LevelBarRect(
             x = index * (barWidth + gapPx),
             width = barWidth,
             topY = heightPx * (1f - clamped),
-            color = color,
+            color = levelBarColorFor(clamped, bandTopFraction),
         )
     }
 }
+
+/**
+ * R-944 reopened: quiet bars (below [QUIET_BELOW_FRACTION]) are neutral grey, never amber; every
+ * louder bar is a shade of [OrtColors.chartGreenRamp] — the ramp's own dimmest shade
+ * ([OrtColors.chartGreenRamp]'s last entry) right at [QUIET_BELOW_FRACTION], its brightest
+ * ([OrtColors.accentGreen], the ramp's first entry) at or above [bandTopFraction] — a real
+ * proportional ramp by loudness, not a hand-picked step; a bar that actually reaches the chart's
+ * own ceiling (`clamped >= 1f`, true 0 dBFS clipping) is the one place this chart ever draws red.
+ */
+internal fun levelBarColorFor(clamped: Float, bandTopFraction: Float): androidx.compose.ui.graphics.Color = when {
+    clamped >= 1f -> OrtColors.haltFill
+    clamped < QUIET_BELOW_FRACTION -> OrtColors.chartNeutralRamp[0]
+    else -> greenRampColorFor(clamped, bandTopFraction)
+}
+
+/** Linearly ranks [clamped] between [QUIET_BELOW_FRACTION] (dimmest ramp shade) and
+ * [bandTopFraction] (brightest, and everything louder still) into an index into
+ * [OrtColors.chartGreenRamp] — see [levelBarColorFor]'s own doc comment. */
+private fun greenRampColorFor(clamped: Float, bandTopFraction: Float): androidx.compose.ui.graphics.Color {
+    val ramp = OrtColors.chartGreenRamp
+    val span = (bandTopFraction - QUIET_BELOW_FRACTION).coerceAtLeast(MIN_RAMP_SPAN)
+    val progress = ((clamped - QUIET_BELOW_FRACTION) / span).coerceIn(0f, 1f)
+    val index = ((1f - progress) * (ramp.size - 1)).toInt().coerceIn(0, ramp.size - 1)
+    return ramp[index]
+}
+
+/** Policy, not a spec-mandated figure (this file's own established style for such constants —
+ * see [RealLevelCheck.TOO_QUIET_BELOW_DBFS]'s identical caveat): the fraction below which a bar
+ * reads as ordinary quiet/noise-floor activity rather than speech, chosen to land between
+ * `Setup-Level.dc.html`'s own illustrative grey bars (topping out around 0.24) and its green ones
+ * (starting around 0.44) — report to the lead if a measured target ships later. */
+private const val QUIET_BELOW_FRACTION: Float = 0.30f
+
+/** Guards [greenRampColorFor]'s division whenever [QUIET_BELOW_FRACTION] and the target band's top
+ * fraction ever end up equal or inverted (not reachable with today's real constants, but never a
+ * divide-by-zero regardless). */
+private const val MIN_RAMP_SPAN: Float = 0.0001f
 
 /**
  * R-465 (device-verified, `setup-level/S07-level.png`): [levelBarRects]'s own unclamped mapping
