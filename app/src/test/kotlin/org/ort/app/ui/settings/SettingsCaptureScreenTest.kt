@@ -3,7 +3,11 @@ package org.ort.app.ui.settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
@@ -182,6 +186,91 @@ class SettingsCaptureScreenTest {
                 "clipped behind the live bar",
             liveBarTop - paragraphBottom >= minimumExpectedGap,
         )
+    }
+
+    @Test
+    @Requirement("FR-CAP-12")
+    fun `R_957 the closing paragraph is still reachable when the host also reserves the live bars real height`() {
+        // Register R-957 (addendum to R-933, reviewer B4): the closing paragraph reads cut after
+        // its first line with a *blank gap* above the live bar, live sessions only. R-826's own
+        // test above never modelled `NavHostBody`'s own real shape faithfully: that host's
+        // `NavHostBody` wraps every destination's content in
+        // `Box(Modifier.weight(1f).padding(top = clearance, bottom = liveBarHeight))` — the real,
+        // measured live-bar height is *already* reserved as real padding on the ancestor box, not
+        // merely occupied by a sibling below it. This screen's own R-826 fix then adds a *second*,
+        // static 44dp bottom padding *inside* its own scroll — reserving the live bar's height
+        // twice. Reproduced here by adding the identical real padding to the weighted box the R-826
+        // test above only ever gave a plain sibling.
+        composeTestRule.setContent {
+            OrtTheme {
+                Column(modifier = Modifier.width(390.dp).height(500.dp)) {
+                    Box(modifier = Modifier.weight(1f).padding(bottom = 44.dp)) {
+                        SettingsCaptureScreen(
+                            state = state(CaptureMode.LOCAL_MICROPHONE),
+                            onBack = {},
+                            toggles = SettingsCaptureToggleActions({}, {}, {}),
+                        )
+                    }
+                    Box(modifier = Modifier.height(44.dp).testTag("fake-live-bar"))
+                }
+            }
+        }
+
+        val scrollable = composeTestRule.onNode(hasScrollAction())
+        scrollable.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
+        composeTestRule.waitForIdle()
+
+        composeTestRule
+            .onNodeWithText(
+                "it never adjusts gain on the way in, so what is retained is what the radio put out.",
+                substring = true,
+            )
+            .assertExists()
+    }
+
+    @Test
+    @Requirement("FR-CAP-12")
+    fun `R_957 the closing paragraph stays reachable when the live bars real height arrives after the scroll`() {
+        // Register R-957: `NavHostBody`'s own `liveBarHeight` starts at `0.dp` (`remember {
+        // mutableStateOf(0.dp) }`) and only becomes the real measured value once `LiveBar` itself
+        // reports its size via `onGloballyPositioned`, on a *later* frame/recomposition — exactly
+        // the timing trap that file's own R-262 doc comment already names. If a caller (the tour's
+        // own capture step) scrolls to the end *before* that real height lands, then the ancestor
+        // box's own bottom padding grows afterwards with no further scroll performed, this proves
+        // whether the scrollable's own max-scroll value reactively grows to keep the tail
+        // reachable, or whether it stays stuck at whatever it computed against the taller,
+        // not-yet-shrunk viewport.
+        var liveBarHeight by mutableStateOf(0.dp)
+        composeTestRule.setContent {
+            OrtTheme {
+                Column(modifier = Modifier.width(390.dp).height(500.dp)) {
+                    Box(modifier = Modifier.weight(1f).padding(bottom = liveBarHeight)) {
+                        SettingsCaptureScreen(
+                            state = state(CaptureMode.LOCAL_MICROPHONE),
+                            onBack = {},
+                            toggles = SettingsCaptureToggleActions({}, {}, {}),
+                        )
+                    }
+                    Box(modifier = Modifier.height(44.dp).testTag("fake-live-bar"))
+                }
+            }
+        }
+
+        val scrollable = composeTestRule.onNode(hasScrollAction())
+        scrollable.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
+        composeTestRule.waitForIdle()
+
+        // The live bar's own real height "arrives" only now — after the first (and, on a real
+        // device screenshot, only) scroll-to-end.
+        liveBarHeight = 44.dp
+        composeTestRule.waitForIdle()
+
+        composeTestRule
+            .onNodeWithText(
+                "it never adjusts gain on the way in, so what is retained is what the radio put out.",
+                substring = true,
+            )
+            .assertExists()
     }
 
     @Test
