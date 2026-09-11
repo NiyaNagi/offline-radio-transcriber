@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (WPI run 6 prep: R-944 level-envelope display-window fix, R-945/R-955/R-956/R-960 new tour steps — held for "run 6 go")
 
-### <pending> — R-944 fixed for real (A4's "decaying spike"), R-945 rig-bt-connected/S12-ready-bt, R-955/R-956/R-960 new CF02/CF06/CF11/F09 steps — tour run itself held
+### bff4910f — R-944 fixed for real (A4's "decaying spike"), R-945 rig-bt-connected/S12-ready-bt, R-955/R-956/R-960 new CF02/CF06/CF11/F09 steps — tour run itself held
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`,
 `tools/ui-audit/tour.json`, `results/coverage-matrix.md` (regenerated). No tour run this round —
