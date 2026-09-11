@@ -528,6 +528,17 @@ public fun KeyValueRow(
         // fixes all of them at once, not only CF02's. `key` and `value` share the same `OrtType
         // .control` style, so top-aligning the row lines their first lines up exactly; at 1.0 (or
         // any single-line value) this is visually identical to the previous centred layout.
+        // Register R-980 (halt, run 6): with a [trailingMarker] present, [key] previously had no
+        // upper bound at all — a non-weighted `Text` in a `Row` is measured against the *whole*
+        // remaining row width, so a long key ("Re-verify the route now" at font scale 2.0) reported
+        // its own full single-line width, leaving the weighted [value] column whatever sliver was
+        // left over — the same starvation class `TextAction`'s own doc comment already names for
+        // R-805/R-863/R-874/R-970, just on the *leading* side of the row this time, not the
+        // trailing one. [key] now yields (`weight(1f, fill = false)`, wraps at words within its own
+        // share rather than claiming the whole row) and [value]'s own column keeps a real minimum —
+        // a 1.5x weight against [key]'s 1x means value never drops below ~40% of what remains once
+        // [trailingMarker] (still measured first, unweighted, at its own real intrinsic width) has
+        // taken its share.
         Row(
             modifier = Modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
             verticalAlignment = Alignment.Top,
@@ -537,9 +548,9 @@ public fun KeyValueRow(
                 text = key,
                 style = OrtType.control,
                 color = OrtColors.textDim,
-                modifier = Modifier.widthIn(min = 96.dp),
+                modifier = Modifier.widthIn(min = 96.dp).weight(1f, fill = false),
             )
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1.5f)) {
                 Text(text = value, style = OrtType.control, color = OrtColors.textHigh)
                 subLine?.let { Text(text = it, style = OrtType.subLine, color = OrtColors.textDim) }
             }

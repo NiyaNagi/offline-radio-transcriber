@@ -1,24 +1,18 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
-import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
-import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
@@ -837,52 +831,14 @@ class ModelsScreenTest {
         composeTestRule.onNodeWithText("staged · activates when this session ends").assertDoesNotExist()
     }
 
-    /**
-     * Register R-933 (Reviewer D2, run 3, design — the R-826 shape): under a live session the
-     * Lexicon row's own "not installed" sub-line and "Install a lexicon from a file" action sat
-     * behind the live bar with no way to scroll them clear. Reproduced the same structural way this
-     * codebase's own R-613/R-826 precedents do: a real sibling occupying the live bar's own height
-     * below a `weight(1f)` box holding this screen, then a real maximum scroll, then one node's
-     * bottom checked against the sibling's own top.
-     */
-    @Test
-    @Requirement("FR-AST-3")
-    fun `R_933 scrolled to the end the footer clears a live bar pinned below this screen`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                Column(modifier = Modifier.width(390.dp).height(500.dp)) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        ModelsScreen(
-                            state = ModelsViewState(rows = listOf(row(ModelId.VAD, ModelRowStatus.NOT_INSTALLED))),
-                            onDownload = {},
-                            onSideload = {},
-                        )
-                    }
-                    Box(modifier = Modifier.height(44.dp).testTag("fake-live-bar"))
-                }
-            }
-        }
-
-        val scrollable = composeTestRule.onNode(hasScrollAction())
-        scrollable.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
-        composeTestRule.waitForIdle()
-
-        val footerBottom = composeTestRule
-            .onNodeWithText("A corrupt file is refused and the old one stays", substring = true)
-            .getUnclippedBoundsInRoot()
-            .bottom
-        val liveBarTop = composeTestRule.onNodeWithTag("fake-live-bar").getUnclippedBoundsInRoot().top
-        // R-933's own fix adds 44dp; this screen's closing text already carried its own pre-existing
-        // `OrtSpacing.lg` (20dp) trailing padding regardless of this fix — the threshold is set
-        // meaningfully above that pre-existing baseline (never a bare `> 0`, which the existing 20dp
-        // alone could already satisfy) so this genuinely discriminates the *new* clearance, not the
-        // screen's own unrelated existing spacing.
-        val minimumExpectedGap = 40.dp
-        assertTrue(
-            "expected the closing footer's own bottom ($footerBottom) to clear the live bar's own top " +
-                "($liveBarTop) by at least $minimumExpectedGap after a real max scroll; got a gap of " +
-                "${liveBarTop - footerBottom}",
-            liveBarTop - footerBottom >= minimumExpectedGap,
-        )
-    }
+    // Register R-957 (root cause, WPI's host comparison on 5558/5556): the real "no dead band"
+    // regression test now lives in `OrtNavHostDestinationDispatchTest.kt`
+    // (`R_957 CF04s scroll viewport ends exactly at the live bars top...`), driving the real
+    // `OrtNavHost`/`NavHostBody` this screen is actually reached through — that is the one place
+    // the real bug (a redundant `padding(bottom = liveBarHeight)` on `NavHostBody`'s own content
+    // box, on top of the natural `Column` sibling spacing it already gets) could ever be caught.
+    // An isolated wrapper here that hand-adds its own `padding(bottom = ...)` to simulate that bug
+    // no longer reflects `NavHostBody`'s own real shape once the redundant padding was removed
+    // from it, so the old R-933 test that used exactly this shape (with no ancestor padding at
+    // all) is not replaced with one here.
 }

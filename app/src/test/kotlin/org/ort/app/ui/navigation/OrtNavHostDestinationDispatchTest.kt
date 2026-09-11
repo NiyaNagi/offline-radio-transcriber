@@ -2,6 +2,11 @@ package org.ort.app.ui.navigation
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -11,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
@@ -268,6 +274,93 @@ class OrtNavHostDestinationDispatchTest {
         } finally {
             CaptureState.idle(clearSession = true)
         }
+    }
+
+    /**
+     * Register R-957 (root cause, WPI's host comparison on 5558/5556): `R_262`'s own test above
+     * only ever asserted *no overlap* (`<=`), which the old, doubled reservation also satisfied —
+     * it never caught the real defect, a genuine 125px/45dp dead band between the scroll
+     * viewport's own bottom and the live bar's own top on *every* live-session capture at 1.0,
+     * confirmed on-device (`ScrollView` bounds `[0,128][1080,2087]`, live bar `[0,2212][1080,2337]`
+     * — CF02 and CF04 both). Root cause: `NavHostBody`'s own `Box(Modifier.weight(1f).padding(top
+     * = clearance, bottom = liveBarHeight))` stacked a *second*, explicit reservation on top of the
+     * live bar's own real space as a plain sibling in the same `Column` — Compose's own weight
+     * distribution already gives the content box exactly the remaining height once its
+     * non-weighted siblings (the header, the live bar) are measured, with no extra padding needed
+     * at all (confirmed here: `R_262`'s own scenario — scrolled to the end *before* the bar ever
+     * shows — still passes with the padding removed). One mechanism only now: the `bottom =
+     * liveBarHeight` padding is gone from `NavHostBody`; this asserts the *tight* bound `R_262`
+     * itself never could — the scroll viewport's own bottom equals the live bar's own top, not
+     * merely clears it.
+     */
+    private fun assertScrollEndsAtLiveBarTop(settingsScreen: SettingsScreenId, fontScale: Float) {
+        val sessionId = "r957-${settingsScreen.name.lowercase()}-session"
+        try {
+            CaptureState.capturing(sessionId)
+            composeTestRule.setContent {
+                CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                    OrtTheme {
+                        OrtNavHost(
+                            sessionId = sessionId,
+                            navigator = rememberReaderNavigator(
+                                initialDestination = ReaderDestination.SETTINGS,
+                                initialSettingsScreen = settingsScreen,
+                            ),
+                        )
+                    }
+                }
+            }
+            composeTestRule.waitUntil(15_000) {
+                composeTestRule.onAllNodesWithTag("live-bar-clearance").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            // The closed drawer's own scrollable rows are still in the tree (off-screen, negative
+            // x, its own stable `testTag` from `Drawer.kt`) — excluded explicitly so exactly one
+            // node matches.
+            val scrollable = composeTestRule.onNode(
+                SemanticsMatcher("scrollable, not the drawer's own rows") { node ->
+                    node.config.contains(SemanticsActions.ScrollBy) &&
+                        node.config.getOrNull(SemanticsProperties.TestTag) != "drawer-rows"
+                },
+            )
+            scrollable.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
+            composeTestRule.waitForIdle()
+
+            val scrollBottom = scrollable.getUnclippedBoundsInRoot().bottom
+            val liveBarTop = composeTestRule.onNodeWithTag("live-bar-clearance").getUnclippedBoundsInRoot().top
+            val drift = (liveBarTop - scrollBottom).value
+            assert(drift < 2f && drift > -2f) {
+                "expected the scroll viewport's own bottom ($scrollBottom) to land exactly at the " +
+                    "live bar's own top ($liveBarTop) for $settingsScreen at fontScale=$fontScale; " +
+                    "drifted ${drift}dp"
+            }
+        } finally {
+            CaptureState.idle(clearSession = true)
+        }
+    }
+
+    @Test
+    @Requirement("FR-CAP-12")
+    fun `R_957 CF02s scroll viewport ends exactly at the live bars top at font scale 1_0`() {
+        assertScrollEndsAtLiveBarTop(SettingsScreenId.CAPTURE, fontScale = 1f)
+    }
+
+    @Test
+    @Requirement("FR-CAP-12")
+    fun `R_957 CF02s scroll viewport ends exactly at the live bars top at font scale 2_0`() {
+        assertScrollEndsAtLiveBarTop(SettingsScreenId.CAPTURE, fontScale = 2f)
+    }
+
+    @Test
+    @Requirement("FR-AST-3")
+    fun `R_957 CF04s scroll viewport ends exactly at the live bars top at font scale 1_0`() {
+        assertScrollEndsAtLiveBarTop(SettingsScreenId.ASSETS, fontScale = 1f)
+    }
+
+    @Test
+    @Requirement("FR-AST-3")
+    fun `R_957 CF04s scroll viewport ends exactly at the live bars top at font scale 2_0`() {
+        assertScrollEndsAtLiveBarTop(SettingsScreenId.ASSETS, fontScale = 2f)
     }
 
     /**
