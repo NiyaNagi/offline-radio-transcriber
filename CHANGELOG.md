@@ -32,6 +32,66 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI run 5: closing evidence — the full 207-step screenshot tour, every step green, on the final merged main)
+
+### <pending> — run 5: full tour green (207/207) on main 686212f4, both permission passes for S02c, closing evidence for the WPI program
+
+**Scope:** `results/ui-audit/tour-manifest.json` + every PNG the tour's own 207 steps name (existing
+paths only — the unrelated historical/device-validation screenshots already in `results/ui-audit/`
+from earlier hand-driven rounds, e.g. `scaling/`, `setup/`, `validation/`, were never touched).
+Merged `main` fast-forward to `686212f4` first (every builder round: WPC3 R-885, WPE R-880/881, WPD
+R-882, WPF R-883, plus everything the prior merge at `61cb3424` already carried).
+
+**Requirements/ACs:** none new — this is the closing evidence run, not a code change.
+
+**What changed:** Per the coordinator's explicit "run 5 go": merged `main`, ran the full gate first
+(`build dependencyRules platformGuards`, then `coverageMatrix`/`coverageMatrixCheck` as two separate
+invocations — the tour only ran once the tree was confirmed green), then a fresh
+`install.ps1 -Port 5558 -Clear` for one clean, consistent `apkHash` (`686212f`) across the whole run,
+then the whole tour in two passes on `emulator-5558`:
+
+1. `setup-bt-permission/S02c*` (3 steps) with `BLUETOOTH_CONNECT` explicitly revoked first
+   (`adb shell pm revoke`) — 3/3 ok, the genuine "Nearby devices" permission board (confirmed by
+   reading the PNG, not assumed from the manifest's own `ok: true` alone).
+2. Every step (207/207 — `tour.ps1` with no `-Only` filter) with `BLUETOOTH_CONNECT` re-granted —
+   **including `S02c` itself, which read `ok: true` again here too.** Read that PNG directly to
+   check for a false pass: it is the genuine, correct "Nearby devices" board, identical to pass 1's
+   own capture. This means the two-pass revoke/re-grant recipe `results/ui-audit/README.md`'s own
+   "Reaching S02c" section documents as necessary was not, in fact, required by anything this run
+   exercised — `SetupActivity.EXTRA_STEP`'s own "at or before the natural resume point" rule
+   apparently honors an explicit request to land on S02c regardless of the live permission state
+   (only forward navigation past it would be gated). Not changed or investigated further this round
+   (out of scope for a closing-evidence run); left as an honest observation for whoever next touches
+   `results/ui-audit/README.md`'s own "Reaching S02c" section — the documented two-pass recipe may be
+   more caution than the mechanism actually needs, though it remains a correct, safe way to reach it.
+
+Master manifest and every PNG replaced by this run's own output — 207/207 ok, 0 errors, 0 timeouts,
+no manifest `note` on any step this round (the run 4b diagnostic notes on `mode-usb/N04`/
+`mode-bluetooth/N04`/`mode-bluetooth/CF02` are superseded by this run's own fresh, clean captures —
+see that round's own changelog entry for the historical finding).
+
+**Verified:**
+- `.\gradlew.bat build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` —
+  **BUILD SUCCESSFUL** (10m43s) on `main` merged to `686212f4`.
+- `coverageMatrix` then `coverageMatrixCheck` (separate invocations) — both green, tree confirmed
+  green before the tour ran, per the coordinator's own explicit "the tour must come from a green
+  tree" instruction.
+- `tools\ui-audit\install.ps1 -Port 5558 -Clear` — fresh install, `apkHash` `686212f` for every
+  capture this round.
+- `tools\ui-audit\tour.ps1 -Port 5558 -Only "setup-bt-permission/S02c*"` (permission revoked) — 3/3
+  ok; `tools\ui-audit\tour.ps1 -Port 5558` (full spec, permission re-granted) — 207/207 ok, 0 errors.
+- Spot-checked several PNGs directly (not just the manifest's own `ok` field) — `S02c`'s own board
+  (both passes), `mode-bluetooth/CF02-settings-capture` (the live bar reads "Live", resolving run
+  4b's own diagnosed timeout), `llm-enabled-prose/DG05-digest-prose` (full prose, no `Loading…`
+  frame), `asset-corrupt/S12-ready-corrupt` (the genuinely amber Models row with `Install` visible).
+
+**Left open / not done:** the S02c two-pass-recipe observation above (README not updated this round
+— a closing-evidence run's own scope was the capture, not further investigation of the mechanism).
+This is the closing evidence for the WPI capture-modes/Bluetooth/bundled-assets/LLM screenshot-tour
+program (D33–D36) — no further tour runs are queued.
+
+---
+
 ## 2026-09-11 (register R-885: every Migration now overrides migrate(SQLiteConnection), the path a real device actually opens through)
 
 ### `77013ab8` — R-883: the failure banner overlay now leaves real daylight below itself and shows a scroll hint while its message is cut off
