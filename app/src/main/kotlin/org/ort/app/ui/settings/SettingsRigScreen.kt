@@ -182,10 +182,16 @@ private fun RigConnectionSection(
         state.autoInformation?.let { ai ->
             KeyValueRow(key = ai.label, value = "On", subLine = ai.subLine)
         }
+        // Register R-881 (Validator V11, device, spec): the mnemonic jammed into the key ("Radio
+        // battery, BL") truncated at font scale 2.0 with an empty value beside it and produced a
+        // malformed content-desc ("Radio battery, BL, , not reported by this rig module" — a stray
+        // separator either side of the empty value). The label, value and mnemonic are three
+        // distinct facts; each now gets its own real slot, matching the row's own established shape
+        // elsewhere on this screen (a plain key, the real value, the CAT clause as the sub-line).
         KeyValueRow(
-            key = "Radio battery, BL",
-            value = "",
-            subLine = state.batteryLabel,
+            key = "Radio battery",
+            value = state.batteryLabel,
+            subLine = "BL",
         )
     }
 }

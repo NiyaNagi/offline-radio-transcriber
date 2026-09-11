@@ -17,6 +17,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -36,6 +37,7 @@ import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 /** R-023 (ui-conformance-plan WP2): the row family from guide §6.5/`Rows.dc.html`. */
 @RunWith(RobolectricTestRunner::class)
@@ -481,6 +483,67 @@ class RowsTest {
         // reachable texts a merged description was merely layered on top of.
         composeTestRule.onAllNodesWithText("Input", substring = true).assertCountEquals(1)
         composeTestRule.onAllNodesWithText("USB Audio Device", substring = true).assertCountEquals(1)
+    }
+
+    /**
+     * Register R-880 (Validator V11, device, spec): CF02's "Log overs against" label sat vertically
+     * centred against its own value+sub-line column — fine for a one-line value, but the row's own
+     * sub-line ("used only while the rig is disconnected or absent") wraps to 5–9 lines at font
+     * scale 2.0, so the label floats mid-caption instead of reading beside its own first line.
+     * `KeyValueRow` is the one shared component every "and any sibling with the same shape" row in
+     * the finding's own phrase reduces to (13 real callers across `ui/setup`/`ui/settings`/
+     * `ui/digest`/`ui/screens`) — top-aligning its own `Row` fixes every one of them at once, not
+     * only CF02's. `@GraphicsMode.NATIVE`: this package's own established discipline for real
+     * glyph-wrap measurement (`RigBluetoothScreenTest`'s own `R_805` case).
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_880 the key aligns to the top of a value that wraps to many lines at font scale 2_0`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(240.dp)) {
+                        KeyValueRow(
+                            key = "Log overs against",
+                            value = "145.230",
+                            subLine = "used only while the rig is disconnected or absent",
+                        )
+                    }
+                }
+            }
+        }
+
+        // `KeyValueRow`'s outer node merges every descendant into one semantics node (this same
+        // file's own `R_265_key_value_row_is_a_traversal_stop`) — the individual `Text`s are only
+        // reachable on the *unmerged* tree, which is what this geometry check needs.
+        val keyTop = composeTestRule
+            .onNodeWithText("Log overs against", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+            .top
+        val valueTop = composeTestRule
+            .onNodeWithText("145.230", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+            .top
+        // The sub-line must genuinely have wrapped past one line for this to be a real proof of the
+        // fix, not an accident of a value that happened to fit on one line anyway.
+        val subLineBottom = composeTestRule
+            .onNodeWithText("used only while the rig is disconnected or absent", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+            .bottom
+        val valueBottom = composeTestRule
+            .onNodeWithText("145.230", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+            .bottom
+        assert(subLineBottom - valueBottom > 20.dp) {
+            "test setup failed to force a real multi-line wrap — sub-line only $subLineBottom vs value $valueBottom"
+        }
+        // Top-aligned (both `Text`s share the same `OrtType.control` style): the key's own top edge
+        // sits within a few dp of the value's, never partway down the wrapped block.
+        val drift = (keyTop - valueTop).value
+        assert(drift < 4f && drift > -4f) {
+            "expected the key top-aligned with the value's first line, drifted ${drift}dp " +
+                "(key=$keyTop, value=$valueTop)"
+        }
     }
 
     // `NavRow`'s own tests moved to `NavRowTest.kt` (detekt's `LargeClass` finding, once this file
