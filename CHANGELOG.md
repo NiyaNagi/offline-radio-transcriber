@@ -81,6 +81,65 @@ process-death resume) — exactly the shape R-902 already fixed for S04's own pr
 - `python tools/spec-check/spec_check.py` — all 8 checks pass.
 
 ---
+## 2026-09-11 (WPG follow-up: R-934 — a bundled asset's rejection is persisted and exposed)
+
+### (pending) — bundled assets: BundledAssetInstaller persists a checksum-mismatch rejection so ModelsController can tell it apart from never-installed
+
+**Scope:** `app/src/main/kotlin/org/ort/app/assets/BundledAssetInstaller.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (the `ModelRowViewState`/`rowFor`
+half only — no screen file touched), `app/src/test/kotlin/org/ort/app/assets/BundledAssetInstallerTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerTest.kt`.
+
+**Requirements/ACs:** R-934 (register, `results/ui-audit/register.md` — WPE round 4's own
+investigation: "`BundledAssetInstaller` detects the checksum rejection but persists nothing
+`ModelsController` can read later"), FR-AST-4 (kept intact, not extended), AC-137, FR-AST-3b.
+Closes the E2-H04 checklist row's remaining half (`results/e2e-audit/checklist.md`'s own note:
+"WPG persists the rejection reason, then WPE renders it").
+
+**What changed:** `BundledAssetInstaller.installOne`'s checksum-mismatch branch now persists a new
+`BundledAssetRejection(id, part, expectedPrefix, actualPrefix, wallTimeMillis, reason)` to
+`<destination>.rejected` — the same directory the `.sha256` marker already lives in, in a small
+hand-rolled `key=value` format (this file already carries its own dependency-free JSON reader for
+the manifest; a five-field internal record didn't need a second parser). Both of `installOne`'s
+success paths (a fresh copy that verifies, and the pre-existing idempotency shortcut for an
+already-installed part) delete any stale rejection file for that destination — a part that now
+verifies is no longer "rejected", regardless of which path got it there. `lastRejectionFor(destination):
+BundledAssetRejection?` is the new public reader: a plain file read, nothing cached in memory, so a
+"fresh controller" (a new process, a new `currentState` call, anything) reads exactly what the
+last install attempt left on disk. `ModelRowViewState` gains `lastRejection`, populated by `rowFor`
+in both its Known- and Unknown-checksum branches whenever the row is `NOT_INSTALLED`/`INSTALLED_UNVERIFIED`
+and `null` whenever it verifies — additive only: `status` is unchanged (a rejected part genuinely
+is not on disk), this is the extra *why* `Settings-Assets` could not previously tell apart from
+"never attempted" (R-934's own finding, reproduced verbatim in the register row). `FR-AST-4`'s
+replace/roll-back semantics (`download`/`sideload`/`finish`/staging) are untouched — this only adds
+a new read path, no new write path on that side.
+
+Tests (`BundledAssetInstallerTest`): persisted and read back by a fresh call (not an in-memory
+field); cleared on a later successful `reinstall`; cleared by the idempotency-shortcut success path
+too (a stale rejection from an unrelated earlier run must not survive an already-verified launch);
+and a scenario-shaped test reproducing `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`'s own
+private `CorruptingBundledAssetSource` mechanism (one byte flipped in exactly one of several real
+entries, not a fabricated digest — that class is private to WPI's own file and was not imported)
+proving only the genuinely corrupted part gets a persisted rejection while the rest install for
+real. One more test in `ModelsControllerTest`: `currentState`'s own row exposes the rejection
+through the real `BundledAssetInstaller.installAll`/`reinstall` path, and clears once recovered.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest` — full module, green (see this entry's own commit for the
+  exact tail).
+- `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green.
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` — regenerated, confirmed up to date.
+- `python tools/spec-check/spec_check.py` — 8/8.
+- **Discrimination, two rounds:** (1) disabled the rejection *write* — four of the five new tests
+  failed exactly as expected (`expected a persisted rejection, got null` / `expected currentState's
+  row to expose the rejection, got null`), restored, green again. (2) disabled only the
+  idempotency-shortcut's *clear* — exactly the one test naming that path failed
+  (`the stale rejection must not survive an already-verified launch`), the other four stayed green
+  (they don't exercise that branch), restored, green again.
+
+**Left open:** WPE's own rendering of `lastRejection` on `Settings-Assets` (this package does not
+touch `ui/screens`/`ui/settings`, per the coordinator's own instruction); the register row's
+`closed` status is the lead's call.
 
 ## 2026-09-11 (WPD follow-up: S11's marker/title/duration/AC-133 clause, S04's pre-select and override fix, S00's Bluetooth icon, S04's subtitle — R-902, R-903, R-850, R-851, R-852)
 
@@ -30165,6 +30224,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 

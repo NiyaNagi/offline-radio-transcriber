@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.ort.app.assets.BundledAssetInstaller
+import org.ort.app.assets.BundledAssetRejection
 import org.ort.app.assets.GeneratedBundledAssetManifest
 import org.ort.core.Outcome
 import org.ort.core.SystemClock
@@ -249,6 +251,14 @@ public data class ModelRowViewState(
      * FR-AST-3) but MUST NEVER be loaded, only stored. `Settings-Assets` reads this to say
      * "stored, not loaded" for such a row rather than implying it is usable at the current tier. */
     val tierEligible: Boolean = true,
+    /** R-934 (register, WPE round 4 — "an owed installer fact"): the last checksum-mismatch
+     * rejection [org.ort.app.assets.BundledAssetInstaller] recorded for this part, or `null` when
+     * there is none (never installed at all, or a later install verified and cleared it). Distinct
+     * from [detail]: a rejected part is still [ModelRowStatus.NOT_INSTALLED] (it genuinely is not
+     * on disk), but *why* — "the file was rejected and removed" versus "never attempted" — is a
+     * fact `Settings-Assets` could not previously tell apart under `asset-corrupt` (exactly R-934's
+     * own finding). WPE renders this; this field only carries it. */
+    val lastRejection: BundledAssetRejection? = null,
 )
 
 public data class ModelsViewState(val rows: List<ModelRowViewState>, val requeuedMessage: String? = null)
@@ -851,6 +861,7 @@ public object ModelsController {
                 checksumPrefix = if (verified) spec.checksum.value.take(CHECKSUM_PREFIX_LENGTH) else null,
                 bundled = catalogEntry.bundled,
                 tierEligible = tierEligible,
+                lastRejection = if (verified) null else BundledAssetInstaller.lastRejectionFor(spec.destination),
             )
         }
 
@@ -875,6 +886,7 @@ public object ModelsController {
             checksumPrefix = if (installed) marker.readText().take(CHECKSUM_PREFIX_LENGTH) else null,
             bundled = catalogEntry.bundled,
             tierEligible = tierEligible,
+            lastRejection = if (installed) null else BundledAssetInstaller.lastRejectionFor(destination),
         )
     }
 

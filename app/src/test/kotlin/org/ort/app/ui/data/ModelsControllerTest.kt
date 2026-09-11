@@ -360,6 +360,76 @@ class ModelsControllerTest {
         assertTrue("Gemma must be eligible at tier 3", gemmaAtT3.tierEligible)
     }
 
+    // R-934 (register, WPE round 4 — "an owed installer fact"): currentState's own row must expose
+    // BundledAssetInstaller's persisted rejection, not just leave a bundled part reading as
+    // never-attempted after it was genuinely rejected and removed.
+
+    @Test
+    @Requirement("R-934", "AC-137")
+    fun `R_934 currentState exposes a persisted rejection, cleared once reinstall verifies`(): Unit = runTest {
+        val tempFilesDir = Files.createTempDirectory("models-controller-rejection-test").toFile()
+        val fakeContext = object : android.content.ContextWrapper(context) {
+            override fun getFilesDir(): File = tempFilesDir
+        }
+        val destination = ModelCatalog.entry(ModelId.VAD).destination(tempFilesDir)
+        val relativeDestination = "models/silero-vad/silero_vad.onnx"
+        val correctBytes = byteArrayOf(4, 5, 6, 7)
+        val correctChecksum = Checksum(value = sha256(correctBytes))
+        val vadSpecFor: (ModelId, File) -> ModelFetchSpec? = { id, _ ->
+            if (id == ModelId.VAD) {
+                ModelFetchSpec(
+                    url = "https://example.invalid/VAD",
+                    destination = destination,
+                    checksum = correctChecksum,
+                )
+            } else {
+                null
+            }
+        }
+        val manifestJson = """
+                {"assets": [{"id": "VAD", "destination": "$relativeDestination",
+                "sha256": "${correctChecksum.value}", "sizeBytes": 4, "tiers": ["T0"], "missing": false}]}
+        """.trimIndent()
+
+        // A genuinely corrupted bundled copy — the real BundledAssetInstaller.installAll path,
+        // not a hand-written rejection file.
+        val corruptSource = FakeBundledAssetSource(
+            mapOf(
+                "bundled/manifest.json" to manifestJson.toByteArray(),
+                "bundled/$relativeDestination" to byteArrayOf(0, 0, 0),
+            ),
+        )
+        val failed = BundledAssetInstaller.installAll(tempFilesDir, corruptSource).single()
+        assertTrue(failed is BundledAssetState.Failed)
+
+        val rowAfterRejection = ModelsController.currentState(fakeContext, specFor = vadSpecFor)
+            .rows.first { it.id == ModelId.VAD }
+        assertEquals(ModelRowStatus.NOT_INSTALLED, rowAfterRejection.status)
+        val rejection = rowAfterRejection.lastRejection
+        assertTrue("expected currentState's row to expose the rejection, got null", rejection != null)
+        checkNotNull(rejection)
+        assertEquals("VAD", rejection.id)
+        assertEquals(correctChecksum.value.take(8), rejection.expectedPrefix)
+
+        // Recover through the real reinstall path — the row's rejection must clear.
+        val goodSource = FakeBundledAssetSource(
+            mapOf(
+                "bundled/manifest.json" to manifestJson.toByteArray(),
+                "bundled/$relativeDestination" to correctBytes,
+            ),
+        )
+        val recovered = BundledAssetInstaller.reinstall("VAD", tempFilesDir, goodSource)
+        assertTrue(recovered is BundledAssetState.Installed)
+
+        val rowAfterRecovery = ModelsController.currentState(fakeContext, specFor = vadSpecFor)
+            .rows.first { it.id == ModelId.VAD }
+        assertEquals(ModelRowStatus.INSTALLED, rowAfterRecovery.status)
+        assertTrue(
+            "a recovered, verified row must not still carry a rejection",
+            rowAfterRecovery.lastRejection == null,
+        )
+    }
+
     // WPG follow-up (coordinator-assigned, same session): E2-H08's own missing case —
     // side-load/replacement still work through ModelAcquisition for a bundled asset, and the
     // bundled copy remains the real fallback (FR-AST-1's "roll back", FR-AST-3b). `VAD`'s real
