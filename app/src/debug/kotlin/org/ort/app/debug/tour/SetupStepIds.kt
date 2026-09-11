@@ -23,6 +23,11 @@ public object SetupStepIds {
         "S10" to "RADIO_USB",
         "S11" to "RADIO_VERIFIED",
         "S12" to "READY",
+        // P19/WPI (spec/e2e-capture-modes-plan.md, E2-J02): D33's four new setup steps.
+        "S00" to "MODE",
+        "S02c" to "BLUETOOTH_PERMISSION",
+        "S09b" to "RIG_TRANSPORT",
+        "S10b" to "RIG_BLUETOOTH",
     )
 
     /** `null` when [sId] is not one of design-intent's S01..S12/S02b. */

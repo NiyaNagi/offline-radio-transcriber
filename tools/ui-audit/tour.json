@@ -169,6 +169,57 @@
     { "id": "setup-verified/S03-notify@2x-end", "setup": "S03", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-verified/S04-input@2x-end", "setup": "S04", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-verified/S08-battery@2x-end", "setup": "S08", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
-    { "id": "setup-verified/S12-ready@2x-end", "setup": "S12", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" }
+    { "id": "setup-verified/S12-ready@2x-end", "setup": "S12", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
+
+    { "id": "setup-mode/S00-mode", "setup": "S00", "scenario": "setup-mode" },
+    { "id": "setup-mode/S00-mode@2x", "setup": "S00", "scenario": "setup-mode", "fontScale": 2.0 },
+    { "id": "setup-bt-permission/S02c-bluetooth-permission", "setup": "S02c", "scenario": "setup-bt-permission" },
+    { "id": "setup-bt-permission/S02c-bluetooth-permission@2x", "setup": "S02c", "scenario": "setup-bt-permission", "fontScale": 2.0 },
+    { "id": "setup-rig-transport/S09b-rig-transport", "setup": "S09b", "scenario": "setup-rig-transport" },
+    { "id": "setup-rig-transport/S09b-rig-transport@2x", "setup": "S09b", "scenario": "setup-rig-transport", "fontScale": 2.0 },
+    { "id": "setup-rig-bluetooth/S10b-rig-bluetooth", "setup": "S10b", "scenario": "setup-rig-bluetooth" },
+    { "id": "setup-rig-bluetooth/S10b-rig-bluetooth@2x", "setup": "S10b", "scenario": "setup-rig-bluetooth", "fontScale": 2.0 },
+    { "id": "rig-bt-connected/S11-radio-verified", "setup": "S11", "scenario": "rig-bt-connected" },
+    { "id": "assets-bundled/S12-ready-bundled", "setup": "S12", "scenario": "assets-bundled" },
+
+    { "id": "mode-local-mic/S04-input-local-mic", "setup": "S04", "scenario": "mode-local-mic" },
+    { "id": "mode-usb/S04-input-usb", "setup": "S04", "scenario": "mode-usb" },
+    { "id": "mode-bluetooth/S04-input-bluetooth", "setup": "S04", "scenario": "mode-bluetooth" },
+
+    { "id": "mode-local-mic/N01b-now", "scenario": "mode-local-mic", "destination": "NOW" },
+    { "id": "mode-local-mic/N01b-now@2x", "scenario": "mode-local-mic", "destination": "NOW", "fontScale": 2.0 },
+    { "id": "mode-local-mic/L01-log", "scenario": "mode-local-mic", "destination": "LOG" },
+    { "id": "mode-local-mic/T01-threads", "scenario": "mode-local-mic", "destination": "THREADS" },
+    { "id": "mode-local-mic/Q01-search", "scenario": "mode-local-mic", "destination": "SEARCH" },
+    { "id": "mode-local-mic/ST01-stations", "scenario": "mode-local-mic", "destination": "STATIONS" },
+    { "id": "mode-local-mic/CF01-settings", "scenario": "mode-local-mic", "destination": "SETTINGS" },
+    { "id": "mode-local-mic/DG04-session", "scenario": "mode-local-mic", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" } },
+
+    { "id": "mode-usb/N04-capture-status", "scenario": "mode-usb", "destination": "CAPTURE" },
+    { "id": "mode-bluetooth/N04-capture-status", "scenario": "mode-bluetooth", "destination": "CAPTURE" },
+    { "id": "mode-bluetooth/CF02-settings-capture", "scenario": "mode-bluetooth", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" } },
+
+    { "id": "overnight/DG04-session", "scenario": "overnight", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" } },
+    { "id": "bt-audio-session/N04-capture-status", "scenario": "bt-audio-session", "destination": "CAPTURE" },
+    { "id": "bt-audio-session/L01-log", "scenario": "bt-audio-session", "destination": "LOG" },
+    { "id": "bt-audio-session/DG04-session", "scenario": "bt-audio-session", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" } },
+
+    { "id": "bt-audio-dropped/F23-now", "scenario": "bt-audio-dropped", "destination": "NOW" },
+    { "id": "bt-audio-dropped/F23-now@2x", "scenario": "bt-audio-dropped", "destination": "NOW", "fontScale": 2.0 },
+    { "id": "bt-audio-dropped/F23-log", "scenario": "bt-audio-dropped", "destination": "LOG" },
+
+    { "id": "rig-bt-lost/F09-rig-bt-lost-now", "scenario": "rig-bt-lost", "destination": "NOW" },
+    { "id": "rig-bt-connected/CF06-settings-rig", "scenario": "rig-bt-connected", "destination": "SETTINGS", "drillIn": { "settingsScreen": "RIG" } },
+
+    { "id": "mode-change-pending/CF11-settings-mode", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "MODE" } },
+
+    { "id": "assets-bundled/CF04-settings-assets", "scenario": "assets-bundled", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
+    { "id": "assets-bundled/CF04-settings-assets@2x", "scenario": "assets-bundled", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" }, "fontScale": 2.0 },
+    { "id": "asset-corrupt/CF04-settings-assets", "scenario": "asset-corrupt", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
+    { "id": "tier0-llm-stored/CF04-settings-assets", "scenario": "tier0-llm-stored", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ASSETS" } },
+
+    { "id": "llm-enabled-prose/DG05-digest-prose", "scenario": "llm-enabled-prose", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" } },
+    { "id": "llm-enabled-prose/DG05-digest-prose@2x", "scenario": "llm-enabled-prose", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" }, "fontScale": 2.0 },
+    { "id": "llm-disabled/DG01-digest", "scenario": "llm-disabled", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self" } }
   ]
 }
