@@ -32,6 +32,76 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI queued items: R-861 mode-change-pending CF02, R-866 asset-corrupt S12, R-873 debug-process-restart holder republish, R-876 scenario.ps1 stray-session quoting)
+
+### 3c2c67ff — R-861/R-866 new tour steps, R-873 ActiveScenarioRepublishProvider, R-876 scenario.ps1's stray-session check fixed and made non-fatal
+
+**Scope:** `app/src/debug/{AndroidManifest.xml,kotlin/org/ort/app/debug/{Scenarios.kt,ActiveScenarioMarker.kt,ActiveScenarioRepublishProvider.kt}}`,
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`, `tools/ui-audit/{tour.json,scenario.ps1}`,
+`results/ui-audit/{README.md,tour-manifest.json,mode-change-pending/CF02-settings-capture*.png,asset-corrupt/S12-ready-corrupt.png}`,
+`results/coverage-matrix.md` (regenerated).
+
+**Requirements/ACs:** R-861, R-866, R-873, R-876.
+
+**What changed:**
+
+1. **R-861.** `mode-change-pending/CF02-settings-capture` had no tour step at all (only its own
+   `CF11-settings-mode` did) — added at 1.0 and 2.0 (`tour.json`), captured, merged into the manifest.
+
+2. **R-866.** `assets-bundled/S12` reads green since R-862, so it can no longer measure the amber
+   `Install` action `asset-corrupt`'s own Models row genuinely carries. `Scenarios.assetCorrupt()`
+   now also seeds a real, resumable `SetupStore` (the same verified-input/level/overnight base
+   `assetsBundled()` already seeds) so `SetupStateMachine.stepFor` resumes at `SetupStep.READY` —
+   previously this scenario touched no `SetupStore` field at all, so `S12` was unreachable through
+   it. New `asset-corrupt/S12-ready-corrupt` tour step, captured (Models row amber, `Install` visible,
+   confirmed in the PNG); new `WpiScenariosTest` case proves `stepFor` resumes at `READY`.
+
+3. **R-873.** A debug process restart (`force-stop` + relaunch, which a validator or the tour driver
+   can trigger at any point) used to lose every process-wide capture holder (`CaptureState`,
+   `InputStatus`, `RigStatus`, `LevelStatus`, the rig-link state where seeded) back to their own
+   defaults while the session row and heartbeat a scenario seeded both persisted in the real
+   database — V10's own root-cause for R-853, a state production cannot itself produce, so no
+   product fix applied; this package's own gap instead. `ActiveScenarioMarker` (a small
+   `SharedPreferences` file) now records which scenario `Scenarios.load` most recently applied.
+   `ActiveScenarioRepublishProvider`, a new debug-only `ContentProvider` registered in
+   `app/src/debug/AndroidManifest.xml` (merged into the debug variant only), runs at process start —
+   before any `Activity`, the same mechanism WorkManager/Firebase's own auto-init providers use — and
+   re-loads that scenario, republishing its holders exactly as a fresh load would (`Scenarios.load`'s
+   own clear+upsert writes are already idempotent). `adb shell pm clear` wipes this marker's own prefs
+   file along with everything else the app owns, so a fresh install needs no separate "reset" branch.
+   Two new `WpiScenariosTest` cases: one loads a scenario, resets every holder the way a real restart
+   would, constructs the provider the Robolectric way (`Robolectric.buildContentProvider`, which
+   calls `onCreate()` exactly as the OS does), and asserts the holders are back; the other proves the
+   no-marker (fresh install) case is a genuine no-op. `results/ui-audit/README.md` gained its own
+   "R-873 (fixed)" section explaining the mechanism, right after the R-853 section it closes.
+
+4. **R-876.** `scenario.ps1`'s stray-real-session check handed its SQL text to `sqlite3` as a quoted
+   CLI argument — on this device image that reached `sqlite3` as `in prepare, incomplete input`
+   (reproduced directly against `emulator-5558`), because the SQL's own embedded single-quoted string
+   literal (`'scenario-%'`) needs a correctly-nested second layer of shell-quote escaping once the
+   whole thing is also wrapped for `adb shell`'s own argv-joining — exactly the class of quoting this
+   repo's own tooling has hit before. Fixed by piping the SQL through `adb shell`'s stdin instead
+   (`tour.ps1`'s own `spec.json`-write already establishes this pattern) — no shell-argument quoting
+   at all, on either side. Also wrapped the call in a local `$ErrorActionPreference = "Continue"`
+   swap (restored after): a native command's stderr, even redirected to `$null`, still raises a
+   terminating `NativeCommandError` under this script's own top-level `"Stop"` — the exact "aborts on
+   this image" failure the register named, confirmed and now fixed. Verified end to end against
+   `emulator-5558`: `.\scenario.ps1 -Port 5558 -Name empty` completes without a stray-session warning
+   or an abort (the on-device `sqlite3` query itself, tested directly via stdin, returns exit 0).
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`
+— **BUILD SUCCESSFUL**, all tests including the four new cases above. `coverageMatrix` then
+`coverageMatrixCheck` (separate invocations) both green (240/450, unchanged — no new requirement ids
+this round map to a fold `spec-check` tracks). `tools\ui-audit\install.ps1 -Port 5558` (fresh
+`assembleDebug` + reinstall) then `tools\ui-audit\tour.ps1 -Port 5558` for the two new step groups —
+3/3 ok, merged into the master manifest (now 207/207 ok, 0 errors, three more than run 4b's 204).
+`.\scenario.ps1 -Port 5558 -Name empty` run directly against `emulator-5558` to confirm R-876's fix
+end to end.
+
+**Left open / not done:** R-971 as its own separate rule (already superseded by R-973's generalisation
+in the prior round). Run 5 (the full tour, every step, with the revoked-permission `S02c` pass) still
+queued, per the coordinator's own explicit sequencing, after merging the latest `main`.
+
 ## 2026-09-11 (WPI run 4b: live-session screenshot tour, R-910/R-911's mode-usb/mode-bluetooth timeout diagnosed as environmental, R-944 level envelope, R-973 generalised settle)
 
 ### 3dc6f99b — run 4b: full tour green (204/204), R-910/R-911 timeout root-caused to host/emulator resource starvation not a product defect, R-944 speech-shaped level envelope, R-973 generalises R-971's settle into a stable-snapshot rule

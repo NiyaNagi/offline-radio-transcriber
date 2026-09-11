@@ -320,6 +320,35 @@ not a reading of this package's own scenario code. Routed to WPF per the coordin
 delegation ("WPF is looking at the product side") — not fixed here, since nothing in
 `app/src/debug` can be shown to be at fault.
 
+### R-873 (fixed) — the debug scenario layer now survives a relaunch
+
+Validator V10 established R-853's exact mechanism (register R-873): the first open after a scenario
+broadcast renders correctly, but a `force-stop` + relaunch between the broadcast and a validator's
+own separate "open the real reader" gesture loses every process-wide capture holder
+(`CaptureState`/`InputStatus`/`RigStatus`/`LevelStatus`, the rig-link state where seeded) back to
+their own idle defaults — deliberately in-memory-only, never persisted (constitution: liveness
+proven by heartbeat, never faked) — while the session row and the fresh heartbeat the scenario also
+seeded both persist untouched in the real, on-disk database. That is a state production genuinely
+cannot produce on its own (a real capture service is a live, continuously-running process; only a
+*debug* relaunch loses these holders while every DB-backed fact survives), so V10's finding named no
+product change — this package's own gap to close instead.
+
+**The fix**: `ActiveScenarioMarker` (a small `SharedPreferences` file) records which scenario name
+`Scenarios.load` most recently applied. `ActiveScenarioRepublishProvider`, a debug-only
+`ContentProvider` registered in `app/src/debug/AndroidManifest.xml` (merged into the debug variant
+only — never a change to the real `OrtApplication` in `main`), runs its own `onCreate()` at process
+start, before any `Activity` — the same mechanism WorkManager's and Firebase's own manifest-registered
+auto-init providers use — and re-loads that scenario, republishing exactly the holders a real launch
+would have. `Scenarios.load`'s own `clearPriorScenarioData` + upsert writes are already idempotent
+(every tour/validator session reloads scenarios repeatedly without a reinstall), so doing it once
+more at process start is safe. `adb shell pm clear` (`install.ps1 -Clear`'s own mechanism) wipes this
+marker's own `SharedPreferences` file the same as every other store the app owns, so a genuinely
+fresh install starts with no marker and the provider does nothing — no separate "reset" branch was
+needed. `WpiScenariosTest`'s `R_873_*` cases prove the actual mechanism (load a scenario, reset every
+holder the way a real restart would, construct the provider the Robolectric way — which calls
+`onCreate()` exactly as the OS does — and assert the holders are back) and the no-marker case (a
+fresh install must never crash or fabricate a scenario nobody asked for).
+
 ### Reaching S02c (register/plan D33, checklist E2-J01, R-810/R-811)
 
 `SetupStateMachine.stepFor`'s `BLUETOOTH_PERMISSION` gate reads `PermissionsState.bluetoothConnectGranted`

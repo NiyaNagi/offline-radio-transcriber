@@ -133,14 +133,30 @@ else {
 # Hygiene (see this script's own .NOTES): best-effort check for a real, non-scenario session with
 # endedAt = null still sitting in the app's own database from an earlier mis-tap or an unclean OS
 # kill -- never blocks or fails this script either way, since neither `run-as` nor `sqlite3` on the
-# device is guaranteed to exist. The SQL text must reach the device's own shell as ONE argument
-# (adb shell joins its own argv with spaces before the device shell ever sees it, so an unquoted
-# multi-word string would otherwise be split apart) -- wrapped in embedded double quotes here, in
-# the single command-line string handed to `adb shell`, for exactly that reason.
+# device is guaranteed to exist.
+#
+# R-876 (register, validator V10): the earlier version handed the SQL text to `sqlite3` as a quoted
+# CLI argument (`sqlite3 databases/ort.db "<SQL>"`) -- on this image that reached the device's own
+# sqlite3 as "in prepare, incomplete input" (reproduced directly against emulator-5558, not by
+# inspection): the SQL's own embedded single-quoted string literal (`'scenario-%'`) needs a second,
+# nested layer of shell-quote escaping once the whole thing is itself wrapped for `adb shell`'s own
+# argv-joining, and getting that exactly right is exactly the kind of quoting this repo's own
+# gotchas file already warns against hand-rolling. `sqlite3` reads SQL from stdin just as well as
+# from a CLI argument -- piped the same way `tour.ps1` already pipes `spec.json`'s own content
+# through `adb shell`'s stdin -- which needs no quoting at all: the SQL text never touches a
+# shell's own argument parser on either side, Windows (adb.exe) or the device's.
+#
+# `$ErrorActionPreference = "Continue"` around this one call (restored after): a native command's
+# stderr, even redirected to `$null`, still raises a terminating `NativeCommandError` under this
+# script's own top-level `"Stop"` -- confirmed the exact failure mode this register names ("aborts
+# on this image") -- so this call, like `tour.ps1`'s own manifest poll, must run outside `"Stop"`.
 $strayQuery = "SELECT id FROM session WHERE endedAt IS NULL AND id NOT LIKE 'scenario-%';"
-$remoteCommand = "run-as $packageId sqlite3 databases/ort.db `"$strayQuery`""
-$strayOutput = & $adb -s $serial shell $remoteCommand 2>$null
+$remoteCommand = "run-as $packageId sqlite3 databases/ort.db"
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+$strayOutput = $strayQuery | & $adb -s $serial shell $remoteCommand 2>$null
 $strayExitCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
 $strayIds = @($strayOutput | Where-Object { $_ -and $_.Trim() -ne "" })
 if ($strayExitCode -eq 0 -and $strayIds.Count -gt 0) {
     Write-Warning (

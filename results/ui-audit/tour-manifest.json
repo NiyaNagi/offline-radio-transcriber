@@ -202,3 +202,6 @@
 {"id":"setup-rig-bluetooth\/S10b-rig-bluetooth@2x-end","scenario":"setup-rig-bluetooth","fontScale":2,"width":1080,"height":2400,"capturedAt":"2026-09-11T11:06:18.172103Z","ok":true,"errorMessage":null,"apkHash":"729c689","note":"no scroll — fits"}
 {"id":"model-missing\/CF04-settings-assets@2x-end","scenario":"model-missing","fontScale":2,"width":1080,"height":2400,"capturedAt":"2026-09-11T11:53:32.207602Z","ok":true,"errorMessage":null,"apkHash":"729c689","note":null}
 {"id":"bt-audio-dropped\/F23-now@2x-end","scenario":"bt-audio-dropped","fontScale":2,"width":1080,"height":2400,"capturedAt":"2026-09-11T14:29:02.339335Z","ok":true,"errorMessage":null,"apkHash":"7eb69a7","note":null}
+{"id":"mode-change-pending\/CF02-settings-capture","scenario":"mode-change-pending","fontScale":1,"width":1080,"height":2400,"capturedAt":"2026-09-11T15:09:43.885612Z","ok":true,"errorMessage":null,"apkHash":"9971761","note":null}
+{"id":"mode-change-pending\/CF02-settings-capture@2x","scenario":"mode-change-pending","fontScale":2,"width":1080,"height":2400,"capturedAt":"2026-09-11T15:09:45.502407Z","ok":true,"errorMessage":null,"apkHash":"9971761","note":null}
+{"id":"asset-corrupt\/S12-ready-corrupt","scenario":"asset-corrupt","fontScale":1,"width":1080,"height":2400,"capturedAt":"2026-09-11T15:10:41.870252Z","ok":true,"errorMessage":null,"apkHash":"9971761","note":null}

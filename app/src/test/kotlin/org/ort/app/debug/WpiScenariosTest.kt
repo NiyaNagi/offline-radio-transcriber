@@ -110,6 +110,10 @@ class WpiScenariosTest {
             SharedPreferencesProseDigestSettingsStore.PREFS_NAME,
             android.content.Context.MODE_PRIVATE,
         ).edit().clear().commit()
+        context.getSharedPreferences(
+            "org.ort.app.debug.active_scenario",
+            android.content.Context.MODE_PRIVATE,
+        ).edit().clear().commit()
     }
 
     private fun setupStore() = SharedPreferencesSetupStore(
@@ -593,6 +597,62 @@ class WpiScenariosTest {
     }
 
     /**
+     * R-873 (register, validator V10): proves the actual mechanism, not just that
+     * [ActiveScenarioMarker] records a name — loads a live scenario, then does exactly what a real
+     * debug process restart does (resets every process-wide holder to its own default, the same
+     * facets [WpiScenariosTest.resetProcessWideFacets] itself resets between tests, standing in for
+     * the OS tearing the process down), then constructs [ActiveScenarioRepublishProvider] the
+     * Robolectric way (`Robolectric.buildContentProvider`, which calls `onCreate()` the same way the
+     * OS does at real process start) and asserts the holders are back — not because they were never
+     * cleared, but because the provider re-published them.
+     */
+    @Test
+    @Requirement("R-873")
+    fun `R_873_a debug process restart re-publishes the active scenario's process-wide holders`() = runTest {
+        Scenarios.load(context, "rig-bt-lost")
+        assertTrue(InputStatus.state is InputStatus.State.Opened)
+        assertTrue(LevelStatus.state is LevelStatus.State.Measured)
+
+        // Simulate the OS tearing the process down: every process-wide holder a real restart would
+        // lose goes back to its own default, exactly like this file's own `resetProcessWideFacets`.
+        InputStatus.reset()
+        LevelStatus.reset()
+        RigStatus.reset()
+        CaptureState.idle(clearSession = true)
+        assertEquals(InputStatus.State.None, InputStatus.state)
+        assertEquals(LevelStatus.State.NotMeasured, LevelStatus.state)
+
+        org.robolectric.Robolectric.buildContentProvider(ActiveScenarioRepublishProvider::class.java).create()
+
+        assertTrue(
+            "expected InputStatus.Opened restored by the provider, got ${InputStatus.state}",
+            InputStatus.state is InputStatus.State.Opened,
+        )
+        assertTrue(
+            "expected LevelStatus.Measured restored by the provider, got ${LevelStatus.state}",
+            LevelStatus.state is LevelStatus.State.Measured,
+        )
+    }
+
+    /**
+     * R-873: a fresh install (or one just `pm clear`'d) has no marker at all — the provider's own
+     * `onCreate` must do nothing, never crash, and never fabricate a scenario nobody asked for.
+     */
+    @Test
+    @Requirement("R-873")
+    fun `R_873_the republish provider is a no-op when no scenario has ever loaded`() = runTest {
+        assertEquals(CaptureState.State.Idle, CaptureState.state)
+
+        org.robolectric.Robolectric.buildContentProvider(ActiveScenarioRepublishProvider::class.java).create()
+
+        assertEquals(
+            "no marker was ever written -- this must stay untouched",
+            CaptureState.State.Idle,
+            CaptureState.state,
+        )
+    }
+
+    /**
      * R-944: `setup-level`'s `peakHistoryDbfs` must be a real, non-constant speech-shaped envelope
      * — not the flat `-20f + (it % 5)` cycle that drew as alternating full-height amber/green blocks
      * once WPD's `levelBarRects` made S07's meter a real proportional envelope. Every sample stays
@@ -854,6 +914,28 @@ class WpiScenariosTest {
         nonGatedModelIds.filter { it != ModelId.ASR_ENCODER }.forEach { id ->
             assertEquals("$id must still read INSTALLED", ModelRowStatus.INSTALLED, rows.getValue(id).status)
         }
+    }
+
+    /**
+     * R-866 (register, reviewer D3): `assets-bundled/S12` reads green now (R-862), so it can no
+     * longer measure the amber `Install` action at all — `asset-corrupt`'s own Models row is
+     * genuinely amber (one entry `Failed`), and now resumes at [SetupStep.READY] the same way
+     * `assets-bundled` already does, so a tour step can actually reach and capture it.
+     */
+    @Test
+    @Requirement("R-866")
+    fun `R_866_asset-corrupt seeds a resumable setup store, stepFor resumes at READY`() = runTest {
+        Scenarios.load(context, "asset-corrupt")
+
+        val store = setupStore()
+        assertEquals(CaptureMode.USB_RADIO, store.captureMode)
+        assertTrue(store.inputVerified)
+        val step = SetupStateMachine.stepFor(
+            fullyGrantedBluetooth(),
+            micPermanentlyDenied = false,
+            snapshot = store.snapshot(),
+        )
+        assertEquals(SetupStep.READY, step)
     }
 
     @Test

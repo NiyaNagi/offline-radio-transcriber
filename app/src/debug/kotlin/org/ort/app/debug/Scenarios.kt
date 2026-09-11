@@ -226,6 +226,12 @@ public object Scenarios {
 
     public suspend fun load(context: Context, name: String): LoadResult {
         require(name in NAMES) { "unknown scenario '$name' — known scenarios: $NAMES" }
+        // R-873: recorded before the load's own work below so a scenario whose builder throws
+        // partway still names itself as "active" for a later debug-process-start re-publish — the
+        // same honest position `clearPriorScenarioData`/`resetProcessWideFacets` already take (a
+        // half-applied load is this call's own caller's problem, not a reason to leave the marker
+        // pointing at whatever loaded before it).
+        ActiveScenarioMarker.write(context, name)
         val db = OrtDatabase.create(context.applicationContext)
         clearPriorScenarioData(context, db)
         resetProcessWideFacets()
@@ -2886,9 +2892,34 @@ public object Scenarios {
     /** `asset-corrupt` — AC-137: one entry ([ModelId.ASR_ENCODER]) genuinely fails its post-copy
      * digest check ([BundledAssetState.Failed]); every other real, non-gated entry still installs for
      * real (R-841's fix — see [installRealBundledAssets]'s own kdoc for why the real source, not a
-     * fabricated manifest, is what makes [org.ort.app.ui.data.ModelsController.currentState] agree). */
+     * fabricated manifest, is what makes [org.ort.app.ui.data.ModelsController.currentState] agree).
+     *
+     * R-866 (register, reviewer D3): a real, resumable `SetupStore` — the same verified-input/level/
+     * overnight base [assetsBundled] seeds, USB radio never a genuine conflict with the asset-install
+     * facts above — so `SetupStateMachine.stepFor` resumes at [SetupStep.READY] (S12) directly, the
+     * one place this scenario's own amber `Install` action (the failed [ModelId.ASR_ENCODER] entry)
+     * can actually be captured: `assets-bundled/S12` went green once R-862 landed, so it can no longer
+     * measure the amber form at all. Left unseeded before this round because no tour step reached S12
+     * under this scenario yet, not because seeding it would have been wrong.
+     */
     private fun assetCorrupt(context: Context): LoadResult {
         installRealBundledAssets(context, corruptId = ModelId.ASR_ENCODER)
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        store.captureMode = CaptureMode.USB_RADIO
+        store.notificationsSkipped = true
+        store.selectedInputId = "usb-1"
+        store.selectedInputLabel = "USB Audio Device"
+        store.inputVerified = true
+        store.verifiedNativeRateHz = 48_000
+        store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.NONE
+        store.rigTransport = null
+        store.manualFrequencyHz = 145_230_000L
+        store.setupComplete = false
         return LoadResult(0, 0, null)
     }
 
