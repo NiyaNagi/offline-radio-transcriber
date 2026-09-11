@@ -48,6 +48,13 @@
   was never run against a live device to confirm it works on `ort_audit`'s own image (see this
   package's own report). Either way, `install.ps1 -Clear` is the reliable fix: it wipes the app's
   entire on-device state, this stray real session included.
+
+  R-810/R-811/R-820/R-830: `install.ps1` grants `BLUETOOTH_CONNECT` alongside `RECORD_AUDIO`/
+  `POST_NOTIFICATIONS` by default, so every Bluetooth-mode setup scenario except `setup-bt-permission`
+  itself (`setup-rig-transport`, `setup-rig-bluetooth`, and any `S04`/`S09b`/`S10b`/`S11` step under a
+  Bluetooth-mode scenario) reaches its own board rather than clamping back to S02c. `setup-bt-permission`
+  is the one scenario that needs `BLUETOOTH_CONNECT` explicitly revoked first -- see
+  `results/ui-audit/README.md`'s "Reaching S02c" section for the exact recipe.
 #>
 param(
     [Parameter(Mandatory = $true)][int]$Port,

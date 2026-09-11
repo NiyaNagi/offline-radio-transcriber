@@ -13,8 +13,8 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.permissions.PermissionsState
-import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.data.ModelId
+import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.setup.SetupStateMachine
@@ -38,6 +38,7 @@ import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
 import org.ort.pipeline.digest.RoomProseSummaryStore
 import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
+import org.ort.pipeline.rig.DefaultRigTransportFactory
 import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -92,6 +93,13 @@ class WpiScenariosTest {
 
     private fun setupStore() = SharedPreferencesSetupStore(
         context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+    )
+
+    private fun captureConfigurationStore() = SharedPreferencesCaptureConfigurationStore(
+        context.getSharedPreferences(
+            SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+            android.content.Context.MODE_PRIVATE,
+        ),
     )
 
     private fun fullyGrantedBluetooth(bluetoothConnectGranted: Boolean = true) = PermissionsState(
@@ -179,6 +187,35 @@ class WpiScenariosTest {
         assertTrue(InputStatus.state is InputStatus.State.Opened)
     }
 
+    /** R-821: CF02/CF11 read `CaptureConfigurationStore.current()`, not the session row — a scenario
+     * that seeds only the `:data` session leaves them reading the store's own honest `DEFAULT`
+     * (LOCAL_MICROPHONE, no input selected), which happened to read right for mode but wrong for
+     * "no input chosen" on a session that plainly has one. */
+    @Test
+    @Requirement("FR-CAP-3a", "R-821")
+    fun `R_821_mode-local-mic seeds CaptureConfigurationStore current matching the session`() = runTest {
+        Scenarios.load(context, "mode-local-mic")
+
+        val config = captureConfigurationStore().current()
+        assertEquals(CaptureMode.LOCAL_MICROPHONE, config.mode)
+        assertEquals("mic-0", config.selectedInputId)
+        assertNull(
+            "no pending change should exist for a scenario that never wrote one",
+            captureConfigurationStore().pendingConfiguration(),
+        )
+    }
+
+    /** R-823: a transmission's own `stationId` is not itself a `station` catalog row — ST01 reads
+     * the `station` table directly, so a scenario claiming a station was heard must also seed one. */
+    @Test
+    @Requirement("R-823")
+    fun `R_823_mode-local-mic seeds a real station row for W7NPC, not just the transmission's stationId`() = runTest {
+        Scenarios.load(context, "mode-local-mic")
+
+        val station = db.catalogDao().getStation("W7NPC")
+        assertNotNull("ST01 reads the station table directly, not a transmission's own stationId", station)
+    }
+
     @Test
     @Requirement("FR-CAP-13", "AC-129")
     fun `AC_129_mode-usb writes v7 columns USB_RADIO and RigStatus names the USB-serial transport`() = runTest {
@@ -192,6 +229,17 @@ class WpiScenariosTest {
         assertTrue(state is RigStatus.State.Connected)
         state as RigStatus.State.Connected
         assertEquals(RigModuleTransportKind.USB_SERIAL, state.transportKind)
+    }
+
+    @Test
+    @Requirement("FR-CAP-13", "R-821")
+    fun `R_821_mode-usb seeds CaptureConfigurationStore current matching the session`() = runTest {
+        Scenarios.load(context, "mode-usb")
+
+        val config = captureConfigurationStore().current()
+        assertEquals(CaptureMode.USB_RADIO, config.mode)
+        assertEquals("usb-1", config.selectedInputId)
+        assertEquals(RigModuleTransportKind.USB_SERIAL, config.rigTransportKind)
     }
 
     @Test
@@ -211,6 +259,21 @@ class WpiScenariosTest {
         assertTrue(input is InputStatus.State.Opened)
         assertEquals(BluetoothAudioProfile.HFP_MSBC, (input as InputStatus.State.Opened).descriptor.bluetoothProfile)
     }
+
+    @Test
+    @Requirement("D34", "FR-CAP-11", "R-821", "R-822")
+    fun `R_821_mode-bluetooth seeds CaptureConfigurationStore current with the Bluetooth address in rigParams`() =
+        runTest {
+            Scenarios.load(context, "mode-bluetooth")
+
+            val config = captureConfigurationStore().current()
+            assertEquals(CaptureMode.BLUETOOTH_RADIO, config.mode)
+            assertEquals(RigModuleTransportKind.BLUETOOTH_SPP, config.rigTransportKind)
+            assertNotNull(
+                "R-822: CF02/CF06's own Link address reads rigParams directly",
+                config.rigParams[DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS],
+            )
+        }
 
     @Test
     @Requirement("FR-CAP-13")
@@ -248,6 +311,19 @@ class WpiScenariosTest {
         assertNull("the gap must still be open", gap.endedAt)
     }
 
+    /** R-832: F23's own ladder sentence ("retry N of M, next attempt in ...") needs real numbers,
+     * not the honest-but-blank defaulted-null fields a bare [InputStatus.lost] call leaves it in. */
+    @Test
+    @Requirement("F-023", "R-832")
+    fun `R_832_bt-audio-dropped publishes a real reconnect-ladder position`() = runTest {
+        Scenarios.load(context, "bt-audio-dropped")
+
+        val state = InputStatus.state as InputStatus.State.Lost
+        assertEquals(3, state.attempt)
+        assertEquals(8, state.ofTotal)
+        assertEquals(20_000L, state.nextRetryInMillis)
+    }
+
     @Test
     @Requirement("F-009")
     fun `CF06_rig-bt-connected sets RigStatus Connected over Bluetooth SPP, setup left at RADIO_VERIFIED`() = runTest {
@@ -274,6 +350,18 @@ class WpiScenariosTest {
         assertEquals(RigModuleTransportKind.BLUETOOTH_SPP, state.lastKnown.transportKind)
     }
 
+    /** R-832: F9's own ladder sentence needs the same real numbers `bt-audio-dropped` seeds for F23. */
+    @Test
+    @Requirement("F-009", "R-832")
+    fun `R_832_rig-bt-lost publishes a real reconnect-ladder position`() = runTest {
+        Scenarios.load(context, "rig-bt-lost")
+
+        val state = RigStatus.state as RigStatus.State.Stale
+        assertEquals(3, state.attempt)
+        assertEquals(8, state.ofTotal)
+        assertEquals(20_000L, state.nextRetryInMillis)
+    }
+
     @Test
     @Requirement("FR-CAP-12", "AC-131")
     fun `AC_131_mode-change-pending writes a pending configuration without disturbing current`() = runTest {
@@ -289,55 +377,72 @@ class WpiScenariosTest {
         val pending = configStore.pendingConfiguration()
         assertNotNull("a live session must freeze the change as pending, not current", pending)
         assertEquals(CaptureMode.BLUETOOTH_RADIO, pending?.mode)
+        assertNotNull(
+            "the pending Bluetooth change carries its own address in rigParams (R-822)",
+            pending?.rigParams?.get(DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS),
+        )
         assertTrue(CaptureState.isCapturing)
     }
 
+    /** The four non-gated catalog entries — every [ModelId] except the gated LLM, which this build's
+     * own escape hatch (no `HF_TOKEN`) genuinely cannot bundle (see [Scenarios.installRealBundledAssets]'s
+     * own kdoc). */
+    private val nonGatedModelIds = ModelId.entries.filter { it != ModelId.LLM_GEMMA3_1B }
+
     /**
-     * `ModelsController.currentState`'s own [ModelRowViewState.status] verifies the marker it finds
-     * against [ModelCatalog]'s *hardcoded, generated* production checksum (`GeneratedBundledAssetManifest`),
-     * not this fixture's own synthetic placeholder bytes — so it can never read `INSTALLED` for a
-     * scenario-installed file, by construction, regardless of whether [BundledAssetInstaller] itself
-     * genuinely installed it. What *is* real and checkable here is the filesystem effect
-     * [BundledAssetInstaller.installAll] itself produces: a real destination file exists at
-     * [ModelCatalog]'s own real, production destination path for every entry that installed, and is
-     * genuinely absent for one that failed its digest check (AC-137's own "never activated").
+     * R-841/R-842/R-843 (halt): asserts [ModelsController.currentState] itself — the exact read path
+     * `Settings-Assets`/S12's Models row use — not merely a file on disk, so this test would have
+     * caught the original bug (a genuinely installed file whose marker still failed
+     * `ModelsController`'s own checksum comparison against a different value).
      */
     @Test
-    @Requirement("FR-AST-3", "FR-AST-3b", "AC-137")
-    fun `AC_137_assets-bundled installs every real ModelCatalog entry`() = runTest {
+    @Requirement("FR-AST-3", "FR-AST-3b", "AC-137", "R-841")
+    fun `R_841_assets-bundled reports every non-gated entry INSTALLED through ModelsController`() = runTest {
         Scenarios.load(context, "assets-bundled")
 
-        ModelCatalog.entries.forEach { entry ->
-            val destination = entry.destination(context.filesDir)
-            assertTrue("${entry.id} must have a real installed file on disk", destination.isFile)
-            assertTrue("${entry.id} must not be an empty file", destination.length() > 0)
+        val rows = ModelsController.currentState(context).rows.associateBy { it.id }
+        nonGatedModelIds.forEach { id ->
+            assertEquals(
+                "$id must read INSTALLED through the real ModelsController",
+                ModelRowStatus.INSTALLED,
+                rows.getValue(id).status,
+            )
         }
+        assertEquals(
+            "this dev/escape-hatch build genuinely lacks the gated LLM — honest, not a defect",
+            ModelRowStatus.NOT_INSTALLED,
+            rows.getValue(ModelId.LLM_GEMMA3_1B).status,
+        )
     }
 
     @Test
-    @Requirement("FR-AST-3b", "AC-137")
-    fun `AC_137_asset-corrupt fails exactly the corrupt entry and installs every other one`() = runTest {
+    @Requirement("FR-AST-3b", "AC-137", "R-841")
+    fun `R_841_asset-corrupt reports ASR_ENCODER Failed, every other non-gated entry Installed`() = runTest {
         Scenarios.load(context, "asset-corrupt")
 
-        val corruptDestination = ModelCatalog.entry(ModelId.ASR_ENCODER).destination(context.filesDir)
-        assertFalse("a corrupt copy must never be activated (AC-137)", corruptDestination.isFile)
-        ModelCatalog.entries.filter { it.id != ModelId.ASR_ENCODER }.forEach { entry ->
-            val destination = entry.destination(context.filesDir)
-            assertTrue("${entry.id} must still install for real", destination.isFile)
+        val rows = ModelsController.currentState(context).rows.associateBy { it.id }
+        assertEquals(
+            "a genuinely corrupted copy must never verify as installed",
+            ModelRowStatus.NOT_INSTALLED,
+            rows.getValue(ModelId.ASR_ENCODER).status,
+        )
+        nonGatedModelIds.filter { it != ModelId.ASR_ENCODER }.forEach { id ->
+            assertEquals("$id must still read INSTALLED", ModelRowStatus.INSTALLED, rows.getValue(id).status)
         }
     }
 
     @Test
-    @Requirement("FR-AST-3a", "AC-138")
-    fun `AC_138_tier0-llm-stored installs the LLM but reports it tier-ineligible below T3`() = runTest {
-        Scenarios.load(context, "tier0-llm-stored")
+    @Requirement("FR-AST-3a", "AC-138", "R-842")
+    fun `R_842_tier0-llm-stored reports the LLM INSTALLED but tier-ineligible below T3, through ModelsController`() =
+        runTest {
+            Scenarios.load(context, "tier0-llm-stored")
 
-        val destination = ModelCatalog.entry(ModelId.LLM_GEMMA3_1B).destination(context.filesDir)
-        assertTrue("the LLM asset must genuinely be on disk (stored)", destination.isFile)
-
-        val llmRow = ModelsController.currentState(context).rows.associateBy { it.id }.getValue(ModelId.LLM_GEMMA3_1B)
-        assertFalse("stored, never loaded — AC-138's own distinction", llmRow.tierEligible)
-    }
+            val llmRow = ModelsController.currentState(context).rows.associateBy {
+                it.id
+            }.getValue(ModelId.LLM_GEMMA3_1B)
+            assertEquals("stored — AC-138's own distinction", ModelRowStatus.INSTALLED, llmRow.status)
+            assertFalse("stored, never loaded — AC-138's own distinction", llmRow.tierEligible)
+        }
 
     @Test
     @Requirement("FR-DIG-3", "FR-DIG-6", "FR-DIG-11")

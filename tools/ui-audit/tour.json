@@ -175,6 +175,7 @@
     { "id": "setup-mode/S00-mode@2x", "setup": "S00", "scenario": "setup-mode", "fontScale": 2.0 },
     { "id": "setup-bt-permission/S02c-bluetooth-permission", "setup": "S02c", "scenario": "setup-bt-permission" },
     { "id": "setup-bt-permission/S02c-bluetooth-permission@2x", "setup": "S02c", "scenario": "setup-bt-permission", "fontScale": 2.0 },
+    { "id": "setup-bt-permission/S02c-bluetooth-permission@2x-end", "setup": "S02c", "scenario": "setup-bt-permission", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-rig-transport/S09b-rig-transport", "setup": "S09b", "scenario": "setup-rig-transport" },
     { "id": "setup-rig-transport/S09b-rig-transport@2x", "setup": "S09b", "scenario": "setup-rig-transport", "fontScale": 2.0 },
     { "id": "setup-rig-bluetooth/S10b-rig-bluetooth", "setup": "S10b", "scenario": "setup-rig-bluetooth" },
@@ -188,6 +189,7 @@
 
     { "id": "mode-local-mic/N01b-now", "scenario": "mode-local-mic", "destination": "NOW" },
     { "id": "mode-local-mic/N01b-now@2x", "scenario": "mode-local-mic", "destination": "NOW", "fontScale": 2.0 },
+    { "id": "mode-local-mic/N01b-now@2x-end", "scenario": "mode-local-mic", "destination": "NOW", "fontScale": 2.0, "scroll": "end" },
     { "id": "mode-local-mic/L01-log", "scenario": "mode-local-mic", "destination": "LOG" },
     { "id": "mode-local-mic/T01-threads", "scenario": "mode-local-mic", "destination": "THREADS" },
     { "id": "mode-local-mic/Q01-search", "scenario": "mode-local-mic", "destination": "SEARCH" },

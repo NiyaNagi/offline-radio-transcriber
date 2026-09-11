@@ -3,9 +3,10 @@ package org.ort.app.debug
 import android.content.Context
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
+import org.ort.app.assets.BundledAssetSource
 import org.ort.app.assets.BundledAssetState
-import org.ort.app.assets.FakeBundledAssetSource
 import org.ort.app.ui.data.DebugLexiconImportOverride
 import org.ort.app.ui.data.DebugSearchOverride
 import org.ort.app.ui.data.ModelCatalog
@@ -72,10 +73,11 @@ import org.ort.pipeline.digest.RoomProseSummaryStore
 import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import org.ort.pipeline.reprocess.ReprocessStatus
 import org.ort.pipeline.rig.CaptureConfiguration
+import org.ort.pipeline.rig.DefaultRigTransportFactory
 import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 import org.ort.rig.descriptor.BundledDescriptors
 import java.io.File
-import java.security.MessageDigest
+import java.io.InputStream
 import org.ort.rig.RigTransportKind as RigModuleTransportKind
 
 /**
@@ -470,6 +472,19 @@ public object Scenarios {
 
     private const val MAX_CLEAR_ATTEMPTS = 5
     private const val CLEAR_RETRY_BACKOFF_MILLIS = 25L
+
+    /** R-822: the one, consistent paired-device address every Bluetooth-rig scenario below uses
+     * for `CaptureConfiguration.rigParams[DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS]`
+     * — a real-shaped MAC address, never a placeholder string, since CF06/CF02's own Link row reads
+     * this value directly. */
+    private const val BLUETOOTH_RIG_ADDRESS = "AA:BB:CC:11:22:33"
+
+    /** R-832: the coordinator's own specified reconnect-ladder position for both `bt-audio-dropped`
+     * (F23) and `rig-bt-lost` (F9) — a mid-ladder attempt, not the first or the terminal one, so
+     * both boards' ladder sentences have a genuinely non-trivial position to render. */
+    private const val RECONNECT_LADDER_ATTEMPT = 3
+    private const val RECONNECT_LADDER_OF_TOTAL = 8
+    private const val RECONNECT_LADDER_NEXT_RETRY_MILLIS = 20_000L
 
     /**
      * Every process-wide capture-facet singleton [org.ort.app.ui.data.ReaderPolling] reads
@@ -1802,6 +1817,20 @@ public object Scenarios {
         return SharedPreferencesSetupStore(prefs)
     }
 
+    /**
+     * R-821/R-822 (halt): the real [SharedPreferencesCaptureConfigurationStore] CF02/CF11 both read
+     * — every live-session scenario below writes its own session's mode/input/rig facts here too, not
+     * just into the `:data` session row, since a `SharedPreferences` file and a Room table share
+     * nothing and CF02/CF11 read only this store, never the session entity directly.
+     */
+    private fun realCaptureConfigurationStore(context: Context): SharedPreferencesCaptureConfigurationStore =
+        SharedPreferencesCaptureConfigurationStore(
+            context.applicationContext.getSharedPreferences(
+                SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+                Context.MODE_PRIVATE,
+            ),
+        )
+
     /** `setup-mode` — D33/FR-CAP-8, S00: a completely fresh install, so
      * [SetupStateMachine.stepFor] resumes at [SetupStep.MODE] directly from a cold `MainActivity`
      * launch — no mode has ever been chosen. */
@@ -1912,6 +1941,15 @@ public object Scenarios {
      * `:data` session row above — a `SharedPreferences` file and a Room table share nothing) for the
      * "S04 in a lane per mode" tour coverage. `frequencyHz` is honestly `null` — local-mic mode has
      * no rig at all (FR-CAP-2b).
+     *
+     * R-821/R-823 (halt): also seeds the real [org.ort.pipeline.rig.CaptureConfigurationStore]
+     * (`mode = LOCAL_MICROPHONE`, `selectedInputId = "mic-0"`, matching the session/`InputStatus`
+     * above — CF02/CF11 previously read the store's own honest `DEFAULT`, LOCAL_MICROPHONE with a
+     * `null` input, which happened to *look* right for mode but wrong for "not yet selected") and a
+     * real [StationEntity] for `W7NPC` (ST01 previously showed zero stations against N01b's one,
+     * since a `stationId` on the transmission row is not itself a station-catalog entry — see
+     * [Scenarios]'s own class kdoc on why `station` rows are not implied by a transmission's own
+     * `stationId`).
      */
     private suspend fun modeLocalMic(context: Context, db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("mode-local-mic")
@@ -1924,6 +1962,9 @@ public object Scenarios {
                 audioRouteKind = AudioRouteKind.BUILT_IN_MIC.name,
                 audioRouteLabel = "Built-in microphone",
             ),
+        )
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(mode = CaptureMode.LOCAL_MICROPHONE, selectedInputId = "mic-0"),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
         InputStatus.opened(
@@ -1948,6 +1989,22 @@ public object Scenarios {
                 attributionConfidence = 0.9,
             ),
         )
+        db.catalogDao().insert(
+            StationEntity(
+                id = "W7NPC",
+                callsign = "W7NPC",
+                firstHeardAt = startedAt,
+                lastHeardAt = startedAt,
+                notes = null,
+                userName = null,
+                frequenciesHeard = null,
+                activityByHourDow = null,
+                potaRefs = null,
+                spokenGrids = null,
+                ituRegionFromPrefix = null,
+                overCountsByAttributionState = null,
+            ),
+        )
         db.transcriptDao().insert(
             ScenarioFixtures.transcript(
                 id = "$txId-t1",
@@ -1966,7 +2023,8 @@ public object Scenarios {
 
     /** `mode-usb` — FR-CAP-13, AC-129: a live session over USB, `RigStatus.Connected` naming the
      * USB-serial transport and the TH-D75A descriptor (F9/CF06). See [modeLocalMic]'s own doc
-     * comment for why the S04 preset-chip seeding alongside it is not a conflict. */
+     * comment for why the S04 preset-chip seeding alongside it is not a conflict, and for why the
+     * real [org.ort.pipeline.rig.CaptureConfigurationStore] write below (R-821) is not either. */
     private suspend fun modeUsb(context: Context, db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("mode-usb")
         db.sessionDao().insert(
@@ -1978,6 +2036,14 @@ public object Scenarios {
                 audioRouteKind = AudioRouteKind.USB.name,
                 audioRouteLabel = "USB Audio Device",
                 rigTransport = RigTransportKind.USB_SERIAL.name,
+            ),
+        )
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(
+                mode = CaptureMode.USB_RADIO,
+                selectedInputId = "usb-1",
+                rigId = BundledDescriptors.kenwoodThD75a().id,
+                rigTransportKind = RigModuleTransportKind.USB_SERIAL,
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
@@ -2033,7 +2099,8 @@ public object Scenarios {
      * stock Android never offering from a single peer, but perfectly real as two independent
      * Bluetooth links (a headset-class audio source, the TH-D75A's own SPP control link). See
      * [modeLocalMic]'s own doc comment for why the S04 preset-chip seeding alongside it is not a
-     * conflict. */
+     * conflict, and for why the real [org.ort.pipeline.rig.CaptureConfigurationStore] write below
+     * (R-821) — with the Bluetooth address in `rigParams`, R-822's own explicit ask — is not either. */
     private suspend fun modeBluetooth(context: Context, db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("mode-bluetooth")
         db.sessionDao().insert(
@@ -2046,6 +2113,17 @@ public object Scenarios {
                 audioRouteLabel = "Bluetooth headset",
                 bluetoothProfile = BluetoothAudioProfile.HFP_MSBC.name,
                 rigTransport = RigTransportKind.BLUETOOTH_SPP.name,
+            ),
+        )
+        realCaptureConfigurationStore(context).update(
+            CaptureConfiguration(
+                mode = CaptureMode.BLUETOOTH_RADIO,
+                selectedInputId = "bt-1",
+                rigId = BundledDescriptors.kenwoodThD75a().id,
+                rigTransportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+                rigParams = mapOf(
+                    DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS to BLUETOOTH_RIG_ADDRESS,
+                ),
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
@@ -2207,7 +2285,15 @@ public object Scenarios {
             openedAtMillis = SystemClock.wallMillis() - 40 * 60_000L,
         )
         val lostSinceMillis = SystemClock.wallMillis() - 45_000L
-        InputStatus.lost(lostSinceMillis)
+        // R-832 (halt): the reconnect-ladder position, so F23's own ladder sentence ("retry 3 of 8,
+        // next attempt in 20s") has real numbers to render, not the honest-but-blank "not computed"
+        // state InputStatus.Lost's own defaulted-null fields would otherwise leave it in.
+        InputStatus.lost(
+            lostSinceMillis,
+            attempt = RECONNECT_LADDER_ATTEMPT,
+            ofTotal = RECONNECT_LADDER_OF_TOTAL,
+            nextRetryInMillis = RECONNECT_LADDER_NEXT_RETRY_MILLIS,
+        )
         RigStatus.connected(
             descriptor = "Kenwood TH-D75A",
             bands = listOf(
@@ -2308,7 +2394,15 @@ public object Scenarios {
             transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
             descriptorId = BundledDescriptors.kenwoodThD75a().id,
         )
-        RigStatus.stale(lastKnown, sinceMillis = SystemClock.wallMillis() - 12 * 60_000L)
+        // R-832 (halt): the same reconnect-ladder position bt-audio-dropped seeds for F23, here for
+        // F9's own ladder sentence.
+        RigStatus.stale(
+            lastKnown,
+            sinceMillis = SystemClock.wallMillis() - 12 * 60_000L,
+            attempt = RECONNECT_LADDER_ATTEMPT,
+            ofTotal = RECONNECT_LADDER_OF_TOTAL,
+            nextRetryInMillis = RECONNECT_LADDER_NEXT_RETRY_MILLIS,
+        )
         return LoadResult(0, 1, sessionId)
     }
 
@@ -2333,12 +2427,7 @@ public object Scenarios {
                 rigTransport = RigTransportKind.USB_SERIAL.name,
             ),
         )
-        val configStore = SharedPreferencesCaptureConfigurationStore(
-            context.applicationContext.getSharedPreferences(
-                SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
-                Context.MODE_PRIVATE,
-            ),
-        )
+        val configStore = realCaptureConfigurationStore(context)
         configStore.update(
             CaptureConfiguration(
                 mode = CaptureMode.USB_RADIO,
@@ -2354,58 +2443,96 @@ public object Scenarios {
                 selectedInputId = "wired-1",
                 rigId = BundledDescriptors.kenwoodThD75a().id,
                 rigTransportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+                rigParams = mapOf(
+                    DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS to BLUETOOTH_RIG_ADDRESS,
+                ),
             ),
         )
         return LoadResult(0, 1, sessionId)
     }
 
     /**
-     * WPG/WPH's real [BundledAssetInstaller], driven through a [FakeBundledAssetSource] built from
-     * [ModelCatalog.entries] itself — never a hand-typed manifest that could silently drift from
-     * what the catalog actually declares. Every byte and every sha256 below is computed here, from
-     * placeholder content (this package's own brief: fictional/synthetic fixture data only, never a
-     * real published asset's bytes). [corruptId], when given, is served real placeholder bytes but
-     * declared under a manifest sha256 computed from *different* bytes — the same "declared digest
-     * disagrees with what actually arrived" shape a truncated download or a bit-flipped copy
-     * produces, so [BundledAssetInstaller.installOne]'s own real comparison genuinely fails for that
-     * one entry (AC-137) while every other entry installs for real. [ScenarioFixtures.uninstallEveryModelFixture]
-     * runs first so a prior `overnight`/`stations-14-nights` load's own installed-fixture markers
-     * (a different code path, [ScenarioFixtures.installEveryModelFixture]) never masquerade as this
-     * scenario's own result.
+     * R-841/R-843 (halt, reviewer diagnosis): the previous implementation drove
+     * [BundledAssetInstaller] through a fake, hand-computed manifest source —
+     * genuinely exercising the installer, but against sha256 values this fixture invented from
+     * placeholder bytes, never the ones [ModelCatalog] (generated at build time from the *same* root
+     * `bundled-assets.json` [org.ort.app.assets.AndroidBundledAssetSource]'s own real
+     * `bundled/manifest.json` was resolved from — confirmed by reading `ort.android-app.gradle.kts`'s
+     * `generateBundledAssetCatalog`/`fetchBundledAssets` tasks before writing this fix, not assumed)
+     * pins as each entry's own production checksum. [org.ort.app.ui.data.ModelsController.currentState]
+     * verifies a marker against exactly that pinned value (`ModelCatalog.specFor`), so a fixture-installed
+     * marker computed from different bytes could never read back as `INSTALLED` there, no matter how
+     * real [BundledAssetInstaller] itself was underneath — the bug reviewers actually saw on CF04/S12.
+     *
+     * **The fix: install through the REAL [org.ort.app.assets.AndroidBundledAssetSource]**, the exact
+     * source `OrtApplication.onCreate()` itself installs from on every launch — so a genuinely
+     * installed marker is, by construction, the same real checksum `ModelsController.currentState`
+     * checks against. [ScenarioFixtures.uninstallEveryModelFixture] runs first, both to clear a prior
+     * scenario's own installed-fixture markers and to force a fresh copy regardless of whether
+     * [org.ort.app.OrtApplication]'s own one-shot background install (fired once, at process start,
+     * racing this scenario the same way — see this function's own report) already got there first;
+     * `BundledAssetInstaller.installOne`'s own idempotency check (`marker already matches → skip`)
+     * would otherwise silently defeat [corruptId] by never even reading from [source].
+     *
+     * [corruptId], when given, is served genuinely corrupted bytes for exactly that one entry (one
+     * byte flipped, via [CorruptingBundledAssetSource]) while every other entry — manifest.json
+     * included — reads through untouched, so [BundledAssetInstaller.installOne]'s own real,
+     * unmodified digest comparison genuinely fails for that one entry (AC-137), never a fabricated
+     * mismatch. In this build (the local `ORT_ALLOW_MISSING_BUNDLED_ASSETS`/`-PortAllowMissingBundledAssets`
+     * escape hatch, no `HF_TOKEN`), [ModelId.LLM_GEMMA3_1B] is genuinely absent from
+     * `bundled/manifest.json` (`missing: true`) and reports [BundledAssetState.NotBundledInThisBuild]
+     * — real and honest for this build, not a defect in this fixture.
      */
-    private fun installBundledAssetsFixture(context: Context, corruptId: ModelId? = null): List<BundledAssetState> {
+    private fun installRealBundledAssets(context: Context, corruptId: ModelId? = null): List<BundledAssetState> {
         ScenarioFixtures.uninstallEveryModelFixture(context)
         val filesDir = context.filesDir
         File(filesDir, "bundled_assets.manifest").delete()
-        val files = mutableMapOf<String, ByteArray>()
-        val manifestEntries = ModelCatalog.entries.joinToString(",\n") { entry ->
-            val relativeDestination = entry.destination(filesDir).relativeTo(filesDir).invariantSeparatorsPath
-            val content = "bundled-fixture:${entry.id.name}".toByteArray()
-            files["bundled/$relativeDestination"] = content
-            val declaredSha256 = if (entry.id == corruptId) {
-                sha256Hex(content + "corrupt".toByteArray())
-            } else {
-                sha256Hex(content)
-            }
-            """{"id": "${entry.id.name}", "destination": "$relativeDestination", "sha256": "$declaredSha256"}"""
+        val realSource = AndroidBundledAssetSource(context)
+        val source: BundledAssetSource = if (corruptId == null) {
+            realSource
+        } else {
+            val relativeDestination =
+                ModelCatalog.entry(corruptId).destination(filesDir).relativeTo(filesDir).invariantSeparatorsPath
+            CorruptingBundledAssetSource(realSource, corruptAssetPath = "bundled/$relativeDestination")
         }
-        files["bundled/manifest.json"] = "{\"assets\": [$manifestEntries]}".toByteArray()
-        return BundledAssetInstaller.installAll(filesDir, FakeBundledAssetSource(files))
+        return BundledAssetInstaller.installAll(filesDir, source)
     }
 
-    private fun sha256Hex(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    /**
+     * Delegates every read to [delegate] unchanged except [corruptAssetPath], which it corrupts by
+     * flipping one byte — genuine corruption, not a fabricated digest, so [BundledAssetInstaller]'s
+     * own real post-copy sha256 comparison is what actually fails (AC-137). Reads the full byte array
+     * only for the one path being corrupted; every other asset (including the large ASR decoder and
+     * the manifest itself) streams straight through [delegate], never buffered here.
+     */
+    private class CorruptingBundledAssetSource(
+        private val delegate: BundledAssetSource,
+        private val corruptAssetPath: String,
+    ) : BundledAssetSource {
+        override fun open(assetPath: String): InputStream {
+            val stream = delegate.open(assetPath)
+            if (assetPath != corruptAssetPath) return stream
+            val bytes = stream.use { it.readBytes() }
+            val corrupted = bytes.copyOf()
+            if (corrupted.isNotEmpty()) corrupted[corrupted.size - 1] = corrupted[corrupted.size - 1].inc()
+            return corrupted.inputStream()
+        }
+    }
 
     /**
-     * `assets-bundled` — FR-AST-3/3b, AC-137: every real [BundledAssetInstaller] result is
-     * [BundledAssetState.Installed]. Also leaves the real `SetupStore` at S12/[SetupStep.READY]
+     * `assets-bundled` — FR-AST-3/3b, AC-137: every non-gated real [BundledAssetInstaller] result is
+     * [BundledAssetState.Installed] — the four ASR/VAD entries this build's own `fetchBundledAssets`
+     * task genuinely fetched and packaged. [ModelId.LLM_GEMMA3_1B] reports
+     * [BundledAssetState.NotBundledInThisBuild] in this dev/escape-hatch build (no `HF_TOKEN`) —
+     * real and honest, not "every entry Installed" (R-841's fix corrected this doc comment's own
+     * earlier, pre-fix claim to match). Also leaves the real `SetupStore` at S12/[SetupStep.READY]
      * (a verified USB input, no rig — the same honest "no rig module built yet" pairing
      * [seedConfiguredDeviceState] already establishes) so S12's own Mode row and Models row render
      * against this scenario's real, just-installed bundled assets (E2-E13's tour coverage) — never
      * `setup-verified`'s own unrelated, unbundled state.
      */
     private fun assetsBundled(context: Context): LoadResult {
-        installBundledAssetsFixture(context)
+        installRealBundledAssets(context)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
         store.captureMode = CaptureMode.USB_RADIO
@@ -2426,19 +2553,34 @@ public object Scenarios {
     }
 
     /** `asset-corrupt` — AC-137: one entry ([ModelId.ASR_ENCODER]) genuinely fails its post-copy
-     * digest check ([BundledAssetState.Failed]); every other entry still installs for real. */
+     * digest check ([BundledAssetState.Failed]); every other real, non-gated entry still installs for
+     * real (R-841's fix — see [installRealBundledAssets]'s own kdoc for why the real source, not a
+     * fabricated manifest, is what makes [org.ort.app.ui.data.ModelsController.currentState] agree). */
     private fun assetCorrupt(context: Context): LoadResult {
-        installBundledAssetsFixture(context, corruptId = ModelId.ASR_ENCODER)
+        installRealBundledAssets(context, corruptId = ModelId.ASR_ENCODER)
         return LoadResult(0, 0, null)
     }
 
-    /** `tier0-llm-stored` — FR-AST-3a, AC-138: [ModelId.LLM_GEMMA3_1B] installs for real, but this
+    /**
+     * `tier0-llm-stored` — FR-AST-3a, AC-138: [ModelId.LLM_GEMMA3_1B] reads `INSTALLED`, but this
      * device's own tier is forced below T3 ([ShedStatus] is `ModelsController.realCurrentTierLabel`'s
      * own real input — that function's own kdoc), so [org.ort.app.ui.data.ModelRowViewState.tierEligible]
      * genuinely reads `false` for it — stored, never loaded (AC-138's own distinction). `backlog`
-     * stays `0`: this is a tier fact, not F8's backlog failure, which gates on the queue depth alone. */
+     * stays `0`: this is a tier fact, not F8's backlog failure, which gates on the queue depth alone.
+     *
+     * **Deliberately not [installRealBundledAssets]** (R-841/R-842): this build's own escape hatch
+     * leaves `LLM_GEMMA3_1B` genuinely absent from `bundled/manifest.json` (gated, no `HF_TOKEN`), so
+     * the real installer can never report it `Installed` here regardless of fix — there is no real,
+     * ~550 MB gated file for this fixture to install. [ScenarioFixtures.installEveryModelFixture] is
+     * the same established shortcut `overnight`/`stations-14-nights` already use for exactly this
+     * "render every row as installed regardless of what this dev machine happens to have fetched"
+     * need: a placeholder file plus the *real*, pinned [ModelCatalog] checksum as the marker, which
+     * is what [org.ort.app.ui.data.ModelsController.currentState] actually verifies against — real
+     * enough for this scenario's own purpose (the tier distinction), unlike `assets-bundled`/
+     * `asset-corrupt`, whose whole point is exercising the installer's real digest comparison.
+     */
     private fun tier0LlmStored(context: Context): LoadResult {
-        installBundledAssetsFixture(context)
+        ScenarioFixtures.installEveryModelFixture(context)
         ShedStatus.update(level = 1, backlog = 0)
         return LoadResult(0, 0, null)
     }
