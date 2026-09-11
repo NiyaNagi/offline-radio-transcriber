@@ -32,6 +32,68 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI run 7: closing run — R-982 scroll fix plus the WPD/WPE/WPF nav-host round, 219/219 ok on main f3cc17c)
+
+### f26ab8a8 — run 7: 25 steps re-captured (R-982's own four screens, S12-ready-bt, CF06, F09, plus five nav-host regression checks), 219/219 ok, one severe host-contention episode mid-run recovered by an emulator reboot
+
+**Scope:** `results/ui-audit/tour-manifest.json` + the 25 PNGs this round's own step list names. No app
+code touched this round. Merged `main` fast-forward to `f3cc17c` first (WPF R-883 F9 banner cap, WPD
+R-882 Radio row + R-981 signal-heard label, WPE R-957 nav-host reservation + R-980 `KeyValueRow`
+share, this package's own R-982 scroll fix).
+
+**Requirements/ACs:** none new — this is the closing verification run for R-982 plus a regression
+check for WPE's R-957 nav-host reservation change.
+
+**What changed:** Per the coordinator's own "run 7 go": merged `main`, full gate first (`build
+dependencyRules platformGuards`, `coverageMatrix`/`coverageMatrixCheck` — all green before any
+capture ran), fresh `install.ps1 -Port 5558 -Clear`, then eleven `tour.ps1 -Only` groups — 25 steps,
+**25/25 ok, 0 errors, 0 timeouts, no manifest note on any of them**:
+
+| group | steps | result |
+|---|---|---|
+| `mode-change-pending/CF02*` (1.0/-end/@2x/@2x-end) | 4 | ok |
+| `model-missing/CF04*` (same four) | 4 | ok |
+| `rig-bt-connected/CF06*` | 3 | ok |
+| `rig-bt-connected/S12-ready-bt*` | 3 | ok |
+| `rig-bt-lost/F09*` | 3 | ok |
+| `setup-verified/S05*` | 1 | ok |
+| `mode-local-mic/N01b*` (regression check) | 3 | ok |
+| `mode-local-mic/L01*` (regression check) | 1 | ok |
+| `overnight/CF02*` (regression check) | 1 | ok |
+| `bt-audio-session/DG04*` (regression check) | 1 | ok |
+| `overnight/DG04*` (regression check) | 1 | ok |
+
+Spot-checked `mode-local-mic/N01b-now.png` directly against WPE's own R-957 nav-host reservation
+change — the live bar sits at its own clearance with no content clipped beneath it, no regression.
+Master manifest stays 219/219 ok; apkHash `f3cc17c` on all 25 freshly re-captured PNGs this round
+(194 untouched entries keep their own earlier hashes — `686212f` from run 5, `a98ecde` from run
+6/R-982).
+
+**One severe, self-resolving environmental episode mid-run**: right after the `-Clear` install,
+`adb shell` calls into `emulator-5558` began hanging for minutes at a time — even a bare `echo
+hello`. `adb shell top` (once it finally returned, after ~10 minutes) showed the guest's own swap
+100% full (`1900584K total, 1900584K used, 0K free`) and `kswapd0` pegged at over 1000% CPU
+thrashing to reclaim memory it could not find, alongside several `loop`-device kworkers similarly
+pegged — a genuine out-of-memory/swap-thrash condition inside the guest, not a host-side slowdown
+(`adb kill-server` + restart changed nothing). `adb -s emulator-5558 reboot` (the guest only — the
+emulator process itself was never touched, matching the same recovery this package's own report
+already used once before) cleared it: `/proc/meminfo` read healthy immediately after
+(`MemAvailable: 1058480 kB`), the device came back with the app still installed, and a fresh
+`install.ps1 -Clear` completed cleanly on the first try afterward. No code or scenario is implicated
+— this reads as a host-machine-wide resource characteristic (multiple concurrent emulators sharing
+the same host), the same class of event this repo's own report already documented once.
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`
+— BUILD SUCCESSFUL on `main` merged to `f3cc17c`. `coverageMatrix`/`coverageMatrixCheck` (separate
+invocations) — both green, before the tour ran. `install.ps1 -Port 5558 -Clear` (after the
+mid-episode emulator reboot) — clean. Eleven `tour.ps1 -Only` invocations (on-device manifest
+deleted before each) — 25/25 ok, 0 errors. Master manifest: 219/219 ok.
+
+**Left open / not done:** nothing queued — this is the closing run for the WPI capture-modes/
+Bluetooth/bundled-assets/LLM screenshot-tour program (D33–D36) per the coordinator's own framing.
+
+---
+
 ## 2026-09-11 (WPI R-982: TourAccessibilityScroll.scrollToEnd now repeats to a genuine stable position; two new 1.0 -end steps — held for "run 7 go")
 
 ### fa4e4f51 — R-982: scrollToEnd was landing one page short on tall screens; fixed with a real scroll-position comparison, verified live on both named screens
