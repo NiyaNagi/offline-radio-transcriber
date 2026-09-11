@@ -29,10 +29,14 @@ import org.ort.app.ui.failures.ReconcileViewState
 import org.ort.app.ui.failures.UsbViewState
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.app.ui.setup.DebugRigLinkPortOverride
+import org.ort.app.ui.setup.DebugRouteCheckOverride
 import org.ort.app.ui.setup.InMemoryRigLinkPort
 import org.ort.app.ui.setup.PairedDevice
 import org.ort.app.ui.setup.RadioChoice
+import org.ort.app.ui.setup.RouteCheckStage
+import org.ort.app.ui.setup.RouteCheckState
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
+import org.ort.app.ui.setup.levelBarFraction
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
@@ -547,6 +551,18 @@ public object Scenarios {
         // WPD's seam (coordinator-assigned, this round): a scripted RigLinkPort from a prior
         // `setup-rig-bluetooth` load must not leak into a later scenario's own S10b render.
         DebugRigLinkPortOverride.clear()
+        // R-943 (WPD's own seam): a RouteCheckState published for a prior `setup-verified` load's
+        // own S05 render must not leak into a later scenario's own S05/route-mismatch board.
+        DebugRouteCheckOverride.clear()
+        // R-807 (register, coordinator round): [DebugBundledAssetSourceOverride] is deliberately
+        // NOT cleared here, unlike every override above — it exists to survive across a whole
+        // *sequence* of [load] calls within one test (`ScenariosTest`'s own R_110 stress-repeat
+        // loop), not to be scoped to a single scenario's own render the way `DebugRigLinkPortOverride`
+        // et al. are; clearing it here on every single load would silently defeat it on the very
+        // first iteration, since this function runs before `installRealBundledAssets` ever reads
+        // it (reproduced directly: exactly this bug, before this comment was added). The one test
+        // that sets it is responsible for its own `try`/`finally` clear, backstopped by that test
+        // class's own `@After`.
     }
 
     // ---------------------------------------------------------------------------------------
@@ -1507,24 +1523,59 @@ public object Scenarios {
         store.rigTransport = RigTransportKind.USB_SERIAL
         store.manualFrequencyHz = 145_230_000L
         store.setupComplete = false
-        // R-944 (WPD `64081712`/merge `7706d0ab`, not yet on this branch but the fact this seeds is
-        // branch-independent): S05's own raw-signal listen now draws an `InputWaveformCard` from the
-        // same live `LevelStatus` holder S07's meter already reads (see [setupLevel]'s own doc
-        // comment) — left unseeded, S05 drew nothing real either. Seeded with the same
-        // [speechShapedPeakHistoryDbfs] envelope so both steps show one honest, real signal shape.
-        LevelStatus.update(
-            LevelStatus.State.Measured(
-                peakDbfs = -14f,
-                rmsDbfs = -20f,
-                noiseFloorDbfs = -58f,
-                clipped = false,
-                clipCountLastSecond = 0,
-                sampleRateHz = 48_000,
-                updatedAtMillis = SystemClock.wallMillis(),
+        // R-943 (register, reviewer A4 run 5, halt): S05 (`Setup-Verify.dc.html`) is reached by a
+        // cold `SetupActivity.EXTRA_STEP` launch straight at `VERIFY` — no S04 selection ever ran,
+        // so `SetupActivity.selectedDescriptor` is `null` and `RenderVerify` never starts
+        // `RealRouteCheck.run`'s own listen loop. Every fact this board needs (the routed-device
+        // line, the native-rate line, the elapsed counter, the Input waveform card, the noise-floor
+        // text) comes only from a live `RouteCheckState` the real check would otherwise have to
+        // genuinely run and finish to produce — hardware the tour's AVD does not have and 30s the
+        // tour cannot spend per step (`DebugRouteCheckOverride`'s own doc comment, WPD's seam this
+        // round). `passed = {NATIVE_RATE, ROUTE_MATCH}`: those two facts are already known by the
+        // moment a real device label/rate exist; `SIGNAL` is what `levelBars`/`noiseFloorDbfs`
+        // themselves represent, still running (never in `passed` — it has not passed yet); `RESAMPLER`
+        // not reached. **Corrects this function's own prior-round doc comment**, which assumed S05
+        // read the process-wide `LevelStatus` holder S07's meter does — reading
+        // `VerifyScreen.kt`/`DebugRouteCheckOverride.kt` once they actually landed on this branch
+        // shows S05 reads `RouteCheckState.InProgress.levelBars` instead, a genuinely different
+        // holder; the `LevelStatus.update` call this replaced never did anything this board reads.
+        DebugRouteCheckOverride.show(
+            RouteCheckState.InProgress(
+                passed = setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
+                nativeRateHz = 48_000,
+                elapsedListeningMillis = 12_000L,
+                routedDeviceLabel = "USB Audio Device",
+                levelBars = speechShapedLevelBarFractions(),
+                noiseFloorDbfs = -58.0,
             ),
-            peakHistoryDbfs = speechShapedPeakHistoryDbfs(),
         )
         return LoadResult(0, 0, null)
+    }
+
+    /**
+     * R-943: a genuine speech-shaped envelope for [org.ort.app.ui.setup.RouteCheckState.InProgress
+     * .levelBars] — [org.ort.app.ui.setup.VerifyScreen]'s own `InputWaveformCard` draws every
+     * element of this list directly (no `takeLast` truncation the way S07's own meter has —
+     * confirmed by reading `VerifyScreen.kt` before writing this, the exact class of bug R-944
+     * found there), so a shorter list sized to what a waveform card actually shows is honest here,
+     * not a 60-sample history built for a different display. Two raised-cosine lobes, the same
+     * shape [speechShapedPeakHistoryDbfs] uses, mapped through the real
+     * [org.ort.app.ui.setup.levelBarFraction] so this fraction scale agrees with S07's own meter
+     * (`RouteCheckState.InProgress`'s own doc comment).
+     */
+    private fun speechShapedLevelBarFractions(): List<Float> {
+        val floorDbfs = -58.0
+        val peakDbfs = -14.0
+        val sampleCount = 24
+        fun lobe(index: Int, center: Int, halfWidth: Int): Double {
+            val distance = kotlin.math.abs(index - center)
+            if (distance > halfWidth) return 0.0
+            return 0.5 * (1.0 + kotlin.math.cos(Math.PI * distance / halfWidth))
+        }
+        return List(sampleCount) { i ->
+            val envelope = maxOf(lobe(i, center = 8, halfWidth = 5), lobe(i, center = 17, halfWidth = 4) * 0.75)
+            levelBarFraction(floorDbfs + envelope * (peakDbfs - floorDbfs))
+        }
     }
 
     /**
@@ -2835,7 +2886,7 @@ public object Scenarios {
         ScenarioFixtures.uninstallEveryModelFixture(context)
         val filesDir = context.filesDir
         File(filesDir, "bundled_assets.manifest").delete()
-        val realSource = AndroidBundledAssetSource(context)
+        val realSource = DebugBundledAssetSourceOverride.override ?: AndroidBundledAssetSource(context)
         val source: BundledAssetSource = if (corruptId == null) {
             realSource
         } else {
