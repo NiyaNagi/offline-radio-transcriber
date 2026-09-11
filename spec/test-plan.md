@@ -243,6 +243,16 @@ Every step is one of: a root destination; a drill-in seeded by a `NavSeed` field
 at font scale 2.0 (`@2x`); or the same screen scrolled to its end (`@2x-end`). **Judge `@2x` and
 `@2x-end` as a pair** — see the standing decision recorded as register row R-744.
 
+**Test the layout at the tour's own width.** The audit AVD is 1080 px across at 2.769 px per dp —
+**390 dp**, not Robolectric's 360 dp default. Three "fixed" 2.0 rows in the capture-modes program
+(R-882, R-980, R-883) passed at 360 dp and collapsed again on the real width; every font-scale-2.0
+layout test therefore runs under `@Config(qualifiers = "w390dp-h844dp-420dpi")` with
+`@GraphicsMode(NATIVE)` (Robolectric's default graphics shadow does not vary text measurement with
+`fontScale`), and asserts bounds — a value node wider than tall and inside its row — not merely
+that the node exists. The tour's settle waits on observed state (destination, drawer, live bar,
+setup step, rig-link state, two identical semantics snapshots ≥ 500 ms apart), never on elapsed
+time alone; a `-end` step repeats the scroll until the position stops changing.
+
 `tools/ui-audit/diff.py --before <git ref> --after results/ui-audit --manifest <manifest>` lists
 what changed since a previous run, which is what scopes each review round. Use a low threshold;
 the default hides real changes.
