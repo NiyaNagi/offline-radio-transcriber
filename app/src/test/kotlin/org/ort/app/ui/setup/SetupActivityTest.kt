@@ -420,6 +420,99 @@ class SetupActivityTest {
         }
     }
 
+    // --- D33/E2-E09 (WPI's setup-rig-transport-preset scenario): S09b pre-selects the mode's -----
+    // --- preset transport when the chosen rig supports it, same rule R-902 applies to S04 ----------
+
+    private fun kenwoodEntry(activity: SetupActivity) =
+        activity.radioCatalogueForTest.entries().first { it.displayName.contains("TH-D75A") }
+
+    @Test
+    fun `E2_E09 choosing a rig pre-selects the mode preset transport when the rig supports it`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+        grant(Manifest.permission.RECORD_AUDIO)
+        deny(Manifest.permission.POST_NOTIFICATIONS)
+        deny(Manifest.permission.BLUETOOTH_CONNECT)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onChooseMode(CaptureMode.BLUETOOTH_RADIO) }
+            scenario.onActivity { activity -> activity.onDeclineBluetoothPermission() }
+            // onDeclineBluetoothPermission flips the mode to USB (S02c's own "Not now"); re-choose
+            // Bluetooth explicitly so this test proves the Bluetooth preset, not USB's.
+            scenario.onActivity { activity -> activity.onChooseMode(CaptureMode.BLUETOOTH_RADIO) }
+            scenario.onActivity { activity -> activity.onChooseRig(kenwoodEntry(activity)) }
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.RIG_TRANSPORT, activity.currentStepForTest)
+                assertEquals(
+                    "the TH-D75A supports Bluetooth SPP -- the mode's own preset must be pre-selected",
+                    RigTransportKind.BLUETOOTH_SPP,
+                    activity.selectedRigTransportKindForTest,
+                )
+            }
+        }
+    }
+
+    /** Reproduces the exact gap WPI's `setup-rig-transport-preset` scenario found: `SetupStore`
+     * seeded directly (`rigId`/`rigTransport` unset, never through the interactive
+     * [SetupActivity.onChooseRig] tap this file's other tests drive through) — a cold/resumed
+     * launch straight onto [SetupStep.RIG_TRANSPORT] must pre-select exactly as the interactive
+     * path does. */
+    @Test
+    fun `E2_E09 a cold-opened S09b also pre-selects the mode preset transport`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
+            .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
+            .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
+            .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_RADIO_CHOICE, RadioChoice.TH_D75A.name)
+            .putString(
+                SharedPreferencesSetupStore.KEY_RIG_ID,
+                org.ort.rig.descriptor.BundledDescriptors.kenwoodThD75a().id,
+            )
+            .apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.RIG_TRANSPORT, activity.currentStepForTest)
+                assertEquals(
+                    "USB mode's own preset must pre-select even on a cold/resumed launch",
+                    RigTransportKind.USB_SERIAL,
+                    activity.selectedRigTransportKindForTest,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `E2_E09 choosing the non-preset transport and connecting records the override`() {
+        storeEverySetupGateExceptComplete() // USB_RADIO mode -- preset is USB_SERIAL.
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit().putString(SharedPreferencesSetupStore.KEY_RADIO_CHOICE, RadioChoice.TH_D75A.name).apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onChooseRig(kenwoodEntry(activity)) }
+            scenario.onActivity { activity ->
+                assertEquals(RigTransportKind.USB_SERIAL, activity.selectedRigTransportKindForTest)
+                activity.onSelectRigTransport(RigTransportKind.BLUETOOTH_SPP)
+                activity.onConnectRigTransport()
+            }
+            scenario.onActivity { activity ->
+                val store = SharedPreferencesSetupStore(
+                    activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
+                )
+                assertTrue("choosing Bluetooth over the USB preset must record the override", store.modeOverriddenRig)
+            }
+        }
+    }
+
     // --- R-344 (validator pass 4, halt): S09's third row routes through a real frequency entry ---
 
     /**

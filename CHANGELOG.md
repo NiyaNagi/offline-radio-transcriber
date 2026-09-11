@@ -32,6 +32,56 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPD follow-up: S09b pre-selects the mode preset transport, the same rule R-902 applies to S04, E2-E09)
+
+### (pending) — presetRigTransportFor, SetupActivity.applyPresetRigTransportIfUnselected
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{RigTransportScreen,SetupActivity}.kt`,
+matching test files under `app/src/test/kotlin/org/ort/app/ui/setup/`.
+**Requirements/ACs:** FR-RIG-13, FR-RIG-14, FR-CAP-9, E2-E09.
+
+**What changed:** WPI's new `setup-rig-transport-preset` scenario could not show E2-E09's own
+"the mode's preset selected" state because `SetupActivity` never pre-selected S09b's transport at
+all when `SetupStore.rigTransport` was unset — `onChooseRig`'s own inline pre-select ran only on
+the interactive S09 tap, unconditionally converted the mode's preferred transport without checking
+whether the *chosen rig's own descriptor* actually declared it, and never ran again on a cold or
+resumed entry straight onto `RIG_TRANSPORT` (a debug scenario seeding `rigId` directly, or a
+process-death resume) — exactly the shape R-902 already fixed for S04's own preset route.
+
+1. **`presetRigTransportFor(modePresetKind, supportedTransports)`** (new, pure, `RigTransportScreen.kt`)
+   — the mode's preferred transport, converted to the picker's own `RigTransportKind`, but only
+   when the rig's own `transportCapabilities` keys actually contain it; `null` otherwise
+   (constitution I: never guessed for a rig this build cannot prove supports it) or when the mode
+   has no rig-transport preset at all (local-microphone mode).
+2. **`SetupActivity.applyPresetRigTransportIfUnselected()`** (new) — pre-selects
+   `selectedRigTransportKind` from `presetRigTransportFor` only while nothing is chosen yet and
+   `SetupStore.modeOverriddenRig` is still false (an already-recorded override must never be
+   silently re-applied to). Called from `onChooseRig` (after clearing any previous rig's own
+   leftover selection, so a freshly chosen rig always re-evaluates from scratch) *and* from both
+   `refreshStep`/`tryOpenAtRequestedStep` on every entry to `RIG_TRANSPORT` — the same dual-call-site
+   shape `applyPresetInputIfUnselected` (R-902) already established for S04, so the cold/resumed
+   path and the interactive tap path can never drift apart again.
+3. `Connect over …` enables/names itself automatically once pre-selected — no separate change
+   needed, `RigTransportScreen`'s own `PrimaryButton.enabled = state.selected != null` already
+   reads it.
+
+**Verified:**
+- New tests: `RigTransportScreenTest`'s three `presetRigTransportFor` cases (supported → the
+  transport; unsupported → `null`; no mode preset → `null`); `SetupActivityTest`'s `E2_E09_*` (3:
+  the interactive `onChooseRig` tap pre-selects Bluetooth SPP for a Bluetooth-mode TH-D75A choice;
+  a cold-opened S09b — `SetupStore` seeded directly, `onChooseRig` never called — pre-selects USB
+  serial for USB mode identically; choosing the non-preset transport and connecting records
+  `modeOverriddenRig`) — all green, and every pre-existing `RigTransportScreenTest`/`SetupActivityTest`
+  case (including `R_125`'s own `onChooseRig` → `onSelectRigTransport` → `onConnectRigTransport`
+  walk, now pre-selecting before that explicit call redundantly but harmlessly overwrites it) still
+  passes.
+- `-PortAllowMissingBundledAssets=true :app:testDebugUnitTest` (full) — **green, 0 failures**.
+- `-PortAllowMissingBundledAssets=true :app:smokeTestDebugUnitTest` — green.
+- `:app:detekt` / `:app:ktlintCheck` — green.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+
+---
+
 ## 2026-09-11 (WPD follow-up: S11's marker/title/duration/AC-133 clause, S04's pre-select and override fix, S00's Bluetooth icon, S04's subtitle — R-902, R-903, R-850, R-851, R-852)
 
 ### (pending) — presetInputRouteFor/isAudioRouteOverride, RadioVerifiedScreen's marker+duration+AC-133 clause, OrtIcons.bluetooth

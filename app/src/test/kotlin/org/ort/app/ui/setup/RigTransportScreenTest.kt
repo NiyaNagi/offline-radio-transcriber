@@ -127,4 +127,37 @@ class RigTransportScreenTest {
         composeTestRule.onNodeWithTag("setup-rig-transport-back").performClick()
         assert(back)
     }
+
+    // --- D33/E2-E09 (WPI's setup-rig-transport-preset scenario): presetRigTransportFor only ------
+    // --- names a transport the chosen rig's own descriptor actually supports ------------------------
+
+    @Test
+    fun `presetRigTransportFor returns the mode preset when the rig supports it`() {
+        val preset = presetRigTransportFor(
+            modePresetKind = org.ort.core.capture.RigTransportKind.BLUETOOTH_SPP,
+            supportedTransports = setOf(RigTransportKind.BLUETOOTH_SPP, RigTransportKind.USB_SERIAL),
+        )
+
+        assert(preset == RigTransportKind.BLUETOOTH_SPP) { "got $preset" }
+    }
+
+    @Test
+    fun `presetRigTransportFor returns null when the rig does not support the mode preset`() {
+        val preset = presetRigTransportFor(
+            modePresetKind = org.ort.core.capture.RigTransportKind.BLUETOOTH_SPP,
+            supportedTransports = setOf(RigTransportKind.USB_SERIAL),
+        )
+
+        assert(preset == null) { "must never guess a transport the rig cannot actually prove it supports, got $preset" }
+    }
+
+    @Test
+    fun `presetRigTransportFor returns null when the mode has no rig-transport preset at all`() {
+        val preset = presetRigTransportFor(
+            modePresetKind = null,
+            supportedTransports = setOf(RigTransportKind.BLUETOOTH_SPP, RigTransportKind.USB_SERIAL),
+        )
+
+        assert(preset == null) { "got $preset" }
+    }
 }
