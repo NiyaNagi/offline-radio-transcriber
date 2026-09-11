@@ -32,6 +32,64 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPI run 6 prep: R-944 level-envelope display-window fix, R-945/R-955/R-956/R-960 new tour steps — held for "run 6 go")
+
+### <pending> — R-944 fixed for real (A4's "decaying spike"), R-945 rig-bt-connected/S12-ready-bt, R-955/R-956/R-960 new CF02/CF06/CF11/F09 steps — tour run itself held
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`,
+`tools/ui-audit/tour.json`, `results/coverage-matrix.md` (regenerated). No tour run this round —
+the coordinator's own explicit hold ("still hold until I say — WPD's S05/S07 and WPE's CF02/CF04
+fixes land first"/"run when I send 'run 6 go'").
+
+**Requirements/ACs:** R-944 (the real fix this time), R-945, R-955, R-956, R-960. R-943 is not in
+this entry — it needs WPD's own `DebugRouteCheckOverride`, which does not exist on this branch yet
+(confirmed: no such file anywhere in the tree); left entirely for the round `DebugRouteCheckOverride`
+actually lands in.
+
+**What changed:**
+
+1. **R-944, the real fix.** The prior round's `speechShapedPeakHistoryDbfs()` centered its two
+   raised-cosine lobes at sample indices 14 and 38 of a 60-sample history — but S07's own meter
+   (`levelReadingFrom` in `LevelCheck.kt`) never reads more than `history.takeLast(RealLevelCheck
+   .DEFAULT_BAR_COUNT)`, and `DEFAULT_BAR_COUNT` is **15**. The displayed window (indices 45..59)
+   therefore only ever showed lobe 2's own trailing decay into the floor plus flat silence — exactly
+   A4's own device report, "a decaying spike," not a rise-and-fall. Re-centered both lobes at 50 and
+   57 (both inside the 45..59 display window) so the one window this board (and every other reader
+   of this history) actually shows now genuinely rises from the floor, peaks, and falls. New
+   assertions in `WpiScenariosTest.R_944_setup-level...` check `history.takeLast(15)` directly —
+   its own max reaches near the real peak, and its first sample sits well below that peak (a real
+   rise, not an immediate decay) — so a future regression of this exact class fails this test, not
+   only a validator's own eye.
+2. **R-945.** `rig-bt-connected`'s own long-standing test title claimed "setup left at
+   RADIO_VERIFIED" but never actually asserted it through `SetupStateMachine.stepFor` — read
+   directly, every field `stepFor` checks before `SetupStep.READY` was already seeded (this
+   scenario has resumed at S12 all along; the title was simply never checked). Corrected the test
+   name and added the real `stepFor` assertion (`SetupStep.READY`). New tour steps
+   `rig-bt-connected/S12-ready-bt` (1.0/@2x/@2x-end) — the Bluetooth-rig-session S12 board R-882 was
+   filed against.
+3. **R-955/R-956/R-960 (new tour.json steps, no scenario changes needed — every field these steps'
+   own destinations/drillIns need was already seeded by an earlier round).**
+   `mode-change-pending/CF02-settings-capture@2x-end`; `rig-bt-connected/CF06-settings-rig@2x`/
+   `@2x-end`; `rig-bt-lost/CF06-settings-rig` (R-871's "stale since" fact, now capturable);
+   `mode-bluetooth/CF11-settings-mode`; `rig-bt-lost/F09-rig-bt-lost-now@2x`/`@2x-end`. All are plain
+   destination steps (`OrtNavHost` + `drillIn.settingsScreen`/bare `NOW`), so `TourStepsTest`'s own
+   generic per-`drillIn`/per-destination check already covers every one of them automatically — no
+   new test code needed there, confirmed by reading that class before writing this (it iterates
+   every `destination` step in `tour.json` with no per-id allowlist).
+
+**Verified:** `.\gradlew.bat build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`
+— BUILD SUCCESSFUL, full suite green including `TourStepsTest` (which now also exercises every new
+destination step above) and the corrected/new `WpiScenariosTest` cases. `coverageMatrix` then
+`coverageMatrixCheck` (separate invocations) both green.
+
+**Left open / not done:** R-943 (blocked on WPD's `DebugRouteCheckOverride`, not yet landed). The
+tour itself — every new step above, plus the run-5 carryover list (`setup-verified/S05*`,
+`setup-level/S07*`, `mode-change-pending/CF02*`, `model-missing/CF04*`) — held until the
+coordinator's own explicit "run 6 go", after WPD's S05/S07 fix and WPE's CF02/CF04 fixes land on
+`main`.
+
+---
+
 ## 2026-09-11 (WPI run 5: closing evidence — the full 207-step screenshot tour, every step green, on the final merged main)
 
 ### aa510f44 — run 5: full tour green (207/207) on main 686212f4, both permission passes for S02c, closing evidence for the WPI program

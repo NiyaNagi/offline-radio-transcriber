@@ -1569,12 +1569,23 @@ public object Scenarios {
      * R-944: a genuine speech-shaped envelope for [LevelStatus.update]'s own `peakHistoryDbfs` —
      * two syllable-like rises from the noise floor (-58 dBFS) toward a real peak (-14 dBFS) and back
      * down, a few seconds' worth of samples (60, matching every other caller's own history length),
-     * never a flat or mechanically-alternating cycle (the bug this fixes: a repeating
+     * never a flat or mechanically-alternating cycle (the original bug this fixed: a repeating
      * `-20f + (it % 5)` pattern drew as alternating full-height amber/green blocks once WPD's
      * `levelBarRects` made S07's meter a real proportional envelope, not the honest waveform this
-     * board is meant to show). A raised-cosine lobe centered on each rise keeps every sample a real,
-     * continuously-varying dBFS value — no two adjacent samples equal, both real floor and peak
-     * values actually hit — rather than a synthetic sawtooth or sine no speech envelope looks like.
+     * board is meant to show).
+     *
+     * **Both lobes sit inside the last 15 samples, not spread across the full 60** — found only
+     * after A4's own device report ("a decaying spike," not a rise-and-fall) sent this back through
+     * `LevelCheck.kt`: `levelReadingFrom` never reads the whole history, only
+     * `history.takeLast(RealLevelCheck.DEFAULT_BAR_COUNT)` (15) — this function's own first version
+     * centered its two lobes at index 14 and 38, both entirely *outside* that 15-sample tail window
+     * (indices 45..59), so S07's board only ever rendered that second lobe's own trailing decay
+     * into the noise floor, never its rise. Centering both lobes inside 45..59 instead makes the
+     * one window this board (and every other reader of this same history) ever actually displays
+     * show the genuine rise-and-fall this register asks for; the untouched leading samples
+     * (0..44) stay at the honest floor — never displayed by [RealLevelCheck.DEFAULT_BAR_COUNT]'s
+     * own window, so their own value carries no risk of misleading anything that does read more of
+     * the history than S07 does.
      */
     private fun speechShapedPeakHistoryDbfs(): List<Float> {
         val floorDbfs = -58f
@@ -1586,7 +1597,7 @@ public object Scenarios {
             return 0.5f * (1f + kotlin.math.cos(Math.PI.toFloat() * distance / halfWidth))
         }
         return List(sampleCount) { i ->
-            val envelope = maxOf(lobe(i, center = 14, halfWidth = 10), lobe(i, center = 38, halfWidth = 13) * 0.8f)
+            val envelope = maxOf(lobe(i, center = 50, halfWidth = 5), lobe(i, center = 57, halfWidth = 3) * 0.75f)
             floorDbfs + envelope * (peakDbfs - floorDbfs)
         }
     }
