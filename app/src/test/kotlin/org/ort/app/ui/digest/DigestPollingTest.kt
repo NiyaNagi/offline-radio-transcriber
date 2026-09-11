@@ -321,6 +321,54 @@ class DigestPollingTest {
         assert(detail.inputLabel.contains("radio audio")) { "got ${detail.inputLabel}" }
         assert(!detail.inputLabel.contains("room audio")) { "got ${detail.inputLabel}" }
         assert(detail.rigLinkLabel == "USB serial") { "got ${detail.rigLinkLabel}" }
+        // E2-A07: a pre-v10-shaped row (rigDescriptorId/audioRouteVerified/audioNativeRateHz all
+        // null, same as every fixture above v7 and below v10) must never fabricate "verified" or
+        // a native rate it does not have, and the rig link stays the transport alone.
+        assert(!detail.inputLabel.contains("verified")) { "got ${detail.inputLabel}" }
+        assert(!detail.inputLabel.contains("kHz")) { "got ${detail.inputLabel}" }
+    }
+
+    @Test
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 a session with rig descriptor id, route-verified and native rate names all three`() = runTest {
+        db.sessionDao().insert(
+            session("S2", startedAt = 0L, endedAt = 3_600_000L).copy(
+                captureMode = "USB_RADIO",
+                audioRouteKind = "USB",
+                audioRouteLabel = "USB Audio Device",
+                rigTransport = "USB_SERIAL",
+                rigDescriptorId = "kenwood-thd75a",
+                audioRouteVerified = true,
+                audioNativeRateHz = 48_000,
+            ),
+        )
+        db.transmissionDao().insert(transmission("TX1", "S2"))
+
+        val detail = DigestPolling.sessionDetail(context, "S2")!!
+
+        assert(detail.inputLabel.contains("verified")) { "got ${detail.inputLabel}" }
+        assert(detail.inputLabel.contains("48 kHz")) { "got ${detail.inputLabel}" }
+        assert(detail.inputLabel.contains("radio audio")) { "got ${detail.inputLabel}" }
+        assert(detail.rigLinkLabel == "Kenwood TH-D75A · USB serial") { "got ${detail.rigLinkLabel}" }
+    }
+
+    @Test
+    @Requirement("FR-CAP-13")
+    fun `FR_CAP_13 audioRouteVerified false reads not verified, never silently dropped`(): Unit = runTest {
+        db.sessionDao().insert(
+            session("S3", startedAt = 0L, endedAt = 3_600_000L).copy(
+                captureMode = "USB_RADIO",
+                audioRouteKind = "USB",
+                audioRouteLabel = "USB Audio Device",
+                rigTransport = "USB_SERIAL",
+                audioRouteVerified = false,
+            ),
+        )
+        db.transmissionDao().insert(transmission("TX1", "S3"))
+
+        val detail = DigestPolling.sessionDetail(context, "S3")!!
+
+        assert(detail.inputLabel.contains("not verified")) { "got ${detail.inputLabel}" }
     }
 
     @Test

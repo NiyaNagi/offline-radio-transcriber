@@ -41,9 +41,21 @@ public class FileHeartbeatStore(private val file: java.io.File) : HeartbeatStore
 
     override fun last(): HeartbeatRecord? {
         if (!file.exists()) return null
-        val lines = file.readLines()
-        if (lines.size < 4) return null
-        return HeartbeatRecord(lines[0], lines[1].toLong(), lines[2].toLong(), lines[3].toLong())
+        return try {
+            val lines = file.readLines()
+            if (lines.size < 4) return null
+            HeartbeatRecord(lines[0], lines[1].toLong(), lines[2].toLong(), lines[3].toLong())
+        } catch (e: java.io.FileNotFoundException) {
+            // AC-5/FR-PLT-1: a TOCTOU race with exists() above -- a scenario reset, clear(), or a
+            // real device's pm-clear can delete the file between the check and the read (another
+            // coroutine polling this same store, technical design §5.6). A heartbeat that vanished
+            // mid-read is honestly "no heartbeat", never an uncaught crash into the UI.
+            null
+        } catch (e: NumberFormatException) {
+            // A write() torn mid-line (a real crash/kill mid-write) leaves a line that is neither
+            // a clean value nor a clean absence -- the same "no heartbeat" answer, not a crash.
+            null
+        }
     }
 
     override fun markCleanShutdown(sessionId: String) {
@@ -57,9 +69,15 @@ public class FileHeartbeatStore(private val file: java.io.File) : HeartbeatStore
 
     override fun hadUncleanEnd(): Boolean {
         if (!file.exists()) return false
-        val lines = file.readLines()
-        if (lines.size < 5) return false
-        return lines[4] != "true"
+        return try {
+            val lines = file.readLines()
+            if (lines.size < 5) return false
+            lines[4] != "true"
+        } catch (e: java.io.FileNotFoundException) {
+            // AC-5/FR-PLT-1: see last()'s own kdoc for the same TOCTOU race -- a vanished
+            // heartbeat is never reported as an unclean end.
+            false
+        }
     }
 
     override fun clear() {

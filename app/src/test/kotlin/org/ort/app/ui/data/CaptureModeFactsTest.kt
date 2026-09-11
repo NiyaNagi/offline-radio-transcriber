@@ -16,7 +16,11 @@ import org.robolectric.RobolectricTestRunner
  * [CaptureMode.LOCAL_MICROPHONE] — that store's own [org.ort.pipeline.rig.CaptureConfiguration
  * .DEFAULT] is a fabricated fact when nothing was ever chosen (constitution I). [RealCaptureModeFacts]
  * is the seam that restores the distinction; this class proves it directly, against the real
- * `SharedPreferences`-backed store, not a fake standing in for it.
+ * `SharedPreferences`-backed store, not a fake standing in for it. [RealCaptureModeFacts] rests on
+ * [org.ort.pipeline.rig.CaptureConfigurationStore.hasBeenConfigured] (E2-A07 follow-up) rather than
+ * a raw `SharedPreferences` key read underneath the store, so this suite exercises that store
+ * method directly (via a real [store] left unwritten, or written to) rather than poking its own
+ * key layout.
  */
 @RunWith(RobolectricTestRunner::class)
 class CaptureModeFactsTest {
@@ -32,10 +36,7 @@ class CaptureModeFactsTest {
         val prefsName = "r821-unset-${System.nanoTime()}"
         freshPrefs(prefsName)
         val store = SharedPreferencesCaptureConfigurationStore(context.getSharedPreferences(prefsName, 0))
-        val facts = RealCaptureModeFacts(
-            store = store,
-            hasBeenConfigured = { context.getSharedPreferences(prefsName, 0).contains("current.mode") },
-        )
+        val facts = RealCaptureModeFacts(store)
 
         // The store's own `current()` already, silently, returns the fabricated default — the exact
         // fact this seam exists to not repeat to the operator.
@@ -59,10 +60,7 @@ class CaptureModeFactsTest {
         // A real, explicit choice of the same mode the fabricated default would have claimed —
         // proving this is about honesty of *provenance*, not merely "never show LOCAL_MICROPHONE".
         store.update(CaptureConfiguration.DEFAULT.copy(mode = CaptureMode.LOCAL_MICROPHONE))
-        val facts = RealCaptureModeFacts(
-            store = store,
-            hasBeenConfigured = { context.getSharedPreferences(prefsName, 0).contains("current.mode") },
-        )
+        val facts = RealCaptureModeFacts(store)
 
         assert(facts.currentMode() == CaptureMode.LOCAL_MICROPHONE) {
             "expected the real, explicitly-written mode, got ${facts.currentMode()}"

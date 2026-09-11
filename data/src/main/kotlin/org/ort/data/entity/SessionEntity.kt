@@ -42,4 +42,22 @@ public data class SessionEntity(
     val bluetoothProfile: String? = null,
     /** `org.ort.core.capture.RigTransportKind.name`, or `null` when no rig transport was in use. */
     val rigTransport: String? = null,
+    /**
+     * E2-A07 (schema v10): the [org.ort.rig.descriptor.RigDescriptor.id] this session was started
+     * with (`CaptureConfiguration.rigId`), or `null` for no rig / the null module. Distinct from
+     * [rigTransport]: a transport names *how* the rig was reached, this names *which* rig —
+     * `RigPickerCatalogue`/`RigCatalogue` resolve it to a display name (`SessionRouteFacts.rigLabel`).
+     */
+    val rigDescriptorId: String? = null,
+    /**
+     * E2-A07 (schema v10): whether the OS's first real read confirmed the selected route matched
+     * (FR-CAP-3) — `null` until that first read happens (session just started, or ended before one
+     * ever succeeded), never fabricated as `true` before it is actually known (constitution I).
+     */
+    val audioRouteVerified: Boolean? = null,
+    /**
+     * E2-A07 (schema v10): the audio device's own native sample rate in Hz, known as soon as the
+     * device is opened (before any frame is actually read) — `null` only for a pre-v10 row.
+     */
+    val audioNativeRateHz: Int? = null,
 )

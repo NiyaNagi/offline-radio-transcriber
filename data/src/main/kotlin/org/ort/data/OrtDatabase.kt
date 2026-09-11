@@ -73,7 +73,9 @@ import java.util.concurrent.Executors
  * own doc comment for how it differs from [StationSummaryEntity]'s per-station accumulation; v9
  * (WPC3) adds [TransmissionEntity.rigStateChangedMidTransmission] (FR-RIG-6) and
  * [org.ort.data.entity.CaptureGapCause.BLUETOOTH_AUDIO_LOST] (FR-CAP-5) — see each one's own doc
- * comment.
+ * comment; v10 (E2-A07) adds [SessionEntity.rigDescriptorId], `.audioRouteVerified` and
+ * `.audioNativeRateHz` so a session's own row names which rig it ran with and whether/how its
+ * audio route resolved — see that entity's own doc comment.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -124,7 +126,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun proseSummaryDao(): ProseSummaryDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 9
+        public const val SCHEMA_VERSION: Int = 10
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -319,6 +321,20 @@ public abstract class OrtDatabase : RoomDatabase() {
         }
 
         /**
+         * v9 → v10 (E2-A07): adds `session.rigDescriptorId`, `.audioRouteVerified` and
+         * `.audioNativeRateHz` — see [org.ort.data.entity.SessionEntity]'s own doc comment for each.
+         * No existing table or column is touched or dropped; every v9 row survives untouched, all
+         * three new columns `NULL` (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
+         */
+        public val MIGRATION_9_10: Migration = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `session` ADD COLUMN `rigDescriptorId` TEXT")
+                db.execSQL("ALTER TABLE `session` ADD COLUMN `audioRouteVerified` INTEGER")
+                db.execSQL("ALTER TABLE `session` ADD COLUMN `audioNativeRateHz` INTEGER")
+            }
+        }
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> = arrayOf(
@@ -330,6 +346,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             MIGRATION_6_7,
             MIGRATION_7_8,
             MIGRATION_8_9,
+            MIGRATION_9_10,
         )
 
         private suspend fun PooledConnection.exec(sql: String) {

@@ -35,6 +35,12 @@ public interface CaptureModeFacts {
 
     /** True exactly while a session is live — [org.ort.pipeline.capture.CaptureState.isCapturing]. */
     public fun isSessionLive(): Boolean
+
+    /** R-821 (E2-A07 follow-up): [CaptureConfigurationStore.hasBeenConfigured] — `false` only for a
+     * genuinely fresh install that has never been through setup, distinguishing that from an
+     * operator who explicitly chose [CaptureMode.LOCAL_MICROPHONE] (otherwise indistinguishable via
+     * [currentMode] alone, since both read the same value). */
+    public fun hasBeenConfigured(): Boolean
 }
 
 /** [realCaptureConfigurationStore]'s own `SharedPreferences` file, shared with `:pipeline`'s
@@ -50,43 +56,19 @@ public fun realCaptureConfigurationStore(context: Context): CaptureConfiguration
         ),
     )
 
-/**
- * Register R-821 (halt): the raw key [SharedPreferencesCaptureConfigurationStore.current] itself
- * writes/reads a mode under (`"current" + "." + "mode"`, that class's own private `PREFIX_CURRENT`/
- * `KEY_MODE` — not importable here, `:pipeline`'s own private constants; mirrored as a literal,
- * confirmed against that file's source before writing this, rather than asking WPC2 to expose a
- * new public accessor this round). Present on the exact same `SharedPreferences` file
- * [realCaptureConfigurationStore] itself opens — this reads the raw entry underneath the store's
- * own `current()`, which cannot itself distinguish "never written" from "written, happens to be
- * LOCAL_MICROPHONE" (both collapse to [org.ort.pipeline.rig.CaptureConfiguration.DEFAULT]).
- *
- * **Coupling risk, reported**: this literal breaks silently (reads as "always not set") if WPC2
- * ever renames its own private prefix/key. The robust long-term fix is a real
- * `CaptureConfigurationStore.hasBeenConfigured(): Boolean` — flagged in this round's own report/
- * CHANGELOG for the lead, not implemented here (`:pipeline` is outside this package's ownership).
- */
-private const val RAW_KEY_CURRENT_MODE = "current.mode"
-
 /** The real [CaptureModeFacts], backed by [store] ([realCaptureConfigurationStore] by default).
- * [hasBeenConfigured] defaults to a real raw-`SharedPreferences` read over the same file [store]
- * itself is expected to be opened over when the [Context] constructor is used — see
- * [RAW_KEY_CURRENT_MODE]'s own doc comment for why this exists at all (R-821). */
-public class RealCaptureModeFacts(
-    private val store: CaptureConfigurationStore,
-    private val hasBeenConfigured: () -> Boolean = { false },
-) : CaptureModeFacts {
-    public constructor(context: Context) : this(
-        store = realCaptureConfigurationStore(context),
-        hasBeenConfigured = {
-            context.applicationContext
-                .getSharedPreferences(SharedPreferencesCaptureConfigurationStore.PREFS_NAME, Context.MODE_PRIVATE)
-                .contains(RAW_KEY_CURRENT_MODE)
-        },
-    )
+ * [currentMode] and [hasBeenConfigured] both rest on [CaptureConfigurationStore.hasBeenConfigured]
+ * (R-821, E2-A07 follow-up) rather than a raw `SharedPreferences` read underneath the store — that
+ * store method already carries the exact "never written at all" fact this class needs, so a
+ * change to the store's own key layout cannot silently break this seam the way reading its keys
+ * directly would have. */
+public class RealCaptureModeFacts(private val store: CaptureConfigurationStore) : CaptureModeFacts {
+    public constructor(context: Context) : this(realCaptureConfigurationStore(context))
 
-    override fun currentMode(): CaptureMode? = if (hasBeenConfigured()) store.current().mode else null
+    override fun currentMode(): CaptureMode? = if (store.hasBeenConfigured()) store.current().mode else null
     override fun pendingMode(): CaptureMode? = store.pendingConfiguration()?.mode
     override fun isSessionLive(): Boolean = CaptureState.isCapturing
+    override fun hasBeenConfigured(): Boolean = store.hasBeenConfigured()
 }
 
 /** The behavioural fake (constitution II) — a plain, settable [CaptureModeFacts] for tests.
@@ -97,10 +79,12 @@ public class FakeCaptureModeFacts(
     private var mode: CaptureMode? = null,
     private var pending: CaptureMode? = null,
     private var sessionLive: Boolean = false,
+    private var configured: Boolean = true,
 ) : CaptureModeFacts {
     override fun currentMode(): CaptureMode? = mode
     override fun pendingMode(): CaptureMode? = pending
     override fun isSessionLive(): Boolean = sessionLive
+    override fun hasBeenConfigured(): Boolean = configured
 
     public fun setMode(value: CaptureMode?) {
         mode = value
@@ -112,5 +96,9 @@ public class FakeCaptureModeFacts(
 
     public fun setSessionLive(value: Boolean) {
         sessionLive = value
+    }
+
+    public fun setConfigured(value: Boolean) {
+        configured = value
     }
 }

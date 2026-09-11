@@ -3,7 +3,9 @@ package org.ort.pipeline.rig
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.core.capture.CaptureMode
@@ -82,6 +84,47 @@ public class SharedPreferencesCaptureConfigurationStoreTest {
         val store = SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false })
         assertEquals(CaptureConfiguration.DEFAULT, store.current())
         assertNull(store.pendingConfiguration())
+    }
+
+    // R-821 follow-up (E2-A07): hasBeenConfigured() -- "never configured" vs "explicitly
+    // LOCAL_MICROPHONE" are otherwise indistinguishable, since current() falls back to the same
+    // CaptureMode value either way.
+
+    @Test
+    @Requirement("R-821")
+    public fun `R_821 a fresh store has never been configured`() {
+        val prefs = freshPrefs("test-capture-configuration-never-configured")
+        val store = SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false })
+        assertFalse(store.hasBeenConfigured())
+    }
+
+    @Test
+    @Requirement("R-821")
+    public fun `R_821 update while not capturing marks the store configured, surviving a new instance`() {
+        val prefs = freshPrefs("test-capture-configuration-configured-by-update")
+        SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false }).update(usbConfig)
+
+        val reader = SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false })
+        assertTrue(reader.hasBeenConfigured())
+    }
+
+    @Test
+    @Requirement("R-821")
+    public fun `R_821 a write while capturing does not itself mark the store configured until activated`() {
+        val prefs = freshPrefs("test-capture-configuration-pending-not-configured")
+        SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { true }).update(usbConfig)
+
+        val reader = SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false })
+        assertFalse(
+            "a pending write with nothing ever promoted to current is still an unconfigured store",
+            reader.hasBeenConfigured(),
+        )
+
+        reader.activateForNewSession()
+        assertTrue(
+            "activateForNewSession promoting the pending write must mark the store configured",
+            reader.hasBeenConfigured(),
+        )
     }
 
     @Test

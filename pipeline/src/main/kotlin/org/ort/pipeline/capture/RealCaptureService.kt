@@ -68,6 +68,7 @@ import org.ort.pipeline.shed.AndroidShedSignals
 import org.ort.pipeline.shed.ShedController
 import org.ort.pipeline.shed.ShedEventPersister
 import org.ort.pipeline.shed.ShedSignals
+import org.ort.rig.NullRigModule
 import org.ort.segment.FrameSpec
 import org.ort.segment.SegmentConfig
 import org.ort.segment.SegmentId
@@ -207,6 +208,10 @@ public class RealCaptureService : Service() {
     private var inputOpenedAtWallMillis: Long = 0L
     private var inputRouteConfirmedThisSession = false
 
+    // E2-A07: guards SessionEntity.audioRouteVerified so it is written exactly once per session --
+    // whichever of a real match (Frames) or a real mismatch (Failed) resolves first.
+    private var audioRouteVerifiedWrittenThisSession = false
+
     // R-173: every path that ends a session (stopCaptureInternal for both a clean and an unclean
     // stop, the storage floor, a route-mismatch/other Failed halt, the "flow ended unexpectedly"
     // fallback) calls endSessionRow() -- guarded by this flag so a session is only ever closed
@@ -309,6 +314,7 @@ public class RealCaptureService : Service() {
         selectedInputDevice = device
         inputOpenedAtWallMillis = SystemClock.wallMillis()
         inputRouteConfirmedThisSession = false
+        audioRouteVerifiedWrittenThisSession = false
         InputStatus.opened(
             descriptor = device,
             nativeRateHz = audioSource.deviceFormat.sampleRate,
@@ -451,6 +457,19 @@ public class RealCaptureService : Service() {
                 // CaptureConfiguration can carry. USB_SERIAL/BLUETOOTH_SPP -- the two values that
                 // exist in both enums -- read identically either way.
                 rigTransport = activeConfiguration.rigTransportKind?.name,
+                // E2-A07: the rig this session was started with -- NullRigModule.ID (no rig
+                // configured) reads as null, never the sentinel string, so a reader never has to
+                // know that constant to tell "no rig" from "a real rig id".
+                rigDescriptorId = activeConfiguration.rigId.takeUnless { it == NullRigModule.ID },
+                // E2-A07: known synchronously once the device is opened, well before the first
+                // frame is ever read -- audioSource.deviceFormat is a constructor-computed val
+                // (AudioRecordSource's own kdoc), not something that waits on a real read.
+                audioNativeRateHz = audioSource.deviceFormat.sampleRate,
+                // E2-A07: audioRouteVerified is deliberately absent here (defaults to null) -- the
+                // OS has not actually routed anything yet at insert time (R-113's own reasoning,
+                // just above in this same file, for why InputStatus.opened() starts the same way).
+                // RealCaptureService.setAudioRouteVerifiedOnce writes the real outcome the moment
+                // it is first known, whichever way it resolves.
             ),
         )
 
@@ -472,6 +491,10 @@ public class RealCaptureService : Service() {
                         // accurate "verified" signal, not an assumption.
                         inputRouteConfirmedThisSession = true
                         refreshInputStatusFromRoute(audioSource)
+                        // E2-A07: the route verifier's own outcome, known right here for the
+                        // first time -- a real match, since AudioRecordSource never reaches Frames
+                        // otherwise (see the comment just above).
+                        writeAudioRouteVerifiedOnce(verified = true)
                     }
                     val now = SystemClock.wallMillis()
                     if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS) {
@@ -486,6 +509,9 @@ public class RealCaptureService : Service() {
                     // any RouteChanged event was ever pending. See RouteVerifier's message shape.
                     if (event.error.startsWith(ROUTE_MISMATCH_ERROR_PREFIX)) {
                         refreshInputStatusFromRoute(audioSource)
+                        // E2-A07: the verifier's own outcome for this halt -- a real mismatch,
+                        // named by this exact branch's own condition.
+                        writeAudioRouteVerifiedOnce(verified = false)
                     }
                     // R-173: covers the route-mismatch halt and every other Failed reason alike --
                     // no TerminationReason names "route mismatch" specifically (the closed enum is
@@ -750,6 +776,23 @@ public class RealCaptureService : Service() {
             InputStatus.mismatch(expected, routed)
             DiagnosticsLog.logRouteMismatch(expected.kind, routed?.kind)
         }
+    }
+
+    /**
+     * E2-A07: [org.ort.data.entity.SessionEntity.audioRouteVerified], written the first time
+     * either a real match or a real mismatch resolves this session — never both, guarded by
+     * [audioRouteVerifiedWrittenThisSession] so a later, unrelated [refreshInputStatusFromRoute]
+     * call (a mid-session [CaptureEvent.RouteChanged], a reconnect) cannot overwrite the session's
+     * own *first* outcome with a later one. Fire-and-forget on [scope], matching every other
+     * post-insert `SessionEntity` write in this class ([endSessionRow] is the one exception, which
+     * deliberately blocks — see its own kdoc for why that one must not race `onDestroy`).
+     */
+    private fun writeAudioRouteVerifiedOnce(verified: Boolean) {
+        if (audioRouteVerifiedWrittenThisSession) return
+        audioRouteVerifiedWrittenThisSession = true
+        val database = db ?: return
+        val session = sessionId
+        scope.launch { database.sessionDao().setAudioRouteVerified(session, verified) }
     }
 
     /**

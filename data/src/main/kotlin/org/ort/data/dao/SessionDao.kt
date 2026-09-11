@@ -18,6 +18,12 @@ public data class SessionCaptureInfo(
     val audioRouteLabel: String?,
     val bluetoothProfile: String?,
     val rigTransport: String?,
+    /** E2-A07 (schema v10) — see [org.ort.data.entity.SessionEntity.rigDescriptorId]'s own kdoc. */
+    val rigDescriptorId: String? = null,
+    /** E2-A07 (schema v10) — see [org.ort.data.entity.SessionEntity.audioRouteVerified]'s own kdoc. */
+    val audioRouteVerified: Boolean? = null,
+    /** E2-A07 (schema v10) — see [org.ort.data.entity.SessionEntity.audioNativeRateHz]'s own kdoc. */
+    val audioNativeRateHz: Int? = null,
 )
 
 @Dao
@@ -56,11 +62,21 @@ public interface SessionDao {
 
     /**
      * FR-CAP-13, AC-129: the fields that distinguish room audio from a radio session, without
-     * reading anything else about it — never reads audio, matching AC-129's own criterion.
+     * reading anything else about it — never reads audio, matching AC-129's own criterion. E2-A07
+     * added the trailing three columns; a pre-v10 row reads them honestly as `NULL`.
      */
     @Query(
-        "SELECT id, captureMode, audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport " +
-            "FROM session WHERE id = :id",
+        "SELECT id, captureMode, audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport, " +
+            "rigDescriptorId, audioRouteVerified, audioNativeRateHz FROM session WHERE id = :id",
     )
     public suspend fun getCaptureInfo(id: String): SessionCaptureInfo?
+
+    /**
+     * E2-A07: [org.ort.data.entity.SessionEntity.audioRouteVerified], written once the OS's first
+     * real read either confirms the selected route or a mismatch halts capture —
+     * [RealCaptureService][org.ort.pipeline.capture.RealCaptureService] is the only writer, and
+     * only ever the first time either outcome resolves for a given session (see its own report).
+     */
+    @Query("UPDATE session SET audioRouteVerified = :verified WHERE id = :id")
+    public suspend fun setAudioRouteVerified(id: String, verified: Boolean)
 }

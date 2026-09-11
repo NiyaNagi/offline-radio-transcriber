@@ -1,6 +1,7 @@
 package org.ort.app.ui.data
 
 import android.content.Context
+import org.ort.app.ui.setup.RigPickerCatalogue
 import org.ort.core.capture.AudioRouteKind
 import org.ort.core.capture.BluetoothAudioProfile
 import org.ort.core.capture.CaptureMode
@@ -33,6 +34,12 @@ public data class SessionRouteFacts(
     public val audioRouteLabel: String?,
     public val bluetoothProfile: BluetoothAudioProfile?,
     public val rigTransport: RigTransportKind?,
+    /** E2-A07 (schema v10) — see [org.ort.data.entity.SessionEntity.rigDescriptorId]'s own kdoc. */
+    public val rigDescriptorId: String? = null,
+    /** E2-A07 (schema v10) — see [org.ort.data.entity.SessionEntity.audioRouteVerified]'s own kdoc. */
+    public val audioRouteVerified: Boolean? = null,
+    /** E2-A07 (schema v10) — see [org.ort.data.entity.SessionEntity.audioNativeRateHz]'s own kdoc. */
+    public val audioNativeRateHz: Int? = null,
 ) {
     /** FR-CAP-11/FR-CAP-13: the fact every Bluetooth-audio surface (N04, F23, the Log's `bt audio`
      * mark) gates on. */
@@ -40,6 +47,44 @@ public data class SessionRouteFacts(
 
     /** FR-CAP-3a/FR-CAP-10: the fact N01b's persistent room-audio disclosure gates on. */
     public val isLocalMicrophone: Boolean get() = captureMode == CaptureMode.LOCAL_MICROPHONE
+
+    /**
+     * E2-A07: `"Kenwood TH-D75A · Bluetooth SPP"` when [rigDescriptorId] resolves against the
+     * bundled/imported catalogue [RigPickerCatalogue] builds (the same lookup S09/S09b use, so a
+     * session's own record names its rig exactly as onboarding would), the transport's own label
+     * alone when the id is `null` or does not resolve (an id from a descriptor since removed, or a
+     * pre-v10 row), and `null` when neither is known at all.
+     */
+    public fun rigLabel(): String? {
+        val transportLabel = rigTransport?.let {
+            RigPickerCatalogue.transportLabel(RigPickerCatalogue.fromPresetKind(it))
+        }
+        val descriptorName = rigDescriptorId?.let { id ->
+            RigPickerCatalogue.build().entries().firstOrNull { it.id == id }?.displayName
+        }
+        return when {
+            descriptorName != null && transportLabel != null -> "$descriptorName · $transportLabel"
+            descriptorName != null -> descriptorName
+            else -> transportLabel
+        }
+    }
+
+    /**
+     * E2-A07: the Input row's own composed line — `"<baseLabel> · verified · 48 kHz · radio audio"`
+     * — from [baseLabel] (the route's own device label/kind; this class does not own that part) plus
+     * whichever of [audioRouteVerified]/[audioNativeRateHz]/room-or-radio are actually known, joined
+     * with `" · "` and never leaving a dangling separator for an omitted, unknown clause
+     * (constitution I — a fact this build does not have is left out, never guessed).
+     */
+    public fun inputRowLabel(baseLabel: String): String {
+        val verifiedClause = audioRouteVerified?.let { if (it) "verified" else "not verified" }
+        val rateClause = audioNativeRateHz?.let(::kHzLabel)
+        val radioOrRoomClause = captureMode?.let {
+            if (it == CaptureMode.LOCAL_MICROPHONE) "room audio" else "radio audio"
+        }
+        return listOfNotNull(baseLabel.ifBlank { null }, verifiedClause, rateClause, radioOrRoomClause)
+            .joinToString(" · ")
+    }
 
     public companion object {
         /** The honest default: a pre-v7 session, a `null` session id, or a lookup failure — never
@@ -50,6 +95,9 @@ public data class SessionRouteFacts(
             audioRouteLabel = null,
             bluetoothProfile = null,
             rigTransport = null,
+            rigDescriptorId = null,
+            audioRouteVerified = null,
+            audioNativeRateHz = null,
         )
 
         /** [info] is `null` for a session id that does not exist at all; every individual column
@@ -66,7 +114,18 @@ public data class SessionRouteFacts(
                     ?.let { name -> runCatching { BluetoothAudioProfile.valueOf(name) }.getOrNull() },
                 rigTransport = info.rigTransport
                     ?.let { name -> runCatching { RigTransportKind.valueOf(name) }.getOrNull() },
+                rigDescriptorId = info.rigDescriptorId,
+                audioRouteVerified = info.audioRouteVerified,
+                audioNativeRateHz = info.audioNativeRateHz,
             )
+        }
+
+        /** E2-A07: `"48 kHz"`/`"44.1 kHz"` — whole numbers unadorned, one decimal only when the
+         * rate genuinely is not a round number of kHz (e.g. 44_100), never a bare Hz figure the
+         * operator would have to convert themselves. */
+        private fun kHzLabel(hz: Int): String {
+            val kHz = hz / 1_000.0
+            return if (kHz == kHz.toLong().toDouble()) "${kHz.toLong()} kHz" else "%.1f kHz".format(kHz)
         }
     }
 }
