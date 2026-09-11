@@ -1,6 +1,7 @@
 package org.ort.app.assets
 
 import android.content.Context
+import org.ort.core.SystemClock
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -41,6 +42,34 @@ public sealed interface BundledAssetState {
      * build simply does not carry the asset). Never produced by a CI-built or release artifact. */
     public data class NotBundledInThisBuild(override val id: String, public val reason: String) : BundledAssetState
 }
+
+/**
+ * R-934 (register, WPE round 4 investigation, `results/ui-audit/register.md`): a checksum-mismatch
+ * rejection used to exist only as the one-shot [BundledAssetState.Failed] return value of the
+ * install call that produced it — nothing [org.ort.app.ui.data.ModelsController.currentState]
+ * could read *later* recorded that a part was **rejected** rather than simply never installed, so
+ * `Settings-Assets` under `asset-corrupt` read exactly like a missing part. This is the persisted
+ * form of that fact, written to [File] alongside the same asset's `.sha256` marker (see
+ * [BundledAssetInstaller]'s own KDoc) and read back by [BundledAssetInstaller.lastRejectionFor] —
+ * constitution I: "a stated, recoverable failure" is not stated at all if nothing later can read
+ * it.
+ *
+ * [part] is the manifest's own relative destination path (the same string
+ * [org.ort.app.ui.data.ModelCatalogEntry] resolves to a `File` with `filesDir` — named apart from
+ * [id] because a caller reading this record back has only the destination `File`, not the
+ * manifest entry, to hand). [expectedPrefix]/[actualPrefix] are the same 8-hex-character prefixes
+ * [BundledAssetState.Failed]'s own reason string already quotes (never the full digest, matching
+ * every other checksum-prefix surface in this codebase). [wallTimeMillis] is
+ * [org.ort.core.SystemClock.wallMillis] at the moment of rejection, never a placeholder.
+ */
+public data class BundledAssetRejection(
+    public val id: String,
+    public val part: String,
+    public val expectedPrefix: String,
+    public val actualPrefix: String,
+    public val wallTimeMillis: Long,
+    public val reason: String,
+)
 
 /**
  * Where [BundledAssetInstaller] reads bytes from — real Android assets in production
@@ -148,6 +177,7 @@ public object BundledAssetInstaller {
         val destination = File(filesDir, entry.destination)
         val marker = markerFile(destination)
         if (destination.isFile && marker.isFile && marker.readText() == entry.sha256) {
+            rejectionFile(destination).delete() // R-934: a part that verifies is no longer "rejected"
             return BundledAssetState.Installed(entry.id, destination)
         }
 
@@ -160,18 +190,28 @@ public object BundledAssetInstaller {
             val gotSha256 = sha256Of(part)
             if (gotSha256 != entry.sha256) {
                 part.delete()
-                BundledAssetState.Failed(
-                    entry.id,
-                    "bundled copy of ${entry.id} failed integrity verification after copying " +
-                        "(expected ${entry.sha256.take(CHECKSUM_PREFIX_LENGTH)}..., got " +
-                        "${gotSha256.take(CHECKSUM_PREFIX_LENGTH)}...) — not activated (AC-137)",
+                val reason = "bundled copy of ${entry.id} failed integrity verification after copying " +
+                    "(expected ${entry.sha256.take(CHECKSUM_PREFIX_LENGTH)}..., got " +
+                    "${gotSha256.take(CHECKSUM_PREFIX_LENGTH)}...) — not activated (AC-137)"
+                writeRejection(
+                    destination,
+                    BundledAssetRejection(
+                        id = entry.id,
+                        part = entry.destination,
+                        expectedPrefix = entry.sha256.take(CHECKSUM_PREFIX_LENGTH),
+                        actualPrefix = gotSha256.take(CHECKSUM_PREFIX_LENGTH),
+                        wallTimeMillis = SystemClock.wallMillis(),
+                        reason = reason,
+                    ),
                 )
+                BundledAssetState.Failed(entry.id, reason)
             } else {
                 if (!part.renameTo(destination)) {
                     part.copyTo(destination, overwrite = true)
                     part.delete()
                 }
                 marker.writeText(entry.sha256)
+                rejectionFile(destination).delete() // R-934: this launch's copy verified — clear any prior rejection
                 BundledAssetState.Installed(entry.id, destination)
             }
         } catch (e: IOException) {
@@ -181,6 +221,67 @@ public object BundledAssetInstaller {
     }
 
     private fun markerFile(destination: File): File = File(destination.parentFile, destination.name + ".sha256")
+
+    /** R-934: the same directory as [markerFile] — "the same place the markers live". */
+    private fun rejectionFile(destination: File): File = File(destination.parentFile, destination.name + ".rejected")
+
+    private fun writeRejection(destination: File, rejection: BundledAssetRejection) {
+        val file = rejectionFile(destination)
+        file.parentFile?.mkdirs()
+        file.writeText(
+            buildString {
+                appendLine("id=${rejection.id}")
+                appendLine("part=${rejection.part}")
+                appendLine("expectedPrefix=${rejection.expectedPrefix}")
+                appendLine("actualPrefix=${rejection.actualPrefix}")
+                appendLine("wallTimeMillis=${rejection.wallTimeMillis}")
+                append("reason=${rejection.reason}")
+            },
+        )
+    }
+
+    /**
+     * R-934: the last checksum-mismatch rejection recorded for the asset that resolves to
+     * [destination], or `null` when there is none — either because it never failed, or because a
+     * later install verified and cleared it (see [installOne]'s own two clearing sites).
+     * [org.ort.app.ui.data.ModelsController.rowFor] calls this directly with the same `File` its
+     * own `specFor`/[org.ort.app.ui.data.ModelCatalog] resolution already produced, so a "fresh
+     * controller" — a new process, a new `ModelsController.currentState` call, anything — reads
+     * this back from disk exactly as [installOne] left it, never from an in-memory field.
+     */
+    public fun lastRejectionFor(destination: File): BundledAssetRejection? {
+        val file = rejectionFile(destination)
+        if (!file.isFile) return null
+        return parseRejection(file.readText())
+    }
+
+    /** Split from [lastRejectionFor] purely to keep each function's own return count under
+     * detekt's threshold — every field is genuinely required, so a missing one honestly means "not
+     * a real rejection record" rather than a partial one. */
+    private fun parseRejection(text: String): BundledAssetRejection? {
+        val lines = text.lines()
+        fun field(prefix: String): String? = lines.firstOrNull { it.startsWith(prefix) }?.removePrefix(prefix)
+
+        val requiredStrings = listOf(field("id="), field("part="), field("expectedPrefix="), field("actualPrefix="))
+        val wallTimeMillis = field("wallTimeMillis=")?.toLongOrNull()
+        if (requiredStrings.any { it == null } || wallTimeMillis == null) return null
+
+        val nonNull = requiredStrings.map { it!! }
+        return BundledAssetRejection(
+            id = nonNull[0],
+            part = nonNull[1],
+            expectedPrefix = nonNull[2],
+            actualPrefix = nonNull[3],
+            wallTimeMillis = wallTimeMillis,
+            reason = reasonFrom(text),
+        )
+    }
+
+    private fun reasonFrom(text: String): String {
+        val reasonMarker = "reason="
+        val reasonIndex = text.indexOf(reasonMarker)
+        return if (reasonIndex >= 0) text.substring(reasonIndex + reasonMarker.length) else ""
+    }
 
     private fun sha256Of(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
