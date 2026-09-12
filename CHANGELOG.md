@@ -27883,7 +27883,7 @@ session-routing fix).
 
 ## 2026-09-08 (ui-conformance WP11a)
 
-###  — ui-conformance WP11a · failure signals: thermal, rig, storage forecast, gap causes, notification
+### e72246ee — ui-conformance WP11a · failure signals: thermal, rig, storage forecast, gap causes, notification
 
 **Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/{ThermalStatus,RigStatus,StorageForecast}.kt`
 (new), `RealCaptureService.kt` (wiring and the notification only), `pipeline/.../GapPersister.kt`,
@@ -28028,7 +28028,7 @@ passed unchanged.
 
 ## 2026-09-08 (ui-conformance WP0)
 
-###  — ui-conformance WP0 · debug scenario simulator and audit tooling
+### 711aecba — ui-conformance WP0 · debug scenario simulator and audit tooling
 
 **Scope:** `app/src/debug/**` (new — `ScenarioReceiver.kt`, `Scenarios.kt`, `ScenarioFixtures.kt`,
 `OvernightScenario.kt`, `StationsFixtures.kt`, `ScenarioReaderActivity.kt`,
@@ -28155,7 +28155,7 @@ already encodes with, rather than inventing a second decode path.
 
 ## 2026-09-08 (audit — F-029)
 
-###  — audit F-029 · coverage matrix's own hygiene: hyphenated audit ids and a fixture's self-reference no longer read as false orphans
+### 979addc2 — audit F-029 · coverage matrix's own hygiene: hyphenated audit ids and a fixture's self-reference no longer read as false orphans
 
 **Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/CoverageMatrix.kt`,
 `buildSrc/src/test/kotlin/org/ort/gradle/CoverageMatrixTest.kt`, `results/coverage-matrix.md`.
