@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package org.ort.rig.descriptor
 
 import kotlinx.coroutines.CoroutineScope
@@ -8,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -70,7 +74,7 @@ private fun pushOnlyDescriptor(): RigDescriptor = RigDescriptor(
 class DescriptorRigModuleTest {
 
     @Test
-    fun `FR_RIG_1_health_hang a hung transport is rescued by the module's own watchdog`() = runBlocking {
+    fun `FR_RIG_1_health_hang a hung transport is rescued by the module's own watchdog`() = runTest {
         val transport = FakeRigTransport()
         // Set BEFORE connect so the very first read is guaranteed to be the hung one -- no race.
         transport.hangOnNextRead()
@@ -78,6 +82,7 @@ class DescriptorRigModuleTest {
             pollingFrequencyDescriptor(),
             { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
@@ -92,13 +97,14 @@ class DescriptorRigModuleTest {
     }
 
     @Test
-    fun `FR_RIG_11_garbage a garbage reply emits no state and health says so`() = runBlocking {
+    fun `FR_RIG_11_garbage a garbage reply emits no state and health says so`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptGarbage("FQ", "NOPE THIS IS NOT A REPLY")
         val module = DescriptorRigModule(
             pollingFrequencyDescriptor(),
             { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
@@ -113,14 +119,38 @@ class DescriptorRigModuleTest {
         }
     }
 
+    /**
+     * Register R-808: this test previously ran under `runBlocking` with [DescriptorRigModule]'s
+     * default `scope` — real `Dispatchers.Default`, real wall-clock `delay`/`withTimeoutOrNull` —
+     * racing its own `withTimeoutOrNull(2_000)` assertions against however fast a shared, possibly
+     * saturated thread pool happened to schedule the module's `stateWatchJob`/`readJob` coroutines.
+     * `FakeRigTransport.dropMidStream` itself already signals synchronously (a plain `StateFlow`
+     * assignment, no delay of its own); the flake was entirely in *observing* that signal from a
+     * background coroutine competing for real CPU time on a loaded CI runner — passed every time
+     * locally, failed once on a slower/busier Linux runner (CI run 34660541461).
+     *
+     * Fixed by moving the whole test onto [kotlinx.coroutines.test.runTest]'s virtual time and
+     * giving the module its own `scope` on [kotlinx.coroutines.test.UnconfinedTestDispatcher] tied
+     * to that same [kotlinx.coroutines.test.TestScope.testScheduler] — every `delay`,
+     * `withTimeoutOrNull` and flow emission on both sides of this test (the test body and the
+     * module's `readJob`/`pollJob`/`stateWatchJob`) now advances on one shared, deterministic
+     * virtual clock, and `UnconfinedTestDispatcher` runs a resumed coroutine immediately rather
+     * than queuing it for a later real dispatch, so the module's reaction to
+     * [FakeRigTransport.dropMidStream] happens synchronously within that call, exactly as it would
+     * need to for this test to never again depend on real scheduling speed. Production's own drop
+     * detection ([DescriptorRigModule]'s `stateWatchJob`) was never wall-clock-timed to begin with
+     * — it reacts to a `TransportState.Lost` value change, not a timer — so nothing there needed a
+     * behavioural fix; this was a test-only race.
+     */
     @Test
-    fun `FR_RIG_7_drop a dropped transport marks the last state stale and reports TRANSPORT_LOST`() = runBlocking {
+    fun `FR_RIG_7_drop a dropped transport marks the last state stale and reports TRANSPORT_LOST`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FQ", "FQ0014250000")
         val module = DescriptorRigModule(
             pollingFrequencyDescriptor(),
             { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
@@ -149,12 +179,13 @@ class DescriptorRigModuleTest {
     }
 
     @Test
-    fun `FR_RIG_1_push a push line updates state with no poll ever sent`() = runBlocking {
+    fun `FR_RIG_1_push a push line updates state with no poll ever sent`() = runTest {
         val transport = FakeRigTransport()
         val module = DescriptorRigModule(
             pushOnlyDescriptor(),
             { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
@@ -176,7 +207,7 @@ class DescriptorRigModuleTest {
     }
 
     @Test
-    fun `FR_RIG_6 a mid-transmission rig change is flagged, an unchanged one is not`() = runBlocking {
+    fun `FR_RIG_6 a mid-transmission rig change is flagged, an unchanged one is not`() = runTest {
         val transport = FakeRigTransport()
         val clock = TestClock(startMonotonicNanos = 1_000_000_000L)
         val module = DescriptorRigModule(
@@ -184,6 +215,7 @@ class DescriptorRigModuleTest {
             { _, _, _ -> transport },
             clock = clock,
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
@@ -226,12 +258,13 @@ class DescriptorRigModuleTest {
     }
 
     @Test
-    fun `D23 squelchOpenedAtNanos reports null when the band has never been open`() = runBlocking {
+    fun `D23 squelchOpenedAtNanos reports null when the band has never been open`() = runTest {
         val transport = FakeRigTransport()
         val module = DescriptorRigModule(
             pushOnlyDescriptor(),
             { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
@@ -246,7 +279,7 @@ class DescriptorRigModuleTest {
     }
 
     @Test
-    fun `D23 squelchOpenedAtNanos reports the timestamp of the earliest contiguous open reading`() = runBlocking {
+    fun `D23 squelchOpenedAtNanos reports the timestamp of the earliest contiguous open reading`() = runTest {
         val transport = FakeRigTransport()
         val clock = TestClock(startMonotonicNanos = 1_000_000_000L)
         val module = DescriptorRigModule(
@@ -254,6 +287,7 @@ class DescriptorRigModuleTest {
             { _, _, _ -> transport },
             clock = clock,
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
@@ -275,7 +309,7 @@ class DescriptorRigModuleTest {
     }
 
     @Test
-    fun `WPC3 connect passes this transport's matching TransportSpec to the factory`() = runBlocking {
+    fun `WPC3 connect passes this transport's matching TransportSpec to the factory`() = runTest {
         val transport = FakeRigTransport()
         var seenSpec: TransportSpec? = null
         val descriptor = BundledDescriptors.kenwoodThD75a()
@@ -285,6 +319,7 @@ class DescriptorRigModuleTest {
                 if (kind == RigTransportKind.USB_SERIAL) seenSpec = spec
                 transport
             },
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
@@ -298,6 +333,15 @@ class DescriptorRigModuleTest {
         }
     }
 
+    // Register R-808 follow-up: deliberately NOT converted to runTest/UnconfinedTestDispatcher
+    // like every other case in this file. This test's whole point is to prove readJob genuinely
+    // yields a REAL OS thread it shares with another coroutine -- an unconfined test dispatcher
+    // would trivially interleave both coroutines regardless of whether the fix under test actually
+    // works, proving nothing. A dedicated single-thread real executor is the only way to make a
+    // busy-spin regression here fail deterministically, so this one keeps runBlocking and a real
+    // Dispatchers-backed scope on purpose. It carries no real-time race of the FR_RIG_7_drop kind:
+    // its own withTimeoutOrNull(5_000) bounds a check that either completes almost instantly or
+    // hangs forever on a regression -- never a borderline "was the CI box fast enough" case.
     @Test
     fun `WPC3 the read loop yields even when the transport never opens, so it never starves its scope`() = runBlocking {
         // A single, dedicated thread: if readJob busy-spins (no genuine suspension point when

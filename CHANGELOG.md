@@ -104,6 +104,147 @@ no `HF_TOKEN` and no escape hatch, which stayed green.
 
 **Left open / not done:** none — this was purely a task-graph wiring defect; the five tests
 themselves needed no change, matching the coordinator's own diagnosis and confirmation run.
+## 2026-09-11 (register R-808 follow-up: every remaining real-time race in :rig's own test suite made deterministic)
+
+### (pending) — DescriptorRigModuleTest, ThD75aDescriptorTest and GenericAsciiCatDescriptorTest all converted to runTest/UnconfinedTestDispatcher; :rig-usb/:rig-bluetooth already clean; :pipeline's own instances named, not fixed
+
+**Scope:** `rig/src/test/kotlin/org/ort/rig/descriptor/{DescriptorRigModuleTest,ThD75aDescriptorTest,GenericAsciiCatDescriptorTest}.kt`.
+
+**Requirements/ACs:** R-808, FR-RIG-1, FR-RIG-6, FR-RIG-7, FR-RIG-11, D23, AC-133.
+
+**What changed:** *Constitution check.* II (as this round's own halt already established: a test's
+correctness must not depend on the speed of the machine running it). Finished the file this
+round's own halt named directly: `DescriptorRigModuleTest`'s remaining seven `runBlocking`+
+`withTimeoutOrNull`+module-on-default-`Dispatchers.Default` cases (`FR_RIG_1_health_hang`,
+`FR_RIG_11_garbage`, `FR_RIG_1_push`, `FR_RIG_6`, both `D23 squelchOpenedAtNanos` cases, and `WPC3
+connect passes...`) now run under `runTest` with the module's own `scope` on
+`UnconfinedTestDispatcher(testScheduler)`, identically to `FR_RIG_7_drop`'s own fix — each test's
+assertion meaning is unchanged, only the dispatcher/timing mechanism underneath it. One case,
+`WPC3 the read loop yields even when the transport never opens...`, is deliberately left on
+`runBlocking` with a real dedicated single-thread executor: it exists specifically to prove
+`readJob` yields a *real* OS thread it shares with another coroutine (the busy-spin regression this
+test guards against), and an unconfined test dispatcher would trivially interleave both coroutines
+regardless of whether the fix actually works — virtual time would prove nothing there. A code
+comment on that test now says so explicitly, so a future reader does not "fix" it back into the
+same shape by mistake.
+
+Grepped `:rig`, `:rig-usb`, `:rig-bluetooth` and `:pipeline` test sources for the identical shape
+(`runBlocking` + `withTimeoutOrNull`/`withTimeout` + a module left on its default real
+`Dispatchers.Default` scope) as instructed:
+
+- **`:rig`**: found two more files beyond `DescriptorRigModuleTest.kt` — `ThD75aDescriptorTest.kt`
+  (`both bands report their own frequency from AI push lines`, `D23 a BY change on band B
+  attributes squelch to B, not A`) and `GenericAsciiCatDescriptorTest.kt` (`FA and MD poll replies
+  are parsed...`), both via the shared `awaitStateWhere` helper (`ThD75aDescriptorTest.kt`) racing
+  a `DescriptorRigModule` built with no `scope` override. **Fixed in this round** — same
+  `runTest`/`UnconfinedTestDispatcher(testScheduler)` treatment; `awaitStateWhere` itself needed no
+  change, since it only ever uses the ambient coroutine context's own `delay`/`withTimeoutOrNull`,
+  never a dispatcher of its own. `NullRigModuleTest.kt` also uses `runBlocking` but never waits on
+  anything — `.first()` reads a value already emitted synchronously before it is called — so it is
+  not this shape and was left alone.
+- **`:rig-usb`**: clean. `UsbSerialTransportTest.kt` already uses `runTest` with
+  `StandardTestDispatcher(testScheduler)` throughout — no `runBlocking` anywhere in this module's
+  tests.
+- **`:rig-bluetooth`**: clean. No `runBlocking` at all in this module's tests
+  (`TransportParityTest.kt`/`BluetoothSppTransportTest.kt` already use `runTest`).
+- **`:pipeline`**: **found, named, not fixed this round** (out of this row's scope per the
+  coordinator's own instruction) —
+  - `rig/RigSupervisorTest.kt` and `rig/RigSupervisorRealTransportTest.kt`: both hold a
+    `CoroutineScope(Dispatchers.Default + Job())` for their shared `RigSupervisor`, and poll a
+    process-wide `RigStatus` object inside a real `withTimeout(2_000)` (`awaitBandSquelch`,
+    `awaitConnected`, `awaitStale`) — the identical shape, one layer up the stack from
+    `DescriptorRigModule` itself.
+  - `rig/RigLinkBridgeTest.kt`: several `runBlocking` cases racing real `withTimeout(2_000)`/
+    `withTimeout(10_000)` against `Dispatchers.Default` — though its own comments show at least
+    some of these are the same *deliberate* real-thread requirement as `:rig`'s own busy-spin test
+    (`DefaultRigLinkBridge.probe`'s scope is explicitly kept off any dispatcher shared with the
+    fake transport's own dedicated thread, for the same busy-spin-proof reason), so this file needs
+    a case-by-case read, not a blanket conversion, before anyone touches it.
+  - `reprocess/ReprocessRunnerTest.kt` has `runBlocking` + `withTimeoutOrNull` too, but its own kdoc
+    already documents this as the *opposite* problem, not this one: `runTest`'s virtual-time
+    auto-advance actively mis-fires there, because Room dispatches suspend DAO calls onto its own
+    real executor thread, which looks "idle" to `runTest`'s scheduler — already correctly excluded,
+    nothing to do.
+
+**Verified:** `./gradlew -PortAllowMissingBundledAssets=true :rig:test` — full module green (all 39
+cases). `DescriptorRigModuleTest` alone run 5 times in a row (`--rerun` each time) — green every
+time, ~3-6s per run (down from real multi-second `withTimeoutOrNull` waits on every pass
+previously); the full `:rig:test` module run 5 times in a row — green every time. Both repeated
+once more with every CPU core pinned at 100% by deliberately started PowerShell background
+spin-loop jobs, simulating a saturated CI runner directly — still green, confirming the fix holds
+under real scheduling pressure by construction. Full gate — `./gradlew
+-PortAllowMissingBundledAssets=true build dependencyRules platformGuards` (`-x
+smokeTestDebugUnitTest`, the separately-reported pre-existing, unrelated flake), `-p buildSrc
+test`, `spec_check.py`, `coverageMatrix`/`coverageMatrixCheck` (two invocations) — all green,
+241/450 covered, unchanged (test-only determinism fix, no new requirement coverage).
+
+**Left open / not done:** the `:pipeline` instances named above (`RigSupervisorTest.kt`,
+`RigSupervisorRealTransportTest.kt`, `RigLinkBridgeTest.kt`) are not fixed this round, per the
+coordinator's explicit instruction to name rather than fix them here — `RigSupervisorTest`'s and
+`RigSupervisorRealTransportTest`'s `awaitBandSquelch`/`awaitConnected`/`awaitStale` polling loops
+in particular look like the most likely next CI flake if `:pipeline`'s own gate ever runs on a
+similarly loaded machine.
+
+---
+
+## 2026-09-11 (register R-808: DescriptorRigModuleTest's FR_RIG_7_drop case made deterministic against virtual time)
+
+### (pending) — FR_RIG_7_drop no longer races real Dispatchers.Default scheduling on a loaded CI runner
+
+**Scope:** `rig/src/test/kotlin/org/ort/rig/descriptor/DescriptorRigModuleTest.kt`.
+
+**Requirements/ACs:** R-808, FR-RIG-7.
+
+**What changed:** *Constitution check.* II (a test's own correctness must not depend on the speed
+of the machine running it — a green local run and a red CI run for the identical commit is exactly
+the "passes here, silently means nothing there" gap constitution II exists to close). CI run
+`34660541461` (commit `8a8e8ea1`) failed `:rig:test` on
+`DescriptorRigModuleTest > FR_RIG_7_drop a dropped transport marks the last state stale and reports
+TRANSPORT_LOST` with `expected: <true> but was: <false>` at the `health is RigHealth.Degraded &&
+... TRANSPORT_LOST` assertion — the CI log shows `withTimeoutOrNull(2_000) { module.health().first()
+}` returned `null` (so `null is RigHealth.Degraded` read `false`), never a wrong value.
+
+The test ran under plain `runBlocking`, and `DescriptorRigModule` was constructed with its default
+`scope` — real `Dispatchers.Default`. `FakeRigTransport.dropMidStream` itself signals synchronously
+(a plain `StateFlow` assignment, no delay anywhere in it); the race was entirely in *observing* that
+signal — `DescriptorRigModule`'s `stateWatchJob` (which reacts to the `StateFlow` and emits the
+`TRANSPORT_LOST` health event) runs as a separate coroutine on that same real, shared
+`Dispatchers.Default` thread pool, and the test's own `withTimeoutOrNull(2_000)` is an equally real
+wall-clock deadline — on a loaded CI runner (many parallel Gradle test workers sharing that same
+process-wide pool, the identical contention shape `:data`'s `OrtDatabase.kt` already documents for
+a different subsystem) 2 real seconds was not always enough for that job to get a thread. Checked
+`DescriptorRigModule`'s own drop-detection path honestly: it is not itself wall-clock-timed at all
+— `stateWatchJob` reacts to a `TransportState.Lost` value change, never a timer — so there was
+nothing to fix in production; this was a test-only race.
+
+Fixed by moving the test onto `kotlinx.coroutines.test.runTest` and giving the module its own
+`scope` on `UnconfinedTestDispatcher(testScheduler)` — the *same* `TestCoroutineScheduler` the
+outer `runTest` uses. Every `delay`/`withTimeoutOrNull`/flow emission on both sides of the test (the
+test body and the module's `readJob`/`pollJob`/`stateWatchJob`) now advances on one shared, virtual
+clock with no real thread contention at all, and `UnconfinedTestDispatcher` resumes a ready
+coroutine immediately rather than queuing it for a later real dispatch — the module's reaction to
+`dropMidStream` now happens synchronously within that call. `:rig`'s `build.gradle.kts` already
+carried `kotlinx.coroutines.test` as a `testImplementation`, and this pattern already existed
+elsewhere in this module (`FakeRigModuleTest`'s own `runTest` case) — no new dependency.
+
+**Verified:** `./gradlew -PortAllowMissingBundledAssets=true :rig:test --tests
+"org.ort.rig.descriptor.DescriptorRigModuleTest"` — 9/9 green, repeated 5 times in a row (all
+green, ~4-6s each — the whole class now runs on virtual time, no longer paying the real
+multi-second `withTimeoutOrNull` waits the old version did on every pass); re-run once more while
+every CPU core was pinned at 100% by deliberately started background spin-loops (simulating a
+saturated CI runner directly, rather than only reasoning about it) — still green, all 9 cases,
+confirming the fix is immune to real scheduling pressure by construction, not by luck. Full `:rig`
+test module and the rest of the gate pasted in the report.
+
+**Left open / not done:** three sibling tests in the same file (`FR_RIG_1_health_hang`,
+`FR_RIG_11_garbage`, and the pre-existing `WPC3`/`FR_RIG_1_push`/`FR_RIG_6` cases) still use plain
+`runBlocking` with the module's default real `scope` and the same `withTimeoutOrNull(2_000)`
+pattern — the identical latent race, just not the one CI happened to hit this time. Left unchanged
+since only `FR_RIG_7_drop` was named in the halt report and the instruction was to fix "the test",
+but flagging here since a future CI run could reasonably surface the same flake under a different
+test name in this file.
+
+---
 
 ## 2026-09-11 (merge record: every merge to main during the capture-modes program)
 
@@ -32412,6 +32553,7 @@ internally consistent."
 Both sessions noted here as "in flight" when this file was first written have since landed —
 see the 2026-09-07 "P8 and the real R1 run both land" section above. Nothing is in flight as of
 the latest entry; this section is kept as the standing place to note it when something is.
+
 
 
 
