@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (close-out: CI and Release both green on `main`, the `latest-build` pre-release republished)
 
-### (this commit) — register R-809 and checklist E2-K08 closed; Phase G record amended
+### a7de324b — register R-809 and checklist E2-K08 closed; Phase G record amended
 
 **Scope:** `results/ui-audit/register.md`, `results/e2e-audit/checklist.md`,
 `spec/e2e-capture-modes-plan.md`, this file. Docs only — no product or test code.
