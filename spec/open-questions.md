@@ -414,6 +414,12 @@ Q13, above, and D39 in spec §3). See FR-STO-3d for what happens when the 60 GB 
 reached: the oldest archive is pruned first, gated over audio is kept, and a pruned archive
 stays listed as removed with its date.
 
+*This entry, and D39, are about the archive budget only. The other budget FR-STO-3 names —*
+*gated over audio — had no answer for what happens when* **it** *fills, until register R-1037*
+*forced one: see* **D40** *(warn loudly, delete nothing, FR-STO-3e). The two budgets now have*
+*opposite pruning behaviour on purpose, not by oversight — the archive is training material,*
+*the over audio is the product.*
+
 **Question.** FR-SEG-9 offers an optional mode retaining the *unsegmented* stream. Ship it in
 v1, defer it, or drop it?
 

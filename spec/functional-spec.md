@@ -184,6 +184,7 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D37 | **A field-report channel exists: one button in the app uploads a diagnostic bundle to a GitHub repository and opens an issue against it.** This **amends FR-OBS-5**, whose only prior exception (FR-OBS-5a, D25) was the corpus contribution channel. | Product owner direction, taken with the conflict stated. The product owner's first on-device run failed every transcription and surfaced four onboarding defects, and the only evidence that reached the workstation was a verbal description and one photograph of a screen. The channel is operator-triggered per upload, never automatic, and lives entirely in `:net`. See FR-OBS-6..12 and D38 |
 | D38 | **Retained over audio and voiceprint embeddings may be included in a field report, each behind its own toggle, both defaulting off**, with a consent screen naming every file and its real size before each upload. Against a **public** destination, both categories are refused unless a visible Settings switch is explicitly turned off. This **amends FR-SPK-20**, whose own text required that "if any future change proposes contributing, syncing or backing up voiceprints, the default must move to explicit opt-in in the same change" — D38 is that change, and discharges the obligation. | Product owner direction, taken with the conflict stated. The destination is `github.com/NiyaNagi/offline-radio-transcriber`, verified public; the product owner said "just push to this public repo for now — I am just testing." The lead's condition — the uploader reads the destination's visibility and gates accordingly — is recorded as a requirement (FR-OBS-10) rather than as a refusal, because the redacted bundle already diagnoses every defect reported so far without audio or voiceprints. See FR-OBS-9, FR-OBS-10, R19 and Q18 |
 | D39 | **Reversed: the continuous archive (FR-SEG-9) defaults ON, budgeted at 60 GB.** This **amends Q14**, whose recorded answer was "yes, and keep it always available… Default off; budgeted under D26." The mechanism and its budget-not-time-limit shape (D26) are unchanged; only the default flips. | Product owner direction: they want the raw audio for model training and no longer consider the storage cost a reason to keep it off by default. The cost, stated rather than sold: at 16 kHz mono, **FLAC is 50–60% of PCM's 115.2 MB/hour** (FR-STO-2a), so continuous capture costs **~58–69 MB per wall-clock hour**, about **0.5 GB per 8-hour night**, and **~15 GB per month** of nightly use — against the 60 GB budget that is roughly four months of nightly use before anything is pruned. See FR-STO-3d for what pruning does when the budget is reached, and Q14 for the amendment note in place |
+| D40 | **Reaching the over-audio budget warns loudly and deletes nothing.** Capture continues past it; only genuine device storage exhaustion stops capture, and it does so loudly (FR-STO-4, constitution IV). The operator frees space by deleting sessions themselves. This **withdraws** FR-STO-3a's opt-in automatic-pruning option for the **over-audio** budget specifically — the option is unaffected for the continuous archive (FR-STO-3d). | Product owner, closing register R-1037: FR-STO-3, FR-STO-3a and the new FR-STO-3d each specified something about pruning except the one budget nobody had been asked about — what happens when *over* audio, not the archive, fills. Over audio is the evidence behind every transcript and correction (FR-REP-4); none of it disappears without the operator choosing it. The stated cost of that guarantee: without a pruning option, a full over-audio budget is a **sustained warning** the operator must act on, not a one-time notice — see FR-STO-3e |
 
 ---
 
@@ -1178,6 +1179,48 @@ system SHALL prune the **oldest archive first** and SHALL NOT prune gated over a
 room for it: the overs are the product, the archive is the training material FR-STO-3's
 automatic-pruning option (opt-in per budget) exists to feed. A pruned archive interval SHALL
 remain **listed as removed, with its date**, never silently vanishing from the record (P9).
+
+> **Amended by D40.** FR-STO-3a's automatic-pruning option was written before either budget's
+> pruning order had been decided, and its "opt-in per budget" phrasing reads as though the
+> choice were symmetric between the two. It no longer is, now that both are decided: the
+> **continuous-archive** budget keeps the option, exactly as FR-STO-3d states above. The
+> **over-audio** budget does not — register R-1037 asked what FR-STO-3, FR-STO-3a and FR-STO-3c
+> never answered, and the product owner's answer withdraws the option for that budget entirely
+> rather than leaving it opt-in. FR-STO-3, FR-STO-3a, FR-STO-3b and FR-STO-3c are left exactly as
+> drafted below this note: nothing in them was wrong, the over-audio question was simply open
+> until now. See FR-STO-3e and D40.
+
+**FR-STO-3e (M)** — On reaching the **over-audio** budget specifically (D40), the system SHALL
+warn the operator loudly and SHALL delete no over audio — automatically or by any other means.
+FR-STO-3a's opt-in automatic-pruning option does **not** extend to this budget; there is no
+setting that turns pruning on for gated over audio. The operator frees space by deleting
+sessions themselves. Capture SHALL continue past the budget exactly as FR-RUN-1 and
+constitution IV require: only genuine storage exhaustion stops capture, and FR-STO-4 governs
+that shutdown, loudly, never this budget. Because there is no automatic mechanism behind it to
+make the condition self-resolving, the warning SHALL persist for as long as the budget remains
+exceeded — not only at the moment it was first crossed — so a full budget cannot quietly become
+background noise the operator has learned to dismiss. That persistence binds two surfaces
+specifically, not a settings page a tap away: the warning SHALL be **visible without a tap**,
+for as long as the budget remains exceeded, on the **capture status surface** (FR-UI-7, drawn as
+N08 `Capture.dc.html`, superseding N04) and on the **live/transport bar's own state label** while
+capturing (drawn as `Transport-Bar.dc.html`, inventory C10), whose label is already defined as
+the highest-priority condition affecting capture, never a fixed word — this asks an existing
+mechanism to carry a state it can already express (`LiveBarPolling.toneAndLabel()`'s priority
+ladder already carries a `"Low storage"` state), not a new surface. Over audio is the evidence
+FR-REP-4 depends on for every re-run and every correction; none of it disappears without the
+operator choosing it.
+
+**FR-STO-3f (M)** — The continuous archive's **default-on state** (D39) and its **measured
+monthly rate** SHALL be disclosed at two points, in each case beside the control that turns the
+archive off rather than behind a second tap or a separate screen: (a) at setup, wherever the
+archive's default is presented or applied, and (b) wherever storage usage is shown thereafter
+(FR-STO-5, FR-UI-7). Once the archive has run long enough on-device to measure its own rate, the
+disclosure SHALL state **that measured figure** in place of D39's ~15 GB/month estimate
+(constitution VI: a number states its provenance, and a measured rate outranks an estimate);
+until then the estimate stands, visibly labelled as an estimate. This exists because the
+archive is write-mostly training material nobody looks at day to day — register R-1036 —
+so "pruning is safe" (FR-STO-3d) is not the same as the operator knowing their disk is filling
+for a purpose they may have forgotten they enabled.
 
 **FR-STO-4 (M)** — Warn before storage exhaustion and degrade predictably: stop writing
 audio before stopping writing text, and never stop capture silently.
@@ -2668,6 +2711,27 @@ NFR-2 stated latency targets that nothing tested.
   present (FR-STO-3d, D39).
 - **AC-151** A pruned archive interval remains **listed with its date** after removal rather
   than disappearing from the record (FR-STO-3d, P9).
+- **AC-156** Reaching the over-audio budget warns the operator and deletes no over audio,
+  automatically or otherwise; verified by driving audio past the budget and then further past
+  it and confirming no over is removed at either point (FR-STO-3e, D40).
+- **AC-157** The over-audio warning persists across app restarts for as long as the budget
+  remains exceeded, rather than showing once and clearing itself, and genuine storage
+  exhaustion — not this budget — stops capture with a stated reason (FR-STO-3e, FR-STO-4,
+  constitution IV).
+- **AC-160** With the over-audio budget exceeded, the warning is **visible without a tap** on
+  both the capture status surface and the live/transport bar's own state label for as long as
+  the budget stays exceeded — verified by reaching that state and confirming the bar's label
+  (not a fixed word, per its own priority ladder) reads the warning rather than a nominal
+  capturing state, and that the capture status surface shows it without navigating to Settings
+  (FR-STO-3e, FR-UI-7).
+- **AC-158** At setup, wherever the continuous archive's on-by-default state is presented, the
+  screen states that it is on, states a monthly rate (measured if one exists, else the
+  ~15 GB/month estimate, labelled as an estimate), and shows the off control beside that
+  statement on the same screen (FR-STO-3f, D39).
+- **AC-159** Wherever storage usage is shown thereafter (Settings > Storage, the capture status
+  surface), the archive's on/off state and its monthly rate are stated beside the control that
+  turns it off; once a measured rate exists it replaces the estimate (FR-STO-3f, FR-STO-5,
+  FR-UI-7, constitution VI).
 - **AC-126** Station and frequency views show activity patterns that **distinguish "not heard"
   from "not listening"**, verified against a session containing a capture gap (FR-UI-11,
   FR-UI-12).
@@ -3177,7 +3241,8 @@ product; all of them are what make the reference experience world-class.
 | D24 Continuous archive first-class | FR-SEG-9, CON-SEG-1, AC-96, Q14 |
 | D25 Opt-in then automatic contribution | FR-CON-1..8, FR-OBS-5a, NFR-6, R14, AC-111..114 |
 | D26 Retention is a storage budget | FR-STO-3, FR-STO-3a..c, AC-124, AC-125 |
-| D39 Continuous archive defaults on, budgeted at 60 GB | FR-STO-3d, AC-150, AC-151, Q14 (amended) |
+| D39 Continuous archive defaults on, budgeted at 60 GB | FR-STO-3d, FR-STO-3f, AC-150, AC-151, AC-158, AC-159, Q14 (amended) |
+| D40 Over-audio budget warns, never deletes | FR-STO-3a (amended), FR-STO-3e, FR-UI-7, AC-156, AC-157, AC-160 |
 | D27 Own public repository | §2.1 (technical design), Q15 |
 | D28 Persistent voice library | FR-SPK-11..26, R15, AC-104..110, AC-121, AC-122 |
 | D29 Station knowledge accumulates | FR-DIG-7..14, R16, AC-116..120 |
