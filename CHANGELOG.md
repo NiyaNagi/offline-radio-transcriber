@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPNAV: IA-3 generalises the Log's own frequency-filter mechanism to a station, a curated set of overs and Capture's own Full log, all with a real back restore; IA-5 gives Search a drawer row; IA-6 links a transmission to its attributed station)
 
-### <pending> — WPNAV: one filter model for the Log (IA-3), Search reachable from anywhere via the drawer (IA-5), a transmission's attributed station one tap away (IA-6)
+### 7584d1cc — WPNAV: one filter model for the Log (IA-3), Search reachable from anywhere via the drawer (IA-5), a transmission's attributed station one tap away (IA-6)
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/**` (`OrtNavHost.kt`, `Drawer.kt`);
 `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt` (the station link only),
