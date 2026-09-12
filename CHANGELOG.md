@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPD3: R-1013/R-1014 — S10b/S11 render the two new terminal RigLinkState outcomes)
 
-### (pending) — WPD3: VerifyTimedOut enables Continue as partial success, IdentifyTimedOut does not; S11 never renders a partial link as fully verified
+### c77d7d12 — WPD3: VerifyTimedOut enables Continue as partial success, IdentifyTimedOut does not; S11 never renders a partial link as fully verified
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{RigLinkPort,BridgeRigLinkPort,RigBluetoothScreen,
 RadioVerifiedScreen,SetupActivity,SetupStore}.kt`, `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`,
@@ -159,9 +159,7 @@ change re-runs the visual verification). Register R-1013, R-1014.
   missing and currently reads as fully verified.
 - **No real hardware confirmation** — like WPRIG's own entry above, everything here is proven against
   `InMemoryRigLinkPort`/`FakeRigLinkBridge`, never a real TH-D75A (hardware, checklist H2/H3).
-- The commit hash for this entry's own header, filled in by a follow-up commit once it exists
-  (this repository's own established pattern — see the two most recent `changelog: record the …
-  commit hash` commits on `main`).
+- Nothing else — see "Left open" items above for the two real, unclosed gaps.
 
 ## 2026-09-12 (WPRIG: R-1013/R-1014 — `probe()` always reaches a terminal state, naming what actually happened)
 
