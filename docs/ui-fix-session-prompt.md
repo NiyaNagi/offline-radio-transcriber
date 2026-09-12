@@ -1,5 +1,11 @@
 # Prompt: a UI fix session driven by real device testing
 
+**Superseded as the way to start a session by
+[`debug-fix-session-prompt.md`](debug-fix-session-prompt.md)** (2026-09-12), which covers every
+kind of reported issue and runs the verification below automatically whenever a fix touches a
+screen. This file stays as the deeper reference for the capture technique; its "Where things
+stand" figures are those of 2026-09-10 and the general prompt carries the current ones.
+
 Paste everything between the rules into a new session, then add your observations under the last
 heading. It is written to stand alone: a session with no memory of the previous one should be able
 to work from it.

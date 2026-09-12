@@ -1,6 +1,28 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.1.0 → 1.2.0
+
+Bump rationale (1.2.0, MINOR): materially expanded guidance in Principle VIII (a change that
+  touches a screen re-runs the visual verification, triggered by the diff, and what that
+  verification consists of) and in Development Workflow (the debugging loop; "green" means green
+  on CI and on the Release workflow; tests never read the real bundled model). Distilled from the
+  2026-09-10/12 capture-modes program, whose defects were found by re-capturing screens after
+  fixes that nobody had classified as visual (a nav-host padding change moved a live bar 125 px;
+  three font-scale fixes passed at 360 dp and collapsed on the 390 dp device) and whose first
+  three hosted runs were red for reasons no local gate could show (a task never scheduled for the
+  unit tests; a 555 MB asset inflated into a test worker). No principle removed or redefined.
+
+Documents updated in the same change:
+  ✅ AGENTS.md — status and map brought current; working agreement gains the visual
+       re-verification trigger and the debugging loop; commands gain the tour.
+  ✅ docs/debug-fix-session-prompt.md — new; the way to start a debugging and fix session, which
+       runs the re-verification automatically when a diff touches a screen.
+  ✅ docs/ui-fix-session-prompt.md — marked superseded as an entry point; kept as the technique
+       reference.
+  ✅ spec/test-plan.md §7.5 — already carries the mechanics (390 dp, state-based settle); no change.
+
+-- prior --
 Version change: 1.0.1 → 1.1.0
 
 Bump rationale (1.1.0, MINOR): a new principle (VIII, Visual Conformance Is Evidence-Backed) and
@@ -271,6 +293,22 @@ has been compared against its own artboard and the difference is either absent o
   device reports, not the emulator's defaults.
 - **The design inventory records accepted deviations in the row itself**, with the register row
   that decided it. A deviation that is not written down will be re-raised forever.
+- **A change that touches a screen re-runs the visual verification, and the diff is the
+  trigger.** Whether a change is "visual" is not a judgement anyone makes: if the diff touches the
+  UI surface (`app/src/main/kotlin/org/ort/app/ui/**`, `app/src/main/res/**`, `design/**`, the
+  debug scenarios or tour steps that decide what a step shows, or any `*Content`, `*Screen`,
+  `*ViewState`, `*ViewData` or `*Mapper` file under `:app`), the change is not done until its
+  screens have been captured again by the tour — at font scale 1.0 and 2.0, and scrolled to the
+  end where the screen scrolls — and compared against their artboards, with the capture path in
+  the register row. A defect at 2.0, or any change to a row, column, badge or banner layout,
+  also gets a layout test at the tour's own width (390 dp, native graphics) asserting bounds.
+  Anything about labels, touch targets or reading order gets a device dump. A fix report that
+  carries no capture for a diff in those paths is sent back. This exists because a padding
+  change in the navigation host, classified by everyone as plumbing, moved the live bar 125 px
+  on every screen, and three font-scale fixes passed their tests and collapsed on the device.
+- **Only a full canonical tour replaces the committed capture set** under `results/ui-audit/`;
+  experiments and scoped re-captures go to a scratch directory, so the committed set always
+  matches the shipped build named in its manifest.
 
 **Rationale:** This product is a reading instrument for someone deciding whether to trust a
 record. A misaligned column or a clipped sentence is not cosmetic here — it is the same class of
@@ -287,10 +325,22 @@ found this way, and almost none of them by reading code.
 - **CI gates every push**: lint, dependency rules, spec-integrity checks, unit tests, the golden
   pipeline, and the coverage-matrix delta. Device and endurance tests are deliberately excluded;
   pretending a hosted runner can prove them would be false confidence.
-- **The gate is not green until it is green on CI.** A local run proves one operating system, one
-  filesystem, one locale and one machine size. Push often enough that CI is a short feedback loop
-  rather than an archaeology exercise: one 620-commit gap hid a locale-dependent crash, a
-  filesystem-ordering failure and a test-isolation defect simultaneously.
+- **The gate is not green until it is green on CI and on the Release workflow.** A local run
+  proves one operating system, one filesystem, one locale and one machine size; the CI job and the
+  Release job differ again (the Release job packages every bundled asset and runs the tests in
+  the same invocation). Push often enough that the hosted runs are a short feedback loop rather
+  than an archaeology exercise: one 620-commit gap hid a locale-dependent crash, a
+  filesystem-ordering failure and a test-isolation defect simultaneously; one 296-commit gap hid
+  a task never scheduled for the unit tests and a test worker that inflated a 555 MB asset.
+- **No unit test reads a real bundled model.** Robolectric inflates a compressed asset whole into
+  the test worker; a scenario or tour sweep takes the fixture-sized source, and the one narrow
+  test that installs a real asset does so once. A bigger heap is not the fix.
+- **Debugging follows one loop, whatever the symptom**: reproduce in the environment that fails;
+  classify (product, design, test, tooling, environment, not a defect); file the row with its
+  evidence; route to the owning package; require the discriminating test; gate; merge; push;
+  watch the hosted runs; close on evidence — a fresh capture, a device dump, a green run id or a
+  re-run reproduction — never on a report. `docs/debug-fix-session-prompt.md` is the session
+  that runs this loop, with the visual re-verification above built in.
 - **Generated files MUST be byte-identical wherever they are generated.** Anything derived from a
   directory walk is sorted before it is rendered, or the same facts produce a different file on
   another machine and the delta gate fails for no reason.
@@ -322,4 +372,4 @@ found this way, and almost none of them by reading code.
 - **Outstanding.** None. *(Resolved 2026-09-07: the repository now carries an `Apache-2.0`
   `LICENSE`, chosen for the explicit patent grant and the Play Store path — D11, build-plan P1.)*
 
-**Version**: 1.1.0 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-10
+**Version**: 1.2.0 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-12

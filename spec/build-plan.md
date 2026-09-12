@@ -1134,3 +1134,11 @@ Where the two differ, the constitution governs.**
 6. **If a session's exit criteria cannot be met, stop and say so** rather than moving on with a
    module half-done — under strict TDD, a skipped test is an unmet requirement wearing a
    disguise.
+7. **A change that touches a screen re-runs the visual verification, triggered by the diff**
+   (constitution VIII, 1.2.0). If the change touches `app/src/main/kotlin/org/ort/app/ui/**`,
+   `app/src/main/res/**`, `design/**`, a scenario or tour step, or any `*Content`/`*Screen`/
+   `*ViewState`/`*ViewData`/`*Mapper` under `:app`, it is not done until the affected screens are
+   captured again by the tour (1.0, 2.0, `-end`) and compared against their artboards, with the
+   capture path in the register row — see `docs/debug-fix-session-prompt.md` for the exact steps.
+8. **Green means green on CI and on the Release workflow**, on the pushed commit. A local gate is
+   one machine, one locale, one filesystem.

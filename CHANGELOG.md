@@ -32,6 +32,50 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (constitution 1.2.0: a change that touches a screen re-runs the visual verification; the debugging and fix session prompt)
+
+### (this commit) — constitution 1.2.0, AGENTS.md brought current, `docs/debug-fix-session-prompt.md`
+
+**Scope:** `.specify/memory/constitution.md`, `AGENTS.md`, `docs/debug-fix-session-prompt.md`
+(new), `docs/ui-fix-session-prompt.md` (header note), `spec/build-plan.md` (standing rules),
+this file. Governance and guidance only — no product, test or tooling code.
+**Requirements/ACs:** none new. Constitution Principle VIII and Development Workflow expanded
+(MINOR bump 1.1.0 → 1.2.0 per the governance policy; Sync Impact Report at the top of the file
+names every document updated in the same change).
+**What changed:** (1) Principle VIII gains the rule the operator asked for: a change that
+touches a screen re-runs the visual verification, and **the diff is the trigger** — the UI
+surface is named by path (`app/src/main/kotlin/org/ort/app/ui/**`, `app/src/main/res/**`,
+`design/**`, scenario/tour-step changes that decide what a step shows, any `*Content`,
+`*Screen`, `*ViewState`, `*ViewData` or `*Mapper` under `:app`); what the verification consists
+of is stated (tour re-capture at 1.0 and 2.0 plus `-end`, judged against the artboard, capture
+path in the register row; a 390 dp native-graphics bounds test for any 2.0 or row/column change;
+a device dump for labels and touch targets; only a full canonical tour replaces the committed
+set). (2) Development Workflow: "green" means green on CI **and** the Release workflow; no unit
+test reads a real bundled model; the debugging loop is stated once (reproduce in the failing
+environment → classify → file → route → discriminating test → gate → merge → push → hosted runs
+→ close on evidence). (3) `AGENTS.md`: the status line, which still read "implementation not
+started", now reads the true state (P1–P21 landed, v0.1.1, rolling `latest-build`, CI and
+Release green); the map gains the register, the ownership maps, the tooling, the checklists and
+the three session prompts; working-agreement items 7 (visual re-verification, automatic) and 8
+(the debugging loop); a Roles section; the gate and tour commands; three non-negotiables. (4)
+`docs/debug-fix-session-prompt.md`: a stand-alone prompt for a debugging and fix session of any
+kind — crash, wrong data, red workflow, layout — carrying the current state of the repository,
+the loop, the automatic UI trigger and its steps, both ownership maps, builder briefs, merge and
+gate mechanics, the tools, the lessons that cost the most, the operator's device geometry, and
+the "what I am seeing" block. (5) `docs/ui-fix-session-prompt.md` marked superseded as an entry
+point, kept as the technique reference.
+**Verified:** `python tools/spec-check/spec_check.py` 8/8 (this machine). Documents only; no
+Gradle gate applies. Read back for stale numbers against the live repository: register 451 rows
+(408 closed / 29 fixed / 6 open), tour 219 steps, checklist 104 rows (90 closed / 14 hardware),
+spec 277 FR ids / 140 ACs / 36 decisions / 18 risks, `versionName` 0.1.1.
+**Left open / not done:** the trigger is a rule, not yet a structural check (constitution VII
+prefers structural). A candidate for a later tooling round: a Gradle task or CI step that lists
+files changed under the UI paths since the commit named in `results/ui-audit/tour-manifest.json`
+and fails when a register row for the change carries no capture path. Not built here; recorded
+so it is not forgotten.
+
+---
+
 ## 2026-09-12 (close-out: CI and Release both green on `main`, the `latest-build` pre-release republished)
 
 ### a7de324b — register R-809 and checklist E2-K08 closed; Phase G record amended
