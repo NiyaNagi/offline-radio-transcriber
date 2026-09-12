@@ -251,6 +251,19 @@ public class ScreenshotTourActivity : ComponentActivity() {
         // as a floor for animations even now that the state match above proves the right screen
         // composed (R-803's own coordinator instruction).
         delay(DESTINATION_SETTLE_MILLIS)
+        // WPW (register R-1007 follow-up): the real route onto `LiveMonitorScreen` — no `NavSeed`
+        // field exists to seed `NavHostNavState.openCaptureLiveMonitor` directly (that class's own
+        // doc comment), so this taps the just-composed screen's own live bar for real, through the
+        // identical accessibility bridge `TourAccessibilityScroll`'s own scroll already uses, then
+        // waits for `LiveMonitorScreen`'s own content to actually land before anything below reads
+        // the screen as settled.
+        if (step.drillIn["tapLiveBar"] == "true") {
+            val tapped = TourAccessibilityTap.tapClickableNodeWithText(window.decorView, LIVE_BAR_LABEL)
+            if (tapped != TourAccessibilityTap.TapOutcome.Tapped) {
+                error("tour step '${step.id}' could not find a clickable '$LIVE_BAR_LABEL' live-bar node to tap")
+            }
+            awaitLiveMonitorVisible(step.id)
+        }
         if (step.override != null) {
             Scenarios.load(applicationContext, step.override)
             // The override must be observed by the *next* poll tick, not a fresh composition (this
@@ -304,6 +317,32 @@ public class ScreenshotTourActivity : ComponentActivity() {
         }
         true
     } == true
+
+    /**
+     * WPW: after [TourAccessibilityTap.tapClickableNodeWithText] taps the live bar, waits (bounded,
+     * [STATE_WAIT_TIMEOUT_MILLIS]) until `LiveMonitorScreen`'s own content has actually composed —
+     * its `"LOGGED TONIGHT"` section header (`LiveMonitorOversSection`'s own literal), a marker no
+     * other screen in this codebase renders — via [TourAccessibilityScroll.snapshot], the same
+     * text/`contentDescription` reading [awaitStableSemantics] already uses below. Never assumed
+     * from the tap's own return value alone: `ACTION_CLICK` only *invokes* [LiveBar]'s `onClick`,
+     * which flips local Compose state (`CaptureStatusContent`'s own `sub`) — proving the resulting
+     * recomposition actually landed needs a second, real read of the tree, the same reasoning
+     * `awaitDestinationSettled`'s own polling loop rests on.
+     */
+    private suspend fun awaitLiveMonitorVisible(stepId: String) {
+        val settled = withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
+            while (!TourAccessibilityScroll.snapshot(window.decorView).text.contains(LIVE_MONITOR_MARKER)) {
+                delay(STATE_POLL_INTERVAL_MILLIS)
+            }
+            true
+        } == true
+        if (!settled) {
+            error(
+                "tour step '$stepId' tapped the live bar but LiveMonitorScreen never appeared " +
+                    "(no '$LIVE_MONITOR_MARKER' marker) within ${STATE_WAIT_TIMEOUT_MILLIS}ms",
+            )
+        }
+    }
 
     private suspend fun renderSetupStep(step: TourStep): TourCapture {
         val stepName = SetupStepIds.setupStepNameFor(requireNotNull(step.setup))
@@ -463,6 +502,17 @@ public class ScreenshotTourActivity : ComponentActivity() {
         /** Coordinator round two: the manifest note for a `scroll: "end"` step whose own screen has
          * no vertically-scrollable container at all — evidence the screen fits, not a failure. */
         private const val NO_SCROLL_NOTE = "no scroll — fits"
+
+        /** [LiveBarPolling.toneAndLabel]'s own real label for a nominal, capturing session with no
+         * override active — `overnight-live-monitor`'s own shape (no partial text, no room-audio
+         * mark, so [org.ort.app.ui.components.LiveBar]'s composed description is exactly this
+         * string, never a prefix match away from colliding with something else on screen). */
+        private const val LIVE_BAR_LABEL = "Live"
+
+        /** `LiveMonitorScreen`'s own "LOGGED TONIGHT" section header (`ui/screens/LiveMonitorScreen.kt`,
+         * `LiveMonitorOversSection`, a private composable) — see [awaitLiveMonitorVisible]'s own doc
+         * comment for why this, not the tap's own return value, is what proves the screen landed. */
+        private const val LIVE_MONITOR_MARKER = "LOGGED TONIGHT"
 
         /** R-803 (halt): the bound `awaitDestinationSettled`/`renderSetupStep`'s own settle-wait use
          * before giving up and reporting an honest error — generous (well past a single dropped

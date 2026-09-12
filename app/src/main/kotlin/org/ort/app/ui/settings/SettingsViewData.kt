@@ -64,7 +64,15 @@ public data class FieldReportSectionActions(
  * the identical detekt-threshold reason once [FieldReportSectionActions] joining the parameter
  * list pushed the count over it — the same reason [SettingsCrossPackageActions] joined a bundle
  * only once a later addition needed the headroom. */
-public data class SettingsDiagnosticsBundleActions(val onPreview: () -> Unit, val onSaveBundle: () -> Unit)
+public data class SettingsDiagnosticsBundleActions(
+    val onPreview: () -> Unit,
+    val onSaveBundle: () -> Unit,
+    // WPW (register R-1009 follow-up): `DebugDumpBuilder`'s own SAF trigger, alongside the
+    // pre-existing two — joins this bundle for the identical detekt `LongParameterList` reason
+    // `FieldReportSectionActions` joined `SettingsDiagnosticsScreen`'s own parameter list before it.
+    // `{}` default so every existing caller (this file's own tests included) keeps compiling.
+    val onSaveDebugDump: () -> Unit = {},
+)
 
 public data class SettingsCaptureToggleActions(
     val onToggleLevelWarn: (Boolean) -> Unit,

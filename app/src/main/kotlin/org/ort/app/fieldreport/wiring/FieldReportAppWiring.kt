@@ -35,19 +35,19 @@ import java.io.File
  * own internal debug-build gate, so a release build never even constructs the `field-report`
  * directory [File] this object would otherwise build.
  *
- * **The known leak this round could not close, said plainly rather than left silent.**
- * [RealScreenFrameCapturer] starts its own [android.os.HandlerThread] lazily and never quits it —
- * flagged by WPR1's own report, confirmed again here by reading that class before writing this.
- * Closing it needs a `close()`/`quit()` entry point on `RealScreenFrameCapturer` itself, which
- * lives in the `fieldreport.recorder` package — outside this round's own file-ownership map ("consume
- * WPR1's contract, do not alter it"). [attachWindow] mitigates rather than fixes: it constructs at
- * most **one** [RealScreenFrameCapturer] per `Activity` *instance* (called once from `onCreate`,
- * never once per destination change/navigation, which [FieldReportRecorder.onDestinationChanged]
- * alone would otherwise imply for every screen the operator visits), so the leak's rate is bounded
- * by activity recreations — a device rotation, a process-death restore — not by in-app
- * navigation. Reported to the lead as follow-up work for whichever session next owns
- * the `fieldreport.recorder` package: expose a `close()` on [RealScreenFrameCapturer] and call it
- * from [detachWindow].
+ * **The `HandlerThread` leak WPR1 flagged and WPR2 could only bound — now actually closed.**
+ * [RealScreenFrameCapturer] started its own [android.os.HandlerThread] lazily and never quit it;
+ * WPR2's own [attachWindow] mitigated rather than fixed it, since closing the thread needed a
+ * `close()`/`quit()` entry point on `RealScreenFrameCapturer` itself, in the `fieldreport.recorder`
+ * package, outside that round's own file-ownership map. This round owns both packages: that class
+ * now exposes [RealScreenFrameCapturer.close], and [detachWindow] below calls it on whichever
+ * capturer was actually attached, *before* discarding the reference — the same "close the resource
+ * you are about to drop, not just stop pointing at it" fix `Closeable.use` exists to make
+ * automatic elsewhere in this codebase. [attachWindow] still constructs at most **one**
+ * [RealScreenFrameCapturer] per `Activity` *instance* (unchanged from WPR2 — called once from
+ * `onCreate`, never once per destination change/navigation), so even the *rate* of construction
+ * stays bounded the way WPR2 left it; what changes here is that each one constructed is now also
+ * genuinely torn down.
  */
 public object FieldReportAppWiring {
 
@@ -65,10 +65,20 @@ public object FieldReportAppWiring {
         delegatingCapturer.delegate = RealScreenFrameCapturer(window)
     }
 
-    /** [org.ort.app.ui.ReaderActivity]'s own `onDestroy` — stops routing future captures to a
-     * `Window` that is about to go away. Does not (cannot; see this object's own doc comment) quit
-     * the underlying [RealScreenFrameCapturer]'s [android.os.HandlerThread]. */
+    /**
+     * Called from every `Activity` that [attachWindow] attached — [org.ort.app.ui.ReaderActivity
+     * .onDestroy] and, this round, [org.ort.app.ui.setup.SetupActivity]'s own frame wiring — stops
+     * routing future captures to a `Window` that is about to go away, and now (see this object's
+     * own doc comment) actually quits the underlying [RealScreenFrameCapturer]'s
+     * [android.os.HandlerThread] first, rather than merely discarding the reference to it. The
+     * `as?` is a plain type check, never a cast that can throw: [delegatingCapturer]'s own
+     * `delegate` is `null` for a capturer never attached at all (this function's own no-op-safe
+     * case) and, in every real caller, always a [RealScreenFrameCapturer] — the check exists so a
+     * future, differently-shaped [org.ort.app.fieldreport.recorder.ScreenFrameCapturer] (a test
+     * fake, say) is never assumed to carry a [RealScreenFrameCapturer.close] it does not have.
+     */
     public fun detachWindow() {
+        (delegatingCapturer.delegate as? RealScreenFrameCapturer)?.close()
         delegatingCapturer.delegate = null
     }
 

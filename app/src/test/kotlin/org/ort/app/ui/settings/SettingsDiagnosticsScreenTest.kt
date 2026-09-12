@@ -45,6 +45,47 @@ class SettingsDiagnosticsScreenTest {
     )
 
     @Test
+    @Requirement("R-1009")
+    fun `WPW Save debug dump renders beside Save bundle and invokes onSaveDebugDump when tapped`() {
+        var dumpTapped = false
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsDiagnosticsScreen(
+                    state = state(),
+                    onBack = {},
+                    bundleActions = SettingsDiagnosticsBundleActions(
+                        onPreview = {},
+                        onSaveBundle = {},
+                        onSaveDebugDump = { dumpTapped = true },
+                    ),
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(DEBUG_DUMP_SAVE_TEST_TAG))
+        composeTestRule.onNodeWithTag(DEBUG_DUMP_SAVE_TEST_TAG).performClick()
+
+        assert(dumpTapped) { "expected the real onSaveDebugDump callback to have run" }
+    }
+
+    @Test
+    @Requirement("R-1009")
+    fun `WPW Save debug dump defaults to a no-op so every existing caller of this composable keeps compiling`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsDiagnosticsScreen(
+                    state = state(),
+                    onBack = {},
+                    bundleActions = SettingsDiagnosticsBundleActions(onPreview = {}, onSaveBundle = {}),
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(DEBUG_DUMP_SAVE_TEST_TAG))
+        composeTestRule.onNodeWithTag(DEBUG_DUMP_SAVE_TEST_TAG).assertExists()
+    }
+
+    @Test
     @Requirement("R-137")
     fun `R_137 the never-included prose carries the board's own scrubbing example verbatim`() {
         composeTestRule.setContent {

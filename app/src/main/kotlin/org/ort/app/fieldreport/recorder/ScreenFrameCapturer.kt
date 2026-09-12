@@ -46,10 +46,45 @@ public interface ScreenFrameCapturer {
 public class RealScreenFrameCapturer(private val window: Window, private val targetWidthPx: Int = TARGET_WIDTH_PX) :
     ScreenFrameCapturer {
 
-    private val handlerThread by lazy {
-        HandlerThread("field-report-frame-capture").also { it.start() }
-    }
+    // WPW (register, WPR1/WPR2's own follow-up): a plain nullable field, not `by lazy` — `close()`
+    // must be able to tell "never started" (a legitimate no-op: a capturer constructed but never
+    // asked to capture) apart from "started, now stopping" without forcing the thread to start just
+    // to quit it. `by lazy` has no public "was this ever initialized" check reachable without
+    // reflection; this get-and-cache accessor does the identical lazy-start `capture()` already
+    // relied on, while leaving [close] a simple, honest null-check.
+    private var handlerThreadOrNull: HandlerThread? = null
+    private val handlerThread: HandlerThread
+        get() = handlerThreadOrNull ?: HandlerThread("field-report-frame-capture").also {
+            it.start()
+            handlerThreadOrNull = it
+        }
     private val handler by lazy { Handler(handlerThread.looper) }
+
+    /**
+     * WPW (register, WPR1 flagged the leak, WPR2 bounded but could not fix it — see
+     * `FieldReportAppWiring`'s own doc comment for why this needed a seam in this class, not a
+     * workaround in that one). Quits the [HandlerThread] this instance started, if any — a legitimate
+     * no-op when [capture] was never called (nothing was ever started). [HandlerThread.quitSafely]
+     * (not `quit()`): lets any [PixelCopy] callback already queued on this thread's `Looper` finish
+     * delivering its result to the `suspendCancellableCoroutine` awaiting it in [capture], rather
+     * than dropping a callback mid-flight — this instance is being discarded either way, but a
+     * dropped `PixelCopy` callback would otherwise leak that coroutine, suspended forever.
+     */
+    public fun close() {
+        handlerThreadOrNull?.quitSafely()
+        handlerThreadOrNull = null
+    }
+
+    /** Test-only window into [handlerThreadOrNull] — lets a test see whether [close] actually has
+     * something to quit without needing a real, laid-out [Window] whose decor view reports
+     * non-zero dimensions (which [capture] itself requires before it ever touches [handlerThread]).
+     * Production code never reads this. */
+    internal val handlerThreadForTest: HandlerThread? get() = handlerThreadOrNull
+
+    /** Test-only seam: forces [handlerThread] to actually start, through the identical lazy-start
+     * accessor [capture] itself uses — see [handlerThreadForTest]'s own doc comment for why a test
+     * needs this rather than driving a real [capture] call. Production code never calls this. */
+    internal fun startHandlerThreadForTest(): HandlerThread = handlerThread
 
     override suspend fun capture(): ByteArray? {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
