@@ -32,6 +32,97 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPR1: the debug-build field-report session recorder and screen frames)
+
+### a9995b7f — WPR1 · FR-OBS-6/FR-OBS-7: the debug-build session recorder (closed event vocabulary, bounded ring buffer) and FR-OBS-7 screen frames (bounded, app-private)
+
+**Scope:** new `app/src/main/kotlin/org/ort/app/fieldreport/recorder/**` (`RecorderEvent.kt`,
+`RecorderVocabulary.kt`, `FieldReportRecorder.kt`, `ScreenFrameCapturer.kt`, `FrameStore.kt`);
+`app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (the destination-change observation
+hook only — one `LaunchedEffect`, one private extension function, two imports; every existing
+R-957/R-541/R-333 comment and mechanism in that file is untouched); new
+`app/src/test/kotlin/org/ort/app/fieldreport/recorder/**` (`RecorderEventVocabularyTest.kt`,
+`FieldReportRecorderTest.kt`, `FrameStoreTest.kt`, `FakeScreenFrameCapturerTest.kt`).
+
+**Requirements/ACs:** FR-OBS-6 (the closed-vocabulary, bounded, off-audio-path, debug-only session
+recorder), FR-OBS-7 (bounded, app-private, pixels-only screen frames), D37 (the field-report
+channel exists), AC-141 (no free-text field anywhere in the recorder's output), AC-142 (frame
+storage bound holds by dropping the oldest, count and bytes), AC-148 (the local-availability half:
+`FrameStore` has no concept of an upload-time consent toggle — see that test's own doc comment for
+what it does and does not prove; the upload-gating half is WPR2's).
+
+**What changed:** `RecorderEvent` is FR-OBS-6's closed, enumerated event vocabulary — six sealed
+variants (`DestinationChanged`, `ControlTapped`, `PermissionResultRecorded`, `CaptureStateChanged`,
+`SetupStepChanged`, `AudioDevicesEnumerated`), every property a closed enum, a primitive, a
+`List<Int>`, or — the one deliberate, tested exception — `AudioDeviceSnapshot.productName`/
+`.address` (platform-reported device metadata, not caller-composed prose). No
+`message`/`detail`/`note`/`reason`/`cause` parameter exists anywhere in the file, mirroring
+`pipeline/.../DiagnosticsLog.kt`'s own discipline exactly. `FieldReportRecorder` is the bounded
+ring buffer: a single unbounded `Channel` plus one `Dispatchers.IO` consumer (never blocking a
+caller, never on the audio frame path), gated on `BuildConfig.DEBUG` via the same test-seam pattern
+`DebugFailureOverride` already uses, rendering each event to `<filesDir>/field-report/
+session-recorder.log` — the file FR-OBS-8's ungated bundle set names; this package produces it,
+WPR2's own package packages it. `onDestinationChanged` is the one call `OrtNavHost` makes: records
+a `RecorderEvent.DestinationChanged` and, when a `ScreenFrameCapturer` was configured (none is,
+this round — see Left open), fire-and-forgets an FR-OBS-7 frame capture onto a separate scope so a
+slow/hung capturer can never delay navigation. `RealScreenFrameCapturer` uses `PixelCopy` against
+the real `Window` (not a `View.draw` re-render — see that class's own doc comment for why: only
+`PixelCopy` reads the actually-composited surface); `FakeScreenFrameCapturer` is the constitution-II
+behavioural fake (`Success`/`Failure`/`Hang` modes, call-counting). `FrameStore` is FR-OBS-7's
+bounded, app-private frame storage — sequence-numbered files, oldest dropped first on either a
+count or a total-byte bound, including a single frame larger than the byte budget.
+
+Five sealed vocabulary members — `ControlId`, `RecordedPermission`, `PermissionResult`,
+`CaptureTransitionKind` (with a mapper that pattern-matches `CaptureState.State`'s class and
+*never* reads its `Failed.reason`/`Interrupted.cause` free-text fields), and reuse of the existing
+`SetupStep`/`ReaderDestination` enums — exist as types this round but have **no wired call site**:
+every screen that could tap a control, request a permission, or transition a setup step lives in
+`ui/setup`/`ui/audio`/`ui/screens`/`ui/components` or `capture-android`, all owned by other
+builders this round. `OrtNavHost.kt`'s only change is the destination-change hook (`RecorderEvent
+.DestinationChanged`, via the four drill-in ids' priority over `ids.current`, mirroring
+`NavHostDispatch`'s own `when` exactly).
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.fieldreport.*' -PortAllowMissingBundledAssets=true`
+  → 18 tests, BUILD SUCCESSFUL.
+- Discriminating-test proof (revert/fail/restore/pass) for four of them: AC-141's structural test
+  (added an un-allow-listed `debugNote: String` field to `DestinationChanged` → failed with "found
+  free-text-shaped fields ... DestinationChanged.debugNote is an un-allow-listed String field";
+  restored → passed); FR-OBS-6's ring-buffer bound (removed the `while (buffer.size >= maxEvents)
+  removeFirst()` eviction → failed "expected: <3> but was: <5>"; restored → passed); FR-OBS-6's
+  release-build gate (removed `configure`'s `isDebugBuild()` early return → failed "a release build
+  must not even create the directory"; restored → passed); AC-142's `FrameStore` bound (removed the
+  `enforceBounds()` call in `store` → all three bound tests failed with the real over-budget counts;
+  restored → all passed).
+- `.\gradlew :app:smokeTestDebugUnitTest :app:lintDebug dependencyRules platformGuards :app:assembleDebug -PortAllowMissingBundledAssets=true`
+  → BUILD SUCCESSFUL (includes the full `OrtNavHostDestinationDispatchTest` and
+  `ReaderActivityDestinationSmokeTest` suites, confirming the nav-host hook broke nothing there).
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`,
+  `.\gradlew -p buildSrc test`, `python tools\spec-check\spec_check.py`, `.\gradlew
+  coverageMatrix`, `.\gradlew coverageMatrixCheck` — see this round's own report for the exact
+  results of each.
+
+**Left open / not done:**
+- Nothing in this change calls `FieldReportRecorder.configure(...)` from application/activity
+  startup — that file is outside `app/.../fieldreport/recorder/**` and `OrtNavHost.kt`, so no event
+  is actually persisted yet in a running app; the object is fully built and tested standalone.
+- `ControlId`/`RecordedPermission`/`PermissionResult`/`CaptureTransitionKind`/`SetupStepChanged`
+  have no call site (see above) — the coordinator routes each to its owning package.
+- The audio-device-enumeration dump (`AudioDeviceSnapshot`, `RecorderEvent.AudioDevicesEnumerated`)
+  is defined but not called from `AndroidAudioIo.kt` (`capture-android`, owned by WPJ this round,
+  possibly already landing an equivalent dump for R-1004 — coordinator to reconcile).
+- `RealScreenFrameCapturer` (PixelCopy) could not be exercised off-device — no JVM/Robolectric
+  fake for `PixelCopy`/a live `Window` exists in this codebase or the Android test framework; only
+  `FakeScreenFrameCapturer` is unit-tested. A device or `androidTest` pass is needed to confirm it
+  actually captures a real frame.
+- `RealScreenFrameCapturer`'s `HandlerThread` is never quit — a debug-only, long-lived leak, not
+  addressed this round.
+- FR-OBS-6's vocabulary does not yet cover a seventh category some future call site might need;
+  extending it (never widening an event to take a raw `String`) is left to whichever package adds
+  the next wired call site.
+
+---
+
 ## 2026-09-12 (R-1002 round 2: the reason a reprocess item failed for must survive, never a fabricated "gave up")
 
 ### e4869397 — WPQ round 2 — R-1002: a foreground retry regime for reprocess, and the drain-iteration ceiling never overrides a real recorded reason
