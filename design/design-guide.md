@@ -459,6 +459,36 @@ Two densities, and screens pick one deliberately:
 Never mix them within a screen region. The Log's group header is instrument density; the digest
 item above it is editorial. The divider between them is doing real work.
 
+### 10.1 System insets — what the artboards do and do not model
+
+*(Added 2026-09-12, register R-1003 / R-1003d. Written down because the build faithfully
+reproduced a design omission and the operator could not reach the buttons on his own phone.)*
+
+The artboards are authored at a fixed **390 × 844 dp** root and that root is the **whole window**,
+not the content area — every board carries `padding-top: 44px` for the status bar and draws into
+the space behind it. The boards were never given the matching statement at the bottom, and the
+build did exactly what they showed: `SetupScaffold` applied `WindowInsets.statusBars` only and
+pinned its action bar at the raw window bottom, so on a device with a navigation bar every setup
+button rendered underneath it.
+
+The rule, from now on:
+
+- **A board's bottom padding is design spacing, never a system inset.** The 24px under a pinned
+  action block is breathing room between the last control and the edge of the *safe* area.
+- **The build adds the navigation-bar inset on top of that**, it does not absorb it. A pinned
+  bottom surface — a setup action block, a failure action bar, the live bar — sits `24px +
+  navigationBars` above the window bottom, and the same inset is added to the trailing scroll
+  space so nothing hides behind the bar at any font scale (the R-613 / R-940 shape).
+- **Boards with a pinned bottom surface draw the safe area explicitly**, as a 24px band below the
+  content matching the 44px band above it, so the two ends of the board are stated the same way
+  and a reviewer can see what is spacing and what is inset.
+- The app opts into edge-to-edge itself (`enableEdgeToEdge` in all three activities, transparent
+  system-bar colours in `themes.xml`). This is **not** a consequence of the target SDK and would
+  not be fixed by raising it — it is a deliberate look, and the inset arithmetic is the price of it.
+
+Boards updated to the new form are listed in their `design/design-intent.md` rows. A board that
+has not been updated yet is judged against this section, not against its own silence.
+
 ---
 
 ## 11. Accessibility floor
