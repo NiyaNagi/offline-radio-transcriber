@@ -1538,35 +1538,54 @@ permission-request results, capture-state and setup-step transitions, and the pl
 audio-device enumeration. The recorder SHALL be absent from release builds.
 
 **FR-OBS-7 (M)** — On each destination change the recorder observes (FR-OBS-6), it MAY capture
-one **downscaled screen frame**, stored app-private (NFR-6a) and bounded in both count and total
+one screen frame, downscaled and stored app-private (NFR-6a), bounded in both count and total
 bytes — the oldest frame is dropped when a bound is reached, never silently retained past it. A
 frame is pixels only: it carries no additional log line, no OCR pass, no separate transcript of
 what it shows.
 
-**FR-OBS-8 (M)** — The **field-report bundle** extends `DiagnosticsBundleSpec`'s closed
-seven-file set with two further closed additions: the FR-OBS-6 session-recorder log and the
-FR-OBS-7 screen-frame set. It remains a closed, documented, compile-time-enumerable list — the
+Downscaling caps a frame at roughly the artboard's own width (~390 px, design/design-guide.md).
+Say plainly what that buys and what it does not: at that width, body text is largely illegible
+while layout remains perfectly judgeable — which is the entire point, since these frames exist to
+be compared against artboards (constitution VIII) — but a screen title or a callsign set in a
+heading **is** legible at ~390 px. Downscaling is therefore a partial mitigation of what a frame
+can expose, never a substitute for gating it: see FR-OBS-8 and FR-OBS-10.
+
+**FR-OBS-8 (M)** — The **field-report bundle's ungated set** — the part that uploads with no
+gate at all — is `DiagnosticsBundleSpec`'s seven files, each scrubbed by `CallsignScrubber`, plus
+the FR-OBS-6 session-recorder log. The recorder log belongs in the ungated set because it is safe
+**by construction**: FR-OBS-6's closed vocabulary has no `message: String` parameter anywhere in
+it, so it cannot carry a transcript or a callsign, the same guarantee FR-OBS-1's own log
+discipline already provides. It remains a closed, documented, compile-time-enumerable list — the
 property `DiagnosticsBundleSpec`'s `enum class` and FR-CON-3's contributed set both already
-hold — never a free-form directory a future change could grow unnoticed. Retained over audio and
-voiceprint embeddings are separate, opt-in additions (FR-OBS-9), not part of this closed set.
+hold — never a free-form directory a future change could grow unnoticed.
+
+Retained over audio, voiceprint embeddings, and **FR-OBS-7 screen frames** are three separate,
+opt-in, per-category additions (FR-OBS-9), gated identically (FR-OBS-10) — none of the three is
+part of the ungated set above. **A screen frame can render exactly what `CallsignScrubber`
+removes from a log line** — a callsign or transcript fragment visible on screen at the moment of
+capture — so it is gated with the categories that carry third-party content, not with the one
+that structurally cannot.
 
 **FR-OBS-9 (M)** — Before every field-report upload, the operator SHALL be shown: every file the
 bundle contains and its **real size**, rendered through the same producer that builds the
 upload — never a separate estimate, the same discipline `DiagnosticsBundleBuilder.preview()`
 already holds for the exported bundle (FR-OBS-3); the **destination** and the destination
-repository's **visibility** (public or private); and two **per-category** toggles — retained
-over audio, and voiceprint embeddings — each **defaulting off**. Consent SHALL be **per-upload**:
-shown every time, never remembered as a standing permission, and never inferred from a previous
-upload's choice.
+repository's **visibility** (public or private); and three **per-category** toggles — retained
+over audio, voiceprint embeddings, and screen frames — each **defaulting off**. Consent SHALL be
+**per-upload**: shown every time, never remembered as a standing permission, and never inferred
+from a previous upload's choice.
 
 **FR-OBS-10 (M)** — Where the destination repository reports itself **public**, the uploader
-SHALL refuse the over-audio and voiceprint-embedding categories **unless a visible Settings
-switch has been explicitly turned off** by the operator, checked at upload time, not at setup
-time. The redacted bundle — FR-OBS-8's closed set, scrubbed by `CallsignScrubber` — SHALL upload
-with no such gate: every defect reported so far is diagnosable from it alone, and gating it as
-though it carried the same risk as raw audio would make the ordinary case — a public repository
-during testing — silently non-functional for a defect that has nothing to do with anyone's
-voice.
+SHALL refuse the over-audio, voiceprint-embedding and screen-frame categories **unless a visible
+Settings switch has been explicitly turned off** by the operator, checked at upload time, not at
+setup time. FR-OBS-8's ungated set SHALL upload with no such gate: every defect reported so far
+is diagnosable from it alone, and gating it as though it carried the same risk as raw audio or a
+frame would make the ordinary case — a public repository during testing — silently non-functional
+for a defect that has nothing to do with anyone's voice or anything on screen.
+
+Where the destination is public **and** the switch is off, the FR-OBS-9 consent screen SHALL say
+so prominently and SHALL name the categories that are about to be published — **every single
+upload**, not as a one-time disclosure that stops repeating once seen once.
 
 **FR-OBS-11 (M)** — The field-report client SHALL live entirely in the network module and SHALL
 be absent from the capture and processing paths, exactly as FR-CON-8 requires of the corpus
@@ -2733,22 +2752,30 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
 - **AC-142** Screen frames captured by the recorder are stored app-private, bounded in count and
   in total bytes, and the oldest frame is dropped once a bound is reached rather than the bound
   being silently exceeded (FR-OBS-7).
-- **AC-143** A field-report bundle contains exactly `DiagnosticsBundleSpec`'s seven files plus the
-  session-recorder log and the screen-frame set — no more, no fewer — verified by inspecting a
-  captured upload (FR-OBS-8).
+- **AC-143** A field-report bundle's **ungated set** — the part that uploads regardless of the
+  FR-OBS-10 switch — contains exactly `DiagnosticsBundleSpec`'s seven scrubbed files plus the
+  session-recorder log, no more, no fewer, verified by inspecting a captured upload with every
+  opt-in category off (FR-OBS-8).
 - **AC-144** Before a field-report upload proceeds, the consent screen names every file in the
   bundle and its real size, names the destination and the destination repository's visibility,
-  and shows the over-audio and voiceprint-embedding toggles **both off** by default; a second
-  upload shows the same screen again rather than proceeding on a remembered choice (FR-OBS-9).
-- **AC-145** Against a destination reporting itself public, an upload with the over-audio or
-  voiceprint-embedding toggle on is refused unless the FR-OBS-10 Settings switch has been
-  explicitly turned off; the redacted bundle uploads regardless of that switch's state
+  and shows the over-audio, voiceprint-embedding and screen-frame toggles **all three off** by
+  default; a second upload shows the same screen again rather than proceeding on a remembered
+  choice (FR-OBS-9).
+- **AC-145** Against a destination reporting itself public, an upload with the over-audio,
+  voiceprint-embedding or screen-frame toggle on is refused unless the FR-OBS-10 Settings switch
+  has been explicitly turned off; the ungated set uploads regardless of that switch's state
   (FR-OBS-10).
 - **AC-146** No field-report network traffic originates from the app while capture is active,
   verified by packet capture alongside AC-59 (FR-OBS-11, NFR-6).
 - **AC-147** The field-report token never appears in a log line, an exported diagnostic bundle, a
   field-report bundle, or a screen frame, verified by scanning a captured upload and the FR-OBS-3
   bundle for the token value (FR-OBS-12).
+- **AC-148** A screen frame reaches an uploaded bundle only when the operator has explicitly
+  turned that category on for that upload; with the category off, no frame reaches the
+  destination even though the recorder held one locally (FR-OBS-7, FR-OBS-8, FR-OBS-9).
+- **AC-149** Where the destination reports itself public and the FR-OBS-10 switch is off, the
+  consent screen names the categories about to be published on **every** upload for as long as
+  that state holds, not only the first time it is seen (FR-OBS-10).
 
 ---
 
@@ -2776,7 +2803,7 @@ Distinct from §12, which enumerates *runtime* failures. These are risks to the 
 | R12 | An English-only base model (`distil-small.en`, per D20) meets worldwide DX traffic (D12) — accented English and non-English speech | Medium | Medium — recall drops on exactly the HF/DX material the eval fold is loaded with | Measure DX separately from local traffic; the grammar path (FR-LEX-8) does not depend on the prose being right; a multilingual base remains selectable per profile (FR-ASR-11) | M0a / M4 |
 | R17 | **Bluetooth audio (D34) degrades accuracy below the §10.1 targets**, and because it is the most convenient route it becomes the one people actually use — so the product is judged on its worst signal path | **High where the route is offered** — HFP/mSBC's damage is known in principle and unmeasured here | Medium–High: the targets are met on the wired path and missed in the field, with no way to tell which from an aggregate number | Marked on every session and reported as its own source, never merged (FR-CAP-11, FR-CAP-13, CON-CAP-1, AC-132); the wired alternative offered at the point of choice, not buried; **Bluetooth *control* with wired audio steered to first** (FR-RIG-14), which is the same convenience at no signal cost. Measure the delta on the dev fold before the mode ships | Before the Bluetooth mode ships |
 | R18 | **Bundling every asset (D35, D36) makes the install too large to distribute or install** — a T0 phone carries an LLM and a `large-v3-turbo` it can never load | Medium — depends entirely on the final asset set, which is not yet fixed | Medium — the mitigation is known and costs a build variant, so this is expensive rather than dangerous | Sizes reported per asset and excluded from the retention budget (FR-AST-3a); tier-ineligible models stored but never loaded (AC-138); the install-time asset-pack path kept open by keeping delivery out of the asset lifecycle (FR-AST-3a's TODO, FR-AST-3b). Measure the real installed size as soon as the asset set is fixed and revisit if it exceeds what the distribution channel allows | When the asset set is fixed |
-| R19 | **A field report against the public destination (D37, D38) publishes recordings and voiceprints of identifiable third parties who never consented**, the moment the operator turns off the FR-OBS-10 switch | Medium — the categories default off and the switch is a deliberate second action, but the destination is public today and the product owner has already said they intend to test against it | Severe and irreversible once published — the same character as R14, reached through a debugging tool rather than the contribution channel it was designed for | The redacted bundle uploads unconditionally and diagnoses every defect reported so far without audio (FR-OBS-8, FR-OBS-10); the audio/voiceprint categories require the switch to be off at upload time, not merely at setup (FR-OBS-10); per-upload consent names the destination's visibility every time (FR-OBS-9). **Move the destination to a private repository before field reports see routine use.** See Q18 | Before a field report includes audio or voiceprints outside this initial test |
+| R19 | **A field report against the public destination (D37, D38) publishes recordings, voiceprints or screen frames of identifiable third parties who never consented**, the moment the operator turns off the FR-OBS-10 switch | Medium — the categories default off and the switch is a deliberate second action, but the destination is public today and the product owner has already said they intend to test against it | Severe and irreversible once published — the same character as R14, reached through a debugging tool rather than the contribution channel it was designed for | **FR-OBS-10 is a policy control implemented as a UI toggle, not a technical barrier**: it stops an accidental upload, not a deliberate one, and an operator who controls both the toggle and the destination's own visibility setting can defeat it entirely. What mitigation exists: the ungated set uploads unconditionally and diagnoses every defect reported so far without audio, voiceprints or a screen frame (FR-OBS-8); the gated categories require the switch to be off at upload time, not merely at setup (FR-OBS-10); per-upload consent names the destination's visibility every time, and — while the destination is public and the switch is off — names the categories about to be published on every single upload, not once (FR-OBS-9, FR-OBS-10, AC-149). **Move the destination to a private repository before field reports see routine use.** See Q18 | Before a field report includes audio, voiceprints or a screen frame outside this initial test |
 
 **R5 is now the top risk**, because the reference device was chosen for its accuracy ceiling
 and carries the worst background-execution behaviour on the market. It is also the earliest
@@ -3100,8 +3127,8 @@ product; all of them are what make the reference experience world-class.
 | D34 Bluetooth audio permitted | CON-CAP-1 (amended), FR-CAP-11, FR-CAP-13, FR-RIG-14, R17, AC-132, AC-133 |
 | D35 Everything bundled, one variant | FR-AST-3, FR-AST-3a, FR-AST-3b, NFR-6, R18, AC-136..139 |
 | D36 LLM bundled, still post-hoc | FR-DIG-3a, FR-DIG-3b, D5 (untouched), FR-AST-3, R18, AC-138, AC-140 |
-| D37 Field-report channel exists | FR-OBS-5 (amended), FR-OBS-5a (amended), FR-OBS-6..12, AC-141..147 |
-| D38 Field report may include audio/voiceprints, default off | FR-SPK-20 (amended), FR-OBS-9, FR-OBS-10, R19, Q18, AC-144..147 |
+| D37 Field-report channel exists | FR-OBS-5 (amended), FR-OBS-5a (amended), FR-OBS-6..12, AC-141..149 |
+| D38 Field report may include audio/voiceprints, default off | FR-SPK-20 (amended), FR-OBS-9, FR-OBS-10, R19, Q18, AC-144..149 |
 
 Requirement groups added in drafts 3 and 3.2, mapped to the goal or property they serve:
 

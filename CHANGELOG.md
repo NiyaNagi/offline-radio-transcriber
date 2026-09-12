@@ -97,6 +97,33 @@ its routine use with the audio/voiceprint categories on. `spec/build-plan.md` an
 `docs/reference/audit-and-remediate-prompt.md` are not updated with a build prompt for this work —
 out of this session's scope, which was the amendment only.
 
+**Correction (commit `<pending>`, same session, pre-merge — appended here per the review
+coordinator rather than filed as a second entry):** Review before product-owner sign-off found a
+real hole in the draft above: FR-OBS-8 put screen frames in the *ungated* closed set while
+`CallsignScrubber` scrubs every callsign out of the log files in that same set — a photograph of
+a 27px screen title can carry exactly the callsign the log scrubber just removed, and pixels are
+not regexable, so there is no scrubber to write for a frame. Fixed by moving screen frames behind
+the FR-OBS-10 public-destination gate, alongside over audio and voiceprint embeddings, as a third
+opt-in category (FR-OBS-9). **FR-OBS-8** rewritten: the ungated set is now the seven scrubbed
+files plus the session-recorder log only, safe by construction because FR-OBS-6's closed
+vocabulary has no `message: String` parameter; the one-sentence reasoning is stated in the
+requirement itself. **FR-OBS-7** now states plainly what ~390 px downscaling buys (layout
+judgeable, body text largely illegible) and does not buy (a screen title or a callsign in a
+heading is legible at that width) — downscaling is a partial mitigation, never a substitute for
+the gate. **FR-OBS-9/FR-OBS-10** extended to a third toggle and to require the consent screen
+name the about-to-be-published categories **every** upload, not once, while the destination is
+public and the switch is off. **R19** rewritten to keep, unsoftened, that FR-OBS-10 is a policy
+control implemented as a UI toggle, not a technical barrier. **Q18** given a named trigger (closes
+on the first gated-category upload to a public destination, or on the destination going private,
+whichever comes first) rather than staying open-ended. New acceptance criteria **AC-148, AC-149**;
+**AC-143, AC-144, AC-145** revised for the three-category, ungated-set-excludes-frames shape.
+Traceability rows for D37/D38 extended to `AC-141..149`. `AGENTS.md`'s acceptance-criteria count
+284/149/38/19. Re-verified: `python tools\spec-check\spec_check.py` (8/8 pass);
+`.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` (466 requirements, 241 covered,
+regenerates `results/coverage-matrix.md`); `.\gradlew coverageMatrixCheck
+-PortAllowMissingBundledAssets=true` as a separate invocation, green. Still spec-only: no code
+exists for any of FR-OBS-6..12 yet.
+
 ---
 
 ## 2026-09-12 (constitution 1.2.0: a change that touches a screen re-runs the visual verification; the debugging and fix session prompt)

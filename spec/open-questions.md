@@ -30,7 +30,7 @@ channel (D37, D38) and concern where it uploads to and how long what it uploads 
 |---|---|---|
 | **Q2** | Record the tape | Much smaller than it was — ~1 h of validation audio rather than 3–5 h of training data (§14A.3) — but it is the one thing no amount of specification substitutes for |
 | **Q16** | The labelling protocol | Gates labelling that hour. Also much smaller now: callsigns and speaker turns only |
-| **Q18** | Field-report destination | The repository is public today, by the product owner's own choice, "for now" — see D38. Nothing in this spec makes that permanent, and nothing makes it temporary either |
+| **Q18** | Field-report destination | The repository is public today, by the product owner's own choice, "for now" — see D38. It closes when a gated upload happens against it, or the destination goes private, whichever comes first |
 | **Q19** | Uploaded bundle retention | Nothing yet says how long a field report survives at the destination, or who is responsible for deleting it |
 
 Everything else that could be decided on paper has been decided.
@@ -475,18 +475,24 @@ cheapest possible insurance on the project's most expensive irreversible artifac
 destination, or does it move to a private repository once the product owner is done testing?
 
 **Why it matters.** FR-OBS-10's public-destination gate controls what a public destination is
-allowed to receive; it is not a decision about whether the destination should be public at all.
-R19 records what it is guarding against: a field report against a public repository publishes
-recordings and voiceprints of identifiable third parties who never consented, the moment the
-operator turns the FR-OBS-10 switch off — and the product owner has already said the plan is to
-test with that switch reachable. A private destination removes that exposure without removing
-the per-category gate, which is still worth keeping for a different reason: it is what tells the
-operator what they are about to do, on a repository whose visibility can itself change.
+allowed to receive; it is not a decision about whether the destination should be public at all,
+and it is not a technical barrier. R19 records it plainly: **FR-OBS-10 is a policy control
+implemented as a UI toggle**, one an operator who controls both the switch and the destination's
+own visibility setting can defeat entirely. It stops an accidental upload, not a deliberate one.
+A private destination removes the exposure the switch only slows down.
+
+**Named trigger, so this does not stay open indefinitely.** This question closes the moment
+either of the following happens, whichever comes first: **(a)** the first field report
+containing retained over audio, voiceprint embeddings, or a screen frame is uploaded to a
+destination reporting itself public, or **(b)** the destination moves to a private repository.
+Outcome (a) means the risk in R19 has been accepted in practice, not only on paper, and should be
+recorded as such rather than left open; outcome (b) closes the question by removing the condition
+it depends on. An open question with no trigger is a question nobody ever answers.
 
 **Recommendation.** Move to a private repository, or a private destination within the same
 repository, before field reports are used for anything beyond this initial test. Recorded as
-R19; this does not block building the client, only its routine use with the audio or voiceprint
-categories on.
+R19; this does not block building the client, only its routine use with the audio, voiceprint or
+screen-frame categories on.
 
 ---
 

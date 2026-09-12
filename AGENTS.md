@@ -25,7 +25,7 @@ device — start such a session from `docs/debug-fix-session-prompt.md`.
 | Path | What |
 |---|---|
 | `.specify/memory/constitution.md` | **Binding principles.** Read first |
-| `spec/functional-spec.md` | 284 requirement ids, 147 acceptance criteria, 38 decisions, 19 risks |
+| `spec/functional-spec.md` | 284 requirement ids, 149 acceptance criteria, 38 decisions, 19 risks |
 | `spec/technical-design.md` | Architecture, module boundaries, subsystem design |
 | `spec/build-plan.md` | **The working todo list** — P1–P21, all landed |
 | `CHANGELOG.md` | **The build log** — one detailed entry per commit; append to it, don't just tick the plan |
