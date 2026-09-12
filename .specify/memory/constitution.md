@@ -1,6 +1,33 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.2.0 → 1.3.0
+
+Bump rationale (1.3.0, MINOR): a new declared outbound channel — Principle V's "exactly two
+  outbound channels" becomes three — and materially expanded guidance in Principle V's "four
+  categories never leave the device at all" bullet, which is no longer absolute for voiceprints
+  and now states what replaces the removed guarantee. Distilled from the product owner's first
+  on-device run: every transcription failed, onboarding had four defects, and the only evidence
+  that reached the workstation was a verbal description and one photograph — which produced a
+  direct request for a session recorder and a one-button upload to a public GitHub repository.
+  That collided with FR-OBS-5, FR-CON-3, FR-SPK-20 and this principle, and is resolved on the
+  record as D37 and D38 rather than silently in code (Scope And Precedence). No principle
+  removed or redefined.
+
+Documents updated in the same change:
+  ✅ spec/functional-spec.md — new decisions D37, D38 in §3; FR-OBS-5 and FR-OBS-5a amended with
+       visible amendment notes rather than silent rewrites; new requirements FR-OBS-6..12 in a
+       new §7.13b; FR-SPK-20 amended to name the field-report channel as a permitted exception
+       under D38's conditions, discharging the opt-in obligation its own text imposed; new
+       acceptance criteria AC-141..147 in a new §14.13; AC-59 extended to cover the field-report
+       channel; new risk R19; §16 traceability rows for D37 and D38.
+  ✅ spec/open-questions.md — two new open questions: Q18 (whether the destination moves to a
+       private repository once testing ends) and Q19 (retention policy for uploaded bundles).
+  ✅ AGENTS.md — the constitution version reference, and the "Rules that are not negotiable"
+       voiceprints bullet, restated to carry the field-report exception and its conditions
+       rather than the absolute form.
+
+-- prior --
 Version change: 1.1.0 → 1.2.0
 
 Bump rationale (1.2.0, MINOR): materially expanded guidance in Principle VIII (a change that
@@ -213,19 +240,29 @@ did not happen.
 
 - **The capture and processing paths make no network call, ever** (NFR-6). Enforced by module
   boundary and by capability token, not by policy.
-- **There are exactly two outbound channels**: user-initiated actions (asset download, export,
-  QRZ) and the corpus contribution channel, which is off until enabled and never runs during
-  capture (FR-CON-1, FR-CON-2).
+- **There are exactly three outbound channels**: user-initiated actions (asset download, export,
+  QRZ), the corpus contribution channel, off until enabled and never running during capture
+  (FR-CON-1, FR-CON-2), and the field-report channel, an operator-triggered, per-upload path to a
+  GitHub repository that shows its contents before every send and never runs during capture
+  (FR-OBS-6..12, D37).
 - **No analytics, telemetry or crash reporting**, in any build (FR-OBS-5).
-- **Four categories never leave the device at all**: voiceprints and embeddings (FR-SPK-20),
-  user-supplied names (FR-SPK-25), station knowledge (FR-DIG-13), and location finer than a grid
-  square (FR-LEX-24). The contribution payload is **recomputed from a closed field list**, never
-  serialised from an entity graph, so a new column cannot leak by being added.
+- **Three categories never leave the device at all**: user-supplied names (FR-SPK-25), station
+  knowledge (FR-DIG-13), and location finer than a grid square (FR-LEX-24). **A fourth —
+  voiceprints and embeddings — is no longer absolute** (FR-SPK-20, amended by D38): they may
+  leave only through the field-report channel, per-category, defaulting off, named by file and
+  real size before every upload, and refused outright against a public destination unless the
+  operator has explicitly turned off the guard (FR-OBS-9, FR-OBS-10). What now guarantees the
+  user's control is that opt-in and that guard, not device confinement. The contribution payload
+  is still **recomputed from a closed field list**, never serialised from an entity graph, so a
+  new column cannot leak by being added.
 - **Contributed audio is never published** (D31). Derived artifacts may be.
 
 **Rationale:** The product records identifiable third parties who did not consent. The
-device-local guarantee is what makes that defensible, and it is why FR-SPK-20 is load-bearing
-rather than precautionary.
+device-local guarantee is what made that defensible for every prior channel, and it is why
+FR-SPK-20 was load-bearing rather than precautionary: the moment a change proposed giving
+voiceprints an outbound path, that same load-bearing clause required the default to move to
+explicit opt-in in the same change. D38 is that change; R19 records what remains true — a public
+destination and an operator willing to turn the guard off is still a way for this to go wrong.
 
 ### VI. Measurement Discipline
 
@@ -372,4 +409,4 @@ found this way, and almost none of them by reading code.
 - **Outstanding.** None. *(Resolved 2026-09-07: the repository now carries an `Apache-2.0`
   `LICENSE`, chosen for the explicit patent grant and the Play Store path — D11, build-plan P1.)*
 
-**Version**: 1.2.0 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-12
+**Version**: 1.3.0 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-12
