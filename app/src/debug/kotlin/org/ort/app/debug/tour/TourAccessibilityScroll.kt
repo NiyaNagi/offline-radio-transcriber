@@ -162,8 +162,13 @@ public object TourAccessibilityScroll {
 
     /** Breadth-first over the plain [View]/[ViewGroup] tree (not the accessibility tree — that
      * search only becomes possible once a provider is already in hand) for the first descendant
-     * (self included) whose own [View.getAccessibilityNodeProvider] is non-null. */
-    private fun findAccessibilityNodeProvider(rootView: View): AccessibilityNodeProvider? {
+     * (self included) whose own [View.getAccessibilityNodeProvider] is non-null.
+     *
+     * `internal`, not `private` (WPW): [TourAccessibilityTap] reuses this exact lookup for its own
+     * "tap the live bar" seam — the identical bridge, never a second, independently-written walk
+     * that could silently diverge from this one's own hard-won findings (this class's own doc
+     * comment on why the *View* tree, not the decor view, must be walked first). */
+    internal fun findAccessibilityNodeProvider(rootView: View): AccessibilityNodeProvider? {
         val queue = ArrayDeque<View>()
         queue.addLast(rootView)
         while (queue.isNotEmpty()) {

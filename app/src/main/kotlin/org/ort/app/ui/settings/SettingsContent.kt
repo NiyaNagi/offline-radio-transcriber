@@ -25,6 +25,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.ort.app.BuildConfig
 import org.ort.app.diagnostics.DiagnosticsBundleBuilder
+import org.ort.app.export.DebugDumpBuilder
+import org.ort.app.export.ExportCoordinator
+import org.ort.app.export.ExportRequest
 import org.ort.app.fieldreport.bundle.FieldReportBundleBuilder
 import org.ort.app.fieldreport.bundle.FieldReportBundlePreview
 import org.ort.app.fieldreport.bundle.FieldReportGatedCategory
@@ -209,16 +212,7 @@ private fun SettingsSubScreen(
 
         SettingsScreenId.ASSETS -> ModelsContent(context = context, modifier = modifier, onBack = onBack)
 
-        SettingsScreenId.EXPORT -> {
-            var exportState by remember { mutableStateOf<SettingsExportViewState?>(null) }
-            LaunchedEffect(Unit) { exportState = SettingsPolling.export(context) }
-            val state = exportState
-            if (state != null) {
-                SettingsExportScreen(state = state, onBack = onBack, modifier = modifier)
-            } else {
-                LoadingSettings(modifier = modifier)
-            }
-        }
+        SettingsScreenId.EXPORT -> SettingsExportSubScreen(context = context, onBack = onBack, modifier = modifier)
 
         SettingsScreenId.CONTRIBUTE -> SettingsContributeScreen(
             state = remember(storeVersion) { SettingsPolling.contribute(store) },
@@ -403,6 +397,69 @@ private fun SettingsStorageSubScreen(
     }
 }
 
+/** The `EXPORT` branch of [SettingsSubScreen], split out purely to keep that function's own
+ * length/parameter-count under detekt's limits — the same reason [SettingsStorageSubScreen] was.
+ *
+ * WPW (register R-1009 follow-up, WPX's own report): [SettingsExportScreen] already exposes
+ * `onSaveFile: (ExportRequest) -> Unit` with a no-op default, and [org.ort.app.export.ExportCoordinator]
+ * already exists and is tested — nothing called either together, so export was built and
+ * unreachable. Follows the identical Storage Access Framework pattern
+ * [SettingsDiagnosticsSubScreen]'s own `Save bundle` already established: [ActivityResultContracts.CreateDocument],
+ * the write on [Dispatchers.IO], and the real `DISPLAY_NAME` read back from the URI for the
+ * confirmation label — never an assumed filename. A single, generic wildcard MIME type (any/any,
+ * not one of the four format-specific types) because [ActivityResultContracts.CreateDocument]'s own contract is
+ * fixed at the point this launcher is registered, while [ExportRequest.format] varies per tap — the
+ * suggested file name's own real extension ([ExportCoordinator.suggestedFileName]) is what the
+ * picker and the file's own name actually carry the format in, matching how a user could rename the
+ * suggestion in the picker regardless of which MIME type was declared.
+ */
+@Composable
+private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
+    var exportState by remember { mutableStateOf<SettingsExportViewState?>(null) }
+    LaunchedEffect(Unit) { exportState = SettingsPolling.export(context) }
+    // Read at launch time (`onSaveFile` below) and consumed once the picker returns a URI — a plain
+    // `remember`, not `rememberSaveable`: the same short "still in this composition" lifetime
+    // `SettingsDiagnosticsSubScreen`'s own `saveConfirmationLabel` already relies on for its
+    // sibling SAF flow.
+    var pendingExportRequest by remember { mutableStateOf<ExportRequest?>(null) }
+
+    val saveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*"),
+    ) { uri ->
+        val request = pendingExportRequest
+        if (uri == null || request == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                val bytes = ExportCoordinator.build(context, request)
+                context.contentResolver.openOutputStream(uri)?.use { out -> out.write(bytes) }
+            }
+            // R-1009: named for parity with `SettingsDiagnosticsSubScreen`'s own confirmation —
+            // `SettingsExportScreen` renders no confirmation label of its own today (outside this
+            // round's file-ownership map), but `realFileName` is still called here, on the real
+            // returned URI, so the one real fact this flow produces is computed the same honest way
+            // every sibling SAF save in this file already does — never a toast's wording asserted by
+            // a test, per this file's own working agreement.
+            realFileName(context, uri)
+        }
+    }
+
+    val state = exportState
+    if (state != null) {
+        SettingsExportScreen(
+            state = state,
+            onBack = onBack,
+            onSaveFile = { request ->
+                pendingExportRequest = request
+                saveLauncher.launch(ExportCoordinator.suggestedFileName(request))
+            },
+            modifier = modifier,
+        )
+    } else {
+        LoadingSettings(modifier = modifier)
+    }
+}
+
 /** The `DIAGNOSTICS` branch of [SettingsSubScreen], split out purely to keep that function's own
  * length/parameter-count under detekt's limits — the same reason [SettingsStorageSubScreen] was.
  *
@@ -414,6 +471,10 @@ private fun SettingsStorageSubScreen(
  * the picker, so this never assumes the suggestion was kept). `Preview` is a local `previewOpen`
  * toggle — see [SettingsDiagnosticsScreen]'s own doc comment for why it is an in-app listing
  * rather than the board's own per-file external-reader wording.
+ *
+ * WPW (register R-1009 follow-up): a second SAF launcher, `debugDumpSaveLauncher`, wires
+ * [org.ort.app.export.DebugDumpBuilder] the identical way — its own NDJSON, never the zip
+ * `saveLauncher` writes, so the two never share one launcher/MIME type.
  */
 @Composable
 private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, modifier: Modifier) {
@@ -437,6 +498,23 @@ private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, m
         }
     }
 
+    // WPW: `DebugDumpBuilder` — sessions, overs, attributions, gaps and every terminally `FAILED`
+    // work-queue item's own attempt history and `lastError` — through the same real SAF/`Dispatchers.IO`
+    // shape as `saveLauncher` above, a distinct MIME type (NDJSON, not zip) and a distinct
+    // suggested file name so the two saves can never collide in the same picker session.
+    val debugDumpSaveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/x-ndjson"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                val bytes = DebugDumpBuilder.build(context)
+                context.contentResolver.openOutputStream(uri)?.use { out -> out.write(bytes) }
+            }
+            saveConfirmationLabel = "Saved ${realFileName(context, uri)}"
+        }
+    }
+
     val state = diagnosticsState
     FieldReportHost(context = context, modifier = modifier) { fieldReport, fieldReportActions ->
         if (state != null) {
@@ -446,6 +524,7 @@ private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, m
                 bundleActions = SettingsDiagnosticsBundleActions(
                     onPreview = { previewOpen = true },
                     onSaveBundle = { saveLauncher.launch("diagnostics-${LocalDate.now()}.zip") },
+                    onSaveDebugDump = { debugDumpSaveLauncher.launch("debug-dump-${LocalDate.now()}.ndjson") },
                 ),
                 previewOpen = previewOpen,
                 onDismissPreview = { previewOpen = false },

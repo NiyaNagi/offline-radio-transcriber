@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import org.ort.app.BuildConfig
 import org.ort.app.MainActivity
+import org.ort.app.fieldreport.wiring.FieldReportAppWiring
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.data.ModelsController
@@ -269,8 +270,21 @@ public class SetupActivity : ComponentActivity() {
      * that [SetupStep.VERIFY] itself was reached. */
     internal val verifyStateForTest: RouteCheckState? get() = verifyState
 
+    // WPW (register, WPR2's own report): `FieldReportAppWiring.attachWindow(window)` was called
+    // only from `ReaderActivity` — Setup was never wired at all, even though the operator's own
+    // motivating incident (four onboarding defects, no evidence but a verbal description and one
+    // photograph) happened *during* Setup, arguably the highest-value place in the app for a screen
+    // frame. Wired exactly as `ReaderActivity.onCreate`/`onDestroy` already do — attach here, detach
+    // in `onDestroy` below — no other change to this class (this round's own file-ownership map:
+    // "the frame wiring only").
+    override fun onDestroy() {
+        super.onDestroy()
+        FieldReportAppWiring.detachWindow()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FieldReportAppWiring.attachWindow(window)
         enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)
         store = SharedPreferencesSetupStore(getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, MODE_PRIVATE))
         captureConfigStore = SharedPreferencesCaptureConfigurationStore(

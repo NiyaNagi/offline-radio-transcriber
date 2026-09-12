@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.fieldreport.recorder.FieldReportRecorder
+import org.ort.app.fieldreport.recorder.RealScreenFrameCapturer
 import org.ort.app.fieldreport.recorder.RecorderDestination
 import org.ort.app.fieldreport.recorder.RecorderEvent
 import org.robolectric.Robolectric
@@ -85,5 +86,30 @@ class FieldReportAppWiringTest {
     fun `the delegating capturer reports no capture available before any window is attached`() = runTest {
         FieldReportAppWiring.detachWindow()
         assertNull(FieldReportAppWiring.delegatingCapturer.capture())
+    }
+
+    /**
+     * WPW (register, WPR1 flagged the leak, WPR2 could only bound it): [FieldReportAppWiring
+     * .detachWindow] used to only discard its reference to the attached [RealScreenFrameCapturer],
+     * never quitting the [android.os.HandlerThread] it had started — the exact leak this proves
+     * closed, from this object's own real call site rather than [RealScreenFrameCapturer.close]
+     * in isolation ([org.ort.app.fieldreport.recorder.RealScreenFrameCapturerCloseTest] already
+     * covers that class directly).
+     */
+    @Test
+    fun `detachWindow closes the real capturer's HandlerThread, not merely its own reference to it`() {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        FieldReportAppWiring.attachWindow(activity.window)
+        val capturer = FieldReportAppWiring.delegatingCapturer.delegate as RealScreenFrameCapturer
+        val thread = capturer.startHandlerThreadForTest()
+        assertTrue("the thread must actually be running before detachWindow is exercised", thread.isAlive)
+
+        FieldReportAppWiring.detachWindow()
+
+        thread.join(1_000)
+        assertTrue(
+            "detachWindow must actually quit the HandlerThread the attached capturer started",
+            !thread.isAlive,
+        )
     }
 }

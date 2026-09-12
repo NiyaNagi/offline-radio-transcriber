@@ -125,6 +125,12 @@ public data class TourStep(
             // `ScreenshotTourActivity`'s own `RIG_LINK_STATE_PREDICATES`. Read directly, same as
             // `rigBluetoothAddress` above, never through `TourIds.resolveSeed`.
             "rigLinkState",
+            // WPW (register R-1007 follow-up): `"true"` taps the composed screen's own live bar via
+            // `TourAccessibilityTap`, a *destination*-step-only key read directly by
+            // `ScreenshotTourActivity` (never through `TourIds.resolveSeed`, which only ever builds
+            // a `NavSeed`) — the real route onto `LiveMonitorScreen`, since no `NavSeed` field exists
+            // for `OrtNavHost.NavHostNavState.openCaptureLiveMonitor`.
+            "tapLiveBar",
         )
     }
 }

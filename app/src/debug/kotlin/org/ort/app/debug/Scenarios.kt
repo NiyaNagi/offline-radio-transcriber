@@ -232,6 +232,10 @@ public object Scenarios {
         "llm-enabled-prose",
         "llm-disabled",
         "tier0-llm-stored",
+        // WPW (register R-1007 follow-up): the one scenario `Live-Monitor.dc.html` needs — a real
+        // over in each of the seven states that screen renders — see `overnightLiveMonitor`'s own
+        // doc comment.
+        "overnight-live-monitor",
     )
 
     public suspend fun load(context: Context, name: String): LoadResult {
@@ -325,6 +329,7 @@ public object Scenarios {
             "llm-enabled-prose" -> llmEnabledProse(context, db)
             "llm-disabled" -> llmDisabled(context, db)
             "tier0-llm-stored" -> tier0LlmStored(context)
+            "overnight-live-monitor" -> overnightLiveMonitor(context, db)
             else -> error("unreachable — guarded by the require() above")
         }
     }
@@ -3182,4 +3187,215 @@ public object Scenarios {
      * discriminating test), not merely empty. */
     private suspend fun llmDisabled(context: Context, db: OrtDatabase): LoadResult =
         proseDigestScenario(context, db, enabled = false)
+
+    /**
+     * `overnight-live-monitor` — register R-1007's own follow-up: `Live-Monitor.dc.html`
+     * (`org.ort.app.ui.screens.LiveMonitorScreen`) has never been captured because no scenario and
+     * no tour step reached it. A live session (`CaptureState.capturing`, a fresh heartbeat) carrying
+     * one over in each of the seven states that screen renders, in ascending `startedAtUtc` order:
+     *
+     * 1. **Transcribing** — `PROCESSING` with a current Pass B transcript already in flight.
+     * 2/3. **Waiting** — two `CAPTURED` overs with no current transcript yet; the *second* one has a
+     *    real, non-zero queue position (`aheadCount = 1`) ahead of it, not merely a zero default a
+     *    fixture with only one waiting over could never distinguish from a bug.
+     * 4. **Confirmed** — `COMPLETE`/`CONFIRMED`, a real callsign and confidence.
+     * 5. **Inferred** — `COMPLETE`/`INFERRED`, linked back to over 4 via `attributionSourceTransmissionId`
+     *    so the "inferred from HH:MM:SS" caption has a real source to name.
+     * 6. **Unknown** — `COMPLETE`/`UNKNOWN`, timed 95 s after over 5's own end — long enough past
+     *    [org.ort.app.ui.data.LiveMonitorOversPolling]'s own one-minute floor that
+     *    [org.ort.app.ui.data.LiveMonitorOversMapper.listenedSilenceRows] genuinely derives a
+     *    **listened-to silence row** for that span on its own (FR-RUN-12) — never seeded as a row of
+     *    its own, since that mapper computes it from the plain absence of any
+     *    [org.ort.data.entity.CaptureGapEntity] across a real gap between two overs, exactly the fact
+     *    this fixture creates by simply not writing one there. Every other adjacent pair in this
+     *    fixture is spaced under that floor, so this is the *only* span that produces one.
+     * 7. **Not transcribed (failed)** — `FAILED`, with a real [org.ort.data.entity.WorkQueueItemEntity]
+     *    row (`attemptCount = 2`, a real `lastError`) — the same shape `pass-failed` writes, so the
+     *    row's own "Pass B errored 2 times" caption reads a real, durable count, never a guessed one.
+     *
+     * Live (not ended) so both the pinned/embedded live bar and this screen's own continuously-live
+     * rows are reachable at all — `org.ort.app.debug.tour.ScreenshotTourActivity`'s own `tapLiveBar`
+     * drillIn is the real route onto this screen from the tour (no `NavSeed` field exists for
+     * `OrtNavHost.NavHostNavState.openCaptureLiveMonitor` — that class's own doc comment names
+     * exactly this gap, routed to whichever package owns the `app/src/debug` source set, this one).
+     */
+    private suspend fun overnightLiveMonitor(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("overnight-live-monitor")
+        val start = SystemClock.wallMillis() - 20 * 60_000L
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = start,
+                endedAt = null,
+                captureMode = CaptureMode.USB_RADIO.name,
+                audioRouteKind = AudioRouteKind.USB.name,
+                audioRouteLabel = "USB Audio Device",
+                rigTransport = RigTransportKind.USB_SERIAL.name,
+            ),
+        )
+        val freq = 146_520_000L
+        fun offsetSeconds(seconds: Long): Long = start + seconds * 1_000L
+
+        // 1. Transcribing.
+        val txTranscribing = "$sessionId-transcribing"
+        val tTranscribing = offsetSeconds(0)
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txTranscribing,
+                sessionId = sessionId,
+                startedAtUtc = tTranscribing,
+                samplePosition = 1L,
+                frequencyHz = freq,
+                attributionState = AttributionState.UNKNOWN,
+                processingState = TransmissionState.PROCESSING,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txTranscribing-t1",
+                transmissionId = txTranscribing,
+                text = "and that's a copy on the last, stand by",
+                pass = TranscriptPass.B,
+                isCurrent = true,
+                createdAt = tTranscribing + 500L,
+                confidence = null,
+            ),
+        )
+
+        // 2/3. Waiting -- two CAPTURED overs, so the second carries a real non-zero queue position.
+        val txWaiting1 = "$sessionId-waiting1"
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txWaiting1,
+                sessionId = sessionId,
+                startedAtUtc = offsetSeconds(15),
+                samplePosition = 2L,
+                frequencyHz = freq,
+                attributionState = AttributionState.UNKNOWN,
+                processingState = TransmissionState.CAPTURED,
+            ),
+        )
+        val txWaiting2 = "$sessionId-waiting2"
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txWaiting2,
+                sessionId = sessionId,
+                startedAtUtc = offsetSeconds(30),
+                samplePosition = 3L,
+                frequencyHz = freq,
+                attributionState = AttributionState.UNKNOWN,
+                processingState = TransmissionState.CAPTURED,
+            ),
+        )
+
+        // 4. Confirmed.
+        val txConfirmed = "$sessionId-confirmed"
+        val tConfirmed = offsetSeconds(45)
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txConfirmed,
+                sessionId = sessionId,
+                startedAtUtc = tConfirmed,
+                samplePosition = 4L,
+                frequencyHz = freq,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "W7NPC",
+                attributionConfidence = 0.95,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txConfirmed-t1",
+                transmissionId = txConfirmed,
+                text = "this is whiskey seven november papa charlie, clear",
+                isCurrent = true,
+                createdAt = tConfirmed + 500L,
+            ),
+        )
+
+        // 5. Inferred -- links back to the confirmed over above.
+        val txInferred = "$sessionId-inferred"
+        val tInferred = offsetSeconds(60)
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txInferred, sessionId = sessionId, startedAtUtc = tInferred, samplePosition = 5L,
+                frequencyHz = freq, attributionState = AttributionState.INFERRED,
+                stationId = "K7LWH", attributionConfidence = 0.8, attributionSourceTransmissionId = txConfirmed,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txInferred-t1",
+                transmissionId = txInferred,
+                text = "roger that, good copy",
+                isCurrent = true,
+                createdAt = tInferred + 500L,
+            ),
+        )
+
+        // 6. Unknown -- 95s after over 5's own end, so a real listened-silence row is derived for
+        // the gap between them (every other adjacent pair in this fixture stays under the floor).
+        val txUnknown = "$sessionId-unknown"
+        val tUnknown = offsetSeconds(155)
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txUnknown,
+                sessionId = sessionId,
+                startedAtUtc = tUnknown,
+                samplePosition = 6L,
+                frequencyHz = freq,
+                attributionState = AttributionState.UNKNOWN,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txUnknown-t1",
+                transmissionId = txUnknown,
+                text = "...any station on frequency, this is",
+                isCurrent = true,
+                createdAt = tUnknown + 500L,
+            ),
+        )
+
+        // 7. Not transcribed (failed) -- a real WorkQueueItemEntity attempt count.
+        val txFailed = "$sessionId-failed"
+        val tFailed = offsetSeconds(170)
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txFailed,
+                sessionId = sessionId,
+                startedAtUtc = tFailed,
+                samplePosition = 7L,
+                frequencyHz = freq,
+                attributionState = AttributionState.UNKNOWN,
+                processingState = TransmissionState.FAILED,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txFailed-t1",
+                transmissionId = txFailed,
+                text = "static, then a broken transmission",
+                pass = TranscriptPass.A,
+                isCurrent = true,
+                createdAt = tFailed + 500L,
+                confidence = null,
+            ),
+        )
+        db.workQueueDao().insert(
+            WorkQueueItemEntity(
+                transmissionId = txFailed,
+                pass = PassId.B_OFFLINE,
+                state = WorkQueueState.FAILED,
+                priority = 0,
+                attemptCount = 2,
+                lastError = "out of memory in the decoder",
+                enqueuedAt = tFailed,
+            ),
+        )
+
+        ScenarioFixtures.markCapturing(context, sessionId, samplePosition = 7L)
+        val txCount = db.transmissionDao().listBySession(sessionId).size
+        return LoadResult(transmissionCount = txCount, sessionCount = 1, primarySessionId = sessionId)
+    }
 }

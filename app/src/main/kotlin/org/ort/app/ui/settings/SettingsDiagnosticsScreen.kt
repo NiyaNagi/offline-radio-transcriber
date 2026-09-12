@@ -121,7 +121,7 @@ public fun SettingsDiagnosticsScreen(
             }
 
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
+                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg),
                 horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
             ) {
                 SecondaryButton(text = "Preview", onClick = bundleActions.onPreview, modifier = Modifier.weight(1f))
@@ -131,6 +131,17 @@ public fun SettingsDiagnosticsScreen(
                     modifier = Modifier.weight(1f),
                 )
             }
+
+            // WPW (register R-1009 follow-up): `DebugDumpBuilder`'s own trigger — beside `Save
+            // bundle`, through the identical SAF path (`SettingsContent.kt`'s own wiring).
+            SecondaryButton(
+                text = "Save debug dump",
+                onClick = bundleActions.onSaveDebugDump,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = OrtSpacing.sm, bottom = OrtSpacing.lg)
+                    .testTag(DEBUG_DUMP_SAVE_TEST_TAG),
+            )
 
             // WPR2 (FR-OBS-6..12, D37/D38): `null` — a release build, where the debug-only
             // recorder never runs at all (FR-OBS-6) — renders nothing further here.
@@ -424,3 +435,7 @@ public const val FIELD_REPORT_GUARD_TOGGLE_TEST_TAG: String = "field-report-guar
 public const val FIELD_REPORT_TOGGLE_RETAINED_AUDIO_TEST_TAG: String = "field-report-toggle-retained-audio"
 public const val FIELD_REPORT_TOGGLE_VOICEPRINTS_TEST_TAG: String = "field-report-toggle-voiceprints"
 public const val FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG: String = "field-report-toggle-screen-frames"
+
+/** WPW: the debug-dump `Save debug dump` button — a stable, unambiguous target for a
+ * `performClick()` test, the same reason every field-report toggle above is tagged. */
+public const val DEBUG_DUMP_SAVE_TEST_TAG: String = "diagnostics-save-debug-dump"

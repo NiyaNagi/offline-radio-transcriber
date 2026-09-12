@@ -32,6 +32,96 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPW: reaching what five builders left unreachable — the export button, the debug-dump button, the HandlerThread leak actually closed, Setup's own frame wiring, and the `overnight-live-monitor` scenario/tour route)
+
+### (pending) — WPW closes the reach gap five builders reported and could not fix themselves
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/{SettingsContent,SettingsDiagnosticsScreen,SettingsViewData}.kt`;
+`app/src/main/kotlin/org/ort/app/fieldreport/{recorder/ScreenFrameCapturer.kt,wiring/FieldReportAppWiring.kt}`;
+`app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt` (frame wiring only); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`;
+new `app/src/debug/kotlin/org/ort/app/debug/tour/TourAccessibilityTap.kt`; `app/src/debug/kotlin/org/ort/app/debug/tour/{TourSpec,TourAccessibilityScroll,ScreenshotTourActivity}.kt`;
+`tools/ui-audit/tour.json`; `results/ui-audit/README.md` (scenario catalogue table only); tests under
+`app/src/test/kotlin/org/ort/app/{ui/settings,ui/setup,fieldreport,debug}/**`.
+
+**Requirements/ACs:** R-1009 (export/debug-dump reachability — WPX's own report that both were built
+and unreachable), FR-EXP-1..5, FR-OBS-1/3, R-1007 (`Live-Monitor.dc.html`, N07 — "a scenario + tour
+step still to be routed", WPL's own register text), FR-RUN-12, R-1004 (S04 dedupe — documentation of
+the existing reachable point, not a new one — see "Left open" below). Constitution II (strict TDD,
+a test shown to discriminate), IV (liveness by heartbeat), VIII (a screen is not verified until
+captured — this round adds the route, the lead captures).
+
+**What changed:**
+- **Export wired**: `SettingsContent.kt`'s new `SettingsExportSubScreen` gives `SettingsExportScreen.onSaveFile`
+  a real implementation — a SAF `CreateDocument("*/*")` launcher (a single wildcard MIME since the
+  contract is fixed at registration while `ExportRequest.format` varies per tap; the suggested file
+  name's own real extension is what actually carries the format), `ExportCoordinator.build` on
+  `Dispatchers.IO`, bytes written to the returned URI. Follows `SettingsDiagnosticsSubScreen`'s own
+  `Save bundle` pattern exactly.
+- **Debug dump wired**: a second SAF launcher (`application/x-ndjson`) in `SettingsDiagnosticsSubScreen`,
+  a new "Save debug dump" button in `SettingsDiagnosticsScreen.kt` beside `Save bundle`, calling
+  `DebugDumpBuilder.build`. The new action joined `SettingsDiagnosticsBundleActions` (`SettingsViewData.kt`)
+  rather than becoming a fourth top-level parameter — detekt's `LongParameterList` threshold on
+  `SettingsDiagnosticsScreen` required it, the same reason `FieldReportSectionActions` joined that
+  parameter list before it.
+- **`HandlerThread` leak actually closed**: `RealScreenFrameCapturer` gained a `close()` that quits
+  the thread it started (`quitSafely()`, letting an in-flight `PixelCopy` callback finish delivering
+  first) and is a safe no-op when `capture()` was never called (a plain nullable field replaces the
+  `by lazy` delegate so "never started" is distinguishable from "started, now stopping" without
+  forcing a start). `FieldReportAppWiring.detachWindow()` now calls it on the attached delegate before
+  discarding the reference, closing the leak WPR1 flagged and WPR2 could only bound.
+- **`SetupActivity` frame wiring**: `FieldReportAppWiring.attachWindow(window)`/`detachWindow()` added
+  to `onCreate`/`onDestroy`, mirroring `ReaderActivity` exactly — no other change to that file. One
+  window is attached for the whole guided sequence (S00..S12 render inside one `Activity` instance),
+  so this covers every step the operator can reach, S04/S09b/S10b included, not a subset.
+- **`overnight-live-monitor` scenario** (`Scenarios.kt`): a live session seeding one over in each of
+  the seven states `Live-Monitor.dc.html` renders — transcribing, two waiting (the second with a real,
+  non-zero queue position), confirmed, inferred (linked to the confirmed over), a listened-to silence
+  genuinely *derived* by `LiveMonitorOversPolling` from a 95s gap with no `CaptureGapEntity` covering
+  it (never seeded as its own row), and a failed over with a real `WorkQueueItemEntity.attemptCount`.
+- **The route onto `LiveMonitorScreen`**: no `NavSeed` field exists for it (`OrtNavHost`'s own doc
+  comment names exactly this gap, routed to whichever package owns `app/src/debug`). New
+  `TourAccessibilityTap` (mirrors `TourAccessibilityScroll`'s own accessibility-bridge technique)
+  taps the real, composed live bar by its exact `"Live"` label; `TourStep` gained a `tapLiveBar`
+  drillIn key, read directly by `ScreenshotTourActivity` (never through `TourIds`, which only builds
+  `NavSeed`s); a new `awaitLiveMonitorVisible` wait confirms the screen's own `"LOGGED TONIGHT"`
+  marker actually landed before capture. `tour.json` gained `overnight-live-monitor/N07-live-monitor`
+  (+`@2x`/`@2x-end`).
+- **R-1004 (S04) documented, not duplicated**: `setup-verified/S04-input` (pre-existing) already lands
+  cold on `SetupStep.INPUT` and always calls the real `InputRouteEnumerator.list()` — the reachable
+  point for the still-open ask (a ColorOS device dump against logcat tag `InputRouteEnumerator`); the
+  scenario catalogue row now says so explicitly rather than adding a second, functionally identical
+  step.
+
+**Verified:**
+- `./gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.settings.*' --tests 'org.ort.app.fieldreport.*' --tests 'org.ort.app.debug.*' -PortAllowMissingBundledAssets=true` — green (400+ tests).
+- `./gradlew ":app:smokeTestDebugUnitTest" ":app:lintDebug" dependencyRules platformGuards ":app:assembleDebug" -PortAllowMissingBundledAssets=true` — green.
+- `./gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue` — green (10m10s).
+- `./gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — OK, all 8 checks pass.
+- `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (separate invocations) — 260/466 covered, up to date.
+- Every new/changed behaviour proven discriminating: production change reverted to `HEAD`, the new
+  test(s) shown to fail for the right reason (compile error for the two removed symbols;
+  `require()` throw for the unknown scenario name; `AssertionError` for the unattached window),
+  then restored and shown to pass. Full transcripts in this round's own session report.
+
+**Left open / not done:**
+- `TourAccessibilityTap`'s own new-capability tests (`TourAccessibilityTapTest`) have no prior
+  baseline to revert to — discrimination shown instead via three internal cases (tapped, not-found,
+  never-matches-a-non-clickable-node-with-the-same-text).
+- `SettingsContentExportAndDebugDumpTest`'s two Robolectric+Compose cases were observed flaky once in
+  isolation (a `CalledFromWrongThreadException`/`ArrayIndexOutOfBoundsException` pair from a
+  background coroutine) and passed on every other run, including inside the full scoped suite and
+  the full gate — the same class of Robolectric+Compose test-isolation fragility `SetupActivityTest`'s
+  and `ReaderActivityTest`'s own doc comments already document for this codebase, not a defect in the
+  production wiring (proven correct by the revert/restore pair above).
+- The tour itself was not run (device/emulator captures are the lead's own territory this round;
+  `tools\ui-audit\tour.ps1 -Port <n> -Only "overnight-live-monitor/*"` is the scoped re-capture the
+  lead can run to close R-1007's own register row).
+- R-1004's own hardware question (does ColorOS actually report duplicate `AudioDeviceInfo` entries)
+  is unresolved by this round on principle — it needs the reference device, not a build fix.
+- Commit hash filled in by the changelog-completion commit, per this file's own convention.
+
+---
+
 ## 2026-09-12 (WPX: R-1009 — real ADIF/CSV/JSON/text export and the debug dump; R-1020 — Settings stops over-claiming rig verification)
 
 ### b524133d — the log finally leaves the device: real export writers, a debug dump, and Settings' own over-claimed "verified" fixed

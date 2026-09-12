@@ -96,6 +96,10 @@
     { "id": "rig-lost/capture-toast-rig", "scenario": "rig-lost", "destination": "CAPTURE", "override": "rig-reconnected" },
     { "id": "storage-warn/capture-toast-storage", "scenario": "storage-warn", "destination": "CAPTURE", "override": "storage-fine" },
 
+    { "id": "overnight-live-monitor/N07-live-monitor", "scenario": "overnight-live-monitor", "destination": "CAPTURE", "drillIn": { "tapLiveBar": "true" } },
+    { "id": "overnight-live-monitor/N07-live-monitor@2x", "scenario": "overnight-live-monitor", "destination": "CAPTURE", "drillIn": { "tapLiveBar": "true" }, "fontScale": 2.0 },
+    { "id": "overnight-live-monitor/N07-live-monitor@2x-end", "scenario": "overnight-live-monitor", "destination": "CAPTURE", "drillIn": { "tapLiveBar": "true" }, "fontScale": 2.0, "scroll": "end" },
+
     { "id": "field-tier1/R01-improve", "scenario": "field-tier1", "destination": "IMPROVE_RECORDS" },
     { "id": "overnight/R01-improve", "scenario": "overnight", "destination": "IMPROVE_RECORDS" },
 
