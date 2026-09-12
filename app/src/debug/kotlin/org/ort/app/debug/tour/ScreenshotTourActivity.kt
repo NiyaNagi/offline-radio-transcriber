@@ -285,7 +285,17 @@ public class ScreenshotTourActivity : ComponentActivity() {
             awaitLiveBarTagPresent(step.id)
             val tapped = TourAccessibilityTap.tapNodeWithTestTag(window.decorView, LIVE_BAR_TEST_TAG)
             if (tapped != TourAccessibilityTap.TapOutcome.Tapped) {
-                error("tour step '${step.id}' could not find a clickable node tagged '$LIVE_BAR_TEST_TAG' to tap")
+                // R-1025: the presence wait above already proved a node tagged `LIVE_BAR_TEST_TAG`
+                // exists — this failure means no *clickable* node was found inside its bounds at the
+                // moment of the tap, the one fact `describeNodes` exists to carry off-device (see its
+                // own doc comment): the tagged node's own resolved bounds, and every resource-named
+                // or clickable node's own bounds/clickability/containment, landing in this step's own
+                // manifest.json entry rather than requiring a separate logcat capture.
+                val dump = TourAccessibilityTap.describeNodes(window.decorView, LIVE_BAR_TEST_TAG)
+                error(
+                    "tour step '${step.id}' could not find a clickable node tagged '$LIVE_BAR_TEST_TAG' to tap " +
+                        "(fontScale=${step.fontScale})\n$dump",
+                )
             }
             awaitLiveMonitorVisible(step.id)
         }

@@ -1,5 +1,6 @@
 package org.ort.app.ui.settings
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,13 +14,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import org.ort.app.export.ExportCoordinator
+import org.ort.app.export.ExportCountPreview
 import org.ort.app.export.ExportFileFormat
 import org.ort.app.export.ExportRequest
 import org.ort.app.export.ExportRequestScope
@@ -75,6 +80,17 @@ private fun ExportScope.toRequestScope(): ExportRequestScope = when (this) {
  * interactive include beyond scope and format — [org.ort.app.export.ExportRequest
  * .includeTranscripts] genuinely strips transcript text (and its model provenance alongside it)
  * when unchecked.
+ *
+ * [previewCount] (R-1035, register — the operator's own device: an ADIF export "wrote a header
+ * and zero QSO records," correct per FR-EXP-4 and honest about why, but discovered only *after*
+ * the write): recomputed, reactively, for the exact [ExportRequest] `Save file` would use, every
+ * time [scope]/[format]/`includeTranscripts` changes — [ExportFooter] renders its
+ * [ExportCountPreview] *before* the write, never a separate estimate (this parameter is the same
+ * function [onSaveFile]'s own real caller eventually writes with — [ExportCoordinator.previewCount]
+ * itself states why the same producer must answer both). Defaults to the real
+ * [ExportCoordinator.previewCount] so every existing caller keeps compiling and now genuinely
+ * shows the real count with no wiring change of its own; a test injects a behavioural fake instead
+ * of a real `Context`-backed Room read (this module's own `SettingsExportScreenTest`).
  */
 @Composable
 public fun SettingsExportScreen(
@@ -82,10 +98,47 @@ public fun SettingsExportScreen(
     onBack: () -> Unit,
     onSaveFile: (ExportRequest) -> Unit = {},
     modifier: Modifier = Modifier,
+    previewCount: suspend (Context, ExportRequest) -> ExportCountPreview = ExportCoordinator::previewCount,
 ) {
     var scope by remember { mutableStateOf(ExportScope.TONIGHT) }
     var format by remember { mutableStateOf(ExportFileFormat.ADIF) }
     var includeTranscripts by remember { mutableStateOf(true) }
+    // R-1035: `null` exactly while a freshly-selected combination's own preview has not resolved
+    // yet, while `RANGE` is selected (no [ExportRequestScope] exists for it —
+    // [ExportScope.toRequestScope]'s own kdoc — so no request, and no preview, is ever built for
+    // it), or while [previewCount] itself failed — found running the real tour against the real
+    // `overnight` scenario while verifying this fix: [ExportCoordinator.previewCount]'s own real
+    // read can throw on data this build can apparently produce (`IllegalArgumentException:
+    // CONFIRMED transmission ... has no resolvable callsign`, `ExportCoordinator
+    // .toExportAttribution`, outside this file's own ownership — flagged separately, not fixed
+    // here). Before this round, this screen never called [previewCount] at all, so merely opening
+    // it could never crash on that data; a diagnostic preview must not turn a read-only screen
+    // into a new crash surface — `runCatching` treats a failure the same honest way a
+    // `notMeasuredReason` elsewhere in this codebase treats an absent signal: nothing shown, never
+    // a crash and never a fabricated count (constitution I).
+    var preview by remember { mutableStateOf<ExportCountPreview?>(null) }
+    val context = LocalContext.current
+
+    LaunchedEffect(scope, format, includeTranscripts) {
+        preview = if (scope == ExportScope.RANGE) {
+            null
+        } else {
+            runCatching {
+                previewCount(
+                    context,
+                    ExportRequest(
+                        scope = scope.toRequestScope(),
+                        format = format,
+                        includeTranscripts = includeTranscripts,
+                    ),
+                )
+            }.onFailure {
+                // Logged, never silent (constitution: never delete/drop a real failure quietly) —
+                // this is exactly the on-device failure this file's own doc comment names.
+                android.util.Log.w("SettingsExportScreen", "previewCount failed; showing no preview", it)
+            }.getOrNull()
+        }
+    }
 
     Column(
         modifier = modifier
@@ -117,6 +170,8 @@ public fun SettingsExportScreen(
 
             ExportFooter(
                 scope = scope,
+                preview = preview,
+                format = format,
                 onSaveFile = {
                     onSaveFile(
                         ExportRequest(
@@ -231,8 +286,9 @@ private fun ExportFormatSection(format: ExportFileFormat, onFormatChange: (Expor
     )
 }
 
-/** The promise banner, the `RANGE`-only honest `FailedState`, and the real `Save file` button —
- * split out of [SettingsExportScreen] purely to keep that function under detekt's length limit.
+/** The promise banner, the `RANGE`-only honest `FailedState`, the R-1035 count preview, and the
+ * real `Save file` button — split out of [SettingsExportScreen] purely to keep that function under
+ * detekt's length limit.
  *
  * R-135 (round 4, System validator): the promise banner names what would leave the device through
  * export — a fact true regardless of which scope is selected — so it shows unconditionally, not
@@ -241,9 +297,18 @@ private fun ExportFormatSection(format: ExportFileFormat, onFormatChange: (Expor
  * Register R-1009 (WPX): the "Export is not available in this build" `FailedState` used to show
  * unconditionally, because no exporter existed at all. One now does — the `FailedState` shows only
  * while [scope] is `ExportScope.RANGE` (the one scope with no real query behind it, [ExportScope]'s
- * own kdoc), and `Save file` calls [onSaveFile] and is enabled for the other two. */
+ * own kdoc), and `Save file` calls [onSaveFile] and is enabled for the other two.
+ *
+ * R-1035: [preview] renders between the `FailedState` and the button — `null` (still loading, or
+ * `RANGE`) shows nothing rather than a fabricated count. */
 @Composable
-private fun ExportFooter(scope: ExportScope, onSaveFile: () -> Unit, modifier: Modifier = Modifier) {
+private fun ExportFooter(
+    scope: ExportScope,
+    preview: ExportCountPreview?,
+    format: ExportFileFormat,
+    onSaveFile: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(modifier = modifier) {
         Row(
             modifier = Modifier
@@ -274,6 +339,8 @@ private fun ExportFooter(scope: ExportScope, onSaveFile: () -> Unit, modifier: M
                     "session-by-session record.",
                 modifier = Modifier.padding(top = OrtSpacing.md),
             )
+        } else {
+            ExportPreviewRow(preview = preview, format = format, modifier = Modifier.padding(top = OrtSpacing.md))
         }
 
         PrimaryButton(
@@ -283,4 +350,67 @@ private fun ExportFooter(scope: ExportScope, onSaveFile: () -> Unit, modifier: M
             modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.md, bottom = OrtSpacing.lg),
         )
     }
+}
+
+/**
+ * **R-1035** (register): shows how many of [ExportCountPreview.totalCount] records would actually
+ * become a record a reader sees — [ExportCountPreview.exportableCount], and why the rest would
+ * not — *before* `Save file` is pressed, from [ExportCoordinator.previewCount] itself, never a
+ * second, independently-scoped estimate. `null` renders nothing (still loading — constitution I:
+ * never a fabricated count).
+ *
+ * Built from several small `Text` runs, not one interpolated sentence, so every count is its own
+ * separately tagged, independently-queryable node (`export-preview-exportable`/`-total`/
+ * `-excluded`) — a test asserts the real `Int`s this row is built from directly, never the
+ * surrounding wording (" of ", " as QSOs · ", [exclusionReasonWord]'s own phrase) — constitution
+ * II: a caption's prose is not something a test may lock a designer's copy to, only the facts it
+ * reports.
+ */
+@Composable
+private fun ExportPreviewRow(preview: ExportCountPreview?, format: ExportFileFormat, modifier: Modifier = Modifier) {
+    if (preview == null) return
+    val dimColor = OrtColors.textDim
+    val flagColor = OrtColors.accentAmberDim
+    Row(modifier = modifier.fillMaxWidth().testTag("export-preview")) {
+        if (preview.totalCount == 0) {
+            Text(text = "Nothing to export for this scope.", style = OrtType.subLine, color = dimColor)
+        } else {
+            Text(
+                text = "${preview.exportableCount}",
+                style = OrtType.subLine,
+                color = dimColor,
+                modifier = Modifier.testTag("export-preview-exportable"),
+            )
+            Text(text = " of ", style = OrtType.subLine, color = dimColor)
+            Text(
+                text = "${preview.totalCount}",
+                style = OrtType.subLine,
+                color = dimColor,
+                modifier = Modifier.testTag("export-preview-total"),
+            )
+            if (preview.excludedCount == 0) {
+                Text(text = " will be exported.", style = OrtType.subLine, color = dimColor)
+            } else {
+                Text(text = " as QSOs · ", style = OrtType.subLine, color = dimColor)
+                Text(
+                    text = "${preview.excludedCount}",
+                    style = OrtType.subLine,
+                    color = flagColor,
+                    modifier = Modifier.testTag("export-preview-excluded"),
+                )
+                Text(text = " ${exclusionReasonWord(format)}", style = OrtType.subLine, color = flagColor)
+            }
+        }
+    }
+}
+
+/**
+ * **R-1035**: honest about a format's own real limits — only [ExportFileFormat.ADIF] ever excludes
+ * a record at all (`AdifExportWriter`'s own `<EOR>` gate, [ExportCountPreview]'s own kdoc). Never
+ * asserted directly by a test ([ExportPreviewRow]'s own doc comment) — a designer may rephrase
+ * this word at any time without breaking test coverage of the counts it qualifies.
+ */
+private fun exclusionReasonWord(format: ExportFileFormat): String = when (format) {
+    ExportFileFormat.ADIF -> "have no identified station"
+    ExportFileFormat.CSV, ExportFileFormat.JSON, ExportFileFormat.TEXT -> "are excluded"
 }

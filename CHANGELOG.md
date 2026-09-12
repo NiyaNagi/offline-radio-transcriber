@@ -34,7 +34,120 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPDUMP: a single local-save checklist replaces `Preview`/`Save bundle`/`Save debug dump`; R-1035 — the ADIF export states its exportable count before the write)
 
-### 372368ae — WPDUMP: one Save button, twelve checkboxes, everything the operator could only get by saving three separate files before; R-1035's export count
+### (pending — recorded in a follow-up commit) — WPPOL: R-1025 the tour's live-bar tap tolerates real touch-target padding; R-1026 reuses `levelBarColorFor` on the live monitor's envelope; R-1027 the level caption stacks past 1.5x; R-1035 wires the export screen to the real count preview
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/LiveMonitorScreen.kt`;
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt`;
+`app/src/debug/kotlin/org/ort/app/debug/tour/{ScreenshotTourActivity,TourAccessibilityTap}.kt`;
+matching tests under `app/src/test/kotlin/org/ort/app/{ui/screens,ui/settings,debug/tour}/**`.
+
+**Requirements/ACs:** R-1025, R-1026, R-1027, R-1035 (register); design guide §8 (amber reserved
+for anomalies); FR-A11Y-3/AC-63 (the 2.0-ceiling stacking family, R-874/R-980); FR-EXP-4
+(attribution state travels with every callsign — `ExportCountPreview.exportableCount` is the same
+producer `Save file` itself writes with, never a second estimate); constitution I (never a
+fabricated count; a failed preview is an absent signal, never a crash); constitution VIII (the
+tour's own re-verification, evidence below).
+
+**What changed:**
+- **R-1025 (process, blocking every capture of the reworked screens).**
+  `overnight-live-monitor/N07-live-monitor`'s own font-scale-1.0 step failed every run with
+  *"could not find a clickable node tagged 'live-bar' to tap"* while its 2.0 siblings always
+  succeeded. Instrumented `TourAccessibilityTap` with `describeNodes` (dumps a tagged node's own
+  resolved bounds plus every resource-named/clickable node's bounds and containment) and wired it
+  into `ScreenshotTourActivity`'s own tap-failure error message. A real device run
+  (`tools\ui-audit\tour.ps1 -Only "overnight-live-monitor/*"`) produced the actual evidence: the
+  tagged `live-bar` Column measured `Rect(0, 2564, 1260, 2709)`; its own clickable Row
+  (`capture-status-livebar`) measured `Rect(0, 2560, 1260, 2709)` — 4px taller at its own top edge
+  than the Column that visually contains it. Root cause: Android's accessibility delegate pads a
+  clickable node's *reported* bounds to the platform's 48dp minimum touch target when its real
+  layout height is smaller (`LiveBar`'s Row is a deliberate 44dp), and the bar sits flush against
+  the screen's bottom edge with no room to expand downward, so the whole deficit is pushed upward
+  past the tagged Column's own top edge — real, correct on-device geometry that the previous
+  `Rect.contains()` check rejected. At 2.0 the Row's own real text height already clears 48dp, no
+  padding is added, and `contains()` happened to hold, which is why this was font-scale-dependent
+  and not the Activity-recreation or settle-timing races already ruled out. Fix:
+  `TourAccessibilityTap.boundsMatchTag` replaces `Rect.contains()` with `Rect.intersects()` —
+  real, non-trivial overlap, not strict containment.
+- **R-1026 (design).** `LiveMonitorScreen`'s `LevelEnvelopeChart` hand-rolled a 3-way band (bright
+  green at/above the target band, a fixed mid-green inside it, `OrtColors.meterWarn` — amber — for
+  everything quieter), which rendered nearly every bar amber on a genuine overnight envelope
+  (ordinary speech sits roughly -40 to -15 dBFS, almost entirely below the band's own -18 dBFS
+  floor). `levelBarColorFor` (`ui/setup/LevelScreen.kt`, R-944) already fixed the identical defect
+  on S07 and is `internal` — reachable from `ui/screens` without a move, confirmed by using it
+  directly (`liveMonitorLevelBarColor`, this file) rather than reimplementing the banding.
+  `ui/components/**` needed no change.
+- **R-1027 (design).** `LevelCardCaption`'s left caption
+  (`"-14 dBFS · floor -58 dBFS · 14 dB headroom"`) wraps to multiple lines at font scale 2.0 while
+  the right-aligned band label (`"in the band"`) stayed pinned to line one, in the same top-aligned
+  `Row` — reading as one broken sentence. Past `LARGE_FONT_SCALE_THRESHOLD` (1.5x, the same figure
+  `ui/setup/LevelScreen.kt`'s own `LevelFooterFacts` already established for this screen's sibling
+  meter), the band label now stacks below the caption in a `Column` instead of beside it in a
+  `Row`; below the threshold, nothing changes.
+- **R-1035 (polish).** `ExportCoordinator.previewCount` (merged `7f6cc17a`, tested) existed but
+  `SettingsExportScreen` never called it — an ADIF export could still write a header and zero QSO
+  records with no warning before the write. `SettingsExportScreen` now takes an injectable
+  `previewCount: suspend (Context, ExportRequest) -> ExportCountPreview` (defaults to the real
+  `ExportCoordinator::previewCount`, so no other file needed to change), recomputed reactively
+  whenever scope/format/includeTranscripts changes, rendered as several small tagged `Text` runs
+  (`export-preview-exportable`/`-total`/`-excluded`) rather than one interpolated sentence, so a
+  test asserts the real counts directly, never the surrounding prose. Found running the real tour
+  against the real `overnight` scenario while verifying this fix (not by inspection): the real
+  `previewCount` can throw — `IllegalArgumentException: CONFIRMED transmission ... has no
+  resolvable callsign` (`ExportCoordinator.toExportAttribution`) — for data this build can
+  apparently produce; before this round the screen never called `previewCount` at all, so merely
+  opening it could never crash on that data. `runCatching` (logged, never silent) treats a failed
+  preview as absent, never a crash — the underlying data-integrity defect is real and is flagged
+  separately (out of this row's ownership: `app/src/main/kotlin/org/ort/app/export/**`).
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest` — full suite green (`BUILD SUCCESSFUL`), including every new
+  test below.
+- Every fix has a discriminating test, proven both directions (revert → fail for the right reason
+  → restore → pass): `TourAccessibilityTapTest`'s `R_1025` cases (`describeNodes`,
+  `boundsMatchTag` — asserted directly against the real on-device `Rect`s captured above);
+  `LiveMonitorScreenTest`'s `R_1026` cases (grey/green-ramp/red, never amber, across the whole real
+  -60..0 dBFS range) and `R_1027` cases (390dp/480dp × 1.0/2.0, `@GraphicsMode(NATIVE)`, asserting
+  the caption's and band label's real measured vertical ranges never overlap once stacked, and do
+  share a row at 1.0 — the 1.0 cases are real regression coverage, not expected to discriminate
+  this specific wrap-collision defect, matching this file's own `R_1023` precedent);
+  `SettingsExportScreenTest`'s `R_1035` cases (the exact request `previewCount` is asked for on
+  every scope/format/transcripts change; that `Save file` always writes the same request the
+  operator was last shown a preview for; the real counts reaching their own tagged nodes; a
+  throwing `previewCount` never crashing the screen).
+- Real device (`emulator-5558`, `ort_audit_3`): `tools\ui-audit\install.ps1 -Port 5558 -Clear
+  -PortAllowMissingBundledAssets:$true` then `tools\ui-audit\tour.ps1 -Port 5558 -Only
+  "overnight-live-monitor/*"` — all three steps (1.0, `@2x`, `@2x-end`) now capture (3 ok, 0
+  errors; before the fix, the 1.0 step failed identically on four separate runs). Captures
+  compared against `design/canvas/Live-Monitor.dc.html` by eye: the 1.0 envelope now reads green
+  through the nominal band with no amber; the 2.0 capture shows the caption wrapped to two lines
+  with `"in the band"` on its own line below, no longer sharing a line with the caption's first
+  line. `tools\ui-audit\tour.ps1 -Port 5558 -Only "overnight/CF07-settings-export"` captures
+  cleanly (1 ok, 0 errors; previously crashed the app outright before the `runCatching` fix) —
+  `adb logcat` confirms the caught `previewCount` failure is logged
+  (`SettingsExportScreen: previewCount failed; showing no preview`), not silent, and the screen
+  renders correctly with no preview row shown (the honest "absent" state) rather than a fabricated
+  or crashed one. Screenshots are scratch captures only (`%TEMP%`), never written to
+  `results/ui-audit/` (that directory is reserved for the full canonical tour).
+- `:app:smokeTestDebugUnitTest :app:lintDebug dependencyRules platformGuards :app:assembleDebug`,
+  `dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`,
+  `-p buildSrc test`, `python tools\spec-check\spec_check.py`, `coverageMatrix` and
+  `coverageMatrixCheck` (separate invocations) — see this session's own report for the exact
+  results of each.
+
+**Left open / not done:**
+- The `ExportCoordinator.toExportAttribution` crash found while verifying R-1035 on-device is a
+  real, separate data-integrity defect (a `CONFIRMED` transmission with no resolvable callsign) in
+  a file this row does not own (`app/src/main/kotlin/org/ort/app/export/ExportCoordinator.kt`) —
+  flagged for a follow-up session rather than fixed here; `Settings-Export`'s own real `Save file`
+  write path reads the identical records and would hit the same crash for any operator data shaped
+  this way, not only the `overnight` debug scenario.
+- `overnight/CF07-settings-export` has no font-scale-2.0 tour step defined in `tools/ui-audit/tour.json`
+  at all (only one, default-scale, step exists for this screen) — a pre-existing gap this row's
+  own change did not introduce and did not add a step to close, since `tour.json` covers screens
+  well beyond this row's four register rows; noted for whoever next re-scopes that screen's own
+  tour coverage.
+- The on-device visual comparison against the artboards was done by eye (no `diff.py` pixel
+  comparison run), since these are scratch captures, not a canonical tour pass.
 
 **Scope:** `app/src/main/kotlin/org/ort/app/diagnostics/localsave/**` (new);
 `app/src/main/kotlin/org/ort/app/fieldreport/bundle/FieldReportBundleBuilder.kt` (visibility only);
