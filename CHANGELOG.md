@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (constitution 1.3.0: the field-report channel — D37, D38)
 
-### <pending> — spec/constitution amendment: field-report channel (D37), audio/voiceprints in a field report under a public-destination guard (D38)
+### 64d37921 — spec/constitution amendment: field-report channel (D37), audio/voiceprints in a field report under a public-destination guard (D38)
 
 **Scope:** `spec/functional-spec.md`, `spec/open-questions.md`, `.specify/memory/constitution.md`,
 `AGENTS.md`, this file. Specification and governance prose only — no product, build or test code
