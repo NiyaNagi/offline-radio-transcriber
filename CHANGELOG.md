@@ -32,6 +32,80 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (register R-808 close-out: the three named :pipeline files converted or documented case by case)
+
+### (pending) — RigSupervisorTest and RigSupervisorRealTransportTest fully converted; RigLinkBridgeTest converted case by case, two left on real dispatchers with a comment
+
+**Scope:** `pipeline/src/test/kotlin/org/ort/pipeline/rig/{RigSupervisorTest,RigSupervisorRealTransportTest,RigLinkBridgeTest}.kt`.
+
+**Requirements/ACs:** R-808, FR-RIG-1, FR-RIG-2, FR-RIG-3, FR-RIG-6, FR-RIG-7, FR-RIG-8, FR-RIG-9,
+FR-RIG-11, FR-RIG-13, FR-RIG-14, FR-RIG-15, D23, F9, FR-CAP-5, F23.
+
+**What changed:** *Constitution check.* II (finishing the class this register item named: every
+remaining real-time race in `:pipeline`'s own rig tests, or an honest, commented reason it stays
+real). All three files reported last round are addressed this round, closing the shape out of
+`:pipeline` before CI could surface it under a different test name.
+
+1. **`RigSupervisorTest.kt`** — all twelve `runBlocking` cases converted to `runTest`, each with its
+   own `RigSupervisor` built on a fresh `CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher
+   (testScheduler))` passed explicitly to `newSupervisor`'s new `scope` parameter (the class-level
+   `scope` field, still real `Dispatchers.Default`, stays the default for the four cases that never
+   await anything async — `FR_RIG_2`, "an unknown rig id...", `FR_RIG_8`, `FR_RIG_9` — which carried
+   no race to begin with). `RigSupervisor` forwards that same scope straight through to the
+   `DescriptorRigModule` it builds internally and to its own `observeJob`, so one virtual clock now
+   drives every coroutine on both sides, exactly as already proven in `:rig`'s own
+   `DescriptorRigModuleTest`. **Found and fixed a genuine hang while converting**: `readJob`/
+   `pollJob` are `while (true)` loops that never naturally quiesce, and `runTest` requires every
+   coroutine sharing its `testScheduler` to reach that state before the test can finish — the
+   pre-existing pattern of cleaning up only via the class-level `@AfterEach` (which runs *after*
+   `runTest`'s own body returns, too late) made `runTest`'s advance-to-idle spin forever trying to
+   reach a state that loop was never going to produce unassisted, reproduced as a genuine multi-
+   minute 100%-CPU hang in a real test-executor JVM (confirmed by process inspection, not inferred).
+   Fixed by having every converted case call `supervisor.disconnect()` itself, inside its own
+   `try`/`finally`, before its `runTest` block ends — `@AfterEach` stays as a harmless backstop.
+2. **`RigSupervisorRealTransportTest.kt`** — both cases (against the real `UsbSerialTransport`/
+   `BluetoothSppTransport`, not `:rig`'s bare fake) converted the same way, plus each real transport
+   class's own `dispatcher` constructor parameter set to `StandardTestDispatcher(testScheduler)` —
+   the same choice `:rig-usb`'s own `UsbSerialTransportTest` already makes for that exact class —
+   so the transport's own internal reconnect-supervisor loop shares the identical virtual clock.
+   The now-unused class-level `scope`/`Dispatchers`/`Job` were removed rather than left as dead
+   weight. Same disconnect-before-runTest-ends fix applied, since these transports each run their
+   own internal `while (true)` supervisor loop that only quiesces on `close()`.
+3. **`RigLinkBridgeTest.kt`, read case by case**: the three cases that never open a real transport
+   at all (capture-running refusal, the fake-transport happy path, the unknown-rig-id failure) are
+   "about a value or state" and converted to `runTest` with `DefaultRigLinkBridge`'s own
+   `moduleScope` on `UnconfinedTestDispatcher(testScheduler)`. The other two — Bluetooth permission
+   denial and a USB detach before any reply — hold a **real** `BluetoothSppTransport`/
+   `UsbSerialTransport` on its own dedicated real OS thread, deliberately isolated from
+   `DescriptorRigModule`'s own scope (left on production's real `Dispatchers.Default`); their own
+   pre-existing comments already explain this is to avoid exactly the busy-spin-starvation shape
+   `:rig`'s own guard test proves against, and the USB case additionally depends on a genuine race
+   between the transport's real background connect coroutine and this test's own detach — both are
+   real-thread properties, not values, and stay on `runBlocking` with a comment now naming this
+   round's decision explicitly.
+
+**Verified:** `RigSupervisorTest` + `RigSupervisorRealTransportTest` (both fully converted) run
+together 5 times in a row via `--rerun` — green every time, ~5s each. `RigLinkBridgeTest` run alone
+5 times — green every time (its own two real-dispatcher cases carry a small pre-existing,
+self-documented flake risk — "the wide timeout... is the honest cost of depending on that pool's
+own scheduling under a busy build machine" — observed twice in 7 runs of the three files together
+under this session's own machine load, never when run alone; unrelated to this round's conversions
+and left as-is per instruction, since forcing it deterministic would defeat what it tests). All
+three files together run once more under full CPU saturation (every core pinned via deliberate
+PowerShell background spin-loops) — green. Full `:pipeline:testDebugUnitTest` — green. Full gate —
+`./gradlew -PortAllowMissingBundledAssets=true build dependencyRules platformGuards` (`-x
+smokeTestDebugUnitTest`, the separately-reported pre-existing unrelated flake), `-p buildSrc test`,
+`spec_check.py`, `coverageMatrix`/`coverageMatrixCheck` (two invocations) — all green, 241/450
+covered, unchanged.
+
+**Left open / not done:** the two `RigLinkBridgeTest` cases named above stay on real dispatchers by
+design — not a gap, a deliberate choice for a genuine real-thread property. The occasional real-
+scheduling flake observed on `no Bluetooth permission reports NoPermission...` when run alongside
+the other two files (2 failures in 7 combined runs, 0 in 5 solo runs) is pre-existing, self-
+documented in that test's own comment, and out of this round's scope to chase further.
+
+---
+
 ## 2026-09-11 (WPG follow-up: CI red on a fresh checkout — fetchBundledAssets never reached test's task graph)
 
 ### b3fcec14 — merge*Assets now depends on fetchBundledAssets, so tests and the app see the same packaged set

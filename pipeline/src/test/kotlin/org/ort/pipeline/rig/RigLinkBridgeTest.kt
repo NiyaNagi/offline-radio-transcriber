@@ -1,12 +1,18 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package org.ort.pipeline.rig
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -86,12 +92,13 @@ public class RigLinkBridgeTest {
 
     @Test
     @Requirement("FR-RIG-13")
-    public fun `capture running refuses the probe with Failed, before anything is opened`() = runBlocking {
+    public fun `capture running refuses the probe with Failed, before anything is opened`() = runTest {
         CaptureState.capturing("SESSION-LIVE")
         val bridge = DefaultRigLinkBridge(
             context = context,
             transportFactory = RigTransportFactory { _, _, _ -> FakeRigTransport() },
             catalogue = { id -> if (id == TEST_RIG_ID) pushDescriptor("usb_serial") else null },
+            moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
 
         val states = withTimeout(2_000) {
@@ -108,12 +115,13 @@ public class RigLinkBridgeTest {
 
     @Test
     @Requirement("FR-RIG-3")
-    public fun `happy path over a fake RigTransport reaches Verified with the declared capabilities`() = runBlocking {
+    public fun `happy path over a fake RigTransport reaches Verified with the declared capabilities`() = runTest {
         val transport = FakeRigTransport()
         val bridge = DefaultRigLinkBridge(
             context = context,
             transportFactory = RigTransportFactory { _, _, _ -> transport },
             catalogue = { id -> if (id == TEST_RIG_ID) pushDescriptor("usb_serial") else null },
+            moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
 
         val states = withTimeout(2_000) {
@@ -135,11 +143,12 @@ public class RigLinkBridgeTest {
 
     @Test
     @Requirement("FR-RIG-3")
-    public fun `an unknown rig id fails, naming both the requested rig id and the transport`() = runBlocking {
+    public fun `an unknown rig id fails, naming both the requested rig id and the transport`() = runTest {
         val bridge = DefaultRigLinkBridge(
             context = context,
             transportFactory = RigTransportFactory { _, _, _ -> FakeRigTransport() },
             catalogue = { null },
+            moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
 
         val failed = withTimeout(2_000) {
@@ -151,6 +160,14 @@ public class RigLinkBridgeTest {
         assertTrue("must name the requested transport: ${failed.reason}", failed.reason.contains("USB_SERIAL"))
     }
 
+    // Register R-808 follow-up: deliberately NOT converted to runTest/UnconfinedTestDispatcher,
+    // unlike the three cases above. This case and the USB detach case below each hold a real
+    // transport (BluetoothSppTransport/UsbSerialTransport) whose own internal reconnect loop runs
+    // genuinely concurrently with this test on a real OS thread -- the whole point of each test is
+    // that real-thread property (a busy-spin-starvation risk here; a genuine connect-vs-detach race
+    // below), which an unconfined test dispatcher's eager, single-threaded interleaving would
+    // either mask or trivially reorder, proving nothing. Both stay on runBlocking with real
+    // dispatchers, exactly as `:rig`'s own busy-spin guard test does for the same reason.
     @Test
     @Requirement("FR-CAP-5", "F23")
     public fun `no Bluetooth permission reports NoPermission, never Identified`() = runBlocking {
