@@ -19,7 +19,10 @@ import org.ort.core.Clock
 import org.ort.core.SystemClock
 import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
 import org.ort.rig.RigBand
+import org.ort.rig.RigCapability
+import org.ort.rig.RigHealthIssue
 import org.ort.rig.RigTransportKind
 import org.ort.rig.bluetooth.BluetoothReconnectBackoff
 import org.ort.rig.descriptor.CommandSpec
@@ -120,13 +123,29 @@ class RigSupervisorTest {
         descriptor: RigDescriptor = testDescriptor(),
         clock: Clock = SystemClock,
         scope: CoroutineScope = this.scope,
+        /** R-1015: `null` (the default) uses [RigSupervisor]'s own real, descriptor-derived bound —
+         * every case below relies on that real default resolving instantly against
+         * [kotlinx.coroutines.test.TestScope]'s virtual clock, exactly as `RigLinkBridgeTest`'s own
+         * R-1013/R-1014 cases do, since a real derived bound is stronger evidence than a fake tiny
+         * one would be. Overridable here only for a test that needs an explicit, tiny bound. */
+        healthStaleTimeoutMillisFor: ((RigDescriptor) -> Long)? = null,
     ): RigSupervisor {
-        val s = RigSupervisor(
-            transportFactory = RigTransportFactory { _, _, _ -> transport },
-            scope = scope,
-            clock = clock,
-            descriptorForId = { id -> if (id == TEST_RIG_ID) descriptor else null },
-        )
+        val s = if (healthStaleTimeoutMillisFor != null) {
+            RigSupervisor(
+                transportFactory = RigTransportFactory { _, _, _ -> transport },
+                scope = scope,
+                clock = clock,
+                descriptorForId = { id -> if (id == TEST_RIG_ID) descriptor else null },
+                healthStaleTimeoutMillisFor = healthStaleTimeoutMillisFor,
+            )
+        } else {
+            RigSupervisor(
+                transportFactory = RigTransportFactory { _, _, _ -> transport },
+                scope = scope,
+                clock = clock,
+                descriptorForId = { id -> if (id == TEST_RIG_ID) descriptor else null },
+            )
+        }
         supervisor = s
         return s
     }
@@ -467,6 +486,193 @@ class RigSupervisorTest {
 
             val stale = awaitStale()
             assertEquals(BluetoothReconnectBackoff.delayMillisFor(1), stale.nextRetryInMillis)
+        } finally {
+            supervisor.disconnect()
+        }
+    }
+
+    // R-1015 (WPRIG2): RigSupervisor.connect() only ever watched observe(), never health() -- a
+    // transport that stays TransportState.Open but goes silent (the rig never answers again, but
+    // never itself reports Lost either) left RigStatus confidently Connected forever. These prove
+    // the fix reads DescriptorRigModule's own RigHealth.Degraded(TIMEOUT) -- already emitted,
+    // never read before this -- and declares Stale within a bounded, derived time, tagged
+    // distinctly from a genuine transport loss.
+
+    @Test
+    @Requirement("FR-RIG-15", "NFR-1a")
+    fun `R_1015 a transport that stays open and goes silent degrades to Stale within a bounded time, tagged TIMEOUT`() =
+        runTest {
+            val transport = FakeRigTransport()
+            val supervisor = newSupervisor(transport, descriptor = testDescriptor(), scope = freshUnconfinedScope())
+            try {
+                supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+                // An unsolicited push, not a scripted poll reply -- FakeRigTransport re-sends every
+                // scripted reply on each subsequent poll write(), which would keep "refreshing" the
+                // rig forever and never let it fall genuinely silent.
+                transport.pushUnsolicited("FQ0014250000")
+                awaitConnected()
+
+                // Nothing more ever arrives, and the transport itself never reports
+                // TransportState.Lost (still Open the whole time) -- DescriptorRigModule's own read
+                // loop just keeps timing out and retrying forever (its own comment: "retries
+                // forever"). Before this fix, RigStatus simply never moved again.
+                val stale = awaitStale(timeoutMs = 10_000_000L)
+                assertEquals(
+                    RigHealthIssue.TIMEOUT,
+                    stale.issue,
+                    "must be distinguishable from a transport-reported loss",
+                )
+                assertEquals(RigTransportKind.USB_SERIAL, stale.lastKnown.transportKind)
+                assertEquals(
+                    14_250_000L,
+                    stale.lastKnown.bands.first().frequencyHz,
+                    "the last known value is carried forward",
+                )
+                assertNull(
+                    stale.attempt,
+                    "no reconnect ladder is actually running under a transport that still believes it is open",
+                )
+                assertNull(stale.nextRetryInMillis)
+            } finally {
+                supervisor.disconnect()
+            }
+        }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_1015 the health-timeout stale bound is derived from the descriptor's own poll cadence, not hardcoded`() =
+        runTest {
+            // A descriptor with a ten-times-faster poll cadence must still reach the timeout-tagged
+            // Stale within a comfortably smaller virtual bound than testDescriptor's own 60s
+            // cadence would allow -- proving the bound is derived from the descriptor, not a fixed
+            // constant, the same discipline RigLinkBridge's own R-1013/R-1014 timeouts follow.
+            val fastPoll = testDescriptor().poll!!.copy(intervalMs = 100)
+            val fastDescriptor = testDescriptor().copy(poll = fastPoll)
+            val transport = FakeRigTransport()
+            val supervisor = newSupervisor(transport, descriptor = fastDescriptor, scope = freshUnconfinedScope())
+            try {
+                supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+                transport.pushUnsolicited("FQ0014250000")
+                awaitConnected()
+
+                // Comfortably less than testDescriptor()'s own 60_000ms poll interval alone would
+                // require for even a single cycle multiple -- a fixed constant sized for the slow
+                // descriptor would never fire this fast.
+                val stale = awaitStale(timeoutMs = 60_000L)
+                assertEquals(RigHealthIssue.TIMEOUT, stale.issue)
+            } finally {
+                supervisor.disconnect()
+            }
+        }
+
+    @Test
+    @Requirement("FR-RIG-7", "FR-RIG-15")
+    fun `R_1015 a genuinely lost transport is still tagged TRANSPORT_LOST, distinct from silence`() = runTest {
+        val transport = FakeRigTransport()
+        transport.scriptReply("FQ", "FQ0014250000")
+        val supervisor = newSupervisor(transport, scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+            awaitConnected()
+
+            transport.dropMidStream("cable pulled")
+
+            val stale = awaitStale()
+            assertEquals(RigHealthIssue.TRANSPORT_LOST, stale.issue)
+            assertEquals(1, stale.attempt, "the real reconnect ladder is running for a genuinely lost transport")
+        } finally {
+            supervisor.disconnect()
+        }
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_1015 recovering before the bound elapses never declares Stale from silence`() = runTest {
+        val fastPoll = testDescriptor().poll!!.copy(intervalMs = 100)
+        val fastDescriptor = testDescriptor().copy(poll = fastPoll)
+        val transport = FakeRigTransport()
+        val supervisor = newSupervisor(transport, descriptor = fastDescriptor, scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+            transport.pushUnsolicited("FQ0014250000")
+            awaitConnected()
+
+            // The rig speaks again well inside the bound -- a fresh RigState must cancel the
+            // pending health-timeout countdown, never leaving RigStatus stuck mid-flight.
+            transport.pushUnsolicited("FQ0014300000")
+            withTimeout(5_000) {
+                while ((RigStatus.state as? RigStatus.State.Connected)?.bands?.first()?.frequencyHz != 14_300_000L) {
+                    delay(10)
+                }
+            }
+            assertEquals(
+                RigStatus.State.Connected::class,
+                RigStatus.state::class,
+                "recovering before the bound elapses must never leave RigStatus Stale",
+            )
+        } finally {
+            supervisor.disconnect()
+        }
+    }
+
+    // R-1019 (WPRIG2): RigStatus.State.Connected must carry whether every declared capability has
+    // actually been observed, not just that a link opened -- ReadyScreen (S12) had no field to read
+    // this from at all before this.
+
+    @Test
+    @Requirement("FR-RIG-1")
+    fun `R_1019 every declared capability observed reports Full verification`() = runTest {
+        val transport = FakeRigTransport()
+        transport.scriptReply("FQ", "FQ0014250000")
+        val supervisor = newSupervisor(transport, scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+            val connected = awaitConnected()
+            // testDescriptor() declares only FREQUENCY for usb_serial -- FQ alone satisfies it.
+            assertEquals(RigVerification.Full, connected.verification)
+        } finally {
+            supervisor.disconnect()
+        }
+    }
+
+    @Test
+    @Requirement("FR-RIG-1")
+    fun `R_1019 a capability never observed reports Partial, naming exactly what is missing`() = runTest {
+        val descriptor = testDescriptor().copy(
+            transports = listOf(
+                TransportSpec(kind = "usb_serial", capabilities = listOf("FREQUENCY", "SIGNAL_STRENGTH")),
+            ),
+        )
+        val transport = FakeRigTransport()
+        transport.scriptReply("FQ", "FQ0014250000") // never reports SIGNAL_STRENGTH
+        val supervisor = newSupervisor(transport, descriptor = descriptor, scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+            val connected = awaitConnected()
+            assertEquals(RigVerification.Partial(setOf(RigCapability.SIGNAL_STRENGTH)), connected.verification)
+        } finally {
+            supervisor.disconnect()
+        }
+    }
+
+    @Test
+    @Requirement("FR-RIG-7")
+    fun `R_1019 a stale reading carries its verification forward unchanged`() = runTest {
+        val descriptor = testDescriptor().copy(
+            transports = listOf(
+                TransportSpec(kind = "usb_serial", capabilities = listOf("FREQUENCY", "SIGNAL_STRENGTH")),
+            ),
+        )
+        val transport = FakeRigTransport()
+        transport.scriptReply("FQ", "FQ0014250000")
+        val supervisor = newSupervisor(transport, descriptor = descriptor, scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+            awaitConnected()
+
+            transport.dropMidStream("cable pulled")
+            val stale = awaitStale()
+            assertEquals(RigVerification.Partial(setOf(RigCapability.SIGNAL_STRENGTH)), stale.lastKnown.verification)
         } finally {
             supervisor.disconnect()
         }

@@ -1,6 +1,50 @@
 package org.ort.pipeline.capture
 
+import org.ort.rig.RigCapability
+import org.ort.rig.RigHealthIssue
 import org.ort.rig.RigTransportKind
+
+/**
+ * R-1019 (WPRIG2): whether every capability the connected rig's descriptor declares for its
+ * transport has actually been *observed*, not merely that a link opened — the same fact
+ * [org.ort.pipeline.rig.RigLinkProbeState.Verified]/[org.ort.pipeline.rig.RigLinkProbeState
+ * .VerifyTimedOut] already establish at setup time (R-1013/R-1014), now carried into
+ * session-lifetime [RigStatus] too, because nothing did before this: `ReadyScreen` (S12) derived
+ * its wording from [RigStatus.State.Connected] alone, which had no field for the partial fact at
+ * all, so the last screen of setup said "verified" unconditionally — the same defect class as an
+ * attribution without its confidence state (constitution I).
+ *
+ * A closed set, not a boolean, for the same reason [org.ort.pipeline.rig.RigLinkProbeState] is:
+ * [Partial] must *name* what was never observed (S10b/S11's own wording — "identified, command
+ * set partially confirmed" — reused here, not reinvented), and [Unknown] is the honest state for
+ * a caller that never populated this at all, distinct from a caller that positively knows every
+ * capability was seen ([Full]). [RigStatus.State.Connected.verification] defaults to [Unknown]
+ * rather than [Full] specifically so a caller that forgets to state it can never silently claim
+ * "verified" by omission — the one direction constitution I forbids.
+ *
+ * **This is deliberately a data fact, not a rendering guarantee**: Kotlin cannot force a consumer
+ * that pattern-matches on [RigStatus.State.Connected] to also inspect [RigStatus.State.Connected
+ * .verification] before choosing its wording — that exhaustiveness has to live in the `:app` code
+ * that renders it (see this package's own report on `ReadyScreen`/`radioRowForCatRig`, the exact
+ * call site this fixes the data for). Making [RigStatus.State.Connected.verification] itself
+ * non-optional is what constitution I actually requires at the data layer; whether every consumer
+ * remembers to read it is the follow-up this report names precisely rather than assumes.
+ */
+public sealed interface RigVerification {
+    /** Every capability [org.ort.rig.RigModule.capabilities] declares for the active transport has
+     * been observed at least once this connection — the only state that may render "verified". */
+    public data object Full : RigVerification
+
+    /** [missingCapabilities] is exactly what has never been observed yet — never empty (an empty
+     * set is [Full], not [Partial]; enforced by [org.ort.pipeline.rig.RigSupervisor]'s own
+     * construction, not by this type, since a closed sealed interface cannot itself forbid an
+     * empty set without an `init` block this shared value type has no need to carry). */
+    public data class Partial(public val missingCapabilities: Set<RigCapability>) : RigVerification
+
+    /** No caller has stated this fact — the default, and the only honest reading for anything that
+     * predates R-1019. Never renders as "verified". */
+    public data object Unknown : RigVerification
+}
 
 /**
  * F9 (register R-104): the rig's (radio's) CAT-connection state, readable by the status surface —
@@ -43,6 +87,9 @@ public object RigStatus {
             /** The [org.ort.rig.descriptor.RigDescriptor.id] (or [org.ort.rig.NullRigModule.ID])
              * this reading came from. */
             public val descriptorId: String? = null,
+            /** R-1019 (WPRIG2): see [RigVerification]'s own kdoc for the fact this carries and why
+             * it defaults to [RigVerification.Unknown] rather than [RigVerification.Full]. */
+            public val verification: RigVerification = RigVerification.Unknown,
         ) : State
 
         /**
@@ -59,6 +106,23 @@ public object RigStatus {
             public val attempt: Int? = null,
             public val ofTotal: Int? = null,
             public val nextRetryInMillis: Long? = null,
+            /** R-1015 (WPRIG2): which [RigHealthIssue] this staleness reflects —
+             * [RigHealthIssue.TRANSPORT_LOST] when the transport itself reported the link gone
+             * (the original case, carrying [attempt]/[ofTotal]/[nextRetryInMillis] from the real
+             * reconnect ladder the transport is retrying on) and [RigHealthIssue.TIMEOUT] when the
+             * transport never reported anything wrong at all — it still believes it is open — but
+             * the rig has answered nothing for [org.ort.pipeline.rig.RigSupervisor]'s own bounded
+             * wait. No reconnect ladder runs underneath that second case (neither
+             * `UsbSerialTransport` nor `BluetoothSppTransport` has any reason to retry a link it
+             * still believes is open), so [attempt]/[ofTotal]/[nextRetryInMillis] stay `null`
+             * there rather than reporting a countdown that does not exist (constitution I: never
+             * assert more than is known). `null` only for a caller that predates R-1015 and never
+             * supplied one — reused vocabulary, not a parallel one: this is exactly
+             * [org.ort.rig.RigHealth.Degraded.issue], the signal
+             * [org.ort.rig.descriptor.DescriptorRigModule.health] already emitted and nothing read
+             * before this fix (see this package's own report).
+             */
+            public val issue: RigHealthIssue? = null,
         ) : State
     }
 
@@ -75,8 +139,9 @@ public object RigStatus {
         bands: List<BandState>,
         transportKind: RigTransportKind? = null,
         descriptorId: String? = null,
+        verification: RigVerification = RigVerification.Unknown,
     ) {
-        state = State.Connected(descriptor, bands, transportKind, descriptorId)
+        state = State.Connected(descriptor, bands, transportKind, descriptorId, verification)
     }
 
     public fun stale(
@@ -85,8 +150,9 @@ public object RigStatus {
         attempt: Int? = null,
         ofTotal: Int? = null,
         nextRetryInMillis: Long? = null,
+        issue: RigHealthIssue? = null,
     ) {
-        state = State.Stale(lastKnown, sinceMillis, attempt, ofTotal, nextRetryInMillis)
+        state = State.Stale(lastKnown, sinceMillis, attempt, ofTotal, nextRetryInMillis, issue)
     }
 
     public fun reset() {
