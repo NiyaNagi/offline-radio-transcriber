@@ -32,7 +32,110 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-12 (WPD3: R-1013/R-1014 — S10b/S11 render the two new terminal RigLinkState outcomes)
+## 2026-09-12 (WPRIG2: R-1015 — `RigSupervisor` reads `health()`, not just `observe()`, so a silent-but-open rig goes stale within a bounded time; R-1019 — `RigStatus` carries whether a rig link was fully verified)
+
+### PENDING-COMMIT-HASH — WPRIG2: RigSupervisor watches health() so a silent rig cannot stay confidently Connected forever; RigStatus.State.Connected carries RigVerification so S12 can stop over-claiming "verified"
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/rig/RigSupervisor.kt`,
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RigStatus.kt`, and tests under
+`pipeline/src/test/kotlin/org/ort/pipeline/{rig/RigSupervisorTest,capture/RigStatusTest}.kt`. No
+file under `app/**`, `rig/**`, `rig-usb/**`, `rig-bluetooth/**`, `data/**` touched (read only).
+
+**Requirements/ACs:** FR-RIG-7, FR-RIG-15, constitution I (Uncertainty Is Content — a partial or
+stale fact must carry its own confidence state, never be rendered as more certain than it is) and
+constitution IV (Capture Never Blocks, Never Drops, Never Lies — a stale rig must become
+*visibly* stale, and capture must keep running throughout). Register R-1015, R-1019.
+
+**What changed:**
+- **R-1015.** `RigSupervisor.connect()` built a `DescriptorRigModule` and watched only its
+  `observe()` `Flow<RigState>`, never its `health()` `Flow<RigHealth>`. `DescriptorRigModule`'s own
+  read loop already emits `RigHealth.Degraded(TIMEOUT)` on every cycle a silent transport produces
+  (it retries forever — its own comment says so) but nothing consumed that signal: the exact same
+  unread-signal shape as R-1013's setup-time probe, fixed that same morning by a different builder.
+  A rig whose transport stayed `TransportState.Open` (never reported `Lost`) but simply stopped
+  answering left `RigStatus` frozen at whatever `Connected` reading it last held — indistinguishable
+  from a rig that was still live — for the rest of the session.
+  - `RigSupervisor` now also launches a `health()` watcher for the life of each connection. A
+    `Degraded(TIMEOUT)` report starts a single countdown (ignored while one is already running, or
+    while `RigStatus` is not currently `Connected`); a `Healthy` report, any other `Degraded` issue,
+    or a `TRANSPORT_LOST` report cancels it. If the countdown elapses with `RigStatus` still
+    `Connected`, `RigStatus` flips to `State.Stale` tagged `RigHealthIssue.TIMEOUT`, carrying the
+    wall time the silence actually started (not the moment this class finally noticed).
+  - The bound is derived from the connected descriptor's own poll cadence
+    (`RigSupervisor.defaultHealthStaleTimeoutMillis`: `intervalMs × 5`, floored at 5s, defaulting to
+    10s for a push-only descriptor with no poll at all) — the identical reasoning
+    `DefaultRigLinkBridge`'s `identifyTimeoutMillisFor`/`verifyTimeoutMillisFor` already established
+    for R-1013/R-1014, applied one layer up, at session lifetime rather than a one-shot setup probe.
+    Overridable via a new trailing constructor parameter, defaulted for every existing caller.
+  - `RigStatus.State.Stale` gains `issue: RigHealthIssue? = null` (default `null` for a caller that
+    predates R-1015). The pre-existing transport-lost path (`onRigState`'s `STALE` `RigState`
+    branch, driven by `DescriptorRigModule.markAllStale()`) is now tagged
+    `RigHealthIssue.TRANSPORT_LOST` explicitly, so the two causes are distinguishable at the data
+    layer: `TIMEOUT` never carries a reconnect-ladder `attempt`/`ofTotal`/`nextRetryInMillis` (no
+    ladder is actually running under a transport that still believes it is open — asserting one
+    would be exactly the "more than is known" constitution I forbids), where `TRANSPORT_LOST` still
+    does, unchanged.
+  - Reused vocabulary throughout, per this prompt's explicit instruction: `RigHealthIssue` is
+    `:rig`'s own existing enum (`TIMEOUT`, `TRANSPORT_LOST`, …); no parallel enum was invented.
+- **R-1019.** `RigStatus.State.Connected` had no field at all for "every capability the descriptor
+  declares for this transport has actually been observed" — the exact fact
+  `RigLinkProbeState.Verified`/`VerifyTimedOut` already establish at setup time (R-1013/R-1014), so
+  `ReadyScreen`'s S12 (`app/.../ui/setup/ReadyScreen.kt`, `radioRowForCatRig`) rendered `statusText
+  = "verified"` unconditionally for any `Connected` reading, contradicting S10b/S11's own "partially
+  confirmed" wording for the identical link one screen earlier.
+  - New closed type `org.ort.pipeline.capture.RigVerification`: `Full`, `Partial(missingCapabilities:
+    Set<RigCapability>)`, `Unknown`. Added to `RigStatus.State.Connected` as `verification:
+    RigVerification = RigVerification.Unknown` and threaded through `RigStatus.connected(...)`
+    (same default).
+  - **Default chosen deliberately as `Unknown`, not `Full`, and not made a required parameter.** A
+    required parameter would have broken 63 call sites across 19 `app/**` files (mostly debug
+    scenarios and screen tests unrelated to this bug) — a blast radius far outside this package's
+    ownership and this report's scope. `Unknown` is the safe direction: a caller that never states
+    the fact reads as *not verified*, never falsely `Full`. See "Left open" below — this does not by
+    itself stop a consumer from still rendering "verified" wrongly.
+  - `RigSupervisor` now computes the real value: `seenCapabilities` (a running, per-connection set,
+    reset only on a fresh `connect()`, reusing `capabilitiesPresentIn` — the exact mapping
+    `DefaultRigLinkBridge.probe` already uses, not a second implementation) is compared against
+    `module.capabilities(activeTransportKind)` on every `FRESH` `RigState`; `Full` when nothing is
+    missing (or the declared set is empty — nothing to verify), `Partial(missing)` otherwise.
+    Carried forward unchanged into a `Stale` reading's `lastKnown.verification`.
+
+**Verified:**
+- `.\gradlew :pipeline:testDebugUnitTest -PortAllowMissingBundledAssets=true` — green, including
+  every test in `RigSupervisorTest`, `RigSupervisorRealTransportTest` and `RigStatusTest` (23 + 2 +
+  14 cases respectively, all passing).
+- Every new test's discrimination proven by hand: reverted the `watchHealth(...)` call in
+  `RigSupervisor.connect()` → the two R-1015 timeout-detecting tests failed with
+  `TimeoutCancellationException` (RigStatus never left `Connected`) → restored → passing again.
+  Reverted `currentVerification()` to hardcode `RigVerification.Full` → the two R-1019
+  Partial-detecting tests failed (`expected: <Partial(...)> but was: <Full>`) → restored → passing
+  again.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue` —
+  green on a clean single run (fixed one `detekt`/`ktlint` max-line-length finding on a test name
+  along the way). `:app:testDebugUnitTest` and `:app:build` both green with **no source change under
+  `app/**`** — confirms the `Unknown`-default choice above did not force any `:app` compile break.
+
+**Left open / not done:**
+- **A rig that never speaks even once from the very start of a session** (never reaches `Connected`
+  at all — distinct from R-1015's "was Connected, then went silent") stays `RigStatus.State.Absent`
+  indefinitely, identical in appearance to "no rig configured." `declareStaleFromSilence` correctly
+  declines to act in this case (there is no `Connected` fact to demote, and `RigStatus.State.Stale`
+  structurally requires a real `lastKnown: Connected`) — this is a real, related gap, but a
+  different shape from what this report was asked to fix, and is not addressed here.
+- **R-1019's data is available but nothing forces a consumer to read it.** Kotlin cannot make
+  `radioRowForCatRig`'s `is RigStatus.State.Connected -> statusText = "verified"` branch fail to
+  compile just because it ignores `connected.verification` — that exhaustiveness has to live in
+  `:app`'s own code. The exact fix: branch on `connected.verification` (`Full` → "verified";
+  `is Partial` → "identified, command set partially confirmed" naming `missingCapabilities`,
+  reusing S10b/S11's own wording; `Unknown` → the same non-"verified" wording `Unknown` already
+  implies). `SettingsRigFacts.kt`/`RadioUsbScreen.kt`'s own defensive `Connected` rendering (noted in
+  `RadioVerifiedScreen.kt`'s doc comment) should be checked for the same pattern.
+- Neither R-1015 nor R-1019 could be verified against the real TH-D75A (H2/H3) — both are proven
+  against `FakeRigTransport`/`FakeUsbSerialPort`/`FakeBluetoothLink` and virtual time only.
+- `-p buildSrc test`, `python tools/spec-check/spec_check.py`, `coverageMatrix`/
+  `coverageMatrixCheck` not yet run as of this entry — see the session report for their results.
+
+
 
 ### c77d7d12 — WPD3: VerifyTimedOut enables Continue as partial success, IdentifyTimedOut does not; S11 never renders a partial link as fully verified
 
