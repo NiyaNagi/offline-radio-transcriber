@@ -85,6 +85,64 @@ class BridgeRigLinkPortTest {
     }
 
     @Test
+    fun `IdentifyTimedOut maps straight through with its own timeoutMillis, R-1013`() = runTest {
+        val bridge = FakeRigLinkBridge()
+        bridge.scriptProbe(
+            "kenwood-thd75a",
+            RigTransportKind.BLUETOOTH_SPP,
+            flowOf(
+                RigLinkProbeState.Opening,
+                RigLinkProbeState.Open,
+                RigLinkProbeState.IdentifyTimedOut("kenwood-thd75a", timeoutMillis = 6_000L),
+            ),
+        )
+        val port = BridgeRigLinkPort(bridge)
+
+        val states = port.connect("AA:BB:CC:DD:EE:FF", "kenwood-thd75a").toList()
+
+        assertEquals(RigLinkState.IdentifyTimedOut("kenwood-thd75a", timeoutMillis = 6_000L), states.last())
+        assertTrue(states.none { it is RigLinkState.Verified }, "must never fabricate a verified link")
+    }
+
+    @Test
+    fun `VerifyTimedOut maps seen and missing capabilities to labels, sorted by ordinal, R-1014`() = runTest {
+        val bridge = FakeRigLinkBridge()
+        bridge.scriptProbe(
+            "kenwood-thd75a",
+            RigTransportKind.BLUETOOTH_SPP,
+            flowOf(
+                RigLinkProbeState.Opening,
+                RigLinkProbeState.Open,
+                RigLinkProbeState.Identified("kenwood-thd75a"),
+                RigLinkProbeState.VerifyTimedOut(
+                    rigId = "kenwood-thd75a",
+                    seenCapabilities = setOf(RigCapability.SQUELCH_STATE, RigCapability.FREQUENCY),
+                    declaredCapabilities = setOf(
+                        RigCapability.FREQUENCY,
+                        RigCapability.SQUELCH_STATE,
+                        RigCapability.SIGNAL_STRENGTH,
+                    ),
+                    timeoutMillis = 12_000L,
+                ),
+            ),
+        )
+        val port = BridgeRigLinkPort(bridge)
+
+        val states = port.connect("AA:BB:CC:DD:EE:FF", "kenwood-thd75a").toList()
+
+        assertEquals(
+            RigLinkState.VerifyTimedOut(
+                rigId = "kenwood-thd75a",
+                seenCapabilities = listOf("frequency", "squelch"),
+                missingCapabilities = listOf("signal strength"),
+                timeoutMillis = 12_000L,
+            ),
+            states.last(),
+        )
+        assertTrue(states.none { it is RigLinkState.Verified }, "must never render a partial link as Verified")
+    }
+
+    @Test
     fun `an unknown rig id maps its Failed reason straight through`() = runTest {
         val bridge = FakeRigLinkBridge()
         bridge.scriptProbe(

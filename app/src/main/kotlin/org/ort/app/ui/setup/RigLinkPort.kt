@@ -53,6 +53,34 @@ public sealed interface RigLinkState {
     public data object NoPermission : RigLinkState
 
     public data class Failed(val reason: String) : RigLinkState
+
+    /**
+     * R-1013: mirrors [org.ort.pipeline.rig.RigLinkProbeState.IdentifyTimedOut] — the transport
+     * opened ([Open] was reached) but the descriptor's identify sequence never produced a single
+     * [org.ort.rig.RigState] within [timeoutMillis]. Different in kind from [Lost]/[Failed]: the
+     * link is not dropped and nothing failed to open — it is open and silent, which is why S10b's
+     * `Continue` stays disabled here (there is no proof this is even the right rig to proceed with)
+     * while `Continue without connecting` remains the honest way forward. [timeoutMillis] is
+     * carried so the screen states the bound that actually applied, never a hardcoded number.
+     */
+    public data class IdentifyTimedOut(val rigId: String, val timeoutMillis: Long) : RigLinkState
+
+    /**
+     * R-1014: mirrors [org.ort.pipeline.rig.RigLinkProbeState.VerifyTimedOut] — [Identified] was
+     * reached (the rig genuinely spoke) but not every capability the descriptor declares was
+     * observed within [timeoutMillis]. **This is partial success, not failure** (constitution I: a
+     * weaker device may know less; it must not be more wrong) — S10b's `Continue` enables here,
+     * never rendered as [Verified]. [seenCapabilities]/[missingCapabilities] are already resolved to
+     * the same operator-facing labels [Verified.commands] carries (via
+     * [RigPickerCatalogue.capabilityLabel]), sorted the same way, so the screen can say exactly how
+     * many of how many were seen and name the ones that were not.
+     */
+    public data class VerifyTimedOut(
+        val rigId: String,
+        val seenCapabilities: List<String>,
+        val missingCapabilities: List<String>,
+        val timeoutMillis: Long,
+    ) : RigLinkState
 }
 
 /** S10b's port onto the paired-device list and the connect/identify/verify sequence. */
@@ -91,6 +119,12 @@ public class InMemoryRigLinkPort(
         data class FailToOpen(val reason: String) : Script
         data class DropAfterOpen(val reason: String) : Script
         data object NoPermission : Script
+        data class IdentifyTimeout(val timeoutMillis: Long) : Script
+        data class VerifyTimeout(
+            val seenCapabilities: List<String>,
+            val missingCapabilities: List<String>,
+            val timeoutMillis: Long,
+        ) : Script
     }
 
     private val scripts = mutableMapOf<String, Script>()
@@ -136,6 +170,27 @@ public class InMemoryRigLinkPort(
     /** `BLUETOOTH_CONNECT` is absent for this address — never a `SecurityException`. */
     public fun noPermission(address: String) {
         scripts[address] = Script.NoPermission
+    }
+
+    /** R-1013: [connect] opens, then reaches [RigLinkState.IdentifyTimedOut] — a genuine terminal
+     * state, unlike [hang]/[hangAfterIdentify] (which never emit again at all): a caller (and a
+     * tour step) can observe the checklist actually conclude this way, distinct from a hang that
+     * never resolves on its own. */
+    public fun identifyTimesOut(address: String, timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS) {
+        scripts[address] = Script.IdentifyTimeout(timeoutMillis)
+    }
+
+    /** R-1014: [connect] opens, identifies, then reaches [RigLinkState.VerifyTimedOut] naming
+     * exactly the [seenCapabilities]/[missingCapabilities] scripted here — never inferred, since a
+     * fake that only ever produced the same fixed pair would test nothing about a caller reading
+     * either list correctly. */
+    public fun verifyTimesOut(
+        address: String,
+        seenCapabilities: List<String>,
+        missingCapabilities: List<String>,
+        timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
+    ) {
+        scripts[address] = Script.VerifyTimeout(seenCapabilities, missingCapabilities, timeoutMillis)
     }
 
     /** Overrides the verified command list the default (successful) script reports — otherwise
@@ -186,11 +241,39 @@ public class InMemoryRigLinkPort(
                 emit(RigLinkState.Lost(script.reason))
             }
             Script.NoPermission -> emit(RigLinkState.NoPermission)
+            is Script.IdentifyTimeout -> {
+                emit(RigLinkState.Opening)
+                delay(SCRIPT_STEP_DELAY_MILLIS)
+                emit(RigLinkState.Open)
+                delay(SCRIPT_STEP_DELAY_MILLIS)
+                emit(RigLinkState.IdentifyTimedOut(expectedRigId, script.timeoutMillis))
+            }
+            is Script.VerifyTimeout -> {
+                emit(RigLinkState.Opening)
+                delay(SCRIPT_STEP_DELAY_MILLIS)
+                emit(RigLinkState.Open)
+                delay(SCRIPT_STEP_DELAY_MILLIS)
+                emit(RigLinkState.Identified(expectedRigId))
+                delay(SCRIPT_STEP_DELAY_MILLIS)
+                emit(
+                    RigLinkState.VerifyTimedOut(
+                        rigId = expectedRigId,
+                        seenCapabilities = script.seenCapabilities,
+                        missingCapabilities = script.missingCapabilities,
+                        timeoutMillis = script.timeoutMillis,
+                    ),
+                )
+            }
         }
     }
 
     public companion object {
         public const val SCRIPT_STEP_DELAY_MILLIS: Long = 10L
         public val DEFAULT_VERIFIED_COMMANDS: List<String> = listOf("FQ", "BY", "FO", "AI")
+
+        /** The default [identifyTimesOut]/[verifyTimesOut] bound when a scenario/test does not care
+         * about the exact value — a real, plausible-looking descriptor timeout, never asserted on by
+         * any test that does not itself pass a specific one. */
+        public const val DEFAULT_TIMEOUT_MILLIS: Long = 15_000L
     }
 }

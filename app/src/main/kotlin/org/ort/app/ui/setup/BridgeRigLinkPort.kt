@@ -65,5 +65,19 @@ public class BridgeRigLinkPort(private val bridge: RigLinkBridge) : RigLinkPort 
         is RigLinkProbeState.Lost -> RigLinkState.Lost(probeState.reason)
         RigLinkProbeState.NoPermission -> RigLinkState.NoPermission
         is RigLinkProbeState.Failed -> RigLinkState.Failed(probeState.reason)
+        is RigLinkProbeState.IdentifyTimedOut -> RigLinkState.IdentifyTimedOut(
+            probeState.rigId,
+            probeState.timeoutMillis,
+        )
+        is RigLinkProbeState.VerifyTimedOut -> RigLinkState.VerifyTimedOut(
+            rigId = probeState.rigId,
+            seenCapabilities = probeState.seenCapabilities
+                .sortedBy { it.ordinal }
+                .map(RigPickerCatalogue::capabilityLabel),
+            missingCapabilities = (probeState.declaredCapabilities - probeState.seenCapabilities)
+                .sortedBy { it.ordinal }
+                .map(RigPickerCatalogue::capabilityLabel),
+            timeoutMillis = probeState.timeoutMillis,
+        )
     }
 }

@@ -213,6 +213,11 @@ public object Scenarios {
         "setup-rig-bluetooth-connecting",
         "setup-rig-bluetooth-identified",
         "setup-rig-bluetooth-dropped",
+        // R-1013/R-1014 (WPD3, this round): the two new terminal RigLinkProbeState/RigLinkState
+        // outcomes — see setupRigBluetoothIdentifyTimedOut's/setupRigBluetoothVerifyTimedOut's own
+        // doc comments.
+        "setup-rig-bluetooth-identify-timed-out",
+        "setup-rig-bluetooth-verify-timed-out",
         "mode-local-mic",
         "mode-usb",
         "mode-bluetooth",
@@ -304,6 +309,8 @@ public object Scenarios {
             "setup-rig-bluetooth-connecting" -> setupRigBluetoothConnecting(context)
             "setup-rig-bluetooth-identified" -> setupRigBluetoothIdentified(context)
             "setup-rig-bluetooth-dropped" -> setupRigBluetoothDropped(context)
+            "setup-rig-bluetooth-identify-timed-out" -> setupRigBluetoothIdentifyTimedOut(context)
+            "setup-rig-bluetooth-verify-timed-out" -> setupRigBluetoothVerifyTimedOut(context)
             "mode-local-mic" -> modeLocalMic(context, db)
             "mode-usb" -> modeUsb(context, db)
             "mode-bluetooth" -> modeBluetooth(context, db)
@@ -2248,6 +2255,45 @@ public object Scenarios {
             InMemoryRigLinkPort(
                 devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
             ).apply { dropAfterOpen(BLUETOOTH_RIG_ADDRESS) },
+        )
+        return LoadResult(0, 0, null)
+    }
+
+    /** `setup-rig-bluetooth-identify-timed-out` — R-1013: the link opened but the descriptor's
+     * identify sequence never produced anything within its own bound; [InMemoryRigLinkPort
+     * .identifyTimesOut] reaches this as a genuine terminal state (never a hang the tour would have
+     * to wait out — `hangAfterIdentify`'s own kdoc explains why a real, concluding terminal state
+     * matters for a capture). `Continue` must stay disabled here (`RigBluetoothScreen`'s own
+     * doc comment) — `setup-rig-bluetooth-dropped`'s own base is reused since this, too, is a
+     * checklist that never reaches `Verified`. */
+    private fun setupRigBluetoothIdentifyTimedOut(context: Context): LoadResult {
+        seedRigBluetoothLinkStore(context)
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(
+                devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
+            ).apply { identifyTimesOut(BLUETOOTH_RIG_ADDRESS, timeoutMillis = 6_000L) },
+        )
+        return LoadResult(0, 0, null)
+    }
+
+    /** `setup-rig-bluetooth-verify-timed-out` — R-1014: the rig genuinely identified but two
+     * declared capabilities were never observed within the bound — partial success, `Continue`
+     * enables (`RigBluetoothScreen`'s own doc comment), so this scenario is the one
+     * `setup-rig-bluetooth*` base whose checklist genuinely reaches a state the operator can
+     * proceed from without ever reaching `Verified`. */
+    private fun setupRigBluetoothVerifyTimedOut(context: Context): LoadResult {
+        seedRigBluetoothLinkStore(context)
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(
+                devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
+            ).apply {
+                verifyTimesOut(
+                    BLUETOOTH_RIG_ADDRESS,
+                    seenCapabilities = listOf("frequency"),
+                    missingCapabilities = listOf("squelch", "per band"),
+                    timeoutMillis = 12_000L,
+                )
+            },
         )
         return LoadResult(0, 0, null)
     }

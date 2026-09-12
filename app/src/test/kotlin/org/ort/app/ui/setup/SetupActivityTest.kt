@@ -999,6 +999,150 @@ class SetupActivityTest {
         }
     }
 
+    // --- R-1013/R-1014: onContinueRigBluetooth's own product-decision gate -----------------------
+
+    /**
+     * R-1013: [SetupActivity.onContinueRigBluetooth] must stay a no-op on
+     * [RigLinkState.IdentifyTimedOut] — nothing ever answered, so there is no link to proceed with
+     * (the product decision named in this round's own prompt). Drives the real checklist to this
+     * terminal state the same way the tour-builder test above does (`rule.waitForIdle()` — this
+     * file's own established mechanism for letting [InMemoryRigLinkPort]'s millisecond-delay script
+     * run to completion under Robolectric).
+     */
+    @Test
+    fun `R_1013 onContinueRigBluetooth is a no-op on IdentifyTimedOut, setup stays at RIG_BLUETOOTH`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        SetupActivity.isDebugBuild = { true }
+        val address = "AA:BB:CC:11:22:33"
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(devices = listOf(PairedDevice("TH-D75A", address, sppCapable = true)))
+                .apply { identifyTimesOut(address, timeoutMillis = 6_000L) },
+        )
+        try {
+            val context = ApplicationProvider.getApplicationContext<Application>()
+            val intent = Intent(context, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS, address)
+            val activityRule = ActivityScenarioRule<SetupActivity>(intent)
+            val rule = AndroidComposeTestRule(activityRule) { r ->
+                var activity: SetupActivity? = null
+                r.scenario.onActivity { activity = it }
+                checkNotNull(activity) { "SetupActivity did not reach RESUMED" }
+            }
+            var finalState: RigLinkState? = null
+            var stepAfterContinue: SetupStep? = null
+            var storeVerifiedFlag: Boolean? = null
+            val statement = object : Statement() {
+                override fun evaluate() {
+                    rule.waitForIdle()
+                    rule.activityRule.scenario.onActivity { activity ->
+                        finalState = activity.rigLinkStateForTest
+                        activity.onContinueRigBluetooth()
+                        stepAfterContinue = activity.currentStepForTest
+                        storeVerifiedFlag = SharedPreferencesSetupStore(
+                            activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
+                        ).rigBluetoothVerified
+                    }
+                    rule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+                }
+            }
+            val description = Description.createTestDescription(
+                SetupActivityTest::class.java,
+                "R1013OnContinueRigBluetoothNoOpOnIdentifyTimedOut",
+            )
+            rule.apply(statement, description).evaluate()
+
+            assertEquals(RigLinkState.IdentifyTimedOut("kenwood-thd75a", 6_000L), finalState)
+            assertEquals(
+                "Continue must remain a no-op on IdentifyTimedOut -- nothing ever answered",
+                SetupStep.RIG_BLUETOOTH,
+                stepAfterContinue,
+            )
+            assertEquals(false, storeVerifiedFlag)
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+            SetupActivity.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
+    /**
+     * R-1014: [SetupActivity.onContinueRigBluetooth] must proceed on
+     * [RigLinkState.VerifyTimedOut] exactly the same as a full [RigLinkState.Verified] — partial
+     * success, not failure — and carry the real missing-capability list forward to S11 via
+     * [SetupActivity.rigLinkMissingCapabilitiesForTest], never rendering it there as fully verified.
+     */
+    @Test
+    fun `R_1014 onContinueRigBluetooth proceeds on VerifyTimedOut, carrying the missing capabilities to S11`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        SetupActivity.isDebugBuild = { true }
+        val address = "AA:BB:CC:11:22:33"
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(devices = listOf(PairedDevice("TH-D75A", address, sppCapable = true)))
+                .apply {
+                    verifyTimesOut(
+                        address,
+                        seenCapabilities = listOf("frequency"),
+                        missingCapabilities = listOf("squelch", "signal strength"),
+                        timeoutMillis = 12_000L,
+                    )
+                },
+        )
+        try {
+            val context = ApplicationProvider.getApplicationContext<Application>()
+            val intent = Intent(context, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS, address)
+            val activityRule = ActivityScenarioRule<SetupActivity>(intent)
+            val rule = AndroidComposeTestRule(activityRule) { r ->
+                var activity: SetupActivity? = null
+                r.scenario.onActivity { activity = it }
+                checkNotNull(activity) { "SetupActivity did not reach RESUMED" }
+            }
+            var finalState: RigLinkState? = null
+            var stepAfterContinue: SetupStep? = null
+            var missingAfterContinue: List<String>? = null
+            var storeVerifiedFlag: Boolean? = null
+            val statement = object : Statement() {
+                override fun evaluate() {
+                    rule.waitForIdle()
+                    rule.activityRule.scenario.onActivity { activity ->
+                        finalState = activity.rigLinkStateForTest
+                        activity.onContinueRigBluetooth()
+                        stepAfterContinue = activity.currentStepForTest
+                        missingAfterContinue = activity.rigLinkMissingCapabilitiesForTest
+                        storeVerifiedFlag = SharedPreferencesSetupStore(
+                            activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
+                        ).rigBluetoothVerified
+                    }
+                    rule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+                }
+            }
+            val description = Description.createTestDescription(
+                SetupActivityTest::class.java,
+                "R1014OnContinueRigBluetoothProceedsOnVerifyTimedOut",
+            )
+            rule.apply(statement, description).evaluate()
+
+            assertEquals(
+                RigLinkState.VerifyTimedOut(
+                    rigId = "kenwood-thd75a",
+                    seenCapabilities = listOf("frequency"),
+                    missingCapabilities = listOf("squelch", "signal strength"),
+                    timeoutMillis = 12_000L,
+                ),
+                finalState,
+            )
+            assertEquals(SetupStep.RADIO_VERIFIED, stepAfterContinue)
+            assertEquals(listOf("squelch", "signal strength"), missingAfterContinue)
+            assertEquals(true, storeVerifiedFlag)
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+            SetupActivity.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
     @Test
     fun `tour-builder EXTRA_DEBUG_RIG_BLUETOOTH_ADDRESS is ignored in a release build`() {
         storeGatedAtRigBluetooth()

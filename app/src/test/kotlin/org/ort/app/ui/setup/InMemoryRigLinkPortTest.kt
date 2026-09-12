@@ -75,6 +75,48 @@ class InMemoryRigLinkPortTest {
     }
 
     @Test
+    fun `identifyTimesOut reaches a real terminal IdentifyTimedOut, never merely hanging, R-1013`() = runTest {
+        val port = InMemoryRigLinkPort()
+        port.identifyTimesOut("AA:BB", timeoutMillis = 6_000L)
+
+        val states = withTimeout(1_000) { port.connect("AA:BB", "kenwood-thd75a").toList() }
+
+        assertEquals(
+            listOf(RigLinkState.Opening, RigLinkState.Open, RigLinkState.IdentifyTimedOut("kenwood-thd75a", 6_000L)),
+            states,
+        )
+    }
+
+    @Test
+    fun `verifyTimesOut reaches Identified then a real terminal VerifyTimedOut naming what was seen, R-1014`() =
+        runTest {
+            val port = InMemoryRigLinkPort()
+            port.verifyTimesOut(
+                "AA:BB",
+                seenCapabilities = listOf("frequency"),
+                missingCapabilities = listOf("squelch", "signal strength"),
+                timeoutMillis = 12_000L,
+            )
+
+            val states = withTimeout(1_000) { port.connect("AA:BB", "kenwood-thd75a").toList() }
+
+            assertEquals(
+                listOf(
+                    RigLinkState.Opening,
+                    RigLinkState.Open,
+                    RigLinkState.Identified("kenwood-thd75a"),
+                    RigLinkState.VerifyTimedOut(
+                        rigId = "kenwood-thd75a",
+                        seenCapabilities = listOf("frequency"),
+                        missingCapabilities = listOf("squelch", "signal strength"),
+                        timeoutMillis = 12_000L,
+                    ),
+                ),
+                states,
+            )
+        }
+
+    @Test
     fun `a device with no permission reports NoPermission, never a SecurityException`() = runTest {
         val port = InMemoryRigLinkPort()
         port.noPermission("AA:BB")

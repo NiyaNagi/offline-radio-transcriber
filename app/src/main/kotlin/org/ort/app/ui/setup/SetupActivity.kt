@@ -175,6 +175,18 @@ public class SetupActivity : ComponentActivity() {
     private var rigLinkVerifiedDurationSeconds by mutableStateOf<Double?>(null)
     internal var clock: org.ort.core.Clock = org.ort.core.SystemClock
 
+    /** R-1013/R-1014 (WPD3): the capability labels never observed when the checklist concluded at
+     * [RigLinkState.VerifyTimedOut] rather than [RigLinkState.Verified] — set only in
+     * [onContinueRigBluetooth], read only by [RenderRadioVerified]. Reset alongside
+     * [rigLinkVerifiedDurationSeconds] on every path that must never carry a stale or a
+     * different-transport attempt's own fact into a later S11 visit (see each reset site's own
+     * comment) — see [RadioVerifiedScreen]'s own `missingCapabilities` doc comment for the absolute
+     * constraint this exists to satisfy. Not persisted in [SetupStore]: like
+     * [rigLinkVerifiedDurationSeconds], a process-death resume has no way to recover which specific
+     * capabilities were missing, so it honestly reads as fully verified after a resume rather than
+     * fabricating a list — the same accepted trade-off R-903 already established for the duration. */
+    private var rigLinkMissingCapabilities by mutableStateOf<List<String>>(emptyList())
+
     /** WPD's own `:app`-local seam (`RigLinkPort.kt`'s doc comment has the full account) — the
      * real link runs over WPC3's `RigLinkBridge` (`:pipeline`, merged `8e40041`), never
      * `:rig-bluetooth` directly (constitution VII); see [BridgeRigLinkPort]'s own doc comment.
@@ -242,6 +254,11 @@ public class SetupActivity : ComponentActivity() {
     /** Test-only window into [rigLinkVerifiedDurationSeconds] — R-903's own regression proof needs
      * to see the real measured value [onRigLinkStateChanged] computed. */
     internal val rigLinkVerifiedDurationSecondsForTest: Double? get() = rigLinkVerifiedDurationSeconds
+
+    /** Test-only window into [rigLinkMissingCapabilities] — R-1014's own regression proof needs to
+     * see exactly what [onContinueRigBluetooth] carried forward from a [RigLinkState.VerifyTimedOut]
+     * link, not merely that S11 was reached. */
+    internal val rigLinkMissingCapabilitiesForTest: List<String> get() = rigLinkMissingCapabilities
 
     /** Test-only window into [selectedRigTransportKind] — E2-E09's own regression proof needs to
      * see whether S09b's preset pre-select actually ran, not just that the screen renders. */
@@ -656,6 +673,9 @@ public class SetupActivity : ComponentActivity() {
             // R-903: the USB lane has no timed probe at all -- never carry a Bluetooth attempt's
             // own measured duration into an S11 visit this lane reaches directly.
             rigLinkVerifiedDurationSeconds = null
+            // R-1014: the same reasoning -- never carry a prior Bluetooth attempt's own
+            // missing-capability list into a USB-lane S11 visit either.
+            rigLinkMissingCapabilities = emptyList()
             // Matches the pre-catalogue onChooseRadio's own dispatch: a genuinely Connected
             // RigStatus (today, only ever produced by the debug scenario simulator -- :rig-usb's
             // real transport is not wired to :app, RigLinkPort.kt's own doc comment) skips the
@@ -683,6 +703,9 @@ public class SetupActivity : ComponentActivity() {
         // R-903: a fresh attempt's own start -- never inherits a duration from a previous pick.
         rigLinkVerifyStartedAtNanos = clock.monotonicNanos()
         rigLinkVerifiedDurationSeconds = null
+        // R-1014: a fresh attempt's own start -- never inherits a prior pick's own missing-capability
+        // list either.
+        rigLinkMissingCapabilities = emptyList()
     }
 
     /** R-903: [RenderRigBluetooth]'s own `LaunchedEffect` routes every [RigLinkState] emission
@@ -770,9 +793,19 @@ public class SetupActivity : ComponentActivity() {
         startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
     }
 
+    /**
+     * R-1013/R-1014: the product decision is [RigLinkState.VerifyTimedOut] enables `Continue`,
+     * [RigLinkState.IdentifyTimedOut] does not — [Identified] already proved this descriptor
+     * matches the radio (it genuinely spoke); partial capability observation is normal operation
+     * (a quiet band reports no signal strength, a VFO in use reports no memory channel), not a
+     * fault worth blocking on. [rigLinkMissingCapabilities] carries exactly what was not seen
+     * forward to S11 — never lost the moment this function returns, and never rendered there as a
+     * full [RigLinkState.Verified] (constitution I; see [RadioVerifiedScreen]'s own doc comment).
+     */
     internal fun onContinueRigBluetooth() {
         val address = rigBluetoothSelectedAddress ?: return
-        if (rigLinkState !is RigLinkState.Verified) return
+        val linkState = rigLinkState
+        if (linkState !is RigLinkState.Verified && linkState !is RigLinkState.VerifyTimedOut) return
         store.rigBluetoothAddress = address
         store.rigBluetoothVerified = true
         // R-1005c follow-up: reaching this point at all means the operator selected and verified a
@@ -780,6 +813,7 @@ public class SetupActivity : ComponentActivity() {
         // (previously always already true by the time this ran) because onContinueWithoutRigLink
         // now makes it possible to arrive back here, via onBack, with store.rigTransport cleared.
         store.rigTransport = PresetRigTransportKind.BLUETOOTH_SPP
+        rigLinkMissingCapabilities = (linkState as? RigLinkState.VerifyTimedOut)?.missingCapabilities.orEmpty()
         val entry = currentRigEntry()
         // Honest, not fabricated: no live per-band reading exists yet (the real DescriptorRigModule
         // poll loop cannot run from :app — RigLinkPort.kt's own doc comment). An empty band list,
@@ -827,6 +861,9 @@ public class SetupActivity : ComponentActivity() {
         // must never show a duration measured for a now-abandoned attempt.
         rigLinkVerifyStartedAtNanos = null
         rigLinkVerifiedDurationSeconds = null
+        // R-1014: same reasoning -- a now-abandoned attempt's own missing-capability list must not
+        // survive into whatever S11 visit comes next.
+        rigLinkMissingCapabilities = emptyList()
         syncCaptureConfiguration()
         step = SetupStep.RADIO
     }
@@ -1168,6 +1205,7 @@ public class SetupActivity : ComponentActivity() {
                 currentRigEntry()?.transportCapabilities.orEmpty(),
                 rigTransportKind,
             ),
+            missingCapabilities = rigLinkMissingCapabilities,
         )
     }
 

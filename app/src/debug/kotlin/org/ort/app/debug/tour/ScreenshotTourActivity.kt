@@ -499,6 +499,11 @@ public class ScreenshotTourActivity : ComponentActivity() {
             "identified" to { state -> state is RigLinkState.Identified },
             "verified" to { state -> state is RigLinkState.Verified },
             "dropped" to { state -> state is RigLinkState.Lost },
+            // R-1013/R-1014 (WPD3, this round): the two new terminal states — each its own scenario's
+            // own scripted InMemoryRigLinkPort (identifyTimesOut/verifyTimesOut) reaches exactly one
+            // of these and nothing else, the same "terminal, not a hang" shape `"dropped"` already has.
+            "identify-timed-out" to { state -> state is RigLinkState.IdentifyTimedOut },
+            "verify-timed-out" to { state -> state is RigLinkState.VerifyTimedOut },
         )
     }
 }

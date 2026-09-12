@@ -62,9 +62,14 @@ public interface SetupStore {
     /** The paired-device address chosen at S10b (Bluetooth transport only). */
     public var rigBluetoothAddress: String?
 
-    /** Whether S10b's open -> identify -> verify checklist has reached
-     * [RigLinkState.Verified] for [rigBluetoothAddress] — the resumable half of "Bluetooth rig
-     * link established" ([SetupStateMachine]'s `RIG_BLUETOOTH` gate clears once this is true). */
+    /** Whether S10b's open -> identify -> verify checklist has reached a state the operator was
+     * allowed to continue from for [rigBluetoothAddress] — [RigLinkState.Verified], or R-1014's
+     * [RigLinkState.VerifyTimedOut] (partial success; [RigLinkState.IdentifyTimedOut] never sets
+     * this, since `Continue` stays disabled there) — the resumable half of "Bluetooth rig link
+     * established" ([SetupStateMachine]'s `RIG_BLUETOOTH` gate clears once this is true). This flag
+     * alone does not distinguish the two accepted cases — [SetupActivity]'s own in-memory
+     * `rigLinkMissingCapabilities` (not persisted, R-1014's own doc comment explains why) is what a
+     * live S11 visit reads to tell a full verification from a partial one. */
     public var rigBluetoothVerified: Boolean
 
     /** `true` once the operator has changed [selectedInputId] away from what
