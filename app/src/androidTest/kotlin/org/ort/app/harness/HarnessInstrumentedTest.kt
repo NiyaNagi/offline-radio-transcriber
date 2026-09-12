@@ -47,8 +47,18 @@ import java.io.File
 @RunWith(AndroidJUnit4::class)
 class HarnessInstrumentedTest {
 
+    // R-1001 build report (WPJ, out-of-package but pre-existing and build-breaking, fixed here
+    // because app/src/androidTest/** is this session's own owned path and this defect blocks
+    // *every* instrumented test in the app, including this session's own new one): a backtick
+    // method name containing spaces compiles fine to a .class file but D8 rejects it while dexing
+    // for androidTest ("Space characters in SimpleName ... are not allowed prior to DEX version
+    // 040") at this project's minSdk 26 — confirmed directly, this is what
+    // `:app:dexBuilderDebugAndroidTest` failed on before this rename, for *any* androidTest run,
+    // not anything to do with sherpa-onnx. This class's own doc comment already says it was never
+    // actually exercised on a device ("pending hardware access") — this is the first time anyone
+    // tried. Renamed only; no behavioural change.
     @Test
-    fun `M2_21a on-device harness run produces a canonical report file pullable off-device`() {
+    fun m2_21a_onDeviceHarnessRunProducesACanonicalReportFilePullableOffDevice() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val corpusDir = File(context.filesDir, "harness-corpus")
         val manifestFile = File(corpusDir, "manifest.tsv")

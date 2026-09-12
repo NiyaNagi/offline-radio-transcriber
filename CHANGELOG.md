@@ -32,6 +32,154 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPJ: R-1001 — sherpa-onnx's Android native libraries were never packaged; every transmission failed Pass B)
+
+### 06c12772 — WPJ: fetch and package sherpa-onnx's Android `.so` files; stop shipping win-x64 DLLs; guard the APK structurally
+
+**Scope:** `gradle/libs.versions.toml` (comment only), `asr-sherpa/build.gradle.kts`,
+`sherpa-native.json` (new), `buildSrc/src/main/kotlin/org/ort/gradle/FetchSherpaNativeTask.kt`
+(new) and its test, `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt` and
+`PlatformGuardsTask.kt` (+ tests), `buildSrc/src/main/kotlin/ort.android-app.gradle.kts`,
+`buildSrc/build.gradle.kts` (added `org.apache.commons:commons-compress:1.27.1`, needed to
+extract upstream's own `tar.bz2` release archive — no platform `tar`/`bzip2` on this dev machine
+supports it; see that file's own comment), `app/build.gradle.kts` (packaging/resource-exclusion
+and a new `androidTestImplementation` pair), `app/src/androidTest/**` (new
+`RealSherpaDecoderOnDeviceTest`; one pre-existing file, `HarnessInstrumentedTest`, had a
+dex-breaking method name fixed — see "What changed" (5)), `.gitignore`.
+
+**Requirements/ACs:** FR-ASR-1, FR-ASR-8 (sherpa-onnx behind interfaces, Pass B). Register row
+R-1001 (halt) closed.
+
+**What changed:**
+
+1. **Root cause verified, not re-derived** (Step 0 of the work package): `sherpa-onnx-jvm-1.13.7`
+   deliberately supports Android — disassembled `LibraryUtils.load()` with `javap -c`: it skips
+   `loadFromResourceInJar()` on Android and calls `System.loadLibrary("sherpa-onnx-jni")` directly.
+   Downloaded upstream's real `sherpa-onnx-v1.13.7-android.tar.bz2` and listed
+   `arm64-v8a/libsherpa-onnx-jni.so`'s exported symbols with `pyelftools` (no NDK/`nm`/`objdump`
+   available on this machine; `pip install pyelftools` instead) — all 133 exports are
+   `Java_com_k2fsa_sherpa_onnx_*`, and every native method `RealSherpaDecoder`'s actual call path
+   needs (`OfflineRecognizer.{newFromFile,createStream,decode,getResult,delete}`,
+   `OfflineStream.{acceptWaveform,delete}`, confirmed against the same version's `.jar` with
+   `javap -p`) has a matching export. The JNI binding's own `DT_NEEDED` list names only
+   `libonnxruntime.so` beyond system libraries — `libsherpa-onnx-c-api.so`/`-cxx-api.so` (also in
+   the archive) are for consumers this project doesn't use and are never fetched. Bindings match
+   the library; no fallback to vendoring upstream's Android Kotlin sources was needed.
+2. **`FetchSherpaNativeTask`** (new, mirrors `FetchBundledAssetsTask`'s shape): downloads
+   upstream's public archive (no token), extracts exactly `libsherpa-onnx-jni.so` and
+   `libonnxruntime.so` for `arm64-v8a` and `x86_64` only, verifies each against a real sha256
+   computed from an actual download (`sherpa-native.json`), and writes them to
+   `app/src/main/jniLibs/<abi>/` (gitignored, mirroring `assets/bundled/`). One real bug found and
+   fixed during TDD: upstream's own archive stores every entry as `./jniLibs/<abi>/<file>` (a
+   leading `./`), which the first version of the extractor matched verbatim against and silently
+   found nothing — added a regression test and a `removePrefix("./")` normalization; both proved
+   to discriminate. **Deliberately not wired to `-PortAllowMissingBundledAssets`** — per the
+   lead's correction mid-session: the archive needs no token, costs tens (not hundreds) of
+   megabytes, and a build that silently omits these libraries is the exact defect being fixed, so
+   there is no escape hatch for this fetch; it is unconditionally real, including under the
+   escape-hatch gate run below.
+3. **Stopped shipping the win-x64 desktop DLLs to Android**: `asr-sherpa/build.gradle.kts` moves
+   `sherpa-onnx-native-lib-win-x64` from `runtimeOnly` (a *main*-configuration dependency, which
+   `:pipeline`/`:app` inherited transitively onto the Android app's own packaging classpath) to
+   `testRuntimeOnly` — the only real consumer of that jar is this module's own gated
+   `RealSherpaDecoderRealModelTest`/`RealSileroVadRealModelTest`, and `testRuntimeOnly` still
+   resolves for those while being structurally absent from `:asr-sherpa`'s `runtimeElements`
+   variant, so it can never reach `:app` again regardless of what depends on `:asr-sherpa` in the
+   future. `app/build.gradle.kts` also excludes `sherpa-onnx/native/**` from packaged resources as
+   a second, narrower line of defense. Verified against the built APK: the 22 MB of
+   `sherpa-onnx/native/win-x64/{onnxruntime,sherpa-onnx-jni}.dll` are gone; `lib/arm64-v8a/` and
+   `lib/x86_64/` each carry the two real `.so` files instead.
+4. **`ndk { abiFilters += listOf("arm64-v8a", "x86_64") }`** in `ort.android-app.gradle.kts` — the
+   operator's phone plus the audit AVDs; never `armeabi-v7a`/`x86` (the APK is already large).
+5. **The structural guard**: `PlatformGuards.missingNativeLibraryViolations` (new) plus
+   `NativeLibraryPackagingGuardTask` (new) — the one check in this file's family that reads a real
+   packaged APK's zip entries rather than a declared coordinate, because R-1001 was invisible to
+   every existing declared-artifact proxy. Registered as `:app:verifySherpaNativeLibrariesPackaged`
+   in `ort.android-app.gradle.kts` (wired into `:app:check`/`:app:build`, since the root
+   `platformGuards` task runs before any APK is assembled and that root wiring is outside this
+   package's ownership). **A real bug found by direct verification, not just unit tests**: a first
+   version relied on `requiredAbis.getOrElse(default)` for its ABI/file lists and silently checked
+   *zero* required libraries against every real APK — Gradle auto-initializes a managed
+   `ListProperty` to an empty-but-present list, so `getOrElse` never fell back. Found by actually
+   disabling the fetch, rebuilding a real APK missing all four libraries, and watching the guard
+   report "OK" anyway. Fixed with an explicit `.convention(...)` in an `init` block; added two
+   `ProjectBuilder`-based tests (new pattern for this file — needed because the defect lived
+   entirely in Gradle's own property-default wiring, invisible to a test of the pure function
+   alone) that fail without the fix and pass with it.
+6. **On-device proof** (`app/src/androidTest/kotlin/org/ort/app/asr/RealSherpaDecoderOnDeviceTest.kt`,
+   new): constructs the real `RealSherpaDecoder` `:pipeline`'s `AsrEngineProvisioning.kt`
+   constructs in production, on a real Android runtime, and asserts a real transcript. Gated
+   (`org.junit.Assume`) exactly like `:asr-sherpa`'s own JVM-side
+   `RealSherpaDecoderRealModelTest` — a real Whisper `tiny.en` model (~103 MB) is never bundled as
+   an app or test-APK asset (constitution: no test reads a real bundled model); the operator
+   pushes it once via `adb`/`run-as` into the app's own internal storage (this class's own KDoc has
+   the exact commands — app-*external* storage was tried first and confirmed to deny the app read
+   access to a directory `adb push` created directly as root, so this follows the identical
+   internal-storage `run-as` shape the pre-existing `HarnessInstrumentedTest` in this same source
+   set already documents). Fixed one pre-existing, build-breaking defect discovered while making
+   this the first androidTest class ever actually assembled in this repository, both inside this
+   session's owned `app/src/androidTest/**` and both mechanical/no behavioural change: (a)
+   `HarnessInstrumentedTest`'s own test method name contained spaces inside backticks — compiles
+   fine but D8 rejects space characters in a DEX simple name at this project's minSdk 26; renamed,
+   no logic change; (b) `androidTestImplementation(project(":eval"))` (pre-existing) pulls in
+   JUnit5 jars that collide on `META-INF/LICENSE*.md` once `androidTest` is actually packaged —
+   added to the packaging-exclusion block already introduced by this change.
+7. `gradle/libs.versions.toml`: a comment on `sherpaOnnx` explaining there is deliberately no
+   Android Maven coordinate (upstream publishes none — only this raw release tarball).
+
+**Verified:**
+- Step 0 symbol comparison: `pyelftools` dump of `arm64-v8a/libsherpa-onnx-jni.so`'s
+  `.dynsym`/`.dynamic` sections against `javap -p`'s native-method list for
+  `OfflineRecognizer`/`OfflineStream` from the resolved `sherpa-onnx-jvm-1.13.7.jar` — full match,
+  pasted in this session's own report.
+- `./gradlew -p buildSrc test` — all tests green, including the new `FetchSherpaNativeTaskTest`
+  (9 tests) and the new `PlatformGuardsTest` additions (7 tests: 3 pure-function, 2 task-level,
+  plus the pre-existing 8) — every new test proved to discriminate (production check disabled,
+  watched fail; restored, watched pass), pasted in this session's own report.
+- `./gradlew :app:assembleDebug -PortAllowMissingBundledAssets=true` — real build, real network
+  fetch of `sherpa-onnx-v1.13.7-android.tar.bz2` (no token). Resulting
+  `app/build/outputs/apk/debug/app-debug.apk` (603,591,689 bytes, this run's models present from
+  this machine's own cached `HF_TOKEN` fetch, not the escape hatch's concern) inspected directly
+  with `python -c "import zipfile..."`: `lib/arm64-v8a/{libsherpa-onnx-jni.so,libonnxruntime.so}`
+  and the `x86_64` equivalents present; zero `sherpa-onnx/native/**` or `.dll` entries anywhere.
+- `./gradlew :app:verifySherpaNativeLibrariesPackaged` — passes against the real APK above;
+  disabling the fetch (`--exclude-task fetchSherpaNativeLibraries`, deleting
+  `app/src/main/jniLibs/`) and rebuilding reproduced the exact original defect and made the guard
+  fail, naming all four missing `lib/<abi>/<file>` paths; re-enabling the fetch made it pass again.
+- **On-device, on a real x86_64 emulator (`ort_audit_3`, API 34, already booted)**: pushed the real
+  Whisper `tiny.en` model via `adb push` + `run-as` into the app's internal storage, ran
+  `adb shell am instrument -w -e class org.ort.app.asr.RealSherpaDecoderOnDeviceTest
+  org.ort.app.test/androidx.test.runner.AndroidJUnitRunner` — `OK (1 test)`, 7.3s wall time,
+  logcat confirms `run finished: 1 tests, 0 failed, 0 ignored`. **Discrimination proved on the
+  device itself, not just in a unit test**: rebuilt the same APK with
+  `--exclude-task fetchSherpaNativeLibraries`, reinstalled, reran the identical `am instrument`
+  command, and reproduced verbatim the register's own failure —
+  `java.lang.UnsatisfiedLinkError: dlopen failed: library "libsherpa-onnx-jni.so" not found` at
+  `RealSherpaDecoder.<init>` — then restored the fetch and reran to `OK (1 test)` again.
+- `./gradlew dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — both green
+  (`dependencyRules: OK`, `platformGuards: OK`).
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- Full gate (`dependencyRules platformGuards build`, `-p buildSrc test`, `spec_check.py`,
+  `coverageMatrix`, `coverageMatrixCheck`), run with `-PortAllowMissingBundledAssets=true` for the
+  *model* assets only (lead's own gate correction: five worktrees each fetching ~610 MB would
+  stall the machine and hammer Hugging Face; the lead runs the real no-escape-hatch gate once on
+  `main` after merging) — this session's own `fetchSherpaNativeLibraries` is real regardless, as
+  above. Result recorded in this session's own report to the lead.
+
+**Left open / not done:**
+- The stale KDoc at `asr-sherpa/src/main/kotlin/.../real/RealSherpaDecoder.kt:24-29` (claims
+  "Nothing in `:pipeline` or `:app` constructs this class yet", which `AsrEngineProvisioning.kt:81`
+  already contradicts) is in `asr-sherpa/src/**`, outside this work package's owned files —
+  reported to the lead, not fixed here.
+- The full no-escape-hatch gate (every bundled model asset actually fetched) was not run in this
+  worktree, per the lead's own correction — the lead runs that once on `main` after merging.
+- `armeabi-v7a`/`x86` devices cannot run ASR at all now (no native library fetched for them) — a
+  deliberate scope decision (register R-1001, this work package's brief), not an oversight; no
+  such device is in this project's stated device matrix.
+- The on-device proof's model push is manual (`adb`/`run-as`) and not automated by any Gradle
+  task or CI job — matches the existing, identical pattern already established by
+  `HarnessInstrumentedTest` for the same reason (constitution: no test reads a real bundled
+  model).
 ## 2026-09-12 (WPD2: R-1004/R-1005a/R-1005b/R-1005c — the first device field report, `ui/setup` half)
 
 ### ebd76a39 — WPD2: input-device dedupe + dump, BLUETOOTH_SCAN, onResume on the Bluetooth steps, Continue without connecting

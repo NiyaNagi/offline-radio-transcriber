@@ -24,6 +24,12 @@ object PlatformGuards {
 
     data class DependencyViolation(val module: String, val coordinate: String, val reason: String)
     data class ManifestViolation(val module: String, val reason: String)
+    data class NativeLibraryViolation(val path: String, val reason: String)
+
+    /** R-1001's own required set — kept as defaults here so [NativeLibraryPackagingGuardTask] and
+     * this file's tests share one definition of "what WPJ ships" rather than each hardcoding it. */
+    val REQUIRED_NATIVE_LIBRARY_ABIS: List<String> = listOf("arm64-v8a", "x86_64")
+    val REQUIRED_NATIVE_LIBRARY_FILES: List<String> = listOf("libsherpa-onnx-jni.so", "libonnxruntime.so")
 
     /** FR-OBS-5 — no analytics/telemetry/crash-reporting dependency in any module, ever. */
     fun telemetryViolations(dependenciesByModule: Map<String, Set<String>>): List<DependencyViolation> =
@@ -82,4 +88,38 @@ object PlatformGuards {
             )
         }
     }
+
+    /**
+     * R-1001 (register — every real transmission failed Pass B with `dlopen failed: library
+     * "libsherpa-onnx-jni.so" not found`): **the one check in this file that reads a real build
+     * artifact rather than a declared coordinate or manifest string.** Every other guard here is,
+     * by this file's own class-level KDoc, a declared-artifact proxy — that is precisely why R-1001
+     * was invisible to all of them: `sherpa-onnx-jvm` was declared, resolved and dexed correctly;
+     * only the native `.so` files that JAR's `LibraryUtils.load()` calls
+     * `System.loadLibrary("sherpa-onnx-jni")` for at runtime were never packaged into the APK at
+     * all. A declared-coordinate check cannot catch a missing *build-time-fetched* artifact — there
+     * is no coordinate to inspect — so this one is stronger: it takes the actual set of entry paths
+     * a real packaged APK contains (`NativeLibraryPackagingGuardTask` reads them with
+     * `java.util.zip.ZipFile`, wired from `ort.android-app.gradle.kts` after `assembleDebug`, since
+     * this project's `dependencyRules`/`platformGuards` root tasks run before any APK exists to
+     * inspect — see that task's own KDoc) and reports every `lib/<abi>/<file>` this project ships
+     * (`REQUIRED_NATIVE_LIBRARY_ABIS` x `REQUIRED_NATIVE_LIBRARY_FILES`, kept in sync with
+     * `sherpa-native.json`) that the APK does not actually contain.
+     */
+    fun missingNativeLibraryViolations(
+        apkEntryPaths: Set<String>,
+        requiredAbis: List<String> = REQUIRED_NATIVE_LIBRARY_ABIS,
+        requiredFiles: List<String> = REQUIRED_NATIVE_LIBRARY_FILES,
+    ): List<NativeLibraryViolation> =
+        requiredAbis.flatMap { abi ->
+            requiredFiles.map { file -> "lib/$abi/$file" }
+        }.filter { path -> path !in apkEntryPaths }
+            .map { path ->
+                NativeLibraryViolation(
+                    path,
+                    "packaged APK does not contain $path — sherpa-onnx's Android JNI binding will " +
+                        "fail to load at runtime (register R-1001)",
+                )
+            }
+            .sortedBy { it.path }
 }

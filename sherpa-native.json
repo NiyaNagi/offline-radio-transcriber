@@ -1,0 +1,65 @@
+{
+  "$schema": "this file has no external schema — see FetchSherpaNativeTask.kt's doc comment for the shape a parser accepts",
+  "note": [
+    "R-1001 (WPJ): the sherpa-onnx-jvm JAR (gradle/libs.versions.toml's sherpaOnnx coordinate,",
+    "asr-sherpa/build.gradle.kts) supports Android deliberately (LibraryUtils.load() skips",
+    "loadFromResourceInJar() on Android and calls System.loadLibrary(\"sherpa-onnx-jni\") directly —",
+    "see WPJ's build report for the disassembly) but the project never shipped the .so files that",
+    "call resolves to. This manifest is the single source of truth for those native libraries,",
+    "fetched at build time by buildSrc's FetchSherpaNativeTask into",
+    "app/src/main/jniLibs/<abi>/ (gitignored, like app/src/main/assets/bundled/) — never committed.",
+    "",
+    "archiveUrl is upstream's own published, public (no HF_TOKEN, no auth of any kind) GitHub",
+    "release asset for exactly this sherpa-onnx-jvm version — see",
+    "https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.7 and",
+    "https://k2-fsa.github.io/sherpa/onnx/android/build-sherpa-onnx.html, which names this exact",
+    "artifact. It is a single tar.bz2 containing jniLibs/<abi>/*.so for five ABIs; this project",
+    "extracts only the two it ships (see 'libraries' below) and only the two files each of those",
+    "ABIs' JNI binding actually needs — libonnxruntime.so is the only DT_NEEDED entry",
+    "libsherpa-onnx-jni.so declares beyond the Android system libraries (confirmed by inspecting",
+    "its dynamic symbol table with pyelftools in WPJ's build report; libsherpa-onnx-c-api.so and",
+    "libsherpa-onnx-cxx-api.so, also present in the archive, are for native C/C++ API consumers",
+    "this project does not use and are never fetched).",
+    "",
+    "sha256/sizeBytes below were computed directly from a real download and extraction of this",
+    "exact archiveUrl in WPJ's own session (see that build report) — not read from published",
+    "metadata, since GitHub does not publish per-asset checksums for release tarballs.",
+    "",
+    "Unlike bundled-assets.json's FetchBundledAssetsTask, this fetch has no allow-missing escape",
+    "hatch and is never gated behind -PortAllowMissingBundledAssets: the archive needs no token,",
+    "costs a few tens of megabytes (not hundreds), and a build that silently shipped without these",
+    "libraries is the exact defect this manifest exists to close (register R-1001)."
+  ],
+  "version": "1.13.7",
+  "archiveUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-v1.13.7-android.tar.bz2",
+  "libraries": [
+    {
+      "abi": "arm64-v8a",
+      "file": "libsherpa-onnx-jni.so",
+      "archivePath": "jniLibs/arm64-v8a/libsherpa-onnx-jni.so",
+      "sha256": "be77572bfd01586b0e4531f3a223f8d1f2e6b257e567efe861de1faf47dfe969",
+      "sizeBytes": 4761536
+    },
+    {
+      "abi": "arm64-v8a",
+      "file": "libonnxruntime.so",
+      "archivePath": "jniLibs/arm64-v8a/libonnxruntime.so",
+      "sha256": "dc5e4c172b1be9e530c6a62ad8f1be3e0a911cabdee6195abf28dab72477e194",
+      "sizeBytes": 21684880
+    },
+    {
+      "abi": "x86_64",
+      "file": "libsherpa-onnx-jni.so",
+      "archivePath": "jniLibs/x86_64/libsherpa-onnx-jni.so",
+      "sha256": "d832cbe0f35abbfeb52e51d6c6cc905c8c7d9eb2b5e9976eda5984e59b221668",
+      "sizeBytes": 5185768
+    },
+    {
+      "abi": "x86_64",
+      "file": "libonnxruntime.so",
+      "archivePath": "jniLibs/x86_64/libonnxruntime.so",
+      "sha256": "b2e0b6b0ffde094837df455d6e67b865dc4f7bf246b976ad4687a5220211f751",
+      "sizeBytes": 25000416
+    }
+  ]
+}

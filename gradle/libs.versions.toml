@@ -16,6 +16,13 @@ room = "2.7.2"
 androidxSqlite = "2.5.2"
 ksp = "2.0.21-1.0.28"
 sherpaOnnx = "1.13.7"
+# R-1001 (register): upstream publishes no Maven coordinate for Android at all — only this JVM/
+# desktop jar (below) plus per-platform *desktop* native jars (win-x64 here; linux/macOS have their
+# own). The Android `.so` files (`libsherpa-onnx-jni.so`, `libonnxruntime.so`) ship only as a plain
+# GitHub release tarball (`sherpa-onnx-v<version>-android.tar.bz2`), fetched and verified by
+# `buildSrc`'s `FetchSherpaNativeTask` from the root `sherpa-native.json` manifest — never a
+# `libs.versions.toml` coordinate, because there genuinely isn't one to declare. Keep this version
+# in sync with `sherpa-native.json`'s own `version` field if either is ever bumped.
 # P13: Compose foundation (D15). The compiler plugin is pinned to the exact Kotlin version above
 # (buildSrc/build.gradle.kts), so it has no version entry of its own here.
 composeBom = "2024.09.03"
