@@ -32,6 +32,93 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (R-809(a): scenario-loading/navigation tests stop reading the real bundled assets; the real-install tests stay narrow)
+
+### (pending) — ScenariosTest and TourStepsTest take the fixture-sized BundledAssetSource for their all-scenarios sweeps; every real-installer caller audited
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/{ScenariosTest.kt,TinyFixtureBundledAssetSource.kt}`,
+`app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt`. No `app/src/debug/**` or
+`app/build.gradle.kts` change (the heap-size track is R-809(b), landed separately by WPG,
+already merged as `3dcf5d46`/`cedf6b02`/`f2e0e1e3`).
+
+**Requirements/ACs:** R-809 (this is the "(a)" half — the scenario/fixture-source track;
+R-809(b), the worker-heap track, is WPG's, already merged). FR-AST-3 incidentally reconfirmed
+(the real installer's copy-then-verify path still runs unmodified for the tests whose actual
+purpose is proving it).
+
+**What changed:** The Release workflow's unit-test job (run 34664670909, commit `5e07273f`) died
+with `OutOfMemoryError: Java heap space` at `org.robolectric.res.android.Asset$_CompressedAsset
+.getBuffer` — Robolectric inflates a whole compressed APK asset entirely into the test JVM's heap
+the instant any test reads it through the real `AndroidBundledAssetSource`, and once WPG's own
+earlier fix wired `mergeDebugAssets`/`mergeReleaseAssets` to `dependsOn(fetchBundledAssets)`,
+`:app:testDebugUnitTest` started seeing the real, ~555 MB `LLM_GEMMA3_1B` asset for the first
+time. Two tests died: `ScenariosTest > R_110 every declared scenario name loads without
+throwing` and `TourStepsTest > R_TOUR_STEPS every destination step in tour json lands on the
+screen it claims to` — both iterate **every** declared scenario name, including the three
+(`assets-bundled`, `asset-corrupt`, `tier0-llm-stored`) whose own scenario functions call
+`Scenarios.installRealBundledAssets`, which (before this fix) always built a real
+`AndroidBundledAssetSource` reading the genuine packaged asset directory.
+
+Fixed both tests with the exact `DebugBundledAssetSourceOverride` seam `ScenariosTest`'s own
+`R_110 …loading every scenario back to back five times…` test already established (R-807 round):
+set `DebugBundledAssetSourceOverride.override = TinyFixtureBundledAssetSource(context.filesDir)`
+before the sweep, wrapped in `try`/`finally` so the override is always cleared even on a thrown
+assertion. `installRealBundledAssets` already checked
+`DebugBundledAssetSourceOverride.override ?: AndroidBundledAssetSource(context)` (line 2889) — no
+production code changed, only the two tests now populate that seam for the duration of their own
+sweep. `TinyFixtureBundledAssetSource` — a fake `BundledAssetSource` producing a genuine, tiny
+(few dozen bytes) manifest and asset bytes with a real, matching sha256 for every real `ModelId`,
+so `BundledAssetInstaller`'s own copy-then-verify code path runs completely unmodified, just
+cheaply — was extracted out of `ScenariosTest.kt` (previously a private nested class) into its own
+file, `internal` rather than `private`, because Kotlin's `internal` is module-scoped not
+package-scoped and `TourStepsTest` lives in a different package (`org.ort.app.debug.tour`) but
+needs the identical fixture.
+
+**Audited every other caller of `installRealBundledAssets`** (`Scenarios.kt:2885`, three call
+sites: `assetsBundled()` line 2934, `assetCorrupt()` line 2968, `tier0LlmStored()` line 3010) —
+the only tests reaching any of them are `WpiScenariosTest`'s five real-install methods
+(`R_841_assets-bundled…`, `R_841_asset-corrupt…`, `R_866_asset-corrupt…`,
+`R_842_tier0-llm-stored…`, `R_865_tier0-llm-stored…`), each installing once, never in a loop, and
+each is the one place whose own stated purpose is proving the real install path — left on the
+real `AndroidBundledAssetSource`, unchanged, exactly per the coordinator's carve-out.
+
+**Mid-round correction** (coordinator flagged this after seeing CI red on `f2e0e1e3`, WPG's own
+3 g-heap commit, still failing `ScenariosTest > R_110 every declared scenario name loads without
+throwing` on the Linux runner): this was CI running the *pre-fix* code — the fix above already
+covers `tier0LlmStored` (scenario name `"tier0-llm-stored"`, one of `Scenarios.NAMES`, so already
+inside `R_110`'s override-guarded sweep) — confirmed by re-reading `installRealBundledAssets`'s
+own override check and by the reproduction below.
+
+**Verified:**
+- Full gate — `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true`
+  — `BUILD SUCCESSFUL`, 1107 actionable tasks, no `HF_TOKEN`/escape hatch, twice (once before, once
+  after merging WPG's R-809(b) heap fix into this branch).
+- `coverageMatrix` then `coverageMatrixCheck` as two separate invocations — green, unchanged.
+- **Coordinator's requested reproduction**, with the real five assets genuinely present
+  (`fetchBundledAssets` with a real `HF_TOKEN`) and the test task's own `maxHeapSize` temporarily
+  forced to `1500m` (local-only edit to `app/build.gradle.kts`'s `debugUnitTest.maxHeapSize`,
+  reverted immediately after, never committed):
+  `./gradlew :app:testDebugUnitTest --tests "*ScenariosTest*" --tests "*TourStepsTest*"
+  -PortAllowMissingBundledAssets=true --rerun` — `BUILD SUCCESSFUL`, all of `ScenariosTest`'s,
+  `WpiScenariosTest`'s (matched by the same wildcard) and `TourStepsTest`'s tests PASSED, no OOM,
+  including `WpiScenariosTest`'s five genuine real-install methods run together with the two fixed
+  sweeps in the same worker JVM.
+- A second, narrower proof at an even tighter `1g` forced heap: `ScenariosTest` and `TourStepsTest`
+  alone passed cleanly; `WpiScenariosTest`'s own `R_865_tier0-llm-stored` OOM'd only when run
+  combined with the other two classes in one Gradle invocation, but passed clean at `1g` both
+  alone and as its whole class together with its four sibling real-install methods — confirming
+  the OOM was Gradle test-worker batching (several real-install methods across three classes
+  sharing one forked JVM under an unusually tight cap), not a regression in either fix, and not
+  reproducible at the coordinator's own requested `1500m`.
+- Local worktree cleaned of the real `app/src/main/assets/bundled/` content fetched for these
+  proof runs afterward (gitignored, confirmed via `git status` showing no diff) — later gate runs
+  in this round exercise the normal `-PortAllowMissingBundledAssets=true` escape-hatch path again.
+
+**Left open / not done:** none for this register item. R-809(b) (the worker-heap track) is WPG's
+own, already merged; this entry covers only R-809(a).
+
+---
+
 ## 2026-09-11 (register R-808 close-out: the three named :pipeline files converted or documented case by case)
 
 ### (pending) — RigSupervisorTest and RigSupervisorRealTransportTest fully converted; RigLinkBridgeTest converted case by case, two left on real dispatchers with a comment

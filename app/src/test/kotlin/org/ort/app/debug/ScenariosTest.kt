@@ -11,10 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.ort.app.assets.BundledAssetSource
 import org.ort.app.permissions.PermissionsState
-import org.ort.app.ui.data.ModelCatalog
-import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailureSignals
 import org.ort.app.ui.failures.RecoveryAnnouncer
@@ -39,8 +36,6 @@ import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import java.io.File
-import java.io.InputStream
-import java.security.MessageDigest
 
 /**
  * spec/ui-conformance-plan.md WP0, register R-110: proves each scenario inserts what it claims
@@ -106,12 +101,31 @@ class ScenariosTest {
             .edit().clear().commit()
     }
 
+    /**
+     * Register, CI regression (`OutOfMemoryError` at
+     * `org.robolectric.res.android.Asset$_CompressedAsset.getBuffer`, Release workflow run
+     * 34664670909, commit `5e07273f`): once `mergeDebugAssets` genuinely depends on
+     * `fetchBundledAssets` (register, `ort.android-app.gradle.kts`), a real `HF_TOKEN` build's own
+     * ~555MB gated LLM asset is present for every Robolectric run, and Robolectric's own asset
+     * reader inflates a compressed asset's *entire* uncompressed content into the test JVM's heap
+     * to serve it — `assets-bundled`/`asset-corrupt`/`tier0-llm-stored` each call
+     * `installRealBundledAssets`, which copies all five real assets including that one. This test's
+     * own purpose is scenario *loading*, not asset installation fidelity — the same [DebugBundledAssetSourceOverride]
+     * fixture-sized source `R_110 ...five times...`'s own stress loop already uses, in the same
+     * `try`/`finally` shape, so a leftover override can never bleed into a later test in this same
+     * Robolectric process.
+     */
     @Test
     @Requirement("R-110")
     fun `R_110 every declared scenario name loads without throwing`() = runTest {
-        Scenarios.NAMES.forEach { name ->
-            val result = Scenarios.load(context, name)
-            assertTrue("'$name' reported a negative session count", result.sessionCount >= 0)
+        DebugBundledAssetSourceOverride.override = TinyFixtureBundledAssetSource(context.filesDir)
+        try {
+            Scenarios.NAMES.forEach { name ->
+                val result = Scenarios.load(context, name)
+                assertTrue("'$name' reported a negative session count", result.sessionCount >= 0)
+            }
+        } finally {
+            DebugBundledAssetSourceOverride.clear()
         }
     }
 
@@ -789,37 +803,4 @@ class ScenariosTest {
     // LargeClass finding, this file's own size after the R-285 tests above; the same fix
     // RowsTest.kt's own NavRowTest.kt split already establishes as house style).
     // -----------------------------------------------------------------------------------------
-
-    /**
-     * R-807: a fixture-sized [BundledAssetSource] for `R_110 loading every scenario back to back
-     * five times...`'s own stress loop — see that test's own doc comment for why a genuine
-     * `HF_TOKEN` build's real bundle (all five entries, one of them ~555MB) cannot be re-copied 150
-     * times inside a 1-minute test bound. Every real [ModelId]'s own real destination is used (the
-     * exact path [BundledAssetInstaller.installOne] writes to and [ModelsController] reads back
-     * from), with a handful of bytes and a `sha256` this fake source's own bytes genuinely hash to
-     * — so [BundledAssetInstaller]'s real copy-then-verify code path runs unmodified, only the byte
-     * count differs. `missing = false` for every entry, including the gated LLM: this fake source
-     * exists to prove DB-lock safety, not to simulate the escape hatch (that is
-     * `R_841_assets-bundled...`'s own concern, in `WpiScenariosTest.kt`).
-     */
-    private class TinyFixtureBundledAssetSource(filesDir: File) : BundledAssetSource {
-        private val tinyBytes = "R-807 tiny fixture asset for the R_110 stress loop".toByteArray()
-        private val tinySha256 = MessageDigest.getInstance("SHA-256").digest(tinyBytes)
-            .joinToString("") { "%02x".format(it) }
-        private val manifestJson = run {
-            val assetsJson = ModelId.entries.joinToString(",\n") { id ->
-                val destination = ModelCatalog.entry(id).destination(filesDir)
-                    .relativeTo(filesDir).invariantSeparatorsPath
-                """{"id":"${id.name}","destination":"$destination","sha256":"$tinySha256",""" +
-                    """"sizeBytes":${tinyBytes.size},"missing":false}"""
-            }
-            """{"assets":[$assetsJson]}"""
-        }
-
-        override fun open(assetPath: String): InputStream = if (assetPath == "bundled/manifest.json") {
-            manifestJson.toByteArray().inputStream()
-        } else {
-            tinyBytes.inputStream()
-        }
-    }
 }
