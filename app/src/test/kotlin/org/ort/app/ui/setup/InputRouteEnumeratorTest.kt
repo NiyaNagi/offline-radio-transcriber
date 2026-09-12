@@ -1,9 +1,13 @@
 package org.ort.app.ui.setup
 
 import android.app.Application
+import android.content.Context
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,7 +15,11 @@ import org.junit.runner.RunWith
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.fake.FakeAudioIo
+import org.ort.core.capture.AudioRouteKind
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
+import org.robolectric.shadows.AudioDeviceInfoBuilder
+import org.robolectric.shadows.ShadowLog
 
 /** R-081 (ui-conformance-plan WP9) — [InputRouteEnumerator] against
  * [org.ort.capture.android.fake.FakeAudioIo] (constitution II: the same fake capture's own tests
@@ -239,5 +247,133 @@ class InputRouteEnumeratorTest {
         val routeKind = InputRouteEnumerator(context, io).list().single().routeKind
 
         assertEquals(org.ort.core.capture.AudioRouteKind.UNKNOWN, routeKind)
+    }
+
+    // --- R-1004 (device field report, Oppo Find X9 Ultra/ColorOS): dedupe + the device dump ------
+
+    private fun observation(
+        id: String,
+        label: String = "Built-in microphone",
+        kind: AudioDeviceKind = AudioDeviceKind.BUILT_IN_MIC,
+        facts: DeviceHardwareFacts? = null,
+    ): DeviceObservation {
+        val resolved = DeviceTypeNaming.forKind(kind)
+        return DeviceObservation(AudioDeviceDescriptor(id, kind, label), resolved, facts)
+    }
+
+    private fun facts(
+        address: String = "",
+        channelCounts: List<Int> = listOf(1),
+        sampleRates: List<Int> = listOf(48_000),
+        isSource: Boolean = true,
+    ): DeviceHardwareFacts = DeviceHardwareFacts(address, channelCounts, sampleRates, isSource)
+
+    /** R-1004: this is the reported bug reproduced directly — two platform ids that are, on every
+     * queryable fact, the same device reported twice collapse to one row. */
+    @Test
+    fun `R_1004 two observations with identical real hardware facts collapse to one route`() {
+        val enumerator = InputRouteEnumerator(context, FakeAudioIo())
+        val shared = facts()
+        val observations = listOf(observation(id = "mic-0", facts = shared), observation(id = "mic-1", facts = shared))
+
+        val routes = enumerator.buildRouteOptions(observations)
+
+        assertEquals(1, routes.size)
+    }
+
+    /** R-1004: a real difference in a queryable fact (here, `address`) must never be hidden — the
+     * conservative key keeps both rows precisely because it cannot prove they are the same device. */
+    @Test
+    fun `R_1004 two observations that differ in a real hardware fact are both kept`() {
+        val enumerator = InputRouteEnumerator(context, FakeAudioIo())
+        val observations = listOf(
+            observation(id = "mic-bottom", facts = facts(address = "bottom")),
+            observation(id = "mic-top", facts = facts(address = "top")),
+        )
+
+        val routes = enumerator.buildRouteOptions(observations)
+
+        assertEquals(2, routes.size)
+    }
+
+    /** R-1004: the two survivors above render identical subtitle text (subtitle never surfaces
+     * `address`) — each must still be told apart, never silently merged by the UI text alone. */
+    @Test
+    fun `R_1004 two surviving routes that would render identical text are disambiguated`() {
+        val enumerator = InputRouteEnumerator(context, FakeAudioIo())
+        val observations = listOf(
+            observation(id = "mic-bottom", facts = facts(address = "bottom")),
+            observation(id = "mic-top", facts = facts(address = "top")),
+        )
+
+        val routes = enumerator.buildRouteOptions(observations)
+
+        assertNotEquals(
+            "the two rows must remain distinguishable in the rendered text",
+            routes[0].subtitle,
+            routes[1].subtitle,
+        )
+    }
+
+    /** R-1004: with no real `AudioManager` match (every fake-backed device today), the conservative
+     * fallback must never collapse two genuinely distinct fake descriptors just because they share
+     * a type — this is the regression the naive "dedupe by type" key would have caused. */
+    @Test
+    fun `R_1004 observations with no matched hardware facts are never collapsed`() {
+        val enumerator = InputRouteEnumerator(context, FakeAudioIo())
+        val observations = listOf(observation(id = "mic-a", facts = null), observation(id = "mic-b", facts = null))
+
+        val routes = enumerator.buildRouteOptions(observations)
+
+        assertEquals(2, routes.size)
+    }
+
+    /** R-1004: the second, silent consequence — [presetInputRouteFor]'s own `singleOrNull` recovers
+     * once the false duplicate is gone. */
+    @Test
+    fun `R_1004 the preset pre-select recovers once a true duplicate is collapsed`() {
+        val enumerator = InputRouteEnumerator(context, FakeAudioIo())
+        val shared = facts()
+        val observations = listOf(
+            observation(id = "mic-0", kind = AudioDeviceKind.BUILT_IN_MIC, facts = shared),
+            observation(id = "mic-1", kind = AudioDeviceKind.BUILT_IN_MIC, facts = shared),
+        )
+        val routes = enumerator.buildRouteOptions(observations)
+
+        val preset = presetInputRouteFor(org.ort.core.capture.CaptureMode.LOCAL_MICROPHONE, routes)
+
+        assertEquals(AudioRouteKind.BUILT_IN_MIC, preset?.routeKind)
+    }
+
+    /** R-1004: the debug-visible dump — a future field report's only way to see what ColorOS (or
+     * any other platform) really returned, since [DeviceHardwareFacts] cannot be captured any other
+     * way from this environment. */
+    @Test
+    fun `R_1004 the device dump logs every real AudioDeviceInfo the platform reports`() {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val device = AudioDeviceInfoBuilder.newBuilder().setType(AudioDeviceInfo.TYPE_BUILTIN_MIC).build()
+        Shadows.shadowOf(audioManager).addInputDevice(device, false)
+        ShadowLog.clear()
+
+        InputRouteEnumerator(context, FakeAudioIo()).list()
+
+        // R-1004: this proves every field the dump promises is actually present in the written
+        // line — not a specific `type=` value, which Robolectric's own AudioDeviceInfoBuilder does
+        // not round-trip faithfully (confirmed directly: it reads back as `0`, not the constant
+        // passed to `setType`, a shadow limitation this test must not depend on to discriminate).
+        val logs = ShadowLog.getLogs().filter { it.tag == "InputRouteEnumerator" }
+        assertTrue(
+            "expected an audio_device dump line naming every real field, got $logs",
+            logs.any { log ->
+                log.msg.contains("audio_device") &&
+                    log.msg.contains("id=") &&
+                    log.msg.contains("type=") &&
+                    log.msg.contains("isSource=") &&
+                    log.msg.contains("productName=") &&
+                    log.msg.contains("address=") &&
+                    log.msg.contains("channelCounts=") &&
+                    log.msg.contains("sampleRates=")
+            },
+        )
     }
 }
