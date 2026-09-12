@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (spec3: D40 — the over-audio budget warns and never deletes; FR-STO-3f — the archive's default-on state and rate must be disclosed)
 
-### (pending) — spec3: register R-1037 decided as D40/FR-STO-3e (over-audio budget: warn, never delete); register R-1036 decided as FR-STO-3f (archive default-on and monthly rate disclosed at setup and wherever storage is shown)
+### 90699acb — spec3: register R-1037 decided as D40/FR-STO-3e (over-audio budget: warn, never delete); register R-1036 decided as FR-STO-3f (archive default-on and monthly rate disclosed at setup and wherever storage is shown)
 
 **Scope:** `spec/functional-spec.md`, `spec/open-questions.md`, `AGENTS.md` (counts only).
 Product-owner decisions drafted as prose only — no product, build or test code touched.
