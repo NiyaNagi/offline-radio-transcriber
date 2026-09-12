@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPX: R-1009 — real ADIF/CSV/JSON/text export and the debug dump; R-1020 — Settings stops over-claiming rig verification)
 
-### (this commit) — the log finally leaves the device: real export writers, a debug dump, and Settings' own over-claimed "verified" fixed
+### b524133d — the log finally leaves the device: real export writers, a debug dump, and Settings' own over-claimed "verified" fixed
 
 **Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/export/**` (and its tests under
 `pipeline/src/test/**`); new `app/src/main/kotlin/org/ort/app/export/**` (and its tests under
