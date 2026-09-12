@@ -241,8 +241,12 @@ private fun StateDot(tone: CaptureStateTone, size: Dp, modifier: Modifier = Modi
     Box(modifier = modifier.size(size).background(color, CircleShape))
 }
 
+/** `internal`, not `private` (WPL, R-1007): [org.ort.app.ui.screens.LiveMonitorScreen] reuses this
+ * exact dialog for its own `Stop` confirmation — the artboards agree on the copy
+ * ([CaptureStatusViewState.haltConfirmTitle]/`haltConfirmBody`), so the confirmation itself should
+ * not exist twice. */
 @Composable
-private fun StopConfirmDialog(title: String, body: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+internal fun StopConfirmDialog(title: String, body: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = title, style = OrtType.cardTitle, color = OrtColors.textHigh) },

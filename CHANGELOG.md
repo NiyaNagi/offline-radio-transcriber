@@ -32,6 +32,88 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPL: Live Monitor — R-1007)
+
+### a9f1f4c3 — WPL · R-1007: the live instrument the operator asked for after 30 minutes of capture with no way to tell what was happening
+
+**Scope:** new `app/src/main/kotlin/org/ort/app/ui/screens/LiveMonitorScreen.kt`,
+`LiveMonitorActions.kt`, `app/src/main/kotlin/org/ort/app/ui/data/LiveMonitorViewData.kt`;
+`app/src/main/kotlin/org/ort/app/ui/screens/CaptureStatusContent.kt` (a `LIVE_MONITOR` sub-screen,
+its own poll reads, `onOpenLive` wired, two new pass-through parameters),
+`CaptureStatusScreen.kt` (`StopConfirmDialog` widened to `internal` for reuse),
+`app/src/main/kotlin/org/ort/app/ui/data/LiveBarPolling.kt` (`newestPassAPartial` widened to
+`internal` for reuse); `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (the new
+route only — `openCaptureLiveMonitor` state mirroring the existing `openCaptureLevelMeter` seam,
+the pinned bar's `onOpenCapture` callback now lands on Live Monitor directly, and a small
+`onOpenLog` callback for the artboard's own `Full log` action; every existing R-957/R-541/R-333
+comment and mechanism in that file is untouched); new
+`app/src/test/kotlin/org/ort/app/ui/screens/LiveMonitorScreenTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/data/LiveMonitorViewDataTest.kt`; additions to
+`CaptureStatusContentTest.kt` and `OrtNavHostDestinationDispatchTest.kt`;
+`results/coverage-matrix.md` (regenerated).
+
+**Requirements/ACs:** R-1007 (register — the operator ran thirty minutes of capture and could not
+tell what was happening), design-intent N07 (`Live-Monitor.dc.html`), FR-UI-7, FR-UI-12,
+FR-RUN-12 (a silence that was listened to, rendered as a row rather than an absence), P4 (capture
+state never in doubt), FR-CAP-3a (the room-audio mark), AC-63 (no clipping at maximum font scale).
+
+**What changed:** `LiveMonitorScreen` is the artboard, built: a top bar (back, "Live", `Stop`),
+the state row (dot/title/elapsed — reusing `CaptureStatusViewState` directly so the two screens'
+numbers can never disagree), a condensed level envelope card, an optional "Hearing now" card (the
+real `LiveBarPolling.newestPassAPartial` fact, present only when there genuinely is one), the
+"Logged tonight" list newest-first, and a dedicated footer (`room` mark + `Full log`) — deliberately
+**no** `LiveBar` of its own (the screen is already continuously live; adding one would have been a
+third `embedsOwnLiveBar` case in `OrtNavHost.kt`, which this round does not add). `LiveMonitorOverRow`
+is the closed set of states an over in flight can actually be in: `Transcribing` (`PROCESSING` with
+a current Pass B/REPROCESS transcript), `Waiting` (queued or leased with no transcript yet, naming a
+real count of overs ahead of it), `Resolved` (the four attribution states, one type), `NotTranscribed`
+(`FAILED`, naming the real `WorkQueueItemEntity.attemptCount` for its Pass B item — never a guessed
+number, and stating the audio is kept), and `ListenedSilence` (FR-RUN-12: the span between two overs
+with no `CaptureGapEntity` open at all, above a one-minute floor, distinct from the Log's own *not
+listening* gap row — this one means capture kept running and heard nothing). Reached two ways: this
+screen's own embedded live bar (`CaptureStatusContent`'s `onOpenLive`, previously the unwired no-op
+this row's whole reason for existing) and the pinned bar's host-level copy on every other destination
+(`OrtNavHost.kt`'s `onOpenCapture`, which now sets `openCaptureLiveMonitor` after `closeDrillIns()`
+so it is not immediately reset).
+
+**Deviations from the artboard, reported rather than silently taken:** (1) the header reuses
+`CaptureStatusViewState.sinceElapsedLabel` as one sub-line sentence rather than a separate large
+elapsed figure, so the two screens' elapsed/heartbeat facts can never independently drift; (2) the
+"Hearing now" card omits the artboard's own elapsed-seconds figure — no real signal for "how long
+this partial has been streaming" exists anywhere in `:pipeline` today, and inventing one would be
+exactly the fabrication constitution I forbids; (3) `Resolved` rows use the app's one established
+`AttributionRow` (marker + callsign leading, guide §6.1) rather than the artboard's inline
+transcript-highlighted callsigns with a trailing marker dot — reusing the one tested, accessible
+attribution component consistently beats a second, parallel rendering with no lexicon word-position
+data to drive it; (4) an AMBIGUOUS `Resolved` row shows no kept-candidate/alternate pair (that needs
+the full candidate inspection this screen does not otherwise read) — the marker still carries the
+state correctly; (5) `Waiting`'s "N ahead of it" is real (a queue-position count); the artboard's
+own "~40 s behind" ETA is not shown — no real per-pass timing signal exists to derive it honestly.
+
+**Verified:** `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.screens.*' --tests
+'org.ort.app.ui.data.*' --tests 'org.ort.app.ui.components.*' -PortAllowMissingBundledAssets=true`
+green (includes 13 `LiveMonitorViewDataTest` + 11 `LiveMonitorScreenTest` cases, two of the latter
+at `w390dp-h844dp-420dpi` NATIVE graphics, font scale 1.0 and 2.0, asserting real bounds);
+`:app:smokeTestDebugUnitTest` green (includes 3 new `CaptureStatusContentTest` cases and 1 new
+`OrtNavHostDestinationDispatchTest` case); `:app:lintDebug`, `:app:detekt`,
+`:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck`, `dependencyRules`, `platformGuards`,
+`:app:assembleDebug` green; `dependencyRules platformGuards build -PortAllowMissingBundledAssets=true
+--continue` green (10m20s, every module); `-p buildSrc test` green; `python
+tools\spec-check\spec_check.py` OK; `coverageMatrix` then `coverageMatrixCheck` as separate
+invocations, both green (246 of 466 covered, R-1007 now tracked against four test classes). Five
+discriminating reverts performed and recorded in the builder's own report (the back-chevron click
+target, the HEARING-partial list-row exclusion, the listened-silence gap-overlap exclusion, the
+`CaptureStatusContent.onOpenLive` wiring, and `OrtNavHost`'s `onOpenCapture` route) — each failed
+for the stated reason on revert and passed again on restore.
+
+**Left open / not done:** no debug scenario or tour step exists yet for Live Monitor — this
+package does not own `app/src/debug/**`; the exact scenario/step needed is named in the builder's
+own report for the lead to route. Visual conformance against `Live-Monitor.dc.html` is the lead's
+own re-verification per constitution VIII — not run by this builder. The screenshot tour and
+`results/ui-audit/register.md` are untouched.
+
+---
+
 ## 2026-09-12 (WPR1: the debug-build field-report session recorder and screen frames)
 
 ### a9995b7f — WPR1 · FR-OBS-6/FR-OBS-7: the debug-build session recorder (closed event vocabulary, bounded ring buffer) and FR-OBS-7 screen frames (bounded, app-private)

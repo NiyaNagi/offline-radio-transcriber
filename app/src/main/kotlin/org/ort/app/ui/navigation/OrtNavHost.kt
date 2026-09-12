@@ -274,6 +274,7 @@ public fun OrtNavHost(
                         DestinationInitialState(
                             navigator.settingsScreenState.value,
                             navState.openCaptureLevelMeter.value,
+                            navState.openCaptureLiveMonitor.value,
                             navState.pendingLogFilter.value,
                             navState.pendingReviewSessionId.value,
                             seed?.logSheetOpen ?: false,
@@ -396,6 +397,11 @@ private data class NavHostNavState(
     // next time it is freshly composed — see `CaptureStatusContent.openLevelMeter`'s own doc
     // comment for the "opens there on launch" contract this mirrors.
     val openCaptureLevelMeter: MutableState<Boolean>,
+    // R-1007 (WPL, register): whether `Capture` should land directly on `LiveMonitorScreen` the
+    // next time it is freshly composed — the identical "opens there on launch" contract
+    // [openCaptureLevelMeter] already has, set by the pinned live bar's own tap
+    // (`navHostCallbacks`'s `onOpenCapture`) rather than a Settings action.
+    val openCaptureLiveMonitor: MutableState<Boolean>,
     // Round 9, register R-276: the filter `LogContent` should seed on its own next fresh
     // composition — see [openLogFilteredByFrequency]. A plain `remember`, not `rememberSaveable`:
     // it only has to survive until `LogContent`'s own `initialFilter` read, which happens
@@ -445,6 +451,9 @@ private data class NavHostNavState(
         // reaching `Capture` (the drawer row, the live bar's own tap target) and must not leave a
         // stale `true` from an earlier `Settings-Capture` "Meter" tap open the meter again.
         openCaptureLevelMeter.value = false
+        // R-1007: same reasoning again — an ordinary way of reaching `Capture` must not leave a
+        // stale live-monitor landing behind for a later, unrelated visit.
+        openCaptureLiveMonitor.value = false
         // Same reasoning, round 9: any ordinary way of reaching `Log` (the drawer row) must not
         // silently reapply a stale filter or resurrect a "back to the frequency" promise a normal
         // navigation never made.
@@ -546,6 +555,11 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
     val searchInput = rememberSaveable(stateSaver = SearchFilterInputSaver) { mutableStateOf(SearchFilterInput()) }
     val searchResult = remember { mutableStateOf<SearchResult?>(null) }
     val openCaptureLevelMeter = rememberSaveable { mutableStateOf(seed?.openCaptureLevelMeter ?: false) }
+    // R-1007 (WPL): no `NavSeed` field yet — the screenshot tour cannot deep-link a step directly
+    // onto `LiveMonitorScreen` today (this package's own report names the scenario/step it needs,
+    // routed to whichever package owns `app/src/debug/**`); every ordinary reach (the pinned bar's
+    // own tap) still works, seeded `false` only.
+    val openCaptureLiveMonitor = rememberSaveable { mutableStateOf(false) }
     // Round 9, register R-276 — see `NavHostNavState.pendingLogFilter`/`logFrequencyOrigin`'s own
     // doc comments for why one is a plain `remember` and the other `rememberSaveable`.
     val pendingLogFilter = remember { mutableStateOf(seed?.pendingLogFilter) }
@@ -575,6 +589,7 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
         searchInput,
         searchResult,
         openCaptureLevelMeter,
+        openCaptureLiveMonitor,
         pendingLogFilter,
         logFrequencyOrigin,
         frequencyInitialView,
@@ -601,8 +616,20 @@ private fun navHostCallbacks(
             currentState.value = ReaderDestination.SEARCH
         },
         onCloseDrillIns = navState::closeDrillIns,
+        // R-1007 (WPL, register): the operator's own words — "clicking on it should let me see the
+        // entire recording" — so the pinned bar's tap now lands on `LiveMonitorScreen` directly,
+        // not the status root a second tap used to be needed to leave. `closeDrillIns()` first (its
+        // own reset now includes `openCaptureLiveMonitor`, so order matters here), the flag set
+        // true only after.
         onOpenCapture = {
             currentState.value = ReaderDestination.CAPTURE
+            navState.closeDrillIns()
+            navState.openCaptureLiveMonitor.value = true
+        },
+        // R-1007: `Live-Monitor.dc.html`'s own `Full log` action — the plain, unfiltered `Log`,
+        // the same shape `onOpenStations` already is for its own destination.
+        onOpenLog = {
+            currentState.value = ReaderDestination.LOG
             navState.closeDrillIns()
         },
         onOpenTransmission = { id ->
@@ -715,6 +742,8 @@ private data class NavHostLayout(val modifier: Modifier, val contentTopPadding: 
 private data class DestinationInitialState(
     val settingsInitialScreen: SettingsScreenId?,
     val openCaptureLevelMeter: Boolean,
+    // R-1007 (WPL): see `NavHostNavState.openCaptureLiveMonitor`'s own doc comment.
+    val openCaptureLiveMonitor: Boolean,
     val logInitialFilter: LogFilterSelection?,
     val reviewSessionId: String?,
     // Round 14 (after WP5 merged `LogContent.initialSheetOpen`) — see `NavSeed.logSheetOpen`'s own
@@ -766,6 +795,8 @@ private data class NavHostCallbacks(
     val onSearchDestination: () -> Unit,
     val onCloseDrillIns: () -> Unit,
     val onOpenCapture: () -> Unit,
+    // R-1007 (WPL): see `navHostCallbacks`'s own construction site.
+    val onOpenLog: () -> Unit,
     val onOpenTransmission: (String) -> Unit,
     val onOpenStation: (String) -> Unit,
     val onOpenFrequency: (Long) -> Unit,
@@ -1142,6 +1173,7 @@ private fun DestinationContent(
 ) {
     val settingsInitialScreen = initialState.settingsInitialScreen
     val openCaptureLevelMeter = initialState.openCaptureLevelMeter
+    val openCaptureLiveMonitor = initialState.openCaptureLiveMonitor
     val logInitialFilter = initialState.logInitialFilter
     val reviewSessionId = initialState.reviewSessionId
     val logInitialSheetOpen = initialState.logInitialSheetOpen
@@ -1202,11 +1234,18 @@ private fun DestinationContent(
 
         // Round 6, register R-132: `openLevelMeter` is real now — `Settings-Capture`'s `Meter`
         // action (via `NavHostCallbacks.onOpenLevelMeter`) lands here directly on the level meter.
+        // R-1007 (WPL): `openLiveMonitor` the same way — the pinned bar's own tap
+        // (`NavHostCallbacks.onOpenCapture`) lands here directly on `LiveMonitorScreen`.
+        // `onOpenOver` reuses the identical transmission drill-in every other destination already
+        // opens through; `onOpenFullLog` is `Live-Monitor.dc.html`'s own `Full log` action.
         ReaderDestination.CAPTURE -> CaptureStatusContent(
             context = context,
             sessionId = sessionId,
             modifier = content,
             openLevelMeter = openCaptureLevelMeter,
+            openLiveMonitor = openCaptureLiveMonitor,
+            onOpenOver = onOpenTransmission,
+            onOpenFullLog = callbacks.onOpenLog,
         )
 
         // ui-conformance-plan WP10 (register R-090/R-091/R-092/R-107): all three dispatch to
