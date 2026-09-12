@@ -32,6 +32,93 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPW: R-1021 — the live-bar tap matched on a label that was never stable, fixed to match on the real testTag instead)
+
+### 18ed7587 — R-1021: stop matching the tour's live-bar tap on rendered copy
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourAccessibilityTap,ScreenshotTourActivity}.kt`;
+tests under `app/src/test/kotlin/org/ort/app/debug/tour/TourAccessibilityTapTest.kt`.
+
+**Requirements/ACs:** R-1007 (`Live-Monitor.dc.html` capture), **R-1021** (this round's own row —
+the lead's field report: all three `overnight-live-monitor` tour steps failed with "could not find
+a clickable 'Live' live-bar node to tap"). Constitution II ("never assert prose, locale-formatted
+text or a library's message") — the rule's own text is written for tests, but the lead's own
+diagnosis is that it applies identically to capture tooling, and is harder to catch there because a
+tooling failure reads exactly like a feature failure.
+
+**What changed:**
+- **Root cause, confirmed against the source, not assumed:** `TourAccessibilityTap.tapClickableNodeWithText`
+  matched the live bar by its rendered label, hardcoded to `"Live"`. `"Live"` is only
+  `LiveBarPolling.toneAndLabel`'s own `else` branch, outranked by nine other real states (`"Gap"`,
+  `"N behind"`, `"Tier N"`, `"Rig lost"`, ...). `overnight-live-monitor` (this session's own prior
+  scenario, WPW/R-1007) deliberately seeds a gap and a queue backlog — two of the seven states
+  `Live-Monitor.dc.html` exists to render — so the real bar correctly read `"Gap"`/`"N behind"` and
+  the label-matching tap found nothing. Not a scenario defect: changing the scenario to force the
+  label to say `"Live"` would have deleted two of the seven states the capture exists to prove.
+- **Fix:** `TourAccessibilityTap` gained `tapNodeWithTestTag`/`hasNodeWithTestTag`, matching
+  `org.ort.app.ui.components.LiveBar`'s own stable `testTag("live-bar")` (present regardless of
+  tone/label/partial text) instead of copy. Reading a Compose `testTag` from outside the
+  composition needed its own investigation: the platform's "extra data" channel
+  (`AccessibilityNodeInfo.addExtraDataToAccessibilityNodeInfo`, the mechanism
+  `androidx.compose.ui.test.uiautomator` itself uses, confirmed present in Compose UI 1.7.3 by
+  decompiling `AndroidComposeViewAccessibilityDelegateCompat`) declared support for the key but
+  never actually populated it under this project's Robolectric harness — tried first, a real
+  diagnostic test proved it did not work here, and abandoned rather than chased further. What does
+  work, proven empirically: `SemanticsPropertiesAndroid.testTagsAsResourceId` set on an ancestor
+  (`ScreenshotTourActivity`'s own composition root — a debug-tour-only opt-in, no production
+  composable touched) exposes every descendant's `testTag` as the ordinary
+  `AccessibilityNodeInfo.viewIdResourceName`, a plain, unsealed-safe field.
+- Since `LiveBar`'s own `testTag("live-bar")` sits on its outer, non-clickable `Column` (the real
+  clickable node is a distinct, nested one carrying a different, per-screen tag), the tap resolves
+  the tagged node's own bounds and taps the first clickable node whose bounds fall inside them —
+  correct for the live bar specifically because its clickable row fills essentially the whole
+  tagged column (confirmed by reading `LiveBar.kt`: the only sibling is a 1dp non-semantic divider).
+- `ScreenshotTourActivity`'s own `awaitLiveMonitorVisible` was **also** matching on rendered copy
+  (`"LOGGED TONIGHT"`, `LiveMonitorOversSection`'s own literal) to confirm `LiveMonitorScreen` had
+  actually composed after the tap — the identical defect class, introduced in the same prior round
+  and caught by this round's own audit rather than left for a second field report. Fixed to check
+  `hasNodeWithTestTag(..., "live-monitor-top-bar")` instead.
+- `TourAccessibilityTap.tapClickableNodeWithText`/`findClickableVirtualViewIdWithText` (the
+  label-matching entry point) were **removed outright**, not merely superseded: this round's own
+  audit of every `tour.json` `drillIn` and every file in `app/src/debug/kotlin/org/ort/app/debug/tour`
+  found no other step using it, and a public, unused, exact-text-matching entry point is itself the
+  standing invitation to reintroduce this defect the next time a tour step needs a tap.
+- **Audit finding reported, not fixed here** (out of this row's own scope — pre-existing, not
+  introduced this round): `TourAccessibilityScroll.snapshot`'s own `PLACEHOLDER_TEXT_MARKER =
+  "loading"` is a live, case-insensitive substring match against rendered `text`/`contentDescription`,
+  gating `awaitStableSemantics` (whether a capture is allowed to proceed) on designer-authored copy.
+  Its own doc comment already names the reason: "there is no structural placeholder marker... in
+  this codebase to key on instead." Flagged to the lead as a follow-up (this file's own report has
+  the exact citation) rather than fixed, since closing it needs a structural placeholder marker
+  added across several screens this round does not own (`SessionsContent.kt`, `DigestContent.kt`,
+  `SettingsContent.kt`, others) — a larger, separate change.
+- Every other `drillIn` in `tour.json` (enum `.name` lookups, fixed fixture data — callsigns,
+  frequencies, MAC addresses — and the tour DSL's own boolean/enum keywords) was confirmed to match
+  on stable identifiers, not rendered prose.
+
+**Verified:**
+- Discriminating: `TourAccessibilityTap.kt` reverted to its pre-fix (merged, `07b59efe`) state with
+  the new test file kept — `TourAccessibilityTapTest`/`ScreenshotTourActivity` failed to *compile*
+  (`Unresolved reference 'tapNodeWithTestTag'`/`'hasNodeWithTestTag'`), restored, all five tests
+  pass. Full transcripts in this round's own session report.
+- `./gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.debug.tour.*'` — green (all `Tour*`
+  suites, `TourStepsTest`'s own real-composition sweep included).
+- `./gradlew ":app:detekt" ":app:ktlintCheck"` — green.
+- `./gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue` —
+  green.
+
+**Left open / not done:**
+- The tour itself was not re-run (device/emulator capture is the lead's own territory this round);
+  the fix is proven at the unit level (a real `LiveBar` at the exact `"Gap"` state the field report
+  named) but the lead's own `tour.ps1 -Only "overnight-live-monitor/*"` run is what actually closes
+  R-1007/R-1021.
+- `TourAccessibilityScroll`'s own `"loading"` placeholder-text match (see "What changed" above) is
+  reported, not fixed — a genuine, live instance of the same defect class, pre-existing this round;
+  flagged as a follow-up task for a future session (spawned via the session's own task queue,
+  `task_97ad0a07`) rather than left only in this entry.
+
+---
+
 ## 2026-09-12 (WPW: reaching what five builders left unreachable — the export button, the debug-dump button, the HandlerThread leak actually closed, Setup's own frame wiring, and the `overnight-live-monitor` scenario/tour route)
 
 ### 3558d9dd — WPW closes the reach gap five builders reported and could not fix themselves
