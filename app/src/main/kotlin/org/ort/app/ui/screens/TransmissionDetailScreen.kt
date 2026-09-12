@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -575,10 +576,39 @@ private fun PlaybackSection(detail: TransmissionDetailViewState, player: Transmi
     var rate by remember(detail.id) { mutableStateOf(PlaybackRate.NORMAL) }
     var waveform by remember(detail.id) { mutableStateOf<WaveformSummary?>(null) }
 
+    // R-1006 (register): `stop()` existed and was correct but nothing ever called it — leaving
+    // this screen (a back navigation, or a drill-in to a different over reusing the same
+    // composable slot) left the `AudioTrack` running with no control left on screen able to reach
+    // it. Keyed on `detail.id` alone (not `playing`, unlike the poll loop below) so this disposes
+    // — and therefore stops whatever was playing — both on a genuine leave and on a same-screen
+    // switch to a different over, before that over's own state is even set up.
+    // R-1006 (register): `stop()` existed and was correct but nothing ever called it — leaving
+    // this screen (a back navigation, or a drill-in to a different over reusing the same
+    // composable slot) left the `AudioTrack` running with no control left on screen able to reach
+    // it. Keyed on `detail.id` alone (not `playing`, unlike the poll loop below) so this disposes
+    // — and therefore stops whatever was playing — both on a genuine leave and on a same-screen
+    // switch to a different over, before that over's own state is even set up.
+    DisposableEffect(detail.id) {
+        onDispose { player.stop() }
+    }
+
     LaunchedEffect(detail.id, playing) {
         while (playing) {
             positionFraction = player.positionFraction()
-            playing = player.isPlaying()
+            // R-1006: a real `AudioTrack`'s `playState` is only ever changed by an explicit
+            // play()/pause()/stop() call — reaching the end of a static buffer does not flip it on
+            // its own (there is no completion callback wired here), so `isPlaying()` alone would
+            // report `true` forever after an over finished, leaving the control reading "Pause"
+            // with nothing left to pause. The recorded position reaching its own end is the one
+            // real signal that exists, so it is checked first and treated as completion — the
+            // player is stopped (releasing the track) precisely because there is nothing left to
+            // play, the same cleanup a manual stop would do.
+            playing = if (positionFraction >= 1f) {
+                player.stop()
+                false
+            } else {
+                player.isPlaying()
+            }
             delay(POSITION_POLL_MILLIS)
         }
     }
