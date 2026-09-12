@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPW: R-1021 — the live-bar tap matched on a label that was never stable, fixed to match on the real testTag instead)
 
-### (pending) — R-1021: stop matching the tour's live-bar tap on rendered copy
+### 18ed7587 — R-1021: stop matching the tour's live-bar tap on rendered copy
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourAccessibilityTap,ScreenshotTourActivity}.kt`;
 tests under `app/src/test/kotlin/org/ort/app/debug/tour/TourAccessibilityTapTest.kt`.
@@ -113,8 +113,9 @@ tooling failure reads exactly like a feature failure.
   named) but the lead's own `tour.ps1 -Only "overnight-live-monitor/*"` run is what actually closes
   R-1007/R-1021.
 - `TourAccessibilityScroll`'s own `"loading"` placeholder-text match (see "What changed" above) is
-  reported, not fixed — a genuine, live instance of the same defect class, pre-existing this round.
-- Commit hash filled in by the changelog-completion commit, per this file's own convention.
+  reported, not fixed — a genuine, live instance of the same defect class, pre-existing this round;
+  flagged as a follow-up task for a future session (spawned via the session's own task queue,
+  `task_97ad0a07`) rather than left only in this entry.
 
 ---
 
