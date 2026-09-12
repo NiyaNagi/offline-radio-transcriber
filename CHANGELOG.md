@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPRIG2: R-1015 — `RigSupervisor` reads `health()`, not just `observe()`, so a silent-but-open rig goes stale within a bounded time; R-1019 — `RigStatus` carries whether a rig link was fully verified)
 
-### PENDING-COMMIT-HASH — WPRIG2: RigSupervisor watches health() so a silent rig cannot stay confidently Connected forever; RigStatus.State.Connected carries RigVerification so S12 can stop over-claiming "verified"
+### 95839c4d — WPRIG2: RigSupervisor watches health() so a silent rig cannot stay confidently Connected forever; RigStatus.State.Connected carries RigVerification so S12 can stop over-claiming "verified"
 
 **Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/rig/RigSupervisor.kt`,
 `pipeline/src/main/kotlin/org/ort/pipeline/capture/RigStatus.kt`, and tests under
