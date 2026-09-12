@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPR3: the field-report upload client)
 
-### <pending> — WPR3 · FR-OBS-11/FR-OBS-12: the real field-report upload client — contract in `:core`, GitHub implementation in `:net`, wired by `:app`
+### 67d55608 — WPR3 · FR-OBS-11/FR-OBS-12: the real field-report upload client — contract in `:core`, GitHub implementation in `:net`, wired by `:app`
 
 **Scope:** `core/src/main/kotlin/org/ort/core/fieldreport/**` (new — the contract and its
 behavioural fake, moved and redesigned from WPR2's `:app`-local sketch); `net/src/main/kotlin/org/ort/net/fieldreport/**`
