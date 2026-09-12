@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (R-1002 round 2: the reason a reprocess item failed for must survive, never a fabricated "gave up")
 
-### &lt;pending&gt; — WPQ round 2 — R-1002: a foreground retry regime for reprocess, and the drain-iteration ceiling never overrides a real recorded reason
+### e4869397 — WPQ round 2 — R-1002: a foreground retry regime for reprocess, and the drain-iteration ceiling never overrides a real recorded reason
 
 **Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessRunner.kt` (lead-granted
 for this round only), `data/src/main/kotlin/org/ort/data/WorkQueue.kt` (new
