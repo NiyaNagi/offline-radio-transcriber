@@ -26,6 +26,10 @@ import org.robolectric.RobolectricTestRunner
  * `build.gradle.kts`). There is exactly one released schema so far — this test is the harness
  * every future `Migration` in [OrtDatabase.MIGRATIONS] runs forward through to head.
  */
+// Deliberately large, not sloppy: by this file's own design (see kdoc below and the two
+// "every prior fixture" sweeps), every new schema version adds one v(N-1)->vN test here and
+// widens both sweep loops by one -- that is the intended growth, not a refactor smell.
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 public class MigrationTest {
 
@@ -649,18 +653,53 @@ public class MigrationTest {
         }
     }
 
+    /** Register R-1002: v10 → v11 adds `work_queue_item.retryNotBeforeMillis`, `NULL` on an
+     * existing row (unchanged behaviour), with [WorkQueueDao.retryReady]'s new form usable after. */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "R-1002")
+    public fun migration_from_v10_to_v11_preserves_existing_rows_and_adds_the_retry_not_before_column() {
+        val dbName = "migration-test-db-v11-retry-not-before"
+        val v10 = helper.createDatabase(dbName, 10)
+        v10.execSQL(
+            "INSERT INTO work_queue_item (id, transmissionId, pass, state, priority, attemptCount, " +
+                "lastError, shedLevel, leaseRunId, deadlineAt, enqueuedAt, startedAt) VALUES " +
+                "(1, 'TX1', 'B_OFFLINE', 'READY', 0, 1, 'ASR unavailable: no ASR model installed', " +
+                "0, NULL, NULL, 0, NULL)",
+        )
+        v10.close()
+
+        helper.runMigrationsAndValidate(dbName, 11, true, OrtDatabase.MIGRATION_10_11)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val item = runBlocking { db.workQueueDao().getById(1) }
+            assertEquals("ASR unavailable: no ASR model installed", item?.lastError) // survives
+            assertEquals(null, item?.retryNotBeforeMillis) // new column defaults to NULL
+
+            runBlocking {
+                db.workQueueDao().retryReady(1, attemptCount = 2, error = "boom", retryNotBeforeMillis = 99_999L)
+            }
+            val retried = runBlocking { db.workQueueDao().getById(1) }
+            assertEquals(99_999L, retried?.retryNotBeforeMillis) // new write path usable post-migration
+        } finally {
+            db.close()
+        }
+    }
+
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v9 — walks forward through
-     * the *entire* migration chain to v10 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v9,
+     * FR-AST-5: every previously released schema's fixture — v1 through v10 — walks forward through
+     * the *entire* migration chain to v11 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v10,
      * so the same insert works unmodified against every fixture version; what varies is only which
      * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
      * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v9_migrates_forward_to_v10_preserving_its_session_row() {
-        for (fixtureVersion in 1..9) {
+    public fun every_prior_fixture_from_v1_to_v10_migrates_forward_to_v11_preserving_its_session_row() {
+        for (fixtureVersion in 1..10) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -680,7 +719,7 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v10",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v11",
                     "test",
                     migrated!!.appVersion,
                 )
@@ -730,14 +769,14 @@ public class MigrationTest {
      * itself: the same factory function, with the same [androidx.sqlite.driver.bundled
      * .BundledSQLiteDriver], the shipped app and every other production caller use. `fixtureVersion`
      * 9 is the version named in the halt report (`data/schemas/org.ort.data.OrtDatabase/9.json`);
-     * the loop also covers every earlier released version, since each is an on-disk shape a real
-     * device could still be carrying. Kept as the permanent upgrade-path gate: every future
-     * [Migration] this file adds is exercised by this same loop with no further change needed here.
+     * the loop also covers every earlier released version (v10 added, register R-1002, head v11),
+     * since each is an on-disk shape a real device could still be carrying. Widening the range by
+     * one is the one change each new head version needs here.
      */
     @Test
     @Requirement("R-885", "AC-53", "FR-AST-5", "FR-AST-6")
-    public fun r_885_every_fixture_from_v1_to_v9_opens_through_the_real_OrtDatabase_create_and_reads_its_session_row() {
-        for (fixtureVersion in 1..9) {
+    public fun r_885_every_fixture_from_v1_to_v10_opens_through_OrtDatabase_create_and_reads_its_session_row() {
+        for (fixtureVersion in 1..10) {
             val dbName = "r885-real-open-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(

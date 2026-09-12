@@ -77,8 +77,10 @@ public class WorkQueue(
         limit: Int,
         deadlineMillisFor: (WorkQueueItemEntity) -> Long,
     ): List<WorkQueueItemEntity> = db.inWriteTransaction {
-        val ready = queueDao.selectReady(limit)
         val now = clock.wallMillis()
+        // Register R-1002: excludes a row still backed off (WorkQueueBackoff, via failPass) — the
+        // one place every real lease goes through, so nothing downstream can forget to check it.
+        val ready = queueDao.selectReady(limit, now)
         ready.map { item ->
             val deadline = now + deadlineMillisFor(item)
             queueDao.lease(item.id, runId, now, deadline)
@@ -162,7 +164,11 @@ public class WorkQueue(
                 transmissionDao.requireLegalTransition(item.transmissionId, TransmissionState.FAILED)
             }
         } else {
-            queueDao.retryReady(item.id, attempts, error)
+            // Register R-1002 (halt): a derived backoff ladder, not an immediate return to READY —
+            // see WorkQueueBackoff's own kdoc for why five attempts must never again burn out in
+            // eight seconds the way the operator's own device showed.
+            val retryNotBeforeMillis = finishedAt + WorkQueueBackoff.delayMillisFor(attempts)
+            queueDao.retryReady(item.id, attempts, error, retryNotBeforeMillis)
         }
     }
 
@@ -215,6 +221,55 @@ public class WorkQueue(
             }
             failed.size
         }
+
+    /**
+     * Register R-1002 (halt), design call: a failure caused by an unavailable engine (a missing
+     * native ASR library, no model installed) fails identically on every attempt for the rest of
+     * this run — it is not transient, and letting it burn through [maxAttempts] anyway both wastes
+     * the retry budget instantly (the operator's own device: five attempts in eight seconds) and
+     * mis-records a permanent, structural fact as if it were an ordinary flaky failure.
+     *
+     * This is the capability-probe half of that fix (constitution II, "prefer a capability probe
+     * to exception forensics"): the caller — [org.ort.pipeline.capture.RealCaptureService
+     * .startProcessingLoop], the one place that actually asks
+     * [org.ort.pipeline.passb.RealAsrEngineProvider] whether the engine is available — already
+     * knows, *before* a single item is leased, that every Pass B item would fail. It calls this
+     * instead of leasing them: every currently-`READY` item of [pass] moves to `DEFERRED`
+     * (outside [org.ort.data.dao.WorkQueueDao.selectReady]'s `READY`-only filter, so none of them
+     * is ever leased against this run's known-unavailable engine) with [reason] recorded as
+     * [org.ort.data.entity.WorkQueueItemEntity.lastError] — visibly, not silently (constitution
+     * III) — and **no attempt spent**: `attemptCount` is untouched, because deferring is not a
+     * failed attempt, it is declining to make a doomed one.
+     *
+     * Never called from [failPass] itself: deciding this from an error string a pass already threw
+     * would be exactly the exception-forensics the constitution warns against. This only ever runs
+     * from a direct, positive capability reading taken before anything is tried.
+     *
+     * Returns the number of items deferred.
+     */
+    public suspend fun deferReady(pass: PassId, reason: String): Int = db.inWriteTransaction {
+        val ready = queueDao.selectReadyForPass(pass.name)
+        for (item in ready) {
+            queueDao.deferItem(item.id, reason)
+        }
+        ready.size
+    }
+
+    /**
+     * Register R-1002: the other half of [deferReady] — the same capability probe, now reporting
+     * the engine available, moves every `DEFERRED` item of [pass] straight back to `READY`.
+     * Immediately leasable (no backoff: a deferred item never failed, so it has nothing to recover
+     * from) and with its attempt history exactly as [deferReady] left it.
+     *
+     * Returns the number of items undeferred.
+     */
+    public suspend fun undeferToReady(pass: PassId): Int = db.inWriteTransaction {
+        val deferred = queueDao.selectDeferredForPass(pass.name)
+        for (item in deferred) {
+            queueDao.undeferItem(item.id)
+        }
+        deferred.size
+    }
 
     public companion object {
         public const val DEFAULT_MAX_ATTEMPTS: Int = 5

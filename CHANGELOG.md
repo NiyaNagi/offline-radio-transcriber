@@ -32,7 +32,95 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-12 (constitution 1.2.0: a change that touches a screen re-runs the visual verification; the debugging and fix session prompt)
+## 2026-09-12 (R-1002: the operator's nineteen stuck overs come back, and a failure no longer burns its retry budget in eight seconds)
+
+### &lt;pending&gt; — WPQ — R-1002: requeue Pass B on the ASR-availability transition, a derived backoff ladder, and defer-before-lease for a known-unavailable engine
+
+**Scope:** `data/src/main/kotlin/org/ort/data/WorkQueue.kt` (new `WorkQueueBackoff.kt` beside it),
+`data/src/main/kotlin/org/ort/data/dao/WorkQueueDao.kt`,
+`data/src/main/kotlin/org/ort/data/entity/WorkQueueItemEntity.kt`,
+`data/src/main/kotlin/org/ort/data/OrtDatabase.kt` (schema v10 → v11),
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt` (the ASR-availability
+wiring in `startProcessingLoop` only), tests beside each, `results/coverage-matrix.md`
+(regenerated).
+**Requirements/ACs:** FR-RUN-9 ("`FAILED` is retryable with backoff and a bounded attempt
+count" — previously unmet: there was no backoff at all), FR-RUN-10, AC-51, register R-1002.
+**What changed:**
+1. **Requeue on the availability transition.** `RealCaptureService.startProcessingLoop` —
+   the one place in the running app that ever asks `RealAsrEngineProvider` a direct capability
+   question — now acts on the answer for Pass B's whole backlog, not just the item about to
+   lease. On `AsrEngineAvailability.Available` it calls the existing
+   `WorkQueue.requeueFailed(PassId.B_OFFLINE, lastErrorPrefix = "ASR unavailable")` (no new
+   mechanism — this method already existed for exactly this case) and the new
+   `WorkQueue.undeferToReady(PassId.B_OFFLINE)`. **The trigger is this method running at all —
+   once per real `startCapture()` call, i.e. once per capture session start.** It is not a
+   background poll and does not fire the instant the capability changes while idle; the
+   operator's nineteen overs come back the next time a capture session starts on the fixed
+   build, with no reinstall and no manual retry tap, but only once they start capturing again.
+2. **A derived backoff ladder (new file `WorkQueueBackoff.kt`).** `WorkQueue.failPass`'s
+   retryable branch no longer returns an item straight to `READY` — it computes
+   `now + WorkQueueBackoff.delayMillisFor(attempts)` (10s, 20s, 40s, 80s at the default 5
+   attempts — a doubling formula capped at 300s, not five numbers picked by hand) and writes it
+   to the new `WorkQueueItemEntity.retryNotBeforeMillis` column (schema v11,
+   `MIGRATION_10_11`), which `WorkQueueDao.selectReady` now excludes on. `DEFAULT_MAX_ATTEMPTS`
+   is unchanged at 5 — the fix is spacing the attempts out, not changing how many there are.
+3. **Design call: defer, don't burn, a known-unavailable capability's items.** New
+   `WorkQueue.deferReady(pass, reason)`/`.undeferToReady(pass)` move currently-`READY` Pass B
+   items to the existing-but-previously-unused `DEFERRED` state the moment `startProcessingLoop`
+   gets `AsrEngineAvailability.Unavailable` — before a single one is leased — so none of the
+   attempt budget is spent on a fault already known, from a direct capability reading, to be
+   permanent for this run. This is the capability-probe half explicitly preferred over exception
+   forensics (constitution II): the decision is made from `AsrEngineAvailability` itself, never
+   by parsing `WorkQueueItemEntity.lastError`. `requeueFailed`'s `lastErrorPrefix` filter is the
+   one place a stored error string is matched, and only to narrow which *already-recorded*
+   `FAILED` rows get a fresh run — not to decide anything about a live pass's outcome.
+**Verified:** `./gradlew :data:test :pipeline:testDebugUnitTest -PortAllowMissingBundledAssets=true`
+— 299 tests, 297 pass; the 2 failures (`ReprocessRunnerTest.R_350_reason_reaches_summary...`,
+`ReprocessRunnerTest.R_290_a_missing_retained_audio_file_fails_that_item_without_crashing_the_run`)
+and 2 more surfaced by the full `build` below (`RealImproveRunnerTest.R_091_...`,
+`ReaderActivityDestinationSmokeTest.R_350_improve_done_install_action_opens_settings_assets...`)
+are a genuine, out-of-scope consequence of item 2 above — see "Left open" below.
+`./gradlew dependencyRules platformGuards -PortAllowMissingBundledAssets=true` OK (20 modules,
+no forbidden edge, no analytics/HTTP-outside-`:net`).
+`./gradlew :data:detekt :pipeline:detekt :data:ktlintTestSourceSetCheck :pipeline:ktlintTestSourceSetCheck -PortAllowMissingBundledAssets=true`
+all green (after trimming/renaming to fit `MaxLineLength`/`LongMethod`, and
+`@Suppress("LargeClass")` on `MigrationTest` — deliberately large by this file's own convention,
+one test per schema version).
+`./gradlew -p buildSrc test` OK. `python tools/spec-check/spec_check.py` 8/8. `./gradlew coverageMatrix`
+→ 450 requirements, 241 covered; `./gradlew coverageMatrixCheck` → up to date.
+Every new production behaviour proven discriminating: reverted `WorkQueueBackoff.delayMillisFor(attempts)`
+to a plain `finishedAt` → `R_1002_a_retried_item_is_not_leasable_until_its_backoff_rung_elapses`
+failed ("a freshly-backed-off item must not be leasable yet"); restored → passed. Neutered
+`deferReady` to a no-op → both `R_1002_deferReady_...` and `R_1002_undeferToReady_...` failed;
+restored → both passed. Removed the three `queue.deferReady`/`.undeferToReady`/`.requeueFailed`
+calls from `startProcessingLoop` → both new `RealCaptureServiceTest` R-1002 tests timed out
+waiting for state that never changed; restored → both passed.
+`./gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+(19m7s under five concurrent builder gates on the same machine): `FAILURE: Build completed with
+4 failures` — exactly the 4 named above, nothing else; every other module (`:core` through
+`:eval`, `:app`'s other 2032 tests) green.
+**Left open / not done:** (a) **A cross-cutting regression outside this package's ownership.**
+FR-RUN-9's backoff is now real, but at least two callers elsewhere assumed the old
+immediate-retry behaviour and busy-loop with no inter-attempt delay expecting to reach a
+terminal state within a bounded iteration count: `pipeline/.../reprocess/ReprocessRunner.kt`'s
+`runOnePass` (not owned by WPQ; `maxDrainIterationsPerItem = 1_000` with no `delay()` between
+iterations, so it now exhausts its budget in well under a second and reports "gave up after
+1000 drain attempts" instead of the real failure reason for anything that fails even once with
+attempts remaining) and something equivalent in `:app` (`RealImproveRunnerTest.R_091_...`,
+`ReaderActivityDestinationSmokeTest`'s `R_350_improve_done_install_action_...` — a
+`ComposeTimeoutException` after 30s). Both files are outside this prompt's ownership
+(`ReprocessRunner.kt` is `:pipeline` but not the ASR-wiring file WPQ owns; the second is
+entirely `:app`) — routing these is the lead's call, not fixed here. (b) The true end-to-end
+proof — nineteen real overs actually transcribing on the operator's phone once R-1001's
+`libsherpa-onnx-jni.so` ships — is the lead's to take, not reproducible from a workstation.
+(c) A transmission captured *during* a session that starts with ASR unavailable still goes
+through the old lease-and-fail-with-backoff path rather than being deferred pre-emptively,
+because `startProcessingLoop` only evaluates availability once at session start — a known,
+stated limitation of this fix, mitigated but not eliminated by item 2's backoff.
+
+---
+
+
 
 ### bab4351d — constitution 1.2.0, AGENTS.md brought current, `docs/debug-fix-session-prompt.md`
 

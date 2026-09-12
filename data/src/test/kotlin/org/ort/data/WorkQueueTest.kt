@@ -117,10 +117,15 @@ public class WorkQueueTest {
         queue.enqueue("TX-BAD", PassId.B_OFFLINE)
 
         var item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        var attemptNumber = 1
         repeat(2) {
             queue.failPass(item, "boom")
             val row = db.workQueueDao().getById(item.id)!!
             assertEquals(WorkQueueState.READY, row.state) // retries remain — the queue is not blocked
+            // Register R-1002: a retry is no longer immediately leasable — advance past its own
+            // backoff rung before the next lease, exactly as a real drain loop's own polling would.
+            clock.advance(WorkQueueBackoff.delayMillisFor(attemptNumber))
+            attemptNumber++
             item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
         }
         queue.failPass(item, "boom") // third failure exhausts maxAttempts = 3
@@ -472,7 +477,11 @@ public class WorkQueueTest {
         val reasons = listOf("out of memory in the decoder", "engine crashed", "out of memory in the decoder")
         reasons.forEachIndexed { index, reason ->
             queue.failPass(item, reason)
-            if (index < reasons.lastIndex) item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+            if (index < reasons.lastIndex) {
+                // Register R-1002: advance past this attempt's own backoff rung before re-leasing.
+                clock.advance(WorkQueueBackoff.delayMillisFor(index + 1))
+                item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+            }
         }
 
         // Every id used by this item across its retries stays the same row (only the state cycles
@@ -496,6 +505,7 @@ public class WorkQueueTest {
 
         var item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
         queue.failPass(item, "transient decoder error")
+        clock.advance(WorkQueueBackoff.delayMillisFor(1)) // register R-1002: past the backoff rung
         item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
         queue.completePass(item, TransmissionState.COMPLETE)
 
@@ -503,5 +513,128 @@ public class WorkQueueTest {
         val attempts = db.workQueueDao().attemptsFor(item.id)
         assertEquals(1, attempts.size) // its one failed attempt is still on record
         assertEquals("transient decoder error", attempts.single().reason)
+    }
+
+    // ---- Register R-1002 (halt): a backoff ladder between retries, and defer/undefer around a
+    // known capability outage ----
+
+    @Test
+    @Requirement("R-1002")
+    public fun R_1002_a_retried_item_is_not_leasable_until_its_backoff_rung_elapses(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+        val queue = WorkQueue(db, clock, maxAttempts = 5)
+        queue.enqueue("TX1", PassId.B_OFFLINE)
+
+        val item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        queue.failPass(item, "transient decoder error") // attempt 1 of 5 — retryable
+        assertEquals(WorkQueueState.READY, db.workQueueDao().getById(item.id)!!.state)
+
+        // READY, but backed off: an immediate re-drain must find nothing.
+        val tooSoon = queue.leaseBatch("run-2", limit = 10) { 60_000L }
+        assertTrue("a freshly-backed-off item must not be leasable yet", tooSoon.isEmpty())
+
+        // One millisecond short of the ladder's first rung: still not due.
+        clock.advance(WorkQueueBackoff.delayMillisFor(1) - 1)
+        assertTrue(
+            "the item must still not be leasable one millisecond before its backoff elapses",
+            queue.leaseBatch("run-3", limit = 10) { 60_000L }.isEmpty(),
+        )
+
+        // The remaining millisecond: now due.
+        clock.advance(1)
+        val nowLeasable = queue.leaseBatch("run-4", limit = 10) { 60_000L }
+        assertEquals(item.id, nowLeasable.single().id)
+    }
+
+    @Test
+    @Requirement("R-1002")
+    public fun R_1002_deferReady_parks_ready_items_without_spending_an_attempt_or_touching_other_passes(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX-B"))
+            db.transmissionDao().insert(TestFixtures.transmission("TX-D"))
+            val queue = WorkQueue(db, clock)
+            queue.enqueue("TX-B", PassId.B_OFFLINE)
+            queue.enqueue("TX-D", PassId.D_RESOLVE)
+
+            val deferred = queue.deferReady(PassId.B_OFFLINE, "no ASR model installed")
+
+            assertEquals(1, deferred)
+            val bRow = db.workQueueDao().findByTransmissionAndPass("TX-B", PassId.B_OFFLINE.name).single()
+            assertEquals(WorkQueueState.DEFERRED, bRow.state)
+            assertEquals("no ASR model installed", bRow.lastError) // visible, not silent (constitution III)
+            assertEquals(0, bRow.attemptCount) // a defer is not a spent attempt
+
+            val dRow = db.workQueueDao().findByTransmissionAndPass("TX-D", PassId.D_RESOLVE.name).single()
+            assertEquals(WorkQueueState.READY, dRow.state) // a different pass is untouched
+
+            // A deferred item is never leased.
+            val leased = queue.leaseBatch("run-1", limit = 10) { 60_000L }
+            assertEquals(listOf("TX-D"), leased.map { it.transmissionId })
+        }
+
+    @Test
+    @Requirement("R-1002")
+    public fun R_1002_undeferToReady_returns_deferred_items_to_ready_leasable_immediately_with_no_backoff(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX-B"))
+            val queue = WorkQueue(db, clock)
+            queue.enqueue("TX-B", PassId.B_OFFLINE)
+            queue.deferReady(PassId.B_OFFLINE, "no ASR model installed")
+
+            val undeferred = queue.undeferToReady(PassId.B_OFFLINE)
+
+            assertEquals(1, undeferred)
+            val row = db.workQueueDao().findByTransmissionAndPass("TX-B", PassId.B_OFFLINE.name).single()
+            assertEquals(WorkQueueState.READY, row.state)
+            // Immediately leasable — no backoff to wait out, since a defer never failed an attempt.
+            val leased = queue.leaseBatch("run-1", limit = 10) { 60_000L }
+            assertEquals("TX-B", leased.single().transmissionId)
+        }
+
+    /**
+     * The actual R-1002 defect, reproduced end to end against the real store: the operator's
+     * nineteen overs, simulated as one item that exhausted its budget failing identically against
+     * an unavailable ASR engine. [org.ort.pipeline.capture.RealCaptureService.startProcessingLoop]
+     * calls exactly this once it gets a real [org.ort.pipeline.passb.AsrEngineAvailability
+     * .Available] reading — see that class's own report for where the trigger actually lives.
+     */
+    @Test
+    @Requirement("FR-RUN-9", "R-1002")
+    public fun R_1002_requeueFailed_after_asr_available_restores_the_item_with_history_intact(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX-STUCK"))
+        val queue = WorkQueue(db, clock, maxAttempts = 3)
+        queue.enqueue("TX-STUCK", PassId.B_OFFLINE)
+
+        val asrUnavailableError = "ASR unavailable: ASR model present but failed to load: no libsherpa-onnx-jni.so"
+        var item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        repeat(2) { attemptIndex ->
+            queue.failPass(item, asrUnavailableError)
+            clock.advance(WorkQueueBackoff.delayMillisFor(attemptIndex + 1))
+            item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+        }
+        queue.failPass(item, asrUnavailableError) // third failure exhausts maxAttempts = 3
+        assertEquals(WorkQueueState.FAILED, db.workQueueDao().getById(item.id)!!.state)
+        assertEquals(3, db.workQueueDao().attemptsFor(item.id).size)
+
+        // R-1001 lands; the next capture session finds ASR available and requeues Pass B's
+        // ASR-unavailable failures specifically (the exact call RealCaptureService makes).
+        val requeuedCount = queue.requeueFailed(PassId.B_OFFLINE, lastErrorPrefix = "ASR unavailable")
+
+        assertEquals(1, requeuedCount)
+        val row = db.workQueueDao().getById(item.id)!!
+        assertEquals(WorkQueueState.READY, row.state)
+        assertEquals(0, row.attemptCount)
+        assertNull("a requeue must not leave a stale backoff timestamp behind", row.retryNotBeforeMillis)
+        assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX-STUCK")!!.processingState)
+        // Nothing is deleted quietly (constitution III): all three prior failed attempts remain.
+        assertEquals(3, db.workQueueDao().attemptsFor(item.id).size)
+
+        // Genuinely leasable again, not just READY in name — no leftover backoff blocks it.
+        val leasedAgain = queue.leaseBatch("run-2", limit = 10) { 60_000L }
+        assertEquals(item.id, leasedAgain.single().id)
     }
 }

@@ -17,9 +17,16 @@ import org.ort.capture.android.AudioDeviceKind
 import org.ort.capture.android.fake.FakeAudioIo
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.core.AssetRef
+import org.ort.core.PassId
+import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
+import org.ort.data.WorkQueue
 import org.ort.data.entity.CaptureGapCause
+import org.ort.data.entity.WorkAttemptEntity
+import org.ort.data.entity.WorkAttemptOutcome
+import org.ort.data.entity.WorkQueueState
+import org.ort.pipeline.PipelineTestFixtures
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.shed.FakeShedSignals
 import org.ort.testing.Requirement
@@ -353,5 +360,193 @@ public class RealCaptureServiceTest {
         } finally {
             controller.destroy()
         }
+    }
+
+    /**
+     * Register R-1002 (halt): the nineteen-overs defect's forward-looking half. Before this,
+     * [startProcessingLoop][RealCaptureService.startProcessingLoop] only ever *leased* a `READY`
+     * Pass B item and let it fail against [org.ort.pipeline.passb.UnavailableAsrEngine] — spending
+     * an attempt on a fault this class already knows, from the same
+     * [org.ort.pipeline.passb.AsrEngineAvailability.Unavailable] reading, to be permanent for the
+     * rest of this run. This proves the capability-probe half of the fix: a `READY` Pass B item is
+     * moved straight to `DEFERRED` — never leased at all — the moment the service starts with the
+     * engine unavailable.
+     */
+    @Test
+    @Requirement("R-1002")
+    public fun `R_1002 a ready pass b item defers, not leases, when the service starts with ASR unavailable`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+
+        // A Pass B item left over from a previous session, still READY, waiting for an engine.
+        runBlocking {
+            db.sessionDao().insert(PipelineTestFixtures.session("PRIOR-SESSION"))
+            db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-STUCK", "PRIOR-SESSION"))
+            WorkQueue(db, SystemClock).enqueue("TX-STUCK", PassId.B_OFFLINE)
+        }
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Unavailable("no libsherpa-onnx-jni.so in this test") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, "TEST-SESSION-R1002-DEFER")
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            waitUntil(10_000) {
+                runBlocking {
+                    db.workQueueDao().findByTransmissionAndPass("TX-STUCK", "B_OFFLINE").single().state
+                } == WorkQueueState.DEFERRED
+            }
+            val row = runBlocking { db.workQueueDao().findByTransmissionAndPass("TX-STUCK", "B_OFFLINE").single() }
+            assertEquals(
+                "deferring must not spend an attempt -- it is declining a doomed one, not failing it",
+                0,
+                row.attemptCount,
+            )
+            assertEquals("no libsherpa-onnx-jni.so in this test", row.lastError)
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    /**
+     * Register R-1002 (halt): the actual defect, reproduced through the real service's own
+     * composition end to end. Before this, an item that had exhausted [org.ort.data.WorkQueue
+     * .DEFAULT_MAX_ATTEMPTS] against an unavailable ASR engine stayed `FAILED` forever -- R-1001
+     * fixing the missing native library changed nothing for it, because nothing re-evaluated
+     * already-`FAILED` rows. Both fixtures have real, staged audio (like
+     * [CaptureProcessingLoopTest][org.ort.pipeline.CaptureProcessingLoopTest]'s own `stageAudio`)
+     * so the real drain loop that starts alongside [startProcessingLoop] can actually run them to
+     * completion the instant it requeues/undefers them -- proving the operator's own reported
+     * shape all the way to a real transcript, not just a transient `READY` row a slower assertion
+     * would have raced against the same drain loop already leasing it again.
+     */
+    @Test
+    @Requirement("FR-RUN-9", "R-1002")
+    public fun `R_1002 a failed and deferred pass b item both reach COMPLETE when ASR becomes available`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+
+        val failedId = runBlocking { seedR1002ExhaustedAndDeferredFixtures(db, service.filesDir) }
+
+        val engine = FakeAsrEngine(
+            FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "test transmission received")),
+        )
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Available(engine, AssetRef("fake-asr-model", "1"), "test-fake") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, "TEST-SESSION-R1002-AVAILABLE")
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            waitUntil(20_000) {
+                runBlocking {
+                    val failed = db.transmissionDao().getById("TX-FAILED")!!.processingState
+                    val deferred = db.transmissionDao().getById("TX-DEFERRED")!!.processingState
+                    failed == TransmissionState.COMPLETE && deferred == TransmissionState.COMPLETE
+                }
+            }
+
+            // Both really ran the real pass end to end (not just relabelled READY-then-vanished).
+            assertEquals(
+                "test transmission received",
+                runBlocking { db.transcriptDao().getCurrent("TX-FAILED") }!!.text,
+            )
+            assertEquals(
+                "test transmission received",
+                runBlocking { db.transcriptDao().getCurrent("TX-DEFERRED") }!!.text,
+            )
+            // Nothing is deleted quietly (constitution III): the pre-existing failed attempt from
+            // before ASR ever came back stays on record even though the item itself later
+            // succeeded and its queue row was deleted (WorkQueue.completePass's own contract).
+            val history = runBlocking { db.workQueueDao().attemptsFor(failedId) }
+            assertEquals(1, history.size)
+            assertEquals(WorkAttemptOutcome.FAILED, history.single().outcome)
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    /**
+     * Seeds the two fixtures the test above needs -- a `FAILED` Pass B item with a real
+     * [WorkAttemptEntity] history (the operator's own nineteen overs) and a `DEFERRED` one (this
+     * fix's forward half) -- with real, staged audio under [filesDir] so the real drain loop that
+     * starts alongside [RealCaptureService.startProcessingLoop] can run each to a genuine
+     * `COMPLETE`, not just relabel its `work_queue_item` row. Returns the `FAILED` item's id.
+     */
+    private suspend fun seedR1002ExhaustedAndDeferredFixtures(db: OrtDatabase, filesDir: File): Long {
+        val sessionId = "PRIOR-SESSION"
+        db.sessionDao().insert(PipelineTestFixtures.session(sessionId))
+        db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-FAILED", sessionId))
+        db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-DEFERRED", sessionId))
+        stageAudioFixture(filesDir, "TX-FAILED", sessionId)
+        stageAudioFixture(filesDir, "TX-DEFERRED", sessionId)
+
+        val asrUnavailableError = "ASR unavailable: ASR model present but failed to load: no libsherpa-onnx-jni.so"
+        // TX-FAILED: exhausted, exactly like the operator's own nineteen overs -- a real
+        // WorkAttemptEntity history behind it, never erased by the requeue that follows.
+        val failedId = db.workQueueDao().insert(
+            org.ort.data.entity.WorkQueueItemEntity(
+                transmissionId = "TX-FAILED",
+                pass = PassId.B_OFFLINE,
+                state = WorkQueueState.FAILED,
+                priority = 0,
+                attemptCount = 5,
+                lastError = asrUnavailableError,
+                enqueuedAt = 0L,
+            ),
+        )
+        db.workQueueDao().insert(
+            WorkAttemptEntity(
+                itemId = failedId,
+                attemptNo = 1,
+                startedAtMillis = 0L,
+                finishedAtMillis = 1L,
+                outcome = WorkAttemptOutcome.FAILED,
+                reason = asrUnavailableError,
+            ),
+        )
+
+        // TX-DEFERRED: never spent an attempt at all -- parked by this same fix's forward half.
+        db.workQueueDao().insert(
+            org.ort.data.entity.WorkQueueItemEntity(
+                transmissionId = "TX-DEFERRED",
+                pass = PassId.B_OFFLINE,
+                state = WorkQueueState.DEFERRED,
+                priority = 0,
+                attemptCount = 0,
+                lastError = "no libsherpa-onnx-jni.so",
+                enqueuedAt = 0L,
+            ),
+        )
+        return failedId
+    }
+
+    /** 1s of silence at 16kHz/16-bit, FLAC-encoded -- [FakeAsrEngine] ignores the actual content. */
+    private fun stageAudioFixture(filesDir: File, transmissionId: String, sessionId: String) {
+        val codec = org.ort.capture.android.codec.DeflatePredictiveCodec()
+        val encoded = codec.encode(ByteArray(16_000 * 2))
+        val audioFile = File(filesDir, "audio/$sessionId/$transmissionId.flac")
+        audioFile.parentFile?.mkdirs()
+        audioFile.writeBytes(encoded)
     }
 }
