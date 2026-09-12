@@ -32,6 +32,65 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (register R-808: DescriptorRigModuleTest's FR_RIG_7_drop case made deterministic against virtual time)
+
+### (pending) — FR_RIG_7_drop no longer races real Dispatchers.Default scheduling on a loaded CI runner
+
+**Scope:** `rig/src/test/kotlin/org/ort/rig/descriptor/DescriptorRigModuleTest.kt`.
+
+**Requirements/ACs:** R-808, FR-RIG-7.
+
+**What changed:** *Constitution check.* II (a test's own correctness must not depend on the speed
+of the machine running it — a green local run and a red CI run for the identical commit is exactly
+the "passes here, silently means nothing there" gap constitution II exists to close). CI run
+`34660541461` (commit `8a8e8ea1`) failed `:rig:test` on
+`DescriptorRigModuleTest > FR_RIG_7_drop a dropped transport marks the last state stale and reports
+TRANSPORT_LOST` with `expected: <true> but was: <false>` at the `health is RigHealth.Degraded &&
+... TRANSPORT_LOST` assertion — the CI log shows `withTimeoutOrNull(2_000) { module.health().first()
+}` returned `null` (so `null is RigHealth.Degraded` read `false`), never a wrong value.
+
+The test ran under plain `runBlocking`, and `DescriptorRigModule` was constructed with its default
+`scope` — real `Dispatchers.Default`. `FakeRigTransport.dropMidStream` itself signals synchronously
+(a plain `StateFlow` assignment, no delay anywhere in it); the race was entirely in *observing* that
+signal — `DescriptorRigModule`'s `stateWatchJob` (which reacts to the `StateFlow` and emits the
+`TRANSPORT_LOST` health event) runs as a separate coroutine on that same real, shared
+`Dispatchers.Default` thread pool, and the test's own `withTimeoutOrNull(2_000)` is an equally real
+wall-clock deadline — on a loaded CI runner (many parallel Gradle test workers sharing that same
+process-wide pool, the identical contention shape `:data`'s `OrtDatabase.kt` already documents for
+a different subsystem) 2 real seconds was not always enough for that job to get a thread. Checked
+`DescriptorRigModule`'s own drop-detection path honestly: it is not itself wall-clock-timed at all
+— `stateWatchJob` reacts to a `TransportState.Lost` value change, never a timer — so there was
+nothing to fix in production; this was a test-only race.
+
+Fixed by moving the test onto `kotlinx.coroutines.test.runTest` and giving the module its own
+`scope` on `UnconfinedTestDispatcher(testScheduler)` — the *same* `TestCoroutineScheduler` the
+outer `runTest` uses. Every `delay`/`withTimeoutOrNull`/flow emission on both sides of the test (the
+test body and the module's `readJob`/`pollJob`/`stateWatchJob`) now advances on one shared, virtual
+clock with no real thread contention at all, and `UnconfinedTestDispatcher` resumes a ready
+coroutine immediately rather than queuing it for a later real dispatch — the module's reaction to
+`dropMidStream` now happens synchronously within that call. `:rig`'s `build.gradle.kts` already
+carried `kotlinx.coroutines.test` as a `testImplementation`, and this pattern already existed
+elsewhere in this module (`FakeRigModuleTest`'s own `runTest` case) — no new dependency.
+
+**Verified:** `./gradlew -PortAllowMissingBundledAssets=true :rig:test --tests
+"org.ort.rig.descriptor.DescriptorRigModuleTest"` — 9/9 green, repeated 5 times in a row (all
+green, ~4-6s each — the whole class now runs on virtual time, no longer paying the real
+multi-second `withTimeoutOrNull` waits the old version did on every pass); re-run once more while
+every CPU core was pinned at 100% by deliberately started background spin-loops (simulating a
+saturated CI runner directly, rather than only reasoning about it) — still green, all 9 cases,
+confirming the fix is immune to real scheduling pressure by construction, not by luck. Full `:rig`
+test module and the rest of the gate pasted in the report.
+
+**Left open / not done:** three sibling tests in the same file (`FR_RIG_1_health_hang`,
+`FR_RIG_11_garbage`, and the pre-existing `WPC3`/`FR_RIG_1_push`/`FR_RIG_6` cases) still use plain
+`runBlocking` with the module's default real `scope` and the same `withTimeoutOrNull(2_000)`
+pattern — the identical latent race, just not the one CI happened to hit this time. Left unchanged
+since only `FR_RIG_7_drop` was named in the halt report and the instruction was to fix "the test",
+but flagging here since a future CI run could reasonably surface the same flake under a different
+test name in this file.
+
+---
+
 ## 2026-09-11 (merge record: every merge to main during the capture-modes program)
 
 ### merge record — the merge commits of 2026-09-10/11, oldest first

@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package org.ort.rig.descriptor
 
 import kotlinx.coroutines.CoroutineScope
@@ -8,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -113,14 +117,38 @@ class DescriptorRigModuleTest {
         }
     }
 
+    /**
+     * Register R-808: this test previously ran under `runBlocking` with [DescriptorRigModule]'s
+     * default `scope` — real `Dispatchers.Default`, real wall-clock `delay`/`withTimeoutOrNull` —
+     * racing its own `withTimeoutOrNull(2_000)` assertions against however fast a shared, possibly
+     * saturated thread pool happened to schedule the module's `stateWatchJob`/`readJob` coroutines.
+     * `FakeRigTransport.dropMidStream` itself already signals synchronously (a plain `StateFlow`
+     * assignment, no delay of its own); the flake was entirely in *observing* that signal from a
+     * background coroutine competing for real CPU time on a loaded CI runner — passed every time
+     * locally, failed once on a slower/busier Linux runner (CI run 34660541461).
+     *
+     * Fixed by moving the whole test onto [kotlinx.coroutines.test.runTest]'s virtual time and
+     * giving the module its own `scope` on [kotlinx.coroutines.test.UnconfinedTestDispatcher] tied
+     * to that same [kotlinx.coroutines.test.TestScope.testScheduler] — every `delay`,
+     * `withTimeoutOrNull` and flow emission on both sides of this test (the test body and the
+     * module's `readJob`/`pollJob`/`stateWatchJob`) now advances on one shared, deterministic
+     * virtual clock, and `UnconfinedTestDispatcher` runs a resumed coroutine immediately rather
+     * than queuing it for a later real dispatch, so the module's reaction to
+     * [FakeRigTransport.dropMidStream] happens synchronously within that call, exactly as it would
+     * need to for this test to never again depend on real scheduling speed. Production's own drop
+     * detection ([DescriptorRigModule]'s `stateWatchJob`) was never wall-clock-timed to begin with
+     * — it reacts to a `TransportState.Lost` value change, not a timer — so nothing there needed a
+     * behavioural fix; this was a test-only race.
+     */
     @Test
-    fun `FR_RIG_7_drop a dropped transport marks the last state stale and reports TRANSPORT_LOST`() = runBlocking {
+    fun `FR_RIG_7_drop a dropped transport marks the last state stale and reports TRANSPORT_LOST`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FQ", "FQ0014250000")
         val module = DescriptorRigModule(
             pollingFrequencyDescriptor(),
             { _, _, _ -> transport },
             readTimeoutMs = TEST_READ_TIMEOUT_MS,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
