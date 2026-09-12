@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (spec3: D40 — the over-audio budget warns and never deletes; FR-STO-3f — the archive's default-on state and rate must be disclosed)
 
-### (pending) — spec3 follow-up: FR-STO-3e's persistent warning is tied to the two surfaces the operator actually sees — the capture status surface and the live/transport bar's own state label — not merely "reachable"
+### 7fe87105 — spec3 follow-up: FR-STO-3e's persistent warning is tied to the two surfaces the operator actually sees — the capture status surface and the live/transport bar's own state label — not merely "reachable"
 
 **Scope:** `spec/functional-spec.md` (FR-STO-3e text, new AC-160, D40's §16 row), `AGENTS.md`
 (counts only). No product, build or test code touched.
