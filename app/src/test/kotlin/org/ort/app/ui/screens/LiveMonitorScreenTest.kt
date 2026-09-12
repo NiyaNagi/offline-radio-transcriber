@@ -10,6 +10,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertTrue
@@ -23,6 +24,7 @@ import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.data.LiveMonitorOverRow
 import org.ort.app.ui.data.LiveMonitorOversViewState
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.app.ui.theme.OrtType
 import org.ort.core.Attribution
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -375,5 +377,105 @@ class LiveMonitorScreenTest {
                 current.bottom <= next.top,
             )
         }
+    }
+
+    // --- R-1023 (register, R-880/R-1017 family): the leading timestamp column at 2.0 ------------
+
+    /** A single row, so `live-monitor-row-time` (the same testTag on every row's own timestamp
+     * `Text`, R-1023's own seam) resolves to exactly one node — the same "narrow the fixture to
+     * avoid an ambiguous tag" choice `RigBluetoothScreenTest`'s own `assertMarkerAlignsWithLabel`
+     * makes for `radio-row-marker`. `timeLabel` is the real `HH:MM:SS` shape every caller of
+     * `ReaderTransmissionViewStateMapper.timeLabel` produces (`Locale.ROOT`, never locale-dependent) —
+     * used only to measure real layout geometry here, never asserted as rendered prose (constitution
+     * II: never assert on a locale-formatted string).
+     */
+    private val timeProbeRow = LiveMonitorOversViewState(
+        overs = listOf(
+            LiveMonitorOverRow.Waiting(
+                id = "TX-time-probe",
+                timeLabel = "13:40:05",
+                durationLabel = "1.0 s",
+                aheadCount = 0,
+            ),
+        ),
+        summaryLabel = "1 over · 1 waiting",
+    )
+
+    /**
+     * R-1023: `Live-Monitor.dc.html`'s own `.when` class specified a fixed `width: 62px`, the build
+     * reproduced it faithfully (`Modifier.width(62.dp)`), and at font scale 2.0 every row's
+     * timestamp clipped mid-character (`13:4(`, `13:39`) — a log screen that cannot say when
+     * anything happened. The fix (`rememberTimeColumnWidth()`, the same shared floor `LogRow`/
+     * `GapRow`/`RejectedRow` already apply to the identical `HH:MM:SS` column, `ui/components/
+     * Rows.kt`, R-205) is a `widthIn(min = …)` floor measured against this host's real font metrics,
+     * so the column can only ever grow to fit its content, never clip it — proven here by measuring
+     * the same text independently (the identical [rememberTextMeasurer]-backed technique
+     * [org.ort.app.ui.components.rememberMonoColumnWidth] itself uses) and asserting the rendered
+     * node is never narrower than that, never by asserting the rendered string itself.
+     *
+     * Run at **both** 390dp and 480dp (R-1017 was found at 480dp only after passing at 390dp — the
+     * fixed-width bug is width-of-container-independent, but the coverage discipline is the same)
+     * and at **both** font scale 1.0 and 2.0. Evidence from the register shows the clip only ever
+     * reproduced at 2.0 (62dp already comfortably fits an 8-character mono string at 1.0) — the 1.0
+     * cases are real regression coverage for the fixed column, not expected to discriminate this
+     * specific historical bug, and the report says so plainly rather than implying otherwise.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1023 the timestamp column never renders narrower than its own text at 390dp font scale 1_0`() {
+        assertTimeColumnNeverNarrowerThanContent(widthDp = 390, fontScale = 1f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1023 the timestamp column never renders narrower than its own text at 390dp font scale 2_0`() {
+        assertTimeColumnNeverNarrowerThanContent(widthDp = 390, fontScale = 2f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1023 the timestamp column never renders narrower than its own text at 480dp font scale 1_0`() {
+        assertTimeColumnNeverNarrowerThanContent(widthDp = 480, fontScale = 1f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1023 the timestamp column never renders narrower than its own text at 480dp font scale 2_0`() {
+        assertTimeColumnNeverNarrowerThanContent(widthDp = 480, fontScale = 2f)
+    }
+
+    private fun assertTimeColumnNeverNarrowerThanContent(widthDp: Int, fontScale: Float) {
+        var contentWidthPx = 0
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                val measurer = rememberTextMeasurer()
+                contentWidthPx = measurer.measure(text = "13:40:05", style = OrtType.timeFreq).size.width
+                Box(modifier = Modifier.width(widthDp.dp)) {
+                    OrtTheme {
+                        LiveMonitorScreen(
+                            status = status,
+                            level = level,
+                            hearingText = null,
+                            overs = timeProbeRow,
+                            localMicrophone = false,
+                        )
+                    }
+                }
+            }
+        }
+
+        // `density = 1f` above: px and dp coincide numerically here, the same reasoning
+        // `RowsTest`'s own `R_980` case documents for its own per-character-collapse check.
+        val contentWidth = contentWidthPx.dp
+        val nodeBounds = composeTestRule
+            .onNodeWithTag("live-monitor-row-time", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val nodeWidth = nodeBounds.right - nodeBounds.left
+        assertTrue(
+            "expected the timestamp column ($nodeWidth) to never render narrower than its own text " +
+                "($contentWidth) at ${widthDp}dp/fontScale=$fontScale — a narrower column clips the " +
+                "timestamp exactly like R-1023's fixed 62dp column did",
+            nodeWidth >= contentWidth - 0.5.dp,
+        )
     }
 }

@@ -14,6 +14,7 @@ import org.ort.app.ui.data.LiveMonitorOversPolling
 import org.ort.core.AttributionState
 import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.LevelStatus
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -39,6 +40,7 @@ class OvernightLiveMonitorScenarioTest {
     fun closeDatabase() {
         db.close()
         CaptureState.idle(clearSession = true)
+        LevelStatus.reset()
     }
 
     @Test
@@ -153,4 +155,61 @@ class OvernightLiveMonitorScenarioTest {
             resolved.map { it.attribution.state }.toSet(),
         )
     }
+
+    // --- R-1024 (register, `overnight-live-monitor` seeds no level samples) ---------------------
+
+    @Test
+    fun `R_1024 overnight-live-monitor seeds a real Measured level reading, not the honest not-measured default`() =
+        runTest {
+            Scenarios.load(context, "overnight-live-monitor")
+
+            assertTrue(
+                "expected a real LevelStatus.State.Measured reading so N07's level card renders the " +
+                    "running envelope instead of its own honest \"No level signal yet this session\" " +
+                    "fallback — that fallback is correct behaviour only for genuinely absent data",
+                LevelStatus.state is LevelStatus.State.Measured,
+            )
+        }
+
+    /**
+     * R-1024's own trap, named in the register: `setup-level`'s own
+     * `speechShapedPeakHistoryDbfs()` centers its two lobes at indices 50/57 because `SetupStep
+     * .LEVEL`'s meter only ever reads the last 15 samples of the 60 — everywhere else in the array
+     * is invisible to that screen by construction. `LiveMonitorScreen.kt`'s own `LevelEnvelopeChart`
+     * has no such window: it iterates [LevelStatus.peakHistoryDbfs] in full. Reusing the setup-level
+     * shape unchanged here would seed a real [LevelStatus.State.Measured] reading (passing the test
+     * above) whose first 45 entries are flat at the noise floor — genuinely broken for *this*
+     * screen even though it is exactly right for S07. This test reads the leading part of the
+     * array (what N07 renders first) and fails if it is flat, which the naive reuse would be.
+     */
+    @Test
+    fun `R_1024 the seeded envelope carries real variation, not only a tail bump the way S07's own shape would`() =
+        runTest {
+            Scenarios.load(context, "overnight-live-monitor")
+            val history = LevelStatus.peakHistoryDbfs
+
+            assertEquals(
+                "Level-Meter.dc.html's own up-to-60-sample history — see LevelStatus.peakHistoryDbfs's kdoc",
+                60,
+                history.size,
+            )
+            val distinctReadings = history.map { kotlin.math.round(it) }.toSet()
+            assertTrue(
+                "expected real, varying values across the seeded history, not a flat reading or a " +
+                    "mechanically-alternating cycle (R-944's own finding for setup-level's earlier bug) " +
+                    "— got only $distinctReadings",
+                distinctReadings.size > 5,
+            )
+
+            // The leading portion is exactly what a two-lobe shape centered near the end (correct
+            // for S07, wrong here — see this test's own kdoc) would leave flat at the noise floor.
+            val leading = history.take(20)
+            val leadingSpread = leading.max() - leading.min()
+            assertTrue(
+                "expected the leading part of the history (indices 0..19, which this screen's own " +
+                    "LevelEnvelopeChart renders first since it never truncates the array) to carry " +
+                    "real level variation, got a spread of only ${leadingSpread}dB across $leading",
+                leadingSpread > 10f,
+            )
+        }
 }

@@ -32,6 +32,106 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPV: R-1023 — the live monitor's timestamp column stops using a fixed width; R-1024 — `overnight-live-monitor` seeds a real level envelope; R-1025 — the tour's live-bar tap waits for the tagged node to exist before tapping)
+
+### (pending) — WPV: three small live-monitor defects from N07's first capture — R-1023/R-1024/R-1025
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/LiveMonitorScreen.kt`;
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`;
+`app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt`; tests under
+`app/src/test/kotlin/org/ort/app/ui/screens/LiveMonitorScreenTest.kt` and
+`app/src/test/kotlin/org/ort/app/debug/OvernightLiveMonitorScenarioTest.kt`.
+
+**Requirements/ACs:** R-1007 (`Live-Monitor.dc.html`), **R-1023**, **R-1024**, **R-1025** (register
+rows, all from N07's first capture today), constitution VIII (visual conformance — no clipping at
+maximum font scale), constitution II (never assert prose; a test must be shown to discriminate).
+
+**What changed:**
+- **R-1023** (design/screen split, screen half): `LiveMonitorRow`'s leading timestamp `Text` used a
+  fixed `Modifier.width(62.dp)`, matching a board that itself specified a fixed px width
+  (`Live-Monitor.dc.html`'s `.when` — already fixed by the lead in `a8182fd8`, before this commit).
+  At font scale 2.0 the real `HH:MM:SS` string needs roughly 112dp, so it clipped mid-character
+  (`13:4(`, `13:39`) — the third instance of this family this session (R-880, R-1017). Fixed by
+  reusing the existing shared `rememberTimeColumnWidth()` (`ui/components/Rows.kt`, R-205) — the
+  identical `widthIn(min = …)` floor `LogRow`/`GapRow`/`RejectedRow` already apply to the same
+  `HH:MM:SS` shape, measured against this host's real font metrics rather than a guessed constant.
+  **No shared-component change was needed**: R-205 had already generalised exactly this fix;
+  `LiveMonitorScreen.kt` simply was not calling it yet.
+- **R-1024**: `overnight-live-monitor` seeded no `LevelStatus` reading at all, so N07's level card
+  rendered its own honest "No level signal yet this session" fallback instead of the running
+  envelope — the screen's own centrepiece, and the specific thing the operator asked for. Seeded a
+  real `LevelStatus.State.Measured` plus a new `liveMonitorLevelHistoryDbfs()` (three cosine lobes
+  spread across the full 60-sample array). Deliberately **not** `setupLevel`'s own
+  `speechShapedPeakHistoryDbfs()` reused unchanged: that function's two lobes are centered at
+  indices 50/57 specifically because S07's own meter only ever reads `history.takeLast(15)` —
+  everything else is invisible to it by construction (R-944's own fix). `LiveMonitorScreen.kt`'s own
+  `LevelEnvelopeChart` has no such window — confirmed by reading it before writing this: it iterates
+  the *entire* history via `history.forEachIndexed`, no truncation — so reusing the S07 shape
+  unchanged would have drawn as 45 flat floor bars followed by one bump, not a running envelope.
+- **R-1025**: the tour's `overnight-live-monitor/N07-live-monitor` **1.0** step failed with *"could
+  not find a clickable node tagged 'live-bar' to tap"* while the two font-scale-2.0 steps
+  immediately after it, against the same scenario, always succeeded. **Diagnosis** (confirmed by
+  reading the code, not assumed): `awaitDestinationSettled`'s `expectLiveBar` branch only waits for
+  `ReaderNavigator.liveBarState.value` — a plain field — to become non-null. That proves a view-state
+  *value exists*; it does not prove Compose has gone on to recompose `LiveBar`, laid it out, and had
+  the platform's accessibility delegate publish a node for its `testTag("live-bar")` into the tree
+  `TourAccessibilityTap` scans — a later, separately-scheduled step this file had no wait for at all.
+  The only thing standing between "the state landed" and "the tap ran" was `DESTINATION_SETTLE_MILLIS`'s
+  fixed floor, documented at its own call site as sized for "one recomposition + one local DB read,"
+  never for the accessibility tree's own publish cycle. Fixed by adding `awaitLiveBarTagPresent`,
+  which polls `TourAccessibilityTap.hasNodeWithTestTag` (the same bridge `awaitLiveMonitorVisible`
+  already polls with *after* the tap) before tapping, bounded by the existing
+  `STATE_WAIT_TIMEOUT_MILLIS`/`STATE_POLL_INTERVAL_MILLIS` — never a longer or added wall-clock
+  delay. The fix does not depend on explaining why only the 1.0 step tripped the race: no Android
+  `Activity` recreation occurs for a font-scale change (`LocalDensity` is overridden per-composition
+  inside the same Activity, confirmed by reading `ScreenshotTourActivity.kt`), and both 1.0 and 2.0
+  steps get an equally fresh `key(resolved.id)` composition — it removes the dependency on the
+  floor's timing being enough at all, for every step, by waiting on the fact that actually gates
+  whether the tap can succeed.
+
+**Verified:**
+- Discriminating (R-1023): reverted `Modifier.widthIn(min = rememberTimeColumnWidth())` to
+  `Modifier.width(62.dp)` — the two font-scale-2.0 tests (390dp and 480dp) failed (`expected the
+  timestamp column (62.0.dp) to never render narrower than its own text (112.0.dp)`); the two
+  font-scale-1.0 tests passed unchanged (62dp already fits an 8-character mono string at 1.0,
+  matching the register's own evidence that only `@2x` clipped). Restored, all four pass.
+- Discriminating (R-1024): reverted the `LevelStatus.update` call entirely — both new tests failed
+  (`state is Measured`, and the leading-spread assertion). Restored, then separately swapped in
+  `speechShapedPeakHistoryDbfs()` unchanged (the historical R-944 trap) to prove the second test
+  catches *that specific* mistake, not just "no seeding at all": the `Measured` test passed but the
+  leading-spread test failed exactly as predicted (`spread of only 0.0dB across [-58.0, -58.0, ...]`
+  for indices 0..19). Restored to `liveMonitorLevelHistoryDbfs()`, both pass.
+- R-1025: **no discriminating unit test exists or was added.** `ScreenshotTourTest.kt`'s own doc
+  comment states a real `Activity`/`OrtNavHost` composition is deliberately excluded from this
+  shared JVM worker — the same boundary R-1021's own equivalent fix (`awaitLiveMonitorVisible`) was
+  closed against (the register's own R-1021 row shows device/tour evidence only, no test). This fix
+  is proven only by compiling correctly and by the existing `org.ort.app.debug.tour.*` suite (48
+  tests) staying green; the actual race is closed the same way R-1021 was — a scoped
+  `tour.ps1 -Only "overnight-live-monitor/N07-live-monitor"` re-run by the lead, on-device/emulator.
+- `./gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.screens.*' --tests
+  'org.ort.app.ui.data.*' --tests 'org.ort.app.debug.*' -PortAllowMissingBundledAssets=true` — green.
+- `./gradlew ":app:smokeTestDebugUnitTest" ":app:lintDebug" dependencyRules platformGuards
+  ":app:assembleDebug" -PortAllowMissingBundledAssets=true` — green.
+- `./gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue` —
+  green (one round-trip: `app:detekt` first failed on two `MaxLineLength` violations in the new
+  tests, over 120 chars; shortened/reformatted, re-verified green on its own before re-running the
+  full stage).
+- `./gradlew -p buildSrc test` — green.
+- `python tools/spec-check/spec_check.py` — OK, all 8 checks pass.
+- `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (separate invocations, as
+  required) — up to date, 260/466 covered, no diff to `results/coverage-matrix.md`.
+
+**Left open / not done:**
+- R-1025 has no discriminating JVM test (see "Verified" above) — needs the lead's own scoped tour
+  re-run on-device/emulator to close on evidence, per constitution VIII/the debugging loop. Not run
+  this round, per this round's own instruction (the lead does the tour and the captures).
+- The tour was not run and no screenshots were captured this round — R-1023's `@2x`/`@2x-end` and
+  R-1024's envelope both need a fresh capture against `Live-Monitor.dc.html` before either can close
+  on evidence; the register rows stay open until then.
+- `liveMonitorLevelHistoryDbfs()`'s own three-lobe shape is an editorial judgement call, not a
+  measured fact — the lead should compare the fresh capture against the board's own ~30-bar strip
+  and adjust lobe placement/width if the shapes visibly disagree.
+
 ## 2026-09-12 (WPW: R-1021 — the live-bar tap matched on a label that was never stable, fixed to match on the real testTag instead)
 
 ### 18ed7587 — R-1021: stop matching the tour's live-bar tap on rendered copy

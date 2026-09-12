@@ -1667,6 +1667,44 @@ public object Scenarios {
     }
 
     /**
+     * R-1024 (register, `overnight-live-monitor` follow-up to R-1007): a genuine speech-shaped
+     * envelope for [org.ort.app.ui.screens.LiveMonitorScreen]'s own level card, the same
+     * [LevelStatus.peakHistoryDbfs]-backed shape [speechShapedPeakHistoryDbfs] already gives S07.
+     *
+     * **Deliberately not [speechShapedPeakHistoryDbfs] reused unchanged** — that function's two
+     * lobes are centered at indices 50/57 *specifically* because `SetupStep.LEVEL`'s own meter
+     * reads only `history.takeLast(RealLevelCheck.DEFAULT_BAR_COUNT)` (15): everything outside
+     * that tail is invisible to S07 by construction, which is [speechShapedPeakHistoryDbfs]'s own
+     * fix for R-944's trap (a first version centered outside the only window S07 ever reads).
+     * N07 has no such window: `LiveMonitorScreen.kt`'s own `LevelEnvelopeChart` iterates
+     * [org.ort.app.ui.data.LevelViewState.historyDbfs] in full (`history.forEachIndexed`, read
+     * before writing this) with no `takeLast` of its own, so parking two lobes at the very end of
+     * a 60-sample array — correct for S07 — would draw here as 45 flat floor bars followed by one
+     * bump, not the continuous running envelope the board's own ~30-bar strip shows across its
+     * whole width. Three lobes spread across the array instead, each one real transmission's worth
+     * of rise-and-fall (this scenario's own session has several), so every one of the samples this
+     * screen actually reads carries real variation, not silence padding out of frame.
+     */
+    private fun liveMonitorLevelHistoryDbfs(): List<Float> {
+        val floorDbfs = -58f
+        val peakDbfs = -14f
+        val sampleCount = 60
+        fun lobe(index: Int, center: Int, halfWidth: Int, scale: Float = 1f): Float {
+            val distance = kotlin.math.abs(index - center)
+            if (distance > halfWidth) return 0f
+            return scale * 0.5f * (1f + kotlin.math.cos(Math.PI.toFloat() * distance / halfWidth))
+        }
+        return List(sampleCount) { i ->
+            val envelope = maxOf(
+                lobe(i, center = 10, halfWidth = 7),
+                lobe(i, center = 28, halfWidth = 8, scale = 0.85f),
+                lobe(i, center = 48, halfWidth = 6, scale = 0.7f),
+            )
+            floorDbfs + envelope * (peakDbfs - floorDbfs)
+        }
+    }
+
+    /**
      * `setup-radio` — R-285 (V1 pass 3). No sanctioned path reached S09..S11 (`Setup-Rig*.dc.html`)
      * on an emulator before this: the linear flow stalls at S05's own 30 s raw-signal listen (a
      * silent emulator mic never hears anything, [setupVerified]'s own doc comment), and
@@ -3218,6 +3256,11 @@ public object Scenarios {
      * drillIn is the real route onto this screen from the tour (no `NavSeed` field exists for
      * `OrtNavHost.NavHostNavState.openCaptureLiveMonitor` — that class's own doc comment names
      * exactly this gap, routed to whichever package owns the `app/src/debug` source set, this one).
+     *
+     * R-1024: this scenario originally seeded no [LevelStatus] reading at all, so N07's level card
+     * rendered its own honest "No level signal yet this session" fallback where the artboard draws
+     * the running envelope — the centrepiece of the screen and the specific thing the operator
+     * asked for. [liveMonitorLevelHistoryDbfs]'s own doc comment covers the fix and its own trap.
      */
     private suspend fun overnightLiveMonitor(context: Context, db: OrtDatabase): LoadResult {
         val sessionId = ScenarioFixtures.sessionId("overnight-live-monitor")
@@ -3235,6 +3278,23 @@ public object Scenarios {
         )
         val freq = 146_520_000L
         fun offsetSeconds(seconds: Long): Long = start + seconds * 1_000L
+
+        // R-1024: the running level envelope N07's card draws — see [liveMonitorLevelHistoryDbfs]'s
+        // own doc comment for why this is not simply [speechShapedPeakHistoryDbfs] reused as-is.
+        // R-1024: the running level envelope N07's card draws — see [liveMonitorLevelHistoryDbfs]'s
+        // own doc comment for why this is not simply [speechShapedPeakHistoryDbfs] reused as-is.
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = liveMonitorLevelHistoryDbfs(),
+        )
 
         // 1. Transcribing.
         val txTranscribing = "$sessionId-transcribing"
