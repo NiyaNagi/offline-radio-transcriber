@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (constitution 1.2.0: a change that touches a screen re-runs the visual verification; the debugging and fix session prompt)
 
-### (this commit) — constitution 1.2.0, AGENTS.md brought current, `docs/debug-fix-session-prompt.md`
+### bab4351d — constitution 1.2.0, AGENTS.md brought current, `docs/debug-fix-session-prompt.md`
 
 **Scope:** `.specify/memory/constitution.md`, `AGENTS.md`, `docs/debug-fix-session-prompt.md`
 (new), `docs/ui-fix-session-prompt.md` (header note), `spec/build-plan.md` (standing rules),
