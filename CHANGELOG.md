@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPW: reaching what five builders left unreachable — the export button, the debug-dump button, the HandlerThread leak actually closed, Setup's own frame wiring, and the `overnight-live-monitor` scenario/tour route)
 
-### (pending) — WPW closes the reach gap five builders reported and could not fix themselves
+### 3558d9dd — WPW closes the reach gap five builders reported and could not fix themselves
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/{SettingsContent,SettingsDiagnosticsScreen,SettingsViewData}.kt`;
 `app/src/main/kotlin/org/ort/app/fieldreport/{recorder/ScreenFrameCapturer.kt,wiring/FieldReportAppWiring.kt}`;
@@ -118,7 +118,6 @@ captured — this round adds the route, the lead captures).
   lead can run to close R-1007's own register row).
 - R-1004's own hardware question (does ColorOS actually report duplicate `AudioDeviceInfo` entries)
   is unresolved by this round on principle — it needs the reference device, not a build fix.
-- Commit hash filled in by the changelog-completion commit, per this file's own convention.
 
 ---
 
