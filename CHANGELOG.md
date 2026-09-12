@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPD2: R-1004/R-1005a/R-1005b/R-1005c — the first device field report, `ui/setup` half)
 
-### `<pending>` — WPD2: input-device dedupe + dump, BLUETOOTH_SCAN, onResume on the Bluetooth steps, Continue without connecting
+### ebd76a39 — WPD2: input-device dedupe + dump, BLUETOOTH_SCAN, onResume on the Bluetooth steps, Continue without connecting
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/InputRouteEnumerator.kt`,
 `app/src/main/kotlin/org/ort/app/ui/setup/RigBluetoothScreen.kt`,
