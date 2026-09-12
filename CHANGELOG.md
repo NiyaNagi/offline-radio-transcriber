@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPDUMP: a single local-save checklist replaces `Preview`/`Save bundle`/`Save debug dump`; R-1035 — the ADIF export states its exportable count before the write)
 
-### <pending> — WPDUMP: one Save button, twelve checkboxes, everything the operator could only get by saving three separate files before; R-1035's export count
+### 372368ae — WPDUMP: one Save button, twelve checkboxes, everything the operator could only get by saving three separate files before; R-1035's export count
 
 **Scope:** `app/src/main/kotlin/org/ort/app/diagnostics/localsave/**` (new);
 `app/src/main/kotlin/org/ort/app/fieldreport/bundle/FieldReportBundleBuilder.kt` (visibility only);
@@ -128,8 +128,6 @@ R-1035 (register, `spec/../results/ui-audit/register.md`, the operator's own fie
   half of constitution VIII; the screenshot half is left to the lead.
 - **`uiautomator dump`** for the checklist's labels/touch targets is device-dependent and was not
   run in this Gradle-only environment — left for the lead's own device pass.
-- The commit hash above is filled in by a follow-up commit once it exists (this file's own,
-  already-established two-commit pattern for this exact problem).
 - This round fast-forwarded onto `bea78c63` (D39/FR-STO-3d/FR-OBS-13-14, the provenance fixes, and
   the removal of a stray file another session's merge had swept in) partway through — recorded here
   since it changed what this entry's own baseline commit was, not because it touched any file this
