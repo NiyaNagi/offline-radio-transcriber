@@ -35,6 +35,7 @@ import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.Sheet
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.components.safeAreaBottomPadding
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -179,7 +180,10 @@ private fun WelcomeAsks() {
 @Composable
 private fun WelcomeFooter(onBegin: () -> Unit, onWhatIsCaptured: () -> Unit, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
+        // R-1003 (halt): see `SetupScaffold.kt`'s identical fix for the account -- this footer had
+        // the same missing-bottom-inset defect, and the same fix folds straight into `footerHeightPx`
+        // above with no second mechanism.
+        modifier = modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md).safeAreaBottomPadding(),
         verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
         PrimaryButton(
