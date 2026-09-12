@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +49,7 @@ import org.ort.app.ui.components.InProgressRing
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.components.rememberTimeColumnWidth
 import org.ort.app.ui.data.CaptureStateTone
 import org.ort.app.ui.data.CaptureStatusViewState
 import org.ort.app.ui.data.LevelViewState
@@ -428,7 +430,15 @@ private fun LiveMonitorRow(row: LiveMonitorOverRow, onClick: () -> Unit, modifie
             color = OrtColors.textDim,
             maxLines = 1,
             softWrap = false,
-            modifier = Modifier.width(62.dp).testTag("live-monitor-row-time"),
+            // R-1023: this used a fixed `width(62.dp)`, which the artboard also specified and has
+            // since dropped (`Live-Monitor.dc.html`'s own `.when` comment) — a fixed width cannot
+            // survive font scaling, so at 2.0 every row's timestamp clipped mid-character
+            // ("13:4(", "13:39"). Third instance of the family this session after R-880 and R-1017.
+            // `rememberTimeColumnWidth()` is the shared fix already applied to the identical
+            // `HH:MM:SS` column in `LogRow`/`GapRow`/`RejectedRow` (`ui/components/Rows.kt`, R-205):
+            // a `widthIn(min = …)` floor measured against this host's real font metrics, not a
+            // guessed constant — the column sizes to its own content and never shrinks below it.
+            modifier = Modifier.widthIn(min = rememberTimeColumnWidth()).testTag("live-monitor-row-time"),
         )
         Column(modifier = Modifier.weight(1f)) {
             when (row) {

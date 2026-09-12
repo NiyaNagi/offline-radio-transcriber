@@ -282,6 +282,7 @@ public class ScreenshotTourActivity : ComponentActivity() {
         // scenario's own gap/backlog deliberately seed (`TourAccessibilityTap`'s own doc comment
         // has the full account).
         if (step.drillIn["tapLiveBar"] == "true") {
+            awaitLiveBarTagPresent(step.id)
             val tapped = TourAccessibilityTap.tapNodeWithTestTag(window.decorView, LIVE_BAR_TEST_TAG)
             if (tapped != TourAccessibilityTap.TapOutcome.Tapped) {
                 error("tour step '${step.id}' could not find a clickable node tagged '$LIVE_BAR_TEST_TAG' to tap")
@@ -367,6 +368,52 @@ public class ScreenshotTourActivity : ComponentActivity() {
             error(
                 "tour step '$stepId' tapped the live bar but LiveMonitorScreen never appeared " +
                     "(no node tagged '$LIVE_MONITOR_TOP_BAR_TEST_TAG') within ${STATE_WAIT_TIMEOUT_MILLIS}ms",
+            )
+        }
+    }
+
+    /**
+     * **R-1025** (register, follow-up to R-1021): `overnight-live-monitor/N07-live-monitor`'s own
+     * 1.0 step failed with *"could not find a clickable node tagged 'live-bar' to tap"* while the
+     * two font-scale-2.0 steps immediately after it, against the same scenario, tap it
+     * successfully every time.
+     *
+     * **What is actually confirmed by reading this class before writing this fix**: the settle
+     * this step relies on before tapping, [awaitDestinationSettled]'s own `expectLiveBar` branch,
+     * only waits for `activeNavigator.liveBarState.value` — a plain field on [ReaderNavigator] — to
+     * become non-`null`. That proves a [org.ort.app.ui.components.LiveBarViewState] *value exists*;
+     * it does not prove Compose has gone on to recompose [org.ort.app.ui.components.LiveBar] with
+     * it, laid it out, and had the platform's accessibility delegate publish a node for its own
+     * `testTag("live-bar")` into the tree [TourAccessibilityTap] scans — a later, separately
+     * scheduled step this class had no wait for at all. The only thing standing between "the state
+     * landed" and "the tap runs" was [DESTINATION_SETTLE_MILLIS]'s fixed floor, which this file's
+     * own comment at its call site already documents as sized for "one recomposition + one local DB
+     * read," never for the accessibility tree's own publish cycle — exactly the class of gap this
+     * project's own rule exists for (a wall-clock settle is never the fix; wait on observed state).
+     *
+     * **What this fix does not need to resolve to be correct**: why only the 1.0 step trips this
+     * race and the two 2.0 steps do not. Both get an equally fresh composition (`key(resolved.id)`
+     * discards and rebuilds the destination host for every step id, 1.0 included — this is not an
+     * Android `Activity` recreation; [step.fontScale] only overrides `LocalDensity` for that
+     * composition) and an identical fixed floor, so this fix does not depend on that asymmetry
+     * being explained — it removes the dependency on the floor's timing being enough at all, for
+     * every step, by waiting on the one fact that actually gates whether the tap can succeed: the
+     * tagged node's own presence, via the same [TourAccessibilityTap.hasNodeWithTestTag] bridge
+     * [awaitLiveMonitorVisible] already polls with *after* the tap — now polled *before* it too.
+     */
+    private suspend fun awaitLiveBarTagPresent(stepId: String) {
+        val settled = withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
+            while (!TourAccessibilityTap.hasNodeWithTestTag(window.decorView, LIVE_BAR_TEST_TAG)) {
+                delay(STATE_POLL_INTERVAL_MILLIS)
+            }
+            true
+        } == true
+        if (!settled) {
+            error(
+                "tour step '$stepId' never found a node tagged '$LIVE_BAR_TEST_TAG' to tap within " +
+                    "${STATE_WAIT_TIMEOUT_MILLIS}ms — the live-bar state existed (this step's own " +
+                    "awaitDestinationSettled already proved that) but the accessibility tree never " +
+                    "reflected it",
             )
         }
     }
