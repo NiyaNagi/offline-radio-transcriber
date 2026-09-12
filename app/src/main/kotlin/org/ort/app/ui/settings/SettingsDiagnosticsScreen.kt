@@ -7,11 +7,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import org.ort.app.fieldreport.bundle.FieldReportGatedCategory
@@ -29,43 +33,52 @@ import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 
 /**
- * `Settings-Diagnostics.dc.html` (FR-OBS-1/3/5): what a bundle contains, real and computed before
- * it exists on disk — WP11e's `DiagnosticsBundleBuilder` (round 9, register R-137) is the real
- * producer behind every file's size and the header total; `Preview`/`Save bundle` are both real
- * actions now, wired by `SettingsContent` (this screen itself takes no `Context`, per this
- * package's own polling-stays-out-of-screens rule).
+ * `Settings-Diagnostics.dc.html` (FR-OBS-1/3/5), rebuilt WPDUMP (operator, verbatim: *"i also cant
+ * send the voiceprint embeddings screen frames or retained over audio in this build. all the field
+ * report data to be included in the debug dump. just allow a single save dump with checkboxes for
+ * EVERYTHING that can be saved."*).
  *
- * [onPreview] opens [previewOpen] — an in-app, full-screen listing of the exact same real entries
- * (name, clause, size) and total `Save bundle` would write, before committing to it. The board's
- * own prose ("Preview opens every file in a reader before you save") reads as launching a
- * per-file *external* viewer — genuinely a different, larger feature (a `FileProvider`, a manifest
- * change, one `ACTION_VIEW` intent per file) than a single Compose screen can add on its own; this
- * is the honest, real, in-scope substitute reported to the coordinator for a decision on whether
- * the external-reader shape is still wanted as a follow-up.
+ * **What changed.** The three separate actions this screen used to offer (`Preview`, `Save
+ * bundle`, `Save debug dump`) are collapsed into one: [state.localSave]'s checklist already shows
+ * every category's real size and a live running total, so the checklist itself *is* the preview —
+ * a separate full-screen `Preview`/`Done` overlay would only repeat numbers already on this screen.
+ * `Save` writes one zip containing exactly the checked categories
+ * ([org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder], `SettingsContent.kt`'s own wiring).
+ * The operator's own diagnostics zip previously carried the seven scrubbed files and *not* the
+ * recorder log, the frames or the debug dump NDJSON — three separate saves were needed to get
+ * everything into one place. This screen answers exactly that.
+ *
+ * **Defaults and gating.** Nine of the twelve rows default on (the seven scrubbed files, the
+ * session-recorder log, the debug dump — every one safe by construction); the three that carry
+ * recordings/likenesses of real people (retained audio, voiceprint embeddings, screen frames)
+ * default off. There is no FR-OBS-10-shaped public-destination refusal here at all — a local save
+ * has no destination for that guard to key off (see [org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder]'s
+ * own doc comment for why). A category with nothing real to include yet renders disabled with the
+ * reason stated in its own caption (constitution I) rather than being silently absent.
+ *
+ * The field-report section below the checklist ([FieldReportSection]/[FieldReportConsentScreen]) is
+ * unchanged by this round — its own per-upload consent screen keeps its own, independently-reset
+ * selection state, required by FR-OBS-9 ("never remembered, never inferred"); see this file's own
+ * `CHANGELOG.md` entry for why that could not also be unified with the checklist above without
+ * breaking that requirement.
  */
 @Composable
 public fun SettingsDiagnosticsScreen(
     state: SettingsDiagnosticsViewState,
     onBack: () -> Unit,
-    bundleActions: SettingsDiagnosticsBundleActions,
+    localSaveActions: LocalSaveActions,
     modifier: Modifier = Modifier,
-    previewOpen: Boolean = false,
-    onDismissPreview: () -> Unit = {},
     saveConfirmationLabel: String? = null,
     // WPR2 (FR-OBS-6..12, D37/D38): a no-op default so every existing caller of this function
     // keeps compiling unchanged. `SettingsContent.kt` wires both actions for real.
     fieldReportActions: FieldReportSectionActions = FieldReportSectionActions(),
 ) {
-    if (previewOpen) {
-        DiagnosticsPreviewScreen(state = state, onDone = onDismissPreview, modifier = modifier)
-        return
-    }
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         DrillInHeader(parentLabel = "Settings", onBack = onBack)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
             Text(text = "Diagnostics", style = OrtType.screenTitle, color = OrtColors.textHigh)
             Text(
-                text = "What a bundle contains, shown before it exists",
+                text = "Choose what goes into one saved file",
                 style = OrtType.subtitle,
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
@@ -89,58 +102,34 @@ public fun SettingsDiagnosticsScreen(
                 )
             }
 
-            // R-137 (round 9): "In the bundle · N files · X.X MB" is now the board's own shape,
-            // header total included — real, WP11e's `DiagnosticsBundleBuilder.preview`.
-            SectionHeader(
-                label = "In the bundle · ${Plurals.count(state.files.size, "file")} · ${state.totalSizeLabel}",
-                modifier = Modifier.padding(top = OrtSpacing.lg),
-            )
-            state.files.forEach { file -> DiagnosticsFileRow(file = file) }
+            // WPDUMP: `null` only while the async preview is still loading — nothing to show yet,
+            // the same "render nothing until ready" idiom this whole view state already uses one
+            // level up (`SettingsDiagnosticsSubScreen`'s own `diagnosticsState` effect).
+            state.localSave?.let { localSave ->
+                LocalSaveSection(
+                    state = localSave,
+                    actions = localSaveActions,
+                    saveConfirmationLabel = saveConfirmationLabel,
+                )
+            }
 
-            SectionHeader(label = "Never included", modifier = Modifier.padding(top = OrtSpacing.lg))
+            SectionHeader(label = "Always excluded", modifier = Modifier.padding(top = OrtSpacing.lg))
             // R-137 (round 7, then round 9): `Settings-Diagnostics.dc.html`'s own scrubbing example
-            // — "resolved [callsign] at 0.94" — is real now, not hypothetical: WP11e's
-            // `CallsignScrubber` actually runs on every log entry `DiagnosticsBundleBuilder`
-            // renders, so this reads "are scrubbed", not "would be".
+            // — "resolved [callsign] at 0.94" — is real: WP11e's `CallsignScrubber` actually runs
+            // on every log entry the seven scrubbed files above render. WPDUMP: the rest of this
+            // paragraph is rewritten — it used to claim audio, voiceprints and names were *all*
+            // categorically absent, which stopped being true the moment those two checkboxes above
+            // exist. Constitution V's three absolutes (user-supplied names, station knowledge,
+            // precise location) are still true regardless of any checkbox on this screen; audio and
+            // voiceprints are opt-in above, not absent.
             Text(
-                text = "Audio. Transcripts. Callsigns. Voiceprints. Names. Location. The logs above are " +
-                    "scrubbed of callsigns before they are written — a line reads " +
-                    "\"resolved [callsign] at 0.94\", never the callsign itself.",
+                text = "The logs above are scrubbed of callsigns before they are written — a line reads " +
+                    "\"resolved [callsign] at 0.94\", never the callsign itself. User-supplied names, " +
+                    "station knowledge and precise location are never included in a local save, " +
+                    "regardless of any checkbox above.",
                 style = OrtType.cardBody,
                 color = OrtColors.textBody,
                 modifier = Modifier.padding(top = OrtSpacing.xs),
-            )
-
-            saveConfirmationLabel?.let { label ->
-                Text(
-                    text = label,
-                    style = OrtType.cardBody,
-                    color = OrtColors.accentGreen,
-                    modifier = Modifier.padding(top = OrtSpacing.lg),
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg),
-                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
-            ) {
-                SecondaryButton(text = "Preview", onClick = bundleActions.onPreview, modifier = Modifier.weight(1f))
-                PrimaryButton(
-                    text = "Save bundle",
-                    onClick = bundleActions.onSaveBundle,
-                    modifier = Modifier.weight(1f),
-                )
-            }
-
-            // WPW (register R-1009 follow-up): `DebugDumpBuilder`'s own trigger — beside `Save
-            // bundle`, through the identical SAF path (`SettingsContent.kt`'s own wiring).
-            SecondaryButton(
-                text = "Save debug dump",
-                onClick = bundleActions.onSaveDebugDump,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = OrtSpacing.sm, bottom = OrtSpacing.lg)
-                    .testTag(DEBUG_DUMP_SAVE_TEST_TAG),
             )
 
             // WPR2 (FR-OBS-6..12, D37/D38): `null` — a release build, where the debug-only
@@ -153,6 +142,87 @@ public fun SettingsDiagnosticsScreen(
                 )
             }
         }
+    }
+}
+
+/** WPDUMP: the unified checklist — every [LocalSaveCategoryRowViewState] row plus one `Save`
+ * button. Split out of [SettingsDiagnosticsScreen] purely to keep that function under detekt's
+ * length limit, the same reason [FieldReportSection] already is one. */
+@Composable
+private fun LocalSaveSection(
+    state: LocalSaveSectionViewState,
+    actions: LocalSaveActions,
+    saveConfirmationLabel: String?,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.padding(top = OrtSpacing.lg)) {
+        val checkedCount = state.rows.count { it.checked }
+        SectionHeader(
+            label = "Save · ${Plurals.count(checkedCount, "category", "categories")} · ${state.totalSizeLabel}",
+        )
+        state.rows.forEach { row ->
+            LocalSaveCategoryRow(row = row, onToggle = { checked -> actions.onToggle(row.id, checked) })
+        }
+        saveConfirmationLabel?.let { label ->
+            Text(
+                text = label,
+                style = OrtType.cardBody,
+                color = OrtColors.accentGreen,
+                modifier = Modifier.padding(top = OrtSpacing.sm),
+            )
+        }
+        PrimaryButton(
+            text = "Save",
+            onClick = actions.onSave,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = OrtSpacing.sm, bottom = OrtSpacing.lg)
+                .testTag(LOCAL_SAVE_SAVE_BUTTON_TEST_TAG),
+        )
+    }
+}
+
+/** One checklist row — a real checkbox (the outer [Modifier.toggleable] carries the actual click
+ * target/semantics, [Checkbox]'s own `onCheckedChange = null` keeps it purely decorative so the
+ * row is not a double click target — the identical idiom [ToggleRow] already establishes for this
+ * screen's own field-report toggles, a checkbox rather than a switch because the operator's own
+ * word was "checkboxes"), the real label, the real caption ([row.caption] already carries the
+ * "why empty" reason appended when [row.available] is `false` — this composable renders it
+ * verbatim, never re-deriving or re-wording it), and the real trailing size. `enabled =
+ * row.available` on the [Modifier.toggleable] itself is what makes an empty category's row
+ * genuinely inert (no `onToggle` call reaches `SettingsContent.kt` for a tap on a disabled row),
+ * not merely styled to look that way. */
+@Composable
+private fun LocalSaveCategoryRow(
+    row: LocalSaveCategoryRowViewState,
+    onToggle: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = row.checked,
+                enabled = row.available,
+                onValueChange = onToggle,
+                role = Role.Checkbox,
+            )
+            .padding(vertical = OrtSpacing.xs)
+            .testTag(LOCAL_SAVE_ROW_TEST_TAG_PREFIX + row.id.name),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    ) {
+        Checkbox(checked = row.checked, onCheckedChange = null, enabled = row.available)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = row.label, style = OrtType.callsignRow, color = OrtColors.textHigh)
+            Text(text = row.caption, style = OrtType.subLine, color = OrtColors.textDim)
+        }
+        Text(
+            text = row.sizeLabel,
+            style = OrtType.subLine,
+            color = OrtColors.textFaint,
+            modifier = Modifier.testTag(LOCAL_SAVE_ROW_TEST_TAG_PREFIX + row.id.name + LOCAL_SAVE_ROW_SIZE_TAG_SUFFIX),
+        )
     }
 }
 
@@ -381,53 +451,6 @@ private fun FieldReportFileRow(file: FieldReportConsentFileViewState, modifier: 
     }
 }
 
-/** One `IN THE BUNDLE` row — name, real clause, real trailing size (the board's own `.f`/`.sz`
- * shape). Split out of [SettingsDiagnosticsScreen] purely to keep that function under detekt's
- * length limit. */
-@Composable
-private fun DiagnosticsFileRow(file: SettingsDiagnosticsFileViewState, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.xs),
-        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = file.name, style = OrtType.callsignRow, color = OrtColors.textHigh)
-            Text(text = file.description, style = OrtType.subLine, color = OrtColors.textDim)
-        }
-        Text(text = file.sizeLabel, style = OrtType.subLine, color = OrtColors.textFaint)
-    }
-}
-
-/** `Preview` (R-137, round 9): the exact real entries/total `Save bundle` would write, shown
- * before committing to it — see [SettingsDiagnosticsScreen]'s own doc comment for why this is an
- * in-app listing rather than the board's own per-file external-reader wording. */
-@Composable
-private fun DiagnosticsPreviewScreen(
-    state: SettingsDiagnosticsViewState,
-    onDone: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        DrillInHeader(parentLabel = "Diagnostics", onBack = onDone)
-        Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
-            Text(text = "Preview", style = OrtType.screenTitle, color = OrtColors.textHigh)
-            Text(
-                text = "Exactly what Save bundle will write · ${Plurals.count(state.files.size, "file")} · " +
-                    state.totalSizeLabel,
-                style = OrtType.subtitle,
-                color = OrtColors.textDim,
-                modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
-            )
-            state.files.forEach { file -> DiagnosticsFileRow(file = file) }
-            PrimaryButton(
-                text = "Done",
-                onClick = onDone,
-                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
-            )
-        }
-    }
-}
-
 /** Test tags for the field-report section/consent screen's toggles — unambiguous targets for a
  * `performClick()`/`assertIsOn()`/`assertIsOff()` test, the same reason `ControlsTest.kt` already
  * tags a plain `ToggleRow` this way. */
@@ -436,6 +459,14 @@ public const val FIELD_REPORT_TOGGLE_RETAINED_AUDIO_TEST_TAG: String = "field-re
 public const val FIELD_REPORT_TOGGLE_VOICEPRINTS_TEST_TAG: String = "field-report-toggle-voiceprints"
 public const val FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG: String = "field-report-toggle-screen-frames"
 
-/** WPW: the debug-dump `Save debug dump` button — a stable, unambiguous target for a
- * `performClick()` test, the same reason every field-report toggle above is tagged. */
-public const val DEBUG_DUMP_SAVE_TEST_TAG: String = "diagnostics-save-debug-dump"
+/** WPDUMP: the unified checklist's own test tags — one row tag prefix (suffixed with
+ * [org.ort.app.diagnostics.localsave.LocalSaveCategoryId.name], unambiguous per category) and one
+ * `Save` button tag, the identical reason every field-report toggle above is tagged. */
+public const val LOCAL_SAVE_ROW_TEST_TAG_PREFIX: String = "local-save-row-"
+public const val LOCAL_SAVE_SAVE_BUTTON_TEST_TAG: String = "local-save-save-button"
+
+/** Suffix for the trailing size label's own tag ([LOCAL_SAVE_ROW_TEST_TAG_PREFIX] + id + this) —
+ * a distinct, unambiguous target (found with `useUnmergedTree = true`, since the row's own
+ * `toggleable` merges every descendant into one node) for a layout test asserting that specific
+ * child's own bounds, rather than the whole row's. */
+public const val LOCAL_SAVE_ROW_SIZE_TAG_SUFFIX: String = "-size"

@@ -96,4 +96,27 @@ class VoiceprintEmbeddingsProducerTest {
         val array = JSONObject(String(bytes, Charsets.UTF_8)).getJSONArray("voiceprints")
         assertEquals(0, array.length())
     }
+
+    // -----------------------------------------------------------------------------------------
+    // WPDUMP: `count` backs the local-save checklist's own availability check for this category —
+    // must agree with `produce`'s own array length in every one of the same fixtures above.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `WPDUMP count is zero with no stations at all`() = runTest {
+        assertEquals(0, VoiceprintEmbeddingsProducer.count(context))
+    }
+
+    @Test
+    fun `WPDUMP count is zero when the only voiceprint is never bound to a station`() = runTest {
+        db.catalogDao().insert(voiceprint("V2", byteArrayOf(9), boundStationId = null))
+        assertEquals(0, VoiceprintEmbeddingsProducer.count(context))
+    }
+
+    @Test
+    fun `WPDUMP count is one with one station-bound voiceprint`() = runTest {
+        db.catalogDao().insert(station("ST1", "K7ABC"))
+        db.catalogDao().insert(voiceprint("V1", byteArrayOf(1, 2, 3), boundStationId = "ST1"))
+        assertEquals(1, VoiceprintEmbeddingsProducer.count(context))
+    }
 }

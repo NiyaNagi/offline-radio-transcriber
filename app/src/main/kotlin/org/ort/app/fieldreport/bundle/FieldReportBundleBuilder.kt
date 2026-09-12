@@ -131,8 +131,13 @@ public object FieldReportBundleBuilder {
     /** Every FR-OBS-7 frame [org.ort.app.fieldreport.recorder.FrameStore] currently holds on disk,
      * oldest first — read directly off the documented `<filesDir>/field-report/frames/` path (this
      * round's own brief), since [org.ort.app.fieldreport.recorder.FrameStore] itself lives in
-     * the `fieldreport.recorder` package, not constructed here. */
-    private fun screenFrameFiles(context: Context): List<File> {
+     * the `fieldreport.recorder` package, not constructed here.
+     *
+     * WPDUMP: `internal`, not `private` — [org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder]
+     * reuses this exact listing for its own `SCREEN_FRAMES` category rather than a second,
+     * independently-written copy of the same directory scan (this file's own top doc comment's
+     * reuse discipline, one level down). */
+    internal fun screenFrameFiles(context: Context): List<File> {
         val dir = File(File(context.filesDir, FIELD_REPORT_DIR_NAME), "frames")
         return (dir.listFiles()?.toList() ?: emptyList()).sortedBy { it.name }
     }

@@ -1,4 +1,4 @@
-package org.ort.app.ui.settings
+﻿package org.ort.app.ui.settings
 
 import android.content.Intent
 import androidx.activity.ComponentActivity
@@ -6,6 +6,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -76,8 +77,8 @@ class SettingsContentExportAndDebugDumpTest {
     }
 
     @Test
-    @Requirement("R-1009")
-    fun `WPW Save debug dump launches a real SAF CreateDocument intent naming an NDJSON file`() {
+    @Requirement("FR-OBS-3")
+    fun `WPDUMP Save launches a real SAF CreateDocument intent naming one unified zip`() {
         composeTestRule.setContent {
             OrtTheme {
                 SettingsContent(
@@ -88,22 +89,22 @@ class SettingsContentExportAndDebugDumpTest {
             }
         }
         composeTestRule.waitUntil(5_000) {
-            composeTestRule.onAllNodesWithText("Save bundle", substring = false).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag(LOCAL_SAVE_SAVE_BUTTON_TEST_TAG).fetchSemanticsNodes().isNotEmpty()
         }
 
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(DEBUG_DUMP_SAVE_TEST_TAG))
-        composeTestRule.onNodeWithTag(DEBUG_DUMP_SAVE_TEST_TAG).performClick()
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(LOCAL_SAVE_SAVE_BUTTON_TEST_TAG))
+        composeTestRule.onNodeWithTag(LOCAL_SAVE_SAVE_BUTTON_TEST_TAG).performClick()
 
         val started = shadowOf(composeTestRule.activity).nextStartedActivityForResult
-        assertNotNull("expected Save debug dump to actually launch a SAF picker intent", started)
+        assertNotNull("expected Save to actually launch a SAF picker intent", started)
         val intent = started.intent
         assertTrue(Intent.ACTION_CREATE_DOCUMENT == intent.action)
-        assertTrue("application/x-ndjson" == intent.type)
+        assertTrue("application/zip" == intent.type)
         val title = intent.getStringExtra(Intent.EXTRA_TITLE)
         assertNotNull(title)
         assertTrue(
-            "expected a debug-dump-shaped NDJSON file name, got '$title'",
-            title!!.startsWith("debug-dump-") && title.endsWith(".ndjson"),
+            "expected the unified ort-debug-dump-shaped zip file name, got '$title'",
+            title!!.startsWith("ort-debug-dump-") && title.endsWith(".zip"),
         )
     }
 }

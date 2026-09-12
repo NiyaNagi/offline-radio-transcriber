@@ -259,6 +259,92 @@ class ExportCoordinatorTest {
         assertFalse("text format has no CSV header", text.contains("transmission_id"))
     }
 
+    // -----------------------------------------------------------------------------------------
+    // R-1035: the exportable count before the write — "0 of 8 can be exported as QSOs; 7 have no
+    // identified station", never discovered only after saving an empty file.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_1035 ADIF previewCount matches the operator's own log — 0 exportable of 8, 7 excluded`() = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.catalogDao().insert(station("ST1", "KI7ABC"))
+        db.transmissionDao().insert(
+            transmission(
+                "T-confirmed",
+                "S1",
+                AttributionState.CONFIRMED,
+                stationId = "ST1",
+                attributionConfidence = 0.9,
+            ),
+        )
+        repeat(7) { index ->
+            db.transmissionDao().insert(transmission("T-unknown-$index", "S1", AttributionState.UNKNOWN))
+        }
+
+        val preview = ExportCoordinator.previewCount(
+            context,
+            ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.ADIF),
+        )
+
+        assertEquals(8, preview.totalCount)
+        assertEquals(1, preview.exportableCount)
+        assertEquals(7, preview.excludedCount)
+    }
+
+    @Test
+    fun `R_1035 previewCount's exportableCount matches the real written ADIF record count exactly`() = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.transmissionDao().insert(transmission("T1", "S1", AttributionState.UNKNOWN))
+        db.transmissionDao().insert(transmission("T2", "S1", AttributionState.AMBIGUOUS))
+
+        val request = ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.ADIF)
+        val preview = ExportCoordinator.previewCount(context, request)
+        val adif = ExportCoordinator.build(context, request).toString(Charsets.UTF_8)
+
+        assertEquals(0, preview.exportableCount)
+        assertFalse("expected zero <EOR> records to match exportableCount of 0", adif.contains("<EOR>"))
+    }
+
+    @Test
+    fun `R_1035 non-ADIF formats never exclude a record — exportableCount equals totalCount`() = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.transmissionDao().insert(transmission("T1", "S1", AttributionState.UNKNOWN))
+        db.transmissionDao().insert(transmission("T2", "S1", AttributionState.AMBIGUOUS))
+
+        for (format in listOf(ExportFileFormat.CSV, ExportFileFormat.JSON, ExportFileFormat.TEXT)) {
+            val preview = ExportCoordinator.previewCount(
+                context,
+                ExportRequest(scope = ExportRequestScope.EVERYTHING, format = format),
+            )
+            assertEquals("format $format", 2, preview.totalCount)
+            assertEquals("format $format", 2, preview.exportableCount)
+            assertEquals("format $format", 0, preview.excludedCount)
+        }
+    }
+
+    @Test
+    fun `R_1035 previewCount honours confirmedOnly exactly as build does, same effective record set`() = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.catalogDao().insert(station("ST1", "KI7ABC"))
+        db.transmissionDao().insert(
+            transmission("T1", "S1", AttributionState.CONFIRMED, stationId = "ST1", attributionConfidence = 0.9),
+        )
+        db.transmissionDao().insert(transmission("T2", "S1", AttributionState.UNKNOWN))
+
+        val preview = ExportCoordinator.previewCount(
+            context,
+            ExportRequest(
+                scope = ExportRequestScope.EVERYTHING,
+                format = ExportFileFormat.ADIF,
+                confirmedOnly = true,
+            ),
+        )
+
+        assertEquals(1, preview.totalCount)
+        assertEquals(1, preview.exportableCount)
+        assertEquals(0, preview.excludedCount)
+    }
+
     @Test
     fun `R_1009 suggestedFileName carries the real extension for each format`() {
         assertEquals(

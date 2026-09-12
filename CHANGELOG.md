@@ -32,6 +32,107 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPDUMP: a single local-save checklist replaces `Preview`/`Save bundle`/`Save debug dump`; R-1035 — the ADIF export states its exportable count before the write)
+
+### 372368ae — WPDUMP: one Save button, twelve checkboxes, everything the operator could only get by saving three separate files before; R-1035's export count
+
+**Scope:** `app/src/main/kotlin/org/ort/app/diagnostics/localsave/**` (new);
+`app/src/main/kotlin/org/ort/app/fieldreport/bundle/FieldReportBundleBuilder.kt` (visibility only);
+`app/src/main/kotlin/org/ort/app/fieldreport/bundle/VoiceprintEmbeddingsProducer.kt`;
+`app/src/main/kotlin/org/ort/app/export/ExportCoordinator.kt`;
+`app/src/main/kotlin/org/ort/app/ui/settings/{SettingsDiagnosticsScreen,SettingsContent,SettingsViewData}.kt`;
+matching tests under `app/src/test/kotlin/org/ort/app/{diagnostics/localsave,fieldreport/bundle,export,ui/settings}/**`.
+
+**Requirements/ACs:** FR-OBS-3 (a local export excluding audio "unless explicitly included" — this
+round applies that same operator-directed-inclusion shape to every category, not only audio);
+FR-OBS-6/7/8/9 (the categories reused, by definition, from the field-report channel: the recorder
+log, screen frames, retained audio, voiceprint embeddings, the seven scrubbed files);
+constitution V (FR-OBS-10's public-destination guard does not apply — a local SAF save has no
+outbound destination for that guard to key off, so it is not gated at all, only shown honestly with
+real sizes and disabled-with-a-reason where a category is empty); constitution I (uncertainty is
+content — an empty category is a disabled, reasoned checkbox, never a silently absent row);
+R-1035 (register, `spec/../results/ui-audit/register.md`, the operator's own field logs) — FR-EXP-4.
+
+**What changed:**
+- **The operator's own ask, verbatim:** *"i also cant send the voiceprint embeddings screen frames
+  or retained over audio in this build. all the field report data to be included in the debug dump.
+  just allow a single save dump with checkboxes for EVERYTHING that can be saved."* Their own real
+  diagnostics zip already showed why: it carried the seven scrubbed logs with real bytes and *not*
+  the recorder log, the frames, or the debug-dump NDJSON — those needed three separate saves.
+- **New `org.ort.app.diagnostics.localsave` package**: `LocalSaveCategoryId` (a closed 12-entry
+  `enum`: the seven scrubbed files, the session-recorder log, retained audio, voiceprint embeddings,
+  screen frames, the debug-dump NDJSON), `LocalSaveBundleSpec` (maps eight of the twelve onto the
+  *exact* `FieldReportUngatedFileId`/`FieldReportGatedCategory` entries the field-report bundle
+  already defines — a `getValue`-on-a-map guard fails at class-load on drift, the same discipline
+  `FieldReportBundleSpec` itself already holds one layer up — plus `defaultSelected`, the nine
+  structurally-safe categories, and `thirdPartyContent`, the three that are not), and
+  `LocalSaveBundleBuilder` (`preview`/`write`, rendering every category through the same producer
+  the field-report bundle, the diagnostics bundle and the debug dump already use — never a second,
+  independently-authored render of the same logical file).
+- **`SettingsDiagnosticsScreen`'s `Preview`/`Save bundle`/`Save debug dump` are retired**, replaced
+  by one checklist (checkbox, real label, real caption, real size per row — `Checkbox` +
+  `Modifier.toggleable(enabled = row.available, role = Role.Checkbox)`, the row itself the click
+  target, the checkbox purely decorative) and one `Save` button writing one zip via
+  `LocalSaveBundleBuilder.write`. The live per-row size and running total already *is* the preview
+  Compose numbers used to need a separate full-screen overlay to show.
+- **Defaults, D38's shape restated for a local save**: nine rows default on (the seven scrubbed
+  files, the session-recorder log, the debug dump — every one safe by construction, structurally
+  free of a callsign, a station's user-supplied name, or a voiceprint); three default off (retained
+  audio, voiceprint embeddings, screen frames — third-party content: recordings/likenesses of real
+  people). A category with nothing real to include renders **disabled, not absent**, its caption
+  naming why ("no retained audio exists on this device yet", "no voiceprints have been resolved
+  yet", "no screen frames have been captured yet", "the session recorder only runs in debug builds").
+- **Why FR-OBS-10 does not gate this at all**: that guard's own text is scoped to the field-report
+  *uploader* and keys on `destinationIsPublic`, a concept with no meaning for a save that has no
+  network destination. FR-OBS-3 already permitted operator-directed inclusion of audio "unless
+  explicitly included"; this checklist is that same shape for every category, not a narrowing of it.
+- **The upload path (`FieldReportConsentScreen`) is untouched.** Its category *definitions* are
+  shared with the checklist above (the same `FieldReportUngatedFileId`/`FieldReportGatedCategory`
+  entries, reused rather than re-derived); its *selection state* stays independent, because FR-OBS-9
+  requires that screen's three toggles to reset to off on every single open, "never remembered,
+  never inferred" — a constraint the local-save checklist is not subject to and has no reason to
+  inherit. Unifying the two `Set<...>`s would either violate FR-OBS-9 (the consent screen inheriting
+  the checklist's last picks) or force the checklist itself to reset every time for no reason in the
+  spec. Stated here rather than silently narrowed.
+- **R-1035**: `ExportCoordinator.previewCount(context, request): ExportCountPreview` (`totalCount`,
+  `exportableCount`, `excludedCount`), resolved from the exact same `effectiveRecords` list `build`
+  itself hands a writer (refactored out of `build`, shared, never a second query). Only
+  `ExportFileFormat.ADIF` ever excludes a record — its `<CALL>` field has no "unidentified" value, so
+  `Ambiguous`/`Unknown` records never become a `<EOR>`; CSV/JSON/TEXT write one row per record
+  regardless of attribution (confirmed by reading each writer's own source before writing this), so
+  `exportableCount == totalCount` for every format but ADIF. **`SettingsExportScreen.kt` is outside
+  this round's file-ownership map** (not among the files this prompt's "What you own" names), so the
+  real, tested count exists and is ready to render, but wiring it onto the Export screen itself is
+  left as the real, stated gap below rather than touched without ownership.
+- Vestigial, stated rather than silently left: `SettingsDiagnosticsViewState.files`/`totalSizeLabel`
+  (still populated by `SettingsPolling.diagnostics`, outside this round's ownership) are no longer
+  rendered by the rebuilt screen — the new `localSave` field carries the real data now, attached in
+  `SettingsContent.kt` exactly the way `fieldReport` already is.
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.diagnostics.*' --tests 'org.ort.app.fieldreport.*' --tests 'org.ort.app.export.*' --tests 'org.ort.app.ui.settings.*' -PortAllowMissingBundledAssets=true` — green (every test listed below passing).
+- New tests, each proven to discriminate (revert the production change → red for the stated reason → restore → green): `LocalSaveBundleBuilderTest` (9 tests: closed-set/defaults pin, default-selection write, release-build recorder-log exclusion, retained-audio/voiceprint/screen-frame availability and real bytes, defensive filter on an unavailable selected category, preview/write size parity, byte-identity against `FieldReportBundleBuilder`'s own ungated files); `VoiceprintEmbeddingsProducerTest` (+3: `count()` zero/zero/one); `ExportCoordinatorTest` (+4: R-1035's own operator-log numbers 0-of-8/7-excluded, ADIF `exportableCount` matching the real written `<EOR>` count, non-ADIF formats never excluding, `confirmedOnly` honoured identically to `build`); `SettingsDiagnosticsScreenTest` (rewritten: all twelve rows render real label/caption/size, default-on/off checked state, an unavailable row disabled with its reason, tapping a checkbox calls back, `Save` calls back with a real confirmation, the stale absolute "never included" claim is gone, the field-report section/consent-screen suite carried over unchanged); `SettingsLocalSaveScreenLayoutTest` (new, `@GraphicsMode(NATIVE)`, 390dp and 480dp, font scale 1.0 and 2.0, `getUnclippedBoundsInRoot()` on the trailing size label via a dedicated tag with `useUnmergedTree = true` — proven to discriminate against an injected `Modifier.offset(x = 999.dp)` fault, red with the real pushed-x value, restored, green); `SettingsContentExportAndDebugDumpTest` (rewritten: `Save` launches a real `ACTION_CREATE_DOCUMENT`/`application/zip` intent named `ort-debug-dump-....zip`).
+- `.\gradlew ":app:smokeTestDebugUnitTest" ":app:lintDebug" dependencyRules platformGuards ":app:assembleDebug" -PortAllowMissingBundledAssets=true` — green.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue` — green twice (once before, once after a ktlint/detekt cleanup pass and a mojibake fix to three test files introduced by an in-place PowerShell text edit — caught by re-reading the files, fixed byte-for-byte, re-verified with `Select-String` for the corrupted sequences and a full test re-run).
+- `.\gradlew -p buildSrc test` — green. `python tools\spec-check\spec_check.py` — all 8 checks PASS.
+- `.\gradlew coverageMatrix` then `.\gradlew coverageMatrixCheck` (separate invocations) — 260 of 475 requirements covered (post-fast-forward baseline), no orphan-requirement warning (after retagging the new tests' `@Requirement` from the round codename `WPDUMP` to the real id `FR-OBS-3`).
+
+**Left open / not done:**
+- **R-1035's real count is not yet visible on screen.** `ExportCoordinator.previewCount` is real,
+  tested, and shares its record list with `build` — but rendering it on `SettingsExportScreen.kt`
+  needs a file outside this round's ownership map. Flagged for whoever owns that file (or a future
+  round granted it).
+- **The tour/artboard comparison is not run by this change**, per this round's own explicit
+  instruction ("do not run the tour or capture screenshots — the lead does that"). The Robolectric
+  layout tests above (390dp/480dp × 1.0/2.0, native graphics, real bounds) are this builder's own
+  half of constitution VIII; the screenshot half is left to the lead.
+- **`uiautomator dump`** for the checklist's labels/touch targets is device-dependent and was not
+  run in this Gradle-only environment — left for the lead's own device pass.
+- This round fast-forwarded onto `bea78c63` (D39/FR-STO-3d/FR-OBS-13-14, the provenance fixes, and
+  the removal of a stray file another session's merge had swept in) partway through — recorded here
+  since it changed what this entry's own baseline commit was, not because it touched any file this
+  round owns.
+
 ## 2026-09-12 (spec amendments: continuous archive defaults on at 60 GB — D39 — plus the pruning order, a manual-frequency acceptance criterion, and two provenance requirements the WPPROV fix needed)
 
 ### 167e7e2e — spec: D39 reverses Q14's default, FR-STO-3d's pruning order, FR-CAP-13's manual-frequency AC, FR-OBS-13/14 pass-and-session provenance, Q20 opened
