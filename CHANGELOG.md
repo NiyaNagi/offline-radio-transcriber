@@ -32,6 +32,81 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (spec3: D40 — the over-audio budget warns and never deletes; FR-STO-3f — the archive's default-on state and rate must be disclosed)
+
+### (pending) — spec3: register R-1037 decided as D40/FR-STO-3e (over-audio budget: warn, never delete); register R-1036 decided as FR-STO-3f (archive default-on and monthly rate disclosed at setup and wherever storage is shown)
+
+**Scope:** `spec/functional-spec.md`, `spec/open-questions.md`, `AGENTS.md` (counts only).
+Product-owner decisions drafted as prose only — no product, build or test code touched.
+
+**Requirements/ACs:** New decision **D40**. New requirements **FR-STO-3e**, **FR-STO-3f** (M).
+New acceptance criteria **AC-156, AC-157, AC-158, AC-159**. Amends-in-the-open (text left as
+written, annotated) on **FR-STO-3a**; cross-referenced against **FR-STO-3, FR-STO-3b, FR-STO-3c,
+FR-STO-3d, FR-STO-4, FR-REP-4, FR-STO-5, FR-UI-7, D39, Q14, constitution IV and VI**. Closes
+register **R-1037** (decided) and **R-1036** (decided) with an actual spec clause; both rows were
+already marked "decided"/needing "a plain disclosure" in `results/ui-audit/register.md` before
+this session and are not edited here — the register is the session lead's file, not this one's.
+
+**What changed:**
+- **D40** records the product owner's decision on R-1037: reaching the **over-audio** budget
+  warns the operator loudly and deletes no over audio, by any mechanism; capture continues past
+  the budget, and only genuine device storage exhaustion stops it, loudly (FR-STO-4, constitution
+  IV); the operator frees space by deleting sessions themselves in Recordings. This **withdraws**
+  FR-STO-3a's opt-in automatic-pruning option for the over-audio budget specifically — the option
+  is untouched for the continuous archive (FR-STO-3d, unchanged).
+- **FR-STO-3e (M)**, new, states D40's behaviour as a requirement and adds one thing the register
+  finding did not spell out: because there is no automatic mechanism behind this budget to make
+  the condition self-resolving, the warning **SHALL persist for as long as the budget remains
+  exceeded**, not just at the moment it was crossed — otherwise a full budget is exactly the kind
+  of thing an operator learns to dismiss (see "Anything I think is wrong", below, in the session
+  report).
+- **FR-STO-3, FR-STO-3a, FR-STO-3b and FR-STO-3c are left exactly as drafted** — per the prompt's
+  instruction, the withdrawal is recorded as an annotation (a blockquote after FR-STO-3d, before
+  FR-STO-3e) rather than a rewrite of prior text, because none of the four was wrong: the
+  over-audio question was simply never asked before R-1037.
+- **FR-STO-3f (M)**, new, answers R-1036: the continuous archive's default-on state (D39) and its
+  measured monthly rate must be disclosed at setup and wherever storage is shown, beside the
+  control that turns it off — never behind a second tap. Once a measured rate exists on-device it
+  replaces D39's ~15 GB/month estimate (constitution VI: a measured number outranks an estimate);
+  until then the estimate stands, labelled as one.
+- Four acceptance criteria added in §14.8f: AC-156/157 exercise FR-STO-3e (no deletion at or past
+  the budget; the warning survives a restart and only clears when the operator has freed space);
+  AC-158/159 exercise FR-STO-3f (setup states state+rate+control together; Settings > Storage and
+  the capture status surface do the same, and a measured rate displaces the estimate).
+- §16 traceability: new `D40` row; the existing `D39` row extended with `FR-STO-3f, AC-158,
+  AC-159`.
+- `spec/open-questions.md`'s Q14 entry gets one short addendum distinguishing its scope (the
+  archive budget, D39) from D40 (the over-audio budget) — added because a careless reader could
+  otherwise assume Q14/D39 already covered the over-audio case, which was exactly the gap R-1037
+  raised.
+- `AGENTS.md`'s requirement-count line updated: 287→289 requirement ids, 155→159 acceptance
+  criteria, 39→40 decisions (risk count unchanged at 19).
+- **Recorded, without touching code:** `app/src/main/kotlin/org/ort/app/ui/settings/
+  SettingsStore.kt:35,60` (`autoPruneEnabled`, default `false`) and `pipeline/src/main/kotlin/
+  org/ort/pipeline/capture/StorageAccounting.kt:169-188` (`computeNextDeletion`, whole-session
+  oldest-first pruning keyed only on `audioBytesUsed > budgetBytes` or the free-space floor, with
+  no distinction between the over-audio and archive budgets) become **non-conforming for the
+  over-audio budget** the moment FR-STO-3e lands in code — noted here for whichever package
+  rewrites both budgets (already flagged in register R-1037 as landing "with the archive and
+  budget package").
+
+**Verified:** `python tools/spec-check/spec_check.py` — all 8 checks PASS (contiguous/unique AC
+ids, no dangling FR/AC/NFR/CON/Q reference, every decision has a §16 row, every requirement group
+has a criterion, every criterion names a requirement, closed/open questions agree, no mojibake or
+tabs, no conflict markers). `.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` and
+`.\gradlew coverageMatrixCheck -PortAllowMissingBundledAssets=true` run as separate invocations
+(see this session's report for their result).
+
+**Left open / not done:** No product, build or test code changed — FR-STO-3e and FR-STO-3f are
+unimplemented; `SettingsStore.autoPruneEnabled` and `StorageAccounting.computeNextDeletion` still
+prune whole sessions oldest-first regardless of which budget triggered them, which is now a known
+spec/code divergence rather than a silent one. FR-STO-3f's "measured monthly rate" has no
+measurement mechanism yet — this requirement states the disclosure obligation and the preference
+order (measured over estimated); building the measurement is separate build-plan work. The
+register (`results/ui-audit/register.md`) is not edited by this session by design (Own, prompt
+constraint) — R-1036 and R-1037 stay in the lead's hands to move from "decided" to closed once the
+implementing package lands.
+
 ## 2026-09-12 (WPDUMP: a single local-save checklist replaces `Preview`/`Save bundle`/`Save debug dump`; R-1035 — the ADIF export states its exportable count before the write)
 
 ### 372368ae — WPDUMP: one Save button, twelve checkboxes, everything the operator could only get by saving three separate files before; R-1035's export count
