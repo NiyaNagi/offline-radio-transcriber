@@ -34,6 +34,8 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.ort.app.fieldreport.recorder.FieldReportRecorder
+import org.ort.app.fieldreport.recorder.RecorderDestination
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
 import org.ort.app.ui.components.LiveBar
 import org.ort.app.ui.components.LiveBarViewState
@@ -744,6 +746,20 @@ private data class NavHostIds(
     val transmissionInitialRevisionsOpen: Boolean,
 )
 
+/**
+ * FR-OBS-6: the closed [RecorderDestination] this [NavHostIds] currently resolves to — a drill-in
+ * id wins over [NavHostIds.current] exactly the way [NavHostDispatch]'s own `when` already
+ * prioritises them, so this always names whatever destination is actually on screen. Never
+ * forwards a drill-in's own id (see `FieldReportRecorder`'s own package doc comment on why not).
+ */
+private fun NavHostIds.recorderDestination(): RecorderDestination = when {
+    transmissionId != null -> RecorderDestination.TRANSMISSION_DETAIL
+    stationId != null -> RecorderDestination.STATION_DETAIL
+    frequencyHz != null -> RecorderDestination.FREQUENCY_DETAIL
+    threadId != null -> RecorderDestination.THREAD_DETAIL
+    else -> RecorderDestination.forReaderDestination(current)
+}
+
 /** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
 private data class NavHostCallbacks(
     val onOpenDrawer: () -> Unit,
@@ -847,6 +863,20 @@ private fun NavHostBody(
     // capture at 1.0 that read as the last row "cut with blank space", never an overlap (nothing
     // was ever clipped, which is why `R_262`'s own `<=` check below never caught it). One
     // mechanism only now: plain `Column` sibling spacing, no measured-height state at all.
+    // FR-OBS-6/FR-OBS-7 (field-report session recorder, `app/.../fieldreport/recorder/**`, this
+    // round's own addition — see that package's report for the full vocabulary and what else it
+    // does not yet wire): the one destination-change observation hook this round adds, kept to the
+    // smallest possible change per this round's own brief. `ids.recorderDestination()` (below,
+    // this file) turns the four drill-in ids plus `ids.current` into the closed
+    // `RecorderDestination` FR-OBS-6's vocabulary requires — never the drill-in's own id, which
+    // this host otherwise treats as an opaque `String`/`Long` throughout. Keyed on that closed
+    // value, not on the raw ids, so a `LaunchedEffect` restart happens once per logical
+    // destination change, matching "on each destination change the recorder observes" (FR-OBS-7)
+    // exactly.
+    val recorderDestination = ids.recorderDestination()
+    LaunchedEffect(recorderDestination) {
+        FieldReportRecorder.onDestinationChanged(recorderDestination)
+    }
     Column(modifier = layout.modifier) {
         val isDrillIn = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId).any { it != null }
         // ui-conformance WP3 round 4 (R-129 smoke coverage found this, real at the time): this host
