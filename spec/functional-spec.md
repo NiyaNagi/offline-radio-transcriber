@@ -1199,9 +1199,16 @@ constitution IV require: only genuine storage exhaustion stops capture, and FR-S
 that shutdown, loudly, never this budget. Because there is no automatic mechanism behind it to
 make the condition self-resolving, the warning SHALL persist for as long as the budget remains
 exceeded — not only at the moment it was first crossed — so a full budget cannot quietly become
-background noise the operator has learned to dismiss. Over audio is the evidence FR-REP-4
-depends on for every re-run and every correction; none of it disappears without the operator
-choosing it.
+background noise the operator has learned to dismiss. That persistence binds two surfaces
+specifically, not a settings page a tap away: the warning SHALL be **visible without a tap**,
+for as long as the budget remains exceeded, on the **capture status surface** (FR-UI-7, drawn as
+N08 `Capture.dc.html`, superseding N04) and on the **live/transport bar's own state label** while
+capturing (drawn as `Transport-Bar.dc.html`, inventory C10), whose label is already defined as
+the highest-priority condition affecting capture, never a fixed word — this asks an existing
+mechanism to carry a state it can already express (`LiveBarPolling.toneAndLabel()`'s priority
+ladder already carries a `"Low storage"` state), not a new surface. Over audio is the evidence
+FR-REP-4 depends on for every re-run and every correction; none of it disappears without the
+operator choosing it.
 
 **FR-STO-3f (M)** — The continuous archive's **default-on state** (D39) and its **measured
 monthly rate** SHALL be disclosed at two points, in each case beside the control that turns the
@@ -2711,6 +2718,12 @@ NFR-2 stated latency targets that nothing tested.
   remains exceeded, rather than showing once and clearing itself, and genuine storage
   exhaustion — not this budget — stops capture with a stated reason (FR-STO-3e, FR-STO-4,
   constitution IV).
+- **AC-160** With the over-audio budget exceeded, the warning is **visible without a tap** on
+  both the capture status surface and the live/transport bar's own state label for as long as
+  the budget stays exceeded — verified by reaching that state and confirming the bar's label
+  (not a fixed word, per its own priority ladder) reads the warning rather than a nominal
+  capturing state, and that the capture status surface shows it without navigating to Settings
+  (FR-STO-3e, FR-UI-7).
 - **AC-158** At setup, wherever the continuous archive's on-by-default state is presented, the
   screen states that it is on, states a monthly rate (measured if one exists, else the
   ~15 GB/month estimate, labelled as an estimate), and shows the off control beside that
@@ -3229,7 +3242,7 @@ product; all of them are what make the reference experience world-class.
 | D25 Opt-in then automatic contribution | FR-CON-1..8, FR-OBS-5a, NFR-6, R14, AC-111..114 |
 | D26 Retention is a storage budget | FR-STO-3, FR-STO-3a..c, AC-124, AC-125 |
 | D39 Continuous archive defaults on, budgeted at 60 GB | FR-STO-3d, FR-STO-3f, AC-150, AC-151, AC-158, AC-159, Q14 (amended) |
-| D40 Over-audio budget warns, never deletes | FR-STO-3a (amended), FR-STO-3e, AC-156, AC-157 |
+| D40 Over-audio budget warns, never deletes | FR-STO-3a (amended), FR-STO-3e, FR-UI-7, AC-156, AC-157, AC-160 |
 | D27 Own public repository | §2.1 (technical design), Q15 |
 | D28 Persistent voice library | FR-SPK-11..26, R15, AC-104..110, AC-121, AC-122 |
 | D29 Station knowledge accumulates | FR-DIG-7..14, R16, AC-116..120 |

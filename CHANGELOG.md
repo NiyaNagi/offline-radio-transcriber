@@ -34,6 +34,52 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (spec3: D40 — the over-audio budget warns and never deletes; FR-STO-3f — the archive's default-on state and rate must be disclosed)
 
+### (pending) — spec3 follow-up: FR-STO-3e's persistent warning is tied to the two surfaces the operator actually sees — the capture status surface and the live/transport bar's own state label — not merely "reachable"
+
+**Scope:** `spec/functional-spec.md` (FR-STO-3e text, new AC-160, D40's §16 row), `AGENTS.md`
+(counts only). No product, build or test code touched.
+
+**Requirements/ACs:** Amends **FR-STO-3e** by one clause (text below). New acceptance criterion
+**AC-160**. Cross-referenced against **FR-UI-7**, `design/canvas/Capture.dc.html` (N08,
+supersedes N04), `design/canvas/Transport-Bar.dc.html` (inventory C10), and
+`LiveBarPolling.toneAndLabel()` (`app/src/main/kotlin/org/ort/app/ui/data/LiveBarPolling.kt`),
+whose priority ladder already carries a `"Low storage"` state. D40's §16 traceability row
+extended with `FR-UI-7, AC-160`.
+
+**What changed:** The coordinator's own review of the prior session's "anything I think is
+wrong" note decided the open question rather than bouncing it back to the product owner: the
+product owner's own words for D40 were "the app tells you loudly", and a persistent warning
+reachable only via a Settings sub-page is not loud — it is the silent-noise failure with a
+warning attached. FR-STO-3e's persistence sentence now names the two surfaces it binds:
+- the **capture status surface** (FR-UI-7, now drawn as N08 `Capture.dc.html`, which supersedes
+  N04), and
+- the **live/transport bar's own state label** while capturing (being redrawn as
+  `Transport-Bar.dc.html`, inventory C10), whose label is already specified as "the
+  highest-priority condition, never a fixed word".
+
+Both SHALL show the warning **visible without a tap**, for as long as the budget stays exceeded —
+not "reachable in one tap" as FR-UI-7 otherwise allows for the capture status surface generally,
+but actually on-screen. This is stated explicitly as a **linkage to an existing mechanism, not a
+new one**: `LiveBarPolling.toneAndLabel()`'s priority ladder already carries a `"Low storage"`
+state (keyed off `StorageForecast.State.ThreeNightsLeft`/`OneNightLeft`), so the new requirement
+asks that ladder to also carry the over-audio-budget-exceeded state, at whatever priority the
+implementing package judges correct — this spec does not set that priority, only the visibility
+obligation. As instructed, **no cadence, escalation tier or second floor is specified** — the
+prior session was right not to invent those, and this round does not either.
+
+**Verified:** `python tools/spec-check/spec_check.py` — all 8 checks PASS. `.\gradlew
+coverageMatrix -PortAllowMissingBundledAssets=true` and `.\gradlew coverageMatrixCheck
+-PortAllowMissingBundledAssets=true`, run as separate invocations (see this session's report for
+their result).
+
+**Left open / not done:** No code changed — `LiveBarPolling.toneAndLabel()` does not yet have an
+over-audio-budget-exceeded branch, and the capture status surface (N08) does not yet render the
+warning. Both are build-plan work for the package that implements FR-STO-3e/3f, which register
+R-1037 already notes lands "with the archive and budget package". The design boards referenced
+(`Capture.dc.html`, `Transport-Bar.dc.html`) were merged from `main` into this worktree
+(`git merge main`, no conflicts) to have their real names available; neither board was edited by
+this session.
+
 ### 90699acb — spec3: register R-1037 decided as D40/FR-STO-3e (over-audio budget: warn, never delete); register R-1036 decided as FR-STO-3f (archive default-on and monthly rate disclosed at setup and wherever storage is shown)
 
 **Scope:** `spec/functional-spec.md`, `spec/open-questions.md`, `AGENTS.md` (counts only).
