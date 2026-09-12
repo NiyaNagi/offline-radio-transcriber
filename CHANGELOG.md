@@ -32,7 +32,83 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-12 (WPARC: the continuous archive is wired into `RealCaptureService` — D39 default-on 60 GB, FLAC chunks, oldest-first pruning that never touches over audio, and AC-157's persistent over-audio-budget warning)
+## 2026-09-12 (R-1038: the continuous-archive queue is bounded — a stalled writer drops archive frames and records one coalesced hole, instead of growing the heap until the OS kills the process)
+
+### 7ca223bb — R-1038: bound the continuous-archive queue so a stalled writer cannot kill capture
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/{ContinuousArchiveAttachment,RealCaptureService}.kt`;
+`pipeline/src/main/kotlin/org/ort/pipeline/archive/ArchivePruner.kt`; matching tests.
+
+**Requirements/ACs:** Constitution IV ("capture never blocks, never drops, never lies" — this
+closes the "never dies" gap the coordinator's own review found: never-blocks held, never-dies did
+not), risk R5 (the top risk — a night's capture silently not happening), FR-RUN-12 (an archive
+failure is recorded as a hole, coalesced here rather than one row per frame), FR-SEG-9 / AC-151
+(re-segmentable is now honest about a `KEPT` archive that has a recorded hole).
+
+**What changed:**
+- **`ContinuousArchiveAttachment`'s channel is now bounded**, not [`Channel.UNLIMITED`] — a
+  writer that stalls outright (a wedged filesystem, a hung codec, storage I/O starved by the OS)
+  could otherwise grow the queue on the heap without bound (16 kHz mono PCM16 is 115.2 MB/hour)
+  until the OS kills the *process*, taking capture down with the archive that was supposed to be
+  secondary to it. `capacity` is a constructor parameter; `DEFAULT_CAPACITY` is **derived**, not
+  guessed — `ARCHIVE_QUEUE_BOUND_SECONDS` (10) × the pipeline's real frame cadence
+  (`FrameSpec.SAMPLE_RATE` / `AudioRecordSource.DEFAULT_READ_BUFFER_FRAMES` = 10 messages/second),
+  a hundred times the ordinary 100ms-per-frame cadence and comfortably above the one recurring
+  slower step in this path (`ContinuousArchiveWriter`'s FLAC encode-and-verify, once per 30s chunk
+  flush, not per frame) while bounding worst-case growth to a fixed ~312 KB of raw PCM regardless
+  of stall duration. `RealCaptureService.buildArchiveAttachment` restates the identical arithmetic
+  explicitly (`ARCHIVE_QUEUE_CAPACITY`) at the one call site that actually knows the real cadence.
+- **Overflow drops the frame and reports a coalesced hole**, never one row per dropped frame:
+  `offer()` tracks an open drop-span (`overflowStartSample`/`overflowSampleCount`, touched only
+  from the single caller thread, the same single-writer assumption `GapTracker`/`DroppedSpanCause`
+  already make elsewhere) and closes it — reporting through the new `onOverflow` callback — either
+  when a later `offer()` finally succeeds again (the writer recovered) or when `finishAndAwait()`
+  runs (the session ended still stalled). `RealCaptureService` wires `onOverflow` to the same
+  `ArchiveGapPersister` a verification failure uses, with the closed-vocabulary reason
+  `"archive_queue_overflow"`. Over audio and capture are completely unaffected either way — neither
+  is fed through this call.
+- **`finishAndAwait()` is now bounded by a timeout** (`FINISH_TIMEOUT_MILLIS`, 5s): a writer stuck
+  on the very first message a session ever queued would otherwise make this call — which
+  production calls from `endSessionRow`'s own `runBlocking(Dispatchers.IO)` — hang session
+  teardown forever. On timeout it cancels the consumer and gives up on that session's archive
+  rather than block; found while addressing R-1038, not asked for explicitly, but the same root
+  defect reachable through a different call site.
+- **`SessionArchiveState.resegmentable` is now honest about a hole**: previously `true` for any
+  `KEPT` session; now also requires no recorded `archive_gap` row for it
+  (`hasGaps`, new field) — a `KEPT` archive that dropped an interval (verification failure or
+  R-1038 overflow alike) is present but not complete, and re-segmenting across a missing interval
+  would produce boundaries the missing audio cannot actually justify.
+
+**Verified:**
+- `:pipeline:testDebugUnitTest` — full suite green, including the six
+  `ContinuousArchiveAttachmentTest` cases (three original + three new R-1038 cases) and the two
+  new `ArchivePrunerTest` resegmentable-honesty cases.
+- `./gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  — **BUILD SUCCESSFUL in 14m 5s** (1109 actionable tasks).
+- `:pipeline:ktlintMainSourceSetCheck :pipeline:ktlintTestSourceSetCheck :pipeline:detekt` — clean.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `./gradlew coverageMatrix` (run locally, then reverted — `results/**` stays this builder's
+  off-limits territory) — the three ids orphaned in the prior round (`AC-157`, `FR-STO-3e`,
+  `FR-STO-3f`) resolved automatically once `spec3` merged into `main`; no orphan-tests line
+  printed this run. `coverageMatrixCheck` still reports the committed matrix stale (267 vs. 264
+  covered from this round's new tests) — left for the session lead to regenerate/commit.
+- Every claim proven to discriminate (revert → fail → restore → pass): reverting the channel back
+  to `Channel.UNLIMITED` makes both new overflow tests (`R_1038 a writer that never returns...`,
+  `R_1038 a writer that stalls then recovers...`) fail; reverting `resegmentable` to ignore
+  `hasGaps` makes the new resegmentable-honesty test fail. All pasted in full in this session's
+  report.
+
+**Left open / not done:**
+- `finishAndAwait`'s 5s timeout is a judgement call, not a measured figure — no device evidence
+  exists yet for how long a real FLAC chunk flush can legitimately take on the reference or floor
+  device under thermal throttling; if that ever needs to be longer than 5s in practice, the
+  archive gets abandoned prematurely at session end (a false "the writer was wedged" — still
+  strictly safer than the previous "may hang forever", but worth measuring on-device).
+- This round's worth of new coverage is not yet reflected in the committed
+  `results/coverage-matrix.md` (see Verified) — regeneration and commit is the session lead's, per
+  this builder's file-ownership constraints.
+
+
 
 ### 7db41a16 — WPARC: wire the continuous archive into RealCaptureService — D39 default-on 60 GB, FLAC chunks, oldest-first pruning, over-audio budget warning survives restart (AC-157)
 
