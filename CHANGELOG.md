@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPD3 round 2: R-1016/R-1017/R-1018 — device pass 2 findings on S10b)
 
-### (pending) — WPD3 round 2: manufacturer prefix stripped, the paired-device marker top-aligns against a wrapped sub-line, the pinned bar's safe-area padding is 24dp not 12dp
+### fc675b4c — WPD3 round 2: manufacturer prefix stripped, the paired-device marker top-aligns against a wrapped sub-line, the pinned bar's safe-area padding is 24dp not 12dp
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{SetupActivity,RigBluetoothScreen,SetupScaffold}.kt`,
 `app/src/main/kotlin/org/ort/app/ui/components/Controls.kt`, and tests under
