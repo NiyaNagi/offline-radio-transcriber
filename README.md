@@ -108,6 +108,32 @@ construction. `Settings-Assets` reports each asset as bundled/verified with its 
 remains available to replace any of them (FR-AST-1) — the app itself never offers `Download` for a
 bundled entry.
 
+## The field-report channel and `ORT_FIELD_REPORT_TOKEN`
+
+D37/D38 (functional spec §7.13b, FR-OBS-6..12): a debug-only, operator-triggered channel that
+uploads a diagnostic bundle to a GitHub repository (a release asset on a dedicated tag, then an
+issue linking it) and shows its contents — every file, its real size, the destination, and three
+opt-in categories — before every send. `RealFieldReportUploadClient` (`:net`) is the one
+implementation permitted an HTTP client for it (constitution V); `FieldReportUploadClientFactory`
+(`app/.../fieldreport/upload`) is the only place `:app` decides whether it exists in this build.
+
+The upload token is scoped to the one destination repository, present only in a debug build, and
+injected at build time exactly like `HF_TOKEN` above — never committed, never printed, and never
+appearing in a log line, a diagnostic bundle, or a screen frame (FR-OBS-12):
+
+```bash
+export ORT_FIELD_REPORT_TOKEN=ghp_your_token_here   # PowerShell: $env:ORT_FIELD_REPORT_TOKEN = "ghp_your_token_here"
+./gradlew build
+```
+
+Without it, `Settings → Diagnostics`'s field-report `Send` action stays unreachable
+(`FieldReportUploadClientFactory.create()` returns `null`, the same honest "not configured" state
+`ModelAcquisition` uses when a destination is not set up) — never a silent no-op and never a
+fabricated success. A release build never sees a usable token regardless of the environment: the
+`FIELD_REPORT_TOKEN` `BuildConfig` field is only ever populated for a debug build
+(`buildSrc/.../ort.android-app.gradle.kts`), and `FieldReportUploadClientFactory` additionally
+gates on `BuildConfig.DEBUG` before ever reading it.
+
 ## Reading order
 
 **If you are implementing:** functional spec, then `spec/technical-design.md`, then
