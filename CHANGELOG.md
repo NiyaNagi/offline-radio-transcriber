@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPL: Live Monitor — R-1007)
 
-### a9f1f4c3 — WPL · R-1007: the live instrument the operator asked for after 30 minutes of capture with no way to tell what was happening
+### 59894e75 — WPL · R-1007: the live instrument the operator asked for after 30 minutes of capture with no way to tell what was happening
 
 **Scope:** new `app/src/main/kotlin/org/ort/app/ui/screens/LiveMonitorScreen.kt`,
 `LiveMonitorActions.kt`, `app/src/main/kotlin/org/ort/app/ui/data/LiveMonitorViewData.kt`;
