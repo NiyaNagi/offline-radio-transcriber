@@ -1,5 +1,6 @@
 package org.ort.app.debug.tour
 
+import android.graphics.Rect
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -151,5 +152,87 @@ class TourAccessibilityTapTest {
 
         assertEquals(true, TourAccessibilityTap.hasNodeWithTestTag(activity.window.decorView, "live-bar"))
         assertEquals(false, TourAccessibilityTap.hasNodeWithTestTag(activity.window.decorView, "no-such-tag"))
+    }
+
+    /**
+     * R-1025 (register): `overnight-live-monitor/N07-live-monitor`'s own 1.0 step fails with
+     * *"could not find a clickable node tagged 'live-bar' to tap"* while the identical scenario at
+     * 2.0 taps it every time — and this exact bridge already proves (the test above) that a real
+     * [LiveBar] taps successfully in isolation, at the default font scale, every time. So the gap is
+     * not in this bridge; it is something the *real, composed* screen does differently that no
+     * Robolectric test at this level reproduces. [TourAccessibilityTap.describeNodes] exists to
+     * carry that evidence back off a real device — every node's own resource name, bounds and
+     * clickability, plus whether it falls inside the tagged node's own bounds — rather than a bare
+     * "not found". This test only proves the dump's own shape (a tagged-bounds line, and one line
+     * per resource-named-or-clickable node); the real question — what actually differs on-device at
+     * 1.0 versus 2.0 — is answered by this session's own report, not by a Robolectric assertion,
+     * since Robolectric's merged semantics tree and idle detection are exactly what constitution II
+     * warns not to trust for this class of question.
+     */
+    @Test
+    fun `R_1025 describeNodes reports the tagged bounds and every resource-named or clickable node`() {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        activity.setContent {
+            WithTestTagsAsResourceId { LiveBar(state = degradedGapState, onClick = {}) }
+        }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val dump = TourAccessibilityTap.describeNodes(activity.window.decorView, "live-bar")
+
+        assertEquals(true, dump.startsWith("tagged('live-bar') bounds="))
+        assertEquals(true, dump.contains("resourceName=live-bar"))
+        assertEquals(true, dump.contains("clickable=true"))
+        assertEquals(true, dump.contains("insideTag=true"))
+    }
+
+    @Test
+    fun `describeNodes reports the tag as not found rather than throwing when absent`() {
+        val activity = Robolectric.buildActivity(ComponentActivity::class.java).setup().get()
+        activity.setContent { WithTestTagsAsResourceId { Text("something else entirely") } }
+        shadowOf(Looper.getMainLooper()).idle()
+
+        val dump = TourAccessibilityTap.describeNodes(activity.window.decorView, "live-bar")
+
+        assertEquals("tagged('live-bar') bounds=NOT FOUND", dump.split("\n").first())
+    }
+
+    /**
+     * **R-1025, the actual root cause** — found from a real `overnight-live-monitor/N07-live-monitor`
+     * device run's own [TourAccessibilityTap.describeNodes] evidence (this session's own report has
+     * the full dump), not by inspection: at font scale 1.0 the tagged `live-bar` Column measured
+     * `Rect(0, 2564, 1260, 2709)` and its own clickable Row (`capture-status-livebar`) measured
+     * `Rect(0, 2560, 1260, 2709)` — visually a child of that Column, but reported **4px taller at its
+     * own top edge**, because Android's accessibility delegate pads a clickable node's reported
+     * bounds up to the 48dp minimum touch target when its real layout height is smaller (`LiveBar`'s
+     * own Row is a deliberate 44dp, `LiveBar.kt`'s own `heightIn(min = 44.dp)`), and the bar sits
+     * flush against the screen's own bottom edge with no room to expand downward — so the entire
+     * deficit is pushed upward, past the tagged Column's own top edge. `Rect.contains()` (the
+     * previous check) requires the candidate to sit **entirely inside** the tagged bounds, so this
+     * real, correct, on-device geometry failed it. At font scale 2.0 the Row's own real text/line
+     * height already exceeds 48dp, no expansion is needed, and the old `contains()` check happened
+     * to hold — the reason this defect was scale-dependent, not because of any Activity recreation
+     * or a settle-timing race (both already ruled out before this test, per the register row).
+     * `boundsMatchTag` is [TourAccessibilityTap]'s replacement predicate — asserted directly against
+     * these exact real numbers, not a synthetic approximation, so a regression back to `contains()`
+     * fails this test for the precise, on-device reason it must not.
+     */
+    @Test
+    fun `R_1025 boundsMatchTag accepts a clickable node whose touch-target padding exceeds the tagged bounds`() {
+        val taggedBounds = Rect(0, 2564, 1260, 2709)
+        val clickableBounds = Rect(0, 2560, 1260, 2709)
+
+        assertFalse(
+            "sanity: strict containment is exactly what the real device geometry fails",
+            taggedBounds.contains(clickableBounds),
+        )
+        assertEquals(true, TourAccessibilityTap.boundsMatchTag(taggedBounds, clickableBounds))
+    }
+
+    @Test
+    fun `boundsMatchTag still rejects a clickable node nowhere near the tagged bounds`() {
+        val taggedBounds = Rect(0, 2564, 1260, 2709)
+        val unrelatedBounds = Rect(0, 63, 156, 205)
+
+        assertEquals(false, TourAccessibilityTap.boundsMatchTag(taggedBounds, unrelatedBounds))
     }
 }

@@ -99,13 +99,13 @@ public object TourAccessibilityTap {
      * screen-specific tag the caller supplied instead) — so this cannot simply act on the tagged
      * node's own id the way a node that is itself clickable could be acted on directly. Instead it
      * records the tagged node's own [Rect] and returns the first *clickable* node anywhere in the
-     * scan whose bounds fall inside it — generic (no assumption about how many `LayoutNode`s sit
-     * between the tag and the click, and no dependency on virtual-id ordering reflecting tree
-     * structure, which it does not: ids are assigned in creation order, not depth-first), and safe
-     * for the live bar specifically because its clickable row fills essentially the whole tagged
-     * column (confirmed by reading `LiveBar.kt` before writing this: the only sibling inside the
-     * tagged `Column` is a 1dp top-edge divider with no semantics of its own, so no other clickable
-     * node could ever fall inside the same bounds).
+     * scan whose bounds [boundsMatchTag] the tagged node's own — generic (no assumption about how
+     * many `LayoutNode`s sit between the tag and the click, and no dependency on virtual-id ordering
+     * reflecting tree structure, which it does not: ids are assigned in creation order, not
+     * depth-first), and safe for the live bar specifically because its clickable row fills
+     * essentially the whole tagged column (confirmed by reading `LiveBar.kt` before writing this:
+     * the only sibling inside the tagged `Column` is a 1dp top-edge divider with no semantics of its
+     * own, so no other clickable node could ever match the same bounds).
      */
     private fun findClickableVirtualViewIdWithTestTag(provider: AccessibilityNodeProvider, testTag: String): Int? {
         val taggedBounds = boundsOfFirstNodeWithTestTag(provider, testTag) ?: return null
@@ -114,10 +114,35 @@ public object TourAccessibilityTap {
             if (!node.isClickable) continue
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
-            if (taggedBounds.contains(bounds)) return virtualViewId
+            if (boundsMatchTag(taggedBounds, bounds)) return virtualViewId
         }
         return null
     }
+
+    /**
+     * **R-1025** (register): the real predicate behind "this clickable node belongs to that tagged
+     * one" — **not** [Rect.contains], the previous check, which a real device run
+     * (`overnight-live-monitor/N07-live-monitor`, font scale 1.0) proved wrong: `live-bar`'s own
+     * tagged Column measured `Rect(0, 2564, 1260, 2709)` while its own clickable Row
+     * (`capture-status-livebar`) measured `Rect(0, 2560, 1260, 2709)` — 4px *taller at its own top
+     * edge* than the Column that visually contains it. That is not a layout bug: Android's
+     * accessibility delegate pads a clickable node's *reported* bounds up to the platform's 48dp
+     * minimum touch target when its real measured height is smaller
+     * ([org.ort.app.ui.components.LiveBar]'s own Row is a deliberate 44dp,
+     * `LiveBar.kt`'s `heightIn(min = 44.dp)`), and the live bar sits flush against the screen's own
+     * bottom edge with no room to expand the touch target downward — so the whole deficit is pushed
+     * upward, past the tagged Column's own top edge. `Rect.contains()` requires the candidate to sit
+     * entirely inside the tagged bounds and therefore rejects this real, correct geometry. At font
+     * scale 2.0 the Row's own real text/line height already clears 48dp, no padding is added, and
+     * `contains()` happened to hold — the reason this defect was font-scale-dependent, not an
+     * Activity recreation or a settle-timing race (both already ruled out — see the register row).
+     * [Rect.intersects] — real, non-trivial overlap, not merely touching edges — is the correct
+     * check: this project's own accessibility-padding case always overlaps the vast majority of the
+     * tagged bounds, and per [findClickableVirtualViewIdWithTestTag]'s own doc comment no other,
+     * unrelated clickable node ever shares that same screen region for this tag.
+     */
+    internal fun boundsMatchTag(taggedBounds: Rect, candidateBounds: Rect): Boolean =
+        Rect.intersects(taggedBounds, candidateBounds)
 
     private fun findAnyVirtualViewIdWithTestTag(provider: AccessibilityNodeProvider, testTag: String): Int? {
         for (virtualViewId in AccessibilityNodeProvider.HOST_VIEW_ID..MAX_VIRTUAL_VIEW_ID) {
@@ -133,6 +158,40 @@ public object TourAccessibilityTap {
         val bounds = Rect()
         node.getBoundsInScreen(bounds)
         return bounds
+    }
+
+    /**
+     * **R-1025** (register): `overnight-live-monitor/N07-live-monitor`'s own 1.0 step fails to find
+     * a clickable node inside [testTag]'s own bounds while the identical scenario at 2.0 succeeds
+     * every time — and [tapNodeWithTestTag] itself is already proven, in isolation, to tap a real
+     * [org.ort.app.ui.components.LiveBar] correctly at the default font scale
+     * ([TourAccessibilityTapTest]'s own first case). The gap is therefore something the *real,
+     * composed* screen does differently that no bare-component test reproduces — evidence this
+     * function exists to carry off a real device rather than guess at: [testTag]'s own resolved
+     * bounds (or `"NOT FOUND"`, honestly, rather than throwing — the same closed-outcome discipline
+     * [tapNodeWithTestTag] itself follows), then one line per node that is either resource-named
+     * (carries a `testTag`) or clickable — its virtual id, resource name, clickability and bounds,
+     * and whether those bounds fall inside [testTag]'s own (the exact fact
+     * [findClickableVirtualViewIdWithTestTag] tests). Wired into [ScreenshotTourActivity]'s own
+     * tap-failure error message so the evidence lands in the tour's own manifest.json, next to the
+     * failure it explains, with no separate logcat capture needed.
+     */
+    public fun describeNodes(rootView: View, testTag: String): String {
+        val provider = TourAccessibilityScroll.findAccessibilityNodeProvider(rootView)
+            ?: return "no AccessibilityNodeProvider found under the root view"
+        val taggedBounds = boundsOfFirstNodeWithTestTag(provider, testTag)
+        val lines = mutableListOf("tagged('$testTag') bounds=${taggedBounds ?: "NOT FOUND"}")
+        for (virtualViewId in AccessibilityNodeProvider.HOST_VIEW_ID..MAX_VIRTUAL_VIEW_ID) {
+            val node = provider.createAccessibilityNodeInfo(virtualViewId) ?: continue
+            val resourceName = node.viewIdResourceName
+            if (resourceName == null && !node.isClickable) continue
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            val insideTag = taggedBounds?.contains(bounds) == true
+            lines += "id=$virtualViewId resourceName=$resourceName clickable=${node.isClickable} " +
+                "bounds=$bounds insideTag=$insideTag"
+        }
+        return lines.joinToString("\n")
     }
 
     /** Matches [TourAccessibilityScroll]'s own bound — Compose's semantics ids are small,

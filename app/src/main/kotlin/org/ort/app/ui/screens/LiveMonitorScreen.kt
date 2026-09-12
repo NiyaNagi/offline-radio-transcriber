@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -55,6 +56,8 @@ import org.ort.app.ui.data.CaptureStatusViewState
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.data.LiveMonitorOverRow
 import org.ort.app.ui.data.LiveMonitorOversViewState
+import org.ort.app.ui.setup.levelBarColorFor
+import org.ort.app.ui.setup.levelBarFraction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -271,11 +274,7 @@ private fun LevelEnvelopeChart(history: List<Float>, modifier: Modifier = Modifi
                 history.forEachIndexed { index, dbfs ->
                     val x = index * (barWidth + gapPx)
                     val barTopY = yFor(dbfs)
-                    val color = when {
-                        dbfs >= LevelViewState.TARGET_BAND_TOP_DBFS -> OrtColors.accentGreen
-                        dbfs >= LevelViewState.TARGET_BAND_BOTTOM_DBFS -> OrtColors.chartGreenRamp[1]
-                        else -> OrtColors.meterWarn
-                    }
+                    val color = liveMonitorLevelBarColor(dbfs)
                     drawRect(color = color, topLeft = Offset(x, barTopY), size = Size(barWidth, size.height - barTopY))
                 }
             }
@@ -283,31 +282,96 @@ private fun LevelEnvelopeChart(history: List<Float>, modifier: Modifier = Modifi
     }
 }
 
-/** [LiveMonitorLevelCard]'s own dBFS/band-state row — split out for the same reason
- * [LevelEnvelopeChart] is. */
+/**
+ * **R-1026** (register, design): [LevelEnvelopeChart] used to band its own bars by hand — bright
+ * green at/above the target band top, a fixed mid-green shade *inside* the 10dB-wide band, and
+ * [OrtColors.meterWarn] (amber) for literally everything quieter than that. Ordinary speech sits
+ * roughly `-40` to `-15` dBFS ([org.ort.app.ui.setup.LevelCheck.levelBarFraction]'s own doc
+ * comment) — almost entirely below the band's own `-18` dBFS floor — so a genuine overnight
+ * envelope rendered nearly every bar amber, on a screen whose own design guide §8 reserves amber
+ * for anomalies. **R-944 already fixed the identical defect on `Setup-Level.dc.html`'s own
+ * meter** ([org.ort.app.ui.setup.levelBarColorFor]: grey below 0.30 of the chart's own `-60..0`
+ * scale, a real green ramp toward the band top, red only at true `0` dBFS clipping) — this reuses
+ * that exact function rather than reimplementing the banding a second time, via
+ * [org.ort.app.ui.setup.levelBarFraction] (the same `dbfs -> 0f..1f` scale both meters share) so
+ * the two can never re-diverge again. `internal`, not `private`: directly unit-tested
+ * (`LiveMonitorScreenTest`'s own `R_1026` cases) the same way [levelBarColorFor] itself is tested
+ * against real dBFS values, never a rendered pixel.
+ */
+internal fun liveMonitorLevelBarColor(dbfs: Float): androidx.compose.ui.graphics.Color = levelBarColorFor(
+    clamped = levelBarFraction(dbfs.toDouble()),
+    bandTopFraction = levelBarFraction(LevelViewState.TARGET_BAND_TOP_DBFS.toDouble()),
+)
+
+/**
+ * [LiveMonitorLevelCard]'s own dBFS/band-state row — split out for the same reason
+ * [LevelEnvelopeChart] is.
+ *
+ * **R-1027** (register, design): below [LARGE_FONT_SCALE_THRESHOLD] the left caption
+ * (`"-14 dBFS · floor -58 dBFS · 14 dB headroom"`) fits one line, so it and the right band label
+ * (`"in the band"`) correctly share one row, exactly as before. At or above it, the caption wraps
+ * to several lines while the label — unweighted, top-aligned, the same `Row` — stayed pinned to
+ * line one, reading as though it belonged to the caption's own first line while the wrapped
+ * continuation trailed off beside nothing: "one broken sentence" (the register's own words), not
+ * two distinct facts. The R-874/R-980 family's own remedy for "a right sibling must yield to a
+ * wrapping left one" applied here: the label now stacks *below* the caption instead, the same
+ * threshold-based stacking `ui/setup/LevelScreen.kt`'s own `LevelFooterFacts` already established
+ * for this screen's sibling meter (that composable's own doc comment has the identical reasoning).
+ */
 @Composable
 private fun LevelCardCaption(level: LevelViewState, modifier: Modifier = Modifier) {
-    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        val dbfsLine = listOfNotNull(
-            level.peakDbfsLabel,
-            level.noiseFloorDbfsLabel?.let { "floor $it" },
-            level.headroomLabel?.let { "$it headroom" },
-        ).joinToString(" · ")
-        Text(
-            text = dbfsLine,
-            style = OrtType.axis,
-            color = OrtColors.textDim,
-            modifier = Modifier.weight(1f, fill = false).testTag("live-monitor-level-dbfs"),
-        )
-        level.bandStateSentence?.let { sentence ->
+    val dbfsLine = listOfNotNull(
+        level.peakDbfsLabel,
+        level.noiseFloorDbfsLabel?.let { "floor $it" },
+        level.headroomLabel?.let { "$it headroom" },
+    ).joinToString(" · ")
+    val bandLabel = level.bandStateSentence?.let { bandStateShortLabel(it) }
+    val bandColor = bandStateColor(level.bandStateTone)
+    val fontScale = LocalDensity.current.fontScale
+    if (fontScale >= LARGE_FONT_SCALE_THRESHOLD) {
+        Column(modifier = modifier.fillMaxWidth()) {
             Text(
-                text = bandStateShortLabel(sentence),
+                text = dbfsLine,
                 style = OrtType.axis,
-                color = bandStateColor(level.bandStateTone),
+                color = OrtColors.textDim,
+                modifier = Modifier.testTag("live-monitor-level-dbfs"),
             )
+            bandLabel?.let {
+                Text(
+                    text = it,
+                    style = OrtType.axis,
+                    color = bandColor,
+                    modifier = Modifier.padding(top = 3.dp).testTag("live-monitor-level-band"),
+                )
+            }
+        }
+    } else {
+        Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                text = dbfsLine,
+                style = OrtType.axis,
+                color = OrtColors.textDim,
+                modifier = Modifier.weight(1f, fill = false).testTag("live-monitor-level-dbfs"),
+            )
+            bandLabel?.let {
+                Text(
+                    text = it,
+                    style = OrtType.axis,
+                    color = bandColor,
+                    modifier = Modifier.testTag("live-monitor-level-band"),
+                )
+            }
         }
     }
 }
+
+/** guide's own "2.0" ceiling (FR-A11Y-3, AC-63) — the same figure, chosen for the same reason,
+ * `ui/setup/LevelScreen.kt`'s own `LevelFooterFacts` already established for this screen's sibling
+ * meter: the smallest scale a real capture showed this exact family of collision at. Not
+ * re-imported from that file — it is `private` there too, the same "small, file-local policy
+ * constant" shape as [QUIET_BELOW_FRACTION] elsewhere in this codebase, never a spec-mandated
+ * figure. */
+private const val LARGE_FONT_SCALE_THRESHOLD = 1.5f
 
 /** The chart's own short trailing label — the full sentence [LevelViewState.bandStateSentence]
  * carries is the drill-in's own space to spell it out; this card's own row has room only for the

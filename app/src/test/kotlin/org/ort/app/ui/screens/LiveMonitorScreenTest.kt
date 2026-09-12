@@ -13,6 +13,8 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -23,6 +25,7 @@ import org.ort.app.ui.data.KeyValueFacts
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.data.LiveMonitorOverRow
 import org.ort.app.ui.data.LiveMonitorOversViewState
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.app.ui.theme.OrtType
 import org.ort.core.Attribution
@@ -476,6 +479,173 @@ class LiveMonitorScreenTest {
                 "($contentWidth) at ${widthDp}dp/fontScale=$fontScale — a narrower column clips the " +
                 "timestamp exactly like R-1023's fixed 62dp column did",
             nodeWidth >= contentWidth - 0.5.dp,
+        )
+    }
+
+    /**
+     * **R-1026** (register, design): `LevelEnvelopeChart`'s own bar colouring used a hand-rolled
+     * 3-way band (bright green at/above the target band top, a fixed mid-green *inside* the 10dB-
+     * wide band, [OrtColors.meterWarn] — amber — for literally everything quieter than that) —
+     * amber for the great majority of a genuine speech envelope
+     * (`LevelCheck.kt`'s own doc comment: ordinary speech sits roughly `-40` to `-15` dBFS, almost
+     * entirely below the band's own `-18` dBFS floor), on a screen whose own design guide §8
+     * reserves amber for anomalies. **R-944 already fixed the identical defect on S07**
+     * (`ui/setup/LevelScreen.kt`'s `levelBarColorFor` — grey below 0.30 of the `-60..0` scale, a
+     * real green ramp toward the band top, red only at true `0` dBFS clipping) — these tests assert
+     * this screen now calls that exact function (via [liveMonitorLevelBarColor], the same
+     * `dbfs -> fraction -> colour` composition [org.ort.app.ui.setup.LevelScreen.levelBarRects]
+     * itself uses) rather than reimplementing the banding, so the two meters can never re-diverge.
+     */
+    @Test
+    fun `R_1026 a quiet bar below the noise floor reads the neutral grey ramp, never amber`() {
+        val color = liveMonitorLevelBarColor(dbfs = -55f)
+
+        assertEquals(OrtColors.chartNeutralRamp[0], color)
+        assertNotEquals(OrtColors.meterWarn, color)
+    }
+
+    @Test
+    fun `R_1026 ordinary speech, below the target band but above the noise floor, reads a green shade, never amber`() {
+        // LevelCheck.kt's own doc comment: ordinary speech sits roughly -40 to -15 dBFS — this is
+        // exactly the range R-1026's evidence screenshot shows rendering almost entirely amber.
+        val color = liveMonitorLevelBarColor(dbfs = -30f)
+
+        assertNotEquals(
+            "ordinary speech must never read the anomaly colour — design guide 8 reserves amber " +
+                "for anomalies, and this level is nominal",
+            OrtColors.meterWarn,
+            color,
+        )
+        assertTrue(
+            "expected a real chartGreenRamp shade, not the neutral floor colour",
+            OrtColors.chartGreenRamp.contains(color),
+        )
+    }
+
+    @Test
+    fun `R_1026 a bar at the target band top reads full accent green`() {
+        val color = liveMonitorLevelBarColor(dbfs = LevelViewState.TARGET_BAND_TOP_DBFS)
+
+        assertEquals(OrtColors.accentGreen, color)
+    }
+
+    @Test
+    fun `R_1026 a bar that actually reaches the chart ceiling reads red, the one anomaly this chart shows`() {
+        val color = liveMonitorLevelBarColor(dbfs = LevelViewState.CHART_CEILING_DBFS)
+
+        assertEquals(OrtColors.haltFill, color)
+    }
+
+    @Test
+    fun `R_1026 no bar across the whole real -60 to 0 dBFS range ever renders amber`() {
+        var dbfs = LevelViewState.CHART_FLOOR_DBFS
+        while (dbfs <= LevelViewState.CHART_CEILING_DBFS) {
+            assertNotEquals(
+                "dbfs=$dbfs must never render OrtColors.meterWarn — amber is reserved for anomalies",
+                OrtColors.meterWarn,
+                liveMonitorLevelBarColor(dbfs),
+            )
+            dbfs += 1f
+        }
+    }
+
+    /** A real, measured level — never [LevelViewState.notMeasured()] — with the register's own
+     * example figures (`R-1027`'s evidence capture, `N07-live-monitor@2x.png`): `"-14 dBFS"`,
+     * `"floor -58 dBFS"`, `"14 dB headroom"` for the left caption, and a nominal band state so the
+     * right label renders `"in the band"` — the exact pairing the register found colliding. */
+    private val levelWithLongCaption = LevelViewState(
+        inputLabel = "USB · last 60 s",
+        peakDbfsLabel = "-14 dBFS",
+        noiseFloorDbfsLabel = "-58 dBFS",
+        noiseFloorDbfsRaw = -58f,
+        headroomLabel = "14 dB",
+        clippedThisSessionLabel = "0",
+        historyDbfs = listOf(-40f, -30f, -20f, -14f),
+        bandStateSentence = "In the band. Nothing to adjust.",
+        bandStateTone = CaptureStateTone.NOMINAL,
+        notMeasuredReason = null,
+    )
+
+    /**
+     * **R-1027** (register, design): `LevelCardCaption`'s left caption
+     * (`"-14 dBFS · floor -58 dBFS · 14 dB headroom"`) wraps to three lines at font scale 2.0 while
+     * the right-aligned band label (`"in the band"`) stayed on line one — both `Text`s sharing the
+     * same top-aligned `Row`, so the label reads as if it belongs to the caption's first line and
+     * the wrapped continuation trails off with nothing beside it: "one broken sentence" (the
+     * register's own words), not two distinct facts. The R-874/R-980 family's own remedy for "a
+     * right sibling must yield to a wrapping left one": past [LARGE_FONT_SCALE_THRESHOLD] (the same
+     * 1.5x figure `ui/setup/LevelScreen.kt`'s own `LevelFooterFacts` already established for this
+     * screen's own sibling meter, chosen there for the identical reason — the smallest scale a real
+     * capture showed the collision at), the band label now stacks *below* the caption instead of
+     * beside it — asserted here as "their real, measured vertical ranges never overlap", the
+     * precise geometric shape of "reads as one sentence" (same line) versus "reads as two facts"
+     * (separate lines), never a rendered-pixel or prose comparison.
+     *
+     * Run at **both** 390dp and 480dp and **both** font scales, matching this package's own
+     * `R_1023` precedent: the 1.0 cases assert the *opposite*, equally real invariant — the caption
+     * fits one line at the default scale, so the two facts correctly share it (this is not a
+     * regression to guard against; it is the intended compact layout) — real regression coverage
+     * for "do not stack unnecessarily", not expected to discriminate this specific wrap-collision
+     * defect, exactly as that class's own report states plainly rather than implying otherwise.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1027 at 390dp font scale 1_0 the caption and band label still share one row`() {
+        assertLevelCaptionBandOverlap(widthDp = 390, fontScale = 1f, expectOverlap = true)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1027 at 390dp font scale 2_0 the band label stacks below the wrapping caption, never overlapping it`() {
+        assertLevelCaptionBandOverlap(widthDp = 390, fontScale = 2f, expectOverlap = false)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1027 at 480dp font scale 1_0 the caption and band label still share one row`() {
+        assertLevelCaptionBandOverlap(widthDp = 480, fontScale = 1f, expectOverlap = true)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1027 at 480dp font scale 2_0 the band label stacks below the wrapping caption, never overlapping it`() {
+        assertLevelCaptionBandOverlap(widthDp = 480, fontScale = 2f, expectOverlap = false)
+    }
+
+    private fun assertLevelCaptionBandOverlap(widthDp: Int, fontScale: Float, expectOverlap: Boolean) {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                Box(modifier = Modifier.width(widthDp.dp)) {
+                    OrtTheme {
+                        LiveMonitorScreen(
+                            status = status,
+                            level = levelWithLongCaption,
+                            hearingText = null,
+                            overs = timeProbeRow,
+                            localMicrophone = false,
+                        )
+                    }
+                }
+            }
+        }
+
+        val dbfsBounds = composeTestRule
+            .onNodeWithTag("live-monitor-level-dbfs", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val bandBounds = composeTestRule
+            .onNodeWithTag("live-monitor-level-band", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val overlap = dbfsBounds.top < bandBounds.bottom && bandBounds.top < dbfsBounds.bottom
+        val expectation = if (expectOverlap) {
+            "overlap (one shared row)"
+        } else {
+            "never overlap (stacked, never one broken sentence)"
+        }
+        assertEquals(
+            "expected the caption's and band label's real vertical ranges to $expectation at " +
+                "${widthDp}dp/fontScale=$fontScale — caption=$dbfsBounds band=$bandBounds",
+            expectOverlap,
+            overlap,
         )
     }
 }
