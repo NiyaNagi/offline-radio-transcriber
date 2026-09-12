@@ -3739,7 +3739,7 @@ reason, restored; see Verified). VIII (R-841 is a byte-level audit of `ModelsScr
 
 ## 2026-09-10 (WPG follow-up: E2-H08's replace-then-roll-back case)
 
-###  — bundled assets: side-load replaces a bundled model, BundledAssetInstaller.reinstall rolls it back
+### 5971d36e — bundled assets: side-load replaces a bundled model, BundledAssetInstaller.reinstall rolls it back
 
 **Scope:** `app/src/test/kotlin/org/ort/app/ui/data/ModelsControllerTest.kt` only (coordinator-
 assigned follow-up on the same WPG package, same file this branch already owns).
@@ -4997,7 +4997,7 @@ transport modules directly).
 
 ## 2026-09-10 (WPB follow-up: rig-bluetooth lint fix — MissingPermission on the real BluetoothLink adapter)
 
-###  — rig transports: AndroidBluetoothLink's five BLUETOOTH_CONNECT call sites now carry an inline lint-visible guard
+### cff81bba — rig transports: AndroidBluetoothLink's five BLUETOOTH_CONNECT call sites now carry an inline lint-visible guard
 
 **Scope:** `rig-bluetooth/src/main/AndroidManifest.xml`,
 `rig-bluetooth/src/main/kotlin/org/ort/rig/bluetooth/AndroidBluetoothLink.kt`,
@@ -27883,7 +27883,7 @@ session-routing fix).
 
 ## 2026-09-08 (ui-conformance WP11a)
 
-### (pending commit) — ui-conformance WP11a · failure signals: thermal, rig, storage forecast, gap causes, notification
+###  — ui-conformance WP11a · failure signals: thermal, rig, storage forecast, gap causes, notification
 
 **Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/{ThermalStatus,RigStatus,StorageForecast}.kt`
 (new), `RealCaptureService.kt` (wiring and the notification only), `pipeline/.../GapPersister.kt`,
@@ -28028,7 +28028,7 @@ passed unchanged.
 
 ## 2026-09-08 (ui-conformance WP0)
 
-### (pending commit) — ui-conformance WP0 · debug scenario simulator and audit tooling
+###  — ui-conformance WP0 · debug scenario simulator and audit tooling
 
 **Scope:** `app/src/debug/**` (new — `ScenarioReceiver.kt`, `Scenarios.kt`, `ScenarioFixtures.kt`,
 `OvernightScenario.kt`, `StationsFixtures.kt`, `ScenarioReaderActivity.kt`,
@@ -28155,7 +28155,7 @@ already encodes with, rather than inventing a second decode path.
 
 ## 2026-09-08 (audit — F-029)
 
-### (pending commit) — audit F-029 · coverage matrix's own hygiene: hyphenated audit ids and a fixture's self-reference no longer read as false orphans
+###  — audit F-029 · coverage matrix's own hygiene: hyphenated audit ids and a fixture's self-reference no longer read as false orphans
 
 **Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/CoverageMatrix.kt`,
 `buildSrc/src/test/kotlin/org/ort/gradle/CoverageMatrixTest.kt`, `results/coverage-matrix.md`.
