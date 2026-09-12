@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .sec { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .sub { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 3px; }
+    .act { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-height: 58px; background: oklch(0.185 0.008 250); border-radius: 8px; }
+    .act .l { font-size: 12px; color: oklch(0.86 0.006 250); }
+    .row { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    /* 30 px drawn, 44 px touch target (guide 11). */
+    .play { width: 30px; height: 30px; border-radius: 50%; border: 1.5px solid oklch(0.36 0.010 250); box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 1px; }
+    /* R-1023: timestamp sizes to its content. */
+    .when { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250); flex-shrink: 0; white-space: nowrap; padding-top: 7px; }
+    .label { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; padding: 1px 6px; border-radius: 4px; color: oklch(0.72 0.14 150); background: oklch(0.72 0.14 150 / 0.12); margin-top: 5px; }
+    .tick { position: absolute; bottom: 0; width: 2px; background: oklch(0.72 0.14 150); }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 10px; padding: 10px 20px 0; min-height: 44px; box-sizing: border-box;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Recordings</div>
+  </div>
+
+  <div style="padding: 2px 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Wed 10 Sep</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">21:48 – 06:12 · 8 h 24 m · local microphone · room audio</div>
+    <div class="m" style="font-size: 11.5px; color: oklch(0.52 0.008 250); margin-top: 4px;">41 overs · 9 stations · 1 gap · 3 failed</div>
+  </div>
+
+  <!-- Delete shows the space it frees before it is tapped; the confirm sheet repeats it. -->
+  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; padding: 14px 20px 0;">
+    <div class="act">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="oklch(0.72 0.14 150)"><path d="M8 5v14l11-7z"></path></svg>
+      <div class="l">Play all</div>
+    </div>
+    <div class="act">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.80 0.006 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path></svg>
+      <div class="l">Export</div>
+    </div>
+    <div class="act">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.80 0.006 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12l-8 8-9-9V4h7z"></path><circle cx="7.5" cy="7.5" r="1.3"></circle></svg>
+      <div class="l">Label</div>
+    </div>
+    <div class="act">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.15 25)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>
+      <div class="l">Delete</div>
+      <div class="m" style="font-size: 10px; color: oklch(0.58 0.008 250); margin-top: -2px;">frees 0.61 GB</div>
+    </div>
+  </div>
+
+  <!-- Coverage: overs as ticks, not-listening as hatch (guide 8), the playhead. -->
+  <div style="padding: 12px 20px 0;">
+    <div style="background: oklch(0.185 0.008 250); border-radius: 8px; padding: 10px 12px;">
+      <div style="display: flex; align-items: baseline; gap: 8px;">
+        <div class="sec">Coverage</div>
+        <div style="flex-grow: 1;"></div>
+        <div class="m" style="font-size: 11px; color: oklch(0.52 0.008 250);">listened 8 h 07 m of 8 h 24 m</div>
+      </div>
+      <div style="position: relative; height: 26px; margin-top: 8px; background: oklch(0.21 0.010 250); border-radius: 3px; overflow: hidden;">
+        <div style="position: absolute; top: 0; bottom: 0; left: 52%; width: 3.4%; background: repeating-linear-gradient(135deg, oklch(0.36 0.010 250) 0 2px, transparent 2px 5px);"></div>
+        <div class="tick" style="left: 4%; height: 55%;"></div>
+        <div class="tick" style="left: 5%; height: 70%;"></div>
+        <div class="tick" style="left: 9%; height: 45%;"></div>
+        <div class="tick" style="left: 14%; height: 80%;"></div>
+        <div class="tick" style="left: 15%; height: 60%;"></div>
+        <div class="tick" style="left: 21%; height: 50%;"></div>
+        <div class="tick" style="left: 27%; height: 72%;"></div>
+        <div class="tick" style="left: 28%; height: 58%;"></div>
+        <div class="tick" style="left: 33%; height: 66%;"></div>
+        <div class="tick" style="left: 38%; height: 48%;"></div>
+        <div class="tick" style="left: 44%; height: 76%;"></div>
+        <div class="tick" style="left: 49%; height: 54%;"></div>
+        <div class="tick" style="left: 57%; height: 62%; background: oklch(0.78 0.13 75);"></div>
+        <div class="tick" style="left: 60%; height: 52%;"></div>
+        <div class="tick" style="left: 66%; height: 74%;"></div>
+        <div class="tick" style="left: 71%; height: 46%; background: oklch(0.78 0.13 75);"></div>
+        <div class="tick" style="left: 77%; height: 68%;"></div>
+        <div class="tick" style="left: 82%; height: 57%;"></div>
+        <div class="tick" style="left: 88%; height: 71%; background: oklch(0.78 0.13 75);"></div>
+        <div class="tick" style="left: 94%; height: 50%;"></div>
+        <div style="position: absolute; top: 0; bottom: 0; left: 14.4%; width: 2px; background: oklch(0.96 0.006 250);"></div>
+      </div>
+      <div class="m" style="display: flex; justify-content: space-between; font-size: 10px; color: oklch(0.50 0.008 250); margin-top: 4px;">
+        <span>22</span><span>00</span><span>02</span><span>04</span><span>06</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: baseline; gap: 8px; padding: 14px 20px 0;">
+    <div class="sec">Overs · in order</div>
+    <div style="flex-grow: 1;"></div>
+    <div class="m" style="font-size: 11px; color: oklch(0.52 0.008 250);">41</div>
+  </div>
+
+  <div style="padding: 4px 20px 0; flex-grow: 1; overflow: hidden;">
+
+    <!-- Playing: the row the transport bar is playing is marked, and its control reads as pause. -->
+    <div class="row" style="background: oklch(0.19 0.010 250); margin: 0 -20px; padding: 10px 20px 10px 18px; border-left: 2px solid oklch(0.72 0.14 150);">
+      <div class="play" style="background: oklch(0.72 0.14 150); border-color: oklch(0.72 0.14 150); gap: 3px;">
+        <div style="width: 3px; height: 11px; background: oklch(0.16 0.01 150);"></div><div style="width: 3px; height: 11px; background: oklch(0.16 0.01 150);"></div>
+      </div>
+      <div class="when">22:14:07</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+          <div class="m" style="font-size: 13.5px; font-weight: 600; border-bottom: 1.5px solid oklch(0.72 0.14 150);">W7NPC</div>
+        </div>
+        <div style="font-size: 14px; line-height: 1.4; margin-top: 3px;">this is whiskey seven november papa charlie, clear</div>
+        <div class="sub">3.4 s · <span class="m">146.520</span> · confirmed · playing 0:01</div>
+        <div class="label">training · good</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="play"><svg width="11" height="11" viewBox="0 0 24 24" fill="oklch(0.80 0.006 250)"><path d="M7 4v16l13-8z"></path></svg></div>
+      <div class="when">22:15:40</div>
+      <div style="flex-grow: 1; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div class="m" style="font-size: 13.5px; font-weight: 500; border-bottom: 1.5px solid oklch(0.72 0.14 150 / 0.6);">K7LWH</div>
+          <div class="m" style="font-size: 10.5px; background: oklch(0.24 0.010 250); border-radius: 3px; padding: 1px 5px; color: oklch(0.78 0.006 250);">0.80</div>
+        </div>
+        <div style="font-size: 14px; line-height: 1.4; margin-top: 3px;">roger that, good copy</div>
+        <div class="sub">2.1 s · <span class="m">146.520</span> · inferred from 22:14:07</div>
+      </div>
+    </div>
+
+    <!-- A gap is a row (FR-RUN-12): no play control, because nothing was recorded. -->
+    <div class="row">
+      <div style="width: 30px; flex-shrink: 0; display: flex; justify-content: center; padding-top: 6px;">
+        <div style="width: 16px; height: 16px; border-radius: 3px; background: repeating-linear-gradient(135deg, oklch(0.40 0.010 250) 0 2px, transparent 2px 5px);"></div>
+      </div>
+      <div class="when" style="color: oklch(0.50 0.008 250);">02:14:22</div>
+      <div style="flex-grow: 1; min-width: 0; padding-top: 5px;">
+        <div style="font-size: 13.5px; color: oklch(0.62 0.008 250);">Not listening for 16 m 40 s</div>
+        <div class="sub">input lost · resumed 02:31:02 · nothing was recorded</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="play"><svg width="11" height="11" viewBox="0 0 24 24" fill="oklch(0.80 0.006 250)"><path d="M7 4v16l13-8z"></path></svg></div>
+      <div class="when">02:31:48</div>
+      <div style="flex-grow: 1; min-width: 0; padding-top: 5px;">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <div style="font-size: 13.5px; color: oklch(0.72 0.008 250); font-style: italic;">not transcribed</div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="oklch(0.78 0.13 75)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5v5.5M12 16.5v.01"></path></svg>
+          <div style="flex-grow: 1;"></div>
+          <div style="font-size: 13px; color: oklch(0.72 0.14 150);">Retry</div>
+        </div>
+        <div class="sub">1.9 s · Pass B errored 5 times · the audio is kept</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- The transport bar in playback mode (C10). Tap → the playing transmission. -->
+  <div style="border-top: 1px solid oklch(0.28 0.010 250); background: oklch(0.19 0.010 250); padding: 9px 20px 11px; display: flex; align-items: center; gap: 11px;">
+    <div style="display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; gap: 3px;">
+      <div style="width: 3.5px; height: 14px; background: oklch(0.72 0.14 150);"></div><div style="width: 3.5px; height: 14px; background: oklch(0.72 0.14 150);"></div>
+    </div>
+    <div class="m" style="font-size: 12px; color: oklch(0.66 0.008 250); white-space: nowrap;">0:01 / 0:03</div>
+    <div style="position: relative; flex-grow: 1; height: 3px; background: oklch(0.26 0.010 250); border-radius: 2px;">
+      <div style="position: absolute; left: 0; top: 0; bottom: 0; width: 33%; background: oklch(0.72 0.14 150); border-radius: 2px;"></div>
+      <div style="position: absolute; left: 33%; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+    </div>
+    <div class="m" style="font-size: 12.5px; font-weight: 600; color: oklch(0.94 0.006 250);">W7NPC</div>
+  </div>
+
+  <div style="height: 24px; border-top: 1px dashed oklch(0.26 0.010 250); display: flex; align-items: center; justify-content: center;"><div class="m" style="font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.40 0.008 250);">navigation bar inset</div></div>
+
+</div>
+</x-dc>
+</body>
+</html>
