@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-11 (R-809(a): scenario-loading/navigation tests stop reading the real bundled assets; the real-install tests stay narrow)
 
-### (pending) — ScenariosTest and TourStepsTest take the fixture-sized BundledAssetSource for their all-scenarios sweeps; every real-installer caller audited
+### 7670c4d8 — ScenariosTest and TourStepsTest take the fixture-sized BundledAssetSource for their all-scenarios sweeps; every real-installer caller audited
 
 **Scope:** `app/src/test/kotlin/org/ort/app/debug/{ScenariosTest.kt,TinyFixtureBundledAssetSource.kt}`,
 `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt`. No `app/src/debug/**` or
