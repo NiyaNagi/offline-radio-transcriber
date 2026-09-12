@@ -120,7 +120,200 @@ stated limitation of this fix, mitigated but not eliminated by item 2's backoff.
 
 ---
 
+## 2026-09-12 (R-1006: the transmission-detail play control now stops on leave and stops lying about its own state)
 
+### 9576d7fe — WPP: R-1006, the waveform play control now stops on leave, swaps its glyph, and stops lying about state past the end of the over
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/audio/**` (reviewed, unchanged), `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt`, `app/src/main/kotlin/org/ort/app/ui/components/Inspection.kt`, and tests beside each.
+**Requirements/ACs:** FR-UI-5 (playback), register row R-1006. No spec ids changed; `coverageMatrix`/`coverageMatrixCheck` output is unchanged (241/450) because R-1006 is a register finding, not a new requirement.
+**What changed:** The operator's report — "no way to stop it playing, had to listen to it going through the whole thing" — decomposed into three real defects, all in `PlaybackSection`/`WaveformPlayControl`, none in `RealTransmissionAudioPlayer.stop()`/`pause()`/`resume()` themselves (`TransmissionAudioPlayer.kt:39`, `RealTransmissionAudioPlayer.kt:69-85`), which were already correct and are unchanged by this fix:
+  1. **Nothing ever called `stop()`.** `PlaybackSection` now carries a `DisposableEffect(detail.id)` whose `onDispose` stops the player — firing both on a genuine leave (back navigation, screen torn down) and on a same-screen switch to a different over (the effect's key changes before the new over's own state is set up), so an `AudioTrack` from a previous over can never keep running unreachable.
+  2. **The play/pause glyph never actually swapped.** `WaveformPlayControl` always rendered `OrtIcons.play`'s ▶ triangle regardless of state — only its content description ("Play retained audio" ↔ "Pause") already toggled correctly, so a second tap already paused playback, but nothing on screen told a sighted operator that. Fixed with a new internal `waveformControlGlyph(playing)` (the same "pull the decision out of the composable" precedent `scrubFraction` already set in this file, so the swap is unit-testable without a pixel capture) and a `PauseGlyph` (`Canvas`, two bars per `Detail-Playback.dc.html`'s own 24-unit "Playing" glyph) drawn directly in `Inspection.kt` rather than added to `OrtIcons.kt`, which a concurrent builder (file-ownership map, this round) owns.
+  3. **The poll loop never detected natural completion.** A real `AudioTrack`'s `playState` is changed only by an explicit `play()`/`pause()`/`stop()` call — reaching the end of a static buffer does not flip it on its own (there is no completion callback wired here) — so `isPlaying()` alone would have reported `true` forever after an over finished playing, leaving the control reading "Pause" indefinitely. The poll loop now treats `positionFraction() >= 1f` as completion, stops the player (the same cleanup a manual stop performs), and reverts the control to "Play".
+**Reproduction:** no emulator was available this session (host contention across several concurrent builder worktrees; not retried against a wedged AVD). Proceeded on code evidence: `OrtNavHost.kt:208/272/813/940` construct `RealTransmissionAudioPlayer` once and thread it down with no `onDispose`/stop call anywhere in `:app`, confirming the leak; `WaveformPlayControl` (`Inspection.kt`, pre-fix) always called `Icon(imageVector = OrtIcons.play, ...)` with no branch on `playing`, confirming the glyph never changed; Android's own `AudioTrack` API contract (`playState` mutated only by `play()`/`pause()`/`stop()`) confirming the completion gap without needing a device.
+**Verified:** `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.audio.*' --tests 'org.ort.app.ui.screens.TransmissionDetail*' --tests 'org.ort.app.ui.screens.PlaybackControlDetailScreenTest' --tests 'org.ort.app.ui.components.InspectionTest' -PortAllowMissingBundledAssets=true` — all green (3 new tests in `PlaybackControlDetailScreenTest.kt`, 2 new in `InspectionTest.kt`), each shown to discriminate (production change reverted, test failed for the stated reason, restored, test passed again). `.\gradlew :app:smokeTestDebugUnitTest :app:lintDebug dependencyRules platformGuards :app:assembleDebug -PortAllowMissingBundledAssets=true` green. `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true` green (16m30s). `.\gradlew -p buildSrc test` green. `python tools\spec-check\spec_check.py` — OK. `.\gradlew coverageMatrix` then `.\gradlew coverageMatrixCheck` (separate invocations) — 241/450, up to date.
+**Left open / not done:** No emulator/device this session — the glyph swap's actual pixels and the `uiautomator` node for the play/pause control are unverified on-device; the lead owns the tour re-capture against `Detail-Playback.dc.html` per the session brief and constitution VIII (a Robolectric semantics/bounds test cannot stand in for that, and this file's own `ControlsTest.kt` R-565 note already found `captureToImage()` unusable in this sandbox). The completion-detection fix (`positionFraction() >= 1f`) is argued from Android's documented `AudioTrack` contract and tested against the behavioural fake, not against a real device's actual `playbackHeadPosition` trajectory at end-of-buffer — flagged for confirmation on the reference device.
+## 2026-09-12 (R-1003: pinned bottom action bars now clear the navigation bar / gesture pill)
+
+### bd82fa26 — WPN · R-1003: every pinned-bottom action bar reserves real navigation-bar clearance, one shared mechanism
+
+**Scope:** new `app/src/main/kotlin/org/ort/app/ui/components/SafeArea.kt`;
+`app/src/main/kotlin/org/ort/app/ui/setup/SetupScaffold.kt`, `WelcomeScreen.kt`;
+`app/src/main/kotlin/org/ort/app/ui/failures/FailureActionBarScaffold.kt`, `FailRoute.kt`;
+`app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (bottom-inset handling only —
+nothing else in that file touched).
+
+**Requirements/ACs:** register row R-1003 (halt, reported live on the operator's Oppo Find X9
+Ultra, 1440x3168 @ 480dpi, ColorOS): every action button on the setup rig-selection step
+overlapped the system navigation buttons, and the Bluetooth rig step's "Use USB instead" escape
+action was unreachable for the same reason. Constitution VII (guarantees expressed structurally,
+not by convention) and VIII (a screen is not fixed until captured and compared to its artboard —
+that comparison is the lead's, not this entry's).
+
+**What changed:** every pinned-bottom action block in the app applied `.windowInsetsPadding(
+WindowInsets.statusBars)` for its own top inset and reserved nothing at all at the bottom;
+`navigationBars`/`systemBars`/`safeDrawing`/`safeContent` appeared nowhere in `app/src/main`
+before this change. New `Modifier.safeAreaBottomPadding()` (`ui/components/SafeArea.kt`) is the
+one shared mechanism now applied at every such surface, rather than four hand-rolled ones (the
+reason that discipline matters is on the record: R-957, a navigation-host padding change nobody
+classified as visual once moved the live bar 125px on every screen). Applied to: (1)
+`SetupScaffold`'s pinned action `Column` — folds into the same `barHeightPx` the R-940 trailing
+spacer already reads, so that invariant holds with no second mechanism; (2) `WelcomeScreen`'s
+footer `Column`, identically; (3) `FailureActionBarScaffold`'s action-bar `Column` (used by
+`FailRouteScreen`, `FailStorageHaltScreen`, `FailMigrationScreen`, `FailAssetSwapScreen` and
+`TransmissionDetailScreen`); (4) `FailRoute.kt`'s shared `failureScreenInset()`, which now
+reserves the bottom inset too, for the `ui/failures` screens that pin no action bar of their own
+(`FailCalibration`, `FailReconcile`, `FailInfoCards`, `FailUsb`) — verified by decompiling
+Compose foundation's own `InsetsPaddingModifier` (`androidx.compose.foundation.layout`, version
+1.7.3) that this does not double-reserve against (3)'s identical fix on the four screens that
+carry both: `windowInsetsPadding` tracks what an ancestor already consumed via the
+`ModifierLocalConsumedWindowInsets` modifier-local and only applies what remains; (5)
+`OrtNavHost`'s live bar — `NavHostBody`'s own `Column` (the `NavHostLayout.modifier` construction
+site) now carries `safeAreaBottomPadding()`, and the ambient `Scaffold`'s own default
+`contentWindowInsets` (`WindowInsets.systemBars`, confirmed by decompiling
+`ScaffoldDefaults`/`SystemBarsDefaultInsets_androidKt`, Material3 1.3.0 — applied today as plain
+numeric `Modifier.padding(padding)`, which does **not** participate in the same consumption
+tracking) is now explicitly marked consumed via `consumeWindowInsets(padding)` at the
+`FailureHost` call site, so the new bottom padding reserves real space only where none has
+already been reserved, never doubling on top of what the `Scaffold` already draws.
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.setup.*' --tests
+  'org.ort.app.ui.failures.*' --tests 'org.ort.app.ui.navigation.*' -PortAllowMissingBundledAssets=true`
+  — BUILD SUCCESSFUL, every existing test in the three packages passes unchanged (no regression;
+  see "Left open" for what this does and does not prove about the fix itself).
+- `.\gradlew ":app:lintDebug" dependencyRules platformGuards ":app:assembleDebug"
+  -PortAllowMissingBundledAssets=true` — BUILD SUCCESSFUL.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true` — BUILD
+  SUCCESSFUL in 17m39s (the coordinator's gate-correction message asked every worktree to run the
+  full gate with the escape hatch this round to avoid five worktrees each fetching ~610MB of
+  bundled models at once; the no-escape-hatch run is the lead's, once, after merge).
+- `.\gradlew -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `.\gradlew coverageMatrix` then `.\gradlew coverageMatrixCheck` (separate invocations) — both
+  BUILD SUCCESSFUL, no drift in `results/coverage-matrix.md`.
+
+**Left open / not done:** **No Robolectric test in this codebase can discriminate this fix's
+actual behavior**, and this is reported here plainly rather than papered over with a test that
+would pass either way (constitution II). Three independent techniques were tried and each is
+recorded in `SafeArea.kt`'s own kdoc with the exact evidence: (1) dispatching a real
+`WindowInsetsCompat` navigation-bars inset to the test activity's decor view, via both the
+platform `dispatchApplyWindowInsets` and `ViewCompat.dispatchApplyWindowInsets`, with and without
+`WindowCompat.setDecorFitsSystemWindows(window, false)` — `WindowInsets.navigationBars` read zero
+before and after every attempt; (2) constructing a fixed, non-`View`-backed `WindowInsets(bottom
+= 40)` instance and feeding it through a parameterised `safeAreaBottomPadding(insets = ...)` —
+`insets.getBottom(density)` correctly reported `40` when queried directly, but the padding never
+reached the rendered layout; (3) the decisive one — even `Modifier.windowInsetsPadding(
+WindowInsets(bottom = 40))`, Compose's own top-level function, called directly with no wrapper of
+this package's own, measured no differently under `createComposeRule()` than with no padding
+modifier at all. `windowInsetsPadding` is inert under this project's Robolectric setup, not
+merely hard to drive. A `SafeAreaTest.kt` built on attempt (2) was written, run, found
+non-discriminating (it passed identically with the production fix reverted to a no-op), and
+deleted rather than shipped — see this package's own session report for the full revert/restore
+trail. **The closing evidence for register row R-1003 is a device dump**, which this entry
+explicitly defers to the lead, per this session's own brief. Not verified: whether R-1003's fifth
+location (`OrtNavHost`) was genuinely broken in the live, full-app path before this change — the
+Material3 `Scaffold` wrapping it already applies `WindowInsets.systemBars` as numeric padding by
+default, which independent analysis (this entry's own decompilation) suggests may already have
+reserved the correct bottom space; the fix is applied regardless, as a structural guarantee no
+longer dependent on an unstated library default, and is provably harmless (never double-reserves)
+either way — but whether it was closing a live defect there or hardening an already-working path
+is something only a device dump can settle.
+## 2026-09-11 (constitution 1.3.0: the field-report channel — D37, D38)
+
+### 64d37921 — spec/constitution amendment: field-report channel (D37), audio/voiceprints in a field report under a public-destination guard (D38)
+
+**Scope:** `spec/functional-spec.md`, `spec/open-questions.md`, `.specify/memory/constitution.md`,
+`AGENTS.md`, this file. Specification and governance prose only — no product, build or test code
+touched, per this session's own constraints.
+
+**Requirements/ACs:** New decisions **D37** (a field-report channel exists: one button uploads a
+diagnostic bundle to a GitHub repository and opens an issue) and **D38** (retained over audio and
+voiceprint embeddings may be included in a field report, per-category, both defaulting off, with
+a consent screen naming every file and its real size before each upload; refused against a public
+destination unless a visible Settings switch is explicitly turned off). New requirements
+**FR-OBS-6..12** (§7.13b): session recorder, screen frames, the extended bundle, per-upload
+consent, the public-destination condition, the `:net`-only placement mirroring FR-CON-8, and the
+scoped token. **FR-OBS-5** and **FR-OBS-5a** amended (a second named exception, noted rather than
+silently rewritten). **FR-SPK-20** amended: voiceprints may now leave the device through the
+field-report channel only, under D38's conditions — this discharges the obligation FR-SPK-20's
+own text imposed ("if any future change proposes contributing, syncing or backing up voiceprints,
+the default must move to explicit opt-in in the same change"). New acceptance criteria
+**AC-141..147** (§14.13); **AC-59** extended to cover the field-report channel. New risk **R19**.
+Two new open questions, **Q18** (destination) and **Q19** (retention). Constitution **Principle
+V** amended: "exactly two outbound channels" becomes three; the "four categories never leave the
+device at all" bullet is no longer absolute for voiceprints, with the replacement guarantee
+stated. Constitution version **1.2.0 → 1.3.0** (MINOR — a new declared channel and materially
+expanded Principle V guidance; no principle removed or redefined).
+
+**What changed:** The product owner ran the app on a real device for the first time: every
+transcription failed, onboarding had four defects, and the only evidence that reached the
+workstation was a verbal description and one photograph. They asked for an automatic on-device
+recorder and a one-button upload of the whole diagnostic bundle to GitHub with an issue opened
+automatically — which collides with FR-OBS-5 ("no analytics, telemetry or crash reporting"),
+FR-CON-3 (diagnostic logs excluded from the corpus channel), FR-SPK-20 (voiceprints never leave
+the device) and constitution Principle V ("exactly two outbound channels", "four categories never
+leave the device at all"). That collision is resolved on the record here, before any of it is
+built, per Scope And Precedence ("that is a specification defect: raise it, amend the spec, and
+record the decision"), following D25's own shape for wording, scoping and recording an amendment.
+The product owner's actual decisions: (1) the channel exists, operator-triggered per upload, never
+automatic (D37); (2) retained over audio and voiceprint embeddings may be included, each behind
+its own toggle, both defaulting off, with per-upload consent naming every file and its real size
+(D38); (3) the destination for now is the project's own repository, verified public — the product
+owner: "just push to this public repo for now — I am just testing." The lead's condition, recorded
+as FR-OBS-10 rather than as a refusal: against a public destination, the uploader refuses the
+audio/voiceprint categories unless a visible Settings switch is explicitly turned off; the
+redacted bundle uploads unconditionally, and every defect reported so far is diagnosable from it
+alone. New risk R19 and open question Q18 record, on the record, that this is a narrowed promise
+accepted with a stated risk, not a solved one — the guard is bypassable by design, by an operator
+who turns the switch off against a repository that is public today by the product owner's own
+choice.
+
+**Verified:** `python tools\spec-check\spec_check.py` — all 8 checks pass (`spec-check: OK`).
+`.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — regenerates
+`results/coverage-matrix.md` (464 requirements, 241 covered). `.\gradlew coverageMatrixCheck
+-PortAllowMissingBundledAssets=true` — separate invocation, green, up to date against the
+regenerated matrix.
+
+**Left open / not done:** This is specification only — no code exists yet for the session
+recorder, the screen-frame capture, the extended bundle, the consent screen, the visibility check
+or the token handling; FR-OBS-6..12 describe what a future build must satisfy, not what is built.
+Q18 (should the destination move to a private repository once testing ends) and Q19 (retention
+policy for an uploaded bundle) are open product decisions, not blocking the client but blocking
+its routine use with the audio/voiceprint categories on. `spec/build-plan.md` and
+`docs/reference/audit-and-remediate-prompt.md` are not updated with a build prompt for this work —
+out of this session's scope, which was the amendment only.
+
+**Correction (commit `66c91d53`, same session, pre-merge — appended here per the review
+coordinator rather than filed as a second entry):** Review before product-owner sign-off found a
+real hole in the draft above: FR-OBS-8 put screen frames in the *ungated* closed set while
+`CallsignScrubber` scrubs every callsign out of the log files in that same set — a photograph of
+a 27px screen title can carry exactly the callsign the log scrubber just removed, and pixels are
+not regexable, so there is no scrubber to write for a frame. Fixed by moving screen frames behind
+the FR-OBS-10 public-destination gate, alongside over audio and voiceprint embeddings, as a third
+opt-in category (FR-OBS-9). **FR-OBS-8** rewritten: the ungated set is now the seven scrubbed
+files plus the session-recorder log only, safe by construction because FR-OBS-6's closed
+vocabulary has no `message: String` parameter; the one-sentence reasoning is stated in the
+requirement itself. **FR-OBS-7** now states plainly what ~390 px downscaling buys (layout
+judgeable, body text largely illegible) and does not buy (a screen title or a callsign in a
+heading is legible at that width) — downscaling is a partial mitigation, never a substitute for
+the gate. **FR-OBS-9/FR-OBS-10** extended to a third toggle and to require the consent screen
+name the about-to-be-published categories **every** upload, not once, while the destination is
+public and the switch is off. **R19** rewritten to keep, unsoftened, that FR-OBS-10 is a policy
+control implemented as a UI toggle, not a technical barrier. **Q18** given a named trigger (closes
+on the first gated-category upload to a public destination, or on the destination going private,
+whichever comes first) rather than staying open-ended. New acceptance criteria **AC-148, AC-149**;
+**AC-143, AC-144, AC-145** revised for the three-category, ungated-set-excludes-frames shape.
+Traceability rows for D37/D38 extended to `AC-141..149`. `AGENTS.md`'s acceptance-criteria count
+284/149/38/19. Re-verified: `python tools\spec-check\spec_check.py` (8/8 pass);
+`.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` (466 requirements, 241 covered,
+regenerates `results/coverage-matrix.md`); `.\gradlew coverageMatrixCheck
+-PortAllowMissingBundledAssets=true` as a separate invocation, green. Still spec-only: no code
+exists for any of FR-OBS-6..12 yet.
+
+---
+
+## 2026-09-12 (constitution 1.2.0: a change that touches a screen re-runs the visual verification; the debugging and fix session prompt)
 
 ### bab4351d — constitution 1.2.0, AGENTS.md brought current, `docs/debug-fix-session-prompt.md`
 

@@ -10,6 +10,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.unit.Constraints
+import org.ort.app.ui.components.safeAreaBottomPadding
 
 /**
  * Register R-151 (same class as R-123): every takeover with a fixed bottom action bar
@@ -58,7 +59,11 @@ internal fun FailureActionBarScaffold(
             maxHeight = constraints.maxHeight,
         )
         val barPlaceables = subcompose(FailureActionBarScaffoldSlot.Bar) {
-            Column(modifier = Modifier.fillMaxWidth(), content = actionBar)
+            // R-1003 (halt): this bar had no inset handling at either edge -- `safeAreaBottomPadding()`
+            // (`ui/components/SafeArea.kt`) folds straight into this composable's own `barHeightPx`
+            // below, the same value [contentConstraints] already subtracts, so the invariant that
+            // content never renders behind the bar holds with no second mechanism.
+            Column(modifier = Modifier.fillMaxWidth().safeAreaBottomPadding(), content = actionBar)
         }.map { it.measure(looseHeightConstraints) }
         val barHeightPx = barPlaceables.maxOfOrNull { it.height } ?: 0
 

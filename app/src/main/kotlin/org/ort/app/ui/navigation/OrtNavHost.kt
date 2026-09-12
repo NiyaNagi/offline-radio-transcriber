@@ -3,6 +3,7 @@ package org.ort.app.ui.navigation
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.DrawerState
@@ -37,6 +38,7 @@ import org.ort.app.ui.audio.RealTransmissionAudioPlayer
 import org.ort.app.ui.components.LiveBar
 import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.components.ScreenHeader
+import org.ort.app.ui.components.safeAreaBottomPadding
 import org.ort.app.ui.data.DrawerCounts
 import org.ort.app.ui.data.DrawerCountsViewState
 import org.ort.app.ui.data.FrequencyDetailView
@@ -242,10 +244,24 @@ public fun OrtNavHost(
             FailureHost(
                 sessionId = sessionId,
                 actions = failureActions,
-                modifier = Modifier.padding(padding).fillMaxSize(),
+                // R-1003 (halt): `padding` already reflects this `Scaffold`'s own default
+                // `contentWindowInsets` (`WindowInsets.systemBars` — confirmed by decompiling
+                // `ScaffoldDefaults`/`SystemBarsDefaultInsets_androidKt` for this row; this
+                // package's own report has the exact bytecode evidence), applied here as plain
+                // numeric padding, which does **not** register with Compose's own window-insets
+                // consumption tracking (`ModifierLocalConsumedWindowInsets`, internal to
+                // `androidx.compose.foundation.layout`) the way `Modifier.windowInsetsPadding` does.
+                // `consumeWindowInsets(padding)` marks that same span consumed for the subtree
+                // below, so `NavHostBody`'s own `safeAreaBottomPadding()` (its own doc comment)
+                // reserves real space only where none has already been reserved, never doubling on
+                // top of what this padding already draws.
+                modifier = Modifier.padding(padding).consumeWindowInsets(padding).fillMaxSize(),
             ) { contentTopPadding ->
                 NavHostBody(
-                    layout = NavHostLayout(modifier = Modifier.fillMaxSize(), contentTopPadding = contentTopPadding),
+                    layout = NavHostLayout(
+                        modifier = Modifier.fillMaxSize().safeAreaBottomPadding(),
+                        contentTopPadding = contentTopPadding,
+                    ),
                     ids = NavHostIds(
                         current,
                         navState.openedFrom.value,
@@ -677,10 +693,11 @@ private fun searchHostState(
 
 /** [NavHostBody]'s own `modifier` (round 11: no longer `OrtNavHost`'s `Scaffold` inner padding
  * directly — that now lands on the `FailureHost` wrapper one level up, register R-334 — just
- * `fillMaxSize()`) and, register R-178, the banner-height top padding
- * [org.ort.app.ui.failures.FailureHost] reports — bundled, same reason as
- * [NavHostIds]/[NavHostCallbacks], so [NavHostBody] stays under detekt's `LongParameterList`
- * rather than growing a parameter for the R-178 addition. */
+ * `fillMaxSize()`; register R-1003 adds `.safeAreaBottomPadding()` — see the call site's own doc
+ * comment for why that does not double-reserve against the `Scaffold`'s own padding above it) and,
+ * register R-178, the banner-height top padding [org.ort.app.ui.failures.FailureHost] reports —
+ * bundled, same reason as [NavHostIds]/[NavHostCallbacks], so [NavHostBody] stays under detekt's
+ * `LongParameterList` rather than growing a parameter for the R-178 addition. */
 private data class NavHostLayout(val modifier: Modifier, val contentTopPadding: Dp = 0.dp)
 
 /** The "land here fresh, not at the root" seeds three different destinations each take, bundled
