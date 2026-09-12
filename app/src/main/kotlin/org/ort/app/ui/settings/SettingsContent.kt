@@ -24,8 +24,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.ort.app.BuildConfig
-import org.ort.app.diagnostics.DiagnosticsBundleBuilder
-import org.ort.app.export.DebugDumpBuilder
+import org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder
+import org.ort.app.diagnostics.localsave.LocalSaveBundleSpec
+import org.ort.app.diagnostics.localsave.LocalSaveCategoryId
+import org.ort.app.diagnostics.localsave.LocalSavePreview
 import org.ort.app.export.ExportCoordinator
 import org.ort.app.export.ExportRequest
 import org.ort.app.fieldreport.bundle.FieldReportBundleBuilder
@@ -463,71 +465,68 @@ private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifi
 /** The `DIAGNOSTICS` branch of [SettingsSubScreen], split out purely to keep that function's own
  * length/parameter-count under detekt's limits — the same reason [SettingsStorageSubScreen] was.
  *
- * R-137 (round 9, register): `SettingsPolling.diagnostics` became `suspend` once it started
- * calling WP11e's real `DiagnosticsBundleBuilder.preview` — the same async-load shape every other
- * real-I/O sub-screen here uses. `Save bundle` writes through the Storage Access Framework
- * ([ActivityResultContracts.CreateDocument]) on [Dispatchers.IO], then names the *real* file the
- * system actually created (its own `DISPLAY_NAME` column — a user can rename the suggested name in
- * the picker, so this never assumes the suggestion was kept). `Preview` is a local `previewOpen`
- * toggle — see [SettingsDiagnosticsScreen]'s own doc comment for why it is an in-app listing
- * rather than the board's own per-file external-reader wording.
+ * WPDUMP: the operator's own three separate saves (the scrubbed-file zip, then the debug dump
+ * NDJSON, then — separately again — the field-report categories) collapse into one
+ * [LocalSaveBundleBuilder]-backed checklist and one SAF write. `SettingsPolling.diagnostics`
+ * (unowned this round) still supplies the top tiles (`aliveLabel`/`realTimeFactorLabel`/
+ * `failedPassCount`); [localSavePreview] is loaded separately, in parallel, and attached via
+ * `.copy(localSave = ...)` — the identical pattern [FieldReportHost] already establishes one
+ * section down for [FieldReportSectionViewState].
  *
- * WPW (register R-1009 follow-up): a second SAF launcher, `debugDumpSaveLauncher`, wires
- * [org.ort.app.export.DebugDumpBuilder] the identical way — its own NDJSON, never the zip
- * `saveLauncher` writes, so the two never share one launcher/MIME type.
+ * [localSaveSelection] starts from [LocalSaveBundleSpec.defaultSelected] and is never reset for
+ * the life of this composition — unlike the field-report consent screen's own toggles (FR-OBS-9
+ * requires those to reset every open), a local-save checklist has no such requirement, so the
+ * operator's picks persist across a `Save` the same way any other settings screen's own state
+ * would. `Save` writes through the identical Storage Access Framework pattern every sibling SAF
+ * flow in this file already uses: [ActivityResultContracts.CreateDocument], the write on
+ * [Dispatchers.IO], and the real `DISPLAY_NAME` read back from the URI for the confirmation label.
  */
 @Composable
 private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     var diagnosticsState by remember { mutableStateOf<SettingsDiagnosticsViewState?>(null) }
     LaunchedEffect(Unit) { diagnosticsState = SettingsPolling.diagnostics(context) }
-    var previewOpen by remember { mutableStateOf(false) }
     var saveConfirmationLabel by remember { mutableStateOf<String?>(null) }
 
-    val saveLauncher = rememberLauncherForActivityResult(
+    var localSavePreview by remember { mutableStateOf<LocalSavePreview?>(null) }
+    var localSaveSelection by remember { mutableStateOf(LocalSaveBundleSpec.defaultSelected) }
+    LaunchedEffect(Unit) { localSavePreview = LocalSaveBundleBuilder.preview(context) }
+
+    val localSaveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
+        val selection = localSaveSelection
         scope.launch {
             withContext(Dispatchers.IO) {
                 context.contentResolver.openOutputStream(uri)?.use { out ->
-                    DiagnosticsBundleBuilder.write(context, out)
+                    LocalSaveBundleBuilder.write(context, out, selection)
                 }
             }
             saveConfirmationLabel = "Saved ${realFileName(context, uri)}"
-        }
-    }
-
-    // WPW: `DebugDumpBuilder` — sessions, overs, attributions, gaps and every terminally `FAILED`
-    // work-queue item's own attempt history and `lastError` — through the same real SAF/`Dispatchers.IO`
-    // shape as `saveLauncher` above, a distinct MIME type (NDJSON, not zip) and a distinct
-    // suggested file name so the two saves can never collide in the same picker session.
-    val debugDumpSaveLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/x-ndjson"),
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            withContext(Dispatchers.IO) {
-                val bytes = DebugDumpBuilder.build(context)
-                context.contentResolver.openOutputStream(uri)?.use { out -> out.write(bytes) }
-            }
-            saveConfirmationLabel = "Saved ${realFileName(context, uri)}"
+            // WPDUMP: re-resolve after a save so a category that just gained real data on disk
+            // (e.g. a frame captured between opening this screen and tapping Save) shows its real,
+            // current size/availability rather than a stale snapshot from first load.
+            localSavePreview = LocalSaveBundleBuilder.preview(context)
         }
     }
 
     val state = diagnosticsState
+    val preview = localSavePreview
     FieldReportHost(context = context, modifier = modifier) { fieldReport, fieldReportActions ->
         if (state != null) {
             SettingsDiagnosticsScreen(
-                state = state.copy(fieldReport = fieldReport),
-                onBack = onBack,
-                bundleActions = SettingsDiagnosticsBundleActions(
-                    onPreview = { previewOpen = true },
-                    onSaveBundle = { saveLauncher.launch("diagnostics-${LocalDate.now()}.zip") },
-                    onSaveDebugDump = { debugDumpSaveLauncher.launch("debug-dump-${LocalDate.now()}.ndjson") },
+                state = state.copy(
+                    fieldReport = fieldReport,
+                    localSave = preview?.let { localSaveSectionViewState(it, localSaveSelection) },
                 ),
-                previewOpen = previewOpen,
-                onDismissPreview = { previewOpen = false },
+                onBack = onBack,
+                localSaveActions = LocalSaveActions(
+                    onToggle = { id, checked ->
+                        localSaveSelection = if (checked) localSaveSelection + id else localSaveSelection - id
+                    },
+                    onSave = { localSaveLauncher.launch("ort-debug-dump-${LocalDate.now()}.zip") },
+                ),
                 saveConfirmationLabel = saveConfirmationLabel,
                 fieldReportActions = fieldReportActions,
                 modifier = modifier,
@@ -537,6 +536,30 @@ private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, m
         }
     }
 }
+
+/** [SettingsDiagnosticsSubScreen]'s own [LocalSaveSectionViewState] construction, split out purely
+ * to keep that function under detekt's length limit — the same reason
+ * [fieldReportConsentViewState] is its own function one section down. Board order
+ * ([LocalSavePreview.entries] is already board order, [LocalSaveBundleBuilder]'s own doc comment)
+ * preserved verbatim; `checked` folds in `available` so an unavailable row can never render
+ * checked whatever [selected] otherwise carries — the defensive discipline
+ * [LocalSaveBundleBuilder.write] itself also holds, restated here for the screen. */
+private fun localSaveSectionViewState(
+    preview: LocalSavePreview,
+    selected: Set<LocalSaveCategoryId>,
+): LocalSaveSectionViewState = LocalSaveSectionViewState(
+    rows = preview.entries.map { entry ->
+        LocalSaveCategoryRowViewState(
+            id = entry.id,
+            label = entry.label,
+            caption = entry.caption,
+            sizeLabel = formatFieldReportSize(entry.sizeBytes),
+            checked = entry.available && entry.id in selected,
+            available = entry.available,
+        )
+    },
+    totalSizeLabel = formatFieldReportSize(preview.totalBytes(selected)),
+)
 
 /**
  * WPR2 (FR-OBS-6..12, D37/D38): everything the field-report feature owns — the FR-OBS-10

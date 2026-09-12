@@ -47,6 +47,19 @@ public enum class ExportFileFormat(public val extension: String) {
  */
 public enum class ExportRequestScope { TONIGHT, EVERYTHING }
 
+/**
+ * R-1035 (register, from the operator's own device: an ADIF export "wrote a header and zero QSO
+ * records" — correct per FR-EXP-4, and visibly honest about why, but discovered only after the
+ * write). [totalCount] is every record [ExportRequest.scope]/[ExportRequest.confirmedOnly] would
+ * hand a writer; [exportableCount] is how many of those would actually become a record a reader
+ * sees as a logged contact — for [ExportFileFormat.ADIF] specifically, that means
+ * [org.ort.pipeline.export.ExportAttribution.CallsignKnown] (`AdifExportWriter`'s own `<EOR>` gate;
+ * see [ExportCoordinator.previewCount]'s own doc comment for why every other format has no such
+ * gap at all). [excludedCount] is `totalCount - exportableCount`, named separately so a caller never
+ * has to re-derive it.
+ */
+public data class ExportCountPreview(val totalCount: Int, val exportableCount: Int, val excludedCount: Int)
+
 public data class ExportRequest(
     val scope: ExportRequestScope,
     val format: ExportFileFormat,
@@ -86,12 +99,7 @@ public object ExportCoordinator {
     }
 
     public suspend fun build(context: Context, request: ExportRequest): ByteArray = withContext(Dispatchers.IO) {
-        var records = scopedRecords(context, request.scope)
-        if (!request.includeTranscripts) {
-            records =
-                records.map { it.copy(transcriptText = null, transcriptModelId = null, transcriptModelVersion = null) }
-        }
-        val effective = if (request.confirmedOnly) confirmedOnly(records) else records
+        val effective = effectiveRecords(context, request)
         val text = when (request.format) {
             ExportFileFormat.ADIF -> AdifExportWriter.write(effective)
             ExportFileFormat.CSV -> CsvExportWriter.write(effective)
@@ -99,6 +107,50 @@ public object ExportCoordinator {
             ExportFileFormat.TEXT -> TextExportWriter.write(effective)
         }
         text.toByteArray(Charsets.UTF_8)
+    }
+
+    /**
+     * R-1035: the exportable count **before** the write, not after — "0 of 8 can be exported as
+     * QSOs; 7 have no identified station" is [ExportCountPreview.exportableCount] of
+     * [ExportCountPreview.totalCount], [ExportCountPreview.excludedCount] the difference. Resolved
+     * from the exact same [effectiveRecords] list [build] itself hands to a writer — the identical
+     * "the count comes from the same producer that writes the file, never a separate estimate"
+     * discipline [org.ort.app.diagnostics.DiagnosticsBundleBuilder]'s own doc comment already holds
+     * one package over — never a second, independently-scoped query that could silently disagree
+     * with what the write actually does.
+     *
+     * Only [ExportFileFormat.ADIF] ever excludes a record at all: `AdifExportWriter.write` is the
+     * one writer in this package with no way to represent an unidentified station (ADIF's `CALL`
+     * field has no "unknown" value, so [org.ort.pipeline.export.ExportAttribution.Ambiguous]/
+     * [org.ort.pipeline.export.ExportAttribution.Unknown] records are named in its header instead of
+     * becoming a `<EOR>` record). `CsvExportWriter`/`JsonExportWriter`/`TextExportWriter` write one
+     * row per record regardless of attribution state (checked directly against each writer's own
+     * source before writing this) — for every format but ADIF, [ExportCountPreview.exportableCount]
+     * therefore equals [ExportCountPreview.totalCount].
+     */
+    public suspend fun previewCount(context: Context, request: ExportRequest): ExportCountPreview =
+        withContext(Dispatchers.IO) {
+            val effective = effectiveRecords(context, request)
+            val exportable = when (request.format) {
+                ExportFileFormat.ADIF -> effective.count { it.attribution is ExportAttribution.CallsignKnown }
+                ExportFileFormat.CSV, ExportFileFormat.JSON, ExportFileFormat.TEXT -> effective.size
+            }
+            ExportCountPreview(
+                totalCount = effective.size,
+                exportableCount = exportable,
+                excludedCount = effective.size - exportable,
+            )
+        }
+
+    /** The exact record list [build] hands a writer and [previewCount] counts against — shared so
+     * the two can never drift (this object's own [previewCount] doc comment). */
+    private suspend fun effectiveRecords(context: Context, request: ExportRequest): List<ExportOverRecord> {
+        var records = scopedRecords(context, request.scope)
+        if (!request.includeTranscripts) {
+            records =
+                records.map { it.copy(transcriptText = null, transcriptModelId = null, transcriptModelVersion = null) }
+        }
+        return if (request.confirmedOnly) confirmedOnly(records) else records
     }
 
     /** FR-EXP-3's own writer, over the same [scope]-resolved records every other format uses —

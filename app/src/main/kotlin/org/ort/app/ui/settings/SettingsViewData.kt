@@ -1,5 +1,6 @@
 package org.ort.app.ui.settings
 
+import org.ort.app.diagnostics.localsave.LocalSaveCategoryId
 import org.ort.app.fieldreport.bundle.FieldReportGatedCategory
 import org.ort.core.capture.CaptureMode
 
@@ -58,20 +59,6 @@ internal data class SettingsCrossPackageActions(
 public data class FieldReportSectionActions(
     val onOpenFieldReport: () -> Unit = {},
     val onSetPublicDestinationGuardEnabled: (Boolean) -> Unit = {},
-)
-
-/** WPR2: [SettingsDiagnosticsScreen]'s pre-existing `Preview`/`Save bundle` actions, bundled for
- * the identical detekt-threshold reason once [FieldReportSectionActions] joining the parameter
- * list pushed the count over it — the same reason [SettingsCrossPackageActions] joined a bundle
- * only once a later addition needed the headroom. */
-public data class SettingsDiagnosticsBundleActions(
-    val onPreview: () -> Unit,
-    val onSaveBundle: () -> Unit,
-    // WPW (register R-1009 follow-up): `DebugDumpBuilder`'s own SAF trigger, alongside the
-    // pre-existing two — joins this bundle for the identical detekt `LongParameterList` reason
-    // `FieldReportSectionActions` joined `SettingsDiagnosticsScreen`'s own parameter list before it.
-    // `{}` default so every existing caller (this file's own tests included) keeps compiling.
-    val onSaveDebugDump: () -> Unit = {},
 )
 
 public data class SettingsCaptureToggleActions(
@@ -282,6 +269,41 @@ public data class SettingsDiagnosticsViewState(
      * `SettingsPolling.diagnostics`'s existing construction keeps compiling unchanged; `SettingsContent.kt`
      * attaches the real value itself (see that file's own `SettingsDiagnosticsSubScreen`). */
     val fieldReport: FieldReportSectionViewState? = null,
+    /** WPDUMP: the unified local-save checklist's own state — `null` only while the async
+     * [org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder.preview] call is still resolving
+     * (`SettingsDiagnosticsSubScreen`'s own load-in-progress moment, the same "render nothing until
+     * ready" idiom already used one level up for this whole view state). Defaulted for the identical
+     * "`SettingsPolling.kt`'s existing construction keeps compiling unchanged" reason [fieldReport]
+     * is. */
+    val localSave: LocalSaveSectionViewState? = null,
+)
+
+/** One row of the WPDUMP unified local-save checklist — real label/caption/size, [checked] already
+ * folding in [available] (an unavailable row is never rendered checked, whatever the operator's
+ * selection set otherwise carries), and [caption] already carrying the "why empty" reason appended
+ * when `!available` (constitution I) — the screen renders this string verbatim, never re-deriving
+ * or re-wording it. */
+public data class LocalSaveCategoryRowViewState(
+    val id: LocalSaveCategoryId,
+    val label: String,
+    val caption: String,
+    val sizeLabel: String,
+    val checked: Boolean,
+    val available: Boolean,
+)
+
+/** WPDUMP: everything the unified checklist section renders — every row in board order, plus the
+ * running total for exactly the currently-checked rows (recomputed, cheaply, client-side, every
+ * time a checkbox changes — see `SettingsContent.kt`'s own `LocalSaveBundleBuilder.LocalSavePreview.totalBytes`
+ * call). */
+public data class LocalSaveSectionViewState(val rows: List<LocalSaveCategoryRowViewState>, val totalSizeLabel: String)
+
+/** [SettingsDiagnosticsScreen]'s two WPDUMP local-save callbacks, bundled for the identical
+ * detekt `LongParameterList` reason [FieldReportSectionActions] and
+ * [SettingsDiagnosticsBundleActions] already exist for. */
+public data class LocalSaveActions(
+    val onToggle: (LocalSaveCategoryId, Boolean) -> Unit = { _, _ -> },
+    val onSave: () -> Unit = {},
 )
 
 /** `SettingsDiagnosticsScreen`'s field-report section (FR-OBS-6..12, D37/D38). */

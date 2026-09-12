@@ -8,6 +8,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.ort.app.diagnostics.DiagnosticsFileProducer
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.VoiceprintEntity
 
 /**
  * D38/FR-SPK-20 (amended), FR-OBS-9's `VOICEPRINT_EMBEDDINGS` category: the one field-report gated
@@ -33,12 +34,26 @@ public object VoiceprintEmbeddingsProducer : DiagnosticsFileProducer {
     /** The file name this category's entry takes inside a field-report bundle. */
     public const val FILE_NAME: String = "voiceprints.json"
 
-    override suspend fun produce(context: Context): ByteArray = withContext(Dispatchers.IO) {
+    /** The exact station-walk query [produce] itself uses, pulled out so
+     * [org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder] can ask "is there anything here at
+     * all" ([count]) without a second, independently-written copy of the same query — the identical
+     * reuse discipline [org.ort.app.fieldreport.bundle.FieldReportBundleBuilder.screenFrameFiles]'s
+     * own visibility change (WPDUMP) applies one file over. */
+    private suspend fun loadVoiceprints(context: Context): List<VoiceprintEntity> = withContext(Dispatchers.IO) {
         val db = OrtDatabase.create(context.applicationContext)
         val stations = db.activityDao().listStations()
-        val voiceprints = stations
+        stations
             .flatMap { station -> db.catalogDao().voiceprintsForStation(station.id) }
             .distinctBy { it.id }
+    }
+
+    /** WPDUMP: the real count behind the local-save checklist's `VOICEPRINT_EMBEDDINGS` row —
+     * `0` is the honest "nothing to include yet" signal that row's own disabled/reasoned state is
+     * built from, never a placeholder guessed some other way. */
+    internal suspend fun count(context: Context): Int = loadVoiceprints(context).size
+
+    override suspend fun produce(context: Context): ByteArray = withContext(Dispatchers.IO) {
+        val voiceprints = loadVoiceprints(context)
 
         val array = JSONArray()
         for (voiceprint in voiceprints) {

@@ -1,7 +1,8 @@
-package org.ort.app.ui.settings
+﻿package org.ort.app.ui.settings
 
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
@@ -15,17 +16,16 @@ import androidx.compose.ui.test.performScrollToNode
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.diagnostics.localsave.LocalSaveCategoryId
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
- * R-137 (register, rounds 7 and 9 System validator): `Settings-Diagnostics.dc.html`'s own
- * scrubbing example — "resolved [callsign] at 0.94" — is now real (WP11e's `CallsignScrubber`
- * actually runs), and the per-file size / header total are real too (WP11e's
- * `DiagnosticsBundleBuilder.preview`, sourced by `SettingsPolling.diagnostics`) — this screen only
- * renders the numbers it is handed, so this suite covers rendering, never `DiagnosticsBundleBuilder`
- * itself (that package's own `DiagnosticsBundleBuilderTest` does).
+ * WPDUMP (operator: "just allow a single save dump with checkboxes for EVERYTHING that can be
+ * saved"). This screen only renders the [LocalSaveSectionViewState] it is handed — coverage for
+ * [org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder] itself lives in that package's own
+ * `LocalSaveBundleBuilderTest`.
  */
 @RunWith(RobolectricTestRunner::class)
 class SettingsDiagnosticsScreenTest {
@@ -33,67 +33,222 @@ class SettingsDiagnosticsScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private fun state() = SettingsDiagnosticsViewState(
+    private fun row(
+        id: LocalSaveCategoryId,
+        label: String,
+        caption: String,
+        sizeLabel: String,
+        checked: Boolean,
+        available: Boolean = true,
+    ) = LocalSaveCategoryRowViewState(id, label, caption, sizeLabel, checked, available)
+
+    private fun localSave(rows: List<LocalSaveCategoryRowViewState>, totalSizeLabel: String = "1.0 MB") =
+        LocalSaveSectionViewState(rows = rows, totalSizeLabel = totalSizeLabel)
+
+    private fun state(localSave: LocalSaveSectionViewState? = null) = SettingsDiagnosticsViewState(
         aliveLabel = "alive",
         realTimeFactorLabel = "0.31",
         failedPassCount = 0,
-        files = listOf(
-            SettingsDiagnosticsFileViewState("lifecycle.log", "service start, stop", "140 KB"),
-            SettingsDiagnosticsFileViewState("capture.log", "route verifications", "88 KB"),
+        files = emptyList(),
+        totalSizeLabel = "0 KB",
+        localSave = localSave,
+    )
+
+    private fun twelveRows() = listOf(
+        row(LocalSaveCategoryId.LIFECYCLE_LOG, "lifecycle.log", "service start, stop", "140 KB", checked = true),
+        row(LocalSaveCategoryId.CAPTURE_LOG, "capture.log", "route verifications", "88 KB", checked = true),
+        row(LocalSaveCategoryId.PIPELINE_LOG, "pipeline.log", "per-pass timings", "64 KB", checked = true),
+        row(LocalSaveCategoryId.RIG_LOG, "rig.log", "CAT traffic", "8 KB", checked = true),
+        row(LocalSaveCategoryId.ASSETS_JSON, "assets.json", "every model and lexicon", "2 KB", checked = true),
+        row(LocalSaveCategoryId.DEVICE_JSON, "device.json", "SoC, RAM", "1 KB", checked = true),
+        row(LocalSaveCategoryId.COUNTS_JSON, "counts.json", "overs by state", "1 KB", checked = true),
+        row(
+            LocalSaveCategoryId.SESSION_RECORDER_LOG,
+            "session-recorder.log",
+            "destination changes",
+            "4 KB",
+            checked = true,
         ),
-        totalSizeLabel = "2.1 MB",
+        row(
+            LocalSaveCategoryId.RETAINED_AUDIO,
+            "Retained over audio",
+            "the full-fidelity recording — recordings of identifiable people.",
+            "0 KB",
+            checked = false,
+            available = false,
+        ),
+        row(
+            LocalSaveCategoryId.VOICEPRINT_EMBEDDINGS,
+            "voiceprints.json",
+            "the numeric voice signatures — no voiceprints have been resolved yet.",
+            "0 KB",
+            checked = false,
+            available = false,
+        ),
+        row(
+            LocalSaveCategoryId.SCREEN_FRAMES,
+            "Screen frames",
+            "downscaled screenshots — no screen frames have been captured yet.",
+            "0 KB",
+            checked = false,
+            available = false,
+        ),
+        row(LocalSaveCategoryId.DEBUG_DUMP_NDJSON, "debug-dump.ndjson", "every session, over", "12 KB", checked = true),
     )
 
     @Test
-    @Requirement("R-1009")
-    fun `WPW Save debug dump renders beside Save bundle and invokes onSaveDebugDump when tapped`() {
-        var dumpTapped = false
+    @Requirement("FR-OBS-3")
+    fun `WPDUMP all twelve checklist rows render with their real label, caption and size`() {
         composeTestRule.setContent {
             OrtTheme {
                 SettingsDiagnosticsScreen(
-                    state = state(),
+                    state = state(localSave(twelveRows())),
                     onBack = {},
-                    bundleActions = SettingsDiagnosticsBundleActions(
-                        onPreview = {},
-                        onSaveBundle = {},
-                        onSaveDebugDump = { dumpTapped = true },
+                    localSaveActions = LocalSaveActions(),
+                )
+            }
+        }
+
+        for (r in twelveRows()) {
+            val tag = LOCAL_SAVE_ROW_TEST_TAG_PREFIX + r.id.name
+            composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(tag))
+            composeTestRule.onNodeWithTag(tag).assertTextContains(r.label, substring = true)
+            composeTestRule.onNodeWithTag(tag).assertTextContains(r.sizeLabel, substring = true)
+        }
+    }
+
+    @Test
+    @Requirement("FR-OBS-3")
+    fun `WPDUMP a default-on row renders checked, a default-off row renders unchecked`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsDiagnosticsScreen(
+                    state = state(localSave(twelveRows())),
+                    onBack = {},
+                    localSaveActions = LocalSaveActions(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag(LOCAL_SAVE_ROW_TEST_TAG_PREFIX + LocalSaveCategoryId.LIFECYCLE_LOG.name)
+            .assertIsOn()
+
+        val voiceprintTag = LOCAL_SAVE_ROW_TEST_TAG_PREFIX + LocalSaveCategoryId.VOICEPRINT_EMBEDDINGS.name
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(voiceprintTag))
+        composeTestRule.onNodeWithTag(voiceprintTag).assertIsOff()
+    }
+
+    @Test
+    @Requirement("FR-OBS-3")
+    fun `WPDUMP an unavailable row renders disabled and its caption states why`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsDiagnosticsScreen(
+                    state = state(localSave(twelveRows())),
+                    onBack = {},
+                    localSaveActions = LocalSaveActions(),
+                )
+            }
+        }
+
+        val framesTag = LOCAL_SAVE_ROW_TEST_TAG_PREFIX + LocalSaveCategoryId.SCREEN_FRAMES.name
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(framesTag))
+        composeTestRule.onNodeWithTag(framesTag).assertIsNotEnabled()
+        composeTestRule.onNodeWithTag(framesTag).assertIsOff()
+        composeTestRule.onNodeWithTag(framesTag)
+            .assertTextContains("no screen frames have been captured yet", substring = true)
+    }
+
+    @Test
+    @Requirement("FR-OBS-3")
+    fun `WPDUMP tapping an available row's checkbox calls onToggle with the flipped value`() {
+        var toggledId: LocalSaveCategoryId? = null
+        var toggledValue: Boolean? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsDiagnosticsScreen(
+                    state = state(localSave(twelveRows())),
+                    onBack = {},
+                    localSaveActions = LocalSaveActions(
+                        onToggle = { id, value ->
+                            toggledId = id
+                            toggledValue = value
+                        },
                     ),
                 )
             }
         }
 
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(DEBUG_DUMP_SAVE_TEST_TAG))
-        composeTestRule.onNodeWithTag(DEBUG_DUMP_SAVE_TEST_TAG).performClick()
+        val tag = LOCAL_SAVE_ROW_TEST_TAG_PREFIX + LocalSaveCategoryId.LIFECYCLE_LOG.name
+        composeTestRule.onNodeWithTag(tag).performClick()
 
-        assert(dumpTapped) { "expected the real onSaveDebugDump callback to have run" }
+        assert(toggledId == LocalSaveCategoryId.LIFECYCLE_LOG)
+        assert(toggledValue == false) { "lifecycle.log started checked; tapping it must report false" }
     }
 
     @Test
-    @Requirement("R-1009")
-    fun `WPW Save debug dump defaults to a no-op so every existing caller of this composable keeps compiling`() {
+    @Requirement("FR-OBS-3")
+    fun `WPDUMP the section header names the checked count and the real total`() {
         composeTestRule.setContent {
             OrtTheme {
                 SettingsDiagnosticsScreen(
-                    state = state(),
+                    state = state(localSave(twelveRows(), totalSizeLabel = "320 KB")),
                     onBack = {},
-                    bundleActions = SettingsDiagnosticsBundleActions(onPreview = {}, onSaveBundle = {}),
+                    localSaveActions = LocalSaveActions(),
                 )
             }
         }
 
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(DEBUG_DUMP_SAVE_TEST_TAG))
-        composeTestRule.onNodeWithTag(DEBUG_DUMP_SAVE_TEST_TAG).assertExists()
+        // nine rows default checked in `twelveRows()`; SectionHeader uppercases its own label.
+        composeTestRule.onNodeWithText("SAVE · 9 CATEGORIES · 320 KB").assertExists()
+    }
+
+    @Test
+    @Requirement("FR-OBS-3")
+    fun `WPDUMP tapping Save calls onSave, and a real confirmation names the saved file`() {
+        var saveTapped = false
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsDiagnosticsScreen(
+                    state = state(localSave(twelveRows())),
+                    onBack = {},
+                    localSaveActions = LocalSaveActions(onSave = { saveTapped = true }),
+                    saveConfirmationLabel = "Saved ort-debug-dump-2026-09-12.zip",
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Saved ort-debug-dump-2026-09-12.zip").assertExists()
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(LOCAL_SAVE_SAVE_BUTTON_TEST_TAG))
+        composeTestRule.onNodeWithTag(LOCAL_SAVE_SAVE_BUTTON_TEST_TAG).performClick()
+        assert(saveTapped) { "expected onSave to fire" }
+    }
+
+    @Test
+    @Requirement("FR-OBS-3")
+    fun `WPDUMP the checklist section is absent while the async preview has not resolved yet`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsDiagnosticsScreen(
+                    state = state(localSave = null),
+                    onBack = {},
+                    localSaveActions = LocalSaveActions(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag(LOCAL_SAVE_SAVE_BUTTON_TEST_TAG).assertDoesNotExist()
     }
 
     @Test
     @Requirement("R-137")
-    fun `R_137 the never-included prose carries the board's own scrubbing example verbatim`() {
+    fun `R_137 the excluded prose still carries the board's own scrubbing example verbatim`() {
         composeTestRule.setContent {
             OrtTheme {
                 SettingsDiagnosticsScreen(
-                    state = state(),
+                    state = state(localSave(twelveRows())),
                     onBack = {},
-                    bundleActions = SettingsDiagnosticsBundleActions(onPreview = {}, onSaveBundle = {}),
+                    localSaveActions = LocalSaveActions(),
                 )
             }
         }
@@ -102,82 +257,28 @@ class SettingsDiagnosticsScreenTest {
     }
 
     @Test
-    @Requirement("R-137")
-    fun `R_137_list_from_preview the header names the real file count and total, each row its real size`() {
+    @Requirement("FR-OBS-3")
+    fun `WPDUMP the stale absolute never-included claim is gone now that audio and voiceprints are opt-in`() {
         composeTestRule.setContent {
             OrtTheme {
                 SettingsDiagnosticsScreen(
-                    state = state(),
+                    state = state(localSave(twelveRows())),
                     onBack = {},
-                    bundleActions = SettingsDiagnosticsBundleActions(onPreview = {}, onSaveBundle = {}),
+                    localSaveActions = LocalSaveActions(),
                 )
             }
         }
 
-        // SectionHeader uppercases its own label (guide's own section-label style).
-        composeTestRule.onNodeWithText("IN THE BUNDLE · 2 FILES · 2.1 MB").assertExists()
-        composeTestRule.onNodeWithText("140 KB").assertExists()
-        composeTestRule.onNodeWithText("88 KB").assertExists()
-    }
-
-    @Test
-    @Requirement("R-137")
-    fun `R_137 Preview opens the real entries and total, Done returns to the bundle screen`() {
-        var previewTapped = false
-        var dismissed = false
-        composeTestRule.setContent {
-            OrtTheme {
-                SettingsDiagnosticsScreen(
-                    state = state(),
-                    onBack = {},
-                    bundleActions = SettingsDiagnosticsBundleActions(
-                        onPreview = { previewTapped = true },
-                        onSaveBundle = {},
-                    ),
-                    previewOpen = previewTapped,
-                    onDismissPreview = {
-                        dismissed = true
-                        previewTapped = false
-                    },
-                )
-            }
-        }
-
-        // WP2's R-380/R-381 fix: `PrimaryButton`/`SecondaryButton`/`TextAction`'s own
-        // `clearAndSetSemantics` now sets `contentDescription = text` on the button's own node and
-        // clears its inner Text's semantics entirely — its label is a content description now,
-        // never a `Text` node `hasText`/`onNodeWithText` can find.
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription("Preview"))
-        composeTestRule.onNodeWithContentDescription("Preview").performClick()
-        assert(previewTapped) { "expected onPreview to fire" }
-    }
-
-    @Test
-    @Requirement("R-137")
-    fun `R_137_save_writes_zip Save bundle calls back, and a real confirmation names the saved file`() {
-        var saveTapped = false
-        composeTestRule.setContent {
-            OrtTheme {
-                SettingsDiagnosticsScreen(
-                    state = state(),
-                    onBack = {},
-                    bundleActions = SettingsDiagnosticsBundleActions(
-                        onPreview = {},
-                        onSaveBundle = { saveTapped = true },
-                    ),
-                    saveConfirmationLabel = "Saved diagnostics-2026-09-08.zip",
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithText("Saved diagnostics-2026-09-08.zip").assertExists()
-        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription("Save bundle"))
-        composeTestRule.onNodeWithContentDescription("Save bundle").performClick()
-        assert(saveTapped) { "expected onSaveBundle to fire" }
+        // The pre-WPDUMP screen asserted this exact sentence as a categorical absolute — it is no
+        // longer true (both categories are now opt-in checkboxes above), so it must not appear.
+        composeTestRule.onNodeWithText("Voiceprints. Names. Location.", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("never included in a local save", substring = true).assertExists()
     }
 
     // ---------------------------------------------------------------------------------------
-    // WPR2 (FR-OBS-6..12, D37/D38): the field-report section and consent screen.
+    // WPR2 (FR-OBS-6..12, D37/D38): the field-report section and consent screen — unchanged by
+    // WPDUMP (its own selection state stays independent of the checklist above; see this screen's
+    // own top doc comment for why).
     // ---------------------------------------------------------------------------------------
 
     @Test
@@ -186,15 +287,15 @@ class SettingsDiagnosticsScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 SettingsDiagnosticsScreen(
-                    state = state(),
+                    state = state(localSave(twelveRows())),
                     onBack = {},
-                    bundleActions = SettingsDiagnosticsBundleActions(onPreview = {}, onSaveBundle = {}),
+                    localSaveActions = LocalSaveActions(),
                 )
             }
         }
 
         // `SectionHeader` uppercases its own label (guide's own section-label style, per this
-        // file's earlier "IN THE BUNDLE" assertions).
+        // file's earlier "SAVE ·" assertion).
         composeTestRule.onNodeWithText("FIELD REPORT (DEBUG BUILDS ONLY)").assertDoesNotExist()
         composeTestRule.onNodeWithContentDescription("Send field report…").assertDoesNotExist()
     }
@@ -205,9 +306,11 @@ class SettingsDiagnosticsScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 SettingsDiagnosticsScreen(
-                    state = state().copy(fieldReport = FieldReportSectionViewState(publicGuardEnabled = true)),
+                    state = state(localSave(twelveRows())).copy(
+                        fieldReport = FieldReportSectionViewState(publicGuardEnabled = true),
+                    ),
                     onBack = {},
-                    bundleActions = SettingsDiagnosticsBundleActions(onPreview = {}, onSaveBundle = {}),
+                    localSaveActions = LocalSaveActions(),
                 )
             }
         }
@@ -227,9 +330,11 @@ class SettingsDiagnosticsScreenTest {
         composeTestRule.setContent {
             OrtTheme {
                 SettingsDiagnosticsScreen(
-                    state = state().copy(fieldReport = FieldReportSectionViewState(publicGuardEnabled = true)),
+                    state = state(localSave(twelveRows())).copy(
+                        fieldReport = FieldReportSectionViewState(publicGuardEnabled = true),
+                    ),
                     onBack = {},
-                    bundleActions = SettingsDiagnosticsBundleActions(onPreview = {}, onSaveBundle = {}),
+                    localSaveActions = LocalSaveActions(),
                     fieldReportActions = FieldReportSectionActions(
                         onSetPublicDestinationGuardEnabled = { guardEnabledValue = it },
                     ),
@@ -284,7 +389,7 @@ class SettingsDiagnosticsScreenTest {
 
     // AC-144's "reappears on a second upload rather than proceeding on a remembered choice" is
     // proven at the level where a remembered choice could actually happen — the stateful
-    // `SettingsContent` wiring, one open→toggle→cancel→reopen cycle inside a single composition
+    // `SettingsContent` wiring, one openâ†’toggleâ†’cancelâ†’reopen cycle inside a single composition
     // (`SettingsContentTest`'s own `AC_144 a category toggled on and cancelled is off again…`).
     // This composable itself is stateless (every toggle arrives as a parameter, never as internal
     // `remember`ed state) — a `ComposeContentTestRule` refuses a second `setContent` per test, so
