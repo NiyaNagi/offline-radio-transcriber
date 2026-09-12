@@ -24,6 +24,7 @@ import org.ort.capture.android.AudioRecordSource
 import org.ort.capture.android.BackoffLadder
 import org.ort.capture.android.GapRecord
 import org.ort.capture.android.GapTracker
+import org.ort.capture.android.archive.ContinuousArchiveWriter
 import org.ort.capture.android.codec.DeflatePredictiveCodec
 import org.ort.capture.android.codec.FlacStore
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
@@ -50,6 +51,9 @@ import org.ort.pipeline.CaptureProcessingLoop
 import org.ort.pipeline.GapPersister
 import org.ort.pipeline.Pass
 import org.ort.pipeline.PassDrainRunner
+import org.ort.pipeline.archive.ARCHIVE_DIR_NAME
+import org.ort.pipeline.archive.ArchiveGapPersister
+import org.ort.pipeline.archive.pruneArchiveIfOverBudget
 import org.ort.pipeline.diagnostics.DiagnosticsLog
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.passb.PassBFactory
@@ -106,6 +110,14 @@ import java.util.Locale
  * moves real audio into a real durable queue on real hardware, which is the thing no test suite
  * in this repo can verify.
  */
+// Deliberately large, not sloppy: this is the one class every capture-session concern (VAD, gap
+// tracking, shed monitoring, the processing loop, rig status, notifications and now WPARC's
+// continuous archive) has to be wired into a single running Android Service, and every prior
+// prompt (P4/P5/P8/P9/P11/P12/WPC2/WPC3/E2-A07/R-1002) grew it the same way, splitting a helper
+// class out (ThermalTrackingPass, CaptureGapRelay, ShedEventRelay, EnergyVadModel, RealSegmentSink)
+// wherever the logic did not need this class's own fields — the same pattern MigrationTest.kt's
+// own kdoc documents for its analogous, intentional growth.
+@Suppress("LargeClass")
 public class RealCaptureService : Service() {
 
     /**
@@ -164,6 +176,21 @@ public class RealCaptureService : Service() {
         val rigTransportFactory: (android.content.Context) -> RigTransportFactory = { ctx ->
             DefaultRigTransportFactory(ctx)
         },
+        /**
+         * WPARC (FR-SEG-9, FR-STO-3d, D39): where this session's continuous-archive on/off and
+         * budget are read from — see [ArchiveSettingsStore]'s own kdoc for why this is a second,
+         * `:pipeline`-side type over the *same* preferences file `:app`'s `SettingsStore` uses,
+         * not that type itself (`:pipeline` cannot depend on `:app`, same reasoning as
+         * [captureConfigurationStore] just above).
+         */
+        val archiveSettingsStore: (android.content.Context) -> ArchiveSettingsStore = { ctx ->
+            SharedPreferencesArchiveSettingsStore(
+                ctx.getSharedPreferences(
+                    SharedPreferencesArchiveSettingsStore.PREFS_NAME,
+                    android.content.Context.MODE_PRIVATE,
+                ),
+            )
+        },
     )
 
     private var wakeLock: PowerManager.WakeLock? = null
@@ -187,6 +214,16 @@ public class RealCaptureService : Service() {
     // fabricated 0L -- the segmenter is the one thing in this class that knows how much audio has
     // actually been fed to it (Segmenter.position(), unchanged in :segment).
     private var segmenter: Segmenter? = null
+
+    // WPARC (FR-SEG-9, FR-STO-3d, D39): the continuous archive for this session, `null` whenever
+    // the archive is off (ArchiveSettingsStore.archiveEnabled read once at session start, the same
+    // freeze-at-start discipline [activeConfiguration] uses). [archiveWriter] is kept alongside
+    // [archiveAttachment] only so endSessionRow() can ask it, after every frame has drained,
+    // whether anything was actually persisted (chunkIndex().isNotEmpty()) before honestly marking
+    // the session archiveState = KEPT -- never fabricated for a session that wrote nothing.
+    private var archiveWriter: ContinuousArchiveWriter? = null
+    private var archiveAttachment: ContinuousArchiveAttachment? = null
+    private var archiveDirectoryBytesAtSessionStart: Long = 0L
 
     // WPC2 (FR-CAP-12/13, AC-129/AC-131): the configuration read ONCE at this session's start via
     // CaptureConfigurationStore.activateForNewSession() and never re-read until the NEXT session
@@ -427,7 +464,11 @@ public class RealCaptureService : Service() {
         // here, before the tick loop starts, so StorageForecast measures only what THIS session has
         // written, not the whole retained archive's pre-existing size.
         val audioDirectoryBytesAtSessionStart = audioDirectoryBytes()
-        scope.launch { runShedMonitor(shedSignals, shedController, shedRelay, audioDirectoryBytesAtSessionStart) }
+        // WPARC: the same baseline discipline, applied to the continuous archive's own directory
+        // (ArchiveWriteRateForecast's rate must be THIS session's write rate, not the whole
+        // retained archive's pre-existing size).
+        archiveDirectoryBytesAtSessionStart = archiveDirectoryBytes()
+        scope.launch { runShedMonitor(shedSignals, shedController, shedRelay, audioDirectoryBytesAtSessionStart, db) }
     }
 
     /** The session row, the segmenter, and the capture-event loop that feeds both it and [gapRelay]. */
@@ -486,6 +527,7 @@ public class RealCaptureService : Service() {
 
         val builtSegmenter = buildSegmenter(db, queue)
         segmenter = builtSegmenter
+        archiveAttachment = buildArchiveAttachment(db)
 
         var lastHeartbeatAt = 0L
         audioSource.start().collect { event ->
@@ -494,7 +536,16 @@ public class RealCaptureService : Service() {
             gapRelay.onEvent(event)
             when (event) {
                 is CaptureEvent.Frames -> {
+                    // WPARC (constitution IV "capture never blocks"): read BEFORE feeding the
+                    // segmenter -- Segmenter.position() is "the absolute sample position of the
+                    // NEXT sample to be fed" (see onHeartbeat()'s own comment), so this is exactly
+                    // this frame's own starting sample on the session timeline. offer() is a
+                    // plain, non-suspending function (ContinuousArchiveAttachment's own kdoc) --
+                    // this call can never block the frame path, whatever the archive writer is
+                    // doing. Over audio (builtSegmenter.onAudio below) is unaffected either way.
+                    val archiveFramePosition = builtSegmenter.position()
                     builtSegmenter.onAudio(shortsToFloats(event.pcm))
+                    archiveAttachment?.offer(event.pcm, archiveFramePosition)
                     publishLevelStatus(audioSource)
                     if (!inputRouteConfirmedThisSession) {
                         // AudioRecordSource never emits Frames before its own first-read route
@@ -632,6 +683,49 @@ public class RealCaptureService : Service() {
     }
 
     /**
+     * WPARC (FR-SEG-9, FR-STO-3d, D39): attaches the continuous archive to this session, off the
+     * audio frame thread entirely — see [ContinuousArchiveAttachment]'s own kdoc for why
+     * [ContinuousArchiveAttachment.offer] can never block capture, and
+     * [ContinuousArchiveWriter]'s for why a FLAC verification failure never throws. Reads
+     * [ArchiveSettingsStore.archiveEnabled] once, here, at session start — frozen for the whole
+     * session, the same discipline [activeConfiguration] already uses for the capture
+     * configuration, so a setting changed mid-session never alters a session already running.
+     * `null` when the archive is off — every caller of [archiveAttachment] already treats that as
+     * "do nothing" (`?.offer`, `?.finishAndAwait`).
+     *
+     * **Register R-1038**: [ARCHIVE_QUEUE_CAPACITY] is passed explicitly, stated here rather than
+     * left to [ContinuousArchiveAttachment]'s own default, so the derivation this class's real
+     * frame cadence justifies is visible at the one call site that actually knows that cadence
+     * ([AudioRecordSource.DEFAULT_READ_BUFFER_FRAMES] at [FrameSpec.SAMPLE_RATE]) — see
+     * [ContinuousArchiveAttachment.DEFAULT_CAPACITY]'s own kdoc for the arithmetic (it computes
+     * the identical value; this is not a second, independent number). An overflow — the queue
+     * genuinely full, meaning the writer has stalled rather than merely run slow — drops the
+     * frame and records the dropped span as an [org.ort.capture.android.archive.ArchiveHole] via
+     * the same [ArchiveGapPersister] a verification failure uses, coalesced into one row per span
+     * rather than one per dropped frame.
+     */
+    private fun buildArchiveAttachment(db: OrtDatabase): ContinuousArchiveAttachment? {
+        if (!dependencies.archiveSettingsStore(applicationContext).archiveEnabled) return null
+        val gapPersister = ArchiveGapPersister(db.archiveGapDao(), SystemClock)
+        val writer = ContinuousArchiveWriter(
+            directory = File(filesDir, "$ARCHIVE_DIR_NAME/$sessionId"),
+            onHole = { hole -> scope.launch { gapPersister.persist(sessionId, hole) } },
+        )
+        archiveWriter = writer
+        return ContinuousArchiveAttachment(
+            append = { pcm, framePosition -> writer.append(pcm, framePosition) },
+            finishWriter = { writer.finish() },
+            onFailure = { start, count, reason ->
+                scope.launch { gapPersister.persistFailure(sessionId, start, count, reason) }
+            },
+            onOverflow = { start, count ->
+                scope.launch { gapPersister.persistFailure(sessionId, start, count, ARCHIVE_OVERFLOW_REASON) }
+            },
+            capacity = ARCHIVE_QUEUE_CAPACITY,
+        )
+    }
+
+    /**
      * Build-plan P12, defect 3: before this, `PassDrainRunner` (P8), `PassB` (P11) and
      * `RealSherpaDecoder` (P10 follow-up) all existed and none was constructed anywhere in the
      * running app -- a captured, enqueued transmission sat `CAPTURED` forever. [RealAsrEngineProvider]
@@ -724,6 +818,7 @@ public class RealCaptureService : Service() {
         controller: ShedController,
         relay: ShedEventRelay,
         audioDirectoryBytesAtSessionStart: Long,
+        db: OrtDatabase,
     ) {
         // FR-OBS-1 "tier changes with their cause": the same shed-level -> Tier mapping
         // ReprocessRunner.currentTierFromShedLevel() already applies to decide what a reprocess
@@ -757,6 +852,25 @@ public class RealCaptureService : Service() {
                 sessionElapsedMillis = SystemClock.wallMillis() - startedAtWallMillis,
                 floorBytes = STORAGE_FLOOR_BYTES,
             )
+
+            // WPARC (FR-STO-3f being drafted, D39): the archive's own measured write rate, on the
+            // same tick -- never a different moment than the reading beside it (R-104/R-105's own
+            // reasoning for sampling ThermalStatus/StorageForecast together applies here too).
+            val archiveSettings = dependencies.archiveSettingsStore(applicationContext)
+            if (archiveSettings.archiveEnabled) {
+                val archiveBytesNow = archiveDirectoryBytes()
+                val archiveBytesWrittenThisSession =
+                    (archiveBytesNow - archiveDirectoryBytesAtSessionStart).coerceAtLeast(0L)
+                ArchiveWriteRateForecast.update(
+                    bytesWrittenThisSession = archiveBytesWrittenThisSession,
+                    sessionElapsedMillis = SystemClock.wallMillis() - startedAtWallMillis,
+                )
+                // FR-STO-3d, AC-150/AC-151, D39: unconditional once the budget is reached -- not
+                // gated by SettingsStore.autoPruneEnabled, which (register R-1037, FR-STO-3e, D40)
+                // never governs any deletion of over audio and is not the archive's own opt-in
+                // either (see ArchiveSettingsStore's own kdoc).
+                pruneArchiveIfOverBudget(db, filesDir, archiveSettings.archiveBudgetGb * BYTES_PER_GB)
+            }
 
             if (storageFloorBreached(freeBytes)) {
                 stopForStorageExhaustion()
@@ -943,6 +1057,11 @@ public class RealCaptureService : Service() {
         source?.stop()
         source = null
         segmenter = null
+        // WPARC: torn down on every path that ends a session, same as segmenter above -- a stale
+        // reference here must never let a later session's frames reach a previous session's
+        // (already-finished) attachment/writer.
+        archiveAttachment = null
+        archiveWriter = null
         // WPC2: the rig is a per-session resource same as the audio source -- torn down on every
         // path that ends a session, clean or unclean, so a stale Connected/Stale reading never
         // survives into a later Idle screen the way LevelStatus/InputStatus's own reset() prevents.
@@ -971,6 +1090,17 @@ public class RealCaptureService : Service() {
         val endedAt = SystemClock.wallMillis()
         runBlocking(Dispatchers.IO) {
             database.sessionDao().setEnded(sessionId, endedAt, reason)
+            // WPARC (FR-SEG-9): flush the archive's trailing partial chunk and wait for every
+            // frame already offered to actually be applied -- same runBlocking(Dispatchers.IO)
+            // this call already blocks on, for the same reason (see this function's own kdoc:
+            // must complete before onDestroy's scope.cancel() can race it). Marked KEPT only if
+            // the writer actually persisted something -- never fabricated for a session that
+            // captured nothing to the archive (the archive was off, or every chunk failed
+            // verification and became a hole instead).
+            archiveAttachment?.finishAndAwait()
+            if (archiveWriter?.chunkIndex()?.isNotEmpty() == true) {
+                database.sessionDao().setArchiveKept(sessionId)
+            }
         }
         sessionEndRecorded = true
     }
@@ -1191,6 +1321,15 @@ public class RealCaptureService : Service() {
         return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
     }
 
+    /** WPARC: the continuous archive's real, on-disk size — `filesDir/archive`, recursively, a
+     * sibling of [audioDirectoryBytes]'s `audio/` root (FR-STO-3: the two budgets never share a
+     * directory, so neither can silently consume the other's). */
+    private fun archiveDirectoryBytes(): Long {
+        val dir = File(filesDir, ARCHIVE_DIR_NAME)
+        if (!dir.isDirectory) return 0L
+        return dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+    }
+
     private fun ensureChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
@@ -1269,6 +1408,21 @@ public class RealCaptureService : Service() {
         internal const val RECONNECT_LADDER_STEPS: Int = 5
 
         private const val BYTES_PER_GIB: Double = 1024.0 * 1024.0 * 1024.0
+
+        /** WPARC: matches `SettingsPolling`'s own `it * 1_000_000_000L` (decimal GB, not GiB) —
+         * the unit [org.ort.pipeline.capture.ArchiveSettingsStore.archiveBudgetGb] is stated in. */
+        private const val BYTES_PER_GB: Long = 1_000_000_000L
+
+        /** Register R-1038 — see [buildArchiveAttachment]'s own kdoc and
+         * [ContinuousArchiveAttachment.DEFAULT_CAPACITY]'s for the derivation. Ten seconds of
+         * this session's own real frame cadence: [FrameSpec.SAMPLE_RATE] /
+         * [AudioRecordSource.DEFAULT_READ_BUFFER_FRAMES] messages per second. */
+        internal const val ARCHIVE_QUEUE_CAPACITY: Int = ContinuousArchiveAttachment.ARCHIVE_QUEUE_BOUND_SECONDS *
+            (FrameSpec.SAMPLE_RATE / AudioRecordSource.DEFAULT_READ_BUFFER_FRAMES)
+
+        /** Register R-1038: [ArchiveGapPersister]'s closed-vocabulary reason for a dropped span —
+         * the queue was genuinely full (the writer stalled), never a caught exception's message. */
+        internal const val ARCHIVE_OVERFLOW_REASON: String = "archive_queue_overflow"
     }
 }
 

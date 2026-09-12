@@ -104,3 +104,43 @@ class StorageForecastTest {
         assertEquals(exact, StorageForecast.state)
     }
 }
+
+/** WPARC (FR-STO-3f, being drafted; D39, constitution VI). */
+class ArchiveWriteRateForecastTest {
+
+    @BeforeEach
+    fun reset() {
+        ArchiveWriteRateForecast.reset()
+    }
+
+    @Test
+    @Requirement("FR-STO-3f", "D39")
+    fun `before anything ticks, the rate is not yet measured -- never a fabricated number`() {
+        assertTrue(ArchiveWriteRateForecast.state is ArchiveWriteRateForecast.State.NotYetMeasured)
+    }
+
+    @Test
+    @Requirement("FR-STO-3f", "D39")
+    fun `a real write rate is extrapolated to an hourly and monthly figure, labelled measured`() {
+        // 60 MB written in one hour -> 60 MB/hour -> 60 * 24 * 30 MB/month.
+        ArchiveWriteRateForecast.update(
+            bytesWrittenThisSession = 60L * 1_000_000,
+            sessionElapsedMillis = 3_600_000L,
+        )
+        val state = ArchiveWriteRateForecast.state
+        assertTrue(state is ArchiveWriteRateForecast.State.Measured)
+        state as ArchiveWriteRateForecast.State.Measured
+        assertEquals(60_000_000.0, state.bytesPerHour, 0.001)
+        assertEquals(60_000_000.0 * 24 * 30, state.bytesPerMonth, 0.001)
+    }
+
+    @Test
+    @Requirement("FR-STO-3f", "D39")
+    fun `no elapsed time or nothing written yet reports not yet measured, not a guess`() {
+        ArchiveWriteRateForecast.update(bytesWrittenThisSession = 0L, sessionElapsedMillis = 3_600_000L)
+        assertTrue(ArchiveWriteRateForecast.state is ArchiveWriteRateForecast.State.NotYetMeasured)
+
+        ArchiveWriteRateForecast.update(bytesWrittenThisSession = 1_000L, sessionElapsedMillis = 0L)
+        assertTrue(ArchiveWriteRateForecast.state is ArchiveWriteRateForecast.State.NotYetMeasured)
+    }
+}

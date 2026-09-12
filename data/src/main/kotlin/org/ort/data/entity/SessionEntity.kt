@@ -60,4 +60,22 @@ public data class SessionEntity(
      * device is opened (before any frame is actually read) — `null` only for a pre-v10 row.
      */
     val audioNativeRateHz: Int? = null,
+    /**
+     * WPARC (schema v12, FR-SEG-9, D39): this session's continuous-archive state — `null` (no
+     * archive: the mode was off, or nothing was ever successfully persisted), `"KEPT"` (an
+     * archive exists and the session is re-segmentable, AC-96), or `"REMOVED"` (FR-STO-3d, AC-150:
+     * the archive was pruned oldest-first for the archive budget; the session row itself, and
+     * [archiveRemovedAtMillis], remain — nothing is deleted quietly, P9). A closed set stored as a
+     * plain string, the same convention [captureMode] etc. already use for a `:core`/`:pipeline`
+     * enum `:data` only ever writes/reads by name — see [org.ort.pipeline.capture.ArchiveState] in
+     * `:pipeline`, the real enum this mirrors (`:data` has no dependency on `:pipeline`, so the
+     * closed set lives one layer up and this column is its storage contract, not the type itself).
+     */
+    val archiveState: String? = null,
+    /**
+     * WPARC (schema v12, FR-STO-3d, AC-151): the wall-clock moment [archiveState] became
+     * `"REMOVED"` — a pruned interval "remains listed with its date" rather than disappearing
+     * (P9). `null` while [archiveState] is `null` or `"KEPT"`.
+     */
+    val archiveRemovedAtMillis: Long? = null,
 )

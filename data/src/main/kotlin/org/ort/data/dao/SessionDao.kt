@@ -79,4 +79,22 @@ public interface SessionDao {
      */
     @Query("UPDATE session SET audioRouteVerified = :verified WHERE id = :id")
     public suspend fun setAudioRouteVerified(id: String, verified: Boolean)
+
+    /**
+     * WPARC (FR-SEG-9, AC-96): marks this session's continuous archive as kept/re-segmentable —
+     * written once, when the session ends, only if at least one archive chunk was actually
+     * persisted (constitution I: never fabricate an archive that does not exist).
+     */
+    @Query("UPDATE session SET archiveState = 'KEPT' WHERE id = :id")
+    public suspend fun setArchiveKept(id: String)
+
+    /**
+     * WPARC (FR-STO-3d, AC-150, AC-151): marks this session's archive as pruned — the row (and
+     * [org.ort.data.entity.SessionEntity.archiveRemovedAtMillis]) stays, never deleted quietly.
+     * Only ever applied to a session whose [org.ort.data.entity.SessionEntity.archiveState] was
+     * `"KEPT"` — the caller ([org.ort.pipeline.archive.ArchivePruner]) is responsible for
+     * oldest-first ordering.
+     */
+    @Query("UPDATE session SET archiveState = 'REMOVED', archiveRemovedAtMillis = :removedAtMillis WHERE id = :id")
+    public suspend fun setArchiveRemoved(id: String, removedAtMillis: Long)
 }

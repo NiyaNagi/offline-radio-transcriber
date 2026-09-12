@@ -18,6 +18,27 @@ import androidx.core.content.edit
  * [audioBudgetGb] defaults `null` — no budget set is a real, distinct state from "unlimited"
  * (FR-STO-3: "unlimited" is itself an explicit choice, not the absence of one), so a caller must
  * never treat `null` as either 0 or infinity without saying which it means.
+ *
+ * **[autoPruneEnabled]'s scope narrowed under WPARC (register R-1037, FR-STO-3e, D40):
+ * over audio never auto-deletes, by any means — no setting turns pruning on for it.** This flag
+ * predates that decision and today has no wired deletion effect on over audio at all (no
+ * executor for it was ever built — `computeNextDeletion`
+ * ([org.ort.pipeline.capture.computeNextDeletion]) only ever *previews* what a future one would
+ * do); it is kept, unchanged in shape, only so a value already written by an operator's device is
+ * not silently discarded. Reaching the over-audio budget instead produces a persistent,
+ * poll-cheap warning ([org.ort.pipeline.capture.overAudioBudgetState], AC-157) that survives a
+ * restart and deletes nothing. The continuous archive's own automatic oldest-first pruning
+ * (FR-STO-3d, [archiveEnabled]/[archiveBudgetGb] below) is unconditional once the archive budget
+ * is reached — D39's point is a bounded training corpus, not another opt-in — and is therefore
+ * **not** gated by this flag either.
+ *
+ * **[archiveEnabled]/[archiveBudgetGb] (WPARC, FR-SEG-9, FR-STO-3d, D39)** are the continuous
+ * archive's own budget, independent of [audioBudgetGb] — see
+ * [org.ort.pipeline.capture.ArchiveSettingsStore]'s own kdoc for why a *second*, `:pipeline`-side
+ * store type exists reading/writing this exact same persisted pair: `:pipeline` cannot depend on
+ * `:app` (module graph), so `RealCaptureService` reads these keys through that type instead of
+ * this one, over the same on-disk preferences file. Unlike [audioBudgetGb], [archiveBudgetGb] is
+ * never "no budget set" — D39 always has a real, positive default (60 GB).
  */
 public interface SettingsStore {
     // --- Privacy / contribution (FR-CON-1..8, constitution V) ---------------------------------
@@ -33,6 +54,14 @@ public interface SettingsStore {
      * package's report). */
     public var audioBudgetGb: Int?
     public var autoPruneEnabled: Boolean
+
+    // --- Continuous archive (FR-SEG-9, FR-STO-3d, D39) -----------------------------------------
+    /** Defaults `true` — D39: "the continuous archive ... defaults ON". */
+    public var archiveEnabled: Boolean
+
+    /** Defaults `60` (GB) — D39's stated budget. Never `null`: unlike [audioBudgetGb], this
+     * budget is never in a "not set" state. */
+    public var archiveBudgetGb: Int
 
     // --- Tier override (FR-TIER-3) ---------------------------------------------------------------
     /** [org.ort.core.Tier.name], or `null` for "let the phone choose" (the detected tier, adjusted
@@ -58,6 +87,14 @@ public class SharedPreferencesSettingsStore(private val prefs: SharedPreferences
 
     override var audioBudgetGb: Int? by IntPref(KEY_AUDIO_BUDGET_GB)
     override var autoPruneEnabled: Boolean by BooleanPref(KEY_AUTO_PRUNE, default = false)
+
+    // WPARC (FR-SEG-9, FR-STO-3d, D39): same keys/defaults as
+    // org.ort.pipeline.capture.SharedPreferencesArchiveSettingsStore -- the same on-disk file,
+    // read/written from either side of the module boundary (see this file's own kdoc).
+    override var archiveEnabled: Boolean by BooleanPref(KEY_ARCHIVE_ENABLED, default = true)
+    override var archiveBudgetGb: Int
+        get() = if (prefs.contains(KEY_ARCHIVE_BUDGET_GB)) prefs.getInt(KEY_ARCHIVE_BUDGET_GB, 60) else 60
+        set(value) = prefs.edit { putInt(KEY_ARCHIVE_BUDGET_GB, value) }
 
     override var tierOverrideName: String? by StringPref(KEY_TIER_OVERRIDE)
 
@@ -98,6 +135,8 @@ public class SharedPreferencesSettingsStore(private val prefs: SharedPreferences
         public const val KEY_CONTRIBUTE_RESOLVER_STATS: String = "contribute_resolver_stats"
         public const val KEY_AUDIO_BUDGET_GB: String = "audio_budget_gb"
         public const val KEY_AUTO_PRUNE: String = "auto_prune_enabled"
+        public const val KEY_ARCHIVE_ENABLED: String = "archive_enabled"
+        public const val KEY_ARCHIVE_BUDGET_GB: String = "archive_budget_gb"
         public const val KEY_TIER_OVERRIDE: String = "tier_override"
         public const val KEY_NOISE_REDUCTION: String = "noise_reduction_enabled"
         public const val KEY_BAND_PASS: String = "band_pass_enabled"
@@ -118,6 +157,8 @@ public class InMemorySettingsStore(
     override var contributeResolverStatistics: Boolean = false,
     override var audioBudgetGb: Int? = null,
     override var autoPruneEnabled: Boolean = false,
+    override var archiveEnabled: Boolean = true,
+    override var archiveBudgetGb: Int = 60,
     override var tierOverrideName: String? = null,
     override var noiseReductionEnabled: Boolean = true,
     override var bandPassFilterEnabled: Boolean = false,

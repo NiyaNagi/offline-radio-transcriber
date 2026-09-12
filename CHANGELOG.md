@@ -32,6 +32,192 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (R-1038: the continuous-archive queue is bounded — a stalled writer drops archive frames and records one coalesced hole, instead of growing the heap until the OS kills the process)
+
+### 7ca223bb — R-1038: bound the continuous-archive queue so a stalled writer cannot kill capture
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/capture/{ContinuousArchiveAttachment,RealCaptureService}.kt`;
+`pipeline/src/main/kotlin/org/ort/pipeline/archive/ArchivePruner.kt`; matching tests.
+
+**Requirements/ACs:** Constitution IV ("capture never blocks, never drops, never lies" — this
+closes the "never dies" gap the coordinator's own review found: never-blocks held, never-dies did
+not), risk R5 (the top risk — a night's capture silently not happening), FR-RUN-12 (an archive
+failure is recorded as a hole, coalesced here rather than one row per frame), FR-SEG-9 / AC-151
+(re-segmentable is now honest about a `KEPT` archive that has a recorded hole).
+
+**What changed:**
+- **`ContinuousArchiveAttachment`'s channel is now bounded**, not [`Channel.UNLIMITED`] — a
+  writer that stalls outright (a wedged filesystem, a hung codec, storage I/O starved by the OS)
+  could otherwise grow the queue on the heap without bound (16 kHz mono PCM16 is 115.2 MB/hour)
+  until the OS kills the *process*, taking capture down with the archive that was supposed to be
+  secondary to it. `capacity` is a constructor parameter; `DEFAULT_CAPACITY` is **derived**, not
+  guessed — `ARCHIVE_QUEUE_BOUND_SECONDS` (10) × the pipeline's real frame cadence
+  (`FrameSpec.SAMPLE_RATE` / `AudioRecordSource.DEFAULT_READ_BUFFER_FRAMES` = 10 messages/second),
+  a hundred times the ordinary 100ms-per-frame cadence and comfortably above the one recurring
+  slower step in this path (`ContinuousArchiveWriter`'s FLAC encode-and-verify, once per 30s chunk
+  flush, not per frame) while bounding worst-case growth to a fixed ~312 KB of raw PCM regardless
+  of stall duration. `RealCaptureService.buildArchiveAttachment` restates the identical arithmetic
+  explicitly (`ARCHIVE_QUEUE_CAPACITY`) at the one call site that actually knows the real cadence.
+- **Overflow drops the frame and reports a coalesced hole**, never one row per dropped frame:
+  `offer()` tracks an open drop-span (`overflowStartSample`/`overflowSampleCount`, touched only
+  from the single caller thread, the same single-writer assumption `GapTracker`/`DroppedSpanCause`
+  already make elsewhere) and closes it — reporting through the new `onOverflow` callback — either
+  when a later `offer()` finally succeeds again (the writer recovered) or when `finishAndAwait()`
+  runs (the session ended still stalled). `RealCaptureService` wires `onOverflow` to the same
+  `ArchiveGapPersister` a verification failure uses, with the closed-vocabulary reason
+  `"archive_queue_overflow"`. Over audio and capture are completely unaffected either way — neither
+  is fed through this call.
+- **`finishAndAwait()` is now bounded by a timeout** (`FINISH_TIMEOUT_MILLIS`, 5s): a writer stuck
+  on the very first message a session ever queued would otherwise make this call — which
+  production calls from `endSessionRow`'s own `runBlocking(Dispatchers.IO)` — hang session
+  teardown forever. On timeout it cancels the consumer and gives up on that session's archive
+  rather than block; found while addressing R-1038, not asked for explicitly, but the same root
+  defect reachable through a different call site.
+- **`SessionArchiveState.resegmentable` is now honest about a hole**: previously `true` for any
+  `KEPT` session; now also requires no recorded `archive_gap` row for it
+  (`hasGaps`, new field) — a `KEPT` archive that dropped an interval (verification failure or
+  R-1038 overflow alike) is present but not complete, and re-segmenting across a missing interval
+  would produce boundaries the missing audio cannot actually justify.
+
+**Verified:**
+- `:pipeline:testDebugUnitTest` — full suite green, including the six
+  `ContinuousArchiveAttachmentTest` cases (three original + three new R-1038 cases) and the two
+  new `ArchivePrunerTest` resegmentable-honesty cases.
+- `./gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  — **BUILD SUCCESSFUL in 14m 5s** (1109 actionable tasks).
+- `:pipeline:ktlintMainSourceSetCheck :pipeline:ktlintTestSourceSetCheck :pipeline:detekt` — clean.
+- `python tools/spec-check/spec_check.py` — all 8 checks pass.
+- `./gradlew coverageMatrix` (run locally, then reverted — `results/**` stays this builder's
+  off-limits territory) — the three ids orphaned in the prior round (`AC-157`, `FR-STO-3e`,
+  `FR-STO-3f`) resolved automatically once `spec3` merged into `main`; no orphan-tests line
+  printed this run. `coverageMatrixCheck` still reports the committed matrix stale (267 vs. 264
+  covered from this round's new tests) — left for the session lead to regenerate/commit.
+- Every claim proven to discriminate (revert → fail → restore → pass): reverting the channel back
+  to `Channel.UNLIMITED` makes both new overflow tests (`R_1038 a writer that never returns...`,
+  `R_1038 a writer that stalls then recovers...`) fail; reverting `resegmentable` to ignore
+  `hasGaps` makes the new resegmentable-honesty test fail. All pasted in full in this session's
+  report.
+
+**Left open / not done:**
+- `finishAndAwait`'s 5s timeout is a judgement call, not a measured figure — no device evidence
+  exists yet for how long a real FLAC chunk flush can legitimately take on the reference or floor
+  device under thermal throttling; if that ever needs to be longer than 5s in practice, the
+  archive gets abandoned prematurely at session end (a false "the writer was wedged" — still
+  strictly safer than the previous "may hang forever", but worth measuring on-device).
+- This round's worth of new coverage is not yet reflected in the committed
+  `results/coverage-matrix.md` (see Verified) — regeneration and commit is the session lead's, per
+  this builder's file-ownership constraints.
+
+
+
+### 7db41a16 — WPARC: wire the continuous archive into RealCaptureService — D39 default-on 60 GB, FLAC chunks, oldest-first pruning, over-audio budget warning survives restart (AC-157)
+
+**Scope:** `capture-android/src/main/kotlin/org/ort/capture/android/archive/ContinuousArchiveWriter.kt`
+(FLAC-encode chunks, report verification-failure holes); `pipeline/src/main/kotlin/org/ort/pipeline/archive/**`
+(new: `ArchiveGapPersister`, `ArchivePruner`); `pipeline/src/main/kotlin/org/ort/pipeline/capture/{RealCaptureService,StorageAccounting,StorageForecast}.kt`
+plus two new files in that package (`ContinuousArchiveAttachment`, `ArchiveSettingsStore`);
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsStore.kt` (fields/persistence only —
+`archiveEnabled`/`archiveBudgetGb`); `data/src/main/kotlin/org/ort/data/{OrtDatabase,dao/SessionDao,entity/SessionEntity}.kt`
+plus two new files (`entity/ArchiveGapEntity`, `dao/ArchiveGapDao`) and the schema v12 export;
+matching tests under each package's own `src/test/**`.
+
+**Requirements/ACs:** FR-SEG-9 (continuous-archive mode, re-segmentable sessions), AC-96
+(sample-exact replay, now through real FLAC), FR-STO-2a (lossless retention — FLAC chunks, not
+raw PCM16LE, half the bytes), FR-STO-3 / D26 (the archive's own independent budget), FR-STO-3d /
+D39 (default **on** at **60 GB**, oldest-archive-first pruning, over audio never touched), AC-150
+(oldest-first, over audio untouched, both categories present), AC-151 (a pruned interval stays
+listed with its date), FR-RUN-12 (an archive write failure is recorded as a hole, never silent,
+never blocks), constitution III/IV (audio is the source of truth; capture never blocks) — the
+capture-never-blocks proof is the discriminating test named below. Register R-1037 amendment
+mid-session (FR-STO-3e, D40, AC-157 — ids not yet merged into `spec/functional-spec.md` at the
+time of this commit, hence `coverageMatrix`'s 3 orphan-test entries, expected to resolve once
+that spec change lands): over audio never auto-deletes, by any means, and the over-audio-budget
+warning is a **derived, pollable fact that survives a restart**, not a one-time event.
+
+**What changed:**
+- **`ContinuousArchiveWriter`** now FLAC-encodes each 30 s chunk through the existing `FlacStore`
+  (the same lossless store and decode-and-compare verification over-audio uses) instead of
+  writing raw PCM16LE — half the bytes, and sample-exact on replay (`ArchiveReader` decodes with
+  the same codec). A verification failure is reported through a new `onHole` callback
+  (`ArchiveHole(startSample, sampleCount, reason)`) instead of joining the chunk index — the
+  interval is recorded, not silently dropped, and the writer never throws.
+- **`ContinuousArchiveAttachment`** (new): attaches the archive to the audio frame path the same
+  way `DiagnosticsLog` attaches logging — one unbounded `Channel`, one dedicated consumer
+  coroutine off the frame thread entirely. `offer()` is a plain, non-suspending function
+  (`Channel.trySend` on `Channel.UNLIMITED` can never suspend or fail for capacity), so a
+  stalled, slow or throwing archive writer structurally cannot block or drop a frame. An
+  unexpected exception from the writer is caught here and reported through `onFailure`, the same
+  hole shape, via `ArchiveGapPersister`.
+- **`ArchiveGapPersister`** (new) and **`ArchiveGapEntity`/`ArchiveGapDao`** (new, schema v12):
+  the FR-RUN-12 record — "the archive has a hole for that interval" — mirroring
+  `GapPersister`/`CaptureGapEntity`'s own shape but on the sample-accurate timeline, since a
+  hole is defined by which audio failed to archive, not by wall-clock detection time.
+  `SessionEntity` gains `archiveState` (`null`/`"KEPT"`/`"REMOVED"`) and
+  `archiveRemovedAtMillis` (schema v12, migration tested through both `MigrationTestHelper` and
+  the real `OrtDatabase.create()` connection-based open path per register R-885's own protocol).
+- **`ArchivePruner`** (new): `collectArchiveSessionSummaries` (oldest-`KEPT`-first, mirroring
+  `collectSessionStorageSummaries`'s shape for the separate `archive/` directory),
+  `archiveSessionStates` (the per-session read API: `NONE`/`KEPT`/`REMOVED` plus a
+  `resegmentable` flag, `true` only while `KEPT`), and `pruneArchiveIfOverBudget` — deletes the
+  oldest `KEPT` archive directories until under budget, marks each pruned session `REMOVED` with
+  the real wall-clock moment *before* deleting its directory (so an interrupted run at worst
+  leaves a `REMOVED` row whose directory still exists, never the reverse), and **never** touches
+  `audio/<sessionId>`. Unconditional once the archive budget is reached — not gated by
+  `SettingsStore.autoPruneEnabled`, which per R-1037/D40 never governs any over-audio deletion
+  (none was ever wired) and is left unchanged in shape only so an already-persisted value is not
+  discarded; see that field's expanded kdoc in `SettingsStore.kt`.
+- **`ArchiveSettingsStore`** (new, `:pipeline`) and matching `archiveEnabled`/`archiveBudgetGb`
+  fields on `:app`'s `SettingsStore`: independent of the over-audio budget, defaulting **on** at
+  **60 GB** (D39). Two store types over the *same* `SharedPreferences` file/keys — `:pipeline`
+  cannot depend on `:app` (module graph) — the identical shared-file pattern
+  `CaptureConfigurationStore` already established.
+- **`StorageAccounting`** gains `archiveBytes` (measured, excluded from `totalBytes` — reported
+  on its own, the same treatment `bundledBytes` gets) and `overAudioBudgetState`/
+  `OverAudioBudgetState` — FR-STO-3e/D40/AC-157: a **pure function** of measured usage and the
+  persisted budget, computed fresh on every read, so "exceeded" is never a fired-once event and
+  is provably still true after a simulated process restart.
+- **`StorageForecast`** gains `ArchiveWriteRateForecast` (FR-STO-3f, being drafted): the
+  archive's *measured* bytes/hour and bytes/month, distinct from D39's own static ~15 GB/month
+  estimate — a caller can label the number "measured" only once this object actually reports
+  `State.Measured`.
+- **`RealCaptureService`** wiring: a new `Dependencies.archiveSettingsStore` seam; at session
+  start, if enabled, builds `ContinuousArchiveWriter`+`ContinuousArchiveAttachment` under
+  `archive/<sessionId>`; on every `CaptureEvent.Frames`, offers the frame at
+  `Segmenter.position()`'s pre-feed value (never blocking, over audio unaffected either way); on
+  the shed tick, updates `ArchiveWriteRateForecast` and calls `pruneArchiveIfOverBudget`; at
+  session end (`endSessionRow`), awaits `finishAndAwait()` and marks `archiveState = KEPT` only
+  if at least one chunk actually persisted.
+
+**Verified:**
+- `:capture-android:testDebugUnitTest`, `:pipeline:testDebugUnitTest`, `:data:test`,
+  `:app:testDebugUnitTest --tests 'org.ort.app.ui.settings.*'` — all green.
+- `./gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  — **BUILD SUCCESSFUL in 12m 36s** (1109 actionable tasks), including `:app:test` (full
+  instrumented-equivalent Robolectric suite) and `verifySherpaNativeLibrariesPackaged`.
+- `./gradlew -p buildSrc test` — green (unchanged; buildSrc not touched).
+- `python tools/spec-check/spec_check.py` — all 8 checks pass (spec files untouched by this
+  change).
+- Every new/changed behaviour proven to discriminate (revert → fail → restore → pass), pasted in
+  full in this session's report: `ContinuousArchiveAttachment`'s three tests (bounding the
+  channel to capacity 1 makes all three fail on real data loss, not a contrived assertion),
+  `overAudioBudgetState`'s exact-boundary test (`>` → `>=` flips it), and
+  `RealCaptureServiceArchiveTest`'s archive-on case (removing the one `offer()` call in the
+  frame handler makes it fail).
+- `coverageMatrixCheck` — reports the committed matrix as stale (264 vs. 260 covered; this
+  builder does not own `results/**` and did not regenerate/commit it — left to the session lead).
+
+**Left open / not done:**
+- `FR-STO-3e`/`D40`/`FR-STO-3f` are cited in this commit's tests ahead of their spec merge
+  (register amendment mid-session) — `coverageMatrixCheck` will need a re-run once that lands,
+  and `results/coverage-matrix.md` needs regenerating by whoever owns `results/**`.
+- No UI in this change, per the brief — `archiveEnabled`/`archiveBudgetGb`, the per-session
+  archive state, the measured archive rate and the over-audio warning are all exposed as read
+  APIs for a later Recordings/Settings-Storage prompt to consume; none is rendered yet.
+- Real overnight storage growth against the stated ~58–69 MB/hour estimate is device evidence
+  this session could not produce (Robolectric/JVM only).
+- No migration exercises a *pre-existing* `archive/` directory from before this schema version
+  (there is none — the archive did not exist before this commit).
+
 ## 2026-09-12 (spec3: D40 — the over-audio budget warns and never deletes; FR-STO-3f — the archive's default-on state and rate must be disclosed)
 
 ### 7fe87105 — spec3 follow-up: FR-STO-3e's persistent warning is tied to the two surfaces the operator actually sees — the capture status surface and the live/transport bar's own state label — not merely "reachable"

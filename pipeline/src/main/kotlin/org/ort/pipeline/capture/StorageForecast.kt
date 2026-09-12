@@ -102,3 +102,53 @@ public object StorageForecast {
         state = State.NotYetMeasured(0L, 0L)
     }
 }
+
+/**
+ * WPARC (FR-STO-3f, being drafted; D39, constitution VI "no number without its provenance"):
+ * D39's own "~15 GB per month" figure is a documented **estimate** (a fixed 8-hour night, "nightly
+ * use") — not a measurement. Once a real session has actually run the archive for a measurable
+ * stretch, the *measured* rate this object exposes is what FR-STO-3f will want to show instead,
+ * labelled as measured rather than estimated (constitution VI: never present an estimate as if it
+ * were a measurement, and never the reverse). Same caller-driven `update`-on-tick pattern
+ * [StorageForecast] itself uses, sampled from the same shed tick (`RealCaptureService`'s own
+ * `bytesWrittenThisSession`/`sessionElapsedMillis`, computed against the *archive* directory
+ * rather than `audio/`).
+ */
+public object ArchiveWriteRateForecast {
+
+    public sealed interface State {
+        /** Nothing has been measured yet this session — D39's static ~15 GB/month figure is the
+         * only thing a caller has to show, and it must label it as an estimate, never as this
+         * object's own measured fact. */
+        public data object NotYetMeasured : State
+
+        public data class Measured(public val bytesPerHour: Double, public val bytesPerMonth: Double) : State
+    }
+
+    @Volatile
+    public var state: State = State.NotYetMeasured
+        private set
+
+    public fun update(bytesWrittenThisSession: Long, sessionElapsedMillis: Long) {
+        state = if (sessionElapsedMillis <= 0L || bytesWrittenThisSession <= 0L) {
+            State.NotYetMeasured
+        } else {
+            val bytesPerHour = bytesWrittenThisSession.toDouble() / sessionElapsedMillis.toDouble() * MILLIS_PER_HOUR
+            State.Measured(bytesPerHour, bytesPerHour * HOURS_PER_MONTH)
+        }
+    }
+
+    /** Direct setter for the scenario simulator and tests. */
+    public fun set(newState: State) {
+        state = newState
+    }
+
+    public fun reset() {
+        state = State.NotYetMeasured
+    }
+
+    private const val MILLIS_PER_HOUR: Long = 60L * 60 * 1000
+
+    /** 30 days — the same "a month" approximation D39's own ~15 GB/month estimate uses. */
+    private const val HOURS_PER_MONTH: Double = 24.0 * 30
+}
