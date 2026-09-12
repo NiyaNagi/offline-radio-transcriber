@@ -1,10 +1,13 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package org.ort.pipeline.rig
 
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -31,16 +34,28 @@ import org.ort.testing.Requirement
  * kdoc). Neither transport's own reconnect loop is driven by `RigSupervisor` (that is each
  * transport's own responsibility); recovery itself is already proven by `UsbSerialTransportTest`/
  * `BluetoothSppTransportTest` in their own modules, so it is not re-proven here.
+ *
+ * Register R-808 follow-up: both cases run under [kotlinx.coroutines.test.runTest], sharing one
+ * [kotlinx.coroutines.test.TestScope.testScheduler] across every dispatcher involved —
+ * [UsbSerialTransport]/[BluetoothSppTransport] each take a `dispatcher` constructor param
+ * defaulting to real `Dispatchers.Default` (see each class's own kdoc); here it is
+ * [StandardTestDispatcher], the same choice `:rig-usb`'s own `UsbSerialTransportTest` already
+ * makes for this exact class, and [RigSupervisor]'s own `scope` is
+ * [UnconfinedTestDispatcher], matching [RigSupervisorTest]'s fix. `supervisor.disconnect()` is
+ * called inside each test's own `try`/`finally`, before the `runTest` block ends, for the same
+ * reason documented on [RigSupervisorTest] — `UsbSerialTransport`/`BluetoothSppTransport` each run
+ * their own internal reconnect supervisor loop (`while (true)`, never naturally quiescing) that
+ * only stops on `close()` ([RigSupervisor.disconnect] reaches it via `module.disconnect()`); left
+ * running past the end of `runTest`'s own body, `runTest`'s advance-to-idle would spin forever
+ * trying to reach a state that loop was never going to produce unassisted.
  */
 class RigSupervisorRealTransportTest {
 
-    private val scope = CoroutineScope(Dispatchers.Default + Job())
     private var supervisor: RigSupervisor? = null
 
     @AfterEach
     fun teardown() {
         supervisor?.disconnect()
-        scope.coroutineContext[Job]?.cancel()
         RigStatus.reset()
     }
 
@@ -70,28 +85,37 @@ class RigSupervisorRealTransportTest {
 
     @Test
     @Requirement("FR-RIG-3", "FR-RIG-7")
-    fun `USB_SERIAL reaches Connected through the real UsbSerialTransport, degrades to Stale on a detach`() =
-        runBlocking {
-            val port = FakeUsbSerialPort()
-            val device = UsbDeviceHandle(vendorId = 0x0483, productId = 0x5740, deviceName = "test-cdc-acm")
-            port.attach(device)
-            port.grantPermission(device)
-            val lineConfig = UsbSerialLineConfig(
-                baudRate = 9_600,
-                dataBits = 8,
-                stopBits = 1,
-                parity = UsbSerialParity.NONE,
-                lineTerminator = '\n',
-            )
-            // generic-ascii-cat's own poll commands (rig/src/main/resources/descriptors/generic-ascii-cat.json).
-            port.scriptReply("FA;", "FA00014230000;", lineConfig = lineConfig)
-            port.scriptReply("MD;", "MD4;", lineConfig = lineConfig)
+    fun `USB_SERIAL reaches Connected through the real UsbSerialTransport, degrades to Stale on a detach`() = runTest {
+        val port = FakeUsbSerialPort()
+        val device = UsbDeviceHandle(vendorId = 0x0483, productId = 0x5740, deviceName = "test-cdc-acm")
+        port.attach(device)
+        port.grantPermission(device)
+        val lineConfig = UsbSerialLineConfig(
+            baudRate = 9_600,
+            dataBits = 8,
+            stopBits = 1,
+            parity = UsbSerialParity.NONE,
+            lineTerminator = '\n',
+        )
+        // generic-ascii-cat's own poll commands (rig/src/main/resources/descriptors/generic-ascii-cat.json).
+        port.scriptReply("FA;", "FA00014230000;", lineConfig = lineConfig)
+        port.scriptReply("MD;", "MD4;", lineConfig = lineConfig)
 
-            val factory = RigTransportFactory { _, _, _ ->
-                UsbSerialTransport(device.vendorId, device.productId, lineConfig, port)
-            }
-            val rigSupervisor = RigSupervisor(factory, scope)
-            supervisor = rigSupervisor
+        val factory = RigTransportFactory { _, _, _ ->
+            UsbSerialTransport(
+                device.vendorId,
+                device.productId,
+                lineConfig,
+                port,
+                dispatcher = StandardTestDispatcher(testScheduler),
+            )
+        }
+        val rigSupervisor = RigSupervisor(
+            factory,
+            CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
+        )
+        supervisor = rigSupervisor
+        try {
             rigSupervisor.connect(
                 CaptureConfiguration(
                     mode = CaptureMode.USB_RADIO,
@@ -110,12 +134,15 @@ class RigSupervisorRealTransportTest {
 
             val stale = awaitStale()
             assertEquals(RigTransportKind.USB_SERIAL, stale.lastKnown.transportKind)
+        } finally {
+            rigSupervisor.disconnect()
         }
+    }
 
     @Test
     @Requirement("FR-RIG-14", "FR-RIG-15")
     fun `BLUETOOTH_SPP reaches Connected through the real BluetoothSppTransport, degrades to Stale on a drop`() =
-        runBlocking {
+        runTest {
             val link = FakeBluetoothLink()
             val address = "AA:BB:CC:DD:EE:FF"
             link.pair(address, "Test Radio", SppSupport.YES)
@@ -123,26 +150,35 @@ class RigSupervisorRealTransportTest {
             link.scriptReply("FA;", "FA00014230000;", terminator = terminator)
             link.scriptReply("MD;", "MD4;", terminator = terminator)
 
-            val factory = RigTransportFactory { _, _, _ -> BluetoothSppTransport(address, link, terminator) }
-            val rigSupervisor = RigSupervisor(factory, scope)
-            supervisor = rigSupervisor
-            rigSupervisor.connect(
-                CaptureConfiguration(
-                    mode = CaptureMode.BLUETOOTH_RADIO,
-                    selectedInputId = null,
-                    rigId = "generic-ascii-cat",
-                    rigTransportKind = RigTransportKind.BLUETOOTH_SPP,
-                ),
+            val factory = RigTransportFactory { _, _, _ ->
+                BluetoothSppTransport(address, link, terminator, dispatcher = StandardTestDispatcher(testScheduler))
+            }
+            val rigSupervisor = RigSupervisor(
+                factory,
+                CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
             )
+            supervisor = rigSupervisor
+            try {
+                rigSupervisor.connect(
+                    CaptureConfiguration(
+                        mode = CaptureMode.BLUETOOTH_RADIO,
+                        selectedInputId = null,
+                        rigId = "generic-ascii-cat",
+                        rigTransportKind = RigTransportKind.BLUETOOTH_SPP,
+                    ),
+                )
 
-            val connected = awaitConnected()
-            assertEquals(RigTransportKind.BLUETOOTH_SPP, connected.transportKind)
-            assertEquals("generic-ascii-cat", connected.descriptorId)
-            assertEquals(14_230_000L, connected.bands.first().frequencyHz)
+                val connected = awaitConnected()
+                assertEquals(RigTransportKind.BLUETOOTH_SPP, connected.transportKind)
+                assertEquals("generic-ascii-cat", connected.descriptorId)
+                assertEquals(14_230_000L, connected.bands.first().frequencyHz)
 
-            link.drop()
+                link.drop()
 
-            val stale = awaitStale()
-            assertEquals(RigTransportKind.BLUETOOTH_SPP, stale.lastKnown.transportKind)
+                val stale = awaitStale()
+                assertEquals(RigTransportKind.BLUETOOTH_SPP, stale.lastKnown.transportKind)
+            } finally {
+                rigSupervisor.disconnect()
+            }
         }
 }

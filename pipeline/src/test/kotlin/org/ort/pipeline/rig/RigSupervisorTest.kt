@@ -1,10 +1,15 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package org.ort.pipeline.rig
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -29,6 +34,14 @@ import org.ort.testing.Requirement
 import org.ort.testing.TestClock
 
 private const val TEST_RIG_ID = "test-rig"
+
+/** Register R-808 follow-up: a fresh [CoroutineScope] on [UnconfinedTestDispatcher], tied to this
+ * [TestScope]'s own [TestScope.testScheduler] -- the scope every converted case below passes to
+ * [RigSupervisorTest.newSupervisor] explicitly, so both [RigSupervisor]'s own `observeJob` and the
+ * [org.ort.rig.descriptor.DescriptorRigModule] it builds internally share one deterministic
+ * virtual clock with the test body itself. */
+private fun TestScope.freshUnconfinedScope(): CoroutineScope =
+    CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler))
 
 private fun testDescriptor(): RigDescriptor = RigDescriptor(
     schemaVersion = 1,
@@ -62,6 +75,33 @@ private fun dualBandTestDescriptor(): RigDescriptor = RigDescriptor(
 /**
  * FR-RIG-2/6/7/8/9/13/15, E2-B09's session half, E2-D08: [RigSupervisor] against a real
  * [org.ort.rig.descriptor.DescriptorRigModule] over [FakeRigTransport].
+ *
+ * Register R-808 follow-up: every case that awaits an async [RigStatus] update
+ * (`awaitBandSquelch`/`awaitConnected`/`awaitStale`, all real `withTimeout` + `delay(10)` polling
+ * loops) now runs under [kotlinx.coroutines.test.runTest] with its own [RigSupervisor] built on
+ * [UnconfinedTestDispatcher] tied to that test's own
+ * [kotlinx.coroutines.test.TestScope.testScheduler] — passed to [newSupervisor]'s [scope]
+ * parameter explicitly, never the class-level [scope] field, since `testScheduler` only exists
+ * inside a `runTest` block. `RigSupervisor` forwards that same scope straight through to the
+ * [org.ort.rig.descriptor.DescriptorRigModule] it builds internally (see [RigSupervisor.connect]'s
+ * own `scope` argument) and to its own `observeJob`, so one shared virtual clock now drives every
+ * coroutine on both sides — exactly the fix already proven out in `:rig`'s own
+ * `DescriptorRigModuleTest`/`ThD75aDescriptorTest`/`GenericAsciiCatDescriptorTest` (register
+ * R-808/R-808b). The four cases that never await anything async at all (`FR_RIG_2`, "an unknown
+ * rig id...", `FR_RIG_8`, `FR_RIG_9` — each asserts [RigStatus]/[frequencyForTransmission]
+ * immediately after a synchronous `connect()` call with no polling loop in between) carried no
+ * real-time race to begin with and are left exactly as they were, still on the class-level
+ * real-dispatcher [scope] (harmless, since nothing in them ever waits).
+ *
+ * **Every converted case now calls `supervisor.disconnect()` itself, inside its own `try`/
+ * `finally`, before its `runTest` block ends** — found the hard way: `readJob`/`pollJob` are
+ * `while (true)` loops that never naturally quiesce, and `runTest` requires every coroutine
+ * sharing its `testScheduler` to reach that state before the test can finish; relying on the
+ * class-level `@AfterEach` [teardown] alone (which runs *after* `runTest`'s own body returns, too
+ * late) made `runTest`'s own advance-to-idle spin forever trying to reach a state the still-live
+ * `readJob` was never going to produce on its own — a real, reproducible hang, not a timeout.
+ * [teardown] still runs afterwards too, harmlessly idempotent on an already-disconnected
+ * supervisor, as a backstop for the four plain (non-`runTest`) cases above.
  */
 class RigSupervisorTest {
 
@@ -79,6 +119,7 @@ class RigSupervisorTest {
         transport: FakeRigTransport,
         descriptor: RigDescriptor = testDescriptor(),
         clock: Clock = SystemClock,
+        scope: CoroutineScope = this.scope,
     ): RigSupervisor {
         val s = RigSupervisor(
             transportFactory = RigTransportFactory { _, _, _ -> transport },
@@ -144,25 +185,29 @@ class RigSupervisorTest {
 
     @Test
     @Requirement("FR-RIG-1")
-    fun `WPC2_connected carries the transport kind and descriptor id`() = runBlocking {
+    fun `WPC2_connected carries the transport kind and descriptor id`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FQ", "FQ0014250000")
-        val supervisor = newSupervisor(transport)
-        supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+        val supervisor = newSupervisor(transport, scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
 
-        val connected = awaitConnected()
-        assertEquals(RigTransportKind.USB_SERIAL, connected.transportKind)
-        assertEquals(TEST_RIG_ID, connected.descriptorId)
-        assertEquals(14_250_000L, connected.bands.first().frequencyHz)
+            val connected = awaitConnected()
+            assertEquals(RigTransportKind.USB_SERIAL, connected.transportKind)
+            assertEquals(TEST_RIG_ID, connected.descriptorId)
+            assertEquals(14_250_000L, connected.bands.first().frequencyHz)
+        } finally {
+            supervisor.disconnect()
+        }
     }
 
     @Test
     @Requirement("FR-RIG-7", "FR-RIG-15")
-    fun `FR_RIG_7 a dropped transport degrades to Stale, carrying the last known transport and descriptor`() =
-        runBlocking {
-            val transport = FakeRigTransport()
-            transport.scriptReply("FQ", "FQ0014250000")
-            val supervisor = newSupervisor(transport)
+    fun `FR_RIG_7 a dropped transport degrades to Stale, carrying the last known transport and descriptor`() = runTest {
+        val transport = FakeRigTransport()
+        transport.scriptReply("FQ", "FQ0014250000")
+        val supervisor = newSupervisor(transport, scope = freshUnconfinedScope())
+        try {
             supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
             awaitConnected()
 
@@ -172,25 +217,32 @@ class RigSupervisorTest {
             assertEquals(RigTransportKind.USB_SERIAL, stale.lastKnown.transportKind)
             assertEquals(TEST_RIG_ID, stale.lastKnown.descriptorId)
             assertEquals(14_250_000L, stale.lastKnown.bands.first().frequencyHz, "the value is carried forward")
+        } finally {
+            supervisor.disconnect()
         }
+    }
 
     @Test
     @Requirement("FR-RIG-15")
-    fun `FR_RIG_15 a Bluetooth rig drop degrades exactly as a USB drop does`() = runBlocking {
+    fun `FR_RIG_15 a Bluetooth rig drop degrades exactly as a USB drop does`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FQ", "FQ0014250000")
-        val supervisor = newSupervisor(transport)
-        supervisor.connect(connectedConfig(RigTransportKind.BLUETOOTH_SPP))
-        val connected = awaitConnected()
-        assertEquals(RigTransportKind.BLUETOOTH_SPP, connected.transportKind)
+        val supervisor = newSupervisor(transport, scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.BLUETOOTH_SPP))
+            val connected = awaitConnected()
+            assertEquals(RigTransportKind.BLUETOOTH_SPP, connected.transportKind)
 
-        transport.dropMidStream("link lost")
-        val stale = awaitStale()
-        assertEquals(RigTransportKind.BLUETOOTH_SPP, stale.lastKnown.transportKind)
-        // Reconnection is the transport's own responsibility, not RigSupervisor's (see its class
-        // kdoc) -- FakeRigTransport has no self-healing loop of its own, so this bare fake
-        // legitimately stays Stale here. RigSupervisorRealTransportTest proves the actual
-        // recovery path against UsbSerialTransport/BluetoothSppTransport's own fakes, which do.
+            transport.dropMidStream("link lost")
+            val stale = awaitStale()
+            assertEquals(RigTransportKind.BLUETOOTH_SPP, stale.lastKnown.transportKind)
+            // Reconnection is the transport's own responsibility, not RigSupervisor's (see its
+            // class kdoc) -- FakeRigTransport has no self-healing loop of its own, so this bare
+            // fake legitimately stays Stale here. RigSupervisorRealTransportTest proves the actual
+            // recovery path against UsbSerialTransport/BluetoothSppTransport's own fakes, which do.
+        } finally {
+            supervisor.disconnect()
+        }
     }
 
     @Test
@@ -217,26 +269,34 @@ class RigSupervisorTest {
 
     @Test
     @Requirement("FR-RIG-6", "FR-RIG-9")
-    fun `FR_RIG_6 a rig reading in force at transmission start is reported with provenance rig`() = runBlocking {
+    fun `FR_RIG_6 a rig reading in force at transmission start is reported with provenance rig`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FQ", "FQ0014250000")
-        val supervisor = newSupervisor(transport)
-        supervisor.connect(connectedConfig())
-        awaitConnected()
+        val supervisor = newSupervisor(transport, scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig())
+            awaitConnected()
 
-        // A generous window: the transmission "started" well before this reading and "ends" well
-        // after it, so the reading is unambiguously in force throughout.
-        val reading = supervisor.frequencyForTransmission(band = null, startNanos = 0L, endNanos = Long.MAX_VALUE / 2)
-        assertEquals(14_250_000L, reading.frequencyHz)
-        assertEquals(FrequencyProvenance.RIG, reading.provenance)
+            // A generous window: the transmission "started" well before this reading and "ends"
+            // well after it, so the reading is unambiguously in force throughout.
+            val reading = supervisor.frequencyForTransmission(
+                band = null,
+                startNanos = 0L,
+                endNanos = Long.MAX_VALUE / 2,
+            )
+            assertEquals(14_250_000L, reading.frequencyHz)
+            assertEquals(FrequencyProvenance.RIG, reading.provenance)
+        } finally {
+            supervisor.disconnect()
+        }
     }
 
     @Test
     @Requirement("FR-RIG-15")
-    fun `disconnect returns to Absent and stops republishing`() = runBlocking {
+    fun `disconnect returns to Absent and stops republishing`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FQ", "FQ0014250000")
-        val supervisor = newSupervisor(transport)
+        val supervisor = newSupervisor(transport, scope = freshUnconfinedScope())
         supervisor.connect(connectedConfig())
         awaitConnected()
 
@@ -248,92 +308,122 @@ class RigSupervisorTest {
 
     @Test
     @Requirement("D23")
-    fun `D23 exactly one band open is reported unambiguously`() = runBlocking {
+    fun `D23 exactly one band open is reported unambiguously`() = runTest {
         val transport = FakeRigTransport()
-        val supervisor = newSupervisor(transport, descriptor = dualBandTestDescriptor())
-        supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+        val supervisor = newSupervisor(transport, descriptor = dualBandTestDescriptor(), scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
 
-        transport.pushUnsolicited("BY 0,1")
-        awaitBandSquelch("A", true)
+            transport.pushUnsolicited("BY 0,1")
+            awaitBandSquelch("A", true)
 
-        val result = supervisor.bandAtTransmissionStart(startNanos = Long.MAX_VALUE / 2)
-        assertEquals(RigBand.A, result.band)
-        assertEquals(false, result.ambiguous)
+            val result = supervisor.bandAtTransmissionStart(startNanos = Long.MAX_VALUE / 2)
+            assertEquals(RigBand.A, result.band)
+            assertEquals(false, result.ambiguous)
+        } finally {
+            supervisor.disconnect()
+        }
     }
 
     @Test
     @Requirement("D23")
-    fun `D23 neither band open reports NONE, never a guessed band`() = runBlocking {
+    fun `D23 neither band open reports NONE, never a guessed band`() = runTest {
         val transport = FakeRigTransport()
-        val supervisor = newSupervisor(transport, descriptor = dualBandTestDescriptor())
-        supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+        val supervisor = newSupervisor(transport, descriptor = dualBandTestDescriptor(), scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
 
-        val result = supervisor.bandAtTransmissionStart(startNanos = Long.MAX_VALUE / 2)
-        assertEquals(BandAtStart.NONE, result)
+            val result = supervisor.bandAtTransmissionStart(startNanos = Long.MAX_VALUE / 2)
+            assertEquals(BandAtStart.NONE, result)
+        } finally {
+            supervisor.disconnect()
+        }
     }
 
     @Test
     @Requirement("D23")
-    fun `D23 both bands open resolves to whichever opened first, flagged ambiguous`() = runBlocking {
+    fun `D23 both bands open resolves to whichever opened first, flagged ambiguous`() = runTest {
         val transport = FakeRigTransport()
         val clock = TestClock(startMonotonicNanos = 1_000_000_000L)
-        val supervisor = newSupervisor(transport, descriptor = dualBandTestDescriptor(), clock = clock)
-        supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+        val supervisor = newSupervisor(
+            transport,
+            descriptor = dualBandTestDescriptor(),
+            clock = clock,
+            scope = freshUnconfinedScope(),
+        )
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
 
-        // Band A opens first...
-        transport.pushUnsolicited("BY 0,1")
-        awaitBandSquelch("A", true)
+            // Band A opens first...
+            transport.pushUnsolicited("BY 0,1")
+            awaitBandSquelch("A", true)
 
-        // ...then band B opens later.
-        clock.advanceNanos(500)
-        transport.pushUnsolicited("BY 1,1")
-        awaitBandSquelch("B", true)
+            // ...then band B opens later.
+            clock.advanceNanos(500)
+            transport.pushUnsolicited("BY 1,1")
+            awaitBandSquelch("B", true)
 
-        val result = supervisor.bandAtTransmissionStart(startNanos = Long.MAX_VALUE / 2)
-        assertEquals(RigBand.A, result.band, "band A opened first, so it wins the ambiguity")
-        assertEquals(true, result.ambiguous)
+            val result = supervisor.bandAtTransmissionStart(startNanos = Long.MAX_VALUE / 2)
+            assertEquals(RigBand.A, result.band, "band A opened first, so it wins the ambiguity")
+            assertEquals(true, result.ambiguous)
+        } finally {
+            supervisor.disconnect()
+        }
     }
 
     @Test
     @Requirement("D23")
-    fun `D23 a single-band rig never reports a band, preserving pre-existing behaviour`() = runBlocking {
+    fun `D23 a single-band rig never reports a band, preserving pre-existing behaviour`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FQ", "FQ0014250000")
-        val supervisor = newSupervisor(transport)
-        supervisor.connect(connectedConfig())
-        awaitConnected()
+        val supervisor = newSupervisor(transport, scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig())
+            awaitConnected()
 
-        val result = supervisor.bandAtTransmissionStart(startNanos = Long.MAX_VALUE / 2)
-        assertEquals(BandAtStart.NONE, result)
+            val result = supervisor.bandAtTransmissionStart(startNanos = Long.MAX_VALUE / 2)
+            assertEquals(BandAtStart.NONE, result)
+        } finally {
+            supervisor.disconnect()
+        }
     }
 
     // F9 (WPC3): RigStatus.State.Stale's ladder-position fields.
 
     @Test
     @Requirement("F9")
-    fun `F9 a fresh drop reports the first attempt with the real ladder's own first-step delay`() = runBlocking {
+    fun `F9 a fresh drop reports the first attempt with the real ladder's own first-step delay`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FQ", "FQ0014250000")
-        val supervisor = newSupervisor(transport, descriptor = testDescriptor())
-        supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
-        awaitConnected()
+        val supervisor = newSupervisor(transport, descriptor = testDescriptor(), scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+            awaitConnected()
 
-        transport.dropMidStream("cable pulled")
+            transport.dropMidStream("cable pulled")
 
-        val stale = awaitStale()
-        assertEquals(1, stale.attempt)
-        assertEquals(5, stale.ofTotal)
-        assertEquals(UsbReconnectBackoff.delayMillisFor(1), stale.nextRetryInMillis)
+            val stale = awaitStale()
+            assertEquals(1, stale.attempt)
+            assertEquals(5, stale.ofTotal)
+            assertEquals(UsbReconnectBackoff.delayMillisFor(1), stale.nextRetryInMillis)
+        } finally {
+            supervisor.disconnect()
+        }
     }
 
     @Test
     @Requirement("F9")
-    fun `F9 the position advances as real wall time elapses, from the same ladder, never a second timer`() =
-        runBlocking {
-            val transport = FakeRigTransport()
-            transport.scriptReply("FQ", "FQ0014250000")
-            val clock = TestClock(startMonotonicNanos = 1_000_000_000L)
-            val supervisor = newSupervisor(transport, descriptor = testDescriptor(), clock = clock)
+    fun `F9 the position advances as real wall time elapses, from the same ladder, never a second timer`() = runTest {
+        val transport = FakeRigTransport()
+        transport.scriptReply("FQ", "FQ0014250000")
+        val clock = TestClock(startMonotonicNanos = 1_000_000_000L)
+        val supervisor = newSupervisor(
+            transport,
+            descriptor = testDescriptor(),
+            clock = clock,
+            scope = freshUnconfinedScope(),
+        )
+        try {
             supervisor.connect(connectedConfig(RigTransportKind.USB_SERIAL))
             awaitConnected()
 
@@ -342,8 +432,9 @@ class RigSupervisorTest {
             assertEquals(1, first.attempt)
 
             // Exactly UsbReconnectBackoff's own first step (1s) -- a second, distinct Lost
-            // observation (a different reason string forces a new StateFlow emission) reflects
-            // real elapsed time against the same real ladder, never an independently-invented one.
+            // observation (a different reason string forces a new StateFlow emission)
+            // reflects real elapsed time against the same real ladder, never an
+            // independently-invented one.
             clock.advance(1_000)
             transport.dropMidStream("cable pulled again")
             val second = withTimeout(2_000) {
@@ -357,20 +448,27 @@ class RigSupervisorTest {
             assertEquals(2, second.attempt)
             assertEquals(5, second.ofTotal)
             assertEquals(UsbReconnectBackoff.delayMillisFor(2), second.nextRetryInMillis)
+        } finally {
+            supervisor.disconnect()
         }
+    }
 
     @Test
     @Requirement("F9")
-    fun `F9 the Bluetooth ladder is used for a Bluetooth transport, not the USB one`() = runBlocking {
+    fun `F9 the Bluetooth ladder is used for a Bluetooth transport, not the USB one`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FQ", "FQ0014250000")
-        val supervisor = newSupervisor(transport, descriptor = testDescriptor())
-        supervisor.connect(connectedConfig(RigTransportKind.BLUETOOTH_SPP))
-        awaitConnected()
+        val supervisor = newSupervisor(transport, descriptor = testDescriptor(), scope = freshUnconfinedScope())
+        try {
+            supervisor.connect(connectedConfig(RigTransportKind.BLUETOOTH_SPP))
+            awaitConnected()
 
-        transport.dropMidStream("link lost")
+            transport.dropMidStream("link lost")
 
-        val stale = awaitStale()
-        assertEquals(BluetoothReconnectBackoff.delayMillisFor(1), stale.nextRetryInMillis)
+            val stale = awaitStale()
+            assertEquals(BluetoothReconnectBackoff.delayMillisFor(1), stale.nextRetryInMillis)
+        } finally {
+            supervisor.disconnect()
+        }
     }
 }
