@@ -14,7 +14,12 @@
     .m { font-family: 'IBM Plex Mono', monospace; }
     .sec { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
     .over { display: flex; gap: 11px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
-    .when { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250); width: 62px; flex-shrink: 0; padding-top: 1px; }
+    /* R-1023: NOT a fixed width. The first draft specified `width: 62px` and the build
+       reproduced it faithfully, so every timestamp clipped to `13:4(` at font scale 2.0 —
+       a log screen that cannot say when anything happened. A leading column sized in px
+       cannot survive font scaling; this is the third instance of that family (R-880, R-1017).
+       The column sizes to its own content and never shrinks below it. */
+    .when { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250); flex-shrink: 0; white-space: nowrap; padding-top: 1px; }
     .sub { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 3px; }
   </style>
 </helmet>
