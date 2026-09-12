@@ -6,11 +6,10 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
@@ -39,7 +38,6 @@ import org.ort.rig.usb.UsbSerialTransport
 import org.ort.rig.usb.fakes.FakeUsbSerialPort
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
-import java.util.concurrent.Executors
 
 private const val TEST_RIG_ID = "test-rig"
 
@@ -160,56 +158,77 @@ public class RigLinkBridgeTest {
         assertTrue("must name the requested transport: ${failed.reason}", failed.reason.contains("USB_SERIAL"))
     }
 
-    // Register R-808 follow-up: deliberately NOT converted to runTest/UnconfinedTestDispatcher,
-    // unlike the three cases above. This case and the USB detach case below each hold a real
-    // transport (BluetoothSppTransport/UsbSerialTransport) whose own internal reconnect loop runs
-    // genuinely concurrently with this test on a real OS thread -- the whole point of each test is
-    // that real-thread property (a busy-spin-starvation risk here; a genuine connect-vs-detach race
-    // below), which an unconfined test dispatcher's eager, single-threaded interleaving would
-    // either mask or trivially reorder, proving nothing. Both stay on runBlocking with real
-    // dispatchers, exactly as `:rig`'s own busy-spin guard test does for the same reason.
+    /**
+     * Register R-808 close-out (coordinator escalation): this used to hold a real
+     * [BluetoothSppTransport] on a dedicated real OS thread, deliberately isolated from
+     * [DefaultRigLinkBridge]'s own `moduleScope` to dodge [org.ort.rig.descriptor
+     * .DescriptorRigModule]'s `readJob` busy-spinning if both shared one thread. That busy-spin
+     * bug is fixed at its own source now (`readJob` genuinely suspends via `delay` on every null
+     * read — see that class's own kdoc) and is guarded permanently by `:rig`'s own
+     * `DescriptorRigModuleTest`'s `WPC3 the read loop yields even when the transport never opens...`
+     * test, which exercises the exact same `readJob` code path this bridge's module also runs,
+     * against a bare transport that never opens at all — a strictly harder case than a Bluetooth
+     * permission refusal (which fails, and stops retrying that fast, immediately). That test is
+     * the permanent regression guard for the real-thread property; a second one here would only
+     * duplicate it under a different name. This test's own assertion — `NoPermission`, never
+     * `Identified` — is a value/state fact with no real-thread property of its own, so it now runs
+     * on [kotlinx.coroutines.test.runTest] with [BluetoothSppTransport]'s own `dispatcher`
+     * parameter (added for exactly this — see that class's own kdoc) on
+     * [StandardTestDispatcher], the same choice `:rig-bluetooth`'s own `BluetoothSppTransportTest`
+     * already makes for this exact class, and the bridge's `moduleScope` on
+     * [UnconfinedTestDispatcher] — both tied to the same [kotlinx.coroutines.test.TestScope
+     * .testScheduler], so there is exactly one deterministic virtual clock driving both sides.
+     */
     @Test
     @Requirement("FR-CAP-5", "F23")
-    public fun `no Bluetooth permission reports NoPermission, never Identified`() = runBlocking {
+    public fun `no Bluetooth permission reports NoPermission, never Identified`() = runTest {
         val link = FakeBluetoothLink()
         link.denyConnectPermission()
-        // A dedicated OS thread for the transport's own connect-retry loop, isolated from
-        // Dispatchers.Default -- but deliberately NOT shared with DescriptorRigModule's own
-        // moduleScope (left on the production default): DescriptorRigModule's readJob busy-polls
-        // readLine() with no genuine suspension whenever the transport is not Open (a pre-existing
-        // :rig characteristic, not introduced here), which starves a single-threaded dispatcher
-        // outright if both loops share it -- confirmed by reproducing a 100%-deterministic timeout
-        // that way. Dispatchers.Default's multiple worker threads are what make that survivable in
-        // production and in every other test in this suite; the wide timeout below is the honest
-        // cost of depending on that pool's own scheduling under a busy build machine.
-        val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
-        try {
-            val transport = BluetoothSppTransport("AA:BB:CC:DD:EE:FF", link, '\n', dispatcher = dispatcher)
-            val bridge = DefaultRigLinkBridge(
-                context = context,
-                transportFactory = RigTransportFactory { _, _, _ -> transport },
-                catalogue = { id -> if (id == TEST_RIG_ID) pollDescriptor("bluetooth_spp") else null },
-            )
+        val transport = BluetoothSppTransport(
+            "AA:BB:CC:DD:EE:FF",
+            link,
+            '\n',
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val bridge = DefaultRigLinkBridge(
+            context = context,
+            transportFactory = RigTransportFactory { _, _, _ -> transport },
+            catalogue = { id -> if (id == TEST_RIG_ID) pollDescriptor("bluetooth_spp") else null },
+            moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
+        )
 
-            val states = withTimeout(10_000) {
-                val collected = mutableListOf<RigLinkProbeState>()
-                bridge.probe(TEST_RIG_ID, RigTransportKind.BLUETOOTH_SPP, emptyMap()).collect { state ->
-                    collected += state
-                    if (state is RigLinkProbeState.NoPermission || state is RigLinkProbeState.Failed) return@collect
-                }
-                collected
+        val states = withTimeout(2_000) {
+            val collected = mutableListOf<RigLinkProbeState>()
+            bridge.probe(TEST_RIG_ID, RigTransportKind.BLUETOOTH_SPP, emptyMap()).collect { state ->
+                collected += state
+                if (state is RigLinkProbeState.NoPermission || state is RigLinkProbeState.Failed) return@collect
             }
-
-            assertTrue(states.contains(RigLinkProbeState.NoPermission))
-            assertTrue("no permission must never reach Identified", states.none { it is RigLinkProbeState.Identified })
-        } finally {
-            dispatcher.close()
+            collected
         }
+
+        assertTrue(states.contains(RigLinkProbeState.NoPermission))
+        assertTrue("no permission must never reach Identified", states.none { it is RigLinkProbeState.Identified })
     }
 
+    /**
+     * Register R-808 close-out (coordinator escalation): same audit as the Bluetooth permission
+     * case above, same conclusion. The busy-spin property this used to dodge by staying on real
+     * dispatchers is `:rig`'s own fact, already permanently guarded by `DescriptorRigModuleTest`'s
+     * `WPC3 the read loop yields...` test — nothing new to prove here. The "real UsbSerialTransport
+     * connects on its own background coroutine, genuinely concurrently" reasoning for watching
+     * [org.ort.rig.TransportState.Open] before detaching, rather than detaching immediately, is not
+     * itself a real-thread requirement — it is the *correct* sequencing regardless of dispatcher
+     * (detaching before the fake link has actually connected is a different, uninteresting case:
+     * "not found" rather than "detached"), and remains exactly as meaningful and deterministic
+     * under a shared virtual clock as it was on real threads — `:rig-usb`'s own
+     * `UsbSerialTransportTest` already proves detach-during-connect deterministic under
+     * [StandardTestDispatcher] for this identical class. Converted the same way as the Bluetooth
+     * case: [UsbSerialTransport]'s own `dispatcher` on [StandardTestDispatcher], the bridge's
+     * `moduleScope` on [UnconfinedTestDispatcher], one shared `testScheduler`.
+     */
     @Test
     @Requirement("FR-RIG-7", "FR-RIG-15")
-    public fun `a USB detach before any reply lands reports Lost, never Identified`() = runBlocking {
+    public fun `a USB detach before any reply lands reports Lost, never Identified`() = runTest {
         val port = FakeUsbSerialPort()
         val device = UsbDeviceHandle(vendorId = 0x0483, productId = 0x5740, deviceName = "test-cdc-acm")
         port.attach(device)
@@ -222,53 +241,41 @@ public class RigLinkBridgeTest {
             parity = UsbSerialParity.NONE,
             lineTerminator = '\n',
         )
-        // A dedicated OS thread, never shared with Dispatchers.Default -- see the matching comment
-        // on the Bluetooth permission test above for why.
-        val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
-        try {
-            val transport = UsbSerialTransport(
-                device.vendorId,
-                device.productId,
-                lineConfig,
-                port,
-                dispatcher = dispatcher,
-            )
-            val bridge = DefaultRigLinkBridge(
-                context = context,
-                transportFactory = RigTransportFactory { _, _, _ -> transport },
-                catalogue = { id -> if (id == TEST_RIG_ID) pollDescriptor("usb_serial") else null },
-            )
+        val transport = UsbSerialTransport(
+            device.vendorId,
+            device.productId,
+            lineConfig,
+            port,
+            dispatcher = StandardTestDispatcher(testScheduler),
+        )
+        val bridge = DefaultRigLinkBridge(
+            context = context,
+            transportFactory = RigTransportFactory { _, _, _ -> transport },
+            catalogue = { id -> if (id == TEST_RIG_ID) pollDescriptor("usb_serial") else null },
+            moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
+        )
 
-            // The real UsbSerialTransport connects on its own background coroutine, genuinely
-            // concurrently with this test -- detaching the moment this bridge's own `Open` state is
-            // observed would race that background connect attempt (observed: it can still be
-            // mid-connectOnce(), so the device would already read as "not found" rather than
-            // detached). Watching the transport's own state directly for the real Open transition
-            // is the deterministic signal; this test holds the transport instance precisely so it can.
-            // moduleScope stays on the production default (Dispatchers.Default) -- see the matching
-            // comment on the Bluetooth permission test above for why it must not share this test's
-            // own single-thread transport dispatcher.
-            val states = withTimeout(10_000) {
-                coroutineScope {
-                    launch {
-                        transport.state.first { it is org.ort.rig.TransportState.Open }
-                        port.detach(device)
-                    }
-                    val collected = mutableListOf<RigLinkProbeState>()
-                    bridge.probe(TEST_RIG_ID, RigTransportKind.USB_SERIAL, emptyMap()).collect { collected += it }
-                    collected
+        // Detach only once the transport itself has genuinely reached Open -- detaching any
+        // earlier races the fake link's own connect sequence and reads as "not found" rather than
+        // "detached", regardless of which dispatcher drives it (see this test's own kdoc).
+        val states = withTimeout(2_000) {
+            coroutineScope {
+                launch {
+                    transport.state.first { it is org.ort.rig.TransportState.Open }
+                    port.detach(device)
                 }
+                val collected = mutableListOf<RigLinkProbeState>()
+                bridge.probe(TEST_RIG_ID, RigTransportKind.USB_SERIAL, emptyMap()).collect { collected += it }
+                collected
             }
-
-            val lost = states.filterIsInstance<RigLinkProbeState.Lost>().singleOrNull()
-            assertTrue("expected a Lost state, got: $states", lost != null)
-            assertEquals(UsbSerialTransport.Reason.DETACHED, lost!!.reason)
-            assertTrue(
-                "a drop before any reply must never Identify",
-                states.none { it is RigLinkProbeState.Identified },
-            )
-        } finally {
-            dispatcher.close()
         }
+
+        val lost = states.filterIsInstance<RigLinkProbeState.Lost>().singleOrNull()
+        assertTrue("expected a Lost state, got: $states", lost != null)
+        assertEquals(UsbSerialTransport.Reason.DETACHED, lost!!.reason)
+        assertTrue(
+            "a drop before any reply must never Identify",
+            states.none { it is RigLinkProbeState.Identified },
+        )
     }
 }
