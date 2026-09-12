@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPR1: the debug-build field-report session recorder and screen frames)
 
-### pending — WPR1 · FR-OBS-6/FR-OBS-7: the debug-build session recorder (closed event vocabulary, bounded ring buffer) and FR-OBS-7 screen frames (bounded, app-private)
+### a9995b7f — WPR1 · FR-OBS-6/FR-OBS-7: the debug-build session recorder (closed event vocabulary, bounded ring buffer) and FR-OBS-7 screen frames (bounded, app-private)
 
 **Scope:** new `app/src/main/kotlin/org/ort/app/fieldreport/recorder/**` (`RecorderEvent.kt`,
 `RecorderVocabulary.kt`, `FieldReportRecorder.kt`, `ScreenFrameCapturer.kt`, `FrameStore.kt`);
