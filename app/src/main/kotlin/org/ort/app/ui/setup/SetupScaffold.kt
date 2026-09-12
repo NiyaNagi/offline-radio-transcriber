@@ -40,6 +40,16 @@ import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 
 /**
+ * R-1018 (register, device pass 2) / design-guide §10.1: "the 24px under a pinned action block is
+ * breathing room between the last control and the edge of the *safe* area" — a fixed design
+ * constant, not part of [OrtSpacing]'s general rhythm scale (like the guide's own 44px status-bar
+ * band, this is a specific system-inset convention, not a spacing-rhythm token), and distinct from
+ * the ordinary [OrtSpacing.md] gap the bar's own *top* edge still uses (a different concern §10.1
+ * says nothing about).
+ */
+private val BAR_BOTTOM_SAFE_AREA_SPACING = 24.dp
+
+/**
  * R-080 (ui-conformance-plan WP9): the shell every step of the guided sequence shares except
  * [WelcomeScreen] (`Setup-Welcome.dc.html`'s header is the app wordmark, not this step chrome) —
  * the 44dp status-bar inset, a 44dp back target (guide §5), guide §6.10's step indicator, the
@@ -150,8 +160,21 @@ public fun SetupScaffold(
                 // SafeArea.kt`) is applied here, to the bar's own `Column`, so the extra space folds
                 // straight into `barHeightPx` below -- the same measured value the trailing spacer
                 // (R-940, this function's own doc comment) already uses, with no second mechanism.
+                // R-1018 (register, device pass 2): the mechanism itself is correct -- this padding
+                // sits *inside* `safeAreaBottomPadding()`, so the real navigation-bar inset is added
+                // on top of it, never absorbing it (design-guide §10.1's own rule, confirmed
+                // unaffected by this fix) -- the bottom value alone was wrong: `OrtSpacing.md` (12dp)
+                // where the board specifies 24dp of design spacing "between the last control and the
+                // edge of the safe area" (§10.1). The top edge (space above the bar, between it and
+                // the scrollable content) is a different concern §10.1 says nothing about, so it
+                // keeps `OrtSpacing.md` unchanged.
                 modifier = Modifier.fillMaxWidth()
-                    .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md)
+                    .padding(
+                        start = OrtSpacing.lg,
+                        end = OrtSpacing.lg,
+                        top = OrtSpacing.md,
+                        bottom = BAR_BOTTOM_SAFE_AREA_SPACING,
+                    )
                     .safeAreaBottomPadding(),
                 verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
                 content = bottomActions,

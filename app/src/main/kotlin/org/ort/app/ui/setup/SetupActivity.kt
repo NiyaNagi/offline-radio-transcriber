@@ -1067,7 +1067,9 @@ public class SetupActivity : ComponentActivity() {
         }
         RigBluetoothScreen(
             state = RigBluetoothViewState(
-                rigDisplayName = entry?.displayName ?: "the rig",
+                // R-1016 (register): the same manufacturer-prefix strip R-941 (S09b), R-845 (CF06)
+                // and R-903 (S11) already apply, reused rather than a second one written.
+                rigDisplayName = entry?.let { SettingsPolling.stripManufacturerPrefix(it.displayName) } ?: "the rig",
                 devices = rigBluetoothDevices,
                 selectedAddress = rigBluetoothSelectedAddress,
                 linkState = rigLinkState,
