@@ -1,6 +1,11 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package org.ort.rig.descriptor
 
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.ort.rig.RigCapability
@@ -22,7 +27,7 @@ class GenericAsciiCatDescriptorTest {
     }
 
     @Test
-    fun `FA and MD poll replies are parsed, mode translated through the lookup table`() = runBlocking {
+    fun `FA and MD poll replies are parsed, mode translated through the lookup table`() = runTest {
         val transport = FakeRigTransport()
         transport.scriptReply("FA;", "FA00014250000;")
         transport.scriptReply("MD;", "MD2;")
@@ -30,6 +35,7 @@ class GenericAsciiCatDescriptorTest {
             BundledDescriptors.genericAsciiCat(),
             { _, _, _ -> transport },
             readTimeoutMs = 60,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())

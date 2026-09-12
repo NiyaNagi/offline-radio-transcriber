@@ -1,8 +1,13 @@
+@file:OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+
 package org.ort.rig.descriptor
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -49,12 +54,13 @@ class ThD75aDescriptorTest {
     }
 
     @Test
-    fun `both bands report their own frequency from AI push lines`() = runBlocking {
+    fun `both bands report their own frequency from AI push lines`() = runTest {
         val transport = FakeRigTransport()
         val module = DescriptorRigModule(
             BundledDescriptors.kenwoodThD75a(),
             { _, _, _ -> transport },
             readTimeoutMs = 60,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
@@ -78,12 +84,13 @@ class ThD75aDescriptorTest {
     }
 
     @Test
-    fun `D23 a BY change on band B attributes squelch to B, not A`() = runBlocking {
+    fun `D23 a BY change on band B attributes squelch to B, not A`() = runTest {
         val transport = FakeRigTransport()
         val module = DescriptorRigModule(
             BundledDescriptors.kenwoodThD75a(),
             { _, _, _ -> transport },
             readTimeoutMs = 60,
+            scope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
         try {
             module.connect(RigTransportKind.USB_SERIAL, emptyMap())
