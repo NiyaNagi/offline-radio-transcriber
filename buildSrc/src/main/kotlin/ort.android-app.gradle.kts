@@ -1,4 +1,5 @@
 import com.android.build.gradle.internal.dsl.BaseAppModuleExtension
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.ort.gradle.BundledAssetManifest
 import org.ort.gradle.FetchBundledAssetsTask
@@ -262,6 +263,28 @@ tasks.matching { task ->
         !task.name.contains("AndroidTest")
 }.configureEach {
     mustRunAfter(fetchBundledAssets)
+}
+
+// CI regression (register, 2026-09-11, release run 34664670909): Robolectric's own
+// `Asset$_CompressedAsset.getBuffer` inflates a compressed APK asset entirely into the test JVM's
+// heap the moment a test reads it — and now that `mergeDebugAssets` (above) guarantees the real,
+// 555 MB `LLM_GEMMA3_1B` asset is actually present for `:app:testDebugUnitTest` to read, any test
+// that copies it through the real `AndroidBundledAssetSource` (not the fixture source) forces that
+// entire inflation, which the JVM test worker's default heap cannot hold — `OutOfMemoryError: Java
+// heap space` killed the release workflow's unit-test job. Raising `org.gradle.jvmargs` (the
+// *daemon's* heap, R-807c) does not help here: `Test` tasks fork their own worker JVM with its own,
+// separate heap, sized by `maxHeapSize`, not the daemon's. Set explicitly rather than left at
+// Gradle's default (512m), which is what OOM'd.
+//
+// The alternative deliberately not taken: `androidResources.noCompress` for `.task`/`.onnx` would
+// let Robolectric (and the real Android runtime) map the asset file instead of inflating it, since
+// an uncompressed APK entry can be read directly rather than decompressed into memory — but AAPT2
+// already compresses these binary, already-dense model formats poorly, so marking them
+// non-compressed would grow the shipped APK from the measured ~611 MB (results/e2e-audit/
+// installed-size.md, R18) to an estimated ~724 MB — a real, permanent cost to every install for a
+// test-JVM-only problem. Documented here as an option, not applied.
+tasks.withType<Test>().configureEach {
+    maxHeapSize = "3g"
 }
 
 // P13: `testBuildType` above only redirects the `test`/`check` task *aliases* — `build`'s own
