@@ -692,6 +692,17 @@ public class RealCaptureService : Service() {
      * configuration, so a setting changed mid-session never alters a session already running.
      * `null` when the archive is off — every caller of [archiveAttachment] already treats that as
      * "do nothing" (`?.offer`, `?.finishAndAwait`).
+     *
+     * **Register R-1038**: [ARCHIVE_QUEUE_CAPACITY] is passed explicitly, stated here rather than
+     * left to [ContinuousArchiveAttachment]'s own default, so the derivation this class's real
+     * frame cadence justifies is visible at the one call site that actually knows that cadence
+     * ([AudioRecordSource.DEFAULT_READ_BUFFER_FRAMES] at [FrameSpec.SAMPLE_RATE]) — see
+     * [ContinuousArchiveAttachment.DEFAULT_CAPACITY]'s own kdoc for the arithmetic (it computes
+     * the identical value; this is not a second, independent number). An overflow — the queue
+     * genuinely full, meaning the writer has stalled rather than merely run slow — drops the
+     * frame and records the dropped span as an [org.ort.capture.android.archive.ArchiveHole] via
+     * the same [ArchiveGapPersister] a verification failure uses, coalesced into one row per span
+     * rather than one per dropped frame.
      */
     private fun buildArchiveAttachment(db: OrtDatabase): ContinuousArchiveAttachment? {
         if (!dependencies.archiveSettingsStore(applicationContext).archiveEnabled) return null
@@ -707,6 +718,10 @@ public class RealCaptureService : Service() {
             onFailure = { start, count, reason ->
                 scope.launch { gapPersister.persistFailure(sessionId, start, count, reason) }
             },
+            onOverflow = { start, count ->
+                scope.launch { gapPersister.persistFailure(sessionId, start, count, ARCHIVE_OVERFLOW_REASON) }
+            },
+            capacity = ARCHIVE_QUEUE_CAPACITY,
         )
     }
 
@@ -1397,6 +1412,17 @@ public class RealCaptureService : Service() {
         /** WPARC: matches `SettingsPolling`'s own `it * 1_000_000_000L` (decimal GB, not GiB) —
          * the unit [org.ort.pipeline.capture.ArchiveSettingsStore.archiveBudgetGb] is stated in. */
         private const val BYTES_PER_GB: Long = 1_000_000_000L
+
+        /** Register R-1038 — see [buildArchiveAttachment]'s own kdoc and
+         * [ContinuousArchiveAttachment.DEFAULT_CAPACITY]'s for the derivation. Ten seconds of
+         * this session's own real frame cadence: [FrameSpec.SAMPLE_RATE] /
+         * [AudioRecordSource.DEFAULT_READ_BUFFER_FRAMES] messages per second. */
+        internal const val ARCHIVE_QUEUE_CAPACITY: Int = ContinuousArchiveAttachment.ARCHIVE_QUEUE_BOUND_SECONDS *
+            (FrameSpec.SAMPLE_RATE / AudioRecordSource.DEFAULT_READ_BUFFER_FRAMES)
+
+        /** Register R-1038: [ArchiveGapPersister]'s closed-vocabulary reason for a dropped span —
+         * the queue was genuinely full (the writer stalled), never a caught exception's message. */
+        internal const val ARCHIVE_OVERFLOW_REASON: String = "archive_queue_overflow"
     }
 }
 

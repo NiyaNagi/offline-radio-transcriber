@@ -123,4 +123,42 @@ class ArchivePrunerTest {
         assertEquals(ArchiveState.NONE, state.state)
         assertFalse(state.resegmentable)
     }
+
+    @Test
+    @Requirement("FR-SEG-9", "AC-151", "R-1038")
+    fun `R_1038 a KEPT session with a recorded hole is not resegmentable, honestly`() = runBlocking {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session(id = "S1"))
+        db.sessionDao().setArchiveKept("S1")
+        db.archiveGapDao().insert(
+            org.ort.data.entity.ArchiveGapEntity(
+                id = "AG1",
+                sessionId = "S1",
+                startSample = 0L,
+                sampleCount = 16_000L,
+                reason = "archive_queue_overflow",
+                recordedAtMillis = 0L,
+            ),
+        )
+
+        val state = archiveSessionStates(db).single()
+        assertEquals(ArchiveState.KEPT, state.state)
+        assertTrue(state.hasGaps)
+        assertFalse(
+            "an archive with a recorded hole is present but not complete -- not honestly resegmentable",
+            state.resegmentable,
+        )
+    }
+
+    @Test
+    @Requirement("FR-SEG-9")
+    fun `a KEPT session with no recorded hole is resegmentable`() = runBlocking {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session(id = "S1"))
+        db.sessionDao().setArchiveKept("S1")
+
+        val state = archiveSessionStates(db).single()
+        assertFalse(state.hasGaps)
+        assertTrue(state.resegmentable)
+    }
 }

@@ -24,15 +24,23 @@ public data class ArchiveSessionSummary(
  * (Recordings, the storage screen) consumes. */
 public enum class ArchiveState { NONE, KEPT, REMOVED }
 
-/** FR-SEG-9, AC-151: [resegmentable] is true only while the archive is actually present — a
- * `REMOVED` session's row (and [removedAtMillis]) stays listed, but it can no longer be
- * re-segmented (the archive it would replay is gone, deleted per FR-STO-3d). */
+/**
+ * FR-SEG-9, AC-151, register R-1038: [resegmentable] is true only while the archive is both
+ * present **and** unbroken. `state == REMOVED` (the archive it would replay is gone, deleted per
+ * FR-STO-3d) already made this false; R-1038 adds the other honest reason it can be false while
+ * `state == KEPT` — [hasGaps]: a `KEPT` archive that dropped one or more intervals (an
+ * [org.ort.data.entity.ArchiveGapEntity] row exists for it, whether from a FLAC verification
+ * failure or the R-1038 queue-overflow case) is *present* but not *complete*, and re-segmenting
+ * across a hole would produce boundaries the missing audio can never actually justify —
+ * constitution I: an archive that is only partly there must not read as fully re-segmentable.
+ */
 public data class SessionArchiveState(
     public val sessionId: String,
     public val state: ArchiveState,
     public val removedAtMillis: Long?,
+    public val hasGaps: Boolean,
 ) {
-    public val resegmentable: Boolean get() = state == ArchiveState.KEPT
+    public val resegmentable: Boolean get() = state == ArchiveState.KEPT && !hasGaps
 }
 
 /**
@@ -69,6 +77,7 @@ public suspend fun archiveSessionStates(db: OrtDatabase): List<SessionArchiveSta
                 else -> ArchiveState.NONE
             },
             removedAtMillis = session.archiveRemovedAtMillis,
+            hasGaps = db.archiveGapDao().listBySession(session.id).isNotEmpty(),
         )
     }
 }
