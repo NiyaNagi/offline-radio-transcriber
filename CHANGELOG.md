@@ -97,7 +97,7 @@ its routine use with the audio/voiceprint categories on. `spec/build-plan.md` an
 `docs/reference/audit-and-remediate-prompt.md` are not updated with a build prompt for this work —
 out of this session's scope, which was the amendment only.
 
-**Correction (commit `<pending>`, same session, pre-merge — appended here per the review
+**Correction (commit `66c91d53`, same session, pre-merge — appended here per the review
 coordinator rather than filed as a second entry):** Review before product-owner sign-off found a
 real hole in the draft above: FR-OBS-8 put screen frames in the *ungated* closed set while
 `CallsignScrubber` scrubs every callsign out of the log files in that same set — a photograph of
