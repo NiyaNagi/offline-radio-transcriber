@@ -32,6 +32,59 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPG follow-up: release workflow OOM in Robolectric's own asset inflation)
+
+### cedf6b02 — :app's Test tasks get an explicit 3g maxHeapSize; noCompress documented, not taken
+
+**Scope:** `buildSrc/src/main/kotlin/ort.android-app.gradle.kts` only. No app or test source
+changed.
+
+**Requirements/ACs:** FR-AST-3 (bundled assets install and verify correctly); R18 (installed-size
+risk — cited below as the reason the APK-growth alternative was rejected).
+
+**What changed:** The Release workflow's unit-test job (run 34664670909) died with
+`OutOfMemoryError: Java heap space` inside Robolectric's own `Asset$_CompressedAsset.getBuffer`.
+Now that `mergeDebugAssets` genuinely depends on `fetchBundledAssets` (the immediately preceding
+round's fix), the real 555 MB `LLM_GEMMA3_1B` `.task` file is actually present for
+`:app:testDebugUnitTest` to read — and Robolectric inflates a compressed APK asset entry
+*entirely into the test JVM's own heap* the moment any test copies it through the real
+`AndroidBundledAssetSource` (not the fixture source), which the `Test` task's default worker heap
+(Gradle's own default, 512m) cannot hold. Raising `org.gradle.jvmargs` (the R-807c fix, a round
+ago) does not touch this: `Test` tasks fork their own separate worker JVM sized by `maxHeapSize`,
+independent of the daemon's heap.
+
+Fixed by setting `tasks.withType<Test>().configureEach { maxHeapSize = "3g" }` in
+`ort.android-app.gradle.kts`, with the reasoning above recorded as an inline comment at the call
+site.
+
+**The alternative deliberately not taken**, recorded here per the coordinator's explicit ask:
+`androidResources.noCompress` for `.task`/`.onnx` would let Robolectric (and the real Android
+runtime) map the asset file directly rather than inflating it — an uncompressed APK entry needs
+no decompression buffer at all, so this class of OOM could not recur regardless of asset size.
+Not applied because AAPT2 already compresses these dense, already-binary model formats poorly, so
+marking them non-compressed would grow the shipped APK from the measured ~611 MB
+(`results/e2e-audit/installed-size.md`, R18) to an estimated ~724 MB — a real, permanent cost to
+every install, to fix a test-JVM-only problem. Left as a documented option for whoever next
+touches this, not a change.
+
+**Verified:**
+- `./gradlew :buildSrc:compileKotlin` — green (confirms the new `Test` import and block compile).
+- `./gradlew -p buildSrc test` — green (buildSrc's own meta-guard suite, CI's `lint` job step).
+- `./gradlew ktlintCheck detekt` — green, no `HF_TOKEN`/escape hatch needed (buildSrc's own
+  precompiled scripts carry no ktlint task of their own; `compileKotlin` is buildSrc's own gate).
+- With a real `HF_TOKEN` in the environment (all five assets, Gemma included, actually present):
+  `./gradlew :app:testDebugUnitTest` — `BUILD SUCCESSFUL` in 8m 40s, no OOM, 180 actionable
+  tasks — the exact scenario the release job hit, now green.
+- `./gradlew build dependencyRules platformGuards` with the same real token and no escape hatch —
+  `BUILD SUCCESSFUL` in 11m 32s, 1107 actionable tasks — the full gate, genuinely 5/5 assets.
+- `coverageMatrix` then `coverageMatrixCheck` as separate invocations — `241/450 covered`,
+  unchanged; `python tools/spec-check/spec_check.py` — all 8 checks PASS.
+
+**Left open / not done:** WPI is separately moving the whole-tour tests onto the fixture asset
+source so only the tests whose actual purpose is proving the real install path touch Gemma —
+independent of this fix, not done here. The `noCompress` alternative remains available but
+unapplied, per above.
+
 ## 2026-09-11 (WPG follow-up: CI red on a fresh checkout — fetchBundledAssets never reached test's task graph)
 
 ### b3fcec14 — merge*Assets now depends on fetchBundledAssets, so tests and the app see the same packaged set
