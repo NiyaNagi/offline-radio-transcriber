@@ -5,7 +5,8 @@ Guidance for AI coding agents working in this repository. Follows the
 Codex, Gemini CLI, Windsurf, Aider and others.
 
 **Read [`.specify/memory/constitution.md`](.specify/memory/constitution.md) first.** It is
-binding, it is short, and it exists because this product's characteristic failures are silent.
+binding, it is short, currently at version 1.3.0, and it exists because this product's
+characteristic failures are silent.
 
 ## What this is
 
@@ -24,7 +25,7 @@ device — start such a session from `docs/debug-fix-session-prompt.md`.
 | Path | What |
 |---|---|
 | `.specify/memory/constitution.md` | **Binding principles.** Read first |
-| `spec/functional-spec.md` | 277 requirement ids, 140 acceptance criteria, 36 decisions, 18 risks |
+| `spec/functional-spec.md` | 284 requirement ids, 147 acceptance criteria, 38 decisions, 19 risks |
 | `spec/technical-design.md` | Architecture, module boundaries, subsystem design |
 | `spec/build-plan.md` | **The working todo list** — P1–P21, all landed |
 | `CHANGELOG.md` | **The build log** — one detailed entry per commit; append to it, don't just tick the plan |
@@ -121,8 +122,11 @@ constitution with its reasoning.
 - **`:capture-*` must never depend on `:asr-*`, `:lexicon` or `:identity`.** Capture cannot
   block on inference. The build enforces this; do not "temporarily" add the edge.
 - **Only `:net` may link an HTTP client.** No network in the capture or processing path, ever.
-- **Voiceprints, user-supplied names, station knowledge and precise location never leave the
-  device** — not in a contribution, a diagnostic bundle or a backup.
+- **User-supplied names, station knowledge and precise location never leave the device** — not
+  in a contribution, a diagnostic bundle or a backup. **Voiceprints and embeddings almost never
+  do**: the one exception is the field-report channel, per-category, defaulting off, named by
+  file and real size before every upload, and refused against a public destination unless a
+  visible Settings switch has been explicitly turned off (FR-SPK-20, FR-OBS-9, FR-OBS-10, D38).
 - **An attribution without its confidence state is a bug**, at the data layer, not just the UI.
 - **`CONFIRMED` means heard in *this* transmission.** Never promote a voice match to it.
 - **The segmenter must not accept a tier.** Segmentation is the one decision reprocessing

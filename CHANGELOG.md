@@ -32,6 +32,73 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (constitution 1.3.0: the field-report channel — D37, D38)
+
+### <pending> — spec/constitution amendment: field-report channel (D37), audio/voiceprints in a field report under a public-destination guard (D38)
+
+**Scope:** `spec/functional-spec.md`, `spec/open-questions.md`, `.specify/memory/constitution.md`,
+`AGENTS.md`, this file. Specification and governance prose only — no product, build or test code
+touched, per this session's own constraints.
+
+**Requirements/ACs:** New decisions **D37** (a field-report channel exists: one button uploads a
+diagnostic bundle to a GitHub repository and opens an issue) and **D38** (retained over audio and
+voiceprint embeddings may be included in a field report, per-category, both defaulting off, with
+a consent screen naming every file and its real size before each upload; refused against a public
+destination unless a visible Settings switch is explicitly turned off). New requirements
+**FR-OBS-6..12** (§7.13b): session recorder, screen frames, the extended bundle, per-upload
+consent, the public-destination condition, the `:net`-only placement mirroring FR-CON-8, and the
+scoped token. **FR-OBS-5** and **FR-OBS-5a** amended (a second named exception, noted rather than
+silently rewritten). **FR-SPK-20** amended: voiceprints may now leave the device through the
+field-report channel only, under D38's conditions — this discharges the obligation FR-SPK-20's
+own text imposed ("if any future change proposes contributing, syncing or backing up voiceprints,
+the default must move to explicit opt-in in the same change"). New acceptance criteria
+**AC-141..147** (§14.13); **AC-59** extended to cover the field-report channel. New risk **R19**.
+Two new open questions, **Q18** (destination) and **Q19** (retention). Constitution **Principle
+V** amended: "exactly two outbound channels" becomes three; the "four categories never leave the
+device at all" bullet is no longer absolute for voiceprints, with the replacement guarantee
+stated. Constitution version **1.2.0 → 1.3.0** (MINOR — a new declared channel and materially
+expanded Principle V guidance; no principle removed or redefined).
+
+**What changed:** The product owner ran the app on a real device for the first time: every
+transcription failed, onboarding had four defects, and the only evidence that reached the
+workstation was a verbal description and one photograph. They asked for an automatic on-device
+recorder and a one-button upload of the whole diagnostic bundle to GitHub with an issue opened
+automatically — which collides with FR-OBS-5 ("no analytics, telemetry or crash reporting"),
+FR-CON-3 (diagnostic logs excluded from the corpus channel), FR-SPK-20 (voiceprints never leave
+the device) and constitution Principle V ("exactly two outbound channels", "four categories never
+leave the device at all"). That collision is resolved on the record here, before any of it is
+built, per Scope And Precedence ("that is a specification defect: raise it, amend the spec, and
+record the decision"), following D25's own shape for wording, scoping and recording an amendment.
+The product owner's actual decisions: (1) the channel exists, operator-triggered per upload, never
+automatic (D37); (2) retained over audio and voiceprint embeddings may be included, each behind
+its own toggle, both defaulting off, with per-upload consent naming every file and its real size
+(D38); (3) the destination for now is the project's own repository, verified public — the product
+owner: "just push to this public repo for now — I am just testing." The lead's condition, recorded
+as FR-OBS-10 rather than as a refusal: against a public destination, the uploader refuses the
+audio/voiceprint categories unless a visible Settings switch is explicitly turned off; the
+redacted bundle uploads unconditionally, and every defect reported so far is diagnosable from it
+alone. New risk R19 and open question Q18 record, on the record, that this is a narrowed promise
+accepted with a stated risk, not a solved one — the guard is bypassable by design, by an operator
+who turns the switch off against a repository that is public today by the product owner's own
+choice.
+
+**Verified:** `python tools\spec-check\spec_check.py` — all 8 checks pass (`spec-check: OK`).
+`.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — regenerates
+`results/coverage-matrix.md` (464 requirements, 241 covered). `.\gradlew coverageMatrixCheck
+-PortAllowMissingBundledAssets=true` — separate invocation, green, up to date against the
+regenerated matrix.
+
+**Left open / not done:** This is specification only — no code exists yet for the session
+recorder, the screen-frame capture, the extended bundle, the consent screen, the visibility check
+or the token handling; FR-OBS-6..12 describe what a future build must satisfy, not what is built.
+Q18 (should the destination move to a private repository once testing ends) and Q19 (retention
+policy for an uploaded bundle) are open product decisions, not blocking the client but blocking
+its routine use with the audio/voiceprint categories on. `spec/build-plan.md` and
+`docs/reference/audit-and-remediate-prompt.md` are not updated with a build prompt for this work —
+out of this session's scope, which was the amendment only.
+
+---
+
 ## 2026-09-12 (constitution 1.2.0: a change that touches a screen re-runs the visual verification; the debugging and fix session prompt)
 
 ### bab4351d — constitution 1.2.0, AGENTS.md brought current, `docs/debug-fix-session-prompt.md`

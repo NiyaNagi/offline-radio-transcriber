@@ -1,12 +1,20 @@
 # Open Questions
 
-**Decision register · current against functional spec draft 3.2 · September 2026**
+**Decision register · current against functional spec draft 3.3 · September 2026**
 
 **Draft 3.2 update.** The adversarial audit ([`audit-2026-09-06.md`](audit-2026-09-06.md))
 opened **Q13** (retention format — supersedes Q5, and it is now the more urgent question
 because of R10) and **Q14** (continuous archive, because segmentation turns out to be the one
 irreversible decision in the pipeline). Both are product calls wanted before M2 writes storage
 code. Q5 is folded into Q13 and should be answered there.
+
+**Draft 3.3 update.** The product owner's first on-device run asked for an automatic field-report
+channel — a recorder and a one-button upload to GitHub. That collided with FR-OBS-5, FR-CON-3 and
+FR-SPK-20 and is resolved on the record as **D37** (the channel exists) and **D38** (retained
+over audio and voiceprints may be included, per-category, default off, gated against a public
+destination). It opens **Q18** (does the destination move to a private repository once testing
+ends) and **Q19** (what is the retention policy for an uploaded bundle), both product calls that
+do not block building the client.
 
 ## Status, 7 September 2026 — the register is nearly empty
 
@@ -15,14 +23,17 @@ three hardware verifications (VID/PID, command terminator, whether `AI` pushes `
 [`../docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md). **Q12 is settled by
 rule**: a reference-tier lever that does not measure on the eval fold is deleted, not disabled.
 
-**Two remain, and both concern the same hour of audio:**
+**Four remain.** Two concern the same hour of audio; two more were opened by the field-report
+channel (D37, D38) and concern where it uploads to and how long what it uploads is kept:
 
 | # | Question | Why it is still open |
 |---|---|---|
 | **Q2** | Record the tape | Much smaller than it was — ~1 h of validation audio rather than 3–5 h of training data (§14A.3) — but it is the one thing no amount of specification substitutes for |
 | **Q16** | The labelling protocol | Gates labelling that hour. Also much smaller now: callsigns and speaker turns only |
+| **Q18** | Field-report destination | The repository is public today, by the product owner's own choice, "for now" — see D38. Nothing in this spec makes that permanent, and nothing makes it temporary either |
+| **Q19** | Uploaded bundle retention | Nothing yet says how long a field report survives at the destination, or who is responsible for deleting it |
 
-Everything that could be decided on paper has been decided.
+Everything else that could be decided on paper has been decided.
 
 *Entries below keep their original reasoning, with the answer recorded where one was reached.
 Answers are authoritative in spec §3; this file records how they were reached.*
@@ -454,6 +465,47 @@ The questions a protocol has to answer, none of which are obvious at 11pm with h
 pilot: label it, notice what was ambiguous, write the rules those ambiguities imply, then
 relabel session one under the finished protocol. That costs one session's labelling and is the
 cheapest possible insurance on the project's most expensive irreversible artifact.
+
+---
+
+### Q18 — Field-report destination · owner: product
+
+**Question.** The field-report channel (D37) uploads to
+`github.com/NiyaNagi/offline-radio-transcriber`, verified public. Does that stay the
+destination, or does it move to a private repository once the product owner is done testing?
+
+**Why it matters.** FR-OBS-10's public-destination gate controls what a public destination is
+allowed to receive; it is not a decision about whether the destination should be public at all.
+R19 records what it is guarding against: a field report against a public repository publishes
+recordings and voiceprints of identifiable third parties who never consented, the moment the
+operator turns the FR-OBS-10 switch off — and the product owner has already said the plan is to
+test with that switch reachable. A private destination removes that exposure without removing
+the per-category gate, which is still worth keeping for a different reason: it is what tells the
+operator what they are about to do, on a repository whose visibility can itself change.
+
+**Recommendation.** Move to a private repository, or a private destination within the same
+repository, before field reports are used for anything beyond this initial test. Recorded as
+R19; this does not block building the client, only its routine use with the audio or voiceprint
+categories on.
+
+---
+
+### Q19 — Uploaded bundle retention · owner: product
+
+**Question.** Once a field-report bundle reaches the destination repository, how long does it
+stay there, and who is responsible for removing it?
+
+**Why it matters.** FR-CON-5 gives the corpus contribution channel an explicit deletion
+guarantee, tied to a per-install token. The field-report channel has no equivalent: FR-OBS-6..12
+specify what is recorded and how consent works, but nothing about the lifetime of an uploaded
+issue or its attachment once it lands on GitHub. An issue with an attached bundle is, by
+default, retained by the host indefinitely, and an attachment containing over audio or a
+voiceprint is exactly the kind of thing FR-CON-5's guarantee exists for elsewhere in the spec.
+
+**Recommendation.** Decide a retention policy before the field-report channel sees routine use —
+at minimum, whether an uploaded bundle is deleted once the defect it documents is closed, and
+whether that deletion is manual or scheduled. Until decided, treat every uploaded bundle as
+retained indefinitely at the destination.
 
 ---
 
