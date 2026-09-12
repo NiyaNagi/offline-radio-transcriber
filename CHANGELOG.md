@@ -32,6 +32,149 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPR2: the field-report bundle, its consent screen, and wiring the recorder up)
+
+### cd531121 — WPR2 · FR-OBS-6..12: wires FieldReportRecorder into a running app, builds the field-report bundle (ungated + three gated categories) and its FR-OBS-9 consent screen, and the FR-OBS-10 public-destination guard
+
+**Scope:** new `app/src/main/kotlin/org/ort/app/fieldreport/{bundle,consent,settings,upload,wiring}/**`
+and matching `app/src/test/kotlin/org/ort/app/fieldreport/{bundle,consent,settings,upload,wiring}/**`;
+`app/src/main/kotlin/org/ort/app/diagnostics/DiagnosticsBundleBuilder.kt` (one method made
+non-`private` for reuse, no behaviour change); `app/src/main/kotlin/org/ort/app/OrtApplication.kt`
+and `app/src/main/kotlin/org/ort/app/ui/ReaderActivity.kt` (the `configure()`/window-attach wiring
+only); `app/src/main/kotlin/org/ort/app/ui/settings/{SettingsContent.kt,SettingsDiagnosticsScreen.kt,
+SettingsViewData.kt}` and their test files; `results/coverage-matrix.md` (regenerated).
+
+**Requirements/ACs:** FR-OBS-6/FR-OBS-7 (wiring only — the recorder and frame capturer themselves
+are WPR1's), FR-OBS-8 (the ungated set), FR-OBS-9 (the consent screen), FR-OBS-10 (the public-
+destination guard and its Settings switch), D37, D38, R19. AC-143 (ungated set is exactly the
+seven scrubbed diagnostics files plus the session-recorder log, regardless of category state),
+AC-144 (every toggle defaults off; a toggle turned on and cancelled is off again on the next
+open), AC-145 (a public destination with the guard enabled refuses the three gated toggles;
+turning the guard off allows them), AC-147 (narrowed to what this round owns — see What changed),
+AC-148 (a stored screen frame reaches the bundle only when `SCREEN_FRAMES` is included, never as
+part of the ungated set), AC-149 (the public-destination warning names the toggled-on categories,
+computed fresh on every render, never a one-time disclosure).
+
+**What changed:**
+- **Recorder wiring (item 1).** Nothing called `FieldReportRecorder.configure(...)` before this
+  change, so no session-recorder log or frame was ever written in a running build.
+  `FieldReportAppWiring.configureOnce(filesDir)` is called exactly once, from
+  `OrtApplication.onCreate()` (after the existing Robolectric guard, so none of ~1200 unit tests
+  gain a side effect) — never from an `Activity`, because `FieldReportRecorder.configure` resets
+  the ring buffer every time it runs. `ReaderActivity` (the app's one long-lived, real-content
+  window) calls `FieldReportAppWiring.attachWindow(window)` in `onCreate` and `detachWindow()` in a
+  new `onDestroy` override; both repoint a `DelegatingScreenFrameCapturer` handed to `configure`
+  up front, so attaching/detaching a window never touches the recorder's own configuration again.
+  `MainActivity` needed no change (it finishes immediately with no real content to capture, and
+  calling `configure()` there would only re-arm the reset problem this design avoids).
+  `SetupActivity` — arguably the highest-value place for FR-OBS-7 frames, since the product
+  owner's motivating incident was an onboarding failure — is **not** wired: it lives in `ui/setup`,
+  outside this round's file-ownership map. Flagged for whichever session owns that package next.
+  **Known, unfixed leak, said plainly:** `RealScreenFrameCapturer`'s `HandlerThread` is still never
+  quit (WPR1's own finding) — fixing it needs a `close()` on that class, which lives in
+  `fieldreport/recorder/**`, off limits this round. Mitigated, not fixed: `attachWindow` creates at
+  most one `RealScreenFrameCapturer` per `Activity` instance, bounding the leak's rate by activity
+  recreation, not by in-app navigation.
+- **The ungated set (FR-OBS-8).** `FieldReportBundleSpec.ungatedFiles` is a closed
+  `FieldReportUngatedFileId` enum (8 values) plus a `List` built once and derived directly from
+  `DiagnosticsBundleSpec.files`' own entries (same `producer` instances — never a second,
+  independently-authored copy of the same seven files) plus one more: `SessionRecorderLogProducer`,
+  which reads `<filesDir>/field-report/session-recorder.log` and is never run through
+  `CallsignScrubber` (the recorder's closed vocabulary has no free-text field to scrub).
+- **The three gated categories (FR-OBS-9).** `FieldReportGatedCategory` (`RETAINED_AUDIO`,
+  `VOICEPRINT_EMBEDDINGS`, `SCREEN_FRAMES`) is a closed enum. `VoiceprintEmbeddingsProducer` is the
+  one field-report producer that reads `VoiceprintEntity.embedding` at all (D38's fourth,
+  no-longer-absolute category) — walks every station `ActivityDao.listStations()` returns and
+  collects each one's bound voiceprints via `CatalogDao.voiceprintsForStation`; **known gap,
+  stated rather than narrowed silently:** a voiceprint never bound to any station is unreachable
+  this way, since `:data` has no "every voiceprint" query and `data/**` is outside this round's
+  ownership to add one to. `FieldReportBundleBuilder.preview`/`.write` resolve
+  `FieldReportBundleSpec.ungatedFiles` (always) plus a shared, private `gatedFiles()` resolution
+  (only the categories asked for) before rendering either one, so a preview can never drift from
+  what actually uploads — `DiagnosticsBundleBuilder`'s own R-137 discipline, restated for this
+  bundle. `DiagnosticsBundleBuilder.retainedAudioFiles` was made non-`private` so the field-report
+  bundle reuses the exact same retained-audio query rather than a second copy.
+- **The consent screen (FR-OBS-9) and the guard (FR-OBS-10).** `FieldReportConsentScreen` (new,
+  `SettingsDiagnosticsScreen.kt`) shows every file and its real size (rendered through
+  `FieldReportBundleBuilder.preview`, never a separate estimate), the destination and its
+  visibility (or the honest "not configured" state — see What was left open), and the three
+  toggles, each defaulting off and never persisted between opens (state arrives as a parameter,
+  never `remember`ed internally). `FieldReportGuard.gatedCategoriesAllowed` is the pure decision
+  FR-OBS-10 describes; the consent screen forces the three toggles off and inert (never calling
+  back) while it is `false`, and renders a prominent warning naming the currently-toggled-on
+  categories whenever the destination is public and the guard has been turned off. The FR-OBS-10
+  Settings switch itself is a new `FieldReportSettingsStore` (`fieldreport/settings/**` —
+  deliberately not `ui/settings/SettingsStore.kt`, outside this round's ownership map),
+  defaulting `publicDestinationGuardEnabled = true`, the safe position. `SettingsContent.kt`'s new
+  `FieldReportHost` owns all of this state and is the one place `SettingsDiagnosticsScreen`'s new
+  "Field report" section and the consent screen are wired together; it is debug-build-gated
+  (`BuildConfig.DEBUG`) end to end.
+- **The interface WPR3 implements.** `FieldReportUploadClient` (`fieldreport/upload/**`) —
+  `suspend fun destination(): FieldReportDestination?` and
+  `suspend fun upload(request: FieldReportUploadRequest): FieldReportUploadResult` — plus
+  `FakeFieldReportUploadClient`, the constitution-II behavioural fake. **Flagged, not guessed
+  past:** this interface is declared in `:app`'s own `fieldreport` package, not in `:net`, because
+  FR-OBS-11 wants the client living in the network module but `net/**` is outside this round's
+  ownership map, and `:net` cannot implement an `:app`-declared interface without inverting the
+  existing dependency direction. The wired `fieldReportClient` in `SettingsContent.kt` is `null`
+  today (the same honest "not available" state `SettingsContributeScreen.kt` already uses for its
+  own unbuilt upload client) — `Send` is disabled with that message until WPR3 lands a real
+  client; the upload call site (`uploadFieldReportBundle`) and `canSend` are already wired to flip
+  the moment `fieldReportClient` stops being `null`, no further change needed there.
+- **AC-147, narrowed honestly.** This round never handles the FR-OBS-12 token at all — it lives
+  entirely in `:net`, out of reach — so `FieldReportNoTokenFieldTest` proves the narrower,
+  load-bearing half available at this layer: none of this round's own public field-report types
+  (`FieldReportUploadRequest`, `FieldReportDestination`, `FieldReportBundleEntry`,
+  `FieldReportUngatedFileSpec`) declare a token/secret/credential-shaped field via
+  `java.lang.reflect` (no `kotlin-reflect` dependency in this module, same constraint
+  `RecorderEventVocabularyTest` documents). AC-146 (no field-report network traffic during
+  capture) is not addressed at all this round — there is no network call anywhere in this change
+  to test; it becomes testable once WPR3's `:net` client exists.
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.diagnostics.*' --tests 'org.ort.app.fieldreport.*' --tests 'org.ort.app.ui.settings.*' -PortAllowMissingBundledAssets=true`
+  → 242 tests, BUILD SUCCESSFUL, 0 failures.
+- `.\gradlew ":app:smokeTestDebugUnitTest" ":app:lintDebug" ":app:ktlintCheck" ":app:detekt" -PortAllowMissingBundledAssets=true`
+  → BUILD SUCCESSFUL (the full `:app` unit-test suite, not just this round's own packages).
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  → BUILD SUCCESSFUL (11m 6s; every module, `assembleDebug` and `assembleRelease` both).
+- `.\gradlew -p buildSrc test -PortAllowMissingBundledAssets=true` → BUILD SUCCESSFUL.
+- `python tools\spec-check\spec_check.py` → all 8 checks PASS.
+- `.\gradlew coverageMatrix` → 466 requirements, 252 covered; `.\gradlew coverageMatrixCheck` → up
+  to date against that same count, run as the required separate invocation.
+- Discriminating-test proof (revert/fail/restore/pass), pasted in full in the WPR2 session report:
+  AC-143 (dropped the session-recorder log from `write()`'s loop — both AC-143 tests failed
+  naming the exact missing/extra file, restored, passed), AC-144 (defaulted
+  `FieldReportToggleState`'s three fields to `true` — the "defaults off" test failed with
+  `ToggleableState = 'On'`, restored, passed), AC-145 (`FieldReportGuard.gatedCategoriesAllowed`
+  hardcoded to `true` — both the guard's own unit test and the screen-level "forces off" test
+  failed, restored, passed), AC-147 (added a literal `token` field to `FieldReportUploadRequest`
+  — the reflection test failed naming it, restored, passed), AC-148 (removed the `SCREEN_FRAMES in
+  categories` condition so frames always attach — the "never joins the ungated set" test failed,
+  restored, passed).
+
+**Left open / not done:**
+- **SetupActivity is not wired for frame capture** (see What changed) — the highest-value place
+  for FR-OBS-7 frames, per the product owner's own motivating incident, and outside this round's
+  ownership.
+- **`RealScreenFrameCapturer`'s `HandlerThread` leak is mitigated, not fixed** — needs a `close()`
+  exposed on that class in `fieldreport/recorder/**`.
+- **`FieldReportUploadClient`'s real, `:net`-hosted implementation does not exist** (WPR3) — `Send`
+  is honestly disabled until it does; this round could not resolve where the interface itself
+  should ultimately live (`:net` vs. `:core`) without touching modules outside its ownership map.
+- **`VoiceprintEmbeddingsProducer` cannot reach a voiceprint never bound to any station** — `:data`
+  has no "every voiceprint" query; a `CatalogDao.allVoiceprints()` (or equivalent) would close it.
+- **AC-146 is untested** — no network call exists anywhere in this change to exercise; it needs
+  WPR3's real client and a packet-capture protocol run alongside AC-59's.
+- **No visual verification captures were taken** — this round's brief explicitly reserves that to
+  the session lead; `SettingsDiagnosticsScreen.kt`/`SettingsContent.kt` were touched, so the
+  screens this change added or changed (`Settings-Diagnostics`'s new field-report section, the new
+  consent screen) are owed a tour capture at font scale 1.0/2.0 against an artboard before this is
+  considered visually verified per constitution VIII — none exists for either yet since neither
+  screen has a drawn artboard.
+
+---
+
 ## 2026-09-12 (WPR1: the debug-build field-report session recorder and screen frames)
 
 ### a9995b7f — WPR1 · FR-OBS-6/FR-OBS-7: the debug-build session recorder (closed event vocabulary, bounded ring buffer) and FR-OBS-7 screen frames (bounded, app-private)
