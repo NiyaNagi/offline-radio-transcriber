@@ -32,6 +32,81 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (register R-808 final close-out: the last two RigLinkBridgeTest cases made deterministic — the busy-spin fact was already proven elsewhere)
+
+### (pending) — no Bluetooth permission and USB detach cases both converted to runTest; no new real-thread test added, since :rig's own yield test already covers that fact
+
+**Scope:** `pipeline/src/test/kotlin/org/ort/pipeline/rig/RigLinkBridgeTest.kt`.
+
+**Requirements/ACs:** R-808, FR-CAP-5, F23, FR-RIG-7, FR-RIG-15.
+
+**What changed:** *Constitution check.* II (a value assertion must never depend on real-thread
+scheduling luck; a fact this repository already proved once should never be re-proved by a second,
+weaker test that can fail under load). The coordinator's escalation was exactly right: `no Bluetooth
+permission reports NoPermission, never Identified` failed 2 of 7 runs under this session's own
+machine load in the previous round — unacceptable for a green-CI repo regardless of how it was
+labelled. Re-examined both of the last two real-dispatcher cases with the sharper question the
+coordinator posed: is the real-thread property this test's OWN fact, or someone else's fact it
+happens to also be sitting on top of?
+
+Both turned out to be the latter. The busy-spin risk both comments named — `DescriptorRigModule`'s
+`readJob` starving a thread shared with the transport's own reconnect loop — is a fact entirely
+owned by `:rig`'s `DescriptorRigModule` itself, already fixed at its own source (`readJob` now
+`delay()`s genuinely on every null read) and already permanently guarded by `:rig`'s own
+`DescriptorRigModuleTest`'s `WPC3 the read loop yields even when the transport never opens...` test
+— which exercises the identical `readJob` code path against a transport that never opens at all, a
+strictly harder case than a Bluetooth permission refusal (which fails immediately, on the very
+first attempt, no retries needed to observe it). Neither `RigLinkBridgeTest` case was proving
+anything about that fact that `:rig`'s own test does not already prove more directly — dropped in
+favour of it, per the coordinator's own offered option, rather than writing a second, bounded
+real-thread test that would only duplicate coverage `:rig` already owns.
+
+The USB detach case's own "genuine connect-vs-detach race" reasoning turned out not to be a
+real-thread requirement either: watching `UsbSerialTransport`'s own `TransportState.Open` before
+detaching (rather than detaching immediately) is the *correct* sequencing regardless of which
+dispatcher drives it — detaching before the fake link has actually connected is a different, less
+interesting case ("not found" rather than "detached"). `:rig-usb`'s own `UsbSerialTransportTest`
+already proves detach-during-connect deterministic under `StandardTestDispatcher` for this exact
+class, confirming there was nothing dispatcher-specific left to protect.
+
+Both cases converted the same way as every other case in this round: the real transport
+(`BluetoothSppTransport`/`UsbSerialTransport`) on its own `dispatcher` constructor parameter set to
+`StandardTestDispatcher(testScheduler)` — the same choice `:rig-bluetooth`'s/`:rig-usb`'s own test
+suites already make for these exact classes — and `DefaultRigLinkBridge`'s `moduleScope` on
+`UnconfinedTestDispatcher(testScheduler)`, one shared `testScheduler` driving both sides
+deterministically. The now-unneeded dedicated real single-thread `Executors` dispatchers (and their
+`try`/`finally { dispatcher.close() }` blocks) were removed entirely, along with the now-unused
+`Executors`/`asCoroutineDispatcher`/`runBlocking` imports. Every case in this file is now on
+`runTest`; none remain on real dispatchers.
+
+**Verified:** `RigLinkBridgeTest` alone — green, all 5 cases. All three files this register item
+touched (`RigSupervisorTest`, `RigSupervisorRealTransportTest`, `RigLinkBridgeTest`) run together
+**ten** times in a row via `--rerun` — green every single time, no flake observed at all this
+round (a materially stronger result than the 5-of-7 combined-run rate from the previous round, now
+that the genuinely-flaky real-dispatcher cases are gone). Run once more under full CPU saturation
+(every core pinned via deliberately started PowerShell background spin-loop jobs) — green (this
+pass took substantially longer in wall-clock terms than the earlier per-file saturation runs, since
+saturating literally every core also starves the Gradle daemon's own JVM startup, not just the test
+JVM; Gradle's own internal timer still reported the actual test execution itself at 25s once
+scheduled, confirming the fix's own runtime is unaffected by host contention — only the OS's
+willingness to schedule the process at all was). Full `:pipeline:testDebugUnitTest` — green. Full
+gate — `./gradlew -PortAllowMissingBundledAssets=true build dependencyRules platformGuards` (`-x
+smokeTestDebugUnitTest`), `-p buildSrc test`, `spec_check.py`, `coverageMatrix`/
+`coverageMatrixCheck` (two invocations) — all green, 241/450 covered, unchanged. One gate run
+during this round showed 25 unrelated `:app` Compose-rendering failures
+(`ActivityPatternChartTest`/`AttributionMarkerTest`, `AppNotIdleException` after 60 real seconds
+and 4 million idle-check attempts) caused by three concurrent `qemu-system-x86_64-headless`
+processes (other agents' emulators, confirmed by process inspection) saturating the shared build
+machine at the time — nothing in this round's diff touches `:app`, Compose, or rendering; a
+same-command retry once that contention eased came back fully green in the normal ~6 minutes,
+confirming the failure was host-load noise, not a regression.
+
+**Left open / not done:** nothing — this closes register R-808 for `:rig` and `:pipeline` as
+scoped. The environmental `:app` flake observed mid-round is unrelated to this row and not this
+package's to fix; noted here only for an honest record of what was seen during verification.
+
+---
+
 ## 2026-09-11 (register R-808 close-out: the three named :pipeline files converted or documented case by case)
 
 ### (pending) — RigSupervisorTest and RigSupervisorRealTransportTest fully converted; RigLinkBridgeTest converted case by case, two left on real dispatchers with a comment
