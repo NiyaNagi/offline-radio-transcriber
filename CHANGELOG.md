@@ -32,6 +32,143 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPR3: the field-report upload client)
+
+### <pending> — WPR3 · FR-OBS-11/FR-OBS-12: the real field-report upload client — contract in `:core`, GitHub implementation in `:net`, wired by `:app`
+
+**Scope:** `core/src/main/kotlin/org/ort/core/fieldreport/**` (new — the contract and its
+behavioural fake, moved and redesigned from WPR2's `:app`-local sketch); `net/src/main/kotlin/org/ort/net/fieldreport/**`
+(new — the real GitHub-backed client and its minimal JSON helper); `app/src/main/kotlin/org/ort/app/fieldreport/upload/**`
+(the old `FieldReportUploadClient.kt` interface file removed, replaced by `FieldReportUploadClientFactory.kt`);
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsContent.kt` (wiring only — imports, the
+`fieldReportClient` construction, `fieldReportConsentViewState`'s destination-label/visibility
+mapping, and `uploadFieldReportBundle`'s request construction); `buildSrc/src/main/kotlin/ort.android-app.gradle.kts`
+(the `FIELD_REPORT_TOKEN` `BuildConfig` field only); `README.md` (new token section beside
+`HF_TOKEN`); matching test trees under `core/src/test/**`, `net/src/test/**`,
+`app/src/test/kotlin/org/ort/app/fieldreport/upload/**`; `results/coverage-matrix.md` (regenerated).
+
+**Requirements/ACs:** FR-OBS-11 (the client lives entirely in `:net`; upload refuses during
+capture), FR-OBS-12 (the token is scoped, debug-only, never logged/bundled/framed), FR-OBS-10 (the
+destination's real visibility, fetched at upload time, with an honest `UNKNOWN` state), D37, D38,
+R19. AC-145 (a real, end-to-end GitHub upload — release-then-asset-then-issue — proven against a
+loopback fixture), AC-147 (the token never appears in a produced string, proven both by reflection
+on every new public type and by scanning a full failing run's output for a real token value).
+
+**What changed:**
+- **The routing decision WPR2 flagged, resolved.** WPR2 declared `FieldReportUploadClient` in
+  `:app`'s own package and documented the FR-OBS-11 contradiction rather than guessing past it.
+  This round takes resolution (b) from that doc comment: the contract — `FieldReportUploadClient`,
+  `FieldReportDestination`, `FieldReportUploadRequest`, `FieldReportUploadResult` — now lives in
+  `:core` (no Android dependency, reachable from both `:net` and `:app` without either gaining a
+  forbidden edge on the other). `:core`'s own "only the Kotlin stdlib and JUnit belong here" rule
+  held throughout: the contract's `suspend fun`s need no `kotlinx-coroutines-core` to compile, and
+  the shipped fake's hang behaviour uses the plain `kotlin.coroutines.suspendCoroutine` stdlib
+  primitive, not `kotlinx.coroutines.awaitCancellation()` — no new dependency was added to `:core`
+  or to `:net`.
+- **The shape changed to cross the boundary honestly.** `FieldReportDestination.isPublic: Boolean`
+  became `visibility: FieldReportDestinationVisibility` (`PUBLIC`/`PRIVATE`/`UNKNOWN`) — constitution
+  I forbids collapsing "the API could not be reached" into "confirmed private". `FieldReportGatedCategory`
+  (an `:app`-owned enum in the off-limits `fieldreport.bundle` package) is mirrored as `:core`'s own
+  `FieldReportUploadCategory`, mapped 1:1 at the one call site in `SettingsContent.kt`.
+  `FieldReportUploadResult.Failure.reason` is now a closed `FieldReportUploadFailureReason` enum
+  (`NOT_CONFIGURED`, `CAPTURE_ACTIVE`, `DESTINATION_UNREACHABLE`, `UPLOAD_FAILED`, `PARTIAL_WRITE`,
+  `ISSUE_CREATE_FAILED`) with a separate `detail: String` for operator-facing text — constitution
+  II's "assertions MUST NOT depend on prose" applied to this round's own new type. `FieldReportUploadRequest`
+  gained `captureActive: Boolean` (FR-OBS-11 — see below) and `deviceLabel`/`buildLabel`/`commitLabel`
+  (plain strings the caller supplies, so `:net` never has to reach into `android.os.Build`/`BuildConfig`
+  itself for the issue body's "names the device, the build, the commit").
+- **FR-OBS-11, "never during capture".** `:net` cannot see `:pipeline`'s `CaptureState` (`ModuleGraph`
+  forbids that edge). Enforced by type only in the narrow sense that `captureActive` has no default,
+  so every call site must explicitly state it; enforced by discipline in the sense that nothing stops
+  a caller from passing a wrong answer. `SettingsContent.kt`'s `uploadFieldReportBundle` — the one
+  real caller — reads `org.ort.pipeline.capture.CaptureState.isCapturing` fresh, at the moment of
+  send. `RealFieldReportUploadClient.upload()` refuses outright (`CAPTURE_ACTIVE`, no network call
+  attempted) whenever the request says capture is active.
+- **FR-OBS-10, visibility fetched fresh, `UNKNOWN` is not `PRIVATE`.** `RealFieldReportUploadClient.destination()`
+  calls `GET /repos/{owner}/{repo}` with the token and reads `"private"` from the real response; a
+  non-200 response or an `IOException` both produce `UNKNOWN`, never a guessed `PRIVATE` or `PUBLIC`.
+  `SettingsContent.kt`'s own mapping (`fieldReportConsentViewState`) feeds `UNKNOWN` into
+  `FieldReportGuard.gatedCategoriesAllowed` (an off-limits file, untouched) as `destinationPublic =
+  true` — the guard therefore refuses the three gated categories on `UNKNOWN` exactly as it would on
+  a confirmed public destination, and the consent screen's destination label says "(visibility could
+  not be confirmed)" rather than silently showing a bare repository name.
+- **FR-OBS-12, the token.** `buildSrc/.../ort.android-app.gradle.kts` adds a `FIELD_REPORT_TOKEN`
+  `BuildConfig` field, injected from the `ORT_FIELD_REPORT_TOKEN` user-scope environment variable
+  exactly as `HF_TOKEN` is (`FetchBundledAssetsTask`). Declared for both build types (AGP compiles
+  `:app`'s one shared main source set against each variant's own generated `BuildConfig`, so a
+  field existing only for `debug` would fail `compileReleaseKotlin` the moment any code referenced
+  it) but only the `debug` block ever gives it a real value — a release build always sees the empty
+  default. `FieldReportUploadClientFactory.create()` (new, `app/.../fieldreport/upload`) additionally
+  gates on `BuildConfig.DEBUG` before ever reading it, and returns `null` — never a fabricated
+  client — whenever the token is blank. `RealFieldReportUploadClient` never logs, bundles, or frames
+  the token; every produced string is built from HTTP status codes, this class's own literal text,
+  and the destination's response bodies only.
+- **Upload mechanism**: a release asset on a dedicated tag (`field-reports`, created once, reused
+  after — the Contents API's 100 MB ceiling is too low once retained audio is included), then an
+  issue linking it, naming the device/build/commit/categories. Plain `java.net.HttpURLConnection`
+  throughout (`net/build.gradle.kts`'s own precedent; no HTTP client dependency added — `platformGuards`
+  still reports zero). A minimal, internal `GitHubJson` object reads/writes the handful of scalar
+  JSON fields this needs (no JSON library added; `org.json` was rejected because `:net`'s unit tests
+  run on a plain host JVM with no Robolectric, where its Android stub classes throw `Stub!`).
+- **The behavioural fake** (`FakeFieldReportUploadClient`, `:core`) can report no destination, a
+  destination of any visibility, any result including any failure reason, and can hang — the hang
+  is releasable only by an explicit `releaseHang()` call, never by `Job.cancel()` (a plain
+  `suspendCoroutine` continuation is not cancellable; the first version of this test called
+  `job.cancel()` instead and hung `:core:test` itself for over twenty minutes before being killed
+  and rewritten — see Left open).
+
+**Verified:**
+- `.\gradlew :core:test :net:test -PortAllowMissingBundledAssets=true` — every `:core` (85) and
+  `:net` (both debug and release unit test variants) test green, including the new
+  `FieldReportUploadClientTest`, `FieldReportNoTokenFieldTest`, `GitHubJsonTest` and
+  `RealFieldReportUploadClientTest` suites.
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.fieldreport.*' -PortAllowMissingBundledAssets=true`
+  — every WPR2 field-report test still green unchanged, plus the new `FieldReportUploadClientFactoryTest`
+  and the trimmed `FieldReportNoTokenFieldTest`.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue` —
+  green (`dependencyRules: checked 20 modules`, `:net -> :core` only, no new edge; `platformGuards:
+  OK`, no HTTP client outside `:net`, `android.permission.INTERNET` declared by `:net` only). Two
+  round-trips were needed to get there: a `ktlint` class/function-signature formatting fix (`:core`,
+  `:app`), then a `detekt` `ReturnCount` fix in `:net`'s `RealFieldReportUploadClient.upload()`
+  (rewritten continuation-passing style, `max: 5` in `config/detekt/detekt.yml`) — both fixed and
+  reverified narrowly before the full `build` was re-run to green.
+- `.\gradlew -p buildSrc test` green (unaffected — no `ModuleGraph`/`PlatformGuards` edit was
+  needed).
+- `python tools\spec-check\spec_check.py` — all 8 checks pass (no spec file touched this round).
+- `.\gradlew coverageMatrix` then `.\gradlew coverageMatrixCheck` (separate invocations) — 255 of
+  466 requirements covered (was 253; `FR-OBS-11` and `FR-OBS-12` move from not-yet-covered to
+  covered; `FR-OBS-10` gains this round's new tests alongside WPR2's).
+
+**Left open / not done:**
+- **No real upload has ever been performed against real GitHub.** Every test here runs against a
+  loopback fixture (`LoopbackHttpFixture`, `:net`'s own existing precedent) — the real
+  `https://api.github.com`/`https://uploads.github.com` endpoints, real GitHub REST response shapes
+  beyond the handful of fields this round's `GitHubJsonTest` fixtures cover, and real GitHub-side
+  rate limiting/auth-scope errors are unverified. `ORT_FIELD_REPORT_TOKEN` was not set in this
+  session; `FieldReportUploadClientFactory.create()` therefore returns `null` in every build made
+  here, same as an operator who has not configured one.
+- **AC-146 (no field-report network traffic during capture) needs a packet capture on a real
+  device**, alongside AC-59 — neither this session nor the previous one could run that. FR-OBS-11's
+  code-level refusal (`CAPTURE_ACTIVE`, no request attempted) is unit-tested; the *device-level*
+  guarantee packet capture alone can prove is not.
+- **The "unknown visibility" consent-screen label wording** (`"(visibility could not be confirmed)"`)
+  is new copy this round added inside `SettingsContent.kt`'s own wiring function — it has not been
+  captured or compared against an artboard (this round's own file-ownership map excludes
+  `design/**`, `results/**`, and running the tour; the label is one interpolated word inside an
+  existing, already-audited row, not a new screen or layout).
+- **A stuck-test postmortem, not just a fix.** The first version of the hang test used
+  `job.cancel()` against a plain (non-cancellable) `suspendCoroutine` continuation, which left
+  `:core:test`'s `Gradle Test Executor` running for 20+ minutes before it was identified via
+  `Get-CimInstance Win32_Process` and killed manually. The fake was redesigned around an explicit
+  `releaseHang()` before any further gate run; no other test in this round uses raw `job.cancel()`
+  against a stdlib-only suspension.
+- **The destination repository is a plain literal** (`NiyaNagi/offline-radio-transcriber`,
+  `FieldReportUploadClientFactory`) — Q18 (whether the destination moves to a private repository
+  once testing ends) is still open and this round does not resolve it; changing the destination
+  later is a one-line, non-secret edit in that one file.
+
+---
+
 ## 2026-09-12 (WPR2: the field-report bundle, its consent screen, and wiring the recorder up)
 
 ### cd531121 — WPR2 · FR-OBS-6..12: wires FieldReportRecorder into a running app, builds the field-report bundle (ungated + three gated categories) and its FR-OBS-9 consent screen, and the FR-OBS-10 public-destination guard

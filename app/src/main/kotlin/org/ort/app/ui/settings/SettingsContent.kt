@@ -3,6 +3,7 @@ package org.ort.app.ui.settings
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,14 +29,18 @@ import org.ort.app.fieldreport.bundle.FieldReportBundleBuilder
 import org.ort.app.fieldreport.bundle.FieldReportBundlePreview
 import org.ort.app.fieldreport.bundle.FieldReportGatedCategory
 import org.ort.app.fieldreport.settings.SharedPreferencesFieldReportSettingsStore
-import org.ort.app.fieldreport.upload.FieldReportDestination
-import org.ort.app.fieldreport.upload.FieldReportUploadClient
-import org.ort.app.fieldreport.upload.FieldReportUploadRequest
+import org.ort.app.fieldreport.upload.FieldReportUploadClientFactory
 import org.ort.app.ui.data.RealCaptureModeFacts
 import org.ort.app.ui.data.realCaptureConfigurationStore
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.theme.OrtSpacing
+import org.ort.core.fieldreport.FieldReportDestination
+import org.ort.core.fieldreport.FieldReportDestinationVisibility
+import org.ort.core.fieldreport.FieldReportUploadCategory
+import org.ort.core.fieldreport.FieldReportUploadClient
+import org.ort.core.fieldreport.FieldReportUploadRequest
+import org.ort.pipeline.capture.CaptureState
 import java.io.ByteArrayOutputStream
 import java.time.LocalDate
 import java.util.Locale
@@ -492,10 +497,11 @@ private fun FieldReportHost(
     var fieldReportDestination by remember(fieldReportConsentOpen) {
         mutableStateOf<FieldReportDestination?>(null)
     }
-    // WPR2's own report names the interface WPR3 implements — `null` here is the honest "not
-    // configured" state `SettingsContributeScreen.kt` already uses for its own not-yet-built
-    // upload client, never a fabricated destination.
-    val fieldReportClient: FieldReportUploadClient? = null
+    // WPR3 (FR-OBS-11/FR-OBS-12): `null` is the honest "not configured" state
+    // `SettingsContributeScreen.kt` already uses for its own not-yet-built upload client, never a
+    // fabricated destination — see `FieldReportUploadClientFactory`'s own doc comment for exactly
+    // when that is (a release build, or a debug build with no token in the environment).
+    val fieldReportClient: FieldReportUploadClient? = remember { FieldReportUploadClientFactory.create() }
 
     LaunchedEffect(fieldReportConsentOpen, fieldReportToggles) {
         if (fieldReportConsentOpen) {
@@ -571,7 +577,15 @@ private fun FieldReportToggleState.toCategorySet(): Set<FieldReportGatedCategory
 }
 
 /** [FieldReportHost]'s own `FieldReportConsentViewState` construction, split out purely to keep
- * that function under detekt's length limit. */
+ * that function under detekt's length limit.
+ *
+ * FR-OBS-10 / constitution I: [FieldReportDestinationVisibility.UNKNOWN] — the destination could
+ * not be read at upload time — maps to `destinationPublic = true`, exactly like a confirmed
+ * [FieldReportDestinationVisibility.PUBLIC]. `FieldReportGuard.gatedCategoriesAllowed` (this
+ * round's own file-ownership map puts that file out of reach) takes a plain `Boolean` and refuses
+ * the gated categories whenever it is `true` and the guard switch is on — feeding it `true` on
+ * "unknown" is what makes this refuse rather than silently trust a guess in the dangerous
+ * direction, without needing to touch that file at all. */
 private fun fieldReportConsentViewState(
     preview: FieldReportBundlePreview,
     destination: FieldReportDestination?,
@@ -583,15 +597,30 @@ private fun fieldReportConsentViewState(
     },
     totalSizeLabel = formatFieldReportSize(preview.totalBytes),
     destinationKnown = destination != null,
-    destinationLabel = destination?.label ?: "No upload destination is configured in this build",
-    destinationPublic = destination?.isPublic ?: false,
+    destinationLabel = fieldReportDestinationLabel(destination),
+    destinationPublic = destination?.visibility != FieldReportDestinationVisibility.PRIVATE,
     publicGuardEnabled = guardEnabled,
     toggles = toggles,
 )
 
+/** `null` keeps WPR2's own "not configured" copy; a destination whose visibility could not be
+ * determined says so plainly rather than silently showing it as though it were a confirmed public
+ * or private repository (constitution I: uncertainty is content, not something to paper over). */
+private fun fieldReportDestinationLabel(destination: FieldReportDestination?): String = when {
+    destination == null -> "No upload destination is configured in this build"
+    destination.visibility == FieldReportDestinationVisibility.UNKNOWN ->
+        "${destination.label} (visibility could not be confirmed)"
+    else -> destination.label
+}
+
 /** [FieldReportHost]'s own `Send` action — split out purely to keep that function under detekt's
  * length limit. Builds the real zip via [FieldReportBundleBuilder.write] (never a second, drifting
- * render) and hands it to [client] exactly as [categories] named it. */
+ * render) and hands it to [client] exactly as [categories] named it.
+ *
+ * FR-OBS-11: reads [CaptureState.isCapturing] fresh, at the moment of send, and carries it as
+ * [FieldReportUploadRequest.captureActive] — the one caller in this codebase satisfying that
+ * parameter's own contract (see its doc comment in `:core` for what this obligation is, and is
+ * not, enforced by). */
 private suspend fun uploadFieldReportBundle(
     context: Context,
     client: FieldReportUploadClient,
@@ -604,9 +633,22 @@ private suspend fun uploadFieldReportBundle(
         FieldReportUploadRequest(
             bundle = bytes,
             fileName = "field-report-${LocalDate.now()}.zip",
-            categoriesIncluded = categories,
+            categoriesIncluded = categories.mapTo(mutableSetOf()) { it.toUploadCategory() },
+            captureActive = CaptureState.isCapturing,
+            deviceLabel = "${Build.MANUFACTURER} ${Build.MODEL}",
+            buildLabel = BuildConfig.VERSION_NAME,
+            commitLabel = BuildConfig.GIT_SHORT_COMMIT,
         ),
     )
+}
+
+/** [FieldReportGatedCategory] (`:app`) -> [FieldReportUploadCategory] (`:core`) — the 1:1 mapping
+ * this file's own call site performs because `:core` cannot depend on `:app` (see
+ * [FieldReportUploadCategory]'s own doc comment). */
+private fun FieldReportGatedCategory.toUploadCategory(): FieldReportUploadCategory = when (this) {
+    FieldReportGatedCategory.RETAINED_AUDIO -> FieldReportUploadCategory.RETAINED_AUDIO
+    FieldReportGatedCategory.VOICEPRINT_EMBEDDINGS -> FieldReportUploadCategory.VOICEPRINT_EMBEDDINGS
+    FieldReportGatedCategory.SCREEN_FRAMES -> FieldReportUploadCategory.SCREEN_FRAMES
 }
 
 /** The same "MB above 1, else KB" shape `SettingsPolling.kt`'s own `formatDiagnosticsSize` uses for

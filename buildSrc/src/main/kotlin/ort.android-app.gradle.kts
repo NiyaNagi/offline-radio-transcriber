@@ -47,11 +47,35 @@ extensions.configure<BaseAppModuleExtension> {
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
+
+        // FR-OBS-12: the default every variant gets unless `buildTypes { debug { ... } }` below
+        // overrides it — see that block's own comment for why the field must exist for both
+        // variants. Blank, never a placeholder that could be mistaken for a real value.
+        buildConfigField("String", "FIELD_REPORT_TOKEN", "\"\"")
     }
 
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
+        }
+        // FR-OBS-12: the field-report upload token, scoped to the one destination repository,
+        // present only in a debug build. Injected at build time from the `ORT_FIELD_REPORT_TOKEN`
+        // user-scope environment variable exactly as `HF_TOKEN` is (FetchBundledAssetsTask below) —
+        // never committed, never printed. The field is declared for both build types (below,
+        // `defaultConfig`) because AGP compiles `:app`'s one shared main source set against each
+        // variant's own generated `BuildConfig`, so a field that existed only for `debug` would
+        // fail `compileReleaseKotlin` the moment any code referenced it — but only this `debug`
+        // block ever gives it a real value; a release build always sees the empty-string default,
+        // indistinguishable from "not configured" (`RealFieldReportUploadClient`'s own contract).
+        // `FieldReportUploadClientFactory` (app/.../fieldreport/upload) additionally gates on
+        // `BuildConfig.DEBUG` before ever reading this field, so a release build never constructs a
+        // real client regardless.
+        getByName("debug") {
+            buildConfigField(
+                "String",
+                "FIELD_REPORT_TOKEN",
+                "\"${providers.environmentVariable("ORT_FIELD_REPORT_TOKEN").getOrElse("")}\"",
+            )
         }
     }
 
