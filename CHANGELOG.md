@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPRIG: R-1013/R-1014 — `probe()` always reaches a terminal state, naming what actually happened)
 
-### `<pending>` — RigLinkBridge.probe() gains bounded IdentifyTimedOut/VerifyTimedOut terminals instead of hanging at Open forever
+### ed7de6e4 — RigLinkBridge.probe() gains bounded IdentifyTimedOut/VerifyTimedOut terminals instead of hanging at Open forever
 
 **Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/rig/RigLinkBridge.kt`,
 `pipeline/src/test/kotlin/org/ort/pipeline/rig/RigLinkBridgeTest.kt`. No file outside this list
