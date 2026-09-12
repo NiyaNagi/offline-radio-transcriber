@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPV: R-1023 — the live monitor's timestamp column stops using a fixed width; R-1024 — `overnight-live-monitor` seeds a real level envelope; R-1025 — the tour's live-bar tap waits for the tagged node to exist before tapping)
 
-### (pending) — WPV: three small live-monitor defects from N07's first capture — R-1023/R-1024/R-1025
+### d4b6a250 — WPV: three small live-monitor defects from N07's first capture — R-1023/R-1024/R-1025
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/LiveMonitorScreen.kt`;
 `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`;
