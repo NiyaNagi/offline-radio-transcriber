@@ -6,13 +6,18 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.Density
 import androidx.core.view.drawToBitmap
 import androidx.lifecycle.lifecycleScope
@@ -122,6 +127,7 @@ public class ScreenshotTourActivity : ComponentActivity() {
         override fun onActivityDestroyed(activity: Activity) = Unit
     }
 
+    @OptIn(ExperimentalComposeUiApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         application.registerActivityLifecycleCallbacks(lifecycleCallbacks)
@@ -145,7 +151,21 @@ public class ScreenshotTourActivity : ComponentActivity() {
                             // composition of this exact `key(resolved.id)` subtree, so a step that is
                             // still mid-render never publishes a half-built navigator.
                             SideEffect { activeNavigator = navigator }
-                            OrtNavHost(sessionId = resolved.sessionId, seed = resolved.navSeed, navigator = navigator)
+                            // R-1021 (register, the lead's own field report): a debug-tour-only
+                            // opt-in — no production composable touched — that makes every
+                            // descendant's own `testTag` show up as the ordinary
+                            // `AccessibilityNodeInfo.viewIdResourceName`, so `TourAccessibilityTap`
+                            // can locate a node (the live bar) by its stable tag instead of its
+                            // rendered label, which is not stable (`TourAccessibilityTap`'s own doc
+                            // comment has the full account, including why the platform's "extra
+                            // data" testTag channel was tried first and did not work here).
+                            Box(modifier = Modifier.semantics { testTagsAsResourceId = true }) {
+                                OrtNavHost(
+                                    sessionId = resolved.sessionId,
+                                    seed = resolved.navSeed,
+                                    navigator = navigator,
+                                )
+                            }
                         }
                     }
                 }
@@ -251,16 +271,20 @@ public class ScreenshotTourActivity : ComponentActivity() {
         // as a floor for animations even now that the state match above proves the right screen
         // composed (R-803's own coordinator instruction).
         delay(DESTINATION_SETTLE_MILLIS)
-        // WPW (register R-1007 follow-up): the real route onto `LiveMonitorScreen` — no `NavSeed`
-        // field exists to seed `NavHostNavState.openCaptureLiveMonitor` directly (that class's own
-        // doc comment), so this taps the just-composed screen's own live bar for real, through the
-        // identical accessibility bridge `TourAccessibilityScroll`'s own scroll already uses, then
-        // waits for `LiveMonitorScreen`'s own content to actually land before anything below reads
-        // the screen as settled.
+        // WPW (register R-1007 follow-up), fixed for R-1021: the real route onto
+        // `LiveMonitorScreen` — no `NavSeed` field exists to seed `NavHostNavState
+        // .openCaptureLiveMonitor` directly (that class's own doc comment), so this taps the
+        // just-composed screen's own live bar for real, through the identical accessibility bridge
+        // `TourAccessibilityScroll`'s own scroll already uses, then waits for `LiveMonitorScreen`'s
+        // own content to actually land before anything below reads the screen as settled. **By
+        // `testTag`, never by the bar's own rendered label** — R-1021's own field report: `"Live"`
+        // is only that bar's `else`-branch label, outranked by nine other real states this
+        // scenario's own gap/backlog deliberately seed (`TourAccessibilityTap`'s own doc comment
+        // has the full account).
         if (step.drillIn["tapLiveBar"] == "true") {
-            val tapped = TourAccessibilityTap.tapClickableNodeWithText(window.decorView, LIVE_BAR_LABEL)
+            val tapped = TourAccessibilityTap.tapNodeWithTestTag(window.decorView, LIVE_BAR_TEST_TAG)
             if (tapped != TourAccessibilityTap.TapOutcome.Tapped) {
-                error("tour step '${step.id}' could not find a clickable '$LIVE_BAR_LABEL' live-bar node to tap")
+                error("tour step '${step.id}' could not find a clickable node tagged '$LIVE_BAR_TEST_TAG' to tap")
             }
             awaitLiveMonitorVisible(step.id)
         }
@@ -319,19 +343,22 @@ public class ScreenshotTourActivity : ComponentActivity() {
     } == true
 
     /**
-     * WPW: after [TourAccessibilityTap.tapClickableNodeWithText] taps the live bar, waits (bounded,
-     * [STATE_WAIT_TIMEOUT_MILLIS]) until `LiveMonitorScreen`'s own content has actually composed —
-     * its `"LOGGED TONIGHT"` section header (`LiveMonitorOversSection`'s own literal), a marker no
-     * other screen in this codebase renders — via [TourAccessibilityScroll.snapshot], the same
-     * text/`contentDescription` reading [awaitStableSemantics] already uses below. Never assumed
-     * from the tap's own return value alone: `ACTION_CLICK` only *invokes* [LiveBar]'s `onClick`,
-     * which flips local Compose state (`CaptureStatusContent`'s own `sub`) — proving the resulting
-     * recomposition actually landed needs a second, real read of the tree, the same reasoning
+     * WPW, fixed for **R-1021**: after [TourAccessibilityTap.tapNodeWithTestTag] taps the live bar,
+     * waits (bounded, [STATE_WAIT_TIMEOUT_MILLIS]) until `LiveMonitorScreen`'s own content has
+     * actually composed — via [TourAccessibilityTap.hasNodeWithTestTag] against
+     * `LiveMonitorTopBar`'s own stable `testTag("live-monitor-top-bar")`, never against rendered
+     * text. This function's own first version keyed on the `"LOGGED TONIGHT"` section header's
+     * literal copy — precisely the same class of defect R-1021 found in the tap itself (constitution
+     * II: never match on prose a designer may change), caught and fixed in the same round rather
+     * than left for a second field report. Never assumed from the tap's own return value alone:
+     * `ACTION_CLICK` only *invokes* [org.ort.app.ui.components.LiveBar]'s `onClick`, which flips
+     * local Compose state (`CaptureStatusContent`'s own `sub`) — proving the resulting recomposition
+     * actually landed needs a second, real read of the tree, the same reasoning
      * `awaitDestinationSettled`'s own polling loop rests on.
      */
     private suspend fun awaitLiveMonitorVisible(stepId: String) {
         val settled = withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
-            while (!TourAccessibilityScroll.snapshot(window.decorView).text.contains(LIVE_MONITOR_MARKER)) {
+            while (!TourAccessibilityTap.hasNodeWithTestTag(window.decorView, LIVE_MONITOR_TOP_BAR_TEST_TAG)) {
                 delay(STATE_POLL_INTERVAL_MILLIS)
             }
             true
@@ -339,7 +366,7 @@ public class ScreenshotTourActivity : ComponentActivity() {
         if (!settled) {
             error(
                 "tour step '$stepId' tapped the live bar but LiveMonitorScreen never appeared " +
-                    "(no '$LIVE_MONITOR_MARKER' marker) within ${STATE_WAIT_TIMEOUT_MILLIS}ms",
+                    "(no node tagged '$LIVE_MONITOR_TOP_BAR_TEST_TAG') within ${STATE_WAIT_TIMEOUT_MILLIS}ms",
             )
         }
     }
@@ -503,16 +530,19 @@ public class ScreenshotTourActivity : ComponentActivity() {
          * no vertically-scrollable container at all — evidence the screen fits, not a failure. */
         private const val NO_SCROLL_NOTE = "no scroll — fits"
 
-        /** [LiveBarPolling.toneAndLabel]'s own real label for a nominal, capturing session with no
-         * override active — `overnight-live-monitor`'s own shape (no partial text, no room-audio
-         * mark, so [org.ort.app.ui.components.LiveBar]'s composed description is exactly this
-         * string, never a prefix match away from colliding with something else on screen). */
-        private const val LIVE_BAR_LABEL = "Live"
+        /** [org.ort.app.ui.components.LiveBar]'s own stable `testTag`, on its outer `Column`,
+         * present regardless of tone/label/partial text — **R-1021**: replaced a match against the
+         * bar's own rendered label (`"Live"`, only the `else` branch of a real priority ladder
+         * `overnight-live-monitor` deliberately outranks) after the lead's own field report found
+         * that tap could never find the bar once it read `"Gap"`/`"N behind"`. See
+         * [TourAccessibilityTap]'s own doc comment for the full account. */
+        private const val LIVE_BAR_TEST_TAG = "live-bar"
 
-        /** `LiveMonitorScreen`'s own "LOGGED TONIGHT" section header (`ui/screens/LiveMonitorScreen.kt`,
-         * `LiveMonitorOversSection`, a private composable) — see [awaitLiveMonitorVisible]'s own doc
-         * comment for why this, not the tap's own return value, is what proves the screen landed. */
-        private const val LIVE_MONITOR_MARKER = "LOGGED TONIGHT"
+        /** `LiveMonitorScreen`'s own stable `testTag`, on `LiveMonitorTopBar`
+         * (`ui/screens/LiveMonitorScreen.kt`) — **R-1021**: replaced a match against that screen's
+         * "LOGGED TONIGHT" section header text for the identical reason [LIVE_BAR_TEST_TAG] replaced
+         * the label match; see [awaitLiveMonitorVisible]'s own doc comment. */
+        private const val LIVE_MONITOR_TOP_BAR_TEST_TAG = "live-monitor-top-bar"
 
         /** R-803 (halt): the bound `awaitDestinationSettled`/`renderSetupStep`'s own settle-wait use
          * before giving up and reporting an honest error — generous (well past a single dropped
