@@ -5,6 +5,7 @@ import org.ort.app.ui.data.realCaptureConfigurationStore
 import org.ort.app.ui.failures.FailureMapper
 import org.ort.core.SystemClock
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
 import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.rig.DefaultRigTransportFactory
 import java.util.Locale
@@ -81,7 +82,7 @@ internal object SettingsRigFacts {
                 bands = state.bands.map { it.toViewState(stale = false) },
                 transportLabel = transportLabelFor(transportKind),
                 linkAddressLabel = linkAddressLabel(context),
-                rigModuleLabel = rigModuleLabel(state.descriptorId, descriptor, transportKind),
+                rigModuleLabel = rigModuleLabel(state.descriptorId, descriptor, transportKind, state.verification),
                 otherTransportLabel = otherTransportLabel(descriptor, transportKind),
                 autoInformation = autoInformationFor(descriptor),
                 pollingClause = pollingClauseFor(descriptor),
@@ -98,7 +99,12 @@ internal object SettingsRigFacts {
                 bands = state.lastKnown.bands.map { it.toViewState(stale = true) },
                 transportLabel = transportLabelFor(transportKind),
                 linkAddressLabel = linkAddressLabel(context),
-                rigModuleLabel = rigModuleLabel(state.lastKnown.descriptorId, descriptor, transportKind),
+                rigModuleLabel = rigModuleLabel(
+                    state.lastKnown.descriptorId,
+                    descriptor,
+                    transportKind,
+                    state.lastKnown.verification,
+                ),
                 otherTransportLabel = otherTransportLabel(descriptor, transportKind),
                 autoInformation = autoInformationFor(descriptor),
                 pollingClause = pollingClauseFor(descriptor),
@@ -199,11 +205,22 @@ internal object SettingsRigFacts {
      * ME AI BL`), which is illustrative of a broader command set no accessible source in this build
      * actually declares (the real, bundled `kenwood-thd75a.json` capability list is only three:
      * `FREQUENCY`, `SQUELCH_STATE`, `SUB_BAND`).
+     *
+     * Register R-1020 (WPX): this row rendered "verified command set" unconditionally from the
+     * static descriptor, never reading [RigStatus.State.Connected.verification] — the same defect
+     * class R-1019 already fixed on `ReadyScreen` (S12): constitution I forbids claiming more than
+     * is known, and [RigVerification] defaults to [RigVerification.Unknown] specifically so a
+     * caller that forgets to branch on it can never say "verified" by omission. The word "verified"
+     * now appears only for [RigVerification.Full]; [RigVerification.Partial] says plainly what was
+     * never observed (the same "partially confirmed" vocabulary `RadioVerifiedScreen`/`ReadyScreen`
+     * already use, reused rather than reinvented), and [RigVerification.Unknown] says the command
+     * set was not confirmed this session — never a bare, unconditional "verified".
      */
     private fun rigModuleLabel(
         descriptorId: String?,
         descriptor: org.ort.rig.descriptor.RigDescriptor?,
         transportKind: RigLinkTransportKind?,
+        verification: RigVerification,
     ): String {
         if (descriptor == null || descriptorId == null) return NOT_REPORTED_BY_RIG_MODULE
         val transport = descriptor.transports.firstOrNull { descriptorTransportKindOf(it.kind) == transportKind }
@@ -212,7 +229,15 @@ internal object SettingsRigFacts {
         val caps = rawCaps.joinToString(" ") { raw ->
             runCatching { org.ort.rig.RigCapability.valueOf(raw) }.getOrNull()?.let(::catMnemonicFor) ?: raw
         }
-        return "$descriptorId · built in · verified command set $caps"
+        return when (verification) {
+            RigVerification.Full -> "$descriptorId · built in · verified command set $caps"
+            is RigVerification.Partial -> {
+                val missing = verification.missingCapabilities.sortedBy { it.ordinal }
+                    .joinToString(" ", transform = ::catMnemonicFor)
+                "$descriptorId · built in · command set partially confirmed · missing $missing"
+            }
+            RigVerification.Unknown -> "$descriptorId · built in · command set not confirmed this session"
+        }
     }
 
     /** R-923: the real two-letter CAT command `docs/reference/th-d75a-cat.md`'s own verified

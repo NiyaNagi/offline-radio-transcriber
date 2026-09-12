@@ -32,7 +32,137 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-12 (WPD3 round 3: R-1019 — S12/RadioUsbScreen stop asserting more verification than `RigStatus` establishes)
+## 2026-09-12 (WPX: R-1009 — real ADIF/CSV/JSON/text export and the debug dump; R-1020 — Settings stops over-claiming rig verification)
+
+### (this commit) — the log finally leaves the device: real export writers, a debug dump, and Settings' own over-claimed "verified" fixed
+
+**Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/export/**` (and its tests under
+`pipeline/src/test/**`); new `app/src/main/kotlin/org/ort/app/export/**` (and its tests under
+`app/src/test/kotlin/org/ort/app/export/**`); `app/src/main/kotlin/org/ort/app/ui/settings/
+{SettingsExportScreen,SettingsRigFacts}.kt` and their tests; this file.
+
+**Requirements/ACs:** FR-EXP-1, FR-EXP-2, FR-EXP-3, FR-EXP-4, FR-EXP-5 (FR-EXP-6/QRZ explicitly
+NOT built — out of scope per the register row and this package's own brief). Register R-1009 (the
+operator's own report: "export is not available in this build... complete everything needed for
+debug and real export") and R-1020 (`SettingsRigFacts.rigModuleLabel` rendered "verified command
+set" unconditionally, never reading `RigStatus.State.Connected.verification` — the same defect
+class R-1019 already fixed on `ReadyScreen`/`RadioUsbScreen`). Constitution I (Uncertainty Is
+Content) and VI (Measurement Discipline) govern both halves.
+
+**What changed:**
+- **`org.ort.pipeline.export.ExportAttribution`** (FR-EXP-4, made structural, not conventional): a
+  sealed type mirroring `AttributionState`'s four values, with a `CallsignKnown` sub-interface that
+  is the *only* place a `callsign` field exists at all — `Ambiguous`/`Unknown` carry none to read.
+  `toCells()` is the one function every writer calls to render an attribution; it always returns
+  the callsign cell and the state tag together in one object, so a writer cannot staple a
+  `CONFIRMED` tag onto an `INFERRED` callsign without hand-rolling a second path around the type
+  entirely. `ExportAttributionTest`'s own `FR_EXP_4_*` tests include a reflection check that the
+  base type declares no `callsign`/`confidence` member at all, and that the sealed set stays
+  exactly four states.
+- **Four format writers**, each a pure function over `List<ExportOverRecord>`, all real:
+  `AdifExportWriter` (FR-EXP-1) emits real ADIF QSO records (`CALL`/`QSO_DATE`/`TIME_ON`/`FREQ`/
+  `MODE`) for `CONFIRMED`/`INFERRED` overs, plus `APP_ORT_ATTRIBUTION_STATE`/`APP_ORT_CONFIDENCE`
+  application-defined fields so an inferred record can never render identically to a confirmed
+  one. ADIF has no field for "unidentified" — an `AMBIGUOUS`/`UNKNOWN` over is never given a QSO
+  record (no fabricated `CALL`), but is named in the file's own header block with its transmission
+  id, timestamp, frequency and state, so nothing is silently dropped. `CsvExportWriter` (FR-EXP-2)
+  writes every field including confidence and provenance, RFC4180-quoted, ISO-8601 UTC timestamps
+  and raw-Hz frequencies (never a locale-formatted number or date). `JsonExportWriter` and
+  `TextExportWriter` cover the screen's other two format chips, both hand-rolled (no JSON library
+  on `:pipeline`'s classpath) with the same FR-EXP-4 guarantee. `PotaActivityExportWriter`
+  (FR-EXP-3) filters to overs whose attributed station carries a park reference, one row per
+  reference, naming park/station/frequency/time. `confirmedOnly()` (FR-EXP-5) is a one-line filter
+  composed with any writer rather than a flag duplicated onto each one.
+- **`org.ort.app.export.ExportCoordinator`**: reads the real `:data` entities
+  (`SessionEntity`/`TransmissionEntity`/`TranscriptEntity`/`StationEntity`) and turns them into
+  `ExportOverRecord`s, scoped by `ExportRequestScope.TONIGHT` (the most recent session — the same
+  definition `SettingsPolling.export`'s own `tonightOverCount` already uses) or `EVERYTHING` (every
+  session). `RANGE` ("a range of nights") has no counterpart: no date-range picker exists anywhere
+  in this build, and this round does not add one (a new picker is a visual change with no artboard
+  reference, and this session is explicitly scoped away from screenshot capture) — the Export
+  screen disables `Save file` honestly while that radio option is selected instead. A `TransmissionEntity`
+  claiming `CONFIRMED`/`INFERRED` with no resolvable callsign or confidence throws rather than
+  silently downgrading to `AMBIGUOUS`/`UNKNOWN` (a data-integrity defect belongs visible, not
+  papered over). `includeTranscripts = false` strips both the transcript text and its model
+  provenance together, never one without the other.
+- **`org.ort.app.export.DebugDumpBuilder`** (the debug-dump half of the register row): one NDJSON
+  line per record, `type` discriminating `meta`/`session`/`over`/`gap`/`pass_outcome`. `meta`
+  carries the schema version, real app version, real git commit and device facts (constitution VI
+  provenance). Every `over` line carries its own `attributionState`/`stationId`/
+  `attributionConfidence`/`corrected`/`processedTier`/`executionProvider`/`calibrationId` — no
+  single dump-wide claim that would be wrong the moment two overs ran on different providers.
+  `pass_outcome` lines cover every terminally-`FAILED` `WorkQueueItemEntity`
+  (`WorkQueueDao.selectFailed(null, null)`) with its `lastError` and its full `WorkAttemptEntity`
+  history, oldest first — exactly what "nineteen silently-failed overs" needs to be diagnosable.
+  Holds the same discipline `DiagnosticsBundleBuilder` already does for its own zip (AC-109/
+  AC-120): never reads a voiceprint embedding or a station's user-supplied name/notes — structurally,
+  by never querying `CatalogDao` at all. Not yet wired to a UI button (see "Left open").
+- **`SettingsExportScreen`** (R-1009): the hardcoded `FailedState`/disabled `Save file` (honest
+  while no exporter existed) is replaced with a real save flow via a new `onSaveFile: (ExportRequest)
+  -> Unit` callback, and `ExportFileFormat`/`ExportRequestScope` from the new `:app/export` package
+  replace the screen's own placeholder enums. `Save file` is enabled for `Tonight`/`Everything` and
+  disabled with an honest `FailedState` for `A range of nights`. `Log with attributions` is pinned
+  on (the one thing every format writes); `Transcripts, current version` genuinely toggles
+  `includeTranscripts`; `Digest`/`Superseded transcripts and corrections history`/`Audio` stay
+  visible (matching the artboard) but are non-interactive, each stating "not yet written by this
+  exporter" — no writer folds those into any of the four flat formats yet, and accepting a tap that
+  changed nothing real would itself be the silent-claim defect constitution I forbids. The
+  never-included promise banner (R-135) is unchanged, unconditional. Split into
+  `ExportScopeSection`/`ExportIncludeSection`/`ExportFormatSection`/`ExportFooter` to stay under
+  detekt's `LongMethod` threshold.
+- **`SettingsRigFacts.rigModuleLabel`** (R-1020): now takes `RigVerification` and branches on it —
+  `Full` → unchanged `"verified command set <caps>"`; `Partial` → `"command set partially
+  confirmed · missing <mnemonics>"` (never the word "verified"); `Unknown` (the default a caller
+  that forgets to state the fact silently gets) → `"command set not confirmed this session"`. Both
+  `Connected` and `Stale` (via `lastKnown.verification`) call sites updated. The one pre-existing
+  test exercising the CAT-mnemonic rendering now states `verification = RigVerification.Full`
+  explicitly, since that is what it is actually testing, not the default it used to rely on by
+  accident.
+
+**Verified:**
+- `.\gradlew :pipeline:testDebugUnitTest :app:testDebugUnitTest --tests
+  "org.ort.pipeline.export.*" --tests "org.ort.app.export.*" --tests "org.ort.app.ui.settings.*"
+  -PortAllowMissingBundledAssets=true` — green, 34 pipeline export tests + 7 `ExportCoordinatorTest`
+  + 7 `DebugDumpBuilderTest` + 8 `SettingsExportScreenTest` + 4 `SettingsRigFactsTest` (`R_1020_*`)
+  new, plus every pre-existing `ui/settings` test unaffected.
+- Every new test shown to discriminate: written first against types/functions that did not exist
+  (or, for `SettingsRigFactsTest`'s `R_1020_*` cases, against the pre-fix `rigModuleLabel`),
+  confirmed to fail for the right reason (compile error naming the missing symbol, or — for
+  R-1020 — `AssertionError: ... got kenwood-thd75a · built in · verified command set FQ BY BC`),
+  then made to pass by the implementation.
+- `.\gradlew :app:smokeTestDebugUnitTest :app:lintDebug dependencyRules platformGuards
+  :app:assembleDebug -PortAllowMissingBundledAssets=true` — green.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  — green (detekt/ktlint required two small follow-up fixes: a `ComplexCondition` in
+  `CsvExportWriter.csvField` named as a `Set` instead of a chained `||`, and `SettingsExportScreen`
+  split into the four composables above for `LongMethod`).
+- `.\gradlew -p buildSrc test` — green (unaffected by this change; run per the standing checklist).
+- `python tools\spec-check\spec_check.py` — `spec-check: OK`.
+- `.\gradlew coverageMatrix` then `.\gradlew coverageMatrixCheck` (separate invocations) —
+  `FR-EXP-1..5` move from the uncovered block to real test names; `FR-EXP-6` (QRZ) correctly stays
+  uncovered, not built.
+
+**Left open / not done:**
+- **FR-EXP-6 (QRZ enrichment) is explicitly not built** — (C, v2) in the spec, out of scope per
+  this package's own brief.
+- **`RANGE` ("a range of nights") has no working export** — no date-range picker exists in this
+  build; `Save file` disables itself honestly rather than half-implementing a scope with no UI to
+  supply it.
+- **`Digest`/history/audio inclusion is not wired** into any writer — the three checkboxes are
+  visible but non-interactive, each saying so.
+- **FR-EXP-5's confirmed-only filter has no Settings UI control yet** — `confirmedOnly()` and
+  `ExportRequest.confirmedOnly` are real and tested, callable by a future UI hook, but
+  `Settings-Export.dc.html` has no such element today and this session was explicitly scoped away
+  from adding new visual elements/screenshot capture.
+- **The debug dump has no save button anywhere** — `DebugDumpBuilder` is built and tested but not
+  yet reachable from any screen; wiring one (likely beside `SettingsDiagnosticsScreen`'s own "Save
+  bundle") needs `app/.../ui/settings/SettingsDiagnosticsScreen.kt` and `SettingsContent.kt`,
+  neither owned by this package this round — see the session report for the exact routing ask.
+- **`SettingsExportScreen`'s `Save file`/checkbox/`FailedState` changes touch `ui/**`** and were
+  not re-verified against `Settings-Export.dc.html` with the screenshot tour — this session was
+  explicitly told not to capture screenshots or run the tour; flagged for the lead to route that
+  verification separately (constitution VIII).
+- Every gate command's own **exact output is in the session report**, not re-quoted here.
 
 ### 45038217 — WPD3 round 3: ReadyScreen (S12) and RadioUsbScreen's defensive Connected/Stale fallback branch on RigVerification instead of hardcoding "verified"
 
