@@ -16,7 +16,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.debug.DebugBundledAssetSourceOverride
 import org.ort.app.debug.Scenarios
+import org.ort.app.debug.TinyFixtureBundledAssetSource
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.OrtNavHost
@@ -83,6 +85,9 @@ class TourStepsTest {
         LevelStatus.reset()
         InputStatus.reset()
         DebugFailureOverride.clear()
+        // Register, CI regression: backstop for R_TOUR_STEPS's own override (already cleared in
+        // its own `finally`) -- catches a future test that forgets to.
+        DebugBundledAssetSourceOverride.clear()
         context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, android.content.Context.MODE_PRIVATE)
             .edit().clear().commit()
     }
@@ -190,6 +195,26 @@ class TourStepsTest {
         val sessionId: String?,
     )
 
+    /**
+     * Register, CI regression (`OutOfMemoryError` at
+     * `org.robolectric.res.android.Asset$_CompressedAsset.getBuffer`, Release workflow run
+     * 34664670909, commit `5e07273f`): this test's own scenario loop reaches
+     * `assets-bundled`/`asset-corrupt`/`tier0-llm-stored`'s own destination steps, each calling
+     * `Scenarios.load` -> `installRealBundledAssets` -> the real ~555MB gated LLM asset once a real
+     * `HF_TOKEN` build makes it genuinely present (`mergeDebugAssets`'s own `dependsOn
+     * (fetchBundledAssets)`, register) — Robolectric's own asset reader inflates a compressed
+     * asset's entire uncompressed content into the test JVM's heap to serve it. This test's own
+     * purpose is proving *navigation* (every destination step lands on the screen it claims to),
+     * not install fidelity, so it gets the same [DebugBundledAssetSourceOverride] fixture-sized
+     * source `ScenariosTest`'s own `R_110 ...five times...`/`R_110 every declared scenario name...`
+     * already use, for the same reason, in the same `try`/`finally` shape.
+     */
+    /** The one step this test's own `setContent` renders at a time — a class-level property
+     * (rather than a `var` local to the test method, as before R-807/the CI regression fix) purely
+     * so [checkStep] can be extracted to a method of its own, keeping the test method itself under
+     * detekt's `NestedBlockDepth` once the `try`/`finally` this fix added wraps the loop. */
+    private var current by mutableStateOf<Resolved?>(null)
+
     @Test
     fun `R_TOUR_STEPS every destination step in tour json lands on the screen it claims to`() {
         val tourJsonFile = File("../tools/ui-audit/tour.json").canonicalFile
@@ -202,7 +227,6 @@ class TourStepsTest {
         // actually running this, not by inspection) - one composition drives every step instead,
         // keyed on the step id so each gets a fresh `rememberReaderNavigator`/`NavHostNavState` the
         // same way `ScreenshotTourActivity` itself relies on `key(...)` for the identical reason.
-        var current by mutableStateOf<Resolved?>(null)
         composeTestRule.setContent {
             OrtTheme {
                 val resolved = current
@@ -219,47 +243,57 @@ class TourStepsTest {
             }
         }
 
+        DebugBundledAssetSourceOverride.override = TinyFixtureBundledAssetSource(context.filesDir)
         val failures = mutableListOf<String>()
-        for (step in destinationSteps) {
-            val loadResult = runBlocking { Scenarios.load(context, step.scenario) }
-            val navSeed = runBlocking { TourIds.resolveSeed(context, loadResult.primarySessionId, step.drillIn) }
-            val destination = ReaderDestination.entries.first { it.name == step.destination }
-
-            current = Resolved(step.id, destination, navSeed, loadResult.primarySessionId)
-            composeTestRule.waitForIdle()
-
-            val expected = expectedFor(step)
-            fun isFound(): Boolean = when (expected) {
-                is Expected.Tag -> composeTestRule.onAllNodesWithTag(expected.tag).fetchSemanticsNodes().isNotEmpty()
-                is Expected.AnyTag -> expected.tags.any {
-                    composeTestRule.onAllNodesWithTag(it).fetchSemanticsNodes().isNotEmpty()
-                }
-                is Expected.Text -> composeTestRule.onAllNodes(hasText(expected.text, substring = true))
-                    .fetchSemanticsNodes().isNotEmpty()
-                is Expected.DisplayedTag -> try {
-                    composeTestRule.onNodeWithTag(expected.tag).assertIsDisplayed()
-                    true
-                } catch (notDisplayed: AssertionError) {
-                    false
-                }
-            }
-            // Some states (a sheet whose own content waits on a nested poll, e.g. Log's filter
-            // sheet's facet counts) are not necessarily settled by one `waitForIdle` - retry with
-            // `waitUntil` before calling a step a real wrong-screen failure.
-            val found = if (isFound()) {
-                true
-            } else {
-                try {
-                    composeTestRule.waitUntil(WAIT_UNTIL_TIMEOUT_MILLIS) { isFound() }
-                    true
-                } catch (timeout: Exception) {
-                    false
-                }
-            }
-            if (!found) failures += "${step.id}: expected $expected, not found"
+        try {
+            destinationSteps.forEach { step -> checkStep(step)?.let { failures += it } }
+        } finally {
+            DebugBundledAssetSourceOverride.clear()
         }
 
         assertTrue("wrong-screen captures:\n${failures.joinToString("\n")}", failures.isEmpty())
+    }
+
+    /** One step of `R_TOUR_STEPS...`'s own loop, extracted so that test method stays under
+     * detekt's `NestedBlockDepth` — returns a failure message, or `null` once the step's own
+     * expected marker is found. */
+    private fun checkStep(step: TourStep): String? {
+        val loadResult = runBlocking { Scenarios.load(context, step.scenario) }
+        val navSeed = runBlocking { TourIds.resolveSeed(context, loadResult.primarySessionId, step.drillIn) }
+        val destination = ReaderDestination.entries.first { it.name == step.destination }
+
+        current = Resolved(step.id, destination, navSeed, loadResult.primarySessionId)
+        composeTestRule.waitForIdle()
+
+        val expected = expectedFor(step)
+        fun isFound(): Boolean = when (expected) {
+            is Expected.Tag -> composeTestRule.onAllNodesWithTag(expected.tag).fetchSemanticsNodes().isNotEmpty()
+            is Expected.AnyTag -> expected.tags.any {
+                composeTestRule.onAllNodesWithTag(it).fetchSemanticsNodes().isNotEmpty()
+            }
+            is Expected.Text -> composeTestRule.onAllNodes(hasText(expected.text, substring = true))
+                .fetchSemanticsNodes().isNotEmpty()
+            is Expected.DisplayedTag -> try {
+                composeTestRule.onNodeWithTag(expected.tag).assertIsDisplayed()
+                true
+            } catch (notDisplayed: AssertionError) {
+                false
+            }
+        }
+        // Some states (a sheet whose own content waits on a nested poll, e.g. Log's filter sheet's
+        // facet counts) are not necessarily settled by one `waitForIdle` - retry with `waitUntil`
+        // before calling a step a real wrong-screen failure.
+        val found = if (isFound()) {
+            true
+        } else {
+            try {
+                composeTestRule.waitUntil(WAIT_UNTIL_TIMEOUT_MILLIS) { isFound() }
+                true
+            } catch (timeout: Exception) {
+                false
+            }
+        }
+        return if (found) null else "${step.id}: expected $expected, not found"
     }
 
     private companion object {
