@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPPROV: R-1030 — the manual-frequency escape hatch is wired end to end; R-1031 — a real session records the app's real version, never the v0 `"smoke-test"` literal; R-1032 — the execution provider a Pass B run actually used is persisted, not thrown away; R-1033 — live capture now stamps `processedTier` too, not only reprocessing)
 
-### <pending> — WPPROV: three provenance holes and one false screen caption from the operator's own on-device dump — R-1030/R-1031/R-1032/R-1033
+### 54d55543 — WPPROV: three provenance holes and one false screen caption from the operator's own on-device dump — R-1030/R-1031/R-1032/R-1033
 
 **Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/rig/CaptureConfiguration.kt`,
 `CaptureConfigurationStore.kt`; `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`;
