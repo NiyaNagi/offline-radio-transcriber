@@ -68,6 +68,22 @@ private fun pollDescriptor(kind: String): RigDescriptor = RigDescriptor(
     ),
 )
 
+/** R-1014: declares two capabilities (SQUELCH_STATE, FREQUENCY) but its one unsolicited pattern
+ * only ever supplies `squelchOpen` — FREQUENCY is declared and derivable in principle
+ * ([capabilitiesPresentIn] maps `frequencyHz`) but this rig, as scripted, never actually reports
+ * it, exactly the "a real rig legitimately does not report a declared field" case R-1014 describes.
+ * No `poll` block, so both the identify and verify timeouts fall back to the no-poll default. */
+private fun partialVerifyDescriptor(kind: String): RigDescriptor = RigDescriptor(
+    schemaVersion = 1,
+    id = TEST_RIG_ID,
+    displayName = "Test Rig",
+    transports = listOf(TransportSpec(kind = kind, capabilities = listOf("SQUELCH_STATE", "FREQUENCY"))),
+    unsolicited = UnsolicitedSpec(
+        enable = "AI 1",
+        patterns = listOf(PatternSpec(expect = "^BY (\\d)$", map = mapOf("squelchOpen" to "$1"))),
+    ),
+)
+
 /**
  * WPC3: [RigLinkBridge.probe] over a real [org.ort.rig.descriptor.DescriptorRigModule] — the
  * open → identify → verify sequence S10b's checklist names (E2-E10), plus the two ways it can be
@@ -278,4 +294,82 @@ public class RigLinkBridgeTest {
             states.none { it is RigLinkProbeState.Identified },
         )
     }
+
+    /**
+     * R-1013 (constitution I/IV): the socket opens (a real Bluetooth/USB connect) but the radio on
+     * the other end never answers the identify sequence at all — wrong framing, an unexpected line
+     * terminator, or simply not the rig the descriptor expects. Before this fix, nothing here ever
+     * reaches a terminal state: `module.observe()` never emits (no line ever matches a pattern) and
+     * `module.health()` never emits [org.ort.rig.RigHealthIssue.TRANSPORT_LOST] either — the
+     * transport is genuinely still open, just silent — so `probe()` sits at [RigLinkProbeState.Open]
+     * forever. `FakeRigTransport`'s own `readLine` (`withTimeoutOrNull(timeoutMs) {
+     * incoming.receive() }`) reproduces exactly this: with nothing ever pushed, every read times
+     * out, `DescriptorRigModule`'s read loop retries forever, and nothing this bridge listens to
+     * ever fires. Wrapped in an outer virtual-time [withTimeout] (never a real sleep — this
+     * completes near-instantly under [kotlinx.coroutines.test.TestScope]'s auto-advancing clock)
+     * so the pre-fix hang reports as a clean [kotlinx.coroutines.TimeoutCancellationException]
+     * rather than actually hanging the test runner.
+     */
+    @Test
+    @Requirement("FR-RIG-3", "FR-RIG-11")
+    public fun `a rig that opens but never answers reaches IdentifyTimedOut, never hangs forever`() = runTest {
+        val transport = FakeRigTransport() // never scripted, never pushed -- the radio never speaks
+        val bridge = DefaultRigLinkBridge(
+            context = context,
+            transportFactory = RigTransportFactory { _, _, _ -> transport },
+            catalogue = { id -> if (id == TEST_RIG_ID) pushDescriptor("usb_serial") else null },
+            moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
+        )
+
+        val states = withTimeout(20_000) {
+            val collected = mutableListOf<RigLinkProbeState>()
+            bridge.probe(TEST_RIG_ID, RigTransportKind.USB_SERIAL, emptyMap()).collect { collected += it }
+            collected
+        }
+
+        assertEquals(RigLinkProbeState.Opening, states[0])
+        assertEquals(RigLinkProbeState.Open, states[1])
+        val timedOut = states.filterIsInstance<RigLinkProbeState.IdentifyTimedOut>().single()
+        assertEquals(TEST_RIG_ID, timedOut.rigId)
+        assertTrue("timeout must be a real bound, not zero", timedOut.timeoutMillis > 0)
+        assertTrue("a silent rig must never falsely Identify", states.none { it is RigLinkProbeState.Identified })
+    }
+
+    /**
+     * R-1014: the rig does identify (one matching line arrives) but the descriptor declares a
+     * second capability this particular rig, as scripted, never actually reports — a real,
+     * legitimate gap (a band with no signal, a VFO with no memory channel), not a defect in
+     * [capabilitiesPresentIn]. This must be reported as *partial success* — [Identified] really
+     * happened, and [RigLinkProbeState.VerifyTimedOut.seenCapabilities] must say exactly which
+     * capability was seen — never collapsed into silence or into a generic failure.
+     */
+    @Test
+    @Requirement("FR-RIG-3", "FR-RIG-11")
+    public fun `a rig that identifies but never completes verification reaches VerifyTimedOut with what it did see`() =
+        runTest {
+            val transport = FakeRigTransport()
+            val bridge = DefaultRigLinkBridge(
+                context = context,
+                transportFactory = RigTransportFactory { _, _, _ -> transport },
+                catalogue = { id -> if (id == TEST_RIG_ID) partialVerifyDescriptor("usb_serial") else null },
+                moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
+            )
+
+            val states = withTimeout(20_000) {
+                val collected = mutableListOf<RigLinkProbeState>()
+                bridge.probe(TEST_RIG_ID, RigTransportKind.USB_SERIAL, emptyMap()).collect { state ->
+                    collected += state
+                    if (state is RigLinkProbeState.Opening) transport.pushUnsolicited("BY 1")
+                }
+                collected
+            }
+
+            assertTrue(states.any { it is RigLinkProbeState.Identified })
+            assertTrue("must never falsely claim Verified", states.none { it is RigLinkProbeState.Verified })
+            val timedOut = states.filterIsInstance<RigLinkProbeState.VerifyTimedOut>().single()
+            assertEquals(TEST_RIG_ID, timedOut.rigId)
+            assertEquals(setOf(RigCapability.SQUELCH_STATE), timedOut.seenCapabilities)
+            assertEquals(setOf(RigCapability.SQUELCH_STATE, RigCapability.FREQUENCY), timedOut.declaredCapabilities)
+            assertTrue("timeout must be a real bound, not zero", timedOut.timeoutMillis > 0)
+        }
 }

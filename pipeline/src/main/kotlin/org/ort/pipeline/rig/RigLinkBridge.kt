@@ -3,12 +3,16 @@ package org.ort.pipeline.rig
 import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import org.ort.pipeline.capture.CaptureState
 import org.ort.rig.RigCapability
@@ -77,6 +81,18 @@ public data class PairedRigDevicesResult(
  * straight from the transport's own [org.ort.rig.TransportState.Lost], never invented here.
  * [Failed] covers everything that never gets as far as opening a transport at all (an unknown rig
  * id, a rig/transport combination the descriptor does not declare, or capture already running).
+ *
+ * [IdentifyTimedOut] and [VerifyTimedOut] (R-1013/R-1014) are the two other ways [Open] can end:
+ * the transport genuinely opened and stayed open, but the descriptor's own identify/verify
+ * sequence never completed within a bounded wait. Neither collapses into [Failed] or [Lost] —
+ * constitution I: "a log that silently guesses is worse than one that admits it does not know",
+ * and each names a different fact an operator would act on differently. [Lost] means the
+ * transport itself reported the link gone; [IdentifyTimedOut] means the link is still open but
+ * nothing ever spoke; [VerifyTimedOut] means the rig *did* speak — [Identified] genuinely
+ * happened — but never finished reporting every capability the descriptor declares. A probe run
+ * always reaches exactly one of [Verified], [Lost], [NoPermission], [Failed], [IdentifyTimedOut]
+ * or [VerifyTimedOut] — never sits at [Open] forever (constitution IV: capture-adjacent surfaces
+ * must never lie about work still being in progress once it has, in fact, concluded).
  */
 public sealed interface RigLinkProbeState {
     public data object Opening : RigLinkProbeState
@@ -86,6 +102,38 @@ public sealed interface RigLinkProbeState {
     public data class Lost(public val reason: String) : RigLinkProbeState
     public data object NoPermission : RigLinkProbeState
     public data class Failed(public val reason: String) : RigLinkProbeState
+
+    /**
+     * R-1013: [Open] was reached — the transport itself connected — but the descriptor's identify
+     * sequence never produced a single [RigState] (no line ever matched one of its patterns)
+     * within [timeoutMillis] of opening. This is the "wrong framing, unexpected line terminator, a
+     * radio mode that needs setup before it will talk CAT, or simply not the rig the descriptor
+     * expects" case: the link is not lost (no [org.ort.rig.TransportState.Lost] was ever reported)
+     * and the rig has told this bridge nothing at all, ever — a fact the operator needs distinct
+     * from "the transport dropped" ([Lost]) and from "it spoke but not enough" ([VerifyTimedOut]).
+     * [timeoutMillis] is carried so the UI can state the bound that was actually applied rather
+     * than a number the caller has to already know.
+     */
+    public data class IdentifyTimedOut(public val rigId: String, public val timeoutMillis: Long) : RigLinkProbeState
+
+    /**
+     * R-1014: [Identified] was reached — the rig genuinely answered and this bridge parsed at
+     * least one line from it — but [seenCapabilities] never grew to cover every capability
+     * [declaredCapabilities] the descriptor declares, within [timeoutMillis] of identifying. This
+     * is **partial success, not failure**: the rig is there and speaking the protocol; it simply
+     * never reported every field this transport promises in the time allowed (a band with no
+     * signal reports no `SIGNAL_STRENGTH`; a VFO with no memory channel reports no
+     * `MEMORY_CHANNEL`; a descriptor that declares `TIME` can never complete at all — see
+     * [capabilitiesPresentIn]'s own kdoc). Carrying [seenCapabilities] lets the caller say
+     * "identified, N of M capabilities seen" instead of reporting nothing, which is exactly what
+     * constitution I requires of a machine conclusion that stops short of certainty.
+     */
+    public data class VerifyTimedOut(
+        public val rigId: String,
+        public val seenCapabilities: Set<RigCapability>,
+        public val declaredCapabilities: Set<RigCapability>,
+        public val timeoutMillis: Long,
+    ) : RigLinkProbeState
 }
 
 /**
@@ -134,6 +182,18 @@ public class DefaultRigLinkBridge(
     private val transportFactory: RigTransportFactory = DefaultRigTransportFactory(context),
     private val catalogue: (String) -> RigDescriptor? = ::bundledDescriptorById,
     private val moduleScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    /** R-1013: how long [probe] waits from [RigLinkProbeState.Open] for the first [RigState] at
+     * all before concluding [RigLinkProbeState.IdentifyTimedOut] — a function of the descriptor
+     * being probed, not a fixed constant (see [defaultIdentifyTimeoutMillis]'s own kdoc for the
+     * derivation), and overridable here so a test can substitute a tiny, explicit bound instead of
+     * relying on the default's magnitude. Tests still never sleep in real time regardless of the
+     * value chosen — the `delay` this drives runs on whatever dispatcher collects the returned
+     * [Flow], so [kotlinx.coroutines.test.TestScope]'s virtual clock resolves it instantly. */
+    private val identifyTimeoutMillisFor: (RigDescriptor) -> Long = Companion::defaultIdentifyTimeoutMillis,
+    /** R-1014: the same idea as [identifyTimeoutMillisFor], applied to bounding [RigLinkProbeState
+     * .Identified] -> [RigLinkProbeState.Verified] before concluding [RigLinkProbeState
+     * .VerifyTimedOut] — see [defaultVerifyTimeoutMillis]'s own kdoc. */
+    private val verifyTimeoutMillisFor: (RigDescriptor) -> Long = Companion::defaultVerifyTimeoutMillis,
 ) : RigLinkBridge {
 
     override fun pairedDevices(): PairedRigDevicesResult {
@@ -181,9 +241,9 @@ public class DefaultRigLinkBridge(
         var identified = false
 
         // sendUnlessClosed swallows a send racing an already-closed channel (this producer's own
-        // close(), called from whichever of these two jobs reaches a terminal state first) -- a
-        // benign race between two independent collectors of the same one-shot module, never a
-        // real error.
+        // close(), called from whichever of these jobs reaches a terminal state first) -- a
+        // benign race between independent collectors of the same one-shot module, never a real
+        // error.
         val healthJob = launch {
             module.health().collect { health ->
                 if (health !is RigHealth.Degraded || health.issue != RigHealthIssue.TRANSPORT_LOST) return@collect
@@ -196,19 +256,37 @@ public class DefaultRigLinkBridge(
                 close()
             }
         }
+
+        // R-1013: bounds Open -> Identified; R-1014: bounds Identified -> Verified once
+        // identification actually happens. See each launcher's own kdoc for why neither can be
+        // driven by module.health() alone -- a merely-silent (not lost) transport never produces
+        // RigHealth.Degraded(TRANSPORT_LOST) at all (see this bridge's own report on what
+        // DescriptorRigModule's read loop does instead: it retries forever).
+        val identifyTimeoutMillis = identifyTimeoutMillisFor(descriptor)
+        val identifyTimeoutJob = launchIdentifyTimeoutJob(rigId, identifyTimeoutMillis)
+        var verifyTimeoutJob: Job? = null
+
         val observeJob = launch {
             module.observe().collect { state ->
                 if (!identified) {
                     identified = true
+                    identifyTimeoutJob.cancel()
                     sendUnlessClosed(RigLinkProbeState.Identified(rigId))
                     if (declaredCapabilities.isEmpty()) {
                         sendUnlessClosed(RigLinkProbeState.Verified(declaredCapabilities))
                         close()
                         return@collect
                     }
+                    verifyTimeoutJob = launchVerifyTimeoutJob(
+                        rigId,
+                        seenCapabilitiesSoFar = { seenCapabilities.toSet() },
+                        declaredCapabilities,
+                        verifyTimeoutMillisFor(descriptor),
+                    )
                 }
                 seenCapabilities += capabilitiesPresentIn(state)
                 if (seenCapabilities.containsAll(declaredCapabilities)) {
+                    verifyTimeoutJob?.cancel()
                     sendUnlessClosed(RigLinkProbeState.Verified(declaredCapabilities))
                     close()
                 }
@@ -216,6 +294,8 @@ public class DefaultRigLinkBridge(
         }
 
         awaitClose {
+            identifyTimeoutJob.cancel()
+            verifyTimeoutJob?.cancel()
             healthJob.cancel()
             observeJob.cancel()
             module.disconnect()
@@ -241,6 +321,47 @@ public class DefaultRigLinkBridge(
             SppSupport.NO -> RigLinkSppSupport.NO
             SppSupport.UNKNOWN -> RigLinkSppSupport.UNKNOWN
         }
+
+        /** R-1013: multiplies a descriptor's own [org.ort.rig.descriptor.PollSpec.intervalMs] to
+         * bound how long [probe] waits from [RigLinkProbeState.Open] for the identify sequence to
+         * produce a first [RigState] at all — derived from the descriptor's own declared cadence,
+         * not a hardcoded duration, because a rig that polls every two seconds and a rig that polls
+         * ten times a second have genuinely different silences worth tolerating before concluding
+         * the radio is not answering. Three cycles gives a full extra cycle of margin for a reply
+         * that lands just after this bridge started waiting. */
+        const val IDENTIFY_POLL_CYCLES = 3L
+
+        /** Same reasoning as [IDENTIFY_POLL_CYCLES], applied to bounding [RigLinkProbeState
+         * .Identified] -> [RigLinkProbeState.Verified]: verification needs every declared
+         * capability to have appeared at least once, which — unlike identification, satisfied by a
+         * single matched line — can genuinely take several poll cycles for a multi-field, per-band
+         * descriptor. Doubled against [IDENTIFY_POLL_CYCLES] for that stated reason, not picked to
+         * make any one test pass. */
+        const val VERIFY_POLL_CYCLES = 6L
+
+        /** Floor for a descriptor with no [RigDescriptor.poll] at all (an unsolicited-push-only
+         * rig — including this file's own [FakeRigLinkBridge]-adjacent test descriptors) — there is
+         * no cadence to derive a multiple of, so this names a fixed ceiling for "nothing arrived on
+         * its own" instead of refusing to bound the wait at all. */
+        const val NO_POLL_TIMEOUT_MILLIS = 5_000L
+
+        /** Floor applied to any derived timeout, so a descriptor with an unrealistically fast poll
+         * cadence (a descriptor error, or a future rig with a genuine sub-second cadence) still
+         * gets a wait worth calling a timeout rather than one that fires before a reply could ever
+         * physically arrive. */
+        const val MIN_TIMEOUT_MILLIS = 2_000L
+
+        /** See [identifyTimeoutMillisFor]'s own kdoc for why this is overridable at all; this is
+         * the production default it falls back to. */
+        fun defaultIdentifyTimeoutMillis(descriptor: RigDescriptor): Long = descriptor.poll?.intervalMs
+            ?.let { interval -> (interval * IDENTIFY_POLL_CYCLES).coerceAtLeast(MIN_TIMEOUT_MILLIS) }
+            ?: NO_POLL_TIMEOUT_MILLIS
+
+        /** See [verifyTimeoutMillisFor]'s own kdoc for why this is overridable at all; this is the
+         * production default it falls back to. */
+        fun defaultVerifyTimeoutMillis(descriptor: RigDescriptor): Long = descriptor.poll?.intervalMs
+            ?.let { interval -> (interval * VERIFY_POLL_CYCLES).coerceAtLeast(MIN_TIMEOUT_MILLIS) }
+            ?: NO_POLL_TIMEOUT_MILLIS
     }
 }
 
@@ -255,6 +376,41 @@ private suspend fun ProducerScope<RigLinkProbeState>.sendUnlessClosed(state: Rig
     } catch (e: ClosedSendChannelException) {
         // Already closed by the other collector -- see this function's own kdoc.
     }
+}
+
+/** R-1013: the job [DefaultRigLinkBridge.probe] races against reaching [RigLinkProbeState
+ * .Identified] -- the caller cancels it the instant identification actually happens; otherwise it
+ * alone ends the wait after [timeoutMillis], since nothing else in [probe] ever will (see that
+ * function's own kdoc). */
+private fun ProducerScope<RigLinkProbeState>.launchIdentifyTimeoutJob(rigId: String, timeoutMillis: Long): Job =
+    launch {
+        delay(timeoutMillis)
+        sendUnlessClosed(RigLinkProbeState.IdentifyTimedOut(rigId, timeoutMillis))
+        close()
+    }
+
+/** R-1014: the same idea as [launchIdentifyTimeoutJob], for [RigLinkProbeState.Verified] -- started
+ * only once [RigLinkProbeState.Identified] actually happens and cancelled the instant every
+ * declared capability is seen. [seenCapabilitiesSoFar] is read lazily, at the moment this actually
+ * fires, rather than passed as a value captured when the job was launched -- the caller's mutable
+ * set keeps growing for as long as more lines arrive, and [RigLinkProbeState.VerifyTimedOut] must
+ * report what was seen by the time this fired, not what had been seen when it started waiting. */
+private fun ProducerScope<RigLinkProbeState>.launchVerifyTimeoutJob(
+    rigId: String,
+    seenCapabilitiesSoFar: () -> Set<RigCapability>,
+    declaredCapabilities: Set<RigCapability>,
+    timeoutMillis: Long,
+): Job = launch {
+    delay(timeoutMillis)
+    sendUnlessClosed(
+        RigLinkProbeState.VerifyTimedOut(
+            rigId = rigId,
+            seenCapabilities = seenCapabilitiesSoFar(),
+            declaredCapabilities = declaredCapabilities,
+            timeoutMillis = timeoutMillis,
+        ),
+    )
+    close()
 }
 
 /** [RigState]'s own fields, translated to the [RigCapability] each one derives (WPC3) — the same
@@ -313,4 +469,22 @@ public class FakeRigLinkBridge(
     }
 
     private fun key(rigId: String, transportKind: RigTransportKind): String = "$rigId/$transportKind"
+
+    public companion object {
+        /**
+         * R-1013, scriptable directly: a probe that reaches [RigLinkProbeState.Open] and then
+         * never emits again — the exact defect this package fixes with a bounded timeout in
+         * [DefaultRigLinkBridge]. A caller proving that ITS OWN caller (WPD's setup UI) survives a
+         * hang scripts this via [scriptProbe] rather than reimplementing a hanging transport —
+         * constitution II: "a fake that cannot be told to fail, hang or return a hallucination is
+         * a stub." [awaitCancellation] rather than a long `delay`, since the point is to hang until
+         * cancelled, not to eventually resolve on its own — a caller that itself applies no bound
+         * (the pre-fix defect exactly) hangs forever, precisely as intended here.
+         */
+        public fun hangingAfterOpen(): Flow<RigLinkProbeState> = flow {
+            emit(RigLinkProbeState.Opening)
+            emit(RigLinkProbeState.Open)
+            awaitCancellation()
+        }
+    }
 }
