@@ -244,4 +244,53 @@ class InspectionTest {
 
         composeTestRule.onNodeWithText(valueLabel).assertIsDisplayed()
     }
+
+    // -----------------------------------------------------------------------------------------
+    // R-1006 (register): the waveform's own play control never changed its glyph when playback
+    // started — the content description flipped to "Pause" (already correct), but the icon stayed
+    // the ▶ triangle regardless, so a sighted operator had no on-screen sign a second tap would
+    // pause it. `waveformControlGlyph` is the decision `WaveformPlayControl` now actually renders
+    // from — pulled out to be directly unit-testable, the same "extract the decision" precedent
+    // this file's own [scrubFraction] already set, since the pixels themselves (which glyph
+    // literally paints) are judged on a device/tour capture, never from this test tree
+    // (constitution VIII) — `ControlsTest.kt`'s own `R_565` doc comment already found
+    // `captureToImage()` unusable in this sandbox.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_1006_waveformControlGlyph_is_play_when_idle_and_pause_when_playing`() {
+        assertEquals(WaveformControlGlyph.PLAY, waveformControlGlyph(playing = false))
+        assertEquals(WaveformControlGlyph.PAUSE, waveformControlGlyph(playing = true))
+    }
+
+    /**
+     * The composable-level half of the same fix: [WaveformCardContent]/[WaveformPlayControl]
+     * must actually branch on [waveformControlGlyph], not merely have it sitting unused nearby.
+     * The `waveform-glyph-play`/`waveform-glyph-pause` tags carry no user-visible meaning — they
+     * exist only so this can be proven without a pixel capture (see this file's own note above).
+     */
+    @Test
+    fun `R_1006_the_waveform_cards_control_renders_the_pause_glyph_only_while_playing`() {
+        val bars = listOf(WaveformBar(0.5f, true))
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    WaveformCard(
+                        state = WaveformViewState.Idle(bars, "4.0s"),
+                        onPlayPause = {},
+                        modifier = Modifier.testTag("idle-card"),
+                    )
+                    WaveformCard(
+                        state = WaveformViewState.Playing(bars, 0.3f, "1.2s", "4.0s"),
+                        onPlayPause = {},
+                        modifier = Modifier.testTag("playing-card"),
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("waveform-glyph-play", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("waveform-glyph-pause", useUnmergedTree = true).assertExists()
+        composeTestRule.onNode(hasContentDescription("Pause")).assertIsDisplayed()
+    }
 }

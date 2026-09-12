@@ -27,6 +27,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -137,6 +138,44 @@ private fun WaveformMessageCard(
     }
 }
 
+/**
+ * R-1006 (register): which glyph [WaveformPlayControl] draws for a given [playing] state —
+ * `internal`, not `private`, the same "pull the decision out of the composable" precedent
+ * [scrubFraction] and [highlightedTranscript][org.ort.app.ui.screens.highlightedTranscript]
+ * already set, so the play/pause swap the operator reported missing is provably wired rather than
+ * only visually inspected (the pixels themselves are judged on a device/tour capture, never from
+ * this test tree — constitution VIII, `ControlsTest.kt`'s own `R_565` doc comment on
+ * `captureToImage()` being unusable in this sandbox).
+ */
+internal enum class WaveformControlGlyph { PLAY, PAUSE }
+
+internal fun waveformControlGlyph(playing: Boolean): WaveformControlGlyph =
+    if (playing) WaveformControlGlyph.PAUSE else WaveformControlGlyph.PLAY
+
+/**
+ * R-1006, `Detail-Playback.dc.html`'s own "Playing" card: two 4×14 bars on a 24-unit viewBox
+ * (`<rect x="6" y="5" width="4" height="14">`/`<rect x="14" y="5" width="4" height="14">`), drawn
+ * directly rather than added to [OrtIcons] — this fix's own file ownership is `Inspection.kt`
+ * alone; `OrtIcons.kt` is a concurrent builder's file. Sized/tinted to match [OrtIcons.play]'s own
+ * 14dp/[OrtColors.accentOnGreen] treatment for the same control.
+ */
+@Composable
+private fun PauseGlyph(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.size(14.dp)) {
+        val barWidth = size.width * (4f / 24f)
+        val barHeight = size.height * (14f / 24f)
+        val top = (size.height - barHeight) / 2f
+        val gap = size.width * (4f / 24f)
+        val leftX = (size.width - (barWidth * 2 + gap)) / 2f
+        drawRect(color = OrtColors.accentOnGreen, topLeft = Offset(leftX, top), size = Size(barWidth, barHeight))
+        drawRect(
+            color = OrtColors.accentOnGreen,
+            topLeft = Offset(leftX + barWidth + gap, top),
+            size = Size(barWidth, barHeight),
+        )
+    }
+}
+
 @Composable
 private fun WaveformPlayControl(playing: Boolean, onPlayPause: (() -> Unit)?, modifier: Modifier = Modifier) {
     Box(
@@ -154,12 +193,22 @@ private fun WaveformPlayControl(playing: Boolean, onPlayPause: (() -> Unit)?, mo
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = OrtIcons.play,
-            contentDescription = null,
-            tint = OrtColors.accentOnGreen,
-            modifier = Modifier.size(14.dp),
-        )
+        // R-1006: the glyph itself now follows [playing] too — before this fix the control always
+        // drew the ▶ triangle regardless of state, so a sighted operator had no on-screen sign that
+        // a second tap would pause it (the content description alone already flipped to "Pause").
+        // The `testTag`s below carry no user-visible meaning — they exist only so a test can prove
+        // *which* branch actually rendered, since the pixels themselves are judged on a
+        // device/tour capture, never from this test tree (constitution VIII;
+        // `ControlsTest.kt`'s own `R_565` doc comment on `captureToImage()` being unusable here).
+        when (waveformControlGlyph(playing)) {
+            WaveformControlGlyph.PAUSE -> PauseGlyph(modifier = Modifier.testTag("waveform-glyph-pause"))
+            WaveformControlGlyph.PLAY -> Icon(
+                imageVector = OrtIcons.play,
+                contentDescription = null,
+                tint = OrtColors.accentOnGreen,
+                modifier = Modifier.size(14.dp).testTag("waveform-glyph-play"),
+            )
+        }
     }
 }
 

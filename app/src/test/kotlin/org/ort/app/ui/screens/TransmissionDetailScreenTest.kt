@@ -740,4 +740,8 @@ class TransmissionDetailScreenTest {
 
         composeTestRule.onNodeWithTag("detail-bt-audio-badge").assertExists()
     }
+
+    // ---- R-1006 (register): the playback-stop/completion tests moved to
+    // `PlaybackControlDetailScreenTest.kt` — the same detekt `LargeClass` split this file's own
+    // R-242/R-153 doc comments already used, above. ----
 }
