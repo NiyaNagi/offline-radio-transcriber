@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (R-1002: the operator's nineteen stuck overs come back, and a failure no longer burns its retry budget in eight seconds)
 
-### &lt;pending&gt; — WPQ — R-1002: requeue Pass B on the ASR-availability transition, a derived backoff ladder, and defer-before-lease for a known-unavailable engine
+### cf78d87c — WPQ — R-1002: requeue Pass B on the ASR-availability transition, a derived backoff ladder, and defer-before-lease for a known-unavailable engine
 
 **Scope:** `data/src/main/kotlin/org/ort/data/WorkQueue.kt` (new `WorkQueueBackoff.kt` beside it),
 `data/src/main/kotlin/org/ort/data/dao/WorkQueueDao.kt`,
