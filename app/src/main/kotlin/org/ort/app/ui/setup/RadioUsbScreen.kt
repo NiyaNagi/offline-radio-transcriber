@@ -15,6 +15,7 @@ import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.components.TextField
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
 
 /**
  * S10 (`Setup-Rig-Usb.dc.html`, R-084) — the artboard's own checklist ("USB device attached",
@@ -84,8 +85,18 @@ public fun RadioUsbScreen(rigStatus: RigStatus.State, onBack: () -> Unit, onEnte
                     modifier = Modifier.testTag("setup-radio-usb-frequency-field"),
                 )
             }
-            is RigStatus.State.Connected -> RigVerifiedContent(rigStatus)
-            is RigStatus.State.Stale -> RigVerifiedContent(rigStatus.lastKnown)
+            // R-1019 (register): shares RigVerifiedContent with S11 — a partially (or never)
+            // verified reading must read the same honest "Command set" header that fix
+            // established, never this defensive fallback's own separate copy still claiming
+            // "Verified command set" regardless of RigStatus.verification.
+            is RigStatus.State.Connected -> RigVerifiedContent(
+                rigStatus,
+                partiallyVerified = rigStatus.verification !is RigVerification.Full,
+            )
+            is RigStatus.State.Stale -> RigVerifiedContent(
+                rigStatus.lastKnown,
+                partiallyVerified = rigStatus.lastKnown.verification !is RigVerification.Full,
+            )
         }
     }
 }

@@ -1,6 +1,7 @@
 package org.ort.app.ui.setup
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
@@ -16,6 +17,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
@@ -96,7 +98,11 @@ class RigBluetoothScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Handheld BT").assertIsDisplayed()
+        // R-1018 (register, device pass 2): the pinned bar's own real design-spacing fix (12dp ->
+        // 24dp above the safe area, SetupScaffold.kt) leaves 12dp less room in this unconstrained
+        // test root, pushing this second device row below the fold — the same "grew below the
+        // fold" shape R-1005c's own test file comment already documents for this file's own bar.
+        composeTestRule.onNodeWithText("Handheld BT").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("setup-rig-bt-device-11:22:33:44:55:66").performClick()
         assert(selected == "unset")
     }
@@ -621,6 +627,125 @@ class RigBluetoothScreenTest {
 
         composeTestRule.onNodeWithTag("setup-back").performClick()
         assert(wentBack)
+    }
+
+    // --- R-1018 (register, device pass 2, polish) ---------------------------------------------------
+
+    /**
+     * `Use USB instead` sat 12dp above the safe-area edge where `Setup-Rig-Bluetooth.dc.html` and
+     * design-guide §10.1 specify 24dp of design spacing ("the 24px under a pinned action block is
+     * breathing room between the last control and the edge of the *safe* area") — `SetupScaffold`'s
+     * own bar `Column` applied `OrtSpacing.md` (12dp) to the bottom edge instead. The mechanism
+     * itself is correct — `safeAreaBottomPadding()` is applied *outside* this padding, adding the
+     * real navigation-bar inset on top of it rather than absorbing it (`SafeArea.kt`'s own doc
+     * comment; unchanged here) — only the design-spacing *value* was wrong. `SafeArea.kt`'s own doc
+     * comment confirms `WindowInsets.navigationBars` reads zero under this project's Robolectric
+     * setup, so this test's own root has no inset contribution to account for: the whole gap below
+     * `Use USB instead` here is exactly the design spacing this test asserts, nothing folded in from
+     * a real device's own navigation bar.
+     */
+    @Test
+    fun `R_1018 Use USB instead sits 24dp of design spacing above the screen edge`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Box(modifier = Modifier.width(390.dp).height(844.dp)) {
+                    RigBluetoothScreen(
+                        state = state(),
+                        onSelectDevice = {},
+                        onPairInSettings = {},
+                        onRefresh = {},
+                        onContinue = {},
+                        onContinueWithoutConnecting = {},
+                        onUseUsbInstead = {},
+                        onRequestBluetoothPermission = {},
+                    )
+                }
+            }
+        }
+
+        val rootBounds = composeTestRule.onRoot().getUnclippedBoundsInRoot()
+        val useUsbBounds = composeTestRule.onNodeWithTag("setup-rig-bt-use-usb").getUnclippedBoundsInRoot()
+        val gapDp = (rootBounds.bottom - useUsbBounds.bottom).value
+
+        assertTrue(
+            "expected 24dp of design spacing below 'Use USB instead' (no real navigationBars inset " +
+                "exists under Robolectric, SafeArea.kt's own doc comment), got ${gapDp}dp",
+            kotlin.math.abs(gapDp - 24f) < 0.5f,
+        )
+    }
+
+    // --- R-1017 (register, device pass 2, the R-880 family) ---------------------------------------
+
+    /**
+     * The marker used to centre against the *whole* label+subtitle column — once the subtitle
+     * wraps at font scale 2.0, that floats it between the label and its own sub-line instead of
+     * beside the label. Proven at both the tour's own 390dp width and the operator's own real
+     * device geometry (1260x2772px @ 420dpi = 480x1056dp) — the coordinator's own device pass found
+     * this at 480dp specifically because the existing 390dp coverage never asserted this
+     * relationship at all, width-dependent or not.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1017 the paired-device marker aligns to the label, not the wrapped subtitle, at 390dp font scale 2_0`() {
+        assertMarkerAlignsWithLabel(widthDp = 390)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1017 the paired-device marker aligns to the label, not the wrapped subtitle, at 480dp font scale 2_0`() {
+        assertMarkerAlignsWithLabel(widthDp = 480)
+    }
+
+    private fun assertMarkerAlignsWithLabel(widthDp: Int) {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(widthDp.dp)) {
+                        RigBluetoothScreen(
+                            state = state(devices = listOf(sppDevice)),
+                            onSelectDevice = {},
+                            onPairInSettings = {},
+                            onRefresh = {},
+                            onContinue = {},
+                            onContinueWithoutConnecting = {},
+                            onUseUsbInstead = {},
+                            onRequestBluetoothPermission = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        // R-1017: the row's own `.selectable(...)` merges descendant semantics into one node by
+        // default, dropping the marker's own testTag from the merged tree entirely (Compose's own
+        // merge policy for TestTag) -- `useUnmergedTree = true` is what reaches it directly.
+        val markerBounds = composeTestRule
+            .onNodeWithTag("radio-row-marker", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val labelBounds = composeTestRule
+            .onNodeWithText(sppDevice.name, useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val subtitleBounds = composeTestRule
+            .onNodeWithText("serial port profile", substring = true, useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+
+        assertTrue(
+            "expected the sub-line to render below the label at ${widthDp}dp, got label bottom " +
+                "${labelBounds.bottom} vs subtitle top ${subtitleBounds.top}",
+            labelBounds.bottom <= subtitleBounds.top,
+        )
+        val markerCenterY = (markerBounds.top + markerBounds.bottom) / 2
+        assertTrue(
+            "expected the marker's own vertical centre ($markerCenterY) to fall within the label's " +
+                "own bounds (${labelBounds.top}..${labelBounds.bottom}) at ${widthDp}dp, never migrated " +
+                "down toward the wrapped subtitle (top ${subtitleBounds.top})",
+            markerCenterY in labelBounds.top..labelBounds.bottom,
+        )
+        assertTrue(
+            "expected the marker to stay above where the subtitle begins at ${widthDp}dp, got marker " +
+                "centre $markerCenterY vs subtitle top ${subtitleBounds.top}",
+            markerCenterY < subtitleBounds.top,
+        )
     }
 
     /** R-805 (register, tour run): at font scale 2.0 `Refresh` used to render one letter per line

@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -575,16 +576,28 @@ public fun RadioRow(
     // Both null/Neutral by default, so existing rows are unchanged.
     subtitle: String? = null,
     tone: RowTone = RowTone.Neutral,
+    // R-1017 (register, R-880 family): a caller whose own subtitle can wrap to several lines
+    // (S10b's paired-device address/description) needs the dot aligned to the top of the text
+    // block, not centred against it — centred, once the subtitle wraps, floats the dot between
+    // the label and its sub-line instead of beside the label (`PairedDeviceRow`'s own doc comment
+    // has the full finding). Defaults to the original `CenterVertically`, so every existing caller
+    // (`ControlsTest`'s own coverage, `SettingsExportScreen`/`SettingsModeScreen`/`SettingsTierScreen`/
+    // `InputScreen`/`RigTransportScreen`/`CorrectionSheet`/`TransmissionDetailScreen`) renders exactly
+    // as before this parameter existed.
+    verticalAlignment: Alignment.Vertical = Alignment.CenterVertically,
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
             .selectable(selected = selected, onClick = onClick, role = Role.RadioButton),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = verticalAlignment,
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
-        RadioDot(selected = selected)
+        // R-1017: a stable tag for the marker itself — every other fact this row exposes for
+        // testing is already reachable by its own text; the marker had no seam at all until this
+        // finding needed to assert its own bounds independent of the label/subtitle around it.
+        RadioDot(selected = selected, modifier = Modifier.testTag("radio-row-marker"))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = label,

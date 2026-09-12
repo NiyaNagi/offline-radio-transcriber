@@ -999,6 +999,38 @@ class SetupActivityTest {
         }
     }
 
+    // --- R-1016 (device field report pass 2, R-941's own sibling defect on S10b) ------------------
+
+    /** R-1016 (register): S10b's title read the descriptor's full display name verbatim ("Connect
+     * the Kenwood TH-D75A") — the same manufacturer-prefix strip R-941 already applied to S09b's
+     * title (`SettingsPolling.stripManufacturerPrefix`, R-845/CF06's and R-903/S11's own helper,
+     * reused here rather than a second one written). */
+    @Test
+    fun `R_1016 S10b drops the manufacturer prefix from the title`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        DebugRigLinkPortOverride.show(InMemoryRigLinkPort())
+        try {
+            val activityRule = ActivityScenarioRule(SetupActivity::class.java)
+            val rule = AndroidComposeTestRule(activityRule) { r ->
+                var activity: SetupActivity? = null
+                r.scenario.onActivity { activity = it }
+                checkNotNull(activity) { "SetupActivity did not reach RESUMED" }
+            }
+            val statement = object : Statement() {
+                override fun evaluate() {
+                    rule.waitForIdle()
+                    rule.onNodeWithText("Connect the TH-D75A").assertIsDisplayed()
+                }
+            }
+            val description = Description.createTestDescription(SetupActivityTest::class.java, "r1016TitleDropsPrefix")
+            rule.apply(statement, description).evaluate()
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
     // --- R-1013/R-1014: onContinueRigBluetooth's own product-decision gate -----------------------
 
     /**

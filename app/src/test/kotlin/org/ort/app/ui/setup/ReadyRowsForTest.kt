@@ -10,6 +10,8 @@ import org.ort.app.ui.data.ModelRowViewState
 import org.ort.app.ui.data.ModelsViewState
 import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
+import org.ort.rig.RigCapability
 
 /** R-080..R-084 (ui-conformance-plan WP9), extended by D33/P19 WPD (E2-E13) — [readyRowsFor]
  * builds S12's rows from real state only ([SetupStore], live battery-exemption, [RigStatus],
@@ -197,11 +199,67 @@ class ReadyRowsForTest {
     fun `R_084 a genuinely connected rig renders green and verified`() {
         val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
         val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
-        val connected = RigStatus.State.Connected("Kenwood TH-D75A", listOf(band))
+        // R-1019: this test's own intent is the *fully* verified case -- constructed explicitly now
+        // that a bare Connected() defaults to RigVerification.Unknown, never Full.
+        val connected = RigStatus.State.Connected(
+            "Kenwood TH-D75A",
+            listOf(band),
+            verification = RigVerification.Full,
+        )
         val row = rows(store, rigStatus = connected).first { it.label == "Radio" }
 
         assertTrue(row.ok)
         assertEquals("verified", row.statusText)
+    }
+
+    // --- R-1019 (register): S12 must not assert more than RigStatus.verification establishes -----
+
+    @Test
+    fun `R_1019 RigVerification Partial renders partially confirmed, never verified, naming what was missed`() {
+        val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
+        val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
+        val connected = RigStatus.State.Connected(
+            "Kenwood TH-D75A",
+            listOf(band),
+            verification = RigVerification.Partial(setOf(RigCapability.SIGNAL_STRENGTH, RigCapability.SQUELCH_STATE)),
+        )
+        val row = rows(store, rigStatus = connected).first { it.label == "Radio" }
+
+        assertTrue(row.ok, "a partially verified rig is still connected and usable")
+        assertEquals("partially confirmed", row.statusText)
+        assertFalse(row.value.contains("verified"), "must never claim 'verified' for a partial link")
+        assertTrue(row.value.contains("squelch"))
+        assertTrue(row.value.contains("signal strength"))
+    }
+
+    /** The exact case a future careless change would reintroduce: a `Connected` reading whose
+     * verification was never stated (the honest default) must never render as "verified". */
+    @Test
+    fun `R_1019 RigVerification Unknown never renders verified`() {
+        val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
+        val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
+        val connected = RigStatus.State.Connected(
+            "Kenwood TH-D75A",
+            listOf(band),
+            verification = RigVerification.Unknown,
+        )
+        val row = rows(store, rigStatus = connected).first { it.label == "Radio" }
+
+        assertTrue(row.ok, "still genuinely connected")
+        assertFalse(row.statusText == "verified", "must never claim 'verified' when nothing stated the fact")
+        assertEquals(null, row.statusText)
+    }
+
+    @Test
+    fun `R_1019 a bare Connected reading (no verification stated) defaults to Unknown, never verified`() {
+        val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
+        val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
+        // No `verification` argument at all -- proves the *default* itself is safe end-to-end, not
+        // only an explicitly-passed Unknown.
+        val connected = RigStatus.State.Connected("Kenwood TH-D75A", listOf(band))
+        val row = rows(store, rigStatus = connected).first { it.label == "Radio" }
+
+        assertFalse(row.statusText == "verified")
     }
 
     /** R-882 (register, validator V11, halt): the value string this row carries is what
@@ -250,7 +308,14 @@ class ReadyRowsForTest {
         )
         val store = InMemorySetupStore(radioChoice = RadioChoice.TH_D75A)
         val band = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
-        val connected = RigStatus.State.Connected("Kenwood TH-D75A", listOf(band))
+        // R-1019: this test's own intent is the action wiring on a genuinely fully verified row,
+        // not the verification branch itself -- constructed explicitly now that a bare Connected()
+        // defaults to RigVerification.Unknown.
+        val connected = RigStatus.State.Connected(
+            "Kenwood TH-D75A",
+            listOf(band),
+            verification = RigVerification.Full,
+        )
         val row = readyRowsFor(store, false, connected, ModelsViewState(emptyList()), actions)
             .first { it.label == "Radio" }
 

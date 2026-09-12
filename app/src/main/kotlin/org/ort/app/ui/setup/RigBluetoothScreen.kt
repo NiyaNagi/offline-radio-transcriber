@@ -288,6 +288,17 @@ private fun ContinueWithoutConnectingAction(onClick: () -> Unit, modifier: Modif
     }
 }
 
+/**
+ * R-1017 (register, device pass 2, the R-880 family): at font scale 2.0 the address/description
+ * sub-line can wrap to several lines (a real device found this at 480 dp; the shorter 390 dp row
+ * did not always wrap the same way, which is itself why the earlier device-row tests never caught
+ * it — see this session's own report). [RadioRow]'s default `CenterVertically` centres its marker
+ * against the *whole* label+subtitle column, so once the subtitle wraps, the marker floats between
+ * the label and its own sub-line rather than sitting beside the label — the row stops reading as
+ * one row. `verticalAlignment = Alignment.Top` (the same fix R-880 already applied to `Rows.kt`'s
+ * shared key/value row for an identical shape) keeps the marker aligned to the top of the text
+ * block regardless of how many lines the subtitle wraps to.
+ */
 @Composable
 private fun PairedDeviceRow(device: PairedDevice, selected: Boolean, onSelect: () -> Unit) {
     val selectable = device.sppCapable != false
@@ -303,6 +314,7 @@ private fun PairedDeviceRow(device: PairedDevice, selected: Boolean, onSelect: (
         subtitle = subtitle,
         tone = if (!selectable) RowTone.Warning else RowTone.Neutral,
         modifier = Modifier.testTag("setup-rig-bt-device-${device.address}"),
+        verticalAlignment = Alignment.Top,
     )
 }
 

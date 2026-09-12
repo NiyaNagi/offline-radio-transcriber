@@ -105,11 +105,17 @@ class VerifyScreenTest {
             }
         }
 
+        // R-1018 (register, device pass 2): the pinned bar's own real design-spacing fix (12dp ->
+        // 24dp above the safe area, SetupScaffold.kt) leaves 12dp less room for this unconstrained
+        // test root's scrollable content than before -- these two checks (above the paragraph below
+        // in the board's own order) are asserted first, while nothing has scrolled past them yet;
+        // scrolling to the paragraph afterward can otherwise carry them off the top of the viewport,
+        // the same "grew below the fold" shape R-1005c's own test file comment already documents.
+        composeTestRule.onNodeWithTag("setup-verify-check-native-rate").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-verify-check-route-match").assertIsDisplayed()
         composeTestRule.onNodeWithText("No signal heard in 30 s on USB Audio Device")
             .performScrollTo()
             .assertIsDisplayed()
-        composeTestRule.onNodeWithTag("setup-verify-check-native-rate").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("setup-verify-check-route-match").assertIsDisplayed()
     }
 
     @Test

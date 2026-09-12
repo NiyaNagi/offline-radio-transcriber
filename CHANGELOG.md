@@ -32,6 +32,117 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPD3 round 3: R-1019 — S12/RadioUsbScreen stop asserting more verification than `RigStatus` establishes)
+
+### 45038217 — WPD3 round 3: ReadyScreen (S12) and RadioUsbScreen's defensive Connected/Stale fallback branch on RigVerification instead of hardcoding "verified"
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{ReadyScreen,RadioUsbScreen}.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (the `rig-bt-connected` scenario only), and
+tests under `app/src/test/kotlin/org/ort/app/{ui/setup/{ReadyRowsForTest,ReadyScreenTest,
+RadioUsbScreenTest},debug/WpiScenariosTest}.kt`. `ui/settings/SettingsRigFacts.kt` has the identical
+defect — read for the check the coordinator asked for, not edited (`ui/settings/**` is WPR2's this
+round); reported below instead of fixed.
+
+**Requirements/ACs:** FR-RIG-15, constitution I (Uncertainty Is Content — a partial or unknown
+verification state must never render as `Full`). Register R-1019 (continuing WPRIG2's own
+`95839c4d`, which added `RigStatus.State.Connected.verification: RigVerification` at the data
+layer and explicitly left the `:app` rendering fix to this package).
+
+**What changed:**
+- **`ReadyScreen.kt`'s `radioRowForCatRig`** (S12, `Setup-Done.dc.html`'s Radio row) branched
+  unconditionally to `statusText = "verified"` for any `Connected` reading — contradicting S10b/S11,
+  which already stopped claiming "verified" for a partial link (R-1013/R-1014's own round). Now
+  branches on `rigStatus.verification`: `Full` → `"verified"` (unchanged); `Partial` →
+  `"partially confirmed"` (short — deliberately **not** the fuller "identified, command set
+  partially confirmed" S10b/S11 use in their own banner/subtitle prose — see "Left open" below for
+  why); `Unknown` → `null` (no chip invented for a fact nothing established, the same pattern this
+  row already uses for "no radio chosen"). `Partial`'s own missing-capability names go into `value`
+  instead (`"TH-D75A · 2 bands · missing squelch, signal strength"`) — the one column this exact
+  row's own documented history (R-226, R-882, R-882 reopened) already proved safe to wrap at word
+  boundaries for arbitrary-length text, unlike `statusText`'s `wrapContentWidth(unbounded = true)`
+  single-line measurement.
+- **`RadioUsbScreen.kt`'s defensive `Connected`/`Stale` fallback** shares `RigVerifiedContent` with
+  S11 — wired `partiallyVerified = verification !is RigVerification.Full` through both branches so
+  this copy reads "Command set" (never "Verified command set") under the identical condition S11
+  already established, rather than a second, silently-still-claiming-verified rendering of the same
+  content.
+- **`Scenarios.kt`'s `rig-bt-connected`** — the one debug scenario the tour actually captures S12
+  and S11 from (`tour.json`'s `rig-bt-connected/S12-ready-bt`(`@2x`) and
+  `S11-radio-verified`) — now states `verification = RigVerification.Full` explicitly. Both bands it
+  seeds genuinely report every capability the TH-D75A's own bundled descriptor declares
+  (`FREQUENCY`, `SQUELCH_STATE`, `SUB_BAND`), so `Full` is honest, not merely convenient; without
+  this, the new S12 fix would have silently dropped the "verified" status text from this scenario's
+  own tour capture the next time it runs, since a bare `RigStatus.connected(...)` now defaults to
+  `Unknown`. Checked every other `RigStatus.connected(...)` call site in this file (six more): none
+  of the others gate a `SetupStore` through to `SetupStep.READY`/`RADIO_VERIFIED` (they seed live
+  Now/Capture/Settings screens only), so none are affected by this round's rendering change.
+- **Five pre-existing tests updated, not weakened** — each constructed a bare
+  `RigStatus.State.Connected(...)`/called a bare `RigStatus.connected(...)` and asserted "verified"
+  as an *incidental* fact of its own, unrelated test (action wiring, manufacturer-prefix stripping,
+  a font-scale-2.0 layout regression proof, a `stepFor` resume assertion): `ReadyRowsForTest`'s
+  `R_084 a genuinely connected rig renders green and verified` and `R_285 a genuinely connected rig
+  also offers Change...`, `ReadyScreenTest`'s `R_882 the real rig-bt-connected Radio row wraps at
+  words...`, and `WpiScenariosTest`'s `CF06_rig-bt-connected...` gained an explicit
+  `verification = RigVerification.Full`/assertion, restoring each test's own original intent now
+  that the bare construction defaults to `Unknown` instead.
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.setup.ReadyRowsForTest' --tests 'org.ort.app.ui.setup.RadioUsbScreenTest' --tests 'org.ort.app.debug.WpiScenariosTest' -PortAllowMissingBundledAssets=true`
+  — all green.
+- `.\gradlew ":app:testDebugUnitTest" -PortAllowMissingBundledAssets=true` (every `:app` test) —
+  green, `BUILD SUCCESSFUL in 6m 6s`.
+- **Discrimination proved directly** (reverted, watched fail for the stated reason, restored,
+  watched pass — full output in this session's own report):
+  - `ReadyRowsForTest`'s three new `R_1019` cases — reverting `radioRowForCatRig` to the
+    unconditional `"verified"` failed all three: `Partial` expected `"partially confirmed"` got
+    `"verified"`; `Unknown` (both the explicit case and the bare-default case) expected non-`
+    "verified"`, got `"verified"`.
+  - `RadioUsbScreenTest`'s new `R_1019` case — reverting the `partiallyVerified` wiring failed with
+    `Action performScrollTo() failed` (the "Command set" header node never rendered at all —
+    "Verified command set" rendered instead, at a different position on screen).
+  - `WpiScenariosTest`'s `CF06_rig-bt-connected...` — reverting the scenario's own
+    `verification = RigVerification.Full` failed the new assertion directly
+    (`RigVerification.Unknown` where `Full` was expected).
+- Machine: this workstation (Windows, JDK 17.0.20.101-hotspot), fold: unit (JVM/Robolectric), no
+  bundled asset touched.
+
+**Left open / not done:**
+- **`ui/settings/SettingsRigFacts.kt`'s `rigModuleLabel` has the identical defect, not fixed here.**
+  It builds `"$descriptorId · built in · verified command set $caps"` (CF06, Settings' own Rig
+  screen) purely from the connected descriptor's own *static, declared* capability list — never
+  consulting `RigStatus.State.Connected.verification` at all — so it says "verified command set"
+  for a `Partial`/`Unknown` reading exactly as unconditionally as S12 did before this fix. Read, not
+  edited, per the coordinator's own instruction (`ui/settings/**` is WPR2's this round); reported
+  for them to route.
+- **S12's `statusText` for `Partial` deliberately does not repeat S10b/S11's own fuller phrase**
+  ("identified, command set partially confirmed") verbatim, unlike the coordinator's own literal
+  wording — this row's `statusText` is measured via `wrapContentWidth(unbounded = true)` (this
+  composable's own doc comment) at its *natural, single-line* width regardless of the space
+  actually available, and this exact row has a documented history (R-226, R-882, R-882 reopened) of
+  a string that long overflowing past the screen edge at font scale 2.0. `"partially confirmed"`
+  keeps the discriminating word ("confirmed", never "verified") while staying short enough not to
+  reproduce that regression class; the fuller phrase and the missing-capability names both still
+  appear, in `value`, the column already proven safe for arbitrary length. No Robolectric bounds
+  test proves the *un-fixed* version would actually have overflowed (that would need reverting to
+  the longer string and measuring at 390dp/2.0, which risks committing a real regression this
+  session cannot un-ship before a screenshot catches it) — this is a judgement call flagged for the
+  lead's own capture to confirm or overrule, not a measured fact.
+- **No real device confirmation** — proven against Robolectric/pure-function tests only, matching
+  every other round this session. Neither R-1015 nor R-1019 (either half) can be settled against a
+  real TH-D75A (hardware, H2/H3), per WPRIG2's own entry above.
+**Verified (wider gate, all green):**
+- `.\gradlew ":app:smokeTestDebugUnitTest" ":app:lintDebug" dependencyRules platformGuards ":app:assembleDebug" ":app:compileReleaseKotlin" -PortAllowMissingBundledAssets=true`
+  — green.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  — green, `BUILD SUCCESSFUL in 29s` (mostly cached from the immediately-preceding gate run).
+- `.\gradlew -p buildSrc test` — green.
+- `.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — `466 requirements, 246 covered`,
+  byte-identical to the already-committed file (this round's own new tests cite register ids, not
+  `FR-*`/`AC-*` ids).
+- `.\gradlew coverageMatrixCheck -PortAllowMissingBundledAssets=true` — `up to date (246 covered of
+  466)`.
+- `python tools\spec-check\spec_check.py` — OK, 8/8.
+
 ## 2026-09-12 (WPL: Live Monitor — R-1007)
 
 ### 59894e75 — WPL · R-1007: the live instrument the operator asked for after 30 minutes of capture with no way to tell what was happening
@@ -359,6 +470,107 @@ constitution IV (Capture Never Blocks, Never Drops, Never Lies — a stale rig m
   `coverageMatrixCheck` not yet run as of this entry — see the session report for their results.
 
 
+## 2026-09-12 (WPD3 round 2: R-1016/R-1017/R-1018 — device pass 2 findings on S10b)
+
+### fc675b4c — WPD3 round 2: manufacturer prefix stripped, the paired-device marker top-aligns against a wrapped sub-line, the pinned bar's safe-area padding is 24dp not 12dp
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{SetupActivity,RigBluetoothScreen,SetupScaffold}.kt`,
+`app/src/main/kotlin/org/ort/app/ui/components/Controls.kt`, and tests under
+`app/src/test/kotlin/org/ort/app/ui/setup/{SetupActivityTest,RigBluetoothScreenTest,VerifyScreenTest}.kt`.
+`ui/components/Controls.kt` is outside this session's originally-declared ownership map — touched
+anyway because `RadioRow` (S10b's paired-device rows) is the actual site of R-1017's defect and the
+project's own R-880 precedent fixes the shared component rather than duplicating it; the change is
+purely additive (one new optional parameter, default unchanged) and `ControlsTest.kt` (21/21) and
+every other existing `RadioRow` caller (`SettingsExportScreen`/`SettingsModeScreen`/
+`SettingsTierScreen`/`InputScreen`/`RigTransportScreen`/`CorrectionSheet`/`TransmissionDetailScreen`)
+is proven unaffected below. Flagged for the lead rather than assumed authorized.
+
+**Requirements/ACs:** FR-RIG-14, FR-RIG-15, constitution VIII (a screen change re-runs the visual
+verification), design-guide §10.1 (system-inset arithmetic). Register R-1016, R-1017, R-1018 (all
+filed from the coordinator's own device pass 2, emulator-5558 at 480×1056dp/420dpi).
+
+**What changed:**
+- **R-1016 (design).** S10b's title read "Connect the Kenwood TH-D75A" verbatim — R-941 already
+  fixed the identical defect on S09b's title with `SettingsPolling.stripManufacturerPrefix`; S10b
+  never had it applied. `SetupActivity.RenderRigBluetooth` now strips it the same way, at the same
+  call-site pattern R-941/R-845/R-903 already established — no second helper written.
+- **R-1017 (design, the R-880 family).** `RadioRow`'s default `Alignment.CenterVertically` centres
+  its selection marker against the *whole* label+subtitle column; once the subtitle wraps at font
+  scale 2.0 (a real device found this at 480dp; a 390dp Robolectric test never asserted the
+  relationship at all, at either width, which is itself why it went uncaught), the marker floats
+  between the label and its own sub-line rather than sitting beside the label. Fixed the same way
+  R-880 fixed an identical shape in `Rows.kt`'s shared key/value row: a new optional
+  `verticalAlignment: Alignment.Vertical = Alignment.CenterVertically` parameter on `RadioRow`
+  (default preserves every other caller), set to `Alignment.Top` only from S10b's own
+  `PairedDeviceRow`. A new `radio-row-marker` testTag on the dot itself (`Controls.kt`) is what
+  made the discriminating bounds test possible — the marker had no seam of its own to query before.
+- **R-1018 (polish).** `Use USB instead` sat 12dp above the safe area where
+  `Setup-Rig-Bluetooth.dc.html`/design-guide §10.1 specify 24dp. **Investigated the mechanism first,
+  per the coordinator's own question:** `SetupScaffold`'s bar `Column` applies
+  `.padding(...).safeAreaBottomPadding()` — the inset modifier is the *outer* one, so it already adds
+  the real navigation-bar inset on top of the design padding rather than absorbing it, exactly as
+  §10.1 requires; `SafeArea.kt`'s own doc comment describes this as the intended, confirmed-correct
+  shape. **The mechanism was never the bug** — the bar's own bottom padding value was simply
+  `OrtSpacing.md` (12dp) where the board specifies 24dp. This affects every setup screen's pinned
+  bar, not only S10b, since `SetupScaffold` is shared — a new `BAR_BOTTOM_SAFE_AREA_SPACING = 24.dp`
+  constant (deliberately outside `OrtSpacing`'s general rhythm scale, matching how the guide already
+  treats the 44px status-bar band as its own fixed constant) now applies to the bar's bottom edge
+  only; the bar's own top edge (a different, unrelated concern §10.1 says nothing about) keeps
+  `OrtSpacing.md` unchanged.
+- **Two pre-existing tests updated, not weakened, as a direct consequence of R-1018:**
+  `RigBluetoothScreenTest`'s `E2_E10 a headset-only device...` and `VerifyScreenTest`'s `R_121 a
+  timeout keeps the two checks...` both ran in an unconstrained-height test root that happened to
+  fit every element without scrolling before this fix reserved 12dp more for the bar; both now
+  reach their own elements the same way `R-1005c`'s own test file comment already established for
+  an identical "grew below the fold" shape — a real `performScrollTo()` (or asserting the earlier
+  elements before scrolling past them), never a loosened assertion.
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.setup.*' --tests 'org.ort.app.ui.components.*' -PortAllowMissingBundledAssets=true`
+  — all green, including `ControlsTest` 21/21 (proving the additive `RadioRow` parameter regressed
+  no existing caller).
+- **Discrimination proved directly** (reverted, watched fail for the stated reason, restored,
+  watched pass — full output in this session's own report):
+  - `SetupActivityTest."R_1016 S10b drops the manufacturer prefix..."` — before the fix, failed
+    with the title node simply not found (`"Connect the TH-D75A"` not displayed).
+  - `RigBluetoothScreenTest."R_1017 the paired-device marker aligns..."`, both 390dp and 480dp —
+    reverting to `CenterVertically` failed both with the exact reported shape reproduced
+    numerically: marker centre `261.0dp`, outside the label's own `217.0dp..247.0dp` bounds and
+    past the subtitle's own `249.0dp` top — the marker genuinely inside the subtitle band.
+  - `RigBluetoothScreenTest."R_1018 Use USB instead sits 24dp..."` — before the fix, measured
+    `12.0dp`, exactly the coordinator's own device reading.
+- Machine: this workstation (Windows, JDK 17.0.20.101-hotspot), fold: unit (JVM/Robolectric), no
+  bundled asset touched.
+
+**Verified (wider gate, all green):**
+- `.\gradlew ":app:testDebugUnitTest" -PortAllowMissingBundledAssets=true` (every `:app` test, not
+  only `ui/setup`/`ui/components`) — green, `BUILD SUCCESSFUL in 7m 53s`.
+- `.\gradlew ":app:smokeTestDebugUnitTest" ":app:lintDebug" dependencyRules platformGuards ":app:assembleDebug" ":app:compileReleaseKotlin" -PortAllowMissingBundledAssets=true`
+  — green (`compileReleaseKotlin` carries only the one pre-existing, unrelated `ClickableText`
+  deprecation warning in `TransmissionDetailScreen.kt`, a file this round never touched).
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  — green, `BUILD SUCCESSFUL in 1m 19s`.
+- `.\gradlew -p buildSrc test` — green.
+- `.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — `466 requirements, 246 covered`,
+  byte-identical to the already-committed `results/coverage-matrix.md` (this round's own new tests
+  cite register ids, not `FR-*`/`AC-*` ids, so they add no new tracked coverage — nothing to commit
+  here).
+- `.\gradlew coverageMatrixCheck -PortAllowMissingBundledAssets=true` — `up to date (246 covered of
+  466)`, no delta.
+- `python tools\spec-check\spec_check.py` — OK, 8/8.
+
+**Left open / not done:**
+- **No real device confirmation of any of the three fixes** — proven against Robolectric bounds
+  assertions at 390dp and 480dp only, never the operator's own Oppo Find X9 Ultra. The lead's own
+  re-capture at emulator-5558 is what closes each register row on evidence, per constitution VIII.
+- **`RigVerifiedContent`'s per-command reference rows (from R-1013/R-1014's own round) remain the
+  one known, previously-flagged gap** — unrelated to this round's three findings, still open.
+- **`ui/components/Controls.kt` was edited outside this session's originally-declared ownership** —
+  flagged above under Scope; the change is additive and proven non-regressive for every other
+  caller, but the lead should confirm this was the intended resolution rather than routing the
+  shared-component fix to whichever builder actually owns `ui/components/**`.
+
+## 2026-09-12 (WPD3: R-1013/R-1014 — S10b/S11 render the two new terminal RigLinkState outcomes)
 
 ### c77d7d12 — WPD3: VerifyTimedOut enables Continue as partial success, IdentifyTimedOut does not; S11 never renders a partial link as fully verified
 

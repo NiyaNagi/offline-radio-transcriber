@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -15,6 +16,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
+import org.ort.rig.RigCapability
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -101,6 +104,24 @@ class RadioUsbScreenTest {
         }
 
         composeTestRule.onNodeWithText("Reading now".uppercase()).assertIsDisplayed()
+    }
+
+    /** R-1019 (register): this defensive fallback shares [RigVerifiedContent] with S11 — a
+     * partially verified reading here must read the same "Command set" header (never "Verified
+     * command set") the fix for S12 established, not a separate, silently-still-claiming-verified
+     * copy of the same content. */
+    @Test
+    fun `R_1019 a Partial verification renders Command set, never Verified command set`() {
+        val connected = RigStatus.State.Connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)),
+            verification = RigVerification.Partial(setOf(RigCapability.SIGNAL_STRENGTH)),
+        )
+        composeTestRule.setContent {
+            OrtTheme { RadioUsbScreen(rigStatus = connected, onBack = {}, onEnterFrequency = {}) }
+        }
+
+        composeTestRule.onNodeWithText("Command set".uppercase()).performScrollTo().assertIsDisplayed()
     }
 
     // --- parseMegahertzToHz: pure, no Compose ----------------------------------------------------
