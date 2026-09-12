@@ -304,13 +304,36 @@ public class SetupActivity : ComponentActivity() {
         return true
     }
 
+    /**
+     * R-1005b (device field report): returning from system Settings — the only route the S10b
+     * `NoPermission` banner offered before [requestRigBluetoothPermissions] existed — never calls
+     * `onRequestPermissionsResult` (that callback fires only for the in-app permission dialog), so
+     * a Bluetooth permission granted from Settings while on [SetupStep.BLUETOOTH_PERMISSION] or
+     * [SetupStep.RIG_BLUETOOTH] never re-evaluated anything until the operator hit `Refresh` by
+     * hand. [refreshStep] alone is enough for both: [SetupStep.BLUETOOTH_PERMISSION] genuinely
+     * advances past its own gate once `stepFor` sees the permission granted (`step = next` is then
+     * a real change); [SetupStep.RIG_BLUETOOTH] most often recomputes to the *same* step (the
+     * Bluetooth-link gate does not clear on a permission grant alone), where a naive read of the
+     * `step` setter's `mutableStateOf` write would look like a no-op — but [refreshPairedDevices]
+     * itself runs unconditionally inside that setter whenever the assigned value is
+     * [SetupStep.RIG_BLUETOOTH] (this class's own doc comment on [step]), regardless of whether the
+     * value actually changed, and it is *that* call's own [rigBluetoothDevices]/[rigLinkState]
+     * writes — genuinely different `mutableStateOf` values now that permission is granted — which
+     * make the screen visibly re-render. R-085's pre-existing mic case is unchanged.
+     */
     override fun onResume() {
         super.onResume()
-        // R-085's pattern, carried over: the only way back from a permanent mic denial is the
-        // system settings screen, which never calls onRequestPermissionsResult -- re-check here.
-        if (step == SetupStep.MICROPHONE_DENIED || step == null) refreshStep()
+        if (shouldRefreshStepOnResume(step)) refreshStep()
         rigStatusSnapshot = RigStatus.state
     }
+
+    /** [onResume]'s own condition, named rather than inlined so detekt's `ComplexCondition`
+     * threshold is a non-issue rather than a reason to drop one of the four real cases -- every
+     * one earns its place, per that function's own doc comment. */
+    private fun shouldRefreshStepOnResume(step: SetupStep?): Boolean = step == SetupStep.MICROPHONE_DENIED ||
+        step == null ||
+        step == SetupStep.BLUETOOTH_PERMISSION ||
+        step == SetupStep.RIG_BLUETOOTH
 
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
@@ -680,6 +703,59 @@ public class SetupActivity : ComponentActivity() {
         refreshPairedDevices()
     }
 
+    /**
+     * R-1005a/R-1005b: the S10b `NoPermission` banner's new `Grant permission` action
+     * ([RigBluetoothScreen]'s own doc comment) — requests both dangerous Bluetooth permissions
+     * together (`BLUETOOTH_SCAN` was never declared before this; R-1005a's own manifest fix is
+     * what makes requesting it here meaningful rather than a silent no-op). Below API 31 neither
+     * is a dangerous, runtime-requested permission at all (the legacy `BLUETOOTH`/manifest-granted
+     * `BLUETOOTH_ADMIN` cover the same ground) — [refreshPairedDevices] directly, mirroring
+     * [requestBluetoothConnect]'s own identical branch for the S02c case.
+     */
+    internal fun requestRigBluetoothPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN),
+                REQUEST_CODE,
+            )
+        } else {
+            refreshPairedDevices()
+        }
+    }
+
+    /**
+     * R-1005c (device field report — a trapped operator): the real escape [RigBluetoothScreen]'s
+     * new `Continue without connecting` wires to. Lands on FR-RIG-2's existing null-module/manual-
+     * frequency path exactly the way an unsupported CAT rig already does ([RadioUsbScreen]'s own
+     * doc comment) — [rigStatusSnapshot] is set to [RigStatus.State.Absent] (honest: no live rig
+     * connection exists either way) so [SetupStep.RADIO_USB] renders its real manual-frequency
+     * entry, never a fabricated checklist. [store.rigTransport] is cleared, not merely left as
+     * `BLUETOOTH_SPP`: [SetupStateMachine.needsRigBluetoothLink] gates on exactly that field, and a
+     * rig transport still recorded as Bluetooth would send the very next [refreshStep] straight
+     * back to [SetupStep.RIG_BLUETOOTH] — the trap this action exists to end. [store.rigId] and
+     * [store.radioChoice] are deliberately **not** cleared here: [onEnterFrequency] (the only
+     * forward action [RadioUsbScreen] offers) sets [store.radioChoice] to [RadioChoice.NONE]
+     * itself once a real frequency is entered, at which point the rig is honestly "no radio, manual
+     * frequency" — the identical, already-verified state and Ready-screen row a genuine "no radio"
+     * choice produces (`readyRowsFor`'s own `radioRow`). Setup then finishes with the rig unlinked
+     * and retryable later: `store.rigId` survives that flip (an operator can always start over from
+     * Ready's "Change" action, which clears it explicitly), and Settings' own `RIG_TRANSPORT`
+     * re-entry point (`SettingsContent.kt`'s `onChangeRigLink`) already resolves against it directly
+     * — `RigSupervisor.connect` itself degrades a `rigId` with no `rigTransportKind` straight to the
+     * null module (confirmed by reading that file before writing this: `transportKind == null` is
+     * checked before the rig id is even resolved against a descriptor), so this never risks a blank
+     * re-entry screen or an unexpected live connection attempt in between.
+     */
+    internal fun onContinueWithoutRigLink() {
+        store.rigTransport = null
+        rigLinkVerifyStartedAtNanos = null
+        rigLinkVerifiedDurationSeconds = null
+        rigStatusSnapshot = RigStatus.State.Absent
+        syncCaptureConfiguration()
+        navigateForward(SetupStep.RADIO_USB)
+    }
+
     /** FR-PLT-2/constitution I: [RigLinkPort.pairedDevices]' own [PairedDevicesResult.permissionGranted]
      * drives [RigLinkState.NoPermission] directly — the operator sees the "grant nearby devices"
      * banner the moment S10b (or a `Refresh`) finds the permission missing, never only after they
@@ -699,6 +775,11 @@ public class SetupActivity : ComponentActivity() {
         if (rigLinkState !is RigLinkState.Verified) return
         store.rigBluetoothAddress = address
         store.rigBluetoothVerified = true
+        // R-1005c follow-up: reaching this point at all means the operator selected and verified a
+        // Bluetooth device, so the transport genuinely is Bluetooth SPP -- restored explicitly
+        // (previously always already true by the time this ran) because onContinueWithoutRigLink
+        // now makes it possible to arrive back here, via onBack, with store.rigTransport cleared.
+        store.rigTransport = PresetRigTransportKind.BLUETOOTH_SPP
         val entry = currentRigEntry()
         // Honest, not fabricated: no live per-band reading exists yet (the real DescriptorRigModule
         // poll loop cannot run from :app — RigLinkPort.kt's own doc comment). An empty band list,
@@ -958,7 +1039,10 @@ public class SetupActivity : ComponentActivity() {
             onPairInSettings = ::onPairRigBluetoothInSettings,
             onRefresh = ::onRefreshRigBluetoothDevices,
             onContinue = ::onContinueRigBluetooth,
+            onContinueWithoutConnecting = ::onContinueWithoutRigLink,
             onUseUsbInstead = ::onUseUsbInsteadForRig,
+            onRequestBluetoothPermission = ::requestRigBluetoothPermissions,
+            onBack = ::onBack,
         )
     }
 

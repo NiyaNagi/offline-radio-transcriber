@@ -32,6 +32,118 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPD2: R-1004/R-1005a/R-1005b/R-1005c — the first device field report, `ui/setup` half)
+
+### `<pending>` — WPD2: input-device dedupe + dump, BLUETOOTH_SCAN, onResume on the Bluetooth steps, Continue without connecting
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/InputRouteEnumerator.kt`,
+`app/src/main/kotlin/org/ort/app/ui/setup/RigBluetoothScreen.kt`,
+`app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt`, `app/src/main/AndroidManifest.xml`
+(permissions only), and their tests
+(`app/src/test/kotlin/org/ort/app/ui/setup/{InputRouteEnumeratorTest,RigBluetoothScreenTest,SetupActivityTest}.kt`).
+No file outside this list touched — `SetupScaffold.kt` (WPN's, R-1003's inset fix), `RigLinkPort.kt`/
+`BridgeRigLinkPort.kt` (transport, not owned) and `RadioUsbScreen.kt` (unowned, reused unmodified)
+were read for context only.
+
+**Requirements/ACs:** FR-CAP-2b, FR-CAP-3, FR-RIG-2, FR-RIG-13, FR-RIG-14, FR-RIG-15, FR-PLT-2,
+constitution I (never guess a duplicate, never fabricate an "Absent" checklist), constitution IV
+(a route the operator cannot tell apart is a capture-route mistake waiting to happen). Register
+R-1000..R-1012 (device field report, Oppo Find X9 Ultra/ColorOS), specifically R-1004, R-1005a,
+R-1005b, R-1005c, and R-1003's back-chevron half (S10b only — the nav-bar inset band itself is
+WPN's `SetupScaffold.kt`).
+
+**What changed:**
+- **R-1004 (S04 duplicate input devices).** `InputRouteEnumerator.list()` now logs a debug-visible
+  dump of every real `AudioDeviceInfo` the platform reports (`Log.i`, tag `InputRouteEnumerator`:
+  id, type, isSource, productName, address, channel counts, sample rates) before building rows —
+  `adb logcat -s InputRouteEnumerator` is how a future field report reads it. Routes are then
+  deduped through a new pure `buildRouteOptions(List<DeviceObservation>)`: the key is real hardware
+  facts (type/label/address/channel counts/sample rates/isSource), **never** the platform `id`
+  (guaranteed unique by construction) and never rendered text alone. An observation with no matched
+  `AudioManager` entry (every existing fake-backed test) never collapses with anything — the
+  conservative fallback that cannot hide a genuinely different device from absence of evidence.
+  Two survivors that would still render identical subtitle text get `(n of total)` appended rather
+  than one silently standing in for the other. This also fixes the reported second, silent
+  consequence: `presetInputRouteFor`'s `singleOrNull` pre-select recovers once the false duplicate
+  is gone (proven directly, `R_1004 the preset pre-select recovers...`).
+  **Named assumption** (cannot be verified without the reporting device): if ColorOS's bottom/top/
+  back mic capsules report identical facts on every field this key reads, they collapse to one row;
+  the new dump exists so a future field report can confirm or refute that against real data.
+  **File-ownership note for the session lead:** the dump could not be routed through
+  `org.ort.pipeline.diagnostics.DiagnosticsLog` (`:pipeline`, not owned) — that file's own class doc
+  states a structural guarantee that no call site can pass free text, and `productName` is exactly
+  the free-text field that guarantee exists to keep out. Reported rather than worked around.
+- **R-1005a (`BLUETOOTH_SCAN` never declared).** `AndroidManifest.xml` gains
+  `<uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation">`
+  (this app never derives location from a scan, so `ACCESS_FINE_LOCATION` is correctly never
+  needed). `SetupActivity.requestRigBluetoothPermissions()` requests it alongside
+  `BLUETOOTH_CONNECT` together on API 31+; below that, neither is a dangerous permission at all.
+- **R-1005b (returning from Settings never refreshed anything).** `SetupActivity.onResume()` now
+  also calls `refreshStep()` while on `SetupStep.BLUETOOTH_PERMISSION` or `SetupStep.RIG_BLUETOOTH`
+  — both gates are driven by real platform state a Settings round-trip can change, and neither used
+  to be re-checked except by the in-app permission-dialog callback or a manual `Refresh` tap. For
+  `RIG_BLUETOOTH`, the visible change comes from the `step` property's own setter, which calls
+  `refreshPairedDevices()` unconditionally whenever the assigned value is `RIG_BLUETOOTH` — including
+  a "no-op" reassignment to the same step — so its own `rigBluetoothDevices`/`rigLinkState` writes
+  are what re-render the screen even though `SetupStep` itself did not change. The `NoPermission`
+  banner (`RigBluetoothScreen`) also gained a real `Grant permission` action
+  (`Banner`'s existing `primaryActionLabel`/`onPrimaryAction`), wired to the same
+  `requestRigBluetoothPermissions()`.
+- **R-1005c (trapped on S10b with no way past).** `RigBluetoothScreen` restores the back chevron
+  the artboard has always drawn (`onBack = null` was a conformance defect, not a decision — the S10b
+  artboard the lead redrew 2026-09-12 confirms this explicitly) and gains a new middle pinned action,
+  **`Continue without connecting`**, with its consequence stated directly beneath it in one
+  accessible node (`the frequency is logged by hand until you link the radio`), matching the
+  redrawn artboard's three-action stack and its `design/design-guide.md` §10.1 inset convention
+  (bottom padding is design spacing; the scaffold — not this row — adds the navigation-bar inset).
+  `SetupActivity.onContinueWithoutRigLink()` clears `store.rigTransport` (so the next `stepFor` does
+  not immediately re-trap on `RIG_BLUETOOTH`) and lands on `SetupStep.RADIO_USB` — FR-RIG-2's
+  existing manual-frequency screen, rendered honestly against `RigStatus.State.Absent` — the same
+  screen an unsupported CAT rig already falls back to. `store.rigId`/`radioChoice` are deliberately
+  left untouched until a real frequency is entered (`onEnterFrequency`, unmodified, sets
+  `radioChoice = NONE` itself) — `RigSupervisor.connect` already degrades a `rigId` with no
+  `rigTransportKind` straight to the null module, so a later Settings-driven `RIG_TRANSPORT`
+  re-entry (`SettingsContent.kt`'s existing `onChangeRigLink`) resolves a real catalogue entry
+  rather than rendering blank. `onContinueRigBluetooth()` now also restores
+  `store.rigTransport = BLUETOOTH_SPP` defensively, since declining and returning via `onBack` makes
+  a second, successful attempt reachable with the field cleared for the first time.
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests "org.ort.app.ui.setup.*" -PortAllowMissingBundledAssets=true`
+  — 354 tests, all green (this machine, Windows).
+- `.\gradlew ":app:lintDebug" dependencyRules platformGuards ":app:assembleDebug" -PortAllowMissingBundledAssets=true`
+  — green.
+- Every new test proven to discriminate: production change reverted, test seen to fail for the
+  stated reason, production change restored, test seen to pass again — done for the dedupe key
+  (`InputRouteEnumerator.buildRouteOptions`), `requestRigBluetoothPermissions`'s `BLUETOOTH_SCAN`,
+  `onResume`'s two new branches, `onContinueWithoutRigLink`'s `rigTransport` clear, the back
+  chevron, the `NoPermission` banner action, and `ContinueWithoutConnectingAction`'s click wiring —
+  full before/after output in the session report.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --max-workers=2`
+  — green, `BUILD SUCCESSFUL in 14m 13s` (this machine; `-PortAllowMissingBundledAssets`/reduced
+  worker count per the session lead's own gate correction — five concurrent worktrees on one
+  machine — never the no-escape-hatch gate, which the lead runs once on `main` after merging).
+- `.\gradlew -p buildSrc test` — green.
+- `python tools\spec-check\spec_check.py` — 8/8 PASS.
+- `.\gradlew coverageMatrix` then, separately, `.\gradlew coverageMatrixCheck` — `450 requirements,
+  241 covered`; check reports "up to date"; `results/coverage-matrix.md` unchanged (already current).
+
+**Left open / not done:**
+- **Why the Bluetooth SPP link fails to connect at all on the reporting device is still unknown.**
+  Not investigated further per the brief (transport code, `:pipeline`/`:rig-bluetooth`, not owned);
+  nothing concrete enough to report was found in the files read for context.
+- The R-1004 dedupe key's "identical facts collapse" branch is unverified against the actual
+  reporting device — no device was available this session; it is proven only against hand-built
+  `DeviceObservation`s and the field names Robolectric's `AudioDeviceInfoBuilder` can produce.
+  `logDeviceDump()`'s real output on that device is what should confirm or correct the key next.
+- The visual re-verification (tour capture at 1.0/2.0 against the redrawn S10b artboard) is the
+  session lead's own pass, not run here, per this session's explicit instruction.
+- The no-escape-hatch gate (every bundled asset fetched, no `-PortAllowMissingBundledAssets`) is
+  the lead's own post-merge run on `main`, per this session's gate correction — everything above
+  ran with that escape hatch and a reduced worker count instead.
+
+---
+
 ## 2026-09-12 (constitution 1.2.0: a change that touches a screen re-runs the visual verification; the debugging and fix session prompt)
 
 ### bab4351d — constitution 1.2.0, AGENTS.md brought current, `docs/debug-fix-session-prompt.md`

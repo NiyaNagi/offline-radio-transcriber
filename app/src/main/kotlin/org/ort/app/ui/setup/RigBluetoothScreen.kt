@@ -4,12 +4,14 @@ package org.ort.app.ui.setup
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
@@ -18,6 +20,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.RadioRow
@@ -44,7 +53,25 @@ public data class RigBluetoothViewState(
  * is not yet wired in here). `Continue` enables only once [RigLinkState.Verified] is reached
  * (E2-E10); a [RigLinkState.Lost]/[RigLinkState.Failed]/[RigLinkState.NoPermission] renders as a
  * banner, never a blank screen (E2-E11, FR-RIG-15).
+ *
+ * **R-1003/R-1005c (device field report — a trapped operator).** Three fixes against the artboard
+ * as redrawn 2026-09-12 (`design/design-guide.md` §10.1's own commit):
+ * - [onBack] restores the back chevron the board has always drawn (line 21 of the artboard) —
+ *   `onBack = null` here was a conformance defect, not a design decision; [SetupActivity] is the
+ *   one caller and now passes a real one.
+ * - [onContinueWithoutConnecting] is the new middle action `Setup-Rig-Bluetooth.dc.html` draws
+ *   between `Continue` and `Use USB instead`: a real escape for a Bluetooth-only rig, landing on
+ *   FR-RIG-2's existing null-module/manual-frequency path exactly the way [SetupActivity]'s own
+ *   report names ([ContinueWithoutConnectingAction]'s doc comment has the accessibility half).
+ * - [onRequestBluetoothPermission] gives the [RigLinkState.NoPermission] banner an actual button —
+ *   it used to say "Grant it from Settings" with nothing that did so.
  */
+// R-1005c added the two new callbacks (onContinueWithoutConnecting, onRequestBluetoothPermission)
+// and restored onBack -- every parameter here is a real, independently-wired action or the state
+// this screen renders, matching this file's own established shape (SetupScaffold/Banner's own
+// LongParameterList suppressions carry the identical justification: a deliberately flexible,
+// heavily-wired setup screen, not a struct crying out to be bundled).
+@Suppress("LongParameterList")
 @Composable
 public fun RigBluetoothScreen(
     state: RigBluetoothViewState,
@@ -52,27 +79,23 @@ public fun RigBluetoothScreen(
     onPairInSettings: () -> Unit,
     onRefresh: () -> Unit,
     onContinue: () -> Unit,
+    onContinueWithoutConnecting: () -> Unit,
     onUseUsbInstead: () -> Unit,
+    onRequestBluetoothPermission: () -> Unit,
+    onBack: (() -> Unit)? = null,
 ) {
     SetupScaffold(
         step = SetupStep.RIG_BLUETOOTH,
         title = "Connect the ${state.rigDisplayName}",
         subtitle = "Bluetooth on the radio: Menu › Bluetooth › On, then pair it in Android settings",
-        onBack = null,
+        onBack = onBack,
         bottomActions = {
-            PrimaryButton(
-                text = "Continue",
-                onClick = onContinue,
-                enabled = state.linkState is RigLinkState.Verified,
-                modifier = Modifier.fillMaxWidth().testTag("setup-rig-bt-continue"),
+            RigBluetoothBottomActions(
+                verified = state.linkState is RigLinkState.Verified,
+                onContinue = onContinue,
+                onContinueWithoutConnecting = onContinueWithoutConnecting,
+                onUseUsbInstead = onUseUsbInstead,
             )
-            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                TextAction(
-                    text = "Use USB instead",
-                    onClick = onUseUsbInstead,
-                    modifier = Modifier.testTag("setup-rig-bt-use-usb"),
-                )
-            }
         },
     ) {
         Column {
@@ -104,31 +127,7 @@ public fun RigBluetoothScreen(
         }
 
         state.linkState?.let { linkState ->
-            bannerFor(linkState)?.let {
-                org.ort.app.ui.components.Banner(
-                    title = it.first,
-                    body = it.second,
-                    tone = org.ort.app.ui.components.BannerTone.DEGRADED,
-                    modifier = Modifier.fillMaxWidth().testTag("setup-rig-bt-lost-banner"),
-                )
-            }
-            Column {
-                ChecklistRow(
-                    label = "Serial link open",
-                    state = checklistStateFor(linkState, stage = 1),
-                    modifier = Modifier.testTag("setup-rig-bt-checklist-open"),
-                )
-                ChecklistRow(
-                    label = "Identify the rig",
-                    state = checklistStateFor(linkState, stage = 2),
-                    modifier = Modifier.testTag("setup-rig-bt-checklist-identify"),
-                )
-                ChecklistRow(
-                    label = "Verify the command set",
-                    state = checklistStateFor(linkState, stage = 3),
-                    modifier = Modifier.testTag("setup-rig-bt-checklist-verify"),
-                )
-            }
+            RigBluetoothLinkSection(linkState = linkState, onRequestBluetoothPermission = onRequestBluetoothPermission)
         }
 
         Text(
@@ -136,6 +135,127 @@ public fun RigBluetoothScreen(
                 "frequency as stale and reconnects on its own. It never pairs or unpairs anything.",
             style = OrtType.cardBody,
             color = OrtColors.textDim,
+        )
+    }
+}
+
+/** [RigBluetoothScreen]'s own `bottomActions` — split out purely to keep that function's own
+ * length under detekt's `LongMethod` threshold (R-1005c added the middle action), the same reason
+ * every other small private composable in this file already is. */
+@Composable
+private fun RigBluetoothBottomActions(
+    verified: Boolean,
+    onContinue: () -> Unit,
+    onContinueWithoutConnecting: () -> Unit,
+    onUseUsbInstead: () -> Unit,
+) {
+    PrimaryButton(
+        text = "Continue",
+        onClick = onContinue,
+        enabled = verified,
+        modifier = Modifier.fillMaxWidth().testTag("setup-rig-bt-continue"),
+    )
+    ContinueWithoutConnectingAction(
+        onClick = onContinueWithoutConnecting,
+        modifier = Modifier.testTag("setup-rig-bt-continue-without-connecting"),
+    )
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        TextAction(
+            text = "Use USB instead",
+            onClick = onUseUsbInstead,
+            modifier = Modifier.testTag("setup-rig-bt-use-usb"),
+        )
+    }
+}
+
+/** [RigBluetoothScreen]'s own banner + checklist, once a device has been picked — split out purely
+ * to keep that function's own length under detekt's `LongMethod` threshold, the same reason
+ * [RigBluetoothBottomActions] already is. */
+@Composable
+private fun RigBluetoothLinkSection(linkState: RigLinkState, onRequestBluetoothPermission: () -> Unit) {
+    bannerFor(linkState)?.let { (title, body) ->
+        // R-1005b: the banner used to say "Grant it from Settings" with nothing that did so —
+        // every other Lost/Failed banner has no action of its own (the checklist retries on its
+        // own re-selection), so this is NoPermission-only.
+        val isNoPermission = linkState == RigLinkState.NoPermission
+        org.ort.app.ui.components.Banner(
+            title = title,
+            body = body,
+            tone = org.ort.app.ui.components.BannerTone.DEGRADED,
+            modifier = Modifier.fillMaxWidth().testTag("setup-rig-bt-lost-banner"),
+            primaryActionLabel = if (isNoPermission) "Grant permission" else null,
+            onPrimaryAction = if (isNoPermission) onRequestBluetoothPermission else null,
+        )
+    }
+    Column {
+        ChecklistRow(
+            label = "Serial link open",
+            state = checklistStateFor(linkState, stage = 1),
+            modifier = Modifier.testTag("setup-rig-bt-checklist-open"),
+        )
+        ChecklistRow(
+            label = "Identify the rig",
+            state = checklistStateFor(linkState, stage = 2),
+            modifier = Modifier.testTag("setup-rig-bt-checklist-identify"),
+        )
+        ChecklistRow(
+            label = "Verify the command set",
+            state = checklistStateFor(linkState, stage = 3),
+            modifier = Modifier.testTag("setup-rig-bt-checklist-verify"),
+        )
+    }
+}
+
+/**
+ * R-1005c (device field report, `Setup-Rig-Bluetooth.dc.html` redrawn 2026-09-12) — the escape
+ * hatch for a Bluetooth-only rig that never links: `Continue` is gated on
+ * [RigLinkState.Verified] alone, `Use USB instead` is no escape at all for a rig with no USB
+ * transport, and the board's own back chevron ([RigBluetoothScreen]'s own [onBack]) was
+ * suppressed. This lands on FR-RIG-2's existing null-module/manual-frequency path — see
+ * `SetupActivity.onContinueWithoutRigLink`'s own doc comment for exactly what state setup ends in.
+ *
+ * **Accessibility (the artboard's own instruction — the caption sits directly beneath the action,
+ * "so a screen reader reads them together")**: the established pattern in this codebase for
+ * exactly this shape is `Modifier.clearAndSetSemantics` on the *outer* clickable node
+ * (`ReadyScreen.kt`'s own `ReadySetupRow`, R-342/R-361) — a lone `contentDescription` on a plain
+ * *sibling* `Text` does **not** fold into an ancestor's merged node on a real device, confirmed
+ * there by an on-device dump. [TextAction] cannot be reused unmodified here for the same reason:
+ * its own `clearAndSetSemantics` scopes the announced text to its own label alone (`Controls.kt`'s
+ * own R-380 doc comment), which would leave the caption a second, separately-focusable stop (or,
+ * worse per R-361, an empty one) rather than read together with the action as the board asks.
+ * `clickable`'s own semantics contribution is itself replaced by `clearAndSetSemantics`, so the
+ * click action is redeclared explicitly inside it — the same belt-and-suspenders shape
+ * [TextAction]'s own `onClick(label = null) { ... }` already establishes, for the identical reason.
+ */
+@Composable
+private fun ContinueWithoutConnectingAction(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .requiredHeightIn(min = 44.dp)
+            .padding(top = 2.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .clearAndSetSemantics {
+                contentDescription = "Continue without connecting. " +
+                    "The frequency is logged by hand until you link the radio."
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = "Continue without connecting",
+            style = OrtType.textAction.copy(fontWeight = FontWeight.Medium),
+            color = OrtColors.accentGreen,
+        )
+        Text(
+            text = "the frequency is logged by hand until you link the radio",
+            style = OrtType.subLine,
+            color = OrtColors.textDim,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -187,8 +307,10 @@ private fun bannerFor(linkState: RigLinkState): Pair<String, String>? = when (li
     is RigLinkState.Failed ->
         "Could not connect" to
             "${linkState.reason}. Check the radio is powered on and paired, then try again."
+    // R-1005b: this used to say "Grant it from Settings" with no button that did so — the banner
+    // now carries a real "Grant permission" action ([RigBluetoothScreen]'s own doc comment).
     RigLinkState.NoPermission ->
-        "Nearby devices permission is needed" to "Grant it from Settings, or use USB instead."
+        "Nearby devices permission is needed" to "Grant it below, or use USB instead."
     else -> null
 }
 

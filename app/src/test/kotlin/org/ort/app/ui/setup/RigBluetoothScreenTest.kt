@@ -5,11 +5,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -58,7 +62,9 @@ class RigBluetoothScreenTest {
                     onPairInSettings = {},
                     onRefresh = {},
                     onContinue = {},
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
@@ -78,7 +84,9 @@ class RigBluetoothScreenTest {
                     onPairInSettings = {},
                     onRefresh = {},
                     onContinue = {},
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
@@ -99,7 +107,9 @@ class RigBluetoothScreenTest {
                     onPairInSettings = {},
                     onRefresh = {},
                     onContinue = {},
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
@@ -121,13 +131,18 @@ class RigBluetoothScreenTest {
                     onPairInSettings = { paired = true },
                     onRefresh = { refreshed = true },
                     onContinue = {},
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-rig-bt-pair-in-settings").performClick()
-        composeTestRule.onNodeWithTag("setup-rig-bt-refresh").performClick()
+        // R-1005c: the three-action pinned bar is now tall enough that this row sits below the
+        // fold in this test's own (unconstrained-height) root -- performScrollTo() first, the same
+        // pattern this file's own banner assertions already use below.
+        composeTestRule.onNodeWithTag("setup-rig-bt-pair-in-settings").performScrollTo().performClick()
+        composeTestRule.onNodeWithTag("setup-rig-bt-refresh").performScrollTo().performClick()
         assert(paired)
         assert(refreshed)
     }
@@ -142,7 +157,9 @@ class RigBluetoothScreenTest {
                     onPairInSettings = {},
                     onRefresh = {},
                     onContinue = {},
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
@@ -164,7 +181,9 @@ class RigBluetoothScreenTest {
                     onPairInSettings = {},
                     onRefresh = {},
                     onContinue = { continued = true },
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
@@ -186,7 +205,9 @@ class RigBluetoothScreenTest {
                     onPairInSettings = {},
                     onRefresh = {},
                     onContinue = {},
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
@@ -208,7 +229,9 @@ class RigBluetoothScreenTest {
                     onPairInSettings = {},
                     onRefresh = {},
                     onContinue = {},
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
@@ -226,12 +249,65 @@ class RigBluetoothScreenTest {
                     onPairInSettings = {},
                     onRefresh = {},
                     onContinue = {},
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
 
         composeTestRule.onNodeWithTag("setup-rig-bt-lost-banner").performScrollTo().assertIsDisplayed()
+    }
+
+    /** R-1005b (device field report): the banner used to say "Grant it from Settings" with no
+     * button that did so — this proves a real, wired action exists now. */
+    @Test
+    fun `R_1005b NoPermission banner Grant permission action invokes its own callback`() {
+        var requested = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(selectedAddress = sppDevice.address, linkState = RigLinkState.NoPermission),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = { requested = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-lost-banner").performScrollTo()
+        composeTestRule.onNodeWithText("Grant permission").performClick()
+        assert(requested)
+    }
+
+    /** R-1005b: a Lost/Failed banner carries no action of its own (unchanged) — only NoPermission
+     * gained one, so "Grant permission" must never appear for either. */
+    @Test
+    fun `R_1005b a Lost banner never carries the Grant permission action`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(
+                        selectedAddress = sppDevice.address,
+                        linkState = RigLinkState.Lost("connection dropped"),
+                    ),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-lost-banner").performScrollTo().assertIsDisplayed()
+        composeTestRule.onAllNodesWithText("Grant permission").assertCountEquals(0)
     }
 
     @Test
@@ -245,13 +321,94 @@ class RigBluetoothScreenTest {
                     onPairInSettings = {},
                     onRefresh = {},
                     onContinue = {},
+                    onContinueWithoutConnecting = {},
                     onUseUsbInstead = { usedUsb = true },
+                    onRequestBluetoothPermission = {},
                 )
             }
         }
 
         composeTestRule.onNodeWithTag("setup-rig-bt-use-usb").performClick()
         assert(usedUsb)
+    }
+
+    // --- R-1005c (device field report — a trapped operator): the new escape hatch ------------------
+
+    /** R-1005c: `Continue without connecting` is real and wired, independent of `Continue`'s own
+     * `Verified`-only gate — must fire even while the checklist has not reached `Verified`. */
+    @Test
+    fun `R_1005c Continue without connecting invokes its own callback regardless of link state`() {
+        var continuedWithoutConnecting = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(selectedAddress = sppDevice.address, linkState = RigLinkState.Open),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = { continuedWithoutConnecting = true },
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue-without-connecting").performClick()
+        assert(continuedWithoutConnecting)
+    }
+
+    /** R-1005c: the artboard's own instruction — the consequence caption sits directly beneath the
+     * action so a screen reader reads them together; proven the same way `ReadyScreen.kt`'s own
+     * `R_342`/`R_361` regression proof is (one merged node carrying both facts), not merely that
+     * both strings appear somewhere on screen. */
+    @Test
+    fun `R_1005c the action and its consequence caption announce as one node`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithContentDescription(
+                "Continue without connecting. The frequency is logged by hand until you link the radio.",
+            )
+            .assertHasClickAction()
+    }
+
+    /** R-1003/R-1005c: the board has always drawn a back chevron (line 21 of the artboard) —
+     * `onBack = null` was a conformance defect, not a design decision. */
+    @Test
+    fun `R_1003 a real onBack renders the back chevron and invokes it`() {
+        var wentBack = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                    onBack = { wentBack = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-back").performClick()
+        assert(wentBack)
     }
 
     /** R-805 (register, tour run): at font scale 2.0 `Refresh` used to render one letter per line
@@ -270,7 +427,9 @@ class RigBluetoothScreenTest {
                         onPairInSettings = {},
                         onRefresh = {},
                         onContinue = {},
+                        onContinueWithoutConnecting = {},
                         onUseUsbInstead = {},
+                        onRequestBluetoothPermission = {},
                     )
                 }
             }
@@ -304,7 +463,9 @@ class RigBluetoothScreenTest {
                             onPairInSettings = {},
                             onRefresh = {},
                             onContinue = {},
+                            onContinueWithoutConnecting = {},
                             onUseUsbInstead = {},
+                            onRequestBluetoothPermission = {},
                         )
                     }
                 }
@@ -328,5 +489,53 @@ class RigBluetoothScreenTest {
             "expected Refresh wider than tall (single line, whole word), was " +
                 "${refreshSize.width} x ${refreshSize.height}"
         }
+    }
+
+    /** R-1005c (design, artboard redrawn 2026-09-12): the pinned block now stacks three actions
+     * plus a caption — this project's own history at font scale 2.0 on a 390dp screen (R-874,
+     * R-942, R-980) is actions overlapping or wrapping one letter per line. Bounds, at the tour's
+     * own width, native graphics — never merely that every node exists. */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1005c the three pinned actions never overlap at font scale 2_0 on a real 390dp screen`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        RigBluetoothScreen(
+                            state = state(),
+                            onSelectDevice = {},
+                            onPairInSettings = {},
+                            onRefresh = {},
+                            onContinue = {},
+                            onContinueWithoutConnecting = {},
+                            onUseUsbInstead = {},
+                            onRequestBluetoothPermission = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        val continueBounds = composeTestRule.onNodeWithTag("setup-rig-bt-continue").getUnclippedBoundsInRoot()
+        val withoutConnectingBounds =
+            composeTestRule.onNodeWithTag("setup-rig-bt-continue-without-connecting").getUnclippedBoundsInRoot()
+        val useUsbBounds = composeTestRule.onNodeWithTag("setup-rig-bt-use-usb").getUnclippedBoundsInRoot()
+
+        assertTrue(
+            "expected Continue (bottom ${continueBounds.bottom}) above Continue without connecting " +
+                "(top ${withoutConnectingBounds.top}) at font scale 2.0, got an overlap",
+            continueBounds.bottom <= withoutConnectingBounds.top,
+        )
+        assertTrue(
+            "expected Continue without connecting (bottom ${withoutConnectingBounds.bottom}) above " +
+                "Use USB instead (top ${useUsbBounds.top}) at font scale 2.0, got an overlap",
+            withoutConnectingBounds.bottom <= useUsbBounds.top,
+        )
+        assertTrue(
+            "expected every pinned action to stay within the real 390dp screen's own right edge, " +
+                "got Continue without connecting right edge ${withoutConnectingBounds.right}",
+            withoutConnectingBounds.right <= 390.dp,
+        )
     }
 }

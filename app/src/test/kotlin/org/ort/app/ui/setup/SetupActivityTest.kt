@@ -50,6 +50,10 @@ import org.robolectric.util.ReflectionHelpers
  * `ActivityScenarioRule` calls, so preconditions ([SharedPreferences]/permissions) can still be set
  * up before [ActivityScenario.launch] — the timing `createAndroidComposeRule` itself does not allow.
  */
+// R-1005b/c added the Bluetooth-step onResume and continue-without-connecting coverage on top of
+// this file's own pre-existing breadth (this class's own doc comment: the Activity-level half of
+// the whole guided sequence, deliberately one place per SetupActivity's own LargeClass rationale).
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 class SetupActivityTest {
 
@@ -696,6 +700,226 @@ class SetupActivityTest {
                 scenario.onActivity { activity ->
                     assertEquals(SetupStep.RIG_BLUETOOTH, activity.currentStepForTest)
                     assertEquals(RigLinkState.NoPermission, activity.rigLinkStateForTest)
+                }
+            }
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
+    // --- R-1005b (device field report): onResume re-checks the Bluetooth steps, not just Refresh --
+
+    /** A tiny local [RigLinkPort] whose [pairedDevices] answers with whatever [result] is set to
+     * *right now*, mutable from the test itself — the shape needed to prove [refreshPairedDevices]
+     * genuinely runs *again* on resume, not merely that a cold [SetupActivity.onCreate] runs it once
+     * (the existing R-802 tests already prove that half). [InMemoryRigLinkPort] cannot express this:
+     * its own `devices` list is immutable for the lifetime of one instance, and `denyPermission()` is
+     * one-directional (a real device would be granted once and stay granted for the rest of the
+     * process) — exactly backwards from what this test needs to script (denied, then granted, as a
+     * real Settings round-trip produces). A mutable field, changed by the test *between* reads, is
+     * also immune to exactly how many times Android's own lifecycle happens to call [pairedDevices]
+     * during an ordinary launch (`ActivityScenario.launch` itself drives a real `onResume`) — every
+     * read before the test changes [result] sees the same value regardless of how many of them there
+     * are, so [callCount] is asserted only as "it increased", never as an exact number. */
+    private class ScriptedRigLinkPort(initial: PairedDevicesResult) : RigLinkPort {
+        var result: PairedDevicesResult = initial
+        var callCount = 0
+            private set
+
+        override fun pairedDevices(): PairedDevicesResult {
+            callCount += 1
+            return result
+        }
+
+        override fun connect(address: String, expectedRigId: String) = kotlinx.coroutines.flow.emptyFlow<RigLinkState>()
+    }
+
+    /**
+     * R-1005b: reproduces the reported bug directly. Before this fix, `onResume` only ever
+     * re-checked [SetupStep.MICROPHONE_DENIED]/`null` — an operator who granted "Nearby devices"
+     * from system Settings and returned had to tap `Refresh` by hand. [ScriptedRigLinkPort.result]
+     * is changed only *after* the initial launch has already settled (proving the initial,
+     * already-covered-by-R-802 read is not what this test is about), so the granted state becoming
+     * visible is possible only if [refreshPairedDevices] actually runs again on the resume this test
+     * drives — proving both halves the brief warns about: the call happens, and its own
+     * [rigBluetoothDevicesForTest]/[rigLinkStateForTest] writes are what make the screen visibly
+     * change even though [SetupStep.RIG_BLUETOOTH] itself does not.
+     */
+    @Test
+    fun `R_1005b onResume on RIG_BLUETOOTH re-checks paired devices without a Refresh tap`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        val grantedDevice = PairedDevice("TH-D75A", "AA:BB:CC:11:22:33", sppCapable = true)
+        val port = ScriptedRigLinkPort(PairedDevicesResult(devices = emptyList(), permissionGranted = false))
+        DebugRigLinkPortOverride.show(port)
+        try {
+            ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    assertEquals(SetupStep.RIG_BLUETOOTH, activity.currentStepForTest)
+                    assertEquals(RigLinkState.NoPermission, activity.rigLinkStateForTest)
+                    assertTrue(activity.rigBluetoothDevicesForTest.isEmpty())
+                }
+                val countAfterLaunch = port.callCount
+
+                // The permission is granted "in Settings" between reads -- the real shape of the
+                // bug report, never observable through InMemoryRigLinkPort's one-directional flag.
+                port.result = PairedDevicesResult(devices = listOf(grantedDevice), permissionGranted = true)
+
+                // Drives a real onPause -> onResume cycle, exactly as a real backgrounded-in-
+                // Settings-then-foregrounded operator visit would (this file's own R-125 pattern).
+                scenario.moveToState(Lifecycle.State.STARTED)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                shadowOf(Looper.getMainLooper()).idle()
+
+                scenario.onActivity { activity ->
+                    assertTrue(
+                        "expected pairedDevices() to be read again on resume, was still $countAfterLaunch",
+                        port.callCount > countAfterLaunch,
+                    )
+                    assertEquals(null, activity.rigLinkStateForTest)
+                    assertEquals(listOf(grantedDevice), activity.rigBluetoothDevicesForTest)
+                }
+            }
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
+    /**
+     * R-1005b: the other half of the same fix — [SetupStep.BLUETOOTH_PERMISSION] (S02c, the
+     * capture-mode Bluetooth-audio permission, a different gate from S10b's rig-link one above) is
+     * driven by real Android permission state, not a debug port, so this exercises the fix through
+     * the ordinary `grant`/`deny` shadow helpers already in this file rather than a scripted double.
+     * Granting `BLUETOOTH_CONNECT` from Settings and returning must advance past this step on its
+     * own — before this fix, `onResume` never re-checked it and the operator stayed stuck until some
+     * unrelated action happened to call `refreshStep()`.
+     */
+    @Test
+    fun `R_1005b onResume on BLUETOOTH_PERMISSION re-evaluates a permission granted from Settings`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.BLUETOOTH_RADIO.name)
+            .apply()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        deny(Manifest.permission.BLUETOOTH_CONNECT)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.BLUETOOTH_PERMISSION, activity.currentStepForTest)
+            }
+
+            grant(Manifest.permission.BLUETOOTH_CONNECT)
+            scenario.moveToState(Lifecycle.State.STARTED)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            shadowOf(Looper.getMainLooper()).idle()
+
+            scenario.onActivity { activity ->
+                // Notifications was already granted above -- the next unmet gate past
+                // BLUETOOTH_PERMISSION is INPUT (no route chosen yet), not NOTIFICATIONS.
+                assertEquals(SetupStep.INPUT, activity.currentStepForTest)
+            }
+        }
+    }
+
+    // --- R-1005a (device field report): BLUETOOTH_SCAN is requested alongside BLUETOOTH_CONNECT ---
+
+    @Test
+    fun `R_1005a requestRigBluetoothPermissions asks for BLUETOOTH_SCAN as well as BLUETOOTH_CONNECT`() {
+        storeGatedAtRigBluetooth()
+        deny(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        DebugRigLinkPortOverride.show(InMemoryRigLinkPort().apply { denyPermission() })
+        try {
+            ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+                scenario.onActivity { activity -> activity.requestRigBluetoothPermissions() }
+                scenario.onActivity { activity ->
+                    val requested = shadowOf(activity).lastRequestedPermission.requestedPermissions.toList()
+                    assertTrue(
+                        "expected BLUETOOTH_CONNECT and BLUETOOTH_SCAN both requested, got $requested",
+                        requested.containsAll(
+                            listOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN),
+                        ),
+                    )
+                }
+            }
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
+    // --- R-1005c (device field report — a trapped operator): continue without connecting ----------
+
+    /**
+     * R-1005c: the state the escape hatch leaves setup in, precisely — lands on
+     * [SetupStep.RADIO_USB] (FR-RIG-2's existing manual-frequency screen, honestly rendered against
+     * [RigStatus.State.Absent] since no live rig connection exists either way), clears
+     * [SetupStore.rigTransport] so the very next [SetupStateMachine.stepFor] does not immediately
+     * route back to [SetupStep.RIG_BLUETOOTH], and leaves [SetupStore.rigId] untouched so a later
+     * `RIG_TRANSPORT` re-entry (Settings' own `onChangeRigLink`) still resolves a real catalogue
+     * entry rather than rendering blank.
+     */
+    @Test
+    fun `R_1005c continue without connecting lands on RADIO_USB with the rig transport cleared`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        DebugRigLinkPortOverride.show(InMemoryRigLinkPort())
+        try {
+            ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    assertEquals(SetupStep.RIG_BLUETOOTH, activity.currentStepForTest)
+                    activity.onContinueWithoutRigLink()
+                }
+                scenario.onActivity { activity ->
+                    assertEquals(SetupStep.RADIO_USB, activity.currentStepForTest)
+                    val store = SharedPreferencesSetupStore(
+                        activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
+                    )
+                    assertEquals(null, store.rigTransport)
+                    // The rig choice itself survives -- never erased just because the link was
+                    // declined this session (this function's own doc comment: retry stays cheap).
+                    assertEquals(
+                        org.ort.rig.descriptor.BundledDescriptors.kenwoodThD75a().id,
+                        store.rigId,
+                    )
+                }
+            }
+        } finally {
+            DebugRigLinkPortOverride.clear()
+            DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        }
+    }
+
+    /**
+     * R-1005c: entering a real frequency on the [SetupStep.RADIO_USB] landing completes setup the
+     * same, already-verified way a genuine "no radio" choice does — [SetupStore.radioChoice]
+     * becomes [RadioChoice.NONE] (via [SetupActivity.onEnterFrequency], unmodified by this feature)
+     * and the natural next step is [SetupStep.READY], never a loop back to [SetupStep.RIG_BLUETOOTH].
+     * This is the regression [onContinueRigBluetooth]'s own defensive `rigTransport` restore exists
+     * for: without clearing [SetupStore.rigTransport] in [SetupActivity.onContinueWithoutRigLink],
+     * [SetupStateMachine.needsRigBluetoothLink] would still read `BLUETOOTH_SPP`/`unverified` here
+     * and trap the operator right back on S10b.
+     */
+    @Test
+    fun `R_1005c entering a frequency after declining the link reaches READY, never loops back`() {
+        storeGatedAtRigBluetooth()
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        DebugRigLinkPortOverride.show(InMemoryRigLinkPort())
+        try {
+            ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+                scenario.onActivity { activity -> activity.onContinueWithoutRigLink() }
+                scenario.onActivity { activity -> activity.onEnterFrequency(145_230_000L) }
+                scenario.onActivity { activity ->
+                    assertEquals(SetupStep.READY, activity.currentStepForTest)
+                    val store = SharedPreferencesSetupStore(
+                        activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
+                    )
+                    assertEquals(RadioChoice.NONE, store.radioChoice)
+                    assertEquals(145_230_000L, store.manualFrequencyHz)
                 }
             }
         } finally {
