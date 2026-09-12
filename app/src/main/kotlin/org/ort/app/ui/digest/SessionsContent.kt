@@ -32,13 +32,33 @@ private sealed interface SessionsPage {
      * existing time-window filter (R-276's own precedent — `Frequency.dc.html`'s "The N overs"
      * stat does the same) — `null` (every caller before this existed) opens unfiltered, exactly as
      * before.
+     *
+     * IA-3 (information-architecture review, approved — WPNAV): [transmissionIds] is DG02's own
+     * curated set (`Digest-Item.dc.html`'s "The N overs" for N greater than one — see
+     * [LogReturn.DigestItem]'s own doc comment for why N of exactly one still drills straight into
+     * the transmission instead), and [returnTo] is the one filter model's own "where back goes"
+     * half, generalising this package's pre-existing "always back to `Detail`" — which was itself
+     * a real instance of the same defect this fixes: `Digest`'s own `Full log`/`Read the overs`
+     * back to `Detail` too, silently discarding the `Digest` the operator was actually reading.
      */
     data class Log(
         val sessionId: String,
         val label: String,
         val fromMillis: Long? = null,
         val toMillis: Long? = null,
+        val transmissionIds: Set<String>? = null,
+        val returnTo: LogReturn = LogReturn.Detail,
     ) : SessionsPage
+}
+
+/** IA-3: see [SessionsPage.Log.returnTo]'s own doc comment. */
+private sealed interface LogReturn {
+    data object Detail : LogReturn
+    data object Digest : LogReturn
+
+    /** DG02: a digest item naming more than one over — reopens the exact same item, not its own
+     * list, the same as any other drill-in's own back restores its own state intact. */
+    data class DigestItem(val item: DigestItemViewState) : LogReturn
 }
 
 /** R-133 (register, WP10 small round): [SessionsPage] is a `private sealed interface` — not
@@ -72,6 +92,23 @@ private val SessionsPageSaver: Saver<SessionsPage, String> = Saver(
                 page.label,
                 page.fromMillis?.toString() ?: "",
                 page.toMillis?.toString() ?: "",
+                // IA-3: [transmissionIds] joined the same way `digest_item`'s own field above
+                // already is; [returnTo]'s own discriminator plus, only for `DigestItem`, the
+                // identical flat field set `digest_item` above already encodes — never a second,
+                // recursively-nested [SessionsPageSaver] call, so [PAGE_FIELD_SEPARATOR]'s single
+                // split still finds every field at one flat depth.
+                page.transmissionIds?.joinToString(",") ?: "",
+                when (page.returnTo) {
+                    LogReturn.Detail -> "detail"
+                    LogReturn.Digest -> "digest"
+                    is LogReturn.DigestItem -> "digest_item"
+                },
+                (page.returnTo as? LogReturn.DigestItem)?.item?.id ?: "",
+                (page.returnTo as? LogReturn.DigestItem)?.item?.headline ?: "",
+                (page.returnTo as? LogReturn.DigestItem)?.item?.subLine ?: "",
+                (page.returnTo as? LogReturn.DigestItem)?.item?.reason ?: "",
+                (page.returnTo as? LogReturn.DigestItem)?.item?.ambiguousTone?.toString() ?: "",
+                (page.returnTo as? LogReturn.DigestItem)?.item?.transmissionIds?.joinToString(",") ?: "",
             ).joinToString(PAGE_FIELD_SEPARATOR)
         }
     },
@@ -96,6 +133,22 @@ private val SessionsPageSaver: Saver<SessionsPage, String> = Saver(
                 label = parts[2],
                 fromMillis = parts.getOrNull(3)?.takeIf { it.isNotEmpty() }?.toLongOrNull(),
                 toMillis = parts.getOrNull(4)?.takeIf { it.isNotEmpty() }?.toLongOrNull(),
+                transmissionIds = parts.getOrNull(5)?.takeIf { it.isNotEmpty() }?.split(",")?.toSet(),
+                returnTo = when (parts.getOrNull(6)) {
+                    "digest" -> LogReturn.Digest
+                    "digest_item" -> LogReturn.DigestItem(
+                        DigestItemViewState(
+                            id = parts.getOrElse(7) { "" },
+                            headline = parts.getOrElse(8) { "" },
+                            subLine = parts.getOrElse(9) { "" },
+                            reason = parts.getOrElse(10) { "" },
+                            ambiguousTone = parts.getOrElse(11) { "false" }.toBoolean(),
+                            transmissionIds = parts.getOrNull(12)?.takeIf { it.isNotEmpty() }?.split(",")
+                                ?: emptyList(),
+                        ),
+                    )
+                    else -> LogReturn.Detail
+                },
             )
             else -> SessionsPage.List
         }
@@ -195,38 +248,97 @@ public fun SessionsContent(
             sessionId = current.sessionId,
             onBack = { page = SessionsPage.Detail(current.sessionId) },
             onOpenItem = { item -> page = SessionsPage.DigestItem(current.sessionId, item) },
-            onFullLog = { page = SessionsPage.Log(current.sessionId, "Digest") },
+            // IA-3: `returnTo = LogReturn.Digest` — back used to always land on `Detail`, silently
+            // discarding the `Digest` the operator actually opened this from.
+            onFullLog = { page = SessionsPage.Log(current.sessionId, "Digest", returnTo = LogReturn.Digest) },
             // E2-G07 (DG05): a prose card's own `Read the overs` — the Log filtered to that card's
             // own over time window.
-            onReadOvers = { from, to -> page = SessionsPage.Log(current.sessionId, "Digest", from, to) },
+            onReadOvers = { from, to ->
+                page = SessionsPage.Log(current.sessionId, "Digest", from, to, returnTo = LogReturn.Digest)
+            },
             modifier = modifier,
         )
 
         is SessionsPage.DigestItem -> DigestItemScreen(
             item = current.item,
             onBack = { page = SessionsPage.Digest(current.sessionId) },
-            onOpenTheOvers = { current.item.transmissionIds.firstOrNull()?.let(onOpenTransmission) },
+            // IA-3 (DG02, register): a single over still drills straight into its own transmission
+            // detail — this composable has no drill-in surface of its own to show that on, so the
+            // id is handed up through [onOpenTransmission] exactly as before. More than one used to
+            // discard every id but the first, with the other N-1 unreachable from this tap at all —
+            // now it opens the Log, filtered to exactly this curated set, `returnTo` this same item
+            // so back restores it with its own state intact rather than the plain `Digest` list.
+            onOpenTheOvers = {
+                val ids = current.item.transmissionIds
+                if (ids.size <= 1) {
+                    ids.firstOrNull()?.let(onOpenTransmission)
+                } else {
+                    page = SessionsPage.Log(
+                        sessionId = current.sessionId,
+                        label = "Digest",
+                        transmissionIds = ids.toSet(),
+                        returnTo = LogReturn.DigestItem(current.item),
+                    )
+                }
+            },
             modifier = modifier,
         )
 
-        is SessionsPage.Log -> Column(modifier = modifier.fillMaxSize()) {
-            DrillInHeader(parentLabel = current.label, onBack = { page = SessionsPage.Detail(current.sessionId) })
-            // E2-G07: a prose card's own seeded window (both bounds present) becomes the Log's
-            // existing time-window filter — `null` (the plain "Digest"/"Log" navigation, unchanged)
-            // opens unfiltered.
-            val seededFilter = if (current.fromMillis != null && current.toMillis != null) {
-                LogFilterSelection(fromMillis = current.fromMillis, toMillis = current.toMillis)
-            } else {
-                null
-            }
-            LogContent(
-                context = context,
-                sessionId = current.sessionId,
-                onOpen = onOpenTransmission,
-                initialFilter = seededFilter,
-                modifier = Modifier.fillMaxSize(),
-            )
+        is SessionsPage.Log -> LogPage(
+            current = current,
+            context = context,
+            onOpenTransmission = onOpenTransmission,
+            onBack = { page = it },
+            modifier = modifier,
+        )
+    }
+}
+
+/** [SessionsContent]'s `is SessionsPage.Log` branch, split out purely to keep that composable
+ * under detekt's `LongMethod` limit — IA-3's own generalised `returnTo` is what pushed it over. */
+@Composable
+private fun LogPage(
+    current: SessionsPage.Log,
+    context: Context,
+    onOpenTransmission: (String) -> Unit,
+    onBack: (SessionsPage) -> Unit,
+    modifier: Modifier,
+) {
+    Column(modifier = modifier.fillMaxSize()) {
+        DrillInHeader(
+            parentLabel = current.label,
+            onBack = {
+                // IA-3: the one filter model's own "back restores the origin with its own state
+                // intact" half — [LogReturn.Detail] is `Detail`'s pre-existing (and only) back
+                // target, kept as the default so every caller that never named a `returnTo`
+                // behaves exactly as before.
+                onBack(
+                    when (val returnTo = current.returnTo) {
+                        LogReturn.Detail -> SessionsPage.Detail(current.sessionId)
+                        LogReturn.Digest -> SessionsPage.Digest(current.sessionId)
+                        is LogReturn.DigestItem -> SessionsPage.DigestItem(current.sessionId, returnTo.item)
+                    },
+                )
+            },
+        )
+        // E2-G07: a prose card's own seeded window (both bounds present) becomes the Log's
+        // existing time-window filter — `null` (the plain "Digest"/"Log" navigation, unchanged)
+        // opens unfiltered. IA-3: DG02's own curated [SessionsPage.Log.transmissionIds] layers on
+        // top the identical way — [LogFilterSelection]'s own fields, never a parallel filter.
+        val seededFilter = if (current.fromMillis != null && current.toMillis != null) {
+            LogFilterSelection(fromMillis = current.fromMillis, toMillis = current.toMillis)
+        } else if (current.transmissionIds != null) {
+            LogFilterSelection(transmissionIds = current.transmissionIds)
+        } else {
+            null
         }
+        LogContent(
+            context = context,
+            sessionId = current.sessionId,
+            onOpen = onOpenTransmission,
+            initialFilter = seededFilter,
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 

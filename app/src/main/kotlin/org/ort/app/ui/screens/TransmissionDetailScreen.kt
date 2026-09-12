@@ -110,6 +110,12 @@ public fun TransmissionDetailScreen(
     state: DetailViewState,
     player: TransmissionAudioPlayer,
     onOpenTransmission: (String) -> Unit = {},
+    // IA-6 (information-architecture review, approved — WPNAV): the transmission's own attributed
+    // station, one tap away — `stationId` is only ever non-null for CONFIRMED/INFERRED
+    // (`Attribution`'s own factories: AMBIGUOUS/UNKNOWN never carry one, constitution I), so
+    // [StationLinkSection] below renders nothing for either — never a dead or guessed link.
+    // Defaulted to a no-op so every existing caller keeps compiling unchanged.
+    onOpenStation: (String) -> Unit = {},
     onNotRight: () -> Unit = {},
     onConfirm: () -> Unit = {},
     onChooseCandidate: (String) -> Unit = {},
@@ -191,6 +197,7 @@ public fun TransmissionDetailScreen(
                 WhySection(state, onOpenWhy)
             }
             RevisionsLinkSection(state.detail, onOpenRevisions)
+            StationLinkSection(state.detail, onOpenStation)
             LabelSampleSection(
                 detail = state.detail,
                 expanded = labelExpanded,
@@ -1015,6 +1022,27 @@ private fun RevisionsLinkSection(detail: TransmissionDetailViewState, onOpenRevi
         TextAction(
             text = if (count == 1) "1 earlier version" else "$count earlier versions",
             onClick = onOpenRevisions,
+        )
+    }
+}
+
+/**
+ * IA-6 (information-architecture review, approved — WPNAV): the transmission's own attributed
+ * station, one tap away — every other drill-in reachable from a transmission (the lattice,
+ * revisions, corrections) already had a way in; the station an over was actually attributed to did
+ * not. Absent entirely — never a dead or greyed-out link — when [detail]'s own attribution carries
+ * no `stationId`, which by construction (`Attribution`'s own private constructor plus its four
+ * factories) is every AMBIGUOUS or UNKNOWN over: constitution I is the reason there is no "guess
+ * which station" fallback here.
+ */
+@Composable
+private fun StationLinkSection(detail: TransmissionDetailViewState, onOpenStation: (String) -> Unit) {
+    val stationId = detail.attribution.stationId ?: return
+    Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        TextAction(
+            text = "View station",
+            onClick = { onOpenStation(stationId) },
+            modifier = Modifier.testTag("detail-open-station"),
         )
     }
 }

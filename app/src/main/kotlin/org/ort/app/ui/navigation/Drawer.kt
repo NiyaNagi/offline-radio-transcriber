@@ -52,11 +52,17 @@ import org.ort.app.ui.theme.OrtType
  * ui-conformance-plan WP3). Lists every *built or reachable* destination the canvas specifies, in
  * its order, replacing a tab bar — "Log, Threads, Stations, Frequencies and Earlier nights do not
  * fit in tabs, and Capture, Improve records and Settings belong in the same place"
- * (`canvas.json`'s `integrated` annotation). [ReaderDestination.SEARCH] is deliberately excluded
- * from the rendered rows — `Menu.dc.html` never lists it, and it is reached from every header's
- * magnifier instead ([ReaderDestination.SEARCH]'s own doc comment already named this as the
- * intended end state). The storage footer (D26) is the same `integrated` annotation's other
- * requirement: "a thing you actually watch on this product".
+ * (`canvas.json`'s `integrated` annotation). The storage footer (D26) is the same `integrated`
+ * annotation's other requirement: "a thing you actually watch on this product".
+ *
+ * IA-5 (information-architecture review, approved — WPNAV): [ReaderDestination.SEARCH] used to be
+ * excluded from the rendered rows on the reasoning that `Menu.dc.html` never lists it and every
+ * header's own magnifier reaches it instead — that held only for the destinations drawing WP2's
+ * generic [org.ort.app.ui.components.ScreenHeader], and left `Search` itself, `Settings` and
+ * `Earlier nights` (each drawing its own header, none with a magnifier) with no way to reach it at
+ * all. `Search` now gets the same drawer row every other real destination does, no trailing figure
+ * (`trailingFor`'s own `else -> null`), so it is reachable from anywhere the drawer opens from —
+ * `Settings`/`Earlier nights` already had a working drawer button of their own before this round.
  */
 @Composable
 public fun ReaderDrawerContent(
@@ -88,7 +94,6 @@ public fun ReaderDrawerContent(
                     .padding(horizontal = OrtSpacing.md, vertical = OrtSpacing.md),
             ) {
                 ReaderDestination.entries
-                    .filter { it != ReaderDestination.SEARCH }
                     .forEach { destination ->
                         if (destination == firstTrailing) {
                             Divider(horizontalInset = 0.dp, verticalInset = OrtSpacing.md)

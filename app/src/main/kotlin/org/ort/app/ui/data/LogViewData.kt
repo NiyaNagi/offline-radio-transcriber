@@ -136,6 +136,16 @@ public data class LogFilterSelection(
     val showGaps: Boolean = true,
     val fromMillis: Long? = null,
     val toMillis: Long? = null,
+    // IA-3 (information-architecture review, approved — WPNAV): the same shape [frequencyHz]
+    // already was, generalised rather than duplicated, so ST02 (a station's own "Overs · Log")
+    // narrows the Log the identical way `Frequency.dc.html`'s "The N overs" always has. `null`
+    // (every caller before this existed) is exactly today's unnarrowed behaviour.
+    val stationId: String? = null,
+    // IA-3: DG02 ("The N overs" on a digest item) needs a Log narrowed to one specific, curated
+    // set of overs — not a frequency, station or time window — so the other five siblings a
+    // single-transmission drill-in used to discard are reachable too. `null` (every caller before
+    // this existed) is exactly today's unnarrowed behaviour.
+    val transmissionIds: Set<String>? = null,
 )
 
 public data class LogFrequencyOptionViewState(val hz: Long?, val label: String, val count: Int, val selected: Boolean)
@@ -413,6 +423,16 @@ public object LogItemsMapper {
     private fun matchesFrequency(detail: TransmissionDetail, selection: LogFilterSelection): Boolean =
         selection.frequencyHz == null || detail.frequencyHz == selection.frequencyHz
 
+    // IA-3: [LogFilterSelection.stationId]/[transmissionIds]'s own predicates, the same shape
+    // [matchesFrequency] already is — only [rowsAsTimed] applies either, matching
+    // [matchesFrequency]'s own precedent of narrowing the interleaved rows, never
+    // [buildRejectedFocus]'s dedicated view (P9 — nothing rejected is narrowed further).
+    private fun matchesStation(detail: TransmissionDetail, selection: LogFilterSelection): Boolean =
+        selection.stationId == null || detail.attribution.stationId == selection.stationId
+
+    private fun matchesTransmissionIds(detail: TransmissionDetail, selection: LogFilterSelection): Boolean =
+        selection.transmissionIds == null || detail.id in selection.transmissionIds
+
     private fun matchesTime(startedAtUtcMillis: Long, selection: LogFilterSelection): Boolean =
         (selection.fromMillis == null || startedAtUtcMillis >= selection.fromMillis) &&
             (selection.toMillis == null || startedAtUtcMillis <= selection.toMillis)
@@ -449,6 +469,8 @@ public object LogItemsMapper {
         .filter {
             matchesAttribution(it, selection) &&
                 matchesFrequency(it, selection) &&
+                matchesStation(it, selection) &&
+                matchesTransmissionIds(it, selection) &&
                 matchesTime(it.startedAtUtcMillis, selection)
         }
         .map { detail ->

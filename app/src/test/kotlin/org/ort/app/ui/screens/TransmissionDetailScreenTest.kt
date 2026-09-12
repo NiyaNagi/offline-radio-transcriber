@@ -401,6 +401,51 @@ class TransmissionDetailScreenTest {
     }
 
     @Test
+    fun `IA_6 an attributed transmission links to its station, one tap away`() {
+        var openedStationId: String? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.confirmed("K7LWH", 0.9))),
+                    player = FakeTransmissionAudioPlayer(),
+                    onOpenStation = { openedStationId = it },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("View station").performClick()
+        assertEquals("K7LWH", openedStationId)
+    }
+
+    @Test
+    fun `IA_6 an AMBIGUOUS over has no station to link to - no dead or guessed link`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.ambiguous())),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("View station").assertDoesNotExist()
+    }
+
+    @Test
+    fun `IA_6 an UNKNOWN over has no station to link to - no dead or guessed link`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(detail(attribution = Attribution.unknown())),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("View station").assertDoesNotExist()
+    }
+
+    @Test
     fun `AC_14 the candidate list is viewable inline, with a link to the full lattice`() {
         val inspection = InspectionViewState(
             lattice = LatticeInspectionViewState(

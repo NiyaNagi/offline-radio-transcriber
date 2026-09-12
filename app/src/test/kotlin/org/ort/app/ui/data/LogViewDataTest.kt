@@ -509,6 +509,30 @@ class LogViewDataTest {
     }
 
     @Test
+    fun `IA_3 station filter narrows to that station's overs only`() {
+        val details = listOf(
+            detail(id = "TX1", attribution = Attribution.confirmed("K7ABC", 0.9)),
+            detail(id = "TX2", attribution = Attribution.confirmed("W7XYZ", 0.9)),
+        )
+        val selection = LogFilterSelection(stationId = "K7ABC")
+
+        val items = LogItemsMapper.buildItems(details, emptyList(), selection, emptySet())
+
+        assertEquals(1, items.size)
+        assertEquals("TX1", (items[0] as LogListItem.Row).state.id)
+    }
+
+    @Test
+    fun `IA_3 transmissionIds filter narrows to exactly that curated set`() {
+        val details = listOf(detail(id = "TX1"), detail(id = "TX2"), detail(id = "TX3"))
+        val selection = LogFilterSelection(transmissionIds = setOf("TX1", "TX3"))
+
+        val items = LogItemsMapper.buildItems(details, emptyList(), selection, emptySet())
+
+        assertEquals(setOf("TX1", "TX3"), items.map { (it as LogListItem.Row).state.id }.toSet())
+    }
+
+    @Test
     fun `R_042 the Named quick filter keeps only CONFIRMED and INFERRED rows`() {
         val sheet = LogFilterSelection()
         val named = LogItemsMapper.selectionFor(LogQuickFilterId.Named, sheet)

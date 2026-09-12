@@ -82,6 +82,9 @@ import java.io.File
  * `processingState`, so a tour reaches F04 simply by opening a genuinely rejected transmission,
  * the same as any other real state.
  */
+@Suppress("LongParameterList") // IA-6's onOpenStation is one more seam in the same shape every
+// other cross-package drill-in callback here already is — see this file's own `MainDestination`/
+// `DetailDestinationContent` for the identical, already-accepted precedent.
 @Composable
 public fun TransmissionDetailContent(
     context: Context,
@@ -89,6 +92,10 @@ public fun TransmissionDetailContent(
     player: TransmissionAudioPlayer,
     onBack: () -> Unit,
     onOpenTransmission: (String) -> Unit,
+    // IA-6 (information-architecture review, approved — WPNAV): threaded straight through to
+    // [TransmissionDetailScreen]'s own new station link — see that composable's doc comment.
+    // Defaulted to a no-op so every existing caller keeps compiling unchanged.
+    onOpenStation: (String) -> Unit = {},
     backLabel: String = "Log",
     initialRevisionsOpen: Boolean = false,
     modifier: Modifier = Modifier,
@@ -156,6 +163,7 @@ public fun TransmissionDetailContent(
         player = player,
         onBack = onBack,
         onOpenTransmission = onOpenTransmission,
+        onOpenStation = onOpenStation,
         backLabel = backLabel,
         whyParentLabel = whyParentLabel,
         dest = dest,
@@ -183,6 +191,7 @@ private fun DetailDestinationContent(
     player: TransmissionAudioPlayer,
     onBack: () -> Unit,
     onOpenTransmission: (String) -> Unit,
+    onOpenStation: (String) -> Unit,
     backLabel: String,
     whyParentLabel: String,
     dest: DetailDestination,
@@ -200,6 +209,7 @@ private fun DetailDestinationContent(
                 player = player,
                 onBack = onBack,
                 onOpenTransmission = onOpenTransmission,
+                onOpenStation = onOpenStation,
                 onDestinationChange = onDestinationChange,
                 refresh = refresh,
                 backLabel = backLabel,
@@ -260,6 +270,7 @@ private fun MainDestination(
     player: TransmissionAudioPlayer,
     onBack: () -> Unit,
     onOpenTransmission: (String) -> Unit,
+    onOpenStation: (String) -> Unit,
     onDestinationChange: (DetailDestination) -> Unit,
     refresh: suspend () -> Unit,
     backLabel: String,
@@ -272,6 +283,7 @@ private fun MainDestination(
             state = viewState,
             player = player,
             onOpenTransmission = onOpenTransmission,
+            onOpenStation = onOpenStation,
             onNotRight = { onDestinationChange(DetailDestination.Correcting) },
             onConfirm = {
                 val stationId = current.attribution.stationId

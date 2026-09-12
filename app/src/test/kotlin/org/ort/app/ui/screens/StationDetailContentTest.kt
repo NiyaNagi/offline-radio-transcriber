@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -146,6 +147,30 @@ class StationDetailContentTest {
         // (not a crash, not a second "Loading…"), is exactly what R-272 requires.
         composeTestRule.waitUntilTextExists("One cluster, nothing to split")
         composeTestRule.onNodeWithText("One cluster, nothing to split").assertExists()
+    }
+
+    @Test
+    fun `IA_3 the Overs section's Log action calls onViewAllOvers - it used to be a dead tap`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.catalogDao().insert(station())
+            db.transmissionDao().insert(transmission())
+        }
+        var tapped = false
+
+        composeTestRule.setContent {
+            StationDetailContent(
+                context = context,
+                stationId = "WA7HJR",
+                onBack = {},
+                onViewAllOvers = { tapped = true },
+            )
+        }
+
+        composeTestRule.waitUntilTextExists("WA7HJR")
+        composeTestRule.onNodeWithText("Log").performClick()
+
+        assertTrue(tapped)
     }
 
     @Test

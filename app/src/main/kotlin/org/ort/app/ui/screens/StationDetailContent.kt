@@ -50,6 +50,12 @@ public fun StationDetailContent(
     // below once, so ST03/ST04 can be captured without a real user tap through Overview. Defaulted
     // to `NONE` so every existing caller (`OrtNavHost.kt`) compiles unchanged.
     initialSubScreen: StationSubScreen = StationSubScreen.NONE,
+    // IA-3 (information-architecture review, approved — WPNAV): ST02's own "Overs · Log" trailing
+    // action and "Recent overs · All N" — [StationDetailScreen.onViewAllOvers] already existed and
+    // already rendered both taps, but this composable never passed a real callback in, so both were
+    // dead taps (compiled, rendered, tappable, did nothing). Defaulted to a no-op so every existing
+    // caller keeps compiling unchanged until `OrtNavHost.kt` wires the real navigation.
+    onViewAllOvers: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var sub by remember(stationId) { mutableStateOf(initialSubScreen) }
@@ -134,6 +140,7 @@ public fun StationDetailContent(
                     onOpenTransmission = onOpenTransmission,
                     onOpenPattern = { sub = StationSubScreen.PATTERN },
                     onOpenIdentity = { sub = StationSubScreen.IDENTITY },
+                    onViewAllOvers = onViewAllOvers,
                     backLabel = backLabel,
                 )
             } else {
