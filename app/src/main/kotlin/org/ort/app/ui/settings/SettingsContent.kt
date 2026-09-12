@@ -22,13 +22,23 @@ import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.ort.app.BuildConfig
 import org.ort.app.diagnostics.DiagnosticsBundleBuilder
+import org.ort.app.fieldreport.bundle.FieldReportBundleBuilder
+import org.ort.app.fieldreport.bundle.FieldReportBundlePreview
+import org.ort.app.fieldreport.bundle.FieldReportGatedCategory
+import org.ort.app.fieldreport.settings.SharedPreferencesFieldReportSettingsStore
+import org.ort.app.fieldreport.upload.FieldReportDestination
+import org.ort.app.fieldreport.upload.FieldReportUploadClient
+import org.ort.app.fieldreport.upload.FieldReportUploadRequest
 import org.ort.app.ui.data.RealCaptureModeFacts
 import org.ort.app.ui.data.realCaptureConfigurationStore
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.theme.OrtSpacing
+import java.io.ByteArrayOutputStream
 import java.time.LocalDate
+import java.util.Locale
 
 /**
  * WP10 (register R-090): the stateful entry point `OrtNavHost` dispatches `SETTINGS` to — owns the
@@ -423,20 +433,191 @@ private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, m
     }
 
     val state = diagnosticsState
-    if (state != null) {
-        SettingsDiagnosticsScreen(
-            state = state,
-            onBack = onBack,
-            onPreview = { previewOpen = true },
-            onSaveBundle = { saveLauncher.launch("diagnostics-${LocalDate.now()}.zip") },
-            previewOpen = previewOpen,
-            onDismissPreview = { previewOpen = false },
-            saveConfirmationLabel = saveConfirmationLabel,
-            modifier = modifier,
-        )
-    } else {
-        LoadingSettings(modifier = modifier)
+    FieldReportHost(context = context, modifier = modifier) { fieldReport, fieldReportActions ->
+        if (state != null) {
+            SettingsDiagnosticsScreen(
+                state = state.copy(fieldReport = fieldReport),
+                onBack = onBack,
+                bundleActions = SettingsDiagnosticsBundleActions(
+                    onPreview = { previewOpen = true },
+                    onSaveBundle = { saveLauncher.launch("diagnostics-${LocalDate.now()}.zip") },
+                ),
+                previewOpen = previewOpen,
+                onDismissPreview = { previewOpen = false },
+                saveConfirmationLabel = saveConfirmationLabel,
+                fieldReportActions = fieldReportActions,
+                modifier = modifier,
+            )
+        } else {
+            LoadingSettings(modifier = modifier)
+        }
     }
+}
+
+/**
+ * WPR2 (FR-OBS-6..12, D37/D38): everything the field-report feature owns — the FR-OBS-10
+ * `FieldReportSettingsStore` (see that file's own doc comment for why it lives in
+ * `fieldreport/settings`, not `SettingsStore.kt`), the FR-OBS-9 consent screen's own open/toggle
+ * state, and the real `FieldReportBundleBuilder`/`FieldReportUploadClient` calls — split out of
+ * [SettingsDiagnosticsSubScreen] purely to keep that function under detekt's length limit.
+ *
+ * When the consent screen is not open, [content] is invoked with the current
+ * [FieldReportSectionViewState] (`null` in a release build, FR-OBS-6) and the two actions that
+ * open it / flip the FR-OBS-10 switch — [SettingsDiagnosticsSubScreen] renders its own
+ * `SettingsDiagnosticsScreen` there. When it is open, this function renders
+ * [FieldReportConsentScreen] itself instead, so [content] is never composed underneath it.
+ */
+@Composable
+private fun FieldReportHost(
+    context: Context,
+    modifier: Modifier,
+    content: @Composable (FieldReportSectionViewState?, FieldReportSectionActions) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val fieldReportSettingsStore = remember {
+        SharedPreferencesFieldReportSettingsStore(
+            context.getSharedPreferences(SharedPreferencesFieldReportSettingsStore.PREFS_NAME, Context.MODE_PRIVATE),
+        )
+    }
+    // Bumped after every write so the plain `SharedPreferences` write below (which Compose has no
+    // observer on) still triggers a recomposition — the same idiom `storeVersion` uses one level
+    // up in `SettingsContent`.
+    var fieldReportGuardVersion by remember { mutableStateOf(0) }
+    var fieldReportConsentOpen by remember { mutableStateOf(false) }
+    // AC-144: a fresh `FieldReportToggleState()` every time the consent screen opens — `remember`
+    // keyed on `fieldReportConsentOpen` so re-opening after a `Cancel`/`Send` starts from every
+    // toggle off again, never from whatever the operator picked last time.
+    var fieldReportToggles by remember(fieldReportConsentOpen) { mutableStateOf(FieldReportToggleState()) }
+    var fieldReportPreview by remember(fieldReportConsentOpen) { mutableStateOf<FieldReportBundlePreview?>(null) }
+    var fieldReportDestination by remember(fieldReportConsentOpen) {
+        mutableStateOf<FieldReportDestination?>(null)
+    }
+    // WPR2's own report names the interface WPR3 implements — `null` here is the honest "not
+    // configured" state `SettingsContributeScreen.kt` already uses for its own not-yet-built
+    // upload client, never a fabricated destination.
+    val fieldReportClient: FieldReportUploadClient? = null
+
+    LaunchedEffect(fieldReportConsentOpen, fieldReportToggles) {
+        if (fieldReportConsentOpen) {
+            fieldReportPreview = FieldReportBundleBuilder.preview(context, fieldReportToggles.toCategorySet())
+            fieldReportDestination = fieldReportClient?.destination()
+        }
+    }
+
+    if (!fieldReportConsentOpen) {
+        val fieldReport = if (BuildConfig.DEBUG) {
+            FieldReportSectionViewState(
+                publicGuardEnabled = run {
+                    fieldReportGuardVersion // see this function's own doc comment on the field above
+                    fieldReportSettingsStore.publicDestinationGuardEnabled
+                },
+            )
+        } else {
+            null
+        }
+        content(
+            fieldReport,
+            FieldReportSectionActions(
+                onOpenFieldReport = { fieldReportConsentOpen = true },
+                onSetPublicDestinationGuardEnabled = {
+                    fieldReportSettingsStore.publicDestinationGuardEnabled = it
+                    fieldReportGuardVersion++
+                },
+            ),
+        )
+        return
+    }
+
+    val preview = fieldReportPreview
+    if (preview == null) {
+        LoadingSettings(modifier = modifier)
+        return
+    }
+    FieldReportConsentScreen(
+        state = fieldReportConsentViewState(
+            preview = preview,
+            destination = fieldReportDestination,
+            guardEnabled = fieldReportSettingsStore.publicDestinationGuardEnabled,
+            toggles = fieldReportToggles,
+        ),
+        onToggleRetainedAudio = { fieldReportToggles = fieldReportToggles.copy(retainedAudio = it) },
+        onToggleVoiceprintEmbeddings = { fieldReportToggles = fieldReportToggles.copy(voiceprintEmbeddings = it) },
+        onToggleScreenFrames = { fieldReportToggles = fieldReportToggles.copy(screenFrames = it) },
+        onCancel = { fieldReportConsentOpen = false },
+        onSend = {
+            val client = fieldReportClient
+            if (client != null) {
+                scope.launch {
+                    uploadFieldReportBundle(context, client, fieldReportToggles.toCategorySet())
+                    fieldReportConsentOpen = false
+                }
+            }
+        },
+        // WPR3 lands the real `:net`-backed `FieldReportUploadClient` (see that interface's own
+        // doc comment) — `Send` becomes reachable the moment `fieldReportClient` above stops being
+        // `null`, with no further change here.
+        canSend = fieldReportClient != null,
+        modifier = modifier,
+    )
+}
+
+/** [FieldReportToggleState] → the [FieldReportGatedCategory] set [FieldReportBundleBuilder] reads —
+ * this file's own UI-to-domain mapping, kept here rather than on the data class itself so
+ * `SettingsViewData.kt` stays a plain view-state file with no bundle-building knowledge. */
+private fun FieldReportToggleState.toCategorySet(): Set<FieldReportGatedCategory> = buildSet {
+    if (retainedAudio) add(FieldReportGatedCategory.RETAINED_AUDIO)
+    if (voiceprintEmbeddings) add(FieldReportGatedCategory.VOICEPRINT_EMBEDDINGS)
+    if (screenFrames) add(FieldReportGatedCategory.SCREEN_FRAMES)
+}
+
+/** [FieldReportHost]'s own `FieldReportConsentViewState` construction, split out purely to keep
+ * that function under detekt's length limit. */
+private fun fieldReportConsentViewState(
+    preview: FieldReportBundlePreview,
+    destination: FieldReportDestination?,
+    guardEnabled: Boolean,
+    toggles: FieldReportToggleState,
+): FieldReportConsentViewState = FieldReportConsentViewState(
+    files = preview.entries.map {
+        FieldReportConsentFileViewState(it.fileName, formatFieldReportSize(it.sizeBytes), it.category)
+    },
+    totalSizeLabel = formatFieldReportSize(preview.totalBytes),
+    destinationKnown = destination != null,
+    destinationLabel = destination?.label ?: "No upload destination is configured in this build",
+    destinationPublic = destination?.isPublic ?: false,
+    publicGuardEnabled = guardEnabled,
+    toggles = toggles,
+)
+
+/** [FieldReportHost]'s own `Send` action — split out purely to keep that function under detekt's
+ * length limit. Builds the real zip via [FieldReportBundleBuilder.write] (never a second, drifting
+ * render) and hands it to [client] exactly as [categories] named it. */
+private suspend fun uploadFieldReportBundle(
+    context: Context,
+    client: FieldReportUploadClient,
+    categories: Set<FieldReportGatedCategory>,
+) {
+    val bytes = ByteArrayOutputStream().also { out ->
+        FieldReportBundleBuilder.write(context, out, categories)
+    }.toByteArray()
+    client.upload(
+        FieldReportUploadRequest(
+            bundle = bytes,
+            fileName = "field-report-${LocalDate.now()}.zip",
+            categoriesIncluded = categories,
+        ),
+    )
+}
+
+/** The same "MB above 1, else KB" shape `SettingsPolling.kt`'s own `formatDiagnosticsSize` uses for
+ * the FR-OBS-3 bundle — kept as this file's own small copy rather than a call into that `private`
+ * function, since `SettingsPolling.kt` is outside this round's own file-ownership map. `Locale.ROOT`
+ * throughout, the same guard against a comma-decimal locale that function's own history exists to
+ * avoid repeating (constitution II: never assert this exact string in a test either). */
+private fun formatFieldReportSize(bytes: Long): String {
+    val mb = bytes / 1_000_000.0
+    val kb = bytes / 1_000.0
+    return if (mb >= 1.0) "%.1f MB".format(Locale.ROOT, mb) else "%.0f KB".format(Locale.ROOT, kb)
 }
 
 /** The real name of the document the Storage Access Framework picker actually created — never the
