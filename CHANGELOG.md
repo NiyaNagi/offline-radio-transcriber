@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPD3 round 3: R-1019 — S12/RadioUsbScreen stop asserting more verification than `RigStatus` establishes)
 
-### (pending) — WPD3 round 3: ReadyScreen (S12) and RadioUsbScreen's defensive Connected/Stale fallback branch on RigVerification instead of hardcoding "verified"
+### 45038217 — WPD3 round 3: ReadyScreen (S12) and RadioUsbScreen's defensive Connected/Stale fallback branch on RigVerification instead of hardcoding "verified"
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{ReadyScreen,RadioUsbScreen}.kt`,
 `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (the `rig-bt-connected` scenario only), and
