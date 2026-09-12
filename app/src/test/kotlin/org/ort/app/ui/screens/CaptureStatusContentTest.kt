@@ -282,4 +282,67 @@ class CaptureStatusContentTest {
         composeTestRule.waitUntilDescriptionExists("Open level meter")
         composeTestRule.onNodeWithContentDescription("Open level meter", substring = true).assertExists()
     }
+
+    // -- R-1007 (WPL): the seam this row landed on — `onOpenLive` was `{}` at this file's own
+    // CaptureStatusContent.kt:141 before this round. -------------------------------------------
+
+    @Test
+    @Requirement("R-1007")
+    fun `R_1007 tapping the embedded live bar opens LiveMonitorScreen, and back returns`() {
+        runBlocking { db.sessionDao().insert(session()) }
+        CaptureState.capturing("S1")
+
+        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "S1") } }
+
+        composeTestRule.waitUntilTagExists("capture-status-livebar")
+        composeTestRule.onNodeWithTag("capture-status-livebar").performClick()
+
+        composeTestRule.waitUntilTagExists("live-monitor-back")
+        composeTestRule.onNodeWithTag("live-monitor-back").assertExists()
+        composeTestRule.onNodeWithTag("capture-status-title").assertDoesNotExist()
+
+        composeTestRule.onNodeWithTag("live-monitor-back").performClick()
+
+        composeTestRule.waitUntilTagExists("capture-status-title")
+        composeTestRule.onNodeWithTag("capture-status-title").assertExists()
+        composeTestRule.onNodeWithTag("live-monitor-back").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1007")
+    fun `R_1007 openLiveMonitor lands directly on LiveMonitorScreen, the openLevelMeter contract mirrored`() {
+        runBlocking { db.sessionDao().insert(session()) }
+        CaptureState.capturing("S1")
+
+        composeTestRule.setContent {
+            OrtTheme { CaptureStatusContent(context = context, sessionId = "S1", openLiveMonitor = true) }
+        }
+
+        composeTestRule.waitUntilTagExists("live-monitor-back")
+        composeTestRule.onNodeWithTag("live-monitor-back").assertExists()
+        composeTestRule.onNodeWithTag("capture-status-title").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1007")
+    fun `R_1007 Full log on LiveMonitorScreen invokes the caller's onOpenFullLog`() {
+        runBlocking { db.sessionDao().insert(session()) }
+        CaptureState.capturing("S1")
+        var openedFullLog = false
+
+        composeTestRule.setContent {
+            OrtTheme {
+                CaptureStatusContent(
+                    context = context,
+                    sessionId = "S1",
+                    openLiveMonitor = true,
+                    onOpenFullLog = { openedFullLog = true },
+                )
+            }
+        }
+
+        composeTestRule.waitUntilTagExists("live-monitor-full-log")
+        composeTestRule.onNodeWithTag("live-monitor-full-log").performClick()
+        assertTrue(openedFullLog)
+    }
 }

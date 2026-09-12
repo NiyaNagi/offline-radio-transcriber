@@ -531,4 +531,42 @@ class OrtNavHostDestinationDispatchTest {
             CaptureState.idle(clearSession = true)
         }
     }
+
+    /**
+     * R-1007 (WPL, register): the operator's own words — "clicking on it should let me see the
+     * entire recording" — this is the route this package's own row added:
+     * `NavHostCallbacks.onOpenCapture`, the host's shared pinned bar's own tap target on every
+     * destination that shows its copy (`STATIONS` here — neither `NOW` nor `CAPTURE`, which embed
+     * their own bar and are `LiveMonitorScreen`'s two *other*, in-package routes, covered by
+     * `CaptureStatusContentTest` instead), now lands on `LiveMonitorScreen` directly rather than the
+     * `Capture-Status.dc.html` root a second tap used to be needed to leave.
+     */
+    @Test
+    @Requirement("R-1007")
+    fun `R_1007 tapping the host-rendered live bar on STATIONS opens LiveMonitorScreen directly`() {
+        val sessionId = "r1007-live-bar-session"
+        try {
+            CaptureState.capturing(sessionId)
+            composeTestRule.setContent {
+                OrtTheme {
+                    OrtNavHost(
+                        sessionId = sessionId,
+                        navigator = rememberReaderNavigator(initialDestination = ReaderDestination.STATIONS),
+                    )
+                }
+            }
+            composeTestRule.waitUntil(15_000) {
+                composeTestRule.onAllNodesWithTag("live-bar-clearance").fetchSemanticsNodes().isNotEmpty()
+            }
+
+            composeTestRule.onNodeWithTag("live-bar-clearance").performClick()
+
+            composeTestRule.waitUntil(15_000) {
+                composeTestRule.onAllNodesWithTag("live-monitor-back").fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.onNodeWithTag("live-monitor-back").assertExists()
+        } finally {
+            CaptureState.idle(clearSession = true)
+        }
+    }
 }

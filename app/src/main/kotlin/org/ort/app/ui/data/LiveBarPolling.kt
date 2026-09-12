@@ -224,7 +224,10 @@ public object LiveBarPolling {
      * row — this reuses the two read methods [ReaderPolling] already calls elsewhere
      * (`listBySession`, `getAllVersions`) instead.
      */
-    private suspend fun newestPassAPartial(context: Context, sessionId: String): String? {
+    /** `internal`, not `private` (WPL, R-1007): [org.ort.app.ui.data.LiveMonitorOversPolling]
+     * reuses this exact read for its own "Hearing now" card — the same fact, not a second query
+     * that could drift from what the pinned bar itself shows. */
+    internal suspend fun newestPassAPartial(context: Context, sessionId: String): String? {
         val db = OrtDatabase.create(context.applicationContext)
         val recent = db.transmissionDao().listBySession(sessionId).takeLast(RECENT_TRANSMISSIONS_TO_CHECK)
         var newestText: String? = null
