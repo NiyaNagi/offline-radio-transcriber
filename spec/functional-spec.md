@@ -183,6 +183,7 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D36 | **The LLM is bundled, so it is always present.** It remains **post-hoc and confined to the digest and n-best rescoring**. This revises D10's "optional" to mean *optional to run*, never *possibly absent*. **D5 is untouched**: no LLM in the callsign path, ever. | Product owner: "bundle it and revise the spec." What changes is availability, not role — the deterministic digest is still the one that must hold on its own (FR-DIG-2), and FR-DIG-3a's independence requirement is restated against a *disabled* LLM rather than an absent one, because on a bundled build absence is no longer a state a test can reach |
 | D37 | **A field-report channel exists: one button in the app uploads a diagnostic bundle to a GitHub repository and opens an issue against it.** This **amends FR-OBS-5**, whose only prior exception (FR-OBS-5a, D25) was the corpus contribution channel. | Product owner direction, taken with the conflict stated. The product owner's first on-device run failed every transcription and surfaced four onboarding defects, and the only evidence that reached the workstation was a verbal description and one photograph of a screen. The channel is operator-triggered per upload, never automatic, and lives entirely in `:net`. See FR-OBS-6..12 and D38 |
 | D38 | **Retained over audio and voiceprint embeddings may be included in a field report, each behind its own toggle, both defaulting off**, with a consent screen naming every file and its real size before each upload. Against a **public** destination, both categories are refused unless a visible Settings switch is explicitly turned off. This **amends FR-SPK-20**, whose own text required that "if any future change proposes contributing, syncing or backing up voiceprints, the default must move to explicit opt-in in the same change" — D38 is that change, and discharges the obligation. | Product owner direction, taken with the conflict stated. The destination is `github.com/NiyaNagi/offline-radio-transcriber`, verified public; the product owner said "just push to this public repo for now — I am just testing." The lead's condition — the uploader reads the destination's visibility and gates accordingly — is recorded as a requirement (FR-OBS-10) rather than as a refusal, because the redacted bundle already diagnoses every defect reported so far without audio or voiceprints. See FR-OBS-9, FR-OBS-10, R19 and Q18 |
+| D39 | **Reversed: the continuous archive (FR-SEG-9) defaults ON, budgeted at 60 GB.** This **amends Q14**, whose recorded answer was "yes, and keep it always available… Default off; budgeted under D26." The mechanism and its budget-not-time-limit shape (D26) are unchanged; only the default flips. | Product owner direction: they want the raw audio for model training and no longer consider the storage cost a reason to keep it off by default. The cost, stated rather than sold: at 16 kHz mono, **FLAC is 50–60% of PCM's 115.2 MB/hour** (FR-STO-2a), so continuous capture costs **~58–69 MB per wall-clock hour**, about **0.5 GB per 8-hour night**, and **~15 GB per month** of nightly use — against the 60 GB budget that is roughly four months of nightly use before anything is pruned. See FR-STO-3d for what pruning does when the budget is reached, and Q14 for the amendment note in place |
 
 ---
 
@@ -1172,6 +1173,12 @@ record in place. Losing a recording to a half-finished cleanup is not an accepta
 **FR-STO-3c (M)** — Where the audio budget is set below what the reprocessing horizon needs,
 the UI SHALL name the consequence in FR-REP-4's terms rather than merely warning.
 
+**FR-STO-3d (M)** — On reaching the **continuous-archive** budget specifically (D39), the
+system SHALL prune the **oldest archive first** and SHALL NOT prune gated over audio to make
+room for it: the overs are the product, the archive is the training material FR-STO-3's
+automatic-pruning option (opt-in per budget) exists to feed. A pruned archive interval SHALL
+remain **listed as removed, with its date**, never silently vanishing from the record (P9).
+
 **FR-STO-4 (M)** — Warn before storage exhaustion and degrade predictably: stop writing
 audio before stopping writing text, and never stop capture silently.
 
@@ -1600,6 +1607,36 @@ line, a diagnostics bundle, or a screen frame.
 > ships is a debug-only recorder and an operator-triggered, per-upload channel with its contents
 > shown before every send — narrower on purpose, not a quiet reduction. See R19 and Q18 for what
 > is still open about where the destination should be once testing ends.
+
+### 7.13c FR-OBS · Pass and session provenance (R-1031, R-1032, R-1033)
+
+FR-REP-2 already requires that "every stored result" record the model, model version, lexicon
+version, config **and tier** that produced it, and FR-ACC-5 already requires that records state
+the execution provider. Both were built as if they governed reprocessing alone — FR-REP-2 lives
+in §11, "Reprocessing as an extensibility point", and FR-ACC-5 in the acceleration section — and
+a **live** Pass B ran for the product's entire history without writing either field to the
+transmission it produced: `TransmissionEntity.processedTier` was `ReprocessRunner`'s column
+alone, and `AsrEngineProvisioning`'s computed provider reached a `PassFingerprint` and stopped
+there. Separately, the one production `Session` insert stamped the literal `"smoke-test"` as its
+`appVersion` since v0, in every build, forever, because nothing else was ever wired to it. All
+three were constitution VI violations — a number without its provenance — that no test caught
+because no requirement said, in a section a live-capture engineer would read, that a live pass
+owed the same bookkeeping a reprocess does. These two requirements say it there, so the same
+ambiguity cannot let it lapse again.
+
+**FR-OBS-13 (M)** — A completed Pass B attempt — live or reprocessed — SHALL persist to the
+**transmission's own stored record**, not only to an in-memory fingerprint, the **execution
+provider** that attempted it and the **tier** it ran at. Execution provider SHALL be recorded on
+**every** outcome, `FAILED` included — `none` where no engine was available at all, because
+provenance is a fact about the attempt, not about whether it succeeded. Tier SHALL be recorded
+on `COMPLETE` and `REJECTED`, the same two outcomes reprocessing already stamps it on; a `FAILED`
+attempt establishes no tier for a later reprocess to compare against.
+
+**FR-OBS-14 (M)** — A session's stored record SHALL carry the **actual installed application
+version** at the time it ran, read from the platform's own package information, never a
+build-time literal and never a placeholder value that happens to look like real data. Where the
+version genuinely cannot be determined, the field SHALL record an explicit `unknown` rather than
+a guess.
 
 ### 7.14 FR-RUN · Runtime architecture
 
@@ -2464,6 +2501,10 @@ Input to the test plan. Grouped by what a test would have to establish.
   (FR-RIG-7).
 - **AC-68** Rig-reported squelch state overrides VAD for transmission boundaries while VAD
   still governs whether speech is present inside them (FR-SEG-5).
+- **AC-152** An over captured in a rig-less session (local-microphone mode, or any mode falling
+  back to the null rig module) with a manually entered frequency carries that frequency and
+  `frequencyProvenance = "manual"` on its persisted Transmission record, verified against the
+  R-1030 no-rig reproduction (FR-CAP-13, FR-RIG-8, FR-RIG-9).
 
 ### 14.6 Tiers and degradation
 
@@ -2622,6 +2663,11 @@ NFR-2 stated latency targets that nothing tested.
 - **AC-124** Reaching a storage budget warns and offers export-and-prune by date range rather
   than deleting silently; automatic pruning happens only where opted in (FR-STO-3, FR-STO-3a).
 - **AC-125** An **interrupted** export-and-prune leaves every record in place (FR-STO-3b).
+- **AC-150** Reaching the continuous-archive budget prunes the **oldest archive interval first**
+  and leaves every gated over untouched, verified by a budget reached with both categories
+  present (FR-STO-3d, D39).
+- **AC-151** A pruned archive interval remains **listed with its date** after removal rather
+  than disappearing from the record (FR-STO-3d, P9).
 - **AC-126** Station and frequency views show activity patterns that **distinguish "not heard"
   from "not listening"**, verified against a session containing a capture gap (FR-UI-11,
   FR-UI-12).
@@ -2776,6 +2822,20 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
 - **AC-149** Where the destination reports itself public and the FR-OBS-10 switch is off, the
   consent screen names the categories about to be published on **every** upload for as long as
   that state holds, not only the first time it is seen (FR-OBS-10).
+
+### 14.14 Pass and session provenance (R-1031, R-1032, R-1033)
+
+- **AC-153** A **live** Pass B attempt that reaches `COMPLETE` or `REJECTED` persists the
+  execution provider it ran on to the transmission's own record, and a `FAILED` attempt persists
+  `none` rather than leaving the field unset, verified against the R-1032 reproduction
+  (FR-OBS-13, FR-ACC-5).
+- **AC-154** A **live** Pass B attempt that reaches `COMPLETE` or `REJECTED` persists the tier it
+  ran at to the transmission's own record — not only a reprocess — verified against the R-1033
+  reproduction (FR-OBS-13, FR-REP-2).
+- **AC-155** A real session's stored record carries the actual installed application version,
+  never the literal `"smoke-test"` or any other placeholder, with an explicit `unknown` recorded
+  where the version genuinely cannot be read, verified against the R-1031 reproduction
+  (FR-OBS-14).
 
 ---
 
@@ -3117,6 +3177,7 @@ product; all of them are what make the reference experience world-class.
 | D24 Continuous archive first-class | FR-SEG-9, CON-SEG-1, AC-96, Q14 |
 | D25 Opt-in then automatic contribution | FR-CON-1..8, FR-OBS-5a, NFR-6, R14, AC-111..114 |
 | D26 Retention is a storage budget | FR-STO-3, FR-STO-3a..c, AC-124, AC-125 |
+| D39 Continuous archive defaults on, budgeted at 60 GB | FR-STO-3d, AC-150, AC-151, Q14 (amended) |
 | D27 Own public repository | §2.1 (technical design), Q15 |
 | D28 Persistent voice library | FR-SPK-11..26, R15, AC-104..110, AC-121, AC-122 |
 | D29 Station knowledge accumulates | FR-DIG-7..14, R16, AC-116..120 |
@@ -3141,6 +3202,7 @@ Requirement groups added in drafts 3 and 3.2, mapped to the goal or property the
 | FR-A11Y-1..6 | G4, P1 — an uncertainty-first UI that cannot be read fails G4 |
 | FR-SEG-7..9, CON-SEG-1 | D8, AC-39 — the precondition cross-tier reprocessing assumed |
 | FR-STO-2a..c, CON-STO-1 | D4, FR-REP-4 — the retained audio must still support the passes |
+| FR-OBS-13..14 | Constitution VI, FR-REP-2, FR-ACC-5 — the same "no number without its provenance" obligation, restated because a live pass and a real session both skipped it in practice (R-1031, R-1032, R-1033) |
 
 ---
 

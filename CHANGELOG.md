@@ -32,6 +32,95 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (spec amendments: continuous archive defaults on at 60 GB — D39 — plus the pruning order, a manual-frequency acceptance criterion, and two provenance requirements the WPPROV fix needed)
+
+### 167e7e2e — spec: D39 reverses Q14's default, FR-STO-3d's pruning order, FR-CAP-13's manual-frequency AC, FR-OBS-13/14 pass-and-session provenance, Q20 opened
+
+**Scope:** `spec/functional-spec.md`, `spec/open-questions.md`, `AGENTS.md`, this file.
+Specification prose only — no product, build or test code touched, per this session's own
+constraints.
+
+**Requirements/ACs:** New decision **D39** (§3): the continuous archive (FR-SEG-9) now defaults
+**on**, budgeted at **60 GB**, amending **Q14**'s recorded answer ("yes, and keep it always
+available… Default off; budgeted under D26") rather than silently rewriting it — Q14 keeps its
+original text and gains an "Amended by D39" note, exactly the shape D25 gave FR-OBS-5 and D38
+gave FR-SPK-20. New requirement **FR-STO-3d** (§7.7): on reaching the continuous-archive budget,
+prune the oldest archive first, never the gated over audio, and keep a pruned interval listed
+with its date rather than deleting it quietly (P9). New requirements **FR-OBS-13** and
+**FR-OBS-14** (new §7.13c): a completed Pass B attempt — live or reprocessed — persists execution
+provider and tier to the transmission's own record, not only an in-memory fingerprint; a session
+persists the real installed application version, never a placeholder. New acceptance criteria
+**AC-150, AC-151** (FR-STO-3d, §14.8f), **AC-152** (FR-CAP-13/FR-RIG-8/FR-RIG-9, §14.5, citing the
+R-1030 reproduction), **AC-153, AC-154, AC-155** (FR-OBS-13/FR-OBS-14, new §14.14, citing the
+R-1032/R-1033/R-1031 reproductions respectively). New open question **Q20** (does FR-OBS-1's
+promised per-transmission VAD logging get built, given `capture.log` today carries none). §16
+traceability gains a D39 row and the D26 row is extended to FR-STO-3d/AC-150/AC-151; a new
+"requirement groups added" row covers FR-OBS-13..14. `AGENTS.md`'s spec-summary counts move
+284/149/38/19 → 287/155/39/19.
+
+**What changed:** Four amendments, all approved by the product owner, drafted against
+`.specify/memory/constitution.md` 1.3.0 and the D25/D37/D38 amendment style:
+
+1. **Q14 reversed.** The product owner wants the raw continuous-archive audio for model
+   training and no longer treats its storage cost as a reason to default it off. D39 records the
+   new default (on, 60 GB budget) and states the cost honestly rather than selling it: at 16 kHz
+   mono, PCM is 115.2 MB/wall-clock hour and FLAC is 50–60% of that (FR-STO-2a), so continuous
+   capture costs **~58–69 MB/hour, ~0.5 GB per 8-hour night, ~15 GB/month** of nightly use —
+   roughly four months of nightly use before the 60 GB budget is reached and pruning begins.
+2. **A genuine spec inconsistency, found and fixed.** `spec/open-questions.md`'s Q13 storage
+   table tabulated "Continuous FLAC ~30 MB/hour, ~88 GB/year" — **~26% of PCM**, contradicting
+   FR-STO-2a's own stated 50–60% FLAC-to-PCM ratio. One of the two had to be wrong; it was the
+   table. Corrected to **~58–69 MB/hour, ~0.5 GB/8h shift, ~170–200 GB/year**, derived from
+   FR-STO-2a's ratio applied to 115.2 MB/hour raw PCM, with the header note that this row is
+   100% duty (continuous, ungated) rather than the 15% duty the other three rows in the same
+   table measure. The same wrong figures, duplicated in Q14's own body, are corrected in the same
+   change. The correction is left visible (marked "Corrected 2026-09-12"), not silently rewritten.
+3. **FR-STO-3d.** FR-STO-3 already promised "independent budgets for (a) gated audio and (b) the
+   continuous archive"; only (a) existed in `SettingsStore`. The spec gap this closes is not the
+   second budget's existence (that was already required) but what happens when it is reached:
+   the product owner's decision is that the archive is pruned oldest-first while gated audio —
+   the product, as against the archive's role as training material — is kept untouched, and a
+   pruned interval stays listed as removed with its date rather than vanishing, per P9.
+4. **FR-CAP-13's manual-frequency path gets the acceptance criterion it never had.**
+   `setManualFrequencyOverrideHz` had exactly one caller in the whole repository before today's
+   WPPROV fix (`54d55543`, R-1030), and it was a test — while S10b's own screen told the operator
+   "the frequency is logged by hand until you link the radio." AC-152 asserts what should have
+   caught that: an over captured rig-less with a manually entered frequency carries that
+   frequency and `frequencyProvenance = "manual"` on its persisted record.
+5. **Provenance requirements that catch up with what R-1031/R-1032/R-1033 found built today.**
+   `Session.appVersion` stored the literal `"smoke-test"` since v0 in every build; a live Pass B
+   computed its execution provider and never persisted it past an in-memory `PassFingerprint`;
+   `TransmissionEntity.processedTier` was `ReprocessRunner`'s column alone, so a live pass never
+   recorded the tier it ran at. FR-REP-2 and FR-ACC-5 already said, in words, that "every stored
+   result" and "records" carry this — but both live in sections a live-capture engineer had no
+   reason to read (§11 "Reprocessing as an extensibility point"; the acceleration section), and
+   all three fields lapsed for the product's entire history regardless. **FR-OBS-13** and
+   **FR-OBS-14** restate the same obligation, unambiguously, in the observability section, so an
+   ambiguous section heading cannot let it lapse again — this is requirements catching up with
+   constitution VI ("no number without its provenance"), not a new principle.
+
+**Constitution:** Not touched, and this session concludes it should not be. VI already demands
+provenance and P9 already forbids quiet deletion; FR-STO-3d and FR-OBS-13/14 are requirements
+enforcing what those principles already require, not new principles. No argument found for
+amending governance here.
+
+**Verified:** `python tools\spec-check\spec_check.py` — all 8 checks pass (`spec-check: OK`).
+`.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — regenerates
+`results/coverage-matrix.md` (475 requirements, 260 covered). `.\gradlew coverageMatrixCheck
+-PortAllowMissingBundledAssets=true` — separate invocation, green, up to date against the
+regenerated matrix.
+
+**Left open / not done:** This is specification only — no code exists yet for FR-STO-3d's
+pruning order (`SettingsStore` still carries only `audioBudgetGb`) or for FR-OBS-13/14 beyond
+what `54d55543` already built for the live-pass and session-version cases R-1031/R-1032/R-1033
+covered; a reprocessed pass persisting execution provider and tier was already true before this
+change and is unaffected. Q20 (per-transmission VAD logging) is recorded as an open product
+decision, not a defect, and no requirement or acceptance criterion assumes it exists. `latest`
+budget-reached UI copy naming the 60 GB default is not drafted here — out of scope for a
+spec-only session.
+
+---
+
 ## 2026-09-12 (WPPROV: R-1030 — the manual-frequency escape hatch is wired end to end; R-1031 — a real session records the app's real version, never the v0 `"smoke-test"` literal; R-1032 — the execution provider a Pass B run actually used is persisted, not thrown away; R-1033 — live capture now stamps `processedTier` too, not only reprocessing)
 
 ### 54d55543 — WPPROV: three provenance holes and one false screen caption from the operator's own on-device dump — R-1030/R-1031/R-1032/R-1033

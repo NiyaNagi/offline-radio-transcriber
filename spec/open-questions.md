@@ -16,6 +16,14 @@ destination). It opens **Q18** (does the destination move to a private repositor
 ends) and **Q19** (what is the retention policy for an uploaded bundle), both product calls that
 do not block building the client.
 
+**Draft 3.4 update.** The product owner reversed this entry's own answer: **Q14 is amended by
+D39** — the continuous archive now defaults **on**, budgeted at 60 GB, because the raw audio is
+wanted for model training. The storage table below is corrected in the same change: it had
+tabulated the continuous-archive row at ~30 MB/hour, which is ~26% of PCM and contradicts
+FR-STO-2a's own stated 50–60% FLAC ratio — the table was wrong, and is now brought into agreement
+with FR-STO-2a's ratio. Also opened: **Q20**, whether FR-OBS-1's promised per-transmission VAD
+statistics are worth building, now that an audit found `capture.log` carries none.
+
 ## Status, 7 September 2026 — the register is nearly empty
 
 **Closed:** Q3–Q11, Q13, Q14, Q15 and Q17, recorded as D19–D32 in spec §3. Q1 is closed but for
@@ -23,8 +31,9 @@ three hardware verifications (VID/PID, command terminator, whether `AI` pushes `
 [`../docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md). **Q12 is settled by
 rule**: a reference-tier lever that does not measure on the eval fold is deleted, not disabled.
 
-**Four remain.** Two concern the same hour of audio; two more were opened by the field-report
-channel (D37, D38) and concern where it uploads to and how long what it uploads is kept:
+**Five remain.** Two concern the same hour of audio; two more were opened by the field-report
+channel (D37, D38) and concern where it uploads to and how long what it uploads is kept; one more
+was opened by an audit of what `capture.log` actually contains against what FR-OBS-1 promises:
 
 | # | Question | Why it is still open |
 |---|---|---|
@@ -32,8 +41,10 @@ channel (D37, D38) and concern where it uploads to and how long what it uploads 
 | **Q16** | The labelling protocol | Gates labelling that hour. Also much smaller now: callsigns and speaker turns only |
 | **Q18** | Field-report destination | The repository is public today, by the product owner's own choice, "for now" — see D38. It closes when a gated upload happens against it, or the destination goes private, whichever comes first |
 | **Q19** | Uploaded bundle retention | Nothing yet says how long a field report survives at the destination, or who is responsible for deleting it |
+| **Q20** | Per-transmission VAD statistics | FR-OBS-1 promises them in `capture.log`; none exist. Whether they are worth building is a product call, not a defect |
 
-Everything else that could be decided on paper has been decided.
+Everything else that could be decided on paper has been decided. **Q14 stays closed**: the
+product owner did not reopen the question, they reversed the answer — see D39 below.
 
 *Entries below keep their original reasoning, with the answer recorded where one was reached.
 Answers are authoritative in spec §3; this file records how they were reached.*
@@ -366,7 +377,16 @@ Storage, for the actual decision:
 | Opus ~24 kbps | ~1.1 MB | ~9 MB | ~3.2 GB |
 | FLAC 16 kHz mono | ~4.5 MB | ~36 MB | ~13 GB |
 | PCM 16 kHz mono | ~9 MB | ~72 MB | ~26 GB |
-| Continuous FLAC (Q14, no gating) | ~30 MB | ~240 MB | ~88 GB |
+| Continuous FLAC (Q14, no gating — 100% duty, not 15%) | ~58–69 MB | ~0.5 GB | ~170–200 GB |
+
+> **Corrected 2026-09-12 (D39).** This row previously read ~30 MB / ~240 MB / ~88 GB — about 26%
+> of PCM, which contradicts FR-STO-2a's own stated 50–60% FLAC-to-PCM ratio. One of the two
+> numbers had to be wrong, and it was this table: at 16 kHz mono, PCM is **115.2 MB per
+> wall-clock hour** (16,000 samples/s × 2 bytes × 3,600 s), and FLAC on this material is
+> **50–60% of PCM** (FR-STO-2a), i.e. **~58–69 MB per wall-clock hour** — the figures now in the
+> row above. The other three rows in this table are unaffected; they already used FR-STO-2a's
+> ratio correctly and are @15% duty (gated audio only), not the 100% duty this row measures,
+> which is also why this row's header now says so explicitly.
 
 **Recommendation.** **FLAC, indefinite, with storage-pressure pruning of the oldest audio
 first.** 13 GB/year is affordable on the reference device, it is exactly reversible so no
@@ -378,11 +398,21 @@ Time-based retention stays available for users who want it, with the FR-REP-4 wa
 
 ---
 
-### Q14 — Is continuous-archive capture worth its storage? · **CLOSED** · owner: product
+### Q14 — Is continuous-archive capture worth its storage? · **CLOSED — amended by D39** · owner: product
 
 **Answer: yes, and keep it always available** (D24) — broader than this entry recommended,
 which was to enable it only for M0 recording. Segmentation is otherwise permanent (CON-SEG-1),
 and this is the only mechanism that makes it reprocessable. Default off; budgeted under D26.
+
+**Amended by D39 (2026-09-12).** The default above is reversed: the continuous archive now
+defaults **on**, budgeted at **60 GB**, because the product owner wants the raw audio for model
+training and no longer treats the storage cost as a reason to keep it off by default. Nothing
+else about this entry's answer changes — it is still the only mechanism that makes segmentation
+reprocessable, still budgeted rather than time-limited (D26), and the ~30 MB/~88 GB figures
+below are corrected in the same change (they were wrong on their own terms — see the table in
+Q13, above, and D39 in spec §3). See FR-STO-3d for what happens when the 60 GB budget is
+reached: the oldest archive is pruned first, gated over audio is kept, and a pruned archive
+stays listed as removed with its date.
 
 **Question.** FR-SEG-9 offers an optional mode retaining the *unsegmented* stream. Ship it in
 v1, defer it, or drop it?
@@ -394,9 +424,10 @@ decision in the product is revisable; this one is not. Continuous archive is the
 mechanism that fully closes it, and it converts VAD tuning from an irreversible commitment
 into just another reprocessable pass.
 
-Against that: ~30 MB per wall-clock hour, ~88 GB per year of daily 8-hour shifts. Affordable
-on a 512 GB flagship, not on the floor device, and it makes the gated-Opus storage argument
-irrelevant since the archive dominates.
+Against that: **~58–69 MB per wall-clock hour, ~170–200 GB per year of daily 8-hour shifts**
+*(corrected 2026-09-12 — see the table under Q13, above)*. Affordable on a 512 GB flagship, not
+on the floor device, and it makes the gated-Opus storage argument irrelevant since the archive
+dominates.
 
 **Recommendation.** **Build it, default it off, offer it during M0 recording specifically.**
 The M0 tape is the one recording session whose segmentation you will certainly want to redo —
@@ -512,6 +543,37 @@ voiceprint is exactly the kind of thing FR-CON-5's guarantee exists for elsewher
 at minimum, whether an uploaded bundle is deleted once the defect it documents is closed, and
 whether that deletion is manual or scheduled. Until decided, treat every uploaded bundle as
 retained indefinitely at the destination.
+
+---
+
+### Q20 — Is per-transmission VAD logging worth building? · owner: product
+
+**Question.** FR-OBS-1 says the diagnostics log covers "audio route changes, **VAD statistics**,
+per-pass latency, rejection reasons, tier changes, rig connection events, and service lifecycle."
+An audit of every `DiagnosticsLog.Category.CAPTURE` call site found `route_verified`,
+`route_mismatch`, `input_lost`, `level_clip` and `overrun` — every one of them session-level or
+fault-level. None carries a VAD statistic, and a transmission that segments cleanly produces no
+`capture.log` entry of any kind. The wording has promised something since draft 1 that nothing
+has ever written.
+
+**Why it matters, and why this is a product call rather than a defect.** Closing this the way
+R-1030..R-1033 were closed — just build what the sentence says — would mean logging something
+close to per-transmission on a device that already runs Silero VAD, Pass A/B and the rest of the
+pipeline inside FR-RUN-1's never-block guarantee; the discipline `DiagnosticsLog` already holds
+for FR-OBS-6 (a closed, enumerated event vocabulary, no free-text field, off the audio frame
+path) is exactly the kind of thing that needs designing rather than assuming. It is also not
+obvious *what* a useful VAD statistic is at this grain — segment count and rejection reason are
+already stored on the transmission record itself (§8); a live per-event log entry is a
+different, and possibly redundant, kind of evidence. Deciding that is a product judgement about
+what the health screen (FR-OBS-2) and a field report need to show, not a gap a builder should
+fill by guessing.
+
+**Recommendation.** Either narrow FR-OBS-1's wording to what `capture.log` actually needs to
+carry (route and fault events, which is what it carries today), or specify what a per-transmission
+VAD statistic should record and at what rate, so a builder is not left inferring the answer from
+a decade-old requirement sentence. Until decided, `capture.log`'s current session/fault-level
+scope stands, and no requirement or acceptance criterion should be written that assumes
+per-transmission VAD logging exists.
 
 ---
 
