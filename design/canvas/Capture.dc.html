@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .sec { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .sub { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px; }
+    /* N08. A key/value row whose key yields and whose value keeps the larger share
+       (R-980) - never a fixed-width key, which is how R-1023 clipped at 2.0. */
+    .fact { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .fact .k { flex: 0 1 30%; font-size: 13.5px; color: oklch(0.62 0.008 250); padding-top: 1px; }
+    .fact .v { flex: 1 1 70%; font-size: 14px; color: oklch(0.94 0.006 250); min-width: 0; }
+    .over { display: flex; gap: 11px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    /* R-1023: the timestamp sizes to its content and never shrinks below it. */
+    .when { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250); flex-shrink: 0; white-space: nowrap; padding-top: 1px; }
+    .bar3 { width: 3px; border-radius: 1px; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 14px; padding: 10px 20px 0;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h10"></path></svg>
+    <div style="font-size: 15px; font-weight: 500; color: oklch(0.90 0.006 250);">Capture</div>
+    <div style="flex-grow: 1;"></div>
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+    <div style="display: flex; align-items: center; min-height: 44px; padding-left: 4px;"><div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.15 25);">Stop</div></div>
+  </div>
+
+  <div style="padding: 4px 20px 0;">
+    <div style="display: flex; align-items: baseline; gap: 9px;">
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0; align-self: center;"></div>
+      <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Capturing</div>
+      <div style="flex-grow: 1;"></div>
+      <div class="m" style="font-size: 19px; font-weight: 500; color: oklch(0.90 0.006 250);">0:31:07</div>
+    </div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Since 22:00 · heartbeat 3 s ago</div>
+  </div>
+
+  <!-- Level envelope. R-1026: grey below the floor, a green ramp through the band, red only at clip.
+       Amber is reserved for anomalies (guide 8) and this reading is nominal. -->
+  <div style="padding: 12px 20px 0;">
+    <div style="position: relative; height: 52px; background: oklch(0.185 0.008 250); border-radius: 8px; padding: 0 10px; box-sizing: border-box; display: flex; align-items: flex-end; gap: 2px; overflow: hidden;">
+      <div style="position: absolute; left: 0; right: 0; top: 11px; height: 20px; background: oklch(0.72 0.14 150 / 0.10);"></div>
+      <div style="position: absolute; left: 0; right: 0; top: 5px; height: 1px; background: oklch(0.62 0.17 25 / 0.55);"></div>
+      <div style="position: absolute; left: 0; right: 0; bottom: 12px; height: 0; border-top: 1px dashed oklch(0.40 0.008 250);"></div>
+      <div class="bar3" style="height: 6px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 8px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 7px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 14px; background: oklch(0.52 0.09 150);"></div>
+      <div class="bar3" style="height: 22px; background: oklch(0.62 0.12 150);"></div>
+      <div class="bar3" style="height: 30px; background: oklch(0.72 0.14 150);"></div>
+      <div class="bar3" style="height: 26px; background: oklch(0.69 0.13 150);"></div>
+      <div class="bar3" style="height: 33px; background: oklch(0.72 0.14 150);"></div>
+      <div class="bar3" style="height: 24px; background: oklch(0.66 0.13 150);"></div>
+      <div class="bar3" style="height: 15px; background: oklch(0.54 0.10 150);"></div>
+      <div class="bar3" style="height: 8px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 6px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 9px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 18px; background: oklch(0.60 0.11 150);"></div>
+      <div class="bar3" style="height: 27px; background: oklch(0.70 0.14 150);"></div>
+      <div class="bar3" style="height: 31px; background: oklch(0.72 0.14 150);"></div>
+      <div class="bar3" style="height: 23px; background: oklch(0.65 0.13 150);"></div>
+      <div class="bar3" style="height: 12px; background: oklch(0.50 0.08 150);"></div>
+      <div class="bar3" style="height: 7px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 6px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 10px; background: oklch(0.44 0.05 150);"></div>
+      <div class="bar3" style="height: 20px; background: oklch(0.62 0.12 150);"></div>
+      <div class="bar3" style="height: 29px; background: oklch(0.71 0.14 150);"></div>
+      <div class="bar3" style="height: 21px; background: oklch(0.63 0.12 150);"></div>
+      <div class="bar3" style="height: 11px; background: oklch(0.47 0.06 150);"></div>
+      <div class="bar3" style="height: 7px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 6px; background: oklch(0.38 0.008 250);"></div>
+      <div class="bar3" style="height: 8px; background: oklch(0.38 0.008 250);"></div>
+    </div>
+    <!-- R-1027: the status sits on its own line, so a wrapping caption at 2.0 can never run into it. -->
+    <div class="m" style="font-size: 11.5px; color: oklch(0.62 0.008 250); margin-top: 6px;">−22 dBFS peaks · floor −58 · 22 dB headroom</div>
+    <div style="display: flex; align-items: center; gap: 6px; margin-top: 2px;">
+      <div style="width: 6px; height: 6px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div>
+      <div class="m" style="font-size: 11.5px; color: oklch(0.72 0.14 150);">in the band</div>
+    </div>
+  </div>
+
+  <div style="padding: 12px 20px 0;">
+    <div style="padding: 9px 12px; background: oklch(0.185 0.008 250); border-radius: 8px; border-left: 2px solid oklch(0.72 0.14 150);">
+      <div style="display: flex; align-items: baseline; gap: 8px;">
+        <div class="sec">Hearing now</div>
+      </div>
+      <div style="font-size: 14px; line-height: 1.4; color: oklch(0.80 0.006 250); font-style: italic; margin-top: 4px;">and we're clear on the repeater, seven three to you…</div>
+      <div class="sub" style="margin-top: 3px;">Pass A partial · not attributed — partials never are</div>
+    </div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div class="sec" style="padding-bottom: 4px;">Status</div>
+    <div class="fact">
+      <div class="k">Input</div>
+      <div class="v">Built-in microphone<div class="sub">room audio · 48 kHz → 16 kHz · verified</div></div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 2px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+    <div class="fact">
+      <div class="k">Radio</div>
+      <div class="v">Not linked<div class="sub">frequency by hand · <span class="m">146.520 MHz</span></div></div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 2px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+    <div class="fact">
+      <div class="k">Queue</div>
+      <div class="v"><span class="m">2</span> waiting · <span class="m">0</span> failed<div class="sub">Pass B ~6 s behind · tier 3</div></div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 2px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+    <div class="fact" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div class="k">Storage</div>
+      <div class="v">Archive <span class="m">11.8</span> of <span class="m">60 GB</span><div class="sub">over audio <span class="m">3.1 GB</span> · about 0.5 GB tonight</div></div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0; margin-top: 2px;"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+  </div>
+
+  <div style="padding: 14px 20px 0; flex-grow: 1; overflow: hidden;">
+    <div style="display: flex; align-items: center; gap: 10px; min-height: 22px;">
+      <div class="sec">This session</div>
+      <div style="flex-grow: 1;"></div>
+      <div style="font-size: 12.5px; color: oklch(0.72 0.14 150);">7 overs · all in Recordings ›</div>
+    </div>
+    <div class="over" style="margin-top: 4px;">
+      <div class="when">22:30:53</div>
+      <div style="flex-grow: 1;">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <div style="width: 13px; height: 13px; border-radius: 50%; border: 1.8px solid oklch(0.72 0.14 150); border-right-color: transparent; box-sizing: border-box; flex-shrink: 0;"></div>
+          <div style="font-size: 13.5px; color: oklch(0.72 0.008 250);">Transcribing</div>
+        </div>
+        <div class="sub">2.4 s · Pass B running · tier 3</div>
+      </div>
+    </div>
+    <div class="over">
+      <div class="when">22:30:31</div>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; line-height: 1.4;"><span class="m" style="font-weight: 600; border-bottom: 1.5px solid oklch(0.72 0.14 150);">W7NPC</span> this is whiskey seven november papa charlie…</div>
+        <div class="sub">3.4 s · <span class="m">146.520</span> · manual frequency · confirmed</div>
+      </div>
+      <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0; margin-top: 5px;"></div>
+    </div>
+    <div class="over">
+      <div class="when">22:29:02</div>
+      <div style="flex-grow: 1;">
+        <div style="display: flex; align-items: center; gap: 7px;">
+          <div style="width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid oklch(0.34 0.010 250); box-sizing: border-box; flex-shrink: 0;"></div>
+          <div style="font-size: 13.5px; color: oklch(0.62 0.008 250);">Waiting for Pass B</div>
+        </div>
+        <div class="sub">1.8 s · 1 ahead of it</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- No transport bar here: this screen is what the live bar expands to (IA-2, C10). -->
+  <div style="height: 24px; border-top: 1px dashed oklch(0.26 0.010 250); display: flex; align-items: center; justify-content: center;"><div class="m" style="font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: oklch(0.40 0.008 250);">navigation bar inset</div></div>
+
+</div>
+</x-dc>
+</body>
+</html>

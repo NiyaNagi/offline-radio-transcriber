@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .sec { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); }
+    .state { margin-top: 16px; }
+    .bar { margin-top: 7px; border: 1px solid oklch(0.28 0.010 250); background: oklch(0.19 0.010 250); border-radius: 6px; padding: 10px 14px; display: flex; align-items: center; gap: 11px; min-height: 44px; box-sizing: border-box; }
+    .note { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.52 0.008 250); margin-top: 6px; line-height: 1.45; }
+    .meter { display: flex; gap: 2px; align-items: flex-end; height: 14px; flex-shrink: 0; }
+    .meter div { width: 2px; }
+    .partial { font-size: 13px; color: oklch(0.72 0.006 250); flex-grow: 1; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    .scrub { position: relative; flex-grow: 1; height: 3px; background: oklch(0.26 0.010 250); border-radius: 2px; min-width: 40px; }
+    .fill { position: absolute; left: 0; top: 0; bottom: 0; background: oklch(0.72 0.14 150); border-radius: 2px; }
+    .knob { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: oklch(0.72 0.14 150); }
+    .pause { display: flex; gap: 3px; flex-shrink: 0; }
+    .pause div { width: 3.5px; height: 14px; background: oklch(0.72 0.14 150); }
+    .rule { font-size: 12.5px; line-height: 1.5; color: oklch(0.70 0.006 250); padding: 6px 0; border-top: 1px solid oklch(0.23 0.010 250); }
+    .rule:first-child { border-top: 0; }
+    .rule b { color: oklch(0.92 0.006 250); font-weight: 600; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); overflow: hidden; padding: 30px 20px 0; box-sizing: border-box;">
+
+  <div style="font-size: 22px; font-weight: 600; letter-spacing: -0.02em;">Transport bar</div>
+  <div style="font-size: 13px; color: oklch(0.62 0.008 250); margin-top: 3px;">One component, two modes · C10 · replaces the live bar</div>
+
+  <div class="state">
+    <div class="sec">Live · nominal</div>
+    <div class="bar">
+      <div class="meter"><div style="height: 6px; background: oklch(0.72 0.14 150);"></div><div style="height: 13px; background: oklch(0.72 0.14 150);"></div><div style="height: 9px; background: oklch(0.72 0.14 150);"></div><div style="height: 14px; background: oklch(0.72 0.14 150);"></div></div>
+      <div class="partial">and we're clear on the repeater, seven th…</div>
+      <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150); flex-shrink: 0;">Live</div>
+    </div>
+    <div class="note">tap → Capture (N08)</div>
+  </div>
+
+  <div class="state">
+    <div class="sec">Live · attention</div>
+    <div class="bar">
+      <div class="meter"><div style="height: 3px; background: oklch(0.78 0.13 75);"></div><div style="height: 4px; background: oklch(0.78 0.13 75);"></div><div style="height: 3px; background: oklch(0.78 0.13 75);"></div><div style="height: 5px; background: oklch(0.78 0.13 75);"></div></div>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="1.8" stroke-linecap="round" style="flex-shrink: 0;"><path d="M12 3v10M9 5.5a4 4 0 0 0 6 0"></path><path d="M6 11a6 6 0 0 0 12 0M12 17v4"></path></svg>
+      <div class="partial" style="font-style: normal; color: oklch(0.62 0.008 250);">room</div>
+      <div style="font-size: 13px; font-weight: 500; color: oklch(0.78 0.13 75); flex-shrink: 0;">Quiet</div>
+    </div>
+    <div class="note">the label is the highest-priority condition, never a fixed word — nothing may match on it (R-1021)</div>
+  </div>
+
+  <div class="state">
+    <div class="sec">Live · halted</div>
+    <div class="bar">
+      <div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.72 0.15 25); flex-shrink: 0;"></div>
+      <div class="partial" style="font-style: normal; color: oklch(0.66 0.008 250);">input lost at 02:14 · retrying</div>
+      <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.15 25); flex-shrink: 0;">Halted</div>
+    </div>
+  </div>
+
+  <div class="state">
+    <div class="sec">Playing</div>
+    <div class="bar">
+      <div class="pause"><div></div><div></div></div>
+      <div class="m" style="font-size: 12px; color: oklch(0.66 0.008 250); white-space: nowrap;">0:04 / 0:12</div>
+      <div class="scrub"><div class="fill" style="width: 33%;"></div><div class="knob" style="left: 33%;"></div></div>
+      <div class="m" style="font-size: 12.5px; font-weight: 600; flex-shrink: 0;">W7NPC</div>
+    </div>
+    <div class="note">tap → that transmission · pause and scrub are 44 px targets</div>
+  </div>
+
+  <div class="state">
+    <div class="sec">Playing · while capturing</div>
+    <div class="bar">
+      <div style="width: 7px; height: 7px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
+      <div class="pause"><div></div><div></div></div>
+      <div class="m" style="font-size: 12px; color: oklch(0.66 0.008 250); white-space: nowrap;">0:04 / 0:12</div>
+      <div class="scrub"><div class="fill" style="width: 33%;"></div><div class="knob" style="left: 33%;"></div></div>
+      <div class="m" style="font-size: 12.5px; font-weight: 600; flex-shrink: 0;">W7NPC</div>
+    </div>
+    <div class="note">playback takes the bar; the live dot stays, so capture is never out of sight (constitution IV)</div>
+  </div>
+
+  <div class="state">
+    <div class="sec">Paused</div>
+    <div class="bar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="oklch(0.72 0.14 150)" style="flex-shrink: 0;"><path d="M7 4v16l13-8z"></path></svg>
+      <div class="m" style="font-size: 12px; color: oklch(0.66 0.008 250); white-space: nowrap;">0:04 / 0:12</div>
+      <div class="scrub"><div class="fill" style="width: 33%; background: oklch(0.52 0.08 150);"></div><div class="knob" style="left: 33%; background: oklch(0.60 0.10 150);"></div></div>
+      <div class="m" style="font-size: 12.5px; font-weight: 600; color: oklch(0.78 0.006 250); flex-shrink: 0;">W7NPC</div>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="oklch(0.62 0.008 250)" stroke-width="2" stroke-linecap="round" style="flex-shrink: 0;"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+    </div>
+    <div class="note">× clears playback: back to live if capturing, otherwise the bar hides</div>
+  </div>
+
+  <div style="margin-top: 18px; background: oklch(0.185 0.008 250); border-radius: 8px; padding: 6px 14px;">
+    <div class="rule"><b>Hidden on the screen it expands to.</b> No second copy on Capture while live (IA-2).</div>
+    <div class="rule"><b>The bar owns playback.</b> Leaving a screen never stops the audio; × or the end of the over does. This reverses R-1006's stop-on-leave.</div>
+    <div class="rule"><b>One mode at a time,</b> playback over live, and never a stale state: a finished over clears itself.</div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
