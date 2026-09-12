@@ -798,6 +798,33 @@ public class MigrationTest {
                     "test",
                     migrated!!.appVersion,
                 )
+                // Register R-1002: fixtureVersion 10 is the one whose real open runs exactly
+                // MIGRATION_10_11 through this connection-based path (the R-885 mistake shipped in
+                // a Migration overriding only the legacy migrate(SupportSQLiteDatabase) signature)
+                // -- proven by using the new column's write/read path, not just "did not crash".
+                if (fixtureVersion == 10) {
+                    runBlocking {
+                        db.transmissionDao().insert(TestFixtures.transmission("TX-R885-V10", sessionId = "S1"))
+                        val itemId = db.workQueueDao().insert(
+                            org.ort.data.entity.WorkQueueItemEntity(
+                                transmissionId = "TX-R885-V10",
+                                pass = org.ort.core.PassId.B_OFFLINE,
+                                state = org.ort.data.entity.WorkQueueState.READY,
+                                priority = 0,
+                                enqueuedAt = 0L,
+                            ),
+                        )
+                        db.workQueueDao()
+                            .retryReady(itemId, attemptCount = 1, error = "boom", retryNotBeforeMillis = 42L)
+                        val row = db.workQueueDao().getById(itemId)
+                        assertEquals(
+                            "MIGRATION_10_11's retryNotBeforeMillis column must be usable through the " +
+                                "real connection-based open, not just Room's legacy SupportSQLiteDatabase path",
+                            42L,
+                            row?.retryNotBeforeMillis,
+                        )
+                    }
+                }
             } finally {
                 db.close()
             }

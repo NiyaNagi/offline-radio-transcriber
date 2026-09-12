@@ -32,6 +32,93 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (R-1002 round 2: the reason a reprocess item failed for must survive, never a fabricated "gave up")
+
+### &lt;pending&gt; — WPQ round 2 — R-1002: a foreground retry regime for reprocess, and the drain-iteration ceiling never overrides a real recorded reason
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessRunner.kt` (lead-granted
+for this round only), `data/src/main/kotlin/org/ort/data/WorkQueue.kt` (new
+`SINGLE_ATTEMPT_FOREGROUND` constant beside `DEFAULT_MAX_ATTEMPTS`), tests beside each,
+`data/src/test/kotlin/org/ort/data/MigrationTest.kt` (R-885 confirmation, below),
+`results/coverage-matrix.md` (regenerated). No changes were needed to `RealImproveRunner.kt`
+(`app/src/main/kotlin/org/ort/app/ui/improve/RealImproveRunner.kt`, also lead-granted) — it is a
+thin adapter with no retry logic of its own, so the two fixes below inherited into it and its own
+regression test (`RealImproveRunnerTest.R_091_...`) and `ReaderActivityDestinationSmokeTest`'s
+`R_350_improve_done_install_action_...` both pass unmodified once `ReprocessRunner.kt` was fixed.
+**Requirements/ACs:** FR-RUN-9, register R-1002 (sent back).
+**What changed — the lead's blocking finding, verbatim:** "`ReprocessRunner.runOnePass` now
+reports `gave up after 1000 drain attempts` where it previously reported the real reason. You
+have replaced an honest error with a misleading one" (constitution I). Two changes:
+1. **The drain-iteration ceiling must never override a real recorded reason.** `runOnePass`'s
+   fallback now reads the row's own `lastError` (set by `WorkQueue.failPass` on every failure,
+   terminal or not) and reports that if present, falling back to the generic "gave up..." message
+   only when genuinely nothing is known. This is real defense-in-depth, not just cosmetic: the
+   durable `work_queue_item` table is shared by design between `ReprocessRunner` and live
+   capture's own drain loop (`runOnePass`'s own kdoc already said so), so a row this run enqueued
+   can be leased and failed by a *different* `WorkQueue` instance whose retry policy this run
+   does not control — the new discriminating test reproduces exactly that shape.
+2. **A named foreground regime, `WorkQueue.SINGLE_ATTEMPT_FOREGROUND = 1`, distinct from
+   `DEFAULT_MAX_ATTEMPTS`.** `ReprocessRunner`'s own queue now uses it. Argued, not just applied:
+   `DEFAULT_MAX_ATTEMPTS`'s backoff ladder is right for live capture (nobody is watching, and the
+   fact a retry is waiting out — a model landing, a thermal throttle clearing — can genuinely
+   change between attempts) and wrong for a foreground, user-watched "reprocess now" progress bar
+   run against Pass B, which is a pure function of `(audio, lexicon snapshot, model set, config)`
+   (constitution III) — a second attempt against the same four inputs is not expected to differ,
+   so retrying it with a growing delay only stalls the operator's own progress bar for a fault a
+   second attempt will not fix. This closes the two originally-broken tests
+   (`ReprocessRunnerTest.R_290_...`, `.R_350_...`) at the root: the very first failure now reaches
+   terminal `FAILED` in 1–2 loop iterations, nowhere near the 1000-iteration ceiling.
+**On the availability-transition trigger (round-1 finding, restated in the lead's own terms):**
+the requeue/undefer/defer calls in `RealCaptureService.startProcessingLoop` fire **once per real
+`startCapture()` call — i.e., once per capture session start.** This is **not a live poll**: it
+does not fire the instant R-1001's fix lands while the app is idle. The operator's nineteen overs
+come back the next time they start a capture session on the fixed build, with no reinstall and no
+manual retry tap needed beyond that.
+**On the R-885 real-open-path confirmation:** `MigrationTest`'s
+`r_885_every_fixture_from_v1_to_v10_opens_through_OrtDatabase_create_and_reads_its_session_row`
+loop (extended 1..9 → 1..10 in round 1) already exercises `MIGRATION_10_11` through the real,
+connection-based `OrtDatabase.create()` open path for `fixtureVersion = 10` — the exact path
+R-885 crashed in when a `Migration` overrode only the legacy `migrate(SupportSQLiteDatabase)`.
+This round makes that concrete rather than incidental: for `fixtureVersion == 10` the test now
+also writes and reads back `WorkQueueItemEntity.retryNotBeforeMillis` through that same real-open
+connection, proving the new column's DAO path specifically, not just "the open did not crash".
+**Verified:** `./gradlew :data:test :pipeline:testDebugUnitTest --tests "org.ort.app.ui.improve.*"
+:app:smokeTestDebugUnitTest --tests "org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"
+-PortAllowMissingBundledAssets=true --rerun` — `BUILD SUCCESSFUL`, every previously-red test now
+green, including `ImproveScreensTest`'s own `R_350` test. `./gradlew :data:detekt :pipeline:detekt
+:data:ktlintTestSourceSetCheck :pipeline:ktlintTestSourceSetCheck :data:ktlintMainSourceSetCheck
+:pipeline:ktlintMainSourceSetCheck :app:ktlintMainSourceSetCheck -PortAllowMissingBundledAssets=true`
+green. `python tools/spec-check/spec_check.py` 8/8. `./gradlew coverageMatrix` → 466
+requirements, 241 covered (up from 450/241 — main's spec amendment merged in, not this round's
+own work); `./gradlew coverageMatrixCheck` → up to date. `./gradlew -p buildSrc test` green.
+Both new production changes proven discriminating: reverted the `lastError`-first fallback to
+always use the generic message → `R_1002_the_drain_iteration_ceiling_never_overrides_a_real_recorded_reason`
+failed (`"the real recorded reason must survive the iteration ceiling"`); restored → passed.
+Reverted `ReprocessRunner`'s queue to `WorkQueue(db, clock)` (no `SINGLE_ATTEMPT_FOREGROUND`) →
+`R_290_a_missing_retained_audio_file_fails_that_item_without_crashing_the_run` failed
+(`expected:<FAILED> but was:<PROCESSING>`); restored → passed. (`R_350_reason_reaches_summary...`
+stayed green under that same revert — its own scenario's `lastError` is identical on every
+attempt, so item 1's fallback fix alone already covers it; `R_290`'s varying-per-item scenario is
+the one that actually discriminates item 2.)
+`git merge main` before starting this round (main had moved 15 commits: the spec amendment,
+WPN's R-1003 nav-bar inset fix, WPP's R-1006 playback fix) — one conflict, in `CHANGELOG.md`
+(both sides added a new dated section at the same point); resolved by keeping both, this round's
+work first. No rebase, per the lead's instruction.
+**Left open / not done:** (a) An architectural note, not a defect: `maxAttempts` is a property of
+which `WorkQueue` *instance* leases and fails a row, not of the row itself — a live-capture item
+opportunistically drained during a reprocess run (the shared-queue design `runOnePass`'s own kdoc
+already documents) now gets `SINGLE_ATTEMPT_FOREGROUND`'s single-attempt semantics if reprocess's
+drain call happens to lease and fail it, rather than live capture's own five-attempt ladder. This
+is narrow (the row is still visibly `FAILED` and requeueable, never silently lost — constitution
+III holds) and was already latent before this round (both instances previously shared the same
+un-differentiated retry count by coincidence); making `maxAttempts` a per-item rather than
+per-instance property would be a larger redesign not undertaken here. (b) The true end-to-end
+proof on the operator's own phone is still the lead's to take. (c) `startProcessingLoop`
+evaluating availability once per session start (not a live poll) is unchanged from round 1 —
+restated above in the lead's own requested wording.
+
+---
+
 ## 2026-09-12 (R-1002: the operator's nineteen stuck overs come back, and a failure no longer burns its retry budget in eight seconds)
 
 ### cf78d87c — WPQ — R-1002: requeue Pass B on the ASR-availability transition, a derived backoff ladder, and defer-before-lease for a known-unavailable engine

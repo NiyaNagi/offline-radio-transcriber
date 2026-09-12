@@ -272,7 +272,40 @@ public class WorkQueue(
     }
 
     public companion object {
+        /**
+         * The background regime (technical design §7.1): live capture's own drain loop is not
+         * watched in real time, and the fault a retry is waiting out — an ASR model landing, a
+         * thermal throttle clearing, a decoder's transient OOM — can genuinely change between
+         * attempts. [WorkQueueBackoff]'s ladder (up to 150s of spaced retries at this value) is
+         * built for exactly this: it costs nothing but time nobody is watching, and a second or
+         * third attempt has a real chance of succeeding where the first did not.
+         */
         public const val DEFAULT_MAX_ATTEMPTS: Int = 5
+
+        /**
+         * Register R-1002 round 2, design call: a **foreground** regime, for a caller whose retry
+         * is being watched in real time — `ReprocessRunner`'s "reprocess now" progress bar is the
+         * one example today. Two things make backoff wrong there where it is right for
+         * [DEFAULT_MAX_ATTEMPTS]:
+         *
+         * 1. **Pass B is a pure function of `(audio, lexicon snapshot, model set, config)`**
+         *    (constitution III). Unlike live capture's own retries, nothing about a foreground
+         *    reprocess run changes any of those four inputs between one attempt and the next —
+         *    the model that will run attempt 2 is the same model that just ran attempt 1. A retry
+         *    is not "waiting out" anything; it is re-asking a pure function the same question.
+         * 2. **A human is watching.** [WorkQueueBackoff]'s ladder costs up to 150s per item at
+         *    [DEFAULT_MAX_ATTEMPTS] — free when nobody is watching, a stalled progress bar when
+         *    someone is. Retrying a foreground action with a growing delay for a fault a second,
+         *    identical attempt is not expected to fix trades a real spec fix (FR-RUN-9's backoff)
+         *    for a worse foreground UX than either doing nothing or trying once and reporting
+         *    honestly.
+         *
+         * A single attempt still writes the same [org.ort.data.entity.WorkAttemptEntity] audit
+         * row [failPass] always writes, and the transmission still reaches terminal `FAILED` with
+         * the real reason recorded — this changes *how many times* a foreground caller retries,
+         * never whether a failure is honestly reported (constitution I).
+         */
+        public const val SINGLE_ATTEMPT_FOREGROUND: Int = 1
 
         /** Mirrors `idx_wq_active`'s own `WHERE state IN (...)` (technical design §7.1) exactly. */
         private val ACTIVE_STATES: Set<WorkQueueState> =

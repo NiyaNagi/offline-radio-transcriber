@@ -176,7 +176,13 @@ public class ReprocessRunner(
         val tier = currentTier()
         // R-290: never the raw Pass returned by passFor() -- see the class kdoc.
         val pass = SafePass(passFor(tier))
-        val queue = WorkQueue(db, clock)
+        // Register R-1002 round 2: this is a foreground, user-watched "reprocess now" run, not
+        // live capture's unwatched background queue -- WorkQueue.SINGLE_ATTEMPT_FOREGROUND's own
+        // kdoc has the full reasoning (Pass B is a pure function of its four inputs; nothing
+        // about a retry here changes any of them, unlike live capture's ASR-model-lands/thermal-
+        // clears cases). A retry ladder that costs up to 150s per item is right for a queue
+        // nobody is watching and wrong for a progress bar someone is.
+        val queue = WorkQueue(db, clock, maxAttempts = WorkQueue.SINGLE_ATTEMPT_FOREGROUND)
         val drainRunner = PassDrainRunner(queue, runId)
 
         var done = 0
@@ -313,9 +319,18 @@ public class ReprocessRunner(
             drainRunner.drainBatch(limit = tuning.drainBatchLimit, deadlineMillis = tuning.deadlineMillis, pass = pass)
             iterations++
         }
-        // Defensive only -- a queue row that never resolves after this many drain calls would be a
-        // bug elsewhere (e.g. a starved lease); reported as a failure rather than hanging forever.
-        return PassAttemptOutcome.Failed("gave up after ${tuning.maxDrainIterationsPerItem} drain attempts")
+        // Defensive only -- a queue row that never resolves after this many drain calls would be
+        // a bug elsewhere (e.g. a starved lease, or -- register R-1002 round 2 -- this exact row
+        // sitting out a real WorkQueueBackoff delay under a DIFFERENT WorkQueue instance's
+        // maxAttempts than this run's own SINGLE_ATTEMPT_FOREGROUND, e.g. a live-capture drain
+        // loop that leased and failed it with the background ladder while this run watched).
+        // Constitution I: this generic message must never be reported OVER a real recorded
+        // reason -- WorkQueue.failPass writes lastError on every failure, terminal or not, so the
+        // row itself (if it still exists) is asked one more time before falling back to the
+        // honestly-uninformative default.
+        val lastKnownReason = db.workQueueDao().getById(rowId)?.lastError
+        val genericReason = "gave up after ${tuning.maxDrainIterationsPerItem} drain attempts"
+        return PassAttemptOutcome.Failed(lastKnownReason ?: genericReason)
     }
 
     private sealed interface PassAttemptOutcome {

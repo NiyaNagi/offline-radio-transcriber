@@ -637,4 +637,36 @@ public class WorkQueueTest {
         val leasedAgain = queue.leaseBatch("run-2", limit = 10) { 60_000L }
         assertEquals(item.id, leasedAgain.single().id)
     }
+
+    /**
+     * Register R-1002 round 2: [WorkQueue.SINGLE_ATTEMPT_FOREGROUND] is the named, documented
+     * alternative to [WorkQueue.DEFAULT_MAX_ATTEMPTS] for a foreground, user-watched caller
+     * (`ReprocessRunner`'s own "reprocess now" progress bar) — a single failure must reach
+     * terminal `FAILED` immediately, never entering the backoff ladder [WorkQueue.DEFAULT_MAX_ATTEMPTS]
+     * relies on, so a caller synchronously waiting on the outcome is never stalled by a delay
+     * nothing about a retry is expected to fix (Pass B is a pure function of its inputs).
+     */
+    @Test
+    @Requirement("R-1002")
+    public fun R_1002_SINGLE_ATTEMPT_FOREGROUND_fails_terminally_on_the_first_error_never_backing_off(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX-FOREGROUND"))
+            val queue = WorkQueue(db, clock, maxAttempts = WorkQueue.SINGLE_ATTEMPT_FOREGROUND)
+            queue.enqueue("TX-FOREGROUND", PassId.B_OFFLINE)
+            val item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+
+            queue.failPass(item, "decoder ran out of memory")
+
+            val row = db.workQueueDao().getById(item.id)!!
+            assertEquals(
+                "a single-attempt foreground queue must reach terminal FAILED on the first error",
+                WorkQueueState.FAILED,
+                row.state,
+            )
+            assertEquals(TransmissionState.FAILED, db.transmissionDao().getById("TX-FOREGROUND")!!.processingState)
+            // Never leasable again without an explicit requeue -- the point is exactly that no
+            // backoff-and-retry ever happens on its own for this regime.
+            assertTrue(queue.leaseBatch("run-2", limit = 10) { 60_000L }.isEmpty())
+        }
 }
