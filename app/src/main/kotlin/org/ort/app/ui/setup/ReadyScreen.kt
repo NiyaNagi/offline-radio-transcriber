@@ -37,6 +37,7 @@ import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
 
 /** One `Setup-Done.dc.html` summary row — real, not fabricated: every field below is read from
  * [SetupStore], live permission state, [RigStatus] or [AsrAvailability], never invented. */
@@ -483,14 +484,48 @@ private fun radioRowForCatRig(
         // already reuse rather than duplicate — "Kenwood TH-D75A" -> "TH-D75A", also shortening
         // the value text this row's own new ReadyFactColumns must wrap at font scale 2.0.
         val descriptor = SettingsPolling.stripManufacturerPrefix(rigStatus.descriptor)
-        ReadyRow(
-            label = "Radio",
-            value = "$descriptor · $bandCount band${if (bandCount == 1) "" else "s"}",
-            ok = true,
-            statusText = "verified",
-            actionLabel = "Change",
-            onAction = onChangeRadio,
-        )
+        val bandsClause = "$descriptor · $bandCount band${if (bandCount == 1) "" else "s"}"
+        // R-1019 (register): this row must not assert more than RigStatus.verification actually
+        // establishes — S10b/S11 already stopped claiming "verified" for a partial link;
+        // ReadyScreen (S12) is the last screen in the sequence and was the one place still
+        // contradicting them. `statusText` deliberately stays a short chip (never the "identified,
+        // command set partially confirmed" full sentence S10b/S11 use in their own banner/subtitle
+        // prose) — this exact row's own documented history (R-226, R-882, R-882 reopened) is a
+        // string this long forcing `wrapContentWidth(unbounded = true)`'s single-line measurement
+        // (this composable's own doc comment) past the screen edge at font scale 2.0. The missing
+        // capabilities are named in `value` instead — the one column already proven safe to wrap at
+        // word boundaries for arbitrary length text.
+        when (val verification = rigStatus.verification) {
+            RigVerification.Full -> ReadyRow(
+                label = "Radio",
+                value = bandsClause,
+                ok = true,
+                statusText = "verified",
+                actionLabel = "Change",
+                onAction = onChangeRadio,
+            )
+            is RigVerification.Partial -> ReadyRow(
+                label = "Radio",
+                value = bandsClause + " · missing " +
+                    verification.missingCapabilities.sortedBy { it.ordinal }
+                        .joinToString(", ", transform = RigPickerCatalogue::capabilityLabel),
+                ok = true,
+                statusText = "partially confirmed",
+                actionLabel = "Change",
+                onAction = onChangeRadio,
+            )
+            // R-1019: the honest default for a caller that never stated the fact — never "verified"
+            // by omission (constitution I). Genuinely connected still, so `ok` stays true; no
+            // status chip is invented for a fact nothing established either way.
+            RigVerification.Unknown -> ReadyRow(
+                label = "Radio",
+                value = bandsClause,
+                ok = true,
+                statusText = null,
+                actionLabel = "Change",
+                onAction = onChangeRadio,
+            )
+        }
     }
     is RigStatus.State.Stale -> ReadyRow(
         label = "Radio",

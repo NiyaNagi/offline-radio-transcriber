@@ -32,6 +32,117 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPD3 round 3: R-1019 — S12/RadioUsbScreen stop asserting more verification than `RigStatus` establishes)
+
+### (pending) — WPD3 round 3: ReadyScreen (S12) and RadioUsbScreen's defensive Connected/Stale fallback branch on RigVerification instead of hardcoding "verified"
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{ReadyScreen,RadioUsbScreen}.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (the `rig-bt-connected` scenario only), and
+tests under `app/src/test/kotlin/org/ort/app/{ui/setup/{ReadyRowsForTest,ReadyScreenTest,
+RadioUsbScreenTest},debug/WpiScenariosTest}.kt`. `ui/settings/SettingsRigFacts.kt` has the identical
+defect — read for the check the coordinator asked for, not edited (`ui/settings/**` is WPR2's this
+round); reported below instead of fixed.
+
+**Requirements/ACs:** FR-RIG-15, constitution I (Uncertainty Is Content — a partial or unknown
+verification state must never render as `Full`). Register R-1019 (continuing WPRIG2's own
+`95839c4d`, which added `RigStatus.State.Connected.verification: RigVerification` at the data
+layer and explicitly left the `:app` rendering fix to this package).
+
+**What changed:**
+- **`ReadyScreen.kt`'s `radioRowForCatRig`** (S12, `Setup-Done.dc.html`'s Radio row) branched
+  unconditionally to `statusText = "verified"` for any `Connected` reading — contradicting S10b/S11,
+  which already stopped claiming "verified" for a partial link (R-1013/R-1014's own round). Now
+  branches on `rigStatus.verification`: `Full` → `"verified"` (unchanged); `Partial` →
+  `"partially confirmed"` (short — deliberately **not** the fuller "identified, command set
+  partially confirmed" S10b/S11 use in their own banner/subtitle prose — see "Left open" below for
+  why); `Unknown` → `null` (no chip invented for a fact nothing established, the same pattern this
+  row already uses for "no radio chosen"). `Partial`'s own missing-capability names go into `value`
+  instead (`"TH-D75A · 2 bands · missing squelch, signal strength"`) — the one column this exact
+  row's own documented history (R-226, R-882, R-882 reopened) already proved safe to wrap at word
+  boundaries for arbitrary-length text, unlike `statusText`'s `wrapContentWidth(unbounded = true)`
+  single-line measurement.
+- **`RadioUsbScreen.kt`'s defensive `Connected`/`Stale` fallback** shares `RigVerifiedContent` with
+  S11 — wired `partiallyVerified = verification !is RigVerification.Full` through both branches so
+  this copy reads "Command set" (never "Verified command set") under the identical condition S11
+  already established, rather than a second, silently-still-claiming-verified rendering of the same
+  content.
+- **`Scenarios.kt`'s `rig-bt-connected`** — the one debug scenario the tour actually captures S12
+  and S11 from (`tour.json`'s `rig-bt-connected/S12-ready-bt`(`@2x`) and
+  `S11-radio-verified`) — now states `verification = RigVerification.Full` explicitly. Both bands it
+  seeds genuinely report every capability the TH-D75A's own bundled descriptor declares
+  (`FREQUENCY`, `SQUELCH_STATE`, `SUB_BAND`), so `Full` is honest, not merely convenient; without
+  this, the new S12 fix would have silently dropped the "verified" status text from this scenario's
+  own tour capture the next time it runs, since a bare `RigStatus.connected(...)` now defaults to
+  `Unknown`. Checked every other `RigStatus.connected(...)` call site in this file (six more): none
+  of the others gate a `SetupStore` through to `SetupStep.READY`/`RADIO_VERIFIED` (they seed live
+  Now/Capture/Settings screens only), so none are affected by this round's rendering change.
+- **Five pre-existing tests updated, not weakened** — each constructed a bare
+  `RigStatus.State.Connected(...)`/called a bare `RigStatus.connected(...)` and asserted "verified"
+  as an *incidental* fact of its own, unrelated test (action wiring, manufacturer-prefix stripping,
+  a font-scale-2.0 layout regression proof, a `stepFor` resume assertion): `ReadyRowsForTest`'s
+  `R_084 a genuinely connected rig renders green and verified` and `R_285 a genuinely connected rig
+  also offers Change...`, `ReadyScreenTest`'s `R_882 the real rig-bt-connected Radio row wraps at
+  words...`, and `WpiScenariosTest`'s `CF06_rig-bt-connected...` gained an explicit
+  `verification = RigVerification.Full`/assertion, restoring each test's own original intent now
+  that the bare construction defaults to `Unknown` instead.
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.setup.ReadyRowsForTest' --tests 'org.ort.app.ui.setup.RadioUsbScreenTest' --tests 'org.ort.app.debug.WpiScenariosTest' -PortAllowMissingBundledAssets=true`
+  — all green.
+- `.\gradlew ":app:testDebugUnitTest" -PortAllowMissingBundledAssets=true` (every `:app` test) —
+  green, `BUILD SUCCESSFUL in 6m 6s`.
+- **Discrimination proved directly** (reverted, watched fail for the stated reason, restored,
+  watched pass — full output in this session's own report):
+  - `ReadyRowsForTest`'s three new `R_1019` cases — reverting `radioRowForCatRig` to the
+    unconditional `"verified"` failed all three: `Partial` expected `"partially confirmed"` got
+    `"verified"`; `Unknown` (both the explicit case and the bare-default case) expected non-`
+    "verified"`, got `"verified"`.
+  - `RadioUsbScreenTest`'s new `R_1019` case — reverting the `partiallyVerified` wiring failed with
+    `Action performScrollTo() failed` (the "Command set" header node never rendered at all —
+    "Verified command set" rendered instead, at a different position on screen).
+  - `WpiScenariosTest`'s `CF06_rig-bt-connected...` — reverting the scenario's own
+    `verification = RigVerification.Full` failed the new assertion directly
+    (`RigVerification.Unknown` where `Full` was expected).
+- Machine: this workstation (Windows, JDK 17.0.20.101-hotspot), fold: unit (JVM/Robolectric), no
+  bundled asset touched.
+
+**Left open / not done:**
+- **`ui/settings/SettingsRigFacts.kt`'s `rigModuleLabel` has the identical defect, not fixed here.**
+  It builds `"$descriptorId · built in · verified command set $caps"` (CF06, Settings' own Rig
+  screen) purely from the connected descriptor's own *static, declared* capability list — never
+  consulting `RigStatus.State.Connected.verification` at all — so it says "verified command set"
+  for a `Partial`/`Unknown` reading exactly as unconditionally as S12 did before this fix. Read, not
+  edited, per the coordinator's own instruction (`ui/settings/**` is WPR2's this round); reported
+  for them to route.
+- **S12's `statusText` for `Partial` deliberately does not repeat S10b/S11's own fuller phrase**
+  ("identified, command set partially confirmed") verbatim, unlike the coordinator's own literal
+  wording — this row's `statusText` is measured via `wrapContentWidth(unbounded = true)` (this
+  composable's own doc comment) at its *natural, single-line* width regardless of the space
+  actually available, and this exact row has a documented history (R-226, R-882, R-882 reopened) of
+  a string that long overflowing past the screen edge at font scale 2.0. `"partially confirmed"`
+  keeps the discriminating word ("confirmed", never "verified") while staying short enough not to
+  reproduce that regression class; the fuller phrase and the missing-capability names both still
+  appear, in `value`, the column already proven safe for arbitrary length. No Robolectric bounds
+  test proves the *un-fixed* version would actually have overflowed (that would need reverting to
+  the longer string and measuring at 390dp/2.0, which risks committing a real regression this
+  session cannot un-ship before a screenshot catches it) — this is a judgement call flagged for the
+  lead's own capture to confirm or overrule, not a measured fact.
+- **No real device confirmation** — proven against Robolectric/pure-function tests only, matching
+  every other round this session. Neither R-1015 nor R-1019 (either half) can be settled against a
+  real TH-D75A (hardware, H2/H3), per WPRIG2's own entry above.
+**Verified (wider gate, all green):**
+- `.\gradlew ":app:smokeTestDebugUnitTest" ":app:lintDebug" dependencyRules platformGuards ":app:assembleDebug" ":app:compileReleaseKotlin" -PortAllowMissingBundledAssets=true`
+  — green.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  — green, `BUILD SUCCESSFUL in 29s` (mostly cached from the immediately-preceding gate run).
+- `.\gradlew -p buildSrc test` — green.
+- `.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — `466 requirements, 246 covered`,
+  byte-identical to the already-committed file (this round's own new tests cite register ids, not
+  `FR-*`/`AC-*` ids).
+- `.\gradlew coverageMatrixCheck -PortAllowMissingBundledAssets=true` — `up to date (246 covered of
+  466)`.
+- `python tools\spec-check\spec_check.py` — OK, 8/8.
+
 ## 2026-09-12 (WPRIG2: R-1015 — `RigSupervisor` reads `health()`, not just `observe()`, so a silent-but-open rig goes stale within a bounded time; R-1019 — `RigStatus` carries whether a rig link was fully verified)
 
 ### 95839c4d — WPRIG2: RigSupervisor watches health() so a silent rig cannot stay confidently Connected forever; RigStatus.State.Connected carries RigVerification so S12 can stop over-claiming "verified"

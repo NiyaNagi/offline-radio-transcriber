@@ -49,6 +49,7 @@ import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
@@ -613,6 +614,10 @@ class WpiScenariosTest {
         assertTrue(state is RigStatus.State.Connected)
         state as RigStatus.State.Connected
         assertEquals(RigModuleTransportKind.BLUETOOTH_SPP, state.transportKind)
+        // R-1019: this scenario's own narrative is the fully-verified happy path S11/S12's tour
+        // steps capture — a bare RigStatus.connected() would otherwise default to
+        // RigVerification.Unknown and silently drop S12's own "verified" status text.
+        assertEquals(RigVerification.Full, state.verification)
 
         val store = setupStore()
         assertTrue(store.rigBluetoothVerified)

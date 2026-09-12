@@ -71,6 +71,7 @@ import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
@@ -2736,6 +2737,13 @@ public object Scenarios {
             ),
             transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
             descriptorId = BundledDescriptors.kenwoodThD75a().id,
+            // R-1019 (register): both bands above genuinely report every capability the TH-D75A's
+            // own bundled descriptor declares (FREQUENCY, SQUELCH_STATE, SUB_BAND) — this scenario's
+            // whole narrative is the fully-verified happy path S11/S12's own tour steps capture
+            // (`rig-bt-connected/S11-radio-verified`, `S12-ready-bt`), so it states that explicitly
+            // now that a bare RigStatus.connected(...) would otherwise default to
+            // RigVerification.Unknown and silently drop S12's own "verified" status text.
+            verification = RigVerification.Full,
         )
         val store = freshSetupStore(context)
         store.welcomeSeen = true

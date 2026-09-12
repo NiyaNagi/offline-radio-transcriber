@@ -324,7 +324,14 @@ class ReadyScreenTest {
         )
         val band1 = RigStatus.BandState("A", 145_230_000L, "FM", squelchOpen = true)
         val band2 = RigStatus.BandState("B", 146_960_000L, "FM", squelchOpen = false)
-        val connected = RigStatus.State.Connected("Kenwood TH-D75A", listOf(band1, band2))
+        // R-1019: this test's own intent is the "verified" layout regression proof, not the
+        // verification branch itself -- constructed explicitly now that a bare Connected() defaults
+        // to RigVerification.Unknown, which renders no statusText at all.
+        val connected = RigStatus.State.Connected(
+            "Kenwood TH-D75A",
+            listOf(band1, band2),
+            verification = org.ort.pipeline.capture.RigVerification.Full,
+        )
         val rows = readyRowsFor(store, batteryExempt = false, connected, ModelsViewState(emptyList()), actions)
         composeTestRule.setContent {
             val real = LocalDensity.current
