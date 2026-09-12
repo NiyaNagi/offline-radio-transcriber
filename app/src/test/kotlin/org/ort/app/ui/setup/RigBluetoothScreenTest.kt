@@ -29,7 +29,12 @@ import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.GraphicsMode
 
-/** E2-E10/E2-E11 (`spec/e2e-capture-modes-plan.md` WPD) — `Setup-Rig-Bluetooth.dc.html` (S10b). */
+/** E2-E10/E2-E11 (`spec/e2e-capture-modes-plan.md` WPD) — `Setup-Rig-Bluetooth.dc.html` (S10b).
+ * `LargeClass` suppressed (R-1013/R-1014's own round pushed it over the threshold): this is
+ * already one self-contained cluster — every state S10b's own checklist and banner can reach, one
+ * screen — the same reasoning `WpiScenariosTest`'s own suppression documents for an identical
+ * shape, not a class that grew by accident. */
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 class RigBluetoothScreenTest {
 
@@ -190,6 +195,213 @@ class RigBluetoothScreenTest {
 
         composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsEnabled().performClick()
         assert(continued)
+    }
+
+    // --- R-1013/R-1014: the two new terminal RigLinkState outcomes ------------------------------
+
+    /** R-1014: partial success — Continue enables the same as a full Verified. */
+    @Test
+    fun `R_1014 Continue enables on VerifyTimedOut and invokes its own callback`() {
+        var continued = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(
+                        selectedAddress = sppDevice.address,
+                        linkState = RigLinkState.VerifyTimedOut(
+                            rigId = "kenwood-thd75a",
+                            seenCapabilities = listOf("frequency"),
+                            missingCapabilities = listOf("squelch", "signal strength"),
+                            timeoutMillis = 12_000L,
+                        ),
+                    ),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = { continued = true },
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsEnabled().performClick()
+        assert(continued)
+    }
+
+    /** R-1013: nothing ever answered — Continue must stay disabled, distinct from R-1014's own
+     * partial-success case above. */
+    @Test
+    fun `R_1013 Continue stays disabled on IdentifyTimedOut`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(
+                        selectedAddress = sppDevice.address,
+                        linkState = RigLinkState.IdentifyTimedOut("kenwood-thd75a", timeoutMillis = 6_000L),
+                    ),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsNotEnabled()
+    }
+
+    /** R-1013: "Continue without connecting" must stay reachable — the one forward path when
+     * nothing ever answered. */
+    @Test
+    fun `R_1013 Continue without connecting stays available on IdentifyTimedOut`() {
+        var continuedWithoutConnecting = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(
+                        selectedAddress = sppDevice.address,
+                        linkState = RigLinkState.IdentifyTimedOut("kenwood-thd75a", timeoutMillis = 6_000L),
+                    ),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = { continuedWithoutConnecting = true },
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue-without-connecting").performClick()
+        assert(continuedWithoutConnecting)
+    }
+
+    @Test
+    fun `R_1013 IdentifyTimedOut renders a banner, never a blank screen`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(
+                        selectedAddress = sppDevice.address,
+                        linkState = RigLinkState.IdentifyTimedOut("kenwood-thd75a", timeoutMillis = 6_000L),
+                    ),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-lost-banner").performScrollTo().assertIsDisplayed()
+    }
+
+    /** R-1014: the checklist's own third row names the counts and the missing capabilities — the
+     * screen alone must say what proceeding costs, never just "partially verified". */
+    @Test
+    fun `R_1014 the verify checklist row names how many of how many were seen and which were missing`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(
+                        selectedAddress = sppDevice.address,
+                        linkState = RigLinkState.VerifyTimedOut(
+                            rigId = "kenwood-thd75a",
+                            seenCapabilities = listOf("frequency"),
+                            missingCapabilities = listOf("squelch", "signal strength"),
+                            timeoutMillis = 12_000L,
+                        ),
+                    ),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText("1 of 3 seen — missing squelch, signal strength", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    /** Constitution VIII: this row's own content changed shape (a second, longer detail line under
+     * the label) — bounds at the tour's own width, native graphics, font scale 2.0, the same
+     * discipline R-805/R-942/R-1005c already apply to this screen. A long missing-capability list is
+     * exactly the row this project's own history (R-805, R-863, R-874, R-942) has broken before. */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1014 the verify checklist detail line stays within the real 390dp screen at font scale 2_0`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.width(390.dp)) {
+                        RigBluetoothScreen(
+                            state = state(
+                                selectedAddress = sppDevice.address,
+                                linkState = RigLinkState.VerifyTimedOut(
+                                    rigId = "kenwood-thd75a",
+                                    seenCapabilities = listOf("frequency"),
+                                    missingCapabilities = listOf("squelch", "signal strength", "memory channel"),
+                                    timeoutMillis = 12_000L,
+                                ),
+                            ),
+                            onSelectDevice = {},
+                            onPairInSettings = {},
+                            onRefresh = {},
+                            onContinue = {},
+                            onContinueWithoutConnecting = {},
+                            onUseUsbInstead = {},
+                            onRequestBluetoothPermission = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        val bounds = composeTestRule
+            .onNodeWithTag("setup-rig-bt-checklist-verify")
+            .performScrollTo()
+            .getUnclippedBoundsInRoot()
+        assertTrue(
+            "expected the verify checklist row to stay within the real 390dp screen's own right edge " +
+                "at font scale 2.0, got right edge ${bounds.right}",
+            bounds.right <= 390.dp,
+        )
+    }
+
+    @Test
+    fun `verifyPartialDetail computes the seen-of-total count and the missing labels, pure`() {
+        val detail = verifyPartialDetail(
+            RigLinkState.VerifyTimedOut(
+                rigId = "kenwood-thd75a",
+                seenCapabilities = listOf("frequency"),
+                missingCapabilities = listOf("squelch", "signal strength"),
+                timeoutMillis = 12_000L,
+            ),
+        )
+        assertTrue(detail.contains("1 of 3"))
+        assertTrue(detail.contains("squelch"))
+        assertTrue(detail.contains("signal strength"))
+    }
+
+    @Test
+    fun `formatTimeoutSeconds is locale-independent, never a comma-decimal on a real device`() {
+        assertTrue(org.ort.app.ui.setup.formatTimeoutSeconds(6_000L) == "6.0s")
+        assertTrue(org.ort.app.ui.setup.formatTimeoutSeconds(12_500L) == "12.5s")
     }
 
     @Test

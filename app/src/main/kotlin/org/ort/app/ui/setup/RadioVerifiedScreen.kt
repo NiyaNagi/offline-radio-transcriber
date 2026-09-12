@@ -16,6 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.components.Banner
+import org.ort.app.ui.components.BannerTone
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.settings.SettingsPolling
@@ -73,6 +75,16 @@ public fun RadioVerifiedScreen(
      * [org.ort.rig.RigCapability] set — [sameCommandSetAsUsb] is the pure check; never asserted
      * for a rig this build cannot actually prove it for. */
     sameCommandSetAsUsb: Boolean = false,
+    /** R-1013/R-1014 (WPD3): the capability labels [org.ort.app.ui.setup.RigLinkState.VerifyTimedOut]
+     * named as never observed — non-empty only when S10b's checklist concluded there rather than at
+     * [org.ort.app.ui.setup.RigLinkState.Verified]. **The absolute constraint this parameter exists
+     * to satisfy: a non-empty list here must never render as if the link were fully verified** —
+     * neither the marker dot, nor the subtitle, nor the section header may say "verified" outright
+     * while this is non-empty (constitution I). Empty (the default) for a genuinely complete
+     * verification and for the USB lane, which has no equivalent partial-verification outcome
+     * (`SetupActivity.onConnectRigTransport`'s own USB branch never sets this, the same way it
+     * never carries a Bluetooth attempt's own measured [verifyDurationSeconds]). */
+    missingCapabilities: List<String> = emptyList(),
 ) {
     when (state) {
         is RigStatus.State.Connected -> RadioVerifiedConnected(
@@ -80,6 +92,7 @@ public fun RadioVerifiedScreen(
             transportLabel,
             verifyDurationSeconds,
             sameCommandSetAsUsb,
+            missingCapabilities,
             onContinue,
             onChangeRadio,
         )
@@ -104,11 +117,20 @@ internal fun radioVerifiedSubtitle(
     transportLabel: String?,
     verifyDurationSeconds: Double?,
     sameCommandSetAsUsb: Boolean,
+    /** R-1013/R-1014: non-zero only for a [org.ort.app.ui.setup.RigLinkState.VerifyTimedOut] link —
+     * see [RadioVerifiedScreen]'s own [missingCapabilities] doc comment for the absolute constraint
+     * this exists to satisfy. Takes precedence over [verifyDurationSeconds] (which is `null` for
+     * this case regardless — `SetupActivity.onRigLinkStateChanged` only ever measures a duration for
+     * a genuine [org.ort.app.ui.setup.RigLinkState.Verified]), never claiming "verified" when this
+     * is positive. */
+    missingCapabilityCount: Int = 0,
 ): String {
-    val verifyClause = if (verifyDurationSeconds != null) {
-        "identified and verified in %.1f s".format(verifyDurationSeconds)
-    } else {
-        "identified and verified"
+    // R-1014: "partially confirmed", never a variant of the word "verified" — the absolute
+    // constraint is that this subtitle must never read as Verified for a partial link.
+    val verifyClause = when {
+        missingCapabilityCount > 0 -> "identified, command set partially confirmed"
+        verifyDurationSeconds != null -> "identified and verified in %.1f s".format(Locale.ROOT, verifyDurationSeconds)
+        else -> "identified and verified"
     }
     if (transportLabel == null) return verifyClause.replaceFirstChar { it.uppercase() }
     val clauses = mutableListOf(transportLabel, verifyClause)
@@ -140,18 +162,31 @@ private fun RadioVerifiedConnected(
     transportLabel: String?,
     verifyDurationSeconds: Double?,
     sameCommandSetAsUsb: Boolean,
+    missingCapabilities: List<String>,
     onContinue: () -> Unit,
     onChangeRadio: () -> Unit,
 ) {
+    val partiallyVerified = missingCapabilities.isNotEmpty()
     SetupScaffold(
         step = SetupStep.RADIO_VERIFIED,
         title = "${SettingsPolling.stripManufacturerPrefix(connected.descriptor)} connected",
-        subtitle = radioVerifiedSubtitle(transportLabel, verifyDurationSeconds, sameCommandSetAsUsb),
+        subtitle = radioVerifiedSubtitle(
+            transportLabel,
+            verifyDurationSeconds,
+            sameCommandSetAsUsb,
+            missingCapabilityCount = missingCapabilities.size,
+        ),
         titleLeading = {
             Box(
                 modifier = Modifier
                     .size(9.dp)
-                    .background(OrtColors.accentGreen, CircleShape)
+                    // R-1013/R-1014: the absolute constraint applied to the one marker every other
+                    // screen reads at a glance — amber, never the plain green "fully verified" dot,
+                    // the moment this link's own checklist concluded at VerifyTimedOut.
+                    .background(
+                        if (partiallyVerified) OrtColors.accentAmber else OrtColors.accentGreen,
+                        CircleShape,
+                    )
                     .testTag("setup-radio-verified-marker"),
             )
         },
@@ -171,7 +206,16 @@ private fun RadioVerifiedConnected(
             }
         },
     ) {
-        RigVerifiedContent(connected)
+        if (partiallyVerified) {
+            Banner(
+                title = "Command set only partially verified",
+                body = "Not observed: ${missingCapabilities.joinToString(", ")}. Normal for a quiet band " +
+                    "or an idle control — reconnect later from Settings if it matters for this session.",
+                tone = BannerTone.DEGRADED,
+                modifier = Modifier.fillMaxWidth().testTag("setup-radio-verified-partial-banner"),
+            )
+        }
+        RigVerifiedContent(connected, partiallyVerified = partiallyVerified)
     }
 }
 
@@ -211,9 +255,15 @@ private fun RadioVerifiedStale(stale: RigStatus.State.Stale, onReconnect: () -> 
 private val STALE_SINCE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT)
 
 /** The reading grid + verified command list — shared with [RadioUsbScreen]'s defensive
- * `Connected`/`Stale` fallback rendering so the two screens never drift on what "verified" shows. */
+ * `Connected`/`Stale` fallback rendering so the two screens never drift on what "verified" shows.
+ * [partiallyVerified] (R-1013/R-1014, default `false` — [RadioUsbScreen]'s own call site never
+ * has a partial-verification outcome to report) only renames the section header away from the
+ * word "Verified" itself; the per-command reference rows below it are the protocol's own generic
+ * command set, not a per-session per-capability observation this function has the data to redraw
+ * precisely — see this round's own report for why that deeper precision is left as a known gap
+ * rather than fabricated here. */
 @Composable
-internal fun RigVerifiedContent(connected: RigStatus.State.Connected) {
+internal fun RigVerifiedContent(connected: RigStatus.State.Connected, partiallyVerified: Boolean = false) {
     Column {
         Text(text = "Reading now".uppercase(), style = OrtType.sectionLabel, color = OrtColors.textFaint)
         Row(
@@ -259,7 +309,11 @@ internal fun RigVerifiedContent(connected: RigStatus.State.Connected) {
         }
     }
     Column {
-        Text(text = "Verified command set".uppercase(), style = OrtType.sectionLabel, color = OrtColors.textFaint)
+        Text(
+            text = (if (partiallyVerified) "Command set" else "Verified command set").uppercase(),
+            style = OrtType.sectionLabel,
+            color = OrtColors.textFaint,
+        )
         listOf(
             "FQ" to "Frequency, per band",
             "BY" to "Squelch state — attributes each over to a band",

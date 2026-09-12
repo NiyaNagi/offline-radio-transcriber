@@ -34,6 +34,7 @@ import org.ort.app.ui.components.RowTone
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
+import java.util.Locale
 
 /** S10b's whole view-state (`Setup-Rig-Bluetooth.dc.html`, D33/D34, FR-RIG-14/15). [linkState] is
  * `null` before the operator has picked a paired device at all — no checklist row renders yet. */
@@ -91,7 +92,10 @@ public fun RigBluetoothScreen(
         onBack = onBack,
         bottomActions = {
             RigBluetoothBottomActions(
-                verified = state.linkState is RigLinkState.Verified,
+                // R-1013/R-1014: VerifyTimedOut is partial success (Identified genuinely happened) —
+                // Continue enables the same as a full Verified, never IdentifyTimedOut (nothing ever
+                // answered at all). See RigLinkPort.kt's own class doc comment for the reasoning.
+                verified = state.linkState is RigLinkState.Verified || state.linkState is RigLinkState.VerifyTimedOut,
                 onContinue = onContinue,
                 onContinueWithoutConnecting = onContinueWithoutConnecting,
                 onUseUsbInstead = onUseUsbInstead,
@@ -202,9 +206,33 @@ private fun RigBluetoothLinkSection(linkState: RigLinkState, onRequestBluetoothP
             label = "Verify the command set",
             state = checklistStateFor(linkState, stage = 3),
             modifier = Modifier.testTag("setup-rig-bt-checklist-verify"),
+            // R-1014: the one place this checklist names a partial result rather than collapsing to
+            // done/in-progress/pending — see verifyPartialDetail's own doc comment.
+            detail = (linkState as? RigLinkState.VerifyTimedOut)?.let(::verifyPartialDetail),
         )
     }
 }
+
+/**
+ * R-1014: the third checklist row's own detail line for [RigLinkState.VerifyTimedOut] — names how
+ * many of how many declared capabilities were actually seen and which ones were not, so the
+ * operator can tell from the screen alone what proceeding costs them (constitution I). Never a bare
+ * "partially verified" with no specifics — [state.missingCapabilities] already carries exactly the
+ * labels [RigPickerCatalogue.capabilityLabel] would draw for a full [RigLinkState.Verified], so this
+ * is the same vocabulary, not a separate one invented for the partial case.
+ */
+internal fun verifyPartialDetail(state: RigLinkState.VerifyTimedOut): String {
+    val seen = state.seenCapabilities.size
+    val total = seen + state.missingCapabilities.size
+    return "$seen of $total seen — missing " + state.missingCapabilities.joinToString(", ")
+}
+
+/** R-1013: the identify-timeout banner's own bound clause — the real, applied [timeoutMillis], never
+ * a hardcoded number, formatted with [Locale.ROOT] so a comma-decimal locale never renders a
+ * malformed sentence (constitution II's own history: two `:data` tests once passed on Windows and
+ * failed on Linux for exactly this reason). */
+internal fun formatTimeoutSeconds(timeoutMillis: Long): String =
+    "%.1f".format(Locale.ROOT, timeoutMillis / 1_000.0) + "s"
 
 /**
  * R-1005c (device field report, `Setup-Rig-Bluetooth.dc.html` redrawn 2026-09-12) — the escape
@@ -278,17 +306,34 @@ private fun PairedDeviceRow(device: PairedDevice, selected: Boolean, onSelect: (
     )
 }
 
-private enum class ChecklistRowState { DONE, IN_PROGRESS, PENDING }
+/** [PARTIAL] is R-1014's own third state, distinct from both [DONE] and [PENDING] — never rendered
+ * by colour alone (constitution VII): [ChecklistRow]'s own icon draws it as an amber ring around a
+ * filled dot, a shape none of the other three share. */
+private enum class ChecklistRowState { DONE, IN_PROGRESS, PARTIAL, PENDING }
 
 /** Which stage (1 = link open, 2 = identify, 3 = verify) [linkState] has reached — see this file's
- * own class doc comment for why identify/verify collapse to consecutive states in this seam. */
+ * own class doc comment for why identify/verify collapse to consecutive states in this seam.
+ * [RigLinkState.VerifyTimedOut] is handled as its own case, not folded into `reached`: it is
+ * neither a plain "further along" state (stage 3 is not `DONE`, nothing further can complete this
+ * attempt) nor a total failure (stages 1 and 2 genuinely happened, unlike [RigLinkState.Lost]/
+ * [RigLinkState.Failed]/[RigLinkState.NoPermission]/[RigLinkState.IdentifyTimedOut], which all
+ * collapse the whole checklist — the banner alone carries their detail, per this file's own
+ * established pattern). */
 private fun checklistStateFor(linkState: RigLinkState, stage: Int): ChecklistRowState {
+    if (linkState is RigLinkState.VerifyTimedOut) {
+        return if (stage <= 2) ChecklistRowState.DONE else ChecklistRowState.PARTIAL
+    }
     val reached = when (linkState) {
         RigLinkState.Opening -> 0
         RigLinkState.Open -> 1
         is RigLinkState.Identified -> 2
         is RigLinkState.Verified -> 3
-        is RigLinkState.Lost, is RigLinkState.Failed, RigLinkState.NoPermission -> -1
+        is RigLinkState.Lost, is RigLinkState.Failed, RigLinkState.NoPermission,
+        is RigLinkState.IdentifyTimedOut,
+        // Unreachable: the guard above already returns for VerifyTimedOut. Named here only so this
+        // `when` stays exhaustive against a future RigLinkState case the same way it always has.
+        is RigLinkState.VerifyTimedOut,
+        -> -1
     }
     return when {
         reached < 0 -> ChecklistRowState.PENDING
@@ -311,11 +356,33 @@ private fun bannerFor(linkState: RigLinkState): Pair<String, String>? = when (li
     // now carries a real "Grant permission" action ([RigBluetoothScreen]'s own doc comment).
     RigLinkState.NoPermission ->
         "Nearby devices permission is needed" to "Grant it below, or use USB instead."
+    // R-1013: distinct in kind from Lost/Failed — the link is still open and nothing failed to
+    // open, it is simply silent. States what was tried (opened, waited) and for how long, never a
+    // generic error and never a hardcoded number (constitution I) — see RigLinkState.IdentifyTimedOut's
+    // own doc comment for why Continue stays disabled here while "Continue without connecting" is
+    // the honest way forward.
+    is RigLinkState.IdentifyTimedOut ->
+        "The radio never answered" to
+            "The link opened, but nothing came back within ${formatTimeoutSeconds(linkState.timeoutMillis)}. " +
+            "Check the radio is powered on and its data/CAT mode is on, then pick it again — " +
+            "or continue without connecting."
+    // R-1014: partial success, not a failure banner in the Lost/Failed sense — the checklist's own
+    // third row (RigBluetoothLinkSection's own detail=) already names the specifics; this banner
+    // only frames it as a choice being made, not a fault, since Continue is enabled for this state.
+    is RigLinkState.VerifyTimedOut ->
+        "Identified, but not every capability answered" to
+            "Continuing will log this session with the command set only partially confirmed — see " +
+            "the checklist below for exactly what was not seen."
     else -> null
 }
 
 @Composable
-private fun ChecklistRow(label: String, state: ChecklistRowState, modifier: Modifier = Modifier) {
+private fun ChecklistRow(
+    label: String,
+    state: ChecklistRowState,
+    modifier: Modifier = Modifier,
+    detail: String? = null,
+) {
     Row(
         modifier = modifier.fillMaxWidth().padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -328,16 +395,27 @@ private fun ChecklistRow(label: String, state: ChecklistRowState, modifier: Modi
             ChecklistRowState.IN_PROGRESS -> Canvas(modifier = Modifier.size(18.dp)) {
                 drawCircle(color = OrtColors.accentGreen, style = Stroke(2.dp.toPx()))
             }
+            // R-1014: a ring around a filled dot — a shape distinct from DONE's solid disc and
+            // IN_PROGRESS's plain ring, not merely a different colour (constitution VII).
+            ChecklistRowState.PARTIAL -> Canvas(modifier = Modifier.size(18.dp)) {
+                drawCircle(color = OrtColors.accentAmber, style = Stroke(2.dp.toPx()))
+                drawCircle(color = OrtColors.accentAmber, radius = size.minDimension / 2 - 5.dp.toPx())
+            }
             ChecklistRowState.PENDING -> Box(
                 modifier = Modifier
                     .size(18.dp)
                     .background(androidx.compose.ui.graphics.Color.Transparent, CircleShape),
             )
         }
-        Text(
-            text = label,
-            style = OrtType.control,
-            color = if (state == ChecklistRowState.PENDING) OrtColors.textLow else OrtColors.textBody,
-        )
+        Column {
+            Text(
+                text = label,
+                style = OrtType.control,
+                color = if (state == ChecklistRowState.PENDING) OrtColors.textLow else OrtColors.textBody,
+            )
+            if (detail != null) {
+                Text(text = detail, style = OrtType.subLine, color = OrtColors.accentAmberText)
+            }
+        }
     }
 }

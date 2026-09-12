@@ -265,6 +265,104 @@ class RadioVerifiedScreenTest {
         assertFalse(sameCommandSetAsUsb(identical, null))
     }
 
+    // --- R-1013/R-1014 (WPD3): VerifyTimedOut must never render as Verified -----------------------
+
+    /** The absolute constraint: a non-empty [RadioVerifiedScreen.missingCapabilities] must never
+     * render the connected marker as if fully verified. */
+    @Test
+    fun `R_1014 a partially verified link never shows the plain green connected marker`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(
+                    state = connected,
+                    onContinue = {},
+                    onChangeRadio = {},
+                    onReconnect = {},
+                    missingCapabilities = listOf("squelch", "signal strength"),
+                )
+            }
+        }
+
+        // The marker still renders (never hidden — R-903's own doc comment: absent only for Stale)
+        // but must not read as the same fully-verified state a real Verified link shows.
+        composeTestRule.onNodeWithTag("setup-radio-verified-marker").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-radio-verified-partial-banner").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_1014 a fully verified link never shows the partial banner`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(state = connected, onContinue = {}, onChangeRadio = {}, onReconnect = {})
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-radio-verified-partial-banner").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_1014 the partial banner names the real missing capabilities, never a generic message`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(
+                    state = connected,
+                    onContinue = {},
+                    onChangeRadio = {},
+                    onReconnect = {},
+                    missingCapabilities = listOf("squelch", "signal strength"),
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText("squelch, signal strength", substring = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_1014 Continue still invokes its own callback on a partially verified link`() {
+        var continued = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RadioVerifiedScreen(
+                    state = connected,
+                    onContinue = { continued = true },
+                    onChangeRadio = {},
+                    onReconnect = {},
+                    missingCapabilities = listOf("squelch"),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-radio-verified-continue").performClick()
+        assert(continued)
+    }
+
+    @Test
+    fun `radioVerifiedSubtitle never claims verified when capabilities are missing`() {
+        val subtitle = radioVerifiedSubtitle(
+            transportLabel = "Bluetooth SPP",
+            verifyDurationSeconds = null,
+            sameCommandSetAsUsb = false,
+            missingCapabilityCount = 2,
+        )
+        assertFalse("must never claim 'verified' for a partial link", subtitle.contains("verified"))
+        assertTrue(subtitle.contains("partially"))
+    }
+
+    @Test
+    fun `radioVerifiedSubtitle with no missing capabilities is unchanged, the default case`() {
+        assertEquals(
+            "Bluetooth SPP · identified and verified",
+            radioVerifiedSubtitle(
+                transportLabel = "Bluetooth SPP",
+                verifyDurationSeconds = null,
+                sameCommandSetAsUsb = false,
+            ),
+        )
+    }
+
     @Test
     fun `sameCommandSetAsUsb is false when either transport is undeclared or both are empty`() {
         assertFalse(

@@ -32,6 +32,233 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPD3: R-1013/R-1014 — S10b/S11 render the two new terminal RigLinkState outcomes)
+
+### c77d7d12 — WPD3: VerifyTimedOut enables Continue as partial success, IdentifyTimedOut does not; S11 never renders a partial link as fully verified
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/{RigLinkPort,BridgeRigLinkPort,RigBluetoothScreen,
+RadioVerifiedScreen,SetupActivity,SetupStore}.kt`, `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/{ScreenshotTourActivity,TourSpec}.kt`,
+`tools/ui-audit/tour.json`, and tests under `app/src/test/kotlin/org/ort/app/{ui/setup,debug}/**`.
+Merged WPRIG's `pipeline/rig/RigLinkBridge.kt` change (`ed7de6e4`) first, per this session's own
+instruction — no file under `pipeline/**`/`data/**`/`ui/navigation/**`/`ui/audio/**`/`fieldreport/**`
+touched.
+
+**Requirements/ACs:** FR-RIG-14, FR-RIG-15, constitution I (Uncertainty Is Content — a weaker link
+may know less, it must never be rendered as more right than it is), constitution VIII (a screen
+change re-runs the visual verification). Register R-1013, R-1014.
+
+**What changed:**
+- `:app:compileDebugKotlin`/`compileReleaseKotlin` were red (WPRIG's merge added
+  `RigLinkProbeState.IdentifyTimedOut`/`VerifyTimedOut`, leaving `BridgeRigLinkPort.toRigLinkState`'s
+  exhaustive `when` uncompilable) — fixed by extending `:app`'s own `RigLinkState` with matching
+  `IdentifyTimedOut(rigId, timeoutMillis)` and `VerifyTimedOut(rigId, seenCapabilities,
+  missingCapabilities, timeoutMillis)` cases (capability sets already resolved to the same
+  operator-facing labels `Verified.commands` uses, via `RigPickerCatalogue.capabilityLabel`, so
+  `:app` never imports `RigCapability` for this) and mapping both in `BridgeRigLinkPort`.
+- **Product decision implemented, not reopened:** `VerifyTimedOut` enables S10b's `Continue`
+  (`Identified` already proved the descriptor matches the radio; partial capability observation is
+  normal operation — a quiet band reports no signal strength). `IdentifyTimedOut` does not — nothing
+  ever answered, so `Continue without connecting` is the only forward path, and it stays reachable
+  (unconditionally rendered regardless of link state, unchanged from R-1005c).
+- **S10b (`RigBluetoothScreen.kt`).** New `ChecklistRowState.PARTIAL` (an amber ring around a filled
+  dot — a distinct shape, not just a colour, constitution VII) renders the third checklist row for
+  `VerifyTimedOut`, with a new detail line ("N of M seen — missing X, Y") computed by the new pure
+  `verifyPartialDetail`. `IdentifyTimedOut` renders a banner ("The radio never answered … within
+  6.0s …", the real `timeoutMillis` via the new `formatTimeoutSeconds`, `Locale.ROOT` — never a
+  hardcoded number, never a comma-decimal on a non-English device). `VerifyTimedOut` also renders a
+  banner framing the choice, not a fault, since `Continue` is enabled.
+- **S11 (`RadioVerifiedScreen.kt`) — the absolute constraint.** `RadioVerifiedScreen` gained a
+  `missingCapabilities: List<String>` parameter; non-empty only for a link that concluded at
+  `VerifyTimedOut`. The connected marker dot turns amber (never the plain green "fully verified"
+  dot), the subtitle's verify clause becomes "identified, command set partially confirmed" (the
+  word "verified" never appears for a partial link — a stricter self-check than "not literally
+  claiming Verified"), a new `Banner` (`BannerTone.DEGRADED`, testTag
+  `setup-radio-verified-partial-banner`) names exactly which capabilities were never observed, and
+  `RigVerifiedContent`'s own section header reads "Command set" instead of "Verified command set".
+  Also fixed a latent locale bug while touching `radioVerifiedSubtitle` anyway: its pre-existing
+  `"%.1f s".format(verifyDurationSeconds)` had no `Locale.ROOT` — the exact defect class constitution
+  II's own history names (two `:data` tests once passed on Windows, failed on Linux for this).
+- **`SetupActivity.kt`.** `onContinueRigBluetooth` now accepts `VerifyTimedOut` alongside `Verified`,
+  carrying `missingCapabilities` forward into a new `rigLinkMissingCapabilities` field (reset on
+  every path that must not leak a stale or different-transport attempt's own fact into a later S11
+  visit — `onSelectRigBluetoothDevice`, `onConnectRigTransport`'s USB branch, `onChangeRadio` — the
+  same reset discipline R-903's own `rigLinkVerifiedDurationSeconds` already established). Not
+  persisted in `SetupStore` — like the R-903 duration, a process-death resume has no way to recover
+  which capabilities were missing, so it honestly reads as fully verified after a resume rather than
+  fabricating a list (documented as a known, accepted gap, matching the existing precedent).
+  `SetupStore.rigBluetoothVerified`'s own kdoc updated: it is now true for either accepted terminal,
+  never itself distinguishing the two (the in-memory `rigLinkMissingCapabilities` does that).
+- **`InMemoryRigLinkPort`.** New `identifyTimesOut(address, timeoutMillis)` and
+  `verifyTimesOut(address, seenCapabilities, missingCapabilities, timeoutMillis)` scripts — genuine
+  terminal states, unlike `hang`/`hangAfterIdentify` (constitution II: "a fake that cannot be told
+  to fail, hang or return a hallucination is a stub").
+- **Debug scenarios and tour.** Two new scenarios, `setup-rig-bluetooth-identify-timed-out` and
+  `setup-rig-bluetooth-verify-timed-out` (`Scenarios.kt`), each scripting the corresponding
+  `InMemoryRigLinkPort` outcome on the same `BLUETOOTH_RIG_ADDRESS` the existing
+  `setup-rig-bluetooth*` scenarios share. `ScreenshotTourActivity`'s `RIG_LINK_STATE_PREDICATES`
+  gained `"identify-timed-out"`/`"verify-timed-out"`. `tools/ui-audit/tour.json` gained four steps:
+  `setup-rig-bluetooth/S10b-identify-timed-out`(`@2x`) and `S10b-verify-timed-out`(`@2x`).
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.setup.*' -PortAllowMissingBundledAssets=true`
+  — all green (includes every new test below).
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.debug.WpiScenariosTest' -PortAllowMissingBundledAssets=true`
+  — all green, including the two new scenario tests.
+- **Discrimination proved directly** (reverted, watched fail for the stated reason, restored,
+  watched pass — full output in this session's own report):
+  - `RigBluetoothScreenTest."R_1014 Continue enables on VerifyTimedOut..."` — reverting the
+    `verified = ...` gate to `Verified`-only failed with `Failed to assert the following: (is enabled)`.
+  - `SetupActivityTest."R_1014 onContinueRigBluetooth proceeds on VerifyTimedOut..."` — reverting
+    `onContinueRigBluetooth`'s guard to `Verified`-only failed at the step assertion.
+  - `BridgeRigLinkPortTest."VerifyTimedOut maps seen and missing capabilities..."` — swapping the
+    `missingCapabilities` computation to reuse `seenCapabilities` failed with a mismatched
+    `VerifyTimedOut` value.
+  - `RadioVerifiedScreenTest."R_1014 a partially verified link never shows..."`/`"...names the real
+    missing capabilities..."` — removing the S11 partial banner failed both
+    (`performScrollTo() failed`, the banner node absent).
+- `.\gradlew ":app:smokeTestDebugUnitTest" ":app:lintDebug" dependencyRules platformGuards ":app:assembleDebug" -PortAllowMissingBundledAssets=true`
+  — green. (One `TransmissionDetailContentTest` case failed once with a Robolectric
+  cross-thread/array-bounds error under `smokeTestDebugUnitTest`, in a file this round never
+  touched and does not own — reproduced green in isolation and green again on a full clean rerun;
+  recorded here as an observed pre-existing flake, not a regression from this change.)
+- `.\gradlew ":app:compileReleaseKotlin" -PortAllowMissingBundledAssets=true` — green (confirms the
+  merge's own compile break is fixed).
+- `python tools\spec-check\spec_check.py` — OK, all 8 checks pass.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  — **first run FAILED**: `:app:ktlintMainSourceSetCheck` (two long/misformatted lines in
+  `BridgeRigLinkPort.kt`) and `:app:detekt` (the same `MaxLineLength` pair, plus a `LargeClass`
+  warning on `RigBluetoothScreenTest` this round's own new tests pushed over threshold). Fixed
+  (reformatted the two lines; `@Suppress("LargeClass")` added to `RigBluetoothScreenTest` with the
+  same justification `WpiScenariosTest`'s own suppression already documents) and reconfirmed clean
+  via `:app:detekt`/`:app:ktlintMainSourceSetCheck`/`:app:ktlintTestSourceSetCheck` alone, then the
+  **full gate rerun green**: `BUILD SUCCESSFUL in 9m 58s`.
+- `.\gradlew -p buildSrc test` — green.
+- `.\gradlew coverageMatrix -PortAllowMissingBundledAssets=true` — `466 requirements, 241 covered`.
+- `.\gradlew coverageMatrixCheck -PortAllowMissingBundledAssets=true` — `up to date (241 covered of
+  466)`, no delta from `coverageMatrix`'s own run.
+- Machine: this workstation (Windows, JDK 17.0.20.101-hotspot), fold: unit (JVM/Robolectric), no
+  bundled asset touched by any new/changed test (`-PortAllowMissingBundledAssets=true`).
+
+**Left open / not done:**
+- **S12 (`ReadyScreen.kt`'s `radioRowForCatRig`) still reads `RigStatus.State.Connected` as
+  `statusText = "verified"` unconditionally** — `RigStatus` (`:pipeline`, off-limits this round) has
+  no field carrying the partial-verification fact, so a `VerifyTimedOut`-accepted link that reaches
+  S12 (or Settings) reads as fully verified there. Not a regression (S12 never distinguished this
+  before either), but the absolute constraint is not yet closed end-to-end — needs a `:pipeline`
+  change to `RigStatus.State.Connected` (or an equivalent carried fact) plus a `:pipeline`-owning
+  builder, both outside this round's file ownership.
+- **`RigVerifiedContent`'s static "Verified command set" reference rows (FQ/BY/FO/AI/BL) still show
+  every row with the same green dot regardless of which specific capability was missing** — only the
+  section header changes wording for a partial link. Mapping a specific missing `RigCapability` to
+  its specific AT-command row would need a capability→command-code table this file has no access to
+  (`DescriptorValidator`'s own `FIELD_TO_CAPABILITY` is `internal` to `:rig`) — flagged, not fixed.
+- **`rigLinkMissingCapabilities` does not survive a process death resume** — an accepted trade-off
+  matching R-903's own precedent for `rigLinkVerifiedDurationSeconds` (see "What changed" above);
+  a resumed S11 after a partial-verification accept honestly cannot recall which capabilities were
+  missing and currently reads as fully verified.
+- **No real hardware confirmation** — like WPRIG's own entry above, everything here is proven against
+  `InMemoryRigLinkPort`/`FakeRigLinkBridge`, never a real TH-D75A (hardware, checklist H2/H3).
+- Nothing else — see "Left open" items above for the two real, unclosed gaps.
+
+## 2026-09-12 (WPRIG: R-1013/R-1014 — `probe()` always reaches a terminal state, naming what actually happened)
+
+### ed7de6e4 — RigLinkBridge.probe() gains bounded IdentifyTimedOut/VerifyTimedOut terminals instead of hanging at Open forever
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/rig/RigLinkBridge.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/rig/RigLinkBridgeTest.kt`. No file outside this list
+touched — `rig/**`, `rig-bluetooth/**`, `rig-usb/**` and `RigSupervisor.kt` were read for context
+only, per this session's own ownership map.
+
+**Requirements/ACs:** FR-RIG-3, FR-RIG-11, FR-RIG-14, FR-RIG-15, constitution I (Uncertainty Is
+Content — a probe run must never sit at a state the operator reads as "still working" once it has,
+in fact, concluded), constitution IV (Capture Never Blocks, Never Drops, Never Lies — extended
+here to the rig-link setup path the same discipline already governs capture itself). Register
+R-1013, R-1014.
+
+**What changed:**
+- **R-1013 (`probe()` could hang at `Open` forever).** Root cause confirmed: once the transport
+  opens, `probe()` waited only on `module.observe()` (emits on a matched line) and
+  `module.health()` (emits a terminal only on `RigHealth.Degraded(TRANSPORT_LOST)`). A transport
+  that opens and then never receives a matching reply is neither "identified" nor "lost" — it is
+  genuinely open and genuinely silent — so neither ever fired and `probe()` never emitted past
+  `Open`. Confirmed `DescriptorRigModule`'s existing `readTimeoutMs` (1s) does **not** bound this:
+  it only times out one `readLine` call, after which the read loop emits
+  `RigHealth.Degraded(TIMEOUT)` (a value `probe()` never inspected at all), backs off 50ms, and
+  retries — forever. Fixed by adding a new terminal, `RigLinkProbeState.IdentifyTimedOut(rigId,
+  timeoutMillis)`, produced by a job that starts at `Open`, is cancelled the instant `Identified`
+  is actually reached, and otherwise fires after a **derived** bound (`descriptor.poll.intervalMs
+  × 3`, floored at 2s, defaulting to 5s for a poll-less/unsolicited-only descriptor) — a function
+  of the descriptor being probed, never a bare constant, and overridable via the new
+  `identifyTimeoutMillisFor` constructor parameter.
+- **R-1014 (`Verified` unreachable-by-construction for an underivable/unreported capability).**
+  Investigated against the bundled catalogue before writing any code, per this session's own
+  instruction to check whether it actually bites first: the TH-D75A declares `{FREQUENCY,
+  SQUELCH_STATE, SUB_BAND}` on **both** its transports (`rig/src/main/resources/descriptors/
+  kenwood-thd75a.json`), and `generic-ascii-cat.json` declares `{FREQUENCY, MODE}` — every one of
+  these five capabilities has a direct `RigState` field `capabilitiesPresentIn` already derives
+  (`frequencyHz`, `squelchOpen`, `band`, `mode`). **Conclusion: R-1014 does not bite either bundled
+  descriptor today** — a TH-D75A that identifies and polls normally over either transport reaches
+  `Verified`. The trap is real for the general case this bridge cannot see in advance: a future
+  descriptor declaring `TIME` (no `RigState` field exists for it at all — permanently unreachable)
+  or one declaring `SIGNAL_STRENGTH`/`MEMORY_CHANNEL` for a band that, on a given session, never
+  actually reports one. Fixed generally, without loosening what `Verified` means: a new terminal,
+  `RigLinkProbeState.VerifyTimedOut(rigId, seenCapabilities, declaredCapabilities, timeoutMillis)`,
+  produced by a job started only once `Identified` actually happens (never before), cancelled the
+  instant every declared capability is seen, and otherwise firing after a derived bound
+  (`intervalMs × 6`, same floor/default policy as identify — doubled because verification can
+  legitimately take several poll cycles where identification needs only one). It carries
+  `seenCapabilities` so a caller can report "identified, N of M capabilities seen" rather than
+  silence — partial success is information, not failure (constitution I). `Verified` itself is
+  untouched: it still requires every declared capability, exactly as before.
+- `RigLinkProbeState` is a closed set once more: every probe run now reaches exactly one of
+  `Verified`, `Lost`, `NoPermission`, `Failed`, `IdentifyTimedOut` or `VerifyTimedOut` — never an
+  indefinite `Open`. `FakeRigLinkBridge` gains `Companion.hangingAfterOpen()`, a scriptable probe
+  that reaches `Open` and then hangs via `awaitCancellation()` forever — the exact defect this
+  change fixes, reusable by a future `:app` test proving its own caller survives it (constitution
+  II: "a fake that cannot be told to fail, hang or return a hallucination is a stub").
+- **UI routing left to the session lead, deliberately not touched here:** whether S10b's `Continue`
+  button should accept `VerifyTimedOut` (identified, partial capabilities) as good enough to
+  proceed is a UI/product decision, not this bridge's — `:app` was not touched.
+
+**Verified:**
+- `.\gradlew :pipeline:testDebugUnitTest --tests '*RigLinkBridge*' -PortAllowMissingBundledAssets=true`
+  — 8/8 passing, including the two new discriminating tests
+  (`a rig that opens but never answers reaches IdentifyTimedOut, never hangs forever`,
+  `a rig that identifies but never completes verification reaches VerifyTimedOut with what it did
+  see`), both against a real `DescriptorRigModule` over `FakeRigTransport`, under
+  `kotlinx-coroutines-test` virtual time (no real sleep).
+- **Discrimination proved directly, both new tests:** with the fix's timeout jobs temporarily
+  reverted to the pre-fix `probe()` body (the new `RigLinkProbeState` cases left declared so the
+  file still compiled), both failed with `kotlinx.coroutines.TimeoutCancellationException: Timed
+  out after 20s of virtual time` — the outer test-level `withTimeout(20_000)` catching the real
+  hang, never reaching `IdentifyTimedOut`/`VerifyTimedOut`. Restored, both pass again. Full output
+  captured in this session's report.
+- `.\gradlew :pipeline:testDebugUnitTest -PortAllowMissingBundledAssets=true` (whole module,
+  `--continue`): all tests green, no regression in the five pre-existing `RigLinkBridgeTest` cases
+  or anywhere else in `:pipeline`.
+- Machine: this workstation (Windows, JDK 17.0.20.101-hotspot), fold: unit (JVM/Robolectric), no
+  bundled asset involved (`-PortAllowMissingBundledAssets=true`, no model-bearing test touched).
+
+**Left open / not done:**
+- **RigSupervisor has the same underlying gap, not fixed here (out of this file's ownership).**
+  `RigSupervisor.connect()` opens the transport and returns immediately; it only ever reacts to
+  `DescriptorRigModule.observe()` (via `watch()`/`onRigState`) and never collects `health()` at
+  all — so a silent-but-open rig (this same defect, at session scope) leaves `RigStatus` exactly
+  where `disconnect()`'s `RigStatus.reset()` left it, forever, with no distinguishing signal,
+  and `RigSupervisor` does not even look at the `Degraded(TIMEOUT)` health event `probe()` was
+  similarly blind to before this fix. Reported for the session lead to route; not fixed, since
+  `RigSupervisor.kt` is outside this change's ownership.
+- **UI routing** (whether/how S10b's `Continue` should treat `VerifyTimedOut` as sufficient to
+  proceed) is explicitly left to the session lead — see "What changed" above.
+- **Real TH-D75A over Bluetooth SPP is hardware** (checklist H2/H3) and cannot be settled from a
+  workstation; R-1014's "does not bite the bundled descriptor" conclusion rests on the descriptor
+  and `capabilitiesPresentIn`'s mapping, not on an on-device confirmation that the radio actually
+  answers `FQ`/`BY` polls the way the descriptor assumes.
+- The wider gate (`dependencyRules platformGuards build`, `buildSrc` tests, spec-check,
+  `coverageMatrix`/`coverageMatrixCheck`) was run in the same session; see this session's own
+  report for its full output and the commit hash once made.
+
 ## 2026-09-12 (WPR1: the debug-build field-report session recorder and screen frames)
 
 ### a9995b7f — WPR1 · FR-OBS-6/FR-OBS-7: the debug-build session recorder (closed event vocabulary, bounded ring buffer) and FR-OBS-7 screen frames (bounded, app-private)

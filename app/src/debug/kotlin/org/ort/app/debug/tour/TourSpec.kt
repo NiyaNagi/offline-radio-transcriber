@@ -40,7 +40,8 @@ import org.json.JSONObject
  * **R-840**: `reviewSessionView` (`SESSION`|`DIGEST`) — a companion to `reviewSession`, the same
  * relationship `frequencyInitialView` has to `frequency`; lands `Earlier nights` on the seeded
  * session's `Digest` (DG01/DG05) instead of its `Session` (DG04) detail. **R-900** (register, A2's
- * spot-check on tour run 3): `rigLinkState` (`"connecting"`|`"identified"`|`"verified"`|`"dropped"`)
+ * spot-check on tour run 3): `rigLinkState` (`"connecting"`|`"identified"`|`"verified"`|`"dropped"`|
+ * `"identify-timed-out"`|`"verify-timed-out"` — the last two, R-1013/R-1014, WPD3's own round)
  * — a *setup*-step-only key, read directly by [ScreenshotTourActivity.renderSetupStep] exactly like
  * `rigBluetoothAddress` (never through [TourIds.resolveSeed]), naming the checklist's own inner
  * `RigLinkState` the settle must observe (via `SetupActivity.rigLinkStateForTest`) before capturing —

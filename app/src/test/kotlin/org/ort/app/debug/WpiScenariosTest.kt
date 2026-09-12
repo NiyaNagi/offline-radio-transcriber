@@ -376,6 +376,57 @@ class WpiScenariosTest {
         assertTrue("expected a Lost state, got $emissions", emissions.last() is RigLinkState.Lost)
     }
 
+    /** R-1013 (WPD3, this round): the link opens but the descriptor's identify sequence never
+     * produces anything — a genuine terminal state, not a hang, so the tour can actually capture it
+     * (`InMemoryRigLinkPort.identifyTimesOut`'s own kdoc). */
+    @Test
+    @Requirement("R-1013")
+    fun `setup-rig-bluetooth-identify-timed-out scripts the address to a real terminal IdentifyTimedOut`() = runTest {
+        Scenarios.load(context, "setup-rig-bluetooth-identify-timed-out")
+
+        val port = requireNotNull(DebugRigLinkPortOverride.activeOverride)
+        val emissions = port.connect(rigBluetoothTestAddress, "kenwood-thd75a").toList()
+        assertEquals(
+            listOf(
+                RigLinkState.Opening,
+                RigLinkState.Open,
+                RigLinkState.IdentifyTimedOut("kenwood-thd75a", 6_000L),
+            ),
+            emissions,
+        )
+        val store = setupStore()
+        assertFalse(
+            "IdentifyTimedOut must never mark the resumable link-established flag",
+            store.rigBluetoothVerified,
+        )
+    }
+
+    /** R-1014 (WPD3, this round): [org.ort.pipeline.rig.RigLinkProbeState.Identified] genuinely
+     * happens, but two of three declared capabilities never do — partial success, the exact shape
+     * `RigBluetoothScreenTest`'s own Compose tests render. */
+    @Test
+    @Requirement("R-1014")
+    fun `setup-rig-bluetooth-verify-timed-out scripts the address to a real terminal VerifyTimedOut`() = runTest {
+        Scenarios.load(context, "setup-rig-bluetooth-verify-timed-out")
+
+        val port = requireNotNull(DebugRigLinkPortOverride.activeOverride)
+        val emissions = port.connect(rigBluetoothTestAddress, "kenwood-thd75a").toList()
+        assertEquals(
+            listOf(
+                RigLinkState.Opening,
+                RigLinkState.Open,
+                RigLinkState.Identified("kenwood-thd75a"),
+                RigLinkState.VerifyTimedOut(
+                    rigId = "kenwood-thd75a",
+                    seenCapabilities = listOf("frequency"),
+                    missingCapabilities = listOf("squelch", "per band"),
+                    timeoutMillis = 12_000L,
+                ),
+            ),
+            emissions,
+        )
+    }
+
     @Test
     @Requirement("D33", "D34", "FR-RIG-14")
     fun `setup-rig-bluetooth scripts the address through to Verified`() = runTest {
