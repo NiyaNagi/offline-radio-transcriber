@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.ort.rig.RigCapability
+import org.ort.rig.RigHealthIssue
 import org.ort.rig.RigTransportKind
 import org.ort.testing.Requirement
 
@@ -107,5 +109,78 @@ class RigStatusTest {
         state as RigStatus.State.Stale
         assertEquals(RigTransportKind.USB_SERIAL, state.lastKnown.transportKind)
         assertEquals("kenwood-thd75a", state.lastKnown.descriptorId)
+    }
+
+    // R-1019 (WPRIG2): RigStatus.State.Connected must be able to carry a partial-verification
+    // fact -- see this class's own report for why S12 could not render it before this.
+
+    @Test
+    @Requirement("FR-RIG-1")
+    fun `a caller that predates R-1019 and omits verification reads Unknown, never a false Full`() {
+        RigStatus.connected("TH-D75A", emptyList())
+        val state = RigStatus.state
+        assertTrue(state is RigStatus.State.Connected)
+        assertEquals(RigVerification.Unknown, (state as RigStatus.State.Connected).verification)
+    }
+
+    @Test
+    @Requirement("FR-RIG-1")
+    fun `R_1019 connected carries a Full verification when the caller states every capability was seen`() {
+        RigStatus.connected("TH-D75A", emptyList(), verification = RigVerification.Full)
+        val state = RigStatus.state as RigStatus.State.Connected
+        assertEquals(RigVerification.Full, state.verification)
+    }
+
+    @Test
+    @Requirement("FR-RIG-1")
+    fun `R_1019 connected carries a Partial verification naming exactly what was never observed`() {
+        val missing = setOf(RigCapability.SIGNAL_STRENGTH, RigCapability.MEMORY_CHANNEL)
+        RigStatus.connected("TH-D75A", emptyList(), verification = RigVerification.Partial(missing))
+        val state = RigStatus.state as RigStatus.State.Connected
+        assertEquals(RigVerification.Partial(missing), state.verification)
+    }
+
+    @Test
+    @Requirement("FR-RIG-7")
+    fun `R_1019 stale carries the partial verification forward from lastKnown, unchanged`() {
+        val lastKnown = RigStatus.State.Connected(
+            descriptor = "TH-D75A",
+            bands = emptyList(),
+            verification = RigVerification.Partial(setOf(RigCapability.SIGNAL_STRENGTH)),
+        )
+        RigStatus.stale(lastKnown, sinceMillis = 1L)
+        val state = RigStatus.state as RigStatus.State.Stale
+        assertEquals(RigVerification.Partial(setOf(RigCapability.SIGNAL_STRENGTH)), state.lastKnown.verification)
+    }
+
+    // R-1015 (WPRIG2): RigStatus.State.Stale must distinguish a health-timeout silence from a
+    // transport-reported loss -- reusing RigHealthIssue, the vocabulary DescriptorRigModule's own
+    // health() already emits, rather than inventing a parallel one.
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `a caller that predates R-1015 and omits issue reads null, never a guessed reason`() {
+        val lastKnown = RigStatus.State.Connected("TH-D75A", emptyList())
+        RigStatus.stale(lastKnown, sinceMillis = 1L)
+        val state = RigStatus.state as RigStatus.State.Stale
+        assertNull(state.issue)
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_1015 stale carries RigHealthIssue TIMEOUT when the caller states the rig went silent, not lost`() {
+        val lastKnown = RigStatus.State.Connected("TH-D75A", emptyList())
+        RigStatus.stale(lastKnown, sinceMillis = 1L, issue = RigHealthIssue.TIMEOUT)
+        val state = RigStatus.state as RigStatus.State.Stale
+        assertEquals(RigHealthIssue.TIMEOUT, state.issue)
+    }
+
+    @Test
+    @Requirement("FR-RIG-15")
+    fun `R_1015 stale carries RigHealthIssue TRANSPORT_LOST distinctly from TIMEOUT`() {
+        val lastKnown = RigStatus.State.Connected("TH-D75A", emptyList())
+        RigStatus.stale(lastKnown, sinceMillis = 1L, issue = RigHealthIssue.TRANSPORT_LOST)
+        val state = RigStatus.state as RigStatus.State.Stale
+        assertEquals(RigHealthIssue.TRANSPORT_LOST, state.issue)
     }
 }

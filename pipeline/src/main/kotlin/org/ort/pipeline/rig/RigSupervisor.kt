@@ -2,14 +2,19 @@ package org.ort.pipeline.rig
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.core.Clock
 import org.ort.core.SystemClock
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
 import org.ort.pipeline.diagnostics.DiagnosticsLog
 import org.ort.pipeline.reconnectLadderPositionAt
 import org.ort.rig.NullRigModule
 import org.ort.rig.RigBand
+import org.ort.rig.RigCapability
+import org.ort.rig.RigHealth
+import org.ort.rig.RigHealthIssue
 import org.ort.rig.RigModule
 import org.ort.rig.RigState
 import org.ort.rig.RigStateConfidence
@@ -97,6 +102,22 @@ public class RigSupervisor(
     private val scope: CoroutineScope,
     private val clock: Clock = SystemClock,
     private val descriptorForId: (String) -> RigDescriptor? = ::bundledDescriptorById,
+    /**
+     * R-1015 (WPRIG2): how long this class tolerates [DescriptorRigModule.health] reporting
+     * nothing but [RigHealth.Degraded] with [RigHealthIssue.TIMEOUT] — the module's own read loop
+     * retrying forever, a signal nothing here read before this fix (see this class's own report:
+     * [org.ort.pipeline.rig.DefaultRigLinkBridge]'s setup-time probe had exactly the same
+     * unread-signal hole, R-1013, fixed the same morning) — before it declares [RigStatus] stale
+     * on its own initiative. Derived from the descriptor's own poll cadence, the identical
+     * reasoning [DefaultRigLinkBridge]'s `identifyTimeoutMillisFor`/`verifyTimeoutMillisFor` apply
+     * at setup time: a rig polled every two seconds and one polled every ten times a second have
+     * genuinely different silences worth tolerating — see [defaultHealthStaleTimeoutMillis]'s own
+     * kdoc for the production default. Overridable here so a test can substitute a tiny, explicit
+     * bound. Tests never sleep in real time regardless of the value chosen: the `delay` this
+     * drives runs on whatever dispatcher [scope] uses, so [kotlinx.coroutines.test.TestScope]'s
+     * virtual clock resolves it instantly.
+     */
+    private val healthStaleTimeoutMillisFor: (RigDescriptor) -> Long = Companion::defaultHealthStaleTimeoutMillis,
 ) {
     private var module: RigModule = NullRigModule()
     private var descriptorRigModule: DescriptorRigModule? = null
@@ -105,7 +126,23 @@ public class RigSupervisor(
 
     private var observeJob: Job? = null
 
+    /** R-1015: watches [DescriptorRigModule.health] for the whole life of one [connect] —
+     * [onRigState] alone (driven by [DescriptorRigModule.observe]) never fires again once the rig
+     * falls silent without the transport itself reporting loss, which is exactly the hole this
+     * closes. */
+    private var healthWatchJob: Job? = null
+
     private val perBandState = java.util.Collections.synchronizedMap(LinkedHashMap<RigBand?, RigState>())
+
+    /** R-1019: every [org.ort.rig.RigCapability] observed at least once this connection, across
+     * every band — reset only on a fresh [connect], never on going [RigStatus.State.Stale] (a
+     * capability once genuinely seen stays seen for the life of the link). Compared against
+     * [RigModule.capabilities] to derive [RigVerification] the same way
+     * [org.ort.pipeline.rig.RigLinkProbeState.Verified]/[org.ort.pipeline.rig.RigLinkProbeState
+     * .VerifyTimedOut] already do at setup time — reusing [capabilitiesPresentIn], the exact
+     * mapping [DefaultRigLinkBridge.probe] uses, rather than a second implementation of the same
+     * fact. */
+    private val seenCapabilities = java.util.Collections.synchronizedSet(mutableSetOf<RigCapability>())
 
     @Volatile
     private var manualFrequencyOverrideHz: Long? = null
@@ -125,6 +162,16 @@ public class RigSupervisor(
      */
     @Volatile
     private var staleSinceWallMillis: Long? = null
+
+    /** R-1015: the in-flight "declare stale from silence" countdown — started the moment
+     * [DescriptorRigModule.health] first reports [RigHealthIssue.TIMEOUT] with none already
+     * running, cancelled the instant health recovers ([RigHealth.Healthy], or any other
+     * [RigHealth.Degraded] issue — both mean the wire is not simply silent) or the transport
+     * itself reports [org.ort.rig.TransportState.Lost] (already handled, immediately and with its
+     * own reason, by [onRigState]'s STALE branch — this timer would only ever race it to the same
+     * conclusion with the wrong [RigHealthIssue], so it is cancelled rather than left to run). */
+    @Volatile
+    private var healthStaleTimeoutJob: Job? = null
 
     /** FR-RIG-8: always available regardless of module, and takes precedence with provenance
      * `manual` once set (FR-RIG-9). `null` clears the override, returning to whatever the rig (or
@@ -171,7 +218,9 @@ public class RigSupervisor(
         activeTransportKind = transportKind
         activeDescriptorId = descriptor.id
         perBandState.clear()
+        seenCapabilities.clear()
         watch(built)
+        watchHealth(built, descriptor)
     }
 
     /** Cancels every job, disconnects the underlying module (if any), releases whatever
@@ -179,6 +228,10 @@ public class RigSupervisor(
     public fun disconnect() {
         observeJob?.cancel()
         observeJob = null
+        healthWatchJob?.cancel()
+        healthWatchJob = null
+        healthStaleTimeoutJob?.cancel()
+        healthStaleTimeoutJob = null
         module.disconnect()
         transportFactory.dispose()
         module = NullRigModule()
@@ -188,6 +241,7 @@ public class RigSupervisor(
         lastKnownConnected = null
         staleSinceWallMillis = null
         perBandState.clear()
+        seenCapabilities.clear()
         RigStatus.reset()
     }
 
@@ -273,6 +327,81 @@ public class RigSupervisor(
         observeJob = scope.launch { built.observe().collect(::onRigState) }
     }
 
+    /**
+     * R-1015: watches [DescriptorRigModule.health] for the whole life of this connection —
+     * [DescriptorRigModule]'s own read loop retries a silent link forever, emitting
+     * [RigHealth.Degraded] with [RigHealthIssue.TIMEOUT] on every cycle
+     * ([DescriptorRigModule]'s own comment: "retries forever"), and nothing consumed that signal
+     * before this fix — [onRigState] alone never fires again once the rig stops answering, unless
+     * the transport itself reports [org.ort.rig.TransportState.Lost] (a genuinely different,
+     * already-handled case; see [onRigState]'s own STALE branch and [RigStatus.State.Stale.issue]'s
+     * own kdoc for why the two must never collapse into one).
+     */
+    private fun watchHealth(built: DescriptorRigModule, descriptor: RigDescriptor) {
+        val timeoutMillis = healthStaleTimeoutMillisFor(descriptor)
+        healthWatchJob = scope.launch {
+            built.health().collect { health ->
+                val isSilence = health is RigHealth.Degraded && health.issue == RigHealthIssue.TIMEOUT
+                if (isSilence) startHealthStaleTimeoutIfAbsent(timeoutMillis) else cancelHealthStaleTimeout()
+            }
+        }
+    }
+
+    private fun startHealthStaleTimeoutIfAbsent(timeoutMillis: Long) {
+        // Only one countdown per outage (see healthStaleTimeoutJob's own kdoc), and only while
+        // still genuinely Connected -- once this (or the transport-lost path) has already declared
+        // Stale, a further TIMEOUT health report is not a new fact worth re-scheduling for.
+        if (healthStaleTimeoutJob != null) return
+        if (RigStatus.state !is RigStatus.State.Connected) return
+        val silentSinceWallMillis = clock.wallMillis()
+        healthStaleTimeoutJob = scope.launch {
+            delay(timeoutMillis)
+            declareStaleFromSilence(silentSinceWallMillis)
+        }
+    }
+
+    private fun cancelHealthStaleTimeout() {
+        healthStaleTimeoutJob?.cancel()
+        healthStaleTimeoutJob = null
+    }
+
+    /**
+     * R-1015: flips [RigStatus] to [RigStatus.State.Stale] tagged [RigHealthIssue.TIMEOUT] once
+     * silence has run the full bound [healthStaleTimeoutMillisFor] derives — never before, and
+     * never indefinitely. Unlike the transport-lost path, no reconnect ladder is running
+     * underneath this case (`UsbSerialTransport`/`BluetoothSppTransport`'s own supervisor loops
+     * have no reason to retry a link they still believe is open), so
+     * [RigStatus.State.Stale.attempt]/`ofTotal`/`nextRetryInMillis` are left `null` rather than
+     * reporting a countdown that is not actually running (constitution I: never assert more than
+     * is known). [silentSinceWallMillis] — the wall time this countdown *started*, not the wall
+     * time it fired — is reported as [RigStatus.State.Stale.sinceMillis]: the onset of the
+     * silence, the fact an operator actually needs, not the moment this class finally noticed it.
+     *
+     * Guarded on [RigStatus.state] still being [RigStatus.State.Connected]: a concurrent
+     * transport-lost ([onRigState]'s STALE branch) or a [disconnect] between when this was
+     * scheduled and when it fires must win — this must never downgrade a state already resolved
+     * by a stronger signal, nor overwrite a fresh [RigStatus.absent].
+     */
+    private fun declareStaleFromSilence(silentSinceWallMillis: Long) {
+        healthStaleTimeoutJob = null
+        val connected = RigStatus.state as? RigStatus.State.Connected ?: return
+        val base = lastKnownConnected ?: connected
+        RigStatus.stale(base, silentSinceWallMillis, issue = RigHealthIssue.TIMEOUT)
+        DiagnosticsLog.logRigStale(silentSinceWallMillis)
+    }
+
+    /** R-1019: [module]'s declared capabilities for [activeTransportKind] versus every capability
+     * [seenCapabilities] has accumulated so far this connection — see [RigVerification]'s own
+     * kdoc. An empty declared set reports [RigVerification.Full] immediately, the same reasoning
+     * [org.ort.pipeline.rig.DefaultRigLinkBridge.probe] already applies (nothing to verify cannot
+     * be left unverified). */
+    private fun currentVerification(): RigVerification {
+        val declared = module.capabilities(activeTransportKind)
+        if (declared.isEmpty()) return RigVerification.Full
+        val missing = declared - seenCapabilities
+        return if (missing.isEmpty()) RigVerification.Full else RigVerification.Partial(missing)
+    }
+
     private fun onRigState(state: RigState) {
         perBandState[state.band] = state
         val bands = synchronized(perBandState) {
@@ -287,11 +416,14 @@ public class RigSupervisor(
         }
         when (state.sourceConfidence) {
             RigStateConfidence.FRESH -> {
+                cancelHealthStaleTimeout()
+                seenCapabilities += capabilitiesPresentIn(state)
                 val connected = RigStatus.State.Connected(
                     descriptor = module.displayName,
                     bands = bands,
                     transportKind = activeTransportKind,
                     descriptorId = activeDescriptorId,
+                    verification = currentVerification(),
                 )
                 lastKnownConnected = connected
                 staleSinceWallMillis = null
@@ -300,16 +432,19 @@ public class RigSupervisor(
                     connected.bands,
                     connected.transportKind,
                     connected.descriptorId,
+                    connected.verification,
                 )
                 DiagnosticsLog.logRigConnected(connected.bands.size)
                 state.band?.let { DiagnosticsLog.logRigBand(it.name, state.frequencyHz, state.squelchOpen ?: false) }
             }
             RigStateConfidence.STALE -> {
+                cancelHealthStaleTimeout()
                 val base = lastKnownConnected ?: RigStatus.State.Connected(
                     descriptor = module.displayName,
                     bands = bands,
                     transportKind = activeTransportKind,
                     descriptorId = activeDescriptorId,
+                    verification = currentVerification(),
                 )
                 val sinceMillis = clock.wallMillis()
                 val staleSince = staleSinceWallMillis ?: sinceMillis.also { staleSinceWallMillis = it }
@@ -321,7 +456,14 @@ public class RigSupervisor(
                         delayMillisFor = it,
                     )
                 }
-                RigStatus.stale(base, sinceMillis, position?.attempt, position?.ofTotal, position?.nextRetryInMillis)
+                RigStatus.stale(
+                    base,
+                    sinceMillis,
+                    position?.attempt,
+                    position?.ofTotal,
+                    position?.nextRetryInMillis,
+                    issue = RigHealthIssue.TRANSPORT_LOST,
+                )
                 DiagnosticsLog.logRigStale(sinceMillis)
             }
         }
@@ -336,5 +478,31 @@ public class RigSupervisor(
          * none of the three exposes its length publicly and `:pipeline` may not reach into their
          * private state. */
         const val RECONNECT_LADDER_STEPS = 5
+
+        /** R-1015: multiplies the descriptor's own poll cadence to derive how long silence must
+         * run before [RigSupervisor] declares [RigStatus] stale on the timeout path — the same
+         * reasoning [org.ort.pipeline.rig.DefaultRigLinkBridge]'s own poll-cycle multiples apply
+         * (R-1013/R-1014), chosen more generously here than either of those: this bound covers a
+         * session's whole lifetime, not a one-shot setup probe, so a single missed poll cycle from
+         * ordinary real-world jitter must never falsely declare a healthy night's rig stale — but
+         * still bounded, since "forever" is exactly the defect this fixes. */
+        const val HEALTH_STALE_POLL_CYCLES = 5L
+
+        /** Floor for a descriptor with no [RigDescriptor.poll] at all (unsolicited-push-only) —
+         * mirrors [org.ort.pipeline.rig.DefaultRigLinkBridge]'s own `NO_POLL_TIMEOUT_MILLIS` for
+         * the identical situation: there is no cadence to derive a multiple of. */
+        const val NO_POLL_HEALTH_STALE_TIMEOUT_MILLIS = 10_000L
+
+        /** Floor applied to any derived value, so an unrealistically fast poll cadence (a
+         * descriptor error, or a future rig with a genuine sub-second cadence) still gets a wait
+         * worth calling a timeout rather than one that could fire before a reply could physically
+         * arrive. */
+        const val MIN_HEALTH_STALE_TIMEOUT_MILLIS = 5_000L
+
+        /** See [healthStaleTimeoutMillisFor]'s own kdoc for why this is overridable at all; this
+         * is the production default it falls back to. */
+        fun defaultHealthStaleTimeoutMillis(descriptor: RigDescriptor): Long = descriptor.poll?.intervalMs
+            ?.let { interval -> (interval * HEALTH_STALE_POLL_CYCLES).coerceAtLeast(MIN_HEALTH_STALE_TIMEOUT_MILLIS) }
+            ?: NO_POLL_HEALTH_STALE_TIMEOUT_MILLIS
     }
 }
