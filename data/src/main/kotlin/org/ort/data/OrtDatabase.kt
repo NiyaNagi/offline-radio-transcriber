@@ -77,7 +77,10 @@ import java.util.concurrent.Executors
  * [org.ort.data.entity.CaptureGapCause.BLUETOOTH_AUDIO_LOST] (FR-CAP-5) — see each one's own doc
  * comment; v10 (E2-A07) adds [SessionEntity.rigDescriptorId], `.audioRouteVerified` and
  * `.audioNativeRateHz` so a session's own row names which rig it ran with and whether/how its
- * audio route resolved — see that entity's own doc comment.
+ * audio route resolved — see that entity's own doc comment; v11 (register R-1002, halt) adds
+ * [WorkQueueItemEntity.retryNotBeforeMillis] so a retryable failure's backoff ladder
+ * ([org.ort.data.WorkQueueBackoff]) is enforced by [org.ort.data.dao.WorkQueueDao.selectReady]
+ * itself, not by a caller remembering to wait.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -128,7 +131,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun proseSummaryDao(): ProseSummaryDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 10
+        public const val SCHEMA_VERSION: Int = 11
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -145,7 +148,7 @@ public abstract class OrtDatabase : RoomDatabase() {
          * this module's own `MigrationTest` cases yet crashed a real device on its first upgrade
          * open with `NotImplementedError: Migration requires overriding migrate(SQLiteConnection)`
          * — `MigrationTest`'s own
-         * `r_885_every_fixture_from_v1_to_v9_opens_through_the_real_OrtDatabase_create_and_reads_its_session_row`
+         * `r_885_every_fixture_from_v1_to_v10_opens_through_OrtDatabase_create_and_reads_its_session_row`
          * reproduces this by opening through [create] itself (the real factory) rather than through
          * the helper, and is the permanent gate against a regression here.
          *
@@ -399,6 +402,27 @@ public abstract class OrtDatabase : RoomDatabase() {
         )
 
         /**
+         * v10 → v11 (register R-1002, halt): adds `work_queue_item.retryNotBeforeMillis` — see
+         * [WorkQueueItemEntity]'s own doc comment. No existing table or column is touched or
+         * dropped; every v10 row survives untouched, the new column `NULL` (meaning "immediately
+         * leasable", identical to its pre-migration behaviour) (FR-AST-5/6 → AC-53), verified by
+         * `MigrationTest`.
+         */
+        public val MIGRATION_10_11: Migration = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_10_11_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_10_11_STATEMENTS.forEach(connection::execSQL)
+            }
+        }
+
+        private val MIGRATION_10_11_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `work_queue_item` ADD COLUMN `retryNotBeforeMillis` INTEGER",
+        )
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> = arrayOf(
@@ -411,6 +435,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             MIGRATION_7_8,
             MIGRATION_8_9,
             MIGRATION_9_10,
+            MIGRATION_10_11,
         )
 
         private suspend fun PooledConnection.exec(sql: String) {

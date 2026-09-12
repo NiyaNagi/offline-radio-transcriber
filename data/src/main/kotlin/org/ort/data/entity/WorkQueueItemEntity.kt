@@ -31,6 +31,14 @@ public data class WorkQueueItemEntity(
     val deadlineAt: Long? = null,
     val enqueuedAt: Long,
     val startedAt: Long? = null,
+    /**
+     * Register R-1002 (halt): `null` means immediately leasable, same as every row before this
+     * column existed. [org.ort.data.WorkQueue.failPass] sets this to
+     * `now + org.ort.data.WorkQueueBackoff.delayMillisFor(...)` on a retryable failure so
+     * [org.ort.data.dao.WorkQueueDao.selectReady] excludes the row until the ladder's delay has
+     * actually elapsed, rather than handing it back out for the very next lease.
+     */
+    val retryNotBeforeMillis: Long? = null,
 )
 
 /** Register R-426 (`Fail-Pass.dc.html`): a leased attempt either ran out its own deadline

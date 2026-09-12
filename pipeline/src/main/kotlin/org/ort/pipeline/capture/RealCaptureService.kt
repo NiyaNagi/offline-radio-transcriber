@@ -640,17 +640,37 @@ public class RealCaptureService : Service() {
      * post-capture drain (WorkManager or equivalent) is out of scope here: it is M8 streaming/M10
      * reprocessing work, not something to bolt on ad hoc from the capture-wiring prompt that owns
      * this file. See CHANGELOG.md's F-025 entry.
+     *
+     * **Register R-1002 (halt):** this is also the one place in the running app that ever asks
+     * [RealAsrEngineProvider] a direct capability question, so it is also the only honest place to
+     * act on the answer for Pass B's *backlog*, not just the item this run is about to lease.
+     * [AsrEngineAvailability.Unavailable] means every `READY` Pass B item would fail identically —
+     * [org.ort.data.WorkQueue.deferReady] parks them `DEFERRED` before a single one is leased, so
+     * none of [org.ort.data.WorkQueue.DEFAULT_MAX_ATTEMPTS]'s budget is spent on a fault already
+     * known to be permanent for this run. [AsrEngineAvailability.Available] means the reverse is
+     * now true — [org.ort.data.WorkQueue.undeferToReady] brings those back, and
+     * [org.ort.data.WorkQueue.requeueFailed] brings back whatever *previously* exhausted its
+     * budget the same way, e.g. the operator's own nineteen overs from before R-1001 shipped a
+     * real `libsherpa-onnx-jni.so`. **The trigger is this method running at all — once per real
+     * [startCapture] call, i.e. once per capture session start; see this package's own report for
+     * why that is not the same as "the instant the capability changes."**
      */
     private suspend fun startProcessingLoop(db: OrtDatabase, queue: WorkQueue) {
         val availability = dependencies.asrEngine(filesDir)
         val (engine, modelRef, provider) = when (availability) {
             is AsrEngineAvailability.Available -> {
                 AsrAvailability.available(availability.modelRef.canonical)
+                queue.undeferToReady(PassId.B_OFFLINE)
+                queue.requeueFailed(PassId.B_OFFLINE, lastErrorPrefix = ASR_UNAVAILABLE_ERROR_PREFIX)
                 Triple(availability.engine, availability.modelRef, availability.provider)
             }
             is AsrEngineAvailability.Unavailable -> {
                 AsrAvailability.unavailable(availability.reason)
                 updateNotification(CaptureNotificationContent.State.ASR_UNAVAILABLE)
+                // Register R-1002: a direct capability reading, taken before any item is leased —
+                // never a decision made by parsing an error string a pass already threw (that is
+                // the exception-forensics constitution II names against).
+                queue.deferReady(PassId.B_OFFLINE, availability.reason)
                 // audit F-013: no engine ran at all here, so the fingerprint's provider must say
                 // so honestly ("none") rather than repeating the real engine's "cpu".
                 Triple(UnavailableAsrEngine(availability.reason), org.ort.core.AssetRef("asr-unavailable", "0"), "none")
@@ -1177,6 +1197,17 @@ public class RealCaptureService : Service() {
         private const val HEARTBEAT_INTERVAL_MILLIS: Long = 30_000
         private const val WAKE_LOCK_TIMEOUT_MILLIS: Long = 12 * 60 * 60 * 1000L
         private const val SHORT_MAX: Float = 32_768f
+
+        /**
+         * Register R-1002 (halt): [org.ort.asrapi.AsrUnavailableException]'s own fixed message
+         * prefix (`Exception("ASR unavailable: $reason")`, `asr-api`'s own file, out of this
+         * package's ownership) — the exact text [org.ort.data.WorkQueue.failPass] ends up storing
+         * as [org.ort.data.entity.WorkQueueItemEntity.lastError] for every Pass B item that failed
+         * against [UnavailableAsrEngine]. Used only to narrow [org.ort.data.WorkQueue.requeueFailed]
+         * to that specific, already-recorded cause — never to decide anything about a live pass's
+         * outcome (that would be the exception-forensics constitution II warns against).
+         */
+        private const val ASR_UNAVAILABLE_ERROR_PREFIX: String = "ASR unavailable"
 
         /** technical design §7.3's 10 s shed-controller tick (audit F-007). */
         private const val SHED_SAMPLE_INTERVAL_MILLIS: Long = 10_000

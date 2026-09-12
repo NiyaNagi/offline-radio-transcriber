@@ -12,6 +12,7 @@ import org.ort.asrapi.fake.FakeAsrEngine
 import org.ort.capture.android.codec.DeflatePredictiveCodec
 import org.ort.core.AssetRef
 import org.ort.core.AttributionState
+import org.ort.core.PassId
 import org.ort.core.Tier
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
@@ -20,6 +21,7 @@ import org.ort.data.PassRunOutcome
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.WorkQueueItemEntity
+import org.ort.data.entity.WorkQueueState
 import org.ort.pipeline.Pass
 import org.ort.pipeline.PipelineTestFixtures
 import org.ort.pipeline.capture.CaptureState
@@ -247,6 +249,70 @@ class ReprocessRunnerTest {
             db.transcriptDao().getCurrent(missingAudioId)?.text,
         )
         assertEquals("new transcript text", db.transcriptDao().getCurrent(okId)?.text)
+    }
+
+    /**
+     * Register R-1002 round 2 (halt): before this, `runOnePass`'s drain-iteration ceiling reported
+     * a fixed "gave up after N drain attempts" whenever it fired, even when the row it was
+     * watching already carried a real, recorded [org.ort.data.entity.WorkQueueItemEntity.lastError]
+     * — replacing an honest answer with a misleading one (constitution I) the moment
+     * [org.ort.data.WorkQueue]'s new backoff ladder (register R-1002) left a row genuinely `READY`
+     * but not yet due for its next lease. Reproduces that shape directly, without needing two
+     * concurrent [ReprocessRunner]/live-capture queues to race: a row is pre-failed once (a real
+     * `WorkQueue.failPass` call, `lastError` set, backed off far beyond this run's own tiny
+     * [ReprocessTuning.maxDrainIterationsPerItem]), then [ReprocessRunner.run] is pointed at it —
+     * [ReprocessRunner.runOnePass]'s own [enqueueOrReuseActive] reuses the still-active row rather
+     * than creating a second one, so this is exactly "a row this run does not itself own the retry
+     * state of," the scenario the fix's kdoc names.
+     */
+    @Test
+    @Requirement("R-1002", "FR-RUN-9")
+    fun `R_1002_the_drain_iteration_ceiling_never_overrides_a_real_recorded_reason`() = runBlocking {
+        val txId = "TX-CEILING"
+        seedTransmission(txId, text = "old text")
+        writeAudioFixture(txId)
+
+        // A real failure, real WorkQueue.failPass call, backed off far past this run's own
+        // 1-iteration ceiling below -- simulates a row whose retry state this run does not
+        // control (e.g. a live-capture drain loop's own WorkQueue instance, sharing the same
+        // durable table by design -- see ReprocessRunner.runOnePass's own kdoc).
+        val itemId = db.workQueueDao().insert(
+            WorkQueueItemEntity(
+                transmissionId = txId,
+                pass = PassId.B_OFFLINE,
+                state = WorkQueueState.READY,
+                priority = 0,
+                enqueuedAt = 0L,
+            ),
+        )
+        db.workQueueDao().retryReady(
+            itemId,
+            attemptCount = 1,
+            error = "decoder ran out of memory",
+            retryNotBeforeMillis = Long.MAX_VALUE / 2, // never due within this run
+        )
+
+        val runner = ReprocessRunner(
+            db = db,
+            filesDir = filesDir,
+            // Never actually reached -- the row is backed off, so no drainBatch call ever leases
+            // it; a throwing Pass would prove nothing this test doesn't already prove better.
+            passFor = { InstantCompletingPass() },
+            tuning = ReprocessTuning(maxDrainIterationsPerItem = 1),
+        )
+
+        runner.run(listOf(txId)).toList()
+
+        val summary = (ReprocessStatus.state as ReprocessStatus.State.Done).summary
+        assertEquals(1, summary.failed)
+        assertTrue(
+            "the real recorded reason must survive the iteration ceiling",
+            summary.failureReasons.any { it.contains("decoder ran out of memory") },
+        )
+        assertTrue(
+            "the generic ceiling message must never appear once a real reason is on record",
+            summary.failureReasons.none { it.contains("gave up after") },
+        )
     }
 
     /**

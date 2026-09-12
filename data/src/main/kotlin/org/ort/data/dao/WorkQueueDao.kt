@@ -20,8 +20,17 @@ public interface WorkQueueDao {
     @Query("SELECT * FROM work_queue_item WHERE id = :id")
     public suspend fun getById(id: Long): WorkQueueItemEntity?
 
-    @Query("SELECT * FROM work_queue_item WHERE state = 'READY' ORDER BY priority DESC, enqueuedAt ASC LIMIT :limit")
-    public suspend fun selectReady(limit: Int): List<WorkQueueItemEntity>
+    /**
+     * Register R-1002 (halt): excludes a `READY` row whose [WorkQueueItemEntity.retryNotBeforeMillis]
+     * is still in the future — [org.ort.data.WorkQueue.failPass]'s backoff ladder, enforced at the
+     * one place every real lease goes through, not by trusting a caller to wait.
+     */
+    @Query(
+        "SELECT * FROM work_queue_item WHERE state = 'READY' " +
+            "AND (retryNotBeforeMillis IS NULL OR retryNotBeforeMillis <= :now) " +
+            "ORDER BY priority DESC, enqueuedAt ASC LIMIT :limit",
+    )
+    public suspend fun selectReady(limit: Int, now: Long): List<WorkQueueItemEntity>
 
     @Query(
         "UPDATE work_queue_item SET state = 'LEASED', leaseRunId = :runId, startedAt = :startedAt, " +
@@ -37,20 +46,25 @@ public interface WorkQueueDao {
     public suspend fun selectExpired(now: Long): List<WorkQueueItemEntity>
 
     @Query(
-        "UPDATE work_queue_item SET state = 'READY', leaseRunId = NULL, deadlineAt = NULL, startedAt = NULL " +
-            "WHERE id = :id",
+        "UPDATE work_queue_item SET state = 'READY', leaseRunId = NULL, deadlineAt = NULL, startedAt = NULL, " +
+            "retryNotBeforeMillis = NULL WHERE id = :id",
     )
     public suspend fun resetToReady(id: Long)
 
     @Query("DELETE FROM work_queue_item WHERE id = :id")
     public suspend fun deleteById(id: Long)
 
-    /** Retries remain: back to `READY`, attempt and error recorded, ready to be leased again. */
+    /**
+     * Retries remain: back to `READY`, attempt and error recorded, ready to be leased again once
+     * [retryNotBeforeMillis] (register R-1002's backoff ladder — [org.ort.data.WorkQueueBackoff])
+     * has passed. [selectReady] is the only reader of that column.
+     */
     @Query(
         "UPDATE work_queue_item SET state = 'READY', attemptCount = :attemptCount, lastError = :error, " +
-            "leaseRunId = NULL, deadlineAt = NULL, startedAt = NULL WHERE id = :id",
+            "leaseRunId = NULL, deadlineAt = NULL, startedAt = NULL, retryNotBeforeMillis = :retryNotBeforeMillis " +
+            "WHERE id = :id",
     )
-    public suspend fun retryReady(id: Long, attemptCount: Int, error: String)
+    public suspend fun retryReady(id: Long, attemptCount: Int, error: String, retryNotBeforeMillis: Long)
 
     /** Retries exhausted (FR-RUN-10): terminal — outside the partial unique index's active-state set. */
     @Query(
@@ -80,9 +94,42 @@ public interface WorkQueueDao {
      */
     @Query(
         "UPDATE work_queue_item SET state = 'READY', attemptCount = 0, leaseRunId = NULL, " +
-            "deadlineAt = NULL, startedAt = NULL WHERE id = :id",
+            "deadlineAt = NULL, startedAt = NULL, retryNotBeforeMillis = NULL WHERE id = :id",
     )
     public suspend fun requeueToReady(id: Long)
+
+    /**
+     * Register R-1002 (halt): every currently-`READY` item of [pass] — the set
+     * [org.ort.data.WorkQueue.deferReady] moves to `DEFERRED` the moment a direct capability probe
+     * (never a parsed exception message — constitution II) reports that pass's engine unavailable,
+     * so none of them is ever leased against a fault already known, this run, to be permanent.
+     */
+    @Query("SELECT * FROM work_queue_item WHERE state = 'READY' AND pass = :pass")
+    public suspend fun selectReadyForPass(pass: String): List<WorkQueueItemEntity>
+
+    /**
+     * Register R-1002: `DEFERRED` sits outside `selectReady`'s `state = 'READY'` filter, so a
+     * deferred item is never leased — but it is still one of `idx_wq_active`'s active states, so a
+     * second `enqueue` for the same `(transmissionId, pass)` still correctly finds it rather than
+     * creating a duplicate row. `attemptCount` and `lastError`'s prior value are untouched — a
+     * defer never spends an attempt (constitution III, "nothing is deleted quietly"); [reason]
+     * overwrites `lastError` with why, so the operator sees *that* something happened, not silence.
+     */
+    @Query("UPDATE work_queue_item SET state = 'DEFERRED', lastError = :reason WHERE id = :id")
+    public suspend fun deferItem(id: Long, reason: String)
+
+    /** Register R-1002: every item of [pass] parked `DEFERRED` by [deferItem]. */
+    @Query("SELECT * FROM work_queue_item WHERE state = 'DEFERRED' AND pass = :pass")
+    public suspend fun selectDeferredForPass(pass: String): List<WorkQueueItemEntity>
+
+    /**
+     * Register R-1002: the capability came back — [org.ort.data.WorkQueue.undeferToReady] moves a
+     * `DEFERRED` item straight back to `READY`, immediately leasable (no backoff: it never failed,
+     * so it has nothing to back off from). `attemptCount` and `lastError` are left exactly as they
+     * were before the defer, same "nothing erased" rule [deferItem] follows.
+     */
+    @Query("UPDATE work_queue_item SET state = 'READY', retryNotBeforeMillis = NULL WHERE id = :id")
+    public suspend fun undeferItem(id: Long)
 
     @Query("SELECT COUNT(*) FROM work_queue_item")
     public suspend fun count(): Int
