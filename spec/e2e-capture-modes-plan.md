@@ -267,10 +267,19 @@ five assets (`results/e2e-audit/installed-size.md`); FR-AST-3a's packs TODO stay
 cost recorded (the LLM is 84 % of the bundled bytes).
 
 **Open by design, for the operator:** hardware H1–H15 (H6 tests the D75A-as-audio-source
-prediction; H15 the upgrade over an older install); the CI half of E2-K08 — `main` is unpushed;
-`HF_TOKEN` is set locally and as the repository secret. Deferred with reasons recorded:
+prediction; H15 the upgrade over an older install). Deferred with reasons recorded:
 `usb-serial-for-android` 3.11 (needs compileSdk 35), the TH-D75A descriptor's `MODE` and USB
 vid/pid until H1, the `20m`-shaped false positive in `CallsignShapeFilter`.
+
+**Pushed and green, 2026-09-12:** `main` pushed with `HF_TOKEN` as the repository secret. The
+first CI run was red (R-808: the unit-test job never scheduled `fetchBundledAssets`; a `:rig`
+drop test on real time) and the first two Release runs were red (R-809: Robolectric inflates the
+whole compressed 555 MB Gemma asset into the test worker whenever a scenario copies it through
+the real installer — a 3 g worker heap alone did not hold). Fixed by the asset merges depending
+on the fetch, virtual time in the rig tests, and the all-scenarios sweeps taking the fixture-sized
+asset source. CI run 34671298959 and Release run 34671298925 are both green on `d7332072`, and
+the `latest-build` pre-release is republished from that commit (`app-debug.apk` 609,906,877 B).
+E2-K08 is closed in full.
 
 ## Concurrency and safety
 

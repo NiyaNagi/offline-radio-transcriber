@@ -32,6 +32,38 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (close-out: CI and Release both green on `main`, the `latest-build` pre-release republished)
+
+### (this commit) — register R-809 and checklist E2-K08 closed; Phase G record amended
+
+**Scope:** `results/ui-audit/register.md`, `results/e2e-audit/checklist.md`,
+`spec/e2e-capture-modes-plan.md`, this file. Docs only — no product or test code.
+**Requirements/ACs:** none new. Closes register R-809 and the CI half of E2-K08; AC-136
+(a release is built without the missing-assets escape hatch) is now demonstrated on the hosted
+runner, not only locally.
+**What changed:** R-809's second failure is recorded with its stack (the Release run on
+`f2e0e1e3`, with the 3 g worker heap, still overflowed in `Scenarios.tier0LlmStored` →
+`installRealBundledAssets`: the scenario builders inflate the real Gemma asset once per scenario
+and the `R_110` sweep runs several back to back, so heap alone could not hold on the Linux
+runner). Its close is recorded: WPI `7670c4d8` (the sweeps take `TinyFixtureBundledAssetSource`;
+every real-installer caller audited) merged as `d7332072` together with WPC3 `5adeedb9` (the
+last two `RigLinkBridgeTest` cases deterministic; merged `15215fa8`). E2-K08 closes in full and
+the plan's Phase G record gains a "pushed and green" paragraph replacing its "main is unpushed"
+note.
+**Verified:** local full gate on `d7332072` with all five assets fetched and no escape hatch —
+`gradlew dependencyRules platformGuards build` green in 9m44s, `coverageMatrix` and
+`coverageMatrixCheck` green (this machine, Windows, JDK 17). Hosted: CI run 34671298959 and
+Release run 34671298925 both `success` on `d7332072` (`gh run watch --exit-status`);
+`gh release view latest-build` shows `Latest build (d733207)`, pre-release, published
+2026-09-12T04:07:50Z, target `d7332072`, one asset `app-debug.apk` 609,906,877 B.
+**Left open / not done:** hardware checklist H1–H15 for the operator; FR-AST-3a asset packs
+(cost measured in `results/e2e-audit/installed-size.md`); R-985 (a mid-scroll tour step at 2.0
+next tour session); R-801 (pre-existing guide gaps); `usb-serial-for-android` 3.11 (needs
+compileSdk 35). The Release workflow still uses `actions/setup-java@v4` (deprecation warning
+only) — an update for a later hygiene round.
+
+---
+
 ## 2026-09-11 (register R-808 final close-out: the last two RigLinkBridgeTest cases made deterministic — the busy-spin fact was already proven elsewhere)
 
 ### (pending) — no Bluetooth permission and USB detach cases both converted to runTest; no new real-thread test added, since :rig's own yield test already covers that fact
