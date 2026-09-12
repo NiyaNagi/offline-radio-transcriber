@@ -42,3 +42,9 @@ venv/
 # that manifest is the source-controlled fact; these hundreds of megabytes of binaries, and the
 # generated manifest.json describing what actually landed here, are not.
 /app/src/main/assets/bundled/
+
+# R-1001 (register): sherpa-onnx's Android native libraries are fetched and verified by the
+# fetchSherpaNativeLibraries Gradle task (buildSrc/FetchSherpaNativeTask.kt) from the root
+# sherpa-native.json — that manifest is the source-controlled fact; the extracted .so files are
+# not, same rule as app/src/main/assets/bundled/ above.
+/app/src/main/jniLibs/

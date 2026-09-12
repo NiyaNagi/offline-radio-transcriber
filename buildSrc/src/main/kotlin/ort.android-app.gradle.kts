@@ -3,6 +3,9 @@ import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.ort.gradle.BundledAssetManifest
 import org.ort.gradle.FetchBundledAssetsTask
+import org.ort.gradle.FetchSherpaNativeTask
+import org.ort.gradle.NativeLibraryPackagingGuardTask
+import org.ort.gradle.SherpaNativeManifest
 import java.io.File
 
 plugins {
@@ -35,6 +38,15 @@ extensions.configure<BaseAppModuleExtension> {
         versionCode = 2
         versionName = "0.1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // R-1001 (register): exactly the two ABIs this project fetches native libraries for
+        // (sherpa-native.json, FetchSherpaNativeTask) — arm64-v8a is the operator's phone, x86_64
+        // is the audit AVDs (so the tour can exercise real ASR for the first time). Deliberately
+        // NOT armeabi-v7a/x86: the APK is already ~600 MB with every bundled model, and this
+        // project ships no 32-bit-only device in its device matrix (spec/test-plan.md).
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildTypes {
@@ -228,6 +240,54 @@ tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" }.co
 tasks.matching { it.name == "mergeDebugAssets" || it.name == "mergeReleaseAssets" }.configureEach {
     dependsOn(fetchBundledAssets)
 }
+
+// R-1001 (register): sherpa-onnx's Android native libraries — see FetchSherpaNativeTask's own KDoc
+// for the full defect account and sherpa-native.json for the manifest. Deliberately NOT wired to
+// -PortAllowMissingBundledAssets/ORT_ALLOW_MISSING_BUNDLED_ASSETS the way fetchBundledAssets is
+// (lead correction, WPJ build report): the archive needs no token and costs tens, not hundreds, of
+// megabytes — a build that silently shipped without these libraries is the exact defect (R-1001)
+// this task exists to close, so there is no escape hatch and a fetch failure always fails the
+// build, in every environment including a plain no-token local iteration.
+val sherpaNativeManifestFile = rootProject.layout.projectDirectory.file("sherpa-native.json")
+
+val fetchSherpaNativeLibraries = tasks.register<FetchSherpaNativeTask>("fetchSherpaNativeLibraries") {
+    group = "build"
+    description = "Fetches, verifies and packages sherpa-onnx's Android native libraries into " +
+        "src/main/jniLibs (register R-1001)."
+    manifestFile.set(sherpaNativeManifestFile)
+    jniLibsOutputDir.set(layout.projectDirectory.dir("src/main/jniLibs"))
+    cacheRoot.set(layout.dir(providers.provider { gradle.gradleUserHomeDir.resolve("ort-sherpa-native") }))
+}
+
+tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" }.configureEach {
+    dependsOn(fetchSherpaNativeLibraries)
+}
+
+// Same implicit-input shape fetchBundledAssets' own comment documents for mergeDebugAssets/
+// mergeReleaseAssets, for the AGP task family that actually reads src/main/jniLibs directly.
+tasks.matching { it.name == "mergeDebugJniLibFolders" || it.name == "mergeReleaseJniLibFolders" }.configureEach {
+    dependsOn(fetchSherpaNativeLibraries)
+}
+
+// R-1001: the structural guard (audit F-027's own family, PlatformGuards.kt) that closes the gap
+// every declared-artifact check in that file cannot — see NativeLibraryPackagingGuardTask's own
+// KDoc for why it reads the real APK instead. Wired here, not the root platformGuards task, because
+// this needs an assembled APK to exist first and dependencyRules/platformGuards/build's own
+// ordering (root build.gradle.kts, outside this package's ownership) runs platformGuards before
+// any variant is assembled. `:app:check`/`:app:build` already reach it, and the root `build` task
+// depends on every subproject's own `check` (root build.gradle.kts), so a plain `./gradlew build`
+// still exercises this guard on every push.
+val verifySherpaNativeLibrariesPackaged = tasks.register<NativeLibraryPackagingGuardTask>(
+    "verifySherpaNativeLibrariesPackaged",
+) {
+    group = "verification"
+    description = "Fails if the packaged debug APK is missing a required sherpa-onnx native " +
+        "library for any required ABI (register R-1001)."
+    apkFile.set(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+    dependsOn("assembleDebug")
+}
+
+tasks.named("check") { dependsOn(verifySherpaNativeLibrariesPackaged) }
 
 // `app/src/main/assets/bundled/` (fetchBundledAssets' own output) is an *implicit* input to a
 // whole family of AGP-internal tasks that read the main variant's assets directly — not just

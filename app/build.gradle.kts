@@ -20,6 +20,34 @@ val gitShortCommitProvider = providers.exec {
 extensions.configure<BaseAppModuleExtension> {
     testOptions { unitTests.isIncludeAndroidResources = true }
 
+    // R-1001 (register): `:asr-sherpa/build.gradle.kts` now scopes the Windows-x64 sherpa-onnx
+    // native jar `testRuntimeOnly`, which already keeps it off this module's own runtime/packaging
+    // classpath structurally (see that file's own comment for why that is the real fix, verified
+    // against the built APK). This exclusion is a second, narrower line of defense — belt and
+    // braces, not the fix itself — against any future dependency anywhere in this app's graph
+    // that resolves `sherpa-onnx-native-lib-*` onto a `runtime`/`implementation` configuration:
+    // those jars carry their `.dll`/`.so` files as plain Java resources under `sherpa-onnx/native/`
+    // (confirmed by listing the win-x64 jar's contents), which AGP would otherwise merge into the
+    // APK root as inert, undexed resource files no Android runtime ever loads — exactly the 22 MB
+    // of dead Windows DLLs this register row found shipping to every device.
+    packaging {
+        resources {
+            excludes += "sherpa-onnx/native/**"
+            // R-1001 build report: pre-existing, unrelated to sherpa-onnx — the first time anyone
+            // actually assembled `:app:connectedDebugAndroidTest` in this repository (this
+            // session's own new androidTest is the first file in that source set besides the
+            // never-yet-run `HarnessInstrumentedTest`), it failed packaging on the JUnit5 jars
+            // `androidTestImplementation(project(":eval"))` already pulled in before this session
+            // (for `harnessShared`'s own JVM-parity test code): six of those jars each ship an
+            // identical `META-INF/LICENSE.md`, then (once that was excluded) an identical
+            // `META-INF/LICENSE-notice.md`. Excluding the whole family rather than one file at a
+            // time — a resource-exclusion fix, squarely within this file's own packaging/resource-
+            // exclusion mandate, same shape as the exclusion above, not a dependency or logic
+            // change.
+            excludes += "META-INF/LICENSE*.md"
+        }
+    }
+
     // ui-conformance WP11b follow-up: AGP 8 defaults `buildConfig` to false, so `BuildConfig` was
     // not generated at all — `org.ort.app.ui.failures.DebugFailureOverride` needs `BuildConfig.DEBUG`
     // to gate its read on a real build-type check (a release build must never consult a debug-only
@@ -114,6 +142,13 @@ dependencies {
     // sourceSets comment above and ModuleGraph.kt's documented test-scope exemption.
     androidTestImplementation(project(":eval"))
     androidTestImplementation(project(":testing"))
+    // R-1001: RealSherpaDecoderOnDeviceTest constructs the same RealSherpaDecoder :pipeline's
+    // AsrEngineProvisioning.kt constructs in production, directly, to prove the JNI binding
+    // resolves on a real Android runtime — test-scoped only, same exemption as :eval/:testing above.
+    // :asr-api is needed explicitly too: :asr-sherpa depends on it via `implementation`, not `api`,
+    // so DecodeOptions is not visible transitively.
+    androidTestImplementation(project(":asr-sherpa"))
+    androidTestImplementation(project(":asr-api"))
 }
 
 // ui-conformance WP3 (lead-approved edit to this file only — everything else stays this
