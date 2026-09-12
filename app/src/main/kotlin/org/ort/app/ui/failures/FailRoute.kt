@@ -32,6 +32,7 @@ import org.ort.app.ui.components.BannerTone
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.Sheet
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.components.safeAreaBottomPadding
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -195,9 +196,25 @@ private fun NotRecordedSection(state: RouteViewState, modifier: Modifier = Modif
 
 /** R-126/R-127: the 44dp status-bar inset every full-screen failure takeover/screen needs, shared
  * by every `Fail*Screen` in this package so the inset itself is defined in exactly one place —
- * see `FailRouteScreen`'s own kdoc for why (`SetupScaffold.kt`'s identical inset is the reference). */
+ * see `FailRouteScreen`'s own kdoc for why (`SetupScaffold.kt`'s identical inset is the reference).
+ *
+ * R-1003 (halt): now also reserves the navigation-bar/gesture-pill inset at the bottom
+ * (`ui/components/SafeArea.kt`'s `safeAreaBottomPadding`), for the screens in this package that
+ * pin no action bar of their own (`FailCalibration`, `FailReconcile`, `FailInfoCards`, `FailUsb`) —
+ * those had no bottom-inset handling anywhere. For the four screens that also wrap
+ * [FailureActionBarScaffold] (`FailRouteScreen` itself, `FailStorageHaltScreen`,
+ * `FailMigrationScreen`, `FailAssetSwapScreen`), this does not double-reserve: Compose's own
+ * `windowInsetsPadding` consumes the inset it applies for the composition subtree below it (that is
+ * the whole point of `ModifierLocalConsumedWindowInsets`, internal to
+ * `androidx.compose.foundation.layout`), so [FailureActionBarScaffold]'s own identical fix, nested
+ * inside this one, sees the same inset already spent and adds nothing further there — verified by
+ * decompiling that library's own `InsetsPaddingModifier` for this row (it reads
+ * `ModifierLocalConsumedWindowInsets` and subtracts what an ancestor already consumed before
+ * computing its own padding; this package's own report has the exact bytecode evidence) rather
+ * than assumed. */
 @Composable
-internal fun Modifier.failureScreenInset(): Modifier = this.windowInsetsPadding(WindowInsets.statusBars)
+internal fun Modifier.failureScreenInset(): Modifier =
+    this.windowInsetsPadding(WindowInsets.statusBars).safeAreaBottomPadding()
 
 /** The halt dot beside a "Halted" title (`Fail-Route.dc.html`, `Fail-Storage.dc.html`'s own halt stage). */
 @Composable

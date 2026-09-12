@@ -32,6 +32,95 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (R-1003: pinned bottom action bars now clear the navigation bar / gesture pill)
+
+### (this commit) — WPN · R-1003: every pinned-bottom action bar reserves real navigation-bar clearance, one shared mechanism
+
+**Scope:** new `app/src/main/kotlin/org/ort/app/ui/components/SafeArea.kt`;
+`app/src/main/kotlin/org/ort/app/ui/setup/SetupScaffold.kt`, `WelcomeScreen.kt`;
+`app/src/main/kotlin/org/ort/app/ui/failures/FailureActionBarScaffold.kt`, `FailRoute.kt`;
+`app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (bottom-inset handling only —
+nothing else in that file touched).
+
+**Requirements/ACs:** register row R-1003 (halt, reported live on the operator's Oppo Find X9
+Ultra, 1440x3168 @ 480dpi, ColorOS): every action button on the setup rig-selection step
+overlapped the system navigation buttons, and the Bluetooth rig step's "Use USB instead" escape
+action was unreachable for the same reason. Constitution VII (guarantees expressed structurally,
+not by convention) and VIII (a screen is not fixed until captured and compared to its artboard —
+that comparison is the lead's, not this entry's).
+
+**What changed:** every pinned-bottom action block in the app applied `.windowInsetsPadding(
+WindowInsets.statusBars)` for its own top inset and reserved nothing at all at the bottom;
+`navigationBars`/`systemBars`/`safeDrawing`/`safeContent` appeared nowhere in `app/src/main`
+before this change. New `Modifier.safeAreaBottomPadding()` (`ui/components/SafeArea.kt`) is the
+one shared mechanism now applied at every such surface, rather than four hand-rolled ones (the
+reason that discipline matters is on the record: R-957, a navigation-host padding change nobody
+classified as visual once moved the live bar 125px on every screen). Applied to: (1)
+`SetupScaffold`'s pinned action `Column` — folds into the same `barHeightPx` the R-940 trailing
+spacer already reads, so that invariant holds with no second mechanism; (2) `WelcomeScreen`'s
+footer `Column`, identically; (3) `FailureActionBarScaffold`'s action-bar `Column` (used by
+`FailRouteScreen`, `FailStorageHaltScreen`, `FailMigrationScreen`, `FailAssetSwapScreen` and
+`TransmissionDetailScreen`); (4) `FailRoute.kt`'s shared `failureScreenInset()`, which now
+reserves the bottom inset too, for the `ui/failures` screens that pin no action bar of their own
+(`FailCalibration`, `FailReconcile`, `FailInfoCards`, `FailUsb`) — verified by decompiling
+Compose foundation's own `InsetsPaddingModifier` (`androidx.compose.foundation.layout`, version
+1.7.3) that this does not double-reserve against (3)'s identical fix on the four screens that
+carry both: `windowInsetsPadding` tracks what an ancestor already consumed via the
+`ModifierLocalConsumedWindowInsets` modifier-local and only applies what remains; (5)
+`OrtNavHost`'s live bar — `NavHostBody`'s own `Column` (the `NavHostLayout.modifier` construction
+site) now carries `safeAreaBottomPadding()`, and the ambient `Scaffold`'s own default
+`contentWindowInsets` (`WindowInsets.systemBars`, confirmed by decompiling
+`ScaffoldDefaults`/`SystemBarsDefaultInsets_androidKt`, Material3 1.3.0 — applied today as plain
+numeric `Modifier.padding(padding)`, which does **not** participate in the same consumption
+tracking) is now explicitly marked consumed via `consumeWindowInsets(padding)` at the
+`FailureHost` call site, so the new bottom padding reserves real space only where none has
+already been reserved, never doubling on top of what the `Scaffold` already draws.
+
+**Verified:**
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.setup.*' --tests
+  'org.ort.app.ui.failures.*' --tests 'org.ort.app.ui.navigation.*' -PortAllowMissingBundledAssets=true`
+  — BUILD SUCCESSFUL, every existing test in the three packages passes unchanged (no regression;
+  see "Left open" for what this does and does not prove about the fix itself).
+- `.\gradlew ":app:lintDebug" dependencyRules platformGuards ":app:assembleDebug"
+  -PortAllowMissingBundledAssets=true` — BUILD SUCCESSFUL.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true` — BUILD
+  SUCCESSFUL in 17m39s (the coordinator's gate-correction message asked every worktree to run the
+  full gate with the escape hatch this round to avoid five worktrees each fetching ~610MB of
+  bundled models at once; the no-escape-hatch run is the lead's, once, after merge).
+- `.\gradlew -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `.\gradlew coverageMatrix` then `.\gradlew coverageMatrixCheck` (separate invocations) — both
+  BUILD SUCCESSFUL, no drift in `results/coverage-matrix.md`.
+
+**Left open / not done:** **No Robolectric test in this codebase can discriminate this fix's
+actual behavior**, and this is reported here plainly rather than papered over with a test that
+would pass either way (constitution II). Three independent techniques were tried and each is
+recorded in `SafeArea.kt`'s own kdoc with the exact evidence: (1) dispatching a real
+`WindowInsetsCompat` navigation-bars inset to the test activity's decor view, via both the
+platform `dispatchApplyWindowInsets` and `ViewCompat.dispatchApplyWindowInsets`, with and without
+`WindowCompat.setDecorFitsSystemWindows(window, false)` — `WindowInsets.navigationBars` read zero
+before and after every attempt; (2) constructing a fixed, non-`View`-backed `WindowInsets(bottom
+= 40)` instance and feeding it through a parameterised `safeAreaBottomPadding(insets = ...)` —
+`insets.getBottom(density)` correctly reported `40` when queried directly, but the padding never
+reached the rendered layout; (3) the decisive one — even `Modifier.windowInsetsPadding(
+WindowInsets(bottom = 40))`, Compose's own top-level function, called directly with no wrapper of
+this package's own, measured no differently under `createComposeRule()` than with no padding
+modifier at all. `windowInsetsPadding` is inert under this project's Robolectric setup, not
+merely hard to drive. A `SafeAreaTest.kt` built on attempt (2) was written, run, found
+non-discriminating (it passed identically with the production fix reverted to a no-op), and
+deleted rather than shipped — see this package's own session report for the full revert/restore
+trail. **The closing evidence for register row R-1003 is a device dump**, which this entry
+explicitly defers to the lead, per this session's own brief. Not verified: whether R-1003's fifth
+location (`OrtNavHost`) was genuinely broken in the live, full-app path before this change — the
+Material3 `Scaffold` wrapping it already applies `WindowInsets.systemBars` as numeric padding by
+default, which independent analysis (this entry's own decompilation) suggests may already have
+reserved the correct bottom space; the fix is applied regardless, as a structural guarantee no
+longer dependent on an unstated library default, and is provably harmless (never double-reserves)
+either way — but whether it was closing a live defect there or hardening an already-working path
+is something only a device dump can settle.
+
+---
+
 ## 2026-09-12 (constitution 1.2.0: a change that touches a screen re-runs the visual verification; the debugging and fix session prompt)
 
 ### bab4351d — constitution 1.2.0, AGENTS.md brought current, `docs/debug-fix-session-prompt.md`

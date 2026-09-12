@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
+import org.ort.app.ui.components.safeAreaBottomPadding
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -143,7 +144,15 @@ public fun SetupScaffold(
         // device (this file's own class doc has the full account).
         val barPlaceables = subcompose(SetupScaffoldSlot.Bar) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
+                // R-1003 (halt, Oppo Find X9 Ultra): this block used to reserve no space at all
+                // below its own buttons, so it rendered flush against -- and partly behind -- the
+                // navigation bar / gesture pill. `safeAreaBottomPadding()` (`ui/components/
+                // SafeArea.kt`) is applied here, to the bar's own `Column`, so the extra space folds
+                // straight into `barHeightPx` below -- the same measured value the trailing spacer
+                // (R-940, this function's own doc comment) already uses, with no second mechanism.
+                modifier = Modifier.fillMaxWidth()
+                    .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md)
+                    .safeAreaBottomPadding(),
                 verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
                 content = bottomActions,
             )
