@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import org.ort.app.fieldreport.wiring.FieldReportAppWiring
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.failures.FailureHostActions
 import org.ort.app.ui.navigation.NavSeed
@@ -143,8 +144,18 @@ public class ReaderActivity : ComponentActivity() {
         ForegroundActivityTracker.markActive()
     }
 
+    // WPR2 (FR-OBS-7): this is the app's one long-lived, real-content window — see
+    // `FieldReportAppWiring`'s own doc comment for why attaching/detaching here, rather than
+    // calling `FieldReportRecorder.configure` again, is what lets a screen frame be captured at
+    // all without ever resetting the session recorder's ring buffer.
+    override fun onDestroy() {
+        super.onDestroy()
+        FieldReportAppWiring.detachWindow()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FieldReportAppWiring.attachWindow(window)
         enableEdgeToEdge(statusBarStyle = OrtSystemBarStyle, navigationBarStyle = OrtSystemBarStyle)
         val sessionId = resolveSessionId(
             intentSessionId = intent?.getStringExtra(EXTRA_SESSION_ID),

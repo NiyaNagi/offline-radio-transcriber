@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetState
+import org.ort.app.fieldreport.wiring.FieldReportAppWiring
 import org.ort.pipeline.digest.ProseDigestRunner
 import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 
@@ -50,6 +51,10 @@ class OrtApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         if (isRunningUnderRobolectric()) return
+        // WPR2 (FR-OBS-6/FR-OBS-7): the one call that starts the debug-build field-report session
+        // recorder — see `FieldReportAppWiring`'s own doc comment for why this is called exactly
+        // once, here, rather than from an `Activity`. A no-op in a release build.
+        FieldReportAppWiring.configureOnce(filesDir)
         // WPE (E2-I03's own "owed by WPE" note, FR-DIG-5): schedules the prose-digest work chain
         // on every launch — a no-op if it is already scheduled (`ProseDigestRunner.schedule`'s own
         // `ExistingWorkPolicy.KEEP`) — but only when the operator has not disabled it (CF04's

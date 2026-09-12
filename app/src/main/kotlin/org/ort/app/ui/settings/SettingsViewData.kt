@@ -1,5 +1,6 @@
 package org.ort.app.ui.settings
 
+import org.ort.app.fieldreport.bundle.FieldReportGatedCategory
 import org.ort.core.capture.CaptureMode
 
 /**
@@ -50,6 +51,20 @@ internal data class SettingsCrossPackageActions(
     // `SettingsSubScreen` pushed that function's own count over the limit.
     val onOpenModeSettings: () -> Unit = {},
 )
+
+/** WPR2 (FR-OBS-6..12): [SettingsDiagnosticsScreen]'s field-report section's own two actions,
+ * bundled purely to keep that composable's own parameter list under detekt's threshold — the same
+ * reason [SettingsCaptureToggleActions] exists. */
+public data class FieldReportSectionActions(
+    val onOpenFieldReport: () -> Unit = {},
+    val onSetPublicDestinationGuardEnabled: (Boolean) -> Unit = {},
+)
+
+/** WPR2: [SettingsDiagnosticsScreen]'s pre-existing `Preview`/`Save bundle` actions, bundled for
+ * the identical detekt-threshold reason once [FieldReportSectionActions] joining the parameter
+ * list pushed the count over it — the same reason [SettingsCrossPackageActions] joined a bundle
+ * only once a later addition needed the headroom. */
+public data class SettingsDiagnosticsBundleActions(val onPreview: () -> Unit, val onSaveBundle: () -> Unit)
 
 public data class SettingsCaptureToggleActions(
     val onToggleLevelWarn: (Boolean) -> Unit,
@@ -254,6 +269,46 @@ public data class SettingsDiagnosticsViewState(
      * `DiagnosticsBundleBuilder.preview`'s own `BundlePreview.totalBytes`, never the board's
      * illustrative "2.1 MB". */
     val totalSizeLabel: String,
+    /** WPR2 (FR-OBS-6..12): the field-report section's own state — `null` hides the whole section
+     * (a release build, where the debug-only recorder never runs at all, FR-OBS-6). Defaulted so
+     * `SettingsPolling.diagnostics`'s existing construction keeps compiling unchanged; `SettingsContent.kt`
+     * attaches the real value itself (see that file's own `SettingsDiagnosticsSubScreen`). */
+    val fieldReport: FieldReportSectionViewState? = null,
+)
+
+/** `SettingsDiagnosticsScreen`'s field-report section (FR-OBS-6..12, D37/D38). */
+public data class FieldReportSectionViewState(val publicGuardEnabled: Boolean)
+
+/** FR-OBS-9's consent-screen file row — [category] is `null` for one of FR-OBS-8's ungated files. */
+public data class FieldReportConsentFileViewState(
+    val name: String,
+    val sizeLabel: String,
+    val category: FieldReportGatedCategory?,
+)
+
+/** The operator's current, per-upload toggle state (FR-OBS-9) — every field defaults `false`
+ * ("each defaulting off"), and nothing here is ever persisted across a dismiss/reopen (AC-144). */
+public data class FieldReportToggleState(
+    val retainedAudio: Boolean = false,
+    val voiceprintEmbeddings: Boolean = false,
+    val screenFrames: Boolean = false,
+)
+
+/**
+ * FR-OBS-9: everything the consent screen shows before every field-report upload. [destinationKnown]
+ * `false` pairs with [destinationLabel] carrying the honest "not configured" message
+ * (`SettingsContributeScreen.kt`'s own precedent for an upload client that does not exist yet)
+ * rather than a fabricated repository name; [destinationPublic] is meaningless when
+ * [destinationKnown] is `false` and callers must not read it in that case.
+ */
+public data class FieldReportConsentViewState(
+    val files: List<FieldReportConsentFileViewState>,
+    val totalSizeLabel: String,
+    val destinationKnown: Boolean,
+    val destinationLabel: String,
+    val destinationPublic: Boolean,
+    val publicGuardEnabled: Boolean,
+    val toggles: FieldReportToggleState = FieldReportToggleState(),
 )
 
 public data class SettingsAboutViewState(

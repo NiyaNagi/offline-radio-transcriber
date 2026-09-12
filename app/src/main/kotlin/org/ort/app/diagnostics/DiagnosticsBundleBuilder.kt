@@ -88,8 +88,13 @@ public object DiagnosticsBundleBuilder {
      * true` (FR-OBS-3). Uses the same `File(context.filesDir, entity.audioPath())` layout every
      * other real reader of retained audio in this module does
      * ([org.ort.app.ui.audio.RealTransmissionAudioPlayer], `ReaderPolling.kt`, `LogViewData.kt`).
+     *
+     * WPR2 (FR-OBS-8/FR-OBS-9): made non-`private` so
+     * [org.ort.app.fieldreport.bundle.FieldReportBundleBuilder]'s own `RETAINED_AUDIO` gated
+     * category reuses this exact query rather than a second, independently-written copy of it —
+     * the field-report bundle's own package has no `:data` access of its own to add an equivalent.
      */
-    private suspend fun retainedAudioFiles(context: Context): List<Pair<String, File>> {
+    public suspend fun retainedAudioFiles(context: Context): List<Pair<String, File>> {
         val db = OrtDatabase.create(context.applicationContext)
         return db.transmissionDao().listAll().mapNotNull { entity ->
             val source = File(context.filesDir, entity.audioPath())

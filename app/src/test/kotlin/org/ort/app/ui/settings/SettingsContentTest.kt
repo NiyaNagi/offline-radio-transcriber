@@ -1,11 +1,20 @@
 package org.ort.app.ui.settings
 
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
 import org.junit.Test
@@ -130,5 +139,46 @@ class SettingsContentTest {
         composeTestRule.waitUntilTextExists("Storage and retention")
         composeTestRule.onNodeWithContentDescription("Back to Settings").assertExists()
         composeTestRule.onAllNodesWithContentDescription("Open navigation").assertCountEquals(0)
+    }
+
+    /**
+     * WPR2 (AC-144): "toggles default off and the screen reappears on a second upload rather than
+     * proceeding on a remembered choice" — proven end to end through the real `SettingsContent`
+     * wiring (not just the stateless `FieldReportConsentScreen` composable in isolation, which
+     * `SettingsDiagnosticsScreenTest` already covers): toggle `Screen frames` on, `Cancel`, reopen,
+     * and find it off again — all in one composition, since this rule refuses a second `setContent`.
+     */
+    @Test
+    @Requirement("AC-144")
+    fun `AC_144 a category toggled on and cancelled is off again the next time the consent screen opens`() {
+        composeTestRule.setContent {
+            OrtTheme { SettingsContent(context = context, onDrawer = {}, initialScreen = SettingsScreenId.DIAGNOSTICS) }
+        }
+        composeTestRule.waitUntilTextExists("Send field report…")
+
+        composeTestRule.onNode(hasScrollAction())
+            .performScrollToNode(hasContentDescription("Send field report…"))
+        composeTestRule.onNodeWithContentDescription("Send field report…").performClick()
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.onAllNodesWithTag(FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG).fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        composeTestRule.onNode(hasScrollAction())
+            .performScrollToNode(hasTestTag(FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG))
+        composeTestRule.onNodeWithTag(FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG).performClick()
+        composeTestRule.onNodeWithTag(FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG).assertIsOn()
+
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription("Cancel"))
+        composeTestRule.onNodeWithContentDescription("Cancel").performClick()
+        composeTestRule.waitUntilTextExists("Send field report…")
+        composeTestRule.onNode(hasScrollAction())
+            .performScrollToNode(hasContentDescription("Send field report…"))
+        composeTestRule.onNodeWithContentDescription("Send field report…").performClick()
+        composeTestRule.waitUntil(5_000) {
+            composeTestRule.onAllNodesWithTag(FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG).fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+
+        composeTestRule.onNodeWithTag(FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG).assertIsOff()
     }
 }
