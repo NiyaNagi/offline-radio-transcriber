@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPJ: R-1001 — sherpa-onnx's Android native libraries were never packaged; every transmission failed Pass B)
 
-### `<pending>` — WPJ: fetch and package sherpa-onnx's Android `.so` files; stop shipping win-x64 DLLs; guard the APK structurally
+### 06c12772 — WPJ: fetch and package sherpa-onnx's Android `.so` files; stop shipping win-x64 DLLs; guard the APK structurally
 
 **Scope:** `gradle/libs.versions.toml` (comment only), `asr-sherpa/build.gradle.kts`,
 `sherpa-native.json` (new), `buildSrc/src/main/kotlin/org/ort/gradle/FetchSherpaNativeTask.kt`
