@@ -50,10 +50,48 @@ public data class StorageAccounting(
      */
     public val bundledBytes: Long,
     public val measuredAtMillis: Long,
+    /**
+     * WPARC (FR-STO-3, D39): the continuous archive's own real, on-disk size (`archive/`, a
+     * sibling of `audio/` — never counted inside it, so the archive can never silently consume
+     * the over-audio budget or vice versa). Deliberately **excluded** from [totalBytes], the same
+     * "reported on its own, never folded in" treatment [bundledBytes] gets (AC-139) — the archive
+     * is governed by its own independent budget (FR-STO-3d), not the gated-audio one.
+     */
+    public val archiveBytes: Long = 0L,
 ) {
-    /** The operator's own retention budget figure — deliberately excludes [bundledBytes] (AC-139). */
+    /** The operator's own retention budget figure — deliberately excludes [bundledBytes] and
+     * [archiveBytes] (AC-139, FR-STO-3). */
     public val totalBytes: Long get() = audioBytes + modelBytes + recordBytes + lexiconBytes
 }
+
+/**
+ * FR-STO-3e, D40, AC-157 (register, coordinator amendment): whether the **over-audio** budget is
+ * currently exceeded — a plain, derivable fact recomputed from real measured usage and the
+ * persisted budget every time it is read, **never a one-time event**. AC-157: "the warning
+ * persists for as long as the budget stays exceeded, and survives app restarts" — this is true by
+ * construction here, because nothing about [exceeded] is cached or fired once; a caller polling
+ * this at [org.ort.app.ui.data.LiveBarPolling]'s own cadence always sees the current truth,
+ * process restart included. There is deliberately no pruning tied to this state at all: D40
+ * forbids deleting over audio by any means (register R-1037) — reaching this budget only ever
+ * warns.
+ */
+public data class OverAudioBudgetState(
+    public val usedBytes: Long,
+    /** `null` = no budget set (FR-STO-3's own distinct third state — never confused with `0` or
+     * "unlimited"). */
+    public val budgetBytes: Long?,
+    public val exceeded: Boolean,
+)
+
+/** FR-STO-3e, D40, AC-157: [usedBytes] is [StorageAccounting.audioBytes] (already measured);
+ * [budgetGb] is `SettingsStore.audioBudgetGb`, read fresh by the caller every poll — this function
+ * itself holds no state at all, so "restart" changes nothing about what it reports. */
+public fun overAudioBudgetState(usedBytes: Long, budgetGb: Int?): OverAudioBudgetState {
+    val budgetBytes = budgetGb?.let { it * BYTES_PER_GB }
+    return OverAudioBudgetState(usedBytes, budgetBytes, exceeded = budgetBytes != null && usedBytes > budgetBytes)
+}
+
+private const val BYTES_PER_GB: Long = 1_000_000_000L
 
 /**
  * One session's contribution to retained storage, oldest-first-ordered by [collectSessionStorageSummaries]
@@ -108,6 +146,7 @@ public suspend fun measureStorageAccounting(
         lexiconBytes = measureDirectoryBytes(File(filesDir, "lexicon")),
         bundledBytes = bundledBytes,
         measuredAtMillis = clock.wallMillis(),
+        archiveBytes = measureDirectoryBytes(File(filesDir, "archive")),
     )
 }
 

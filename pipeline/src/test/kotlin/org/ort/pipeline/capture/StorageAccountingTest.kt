@@ -1,9 +1,12 @@
 package org.ort.pipeline.capture
 
+import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.data.OrtDatabase
@@ -213,6 +216,73 @@ class StorageAccountingTest {
         assertEquals(30L, summaries[0].bytes)
         assertEquals(1, summaries[1].overCount)
         assertEquals(5L, summaries[1].bytes)
+    }
+
+    @Test
+    @Requirement("FR-STO-3", "D39")
+    fun `the archive's own directory is measured separately and excluded from totalBytes`() {
+        val filesDir = Files.createTempDirectory("storage-accounting-archive-test").toFile()
+        writeFile(File(filesDir, "audio/SESSION01/tx1.flac"), 100)
+        writeFile(File(filesDir, "archive/SESSION01/chunk-0.flac"), 900)
+
+        val accounting = runBlocking { measureStorageAccounting(filesDir, emptyList()) }
+
+        assertEquals("the archive's own real size", 900L, accounting.archiveBytes)
+        assertEquals(
+            "the archive must never be folded into the over-audio budget figure",
+            100L,
+            accounting.totalBytes,
+        )
+    }
+
+    @Test
+    @Requirement("FR-STO-3e", "D40", "AC-157")
+    fun `AC_157 the over-audio budget warning is a derived fact that survives a restart, not a one-time event`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        // "A fresh reader over the same store" -- two independent SharedPreferences handles onto
+        // the exact prefs file `:app`'s SharedPreferencesSettingsStore persists audioBudgetGb
+        // under (this module cannot import that `:app` type -- module graph -- so the real,
+        // shared-file contract is exercised directly by name, the same pattern already documented
+        // for RealCaptureService.Dependencies.captureConfigurationStore).
+        val firstProcessPrefs = context.getSharedPreferences("org.ort.app.settings", Context.MODE_PRIVATE)
+        firstProcessPrefs.edit().putInt("audio_budget_gb", 1).apply() // a real, persisted 1 GB budget
+
+        // "Real, measured usage over that budget" -- 2 GB, expressed directly as the fact
+        // measureStorageAccounting would eventually report, so this test exercises the persisted
+        // *setting*'s round trip without needing to write an actual 2 GB file to disk.
+        val measuredUsedBytes = 2_000_000_000L
+
+        val budgetGb = firstProcessPrefs.getInt("audio_budget_gb", -1)
+        val stateBeforeRestart = overAudioBudgetState(usedBytes = measuredUsedBytes, budgetGb = budgetGb)
+        assertTrue("usage over budget must read as exceeded", stateBeforeRestart.exceeded)
+
+        // "Restart": a brand new SharedPreferences handle -- nothing carried over from the object
+        // above, only the same on-disk prefs file.
+        val secondProcessPrefs = context.getSharedPreferences("org.ort.app.settings", Context.MODE_PRIVATE)
+        val restartedBudgetGb = secondProcessPrefs.getInt("audio_budget_gb", -1)
+        val stateAfterRestart = overAudioBudgetState(usedBytes = measuredUsedBytes, budgetGb = restartedBudgetGb)
+
+        assertEquals(1, restartedBudgetGb) // the persisted setting survives the "restart"
+        assertTrue(
+            "AC-157: the warning must still read exceeded after a restart, never a one-time notice",
+            stateAfterRestart.exceeded,
+        )
+        assertEquals(stateBeforeRestart, stateAfterRestart)
+    }
+
+    @Test
+    @Requirement("FR-STO-3e", "D40")
+    fun `no budget set never reads as exceeded, and is distinct from an exceeded budget`() {
+        assertFalse(overAudioBudgetState(usedBytes = 999_999_999_999L, budgetGb = null).exceeded)
+        assertNull(overAudioBudgetState(usedBytes = 0L, budgetGb = null).budgetBytes)
+    }
+
+    @Test
+    @Requirement("FR-STO-3e", "D40")
+    fun `usage at exactly the budget is not exceeded -- only strictly over it is`() {
+        val state = overAudioBudgetState(usedBytes = 1_000_000_000L, budgetGb = 1)
+        assertFalse(state.exceeded)
+        assertEquals(1_000_000_000L, state.budgetBytes)
     }
 
     private fun writeFile(file: File, byteCount: Int) {

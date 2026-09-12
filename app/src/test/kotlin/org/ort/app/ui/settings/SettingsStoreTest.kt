@@ -91,4 +91,38 @@ class SettingsStoreTest {
         assert(!fake.bandPassFilterEnabled)
         assert(fake.levelWarnEnabled)
     }
+
+    @Test
+    fun `WPARC D39 the continuous archive defaults on at a 60 GB budget, both real and fake`() {
+        val store = realStore()
+        assert(store.archiveEnabled)
+        assert(store.archiveBudgetGb == 60)
+
+        val fake = InMemorySettingsStore()
+        assert(fake.archiveEnabled)
+        assert(fake.archiveBudgetGb == 60)
+    }
+
+    @Test
+    fun `WPARC an archive setting write survives a fresh store reading the same preferences file`() {
+        val prefs = ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSettingsStore.PREFS_NAME, Application.MODE_PRIVATE)
+        prefs.edit().clear().commit()
+        val first = SharedPreferencesSettingsStore(prefs)
+        first.archiveEnabled = false
+        first.archiveBudgetGb = 30
+
+        val second = SharedPreferencesSettingsStore(prefs)
+        assert(!second.archiveEnabled)
+        assert(second.archiveBudgetGb == 30)
+    }
+
+    @Test
+    fun `WPARC the archive setting is independent of the over-audio budget`() {
+        val store = realStore()
+        store.audioBudgetGb = 10
+        store.archiveBudgetGb = 60
+        assert(store.audioBudgetGb == 10)
+        assert(store.archiveBudgetGb == 60) // unaffected by the unrelated over-audio write
+    }
 }

@@ -16,6 +16,7 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.sqlite.execSQL
 import kotlinx.coroutines.runBlocking
 import org.ort.data.dao.ActivityDao
+import org.ort.data.dao.ArchiveGapDao
 import org.ort.data.dao.CaptureGapDao
 import org.ort.data.dao.CatalogDao
 import org.ort.data.dao.CorrectionDao
@@ -27,6 +28,7 @@ import org.ort.data.dao.StationIdentityDao
 import org.ort.data.dao.TranscriptDao
 import org.ort.data.dao.TransmissionDao
 import org.ort.data.dao.WorkQueueDao
+import org.ort.data.entity.ArchiveGapEntity
 import org.ort.data.entity.AssetEntity
 import org.ort.data.entity.CalibrationEntity
 import org.ort.data.entity.CallsignCandidateEntity
@@ -80,7 +82,9 @@ import java.util.concurrent.Executors
  * audio route resolved — see that entity's own doc comment; v11 (register R-1002, halt) adds
  * [WorkQueueItemEntity.retryNotBeforeMillis] so a retryable failure's backoff ladder
  * ([org.ort.data.WorkQueueBackoff]) is enforced by [org.ort.data.dao.WorkQueueDao.selectReady]
- * itself, not by a caller remembering to wait.
+ * itself, not by a caller remembering to wait; v12 (WPARC, FR-SEG-9, FR-STO-3d, D39) adds
+ * [SessionEntity.archiveState]/`.archiveRemovedAtMillis` and the `archive_gap` table for
+ * [ArchiveGapEntity] — see each one's own doc comment.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
  */
@@ -91,6 +95,7 @@ import java.util.concurrent.Executors
         TranscriptEntity::class,
         WorkQueueItemEntity::class,
         CaptureGapEntity::class,
+        ArchiveGapEntity::class,
         PhoneticLatticeEntity::class,
         CallsignCandidateEntity::class,
         StationEntity::class,
@@ -122,6 +127,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun transcriptDao(): TranscriptDao
     public abstract fun workQueueDao(): WorkQueueDao
     public abstract fun captureGapDao(): CaptureGapDao
+    public abstract fun archiveGapDao(): ArchiveGapDao
     public abstract fun catalogDao(): CatalogDao
     public abstract fun activityDao(): ActivityDao
     public abstract fun searchDao(): SearchDao
@@ -131,7 +137,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun proseSummaryDao(): ProseSummaryDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 11
+        public const val SCHEMA_VERSION: Int = 12
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -423,6 +429,33 @@ public abstract class OrtDatabase : RoomDatabase() {
         )
 
         /**
+         * v11 → v12 (WPARC, FR-SEG-9, FR-STO-3d, D39): adds `session.archiveState` and
+         * `.archiveRemovedAtMillis` — see [SessionEntity]'s own doc comment — and the `archive_gap`
+         * table for [ArchiveGapEntity] (FR-RUN-12). No existing table or column is touched or
+         * dropped; every v11 row survives untouched, both new `session` columns `NULL` (no archive
+         * — honest, not a fabricated "kept") (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
+         */
+        public val MIGRATION_11_12: Migration = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_11_12_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_11_12_STATEMENTS.forEach(connection::execSQL)
+            }
+        }
+
+        private val MIGRATION_11_12_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `session` ADD COLUMN `archiveState` TEXT",
+            "ALTER TABLE `session` ADD COLUMN `archiveRemovedAtMillis` INTEGER",
+            "CREATE TABLE IF NOT EXISTS `archive_gap` (" +
+                "`id` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `startSample` INTEGER NOT NULL, " +
+                "`sampleCount` INTEGER NOT NULL, `reason` TEXT NOT NULL, `recordedAtMillis` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`id`))",
+            "CREATE INDEX IF NOT EXISTS `index_archive_gap_sessionId` ON `archive_gap` (`sessionId`)",
+        )
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> = arrayOf(
@@ -436,6 +469,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             MIGRATION_8_9,
             MIGRATION_9_10,
             MIGRATION_10_11,
+            MIGRATION_11_12,
         )
 
         private suspend fun PooledConnection.exec(sql: String) {

@@ -689,17 +689,90 @@ public class MigrationTest {
     }
 
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v10 — walks forward through
-     * the *entire* migration chain to v11 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v10,
+     * WPARC (FR-SEG-9, FR-STO-3d, D39): v11 → v12 adds `session.archiveState`/
+     * `.archiveRemovedAtMillis` and the `archive_gap` table. Proves both halves of FR-AST-5/6: a
+     * pre-existing `session` row survives untouched with both new columns `NULL` (no archive,
+     * never a fabricated "kept"), and the new write paths ([OrtDatabase.sessionDao]'s
+     * `setArchiveKept`/`setArchiveRemoved` and [OrtDatabase.archiveGapDao]) are immediately usable
+     * afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "AC-96", "AC-150", "AC-151", "FR-AST-5", "FR-AST-6", "FR-SEG-9", "FR-STO-3d")
+    public fun migration_from_v11_to_v12_preserves_existing_rows_and_adds_the_archive_columns() {
+        val dbName = "migration-test-db-v12-archive"
+        val v11 = helper.createDatabase(dbName, 11)
+        v11.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, captureMode, " +
+                "audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 11, 0, 0, NULL, NULL, NULL, NULL, NULL)",
+        )
+        v11.close()
+
+        helper.runMigrationsAndValidate(dbName, 12, true, OrtDatabase.MIGRATION_11_12)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val migrated = runBlocking { db.sessionDao().getById("S1") }
+            assertEquals("test", migrated!!.appVersion) // pre-existing row survives
+            assertEquals(null, migrated.archiveState) // new columns default to NULL, never fabricated
+            assertEquals(null, migrated.archiveRemovedAtMillis)
+
+            runBlocking {
+                db.sessionDao().insert(
+                    org.ort.data.entity.SessionEntity(
+                        id = "S2",
+                        startedAt = 0L,
+                        endedAt = null,
+                        profileId = null,
+                        deviceTier = null,
+                        appVersion = "test",
+                        terminationReason = null,
+                        sourceId = null,
+                        schemaVersion = 12,
+                    ),
+                )
+                db.sessionDao().setArchiveKept("S2")
+                db.archiveGapDao().insert(
+                    org.ort.data.entity.ArchiveGapEntity(
+                        id = "AG1",
+                        sessionId = "S2",
+                        startSample = 0L,
+                        sampleCount = 480_000L,
+                        reason = "verification_failed",
+                        recordedAtMillis = 100L,
+                    ),
+                )
+            }
+            val kept = runBlocking { db.sessionDao().getById("S2") }
+            assertEquals("KEPT", kept!!.archiveState) // new write path usable post-migration
+
+            runBlocking { db.sessionDao().setArchiveRemoved("S2", removedAtMillis = 5_000L) }
+            val removed = runBlocking { db.sessionDao().getById("S2") }
+            assertEquals("REMOVED", removed!!.archiveState)
+            assertEquals(5_000L, removed.archiveRemovedAtMillis) // the pruned interval stays listed, with its date
+
+            val gaps = runBlocking { db.archiveGapDao().listBySession("S2") }
+            assertEquals("verification_failed", gaps.single().reason) // archive_gap table usable post-migration
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v11 — walks forward through
+     * the *entire* migration chain to v12 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v11,
      * so the same insert works unmodified against every fixture version; what varies is only which
      * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
      * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v10_migrates_forward_to_v11_preserving_its_session_row() {
-        for (fixtureVersion in 1..10) {
+    public fun every_prior_fixture_from_v1_to_v11_migrates_forward_to_v12_preserving_its_session_row() {
+        for (fixtureVersion in 1..11) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -719,7 +792,7 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v11",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v12",
                     "test",
                     migrated!!.appVersion,
                 )
@@ -732,6 +805,11 @@ public class MigrationTest {
                     "fixture v$fixtureVersion: the v10 rigDescriptorId column must default to NULL",
                     null,
                     migrated.rigDescriptorId,
+                )
+                assertEquals(
+                    "fixture v$fixtureVersion: the v12 archiveState column must default to NULL",
+                    null,
+                    migrated.archiveState,
                 )
                 // The v8 table exists and is queryable from every fixture version, empty rather
                 // than absent — a missing table would throw here, not read as null.
@@ -769,14 +847,14 @@ public class MigrationTest {
      * itself: the same factory function, with the same [androidx.sqlite.driver.bundled
      * .BundledSQLiteDriver], the shipped app and every other production caller use. `fixtureVersion`
      * 9 is the version named in the halt report (`data/schemas/org.ort.data.OrtDatabase/9.json`);
-     * the loop also covers every earlier released version (v10 added, register R-1002, head v11),
-     * since each is an on-disk shape a real device could still be carrying. Widening the range by
-     * one is the one change each new head version needs here.
+     * the loop also covers every earlier released version (v11 added, WPARC, head v12), since each
+     * is an on-disk shape a real device could still be carrying. Widening the range by one is the
+     * one change each new head version needs here.
      */
     @Test
     @Requirement("R-885", "AC-53", "FR-AST-5", "FR-AST-6")
-    public fun r_885_every_fixture_from_v1_to_v10_opens_through_OrtDatabase_create_and_reads_its_session_row() {
-        for (fixtureVersion in 1..10) {
+    public fun r_885_every_fixture_from_v1_to_v11_opens_through_OrtDatabase_create_and_reads_its_session_row() {
+        for (fixtureVersion in 1..11) {
             val dbName = "r885-real-open-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -823,6 +901,33 @@ public class MigrationTest {
                             42L,
                             row?.retryNotBeforeMillis,
                         )
+                    }
+                }
+                // WPARC: fixtureVersion 11 is the one whose real open runs exactly MIGRATION_11_12
+                // through this connection-based path -- proven by using both new write paths
+                // (setArchiveKept and archiveGapDao), not just "did not crash".
+                if (fixtureVersion == 11) {
+                    runBlocking {
+                        db.sessionDao().setArchiveKept("S1")
+                        db.archiveGapDao().insert(
+                            org.ort.data.entity.ArchiveGapEntity(
+                                id = "AG-R885-V11",
+                                sessionId = "S1",
+                                startSample = 0L,
+                                sampleCount = 480_000L,
+                                reason = "verification_failed",
+                                recordedAtMillis = 100L,
+                            ),
+                        )
+                        val kept = db.sessionDao().getById("S1")
+                        assertEquals(
+                            "MIGRATION_11_12's archiveState column must be usable through the real " +
+                                "connection-based open, not just Room's legacy SupportSQLiteDatabase path",
+                            "KEPT",
+                            kept?.archiveState,
+                        )
+                        val gaps = db.archiveGapDao().listBySession("S1")
+                        assertEquals("verification_failed", gaps.single().reason)
                     }
                 }
             } finally {
