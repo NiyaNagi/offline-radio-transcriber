@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPDUMP: a single local-save checklist replaces `Preview`/`Save bundle`/`Save debug dump`; R-1035 — the ADIF export states its exportable count before the write)
 
-### (pending — recorded in a follow-up commit) — WPPOL: R-1025 the tour's live-bar tap tolerates real touch-target padding; R-1026 reuses `levelBarColorFor` on the live monitor's envelope; R-1027 the level caption stacks past 1.5x; R-1035 wires the export screen to the real count preview
+### c3f6f4b5 — WPPOL: R-1025 the tour's live-bar tap tolerates real touch-target padding; R-1026 reuses `levelBarColorFor` on the live monitor's envelope; R-1027 the level caption stacks past 1.5x; R-1035 wires the export screen to the real count preview
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/LiveMonitorScreen.kt`;
 `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt`;
