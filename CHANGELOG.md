@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (spec amendments: continuous archive defaults on at 60 GB — D39 — plus the pruning order, a manual-frequency acceptance criterion, and two provenance requirements the WPPROV fix needed)
 
-### (this commit) — spec: D39 reverses Q14's default, FR-STO-3d's pruning order, FR-CAP-13's manual-frequency AC, FR-OBS-13/14 pass-and-session provenance, Q20 opened
+### 167e7e2e — spec: D39 reverses Q14's default, FR-STO-3d's pruning order, FR-CAP-13's manual-frequency AC, FR-OBS-13/14 pass-and-session provenance, Q20 opened
 
 **Scope:** `spec/functional-spec.md`, `spec/open-questions.md`, `AGENTS.md`, this file.
 Specification prose only — no product, build or test code touched, per this session's own
