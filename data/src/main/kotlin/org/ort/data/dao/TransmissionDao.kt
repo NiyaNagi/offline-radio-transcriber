@@ -81,6 +81,22 @@ public interface TransmissionDao {
     public suspend fun setProcessedTier(id: String, tier: Tier)
 
     /**
+     * Register R-1032 (constitution VI: "no number without ... execution provider"): the real
+     * execution provider a Pass B/C run [id] actually ran under — see
+     * [org.ort.data.entity.TransmissionEntity.executionProvider]'s own doc comment. Written by
+     * [org.ort.pipeline.passb.DataPassBResultSink.record] for every outcome (accepted, rejected, or
+     * failed — even a failed attempt genuinely ran, or genuinely did not, on this provider; "none"
+     * is the honest value when no engine was available at all), the moment the provider is known —
+     * before this existed, the fingerprint computed the real value and it was thrown away, and the
+     * column's only writer was the literal `executionProvider = null` at segment-persist time,
+     * before any pass had run. Unconditional, no `corrected`-style guard: which provider most
+     * recently ran this record is a fact about the pipeline run, exactly the same reasoning
+     * [setProcessedTier] already applies, never an attribution a human correction should block.
+     */
+    @Query("UPDATE transmission SET executionProvider = :provider WHERE id = :id")
+    public suspend fun setExecutionProvider(id: String, provider: String)
+
+    /**
      * Every transmission not yet processed at any tier at or above the caller's target — i.e.
      * still a genuine reprocessing candidate. Never processed at all
      * ([org.ort.data.entity.TransmissionEntity.processedTier] `IS NULL`) always qualifies,

@@ -32,6 +32,111 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPPROV: R-1030 — the manual-frequency escape hatch is wired end to end; R-1031 — a real session records the app's real version, never the v0 `"smoke-test"` literal; R-1032 — the execution provider a Pass B run actually used is persisted, not thrown away; R-1033 — live capture now stamps `processedTier` too, not only reprocessing)
+
+### <pending> — WPPROV: three provenance holes and one false screen caption from the operator's own on-device dump — R-1030/R-1031/R-1032/R-1033
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/rig/CaptureConfiguration.kt`,
+`CaptureConfigurationStore.kt`; `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`;
+`pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`;
+`data/src/main/kotlin/org/ort/data/dao/TransmissionDao.kt`,
+`data/src/main/kotlin/org/ort/data/entity/TransmissionEntity.kt`;
+`app/src/main/kotlin/org/ort/app/ui/setup/SetupCaptureConfigurationAdapter.kt`; tests under
+`pipeline/src/test/kotlin/org/ort/pipeline/{rig,capture,passb}/**`,
+`data/src/test/kotlin/org/ort/data/dao/TransmissionDaoTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/setup/SetupCaptureConfigurationAdapterTest.kt`.
+
+**Requirements/ACs:** FR-CAP-13, FR-RIG-8, FR-RIG-9, constitution I (uncertainty is content — never
+fabricate a number or a screen's own claim), constitution VI (measurement discipline — no number
+without its provenance). Register rows **R-1030** (halt), **R-1031**, **R-1032**, **R-1033** — all
+three traced to source from the operator's own debug dump (six of eight overs reached `COMPLETE`,
+proving ASR genuinely works) before this session began; diagnosed, not re-derived here.
+
+**What changed:**
+- **R-1030 (halt):** S10b's escape hatch — *"Continue without connecting — the frequency is logged
+  by hand until you link the radio"* — had no wiring behind it at all.
+  `RigSupervisor.setManualFrequencyOverrideHz` (which already takes precedence over any rig
+  reading, checked *before* `descriptorRigModule` is ever consulted — confirmed reachable with no
+  rig connected at all, see `RigSupervisorTest`'s new `R_1030` case) had exactly one caller in the
+  whole repository, and it was a test. `CaptureConfiguration` had no field to carry the operator's
+  entry from `SetupStore.manualFrequencyHz` down to the running service at all. Fixed by adding
+  `CaptureConfiguration.manualFrequencyHz`, threading it through
+  `SetupCaptureConfigurationAdapter.toCaptureConfiguration` (the field already existed on
+  `SetupStore`; `SetupActivity` needed no change), persisting it through
+  `SharedPreferencesCaptureConfigurationStore`'s `PREFIX_CURRENT`/`PREFIX_PENDING` round trip (a
+  `null` is removed outright, never coerced through a real-looking `0` Hz sentinel), and calling
+  `RigSupervisor.setManualFrequencyOverrideHz` once, unconditionally, at `RealCaptureService`
+  session start. A real over now carries `frequencyHz` = the operator's own entry and
+  `frequencyProvenance = "manual"`, proven end to end against the exact no-rig reproduction in
+  `RealCaptureServiceManualFrequencyTest`.
+- **R-1031:** the one production `SessionEntity` insert stamped the literal `appVersion =
+  "smoke-test"` since this class's v0 wiring — every real session, in every build, forever (no
+  `SessionDao` update exists to correct it after the fact). `:pipeline` has no `BuildConfig`, but
+  has the same real `Context` `:app`'s `DeviceJsonProducer`/`SettingsPolling` already read
+  `packageManager.getPackageInfo(...).versionName` through — added `realAppVersion(context)`
+  (a plain top-level function, not a `Dependencies` seam: no fake/real split is worth injecting
+  here) returning `"unknown"`, never a guess, on the packaging-only failure path.
+- **R-1032:** `AsrEngineProvisioning`/`AsrEngineAvailability.Available.provider` computed the real
+  execution provider and it reached `PassFingerprint.provider` — and stopped there.
+  `TransmissionEntity.executionProvider` existed as a column with no writer beyond the literal
+  `null` `RealSegmentSink` sets at segment-persist time, before any pass ever runs; `TransmissionDao`
+  had no update statement for it at all. Added `TransmissionDao.setExecutionProvider` and call it,
+  unconditionally, from `DataPassBResultSink.record` — the one sink every real `PassB` (live
+  capture or reprocessing alike, both built through `PassBFactory.create`) writes through — for
+  every outcome including `Failed` (provenance is a fact about the attempt, not the outcome; `"none"`
+  is the honest value when no engine was available at all).
+- **R-1033 (decision, argued below):** `TransmissionEntity.processedTier` was, by design,
+  `ReprocessRunner`'s column alone — live capture always runs at `Tier.T0` and never recorded it,
+  the identical provenance hole R-1032 had one field over. **Decision: live Pass B now writes the
+  tier it ran at.** `DataPassBResultSink.record` stamps `TransmissionDao.setProcessedTier` on
+  `Accepted`/`Rejected` (never `Failed` — exactly `ReprocessRunner`'s own existing rule, reused
+  rather than duplicated with different judgement), reading the tier from the same
+  `PassFingerprint.tier` every caller already threads through `PassBFactory.create`. Argument: a
+  transcript whose tier is unknown cannot be compared with one whose tier is known, which is the
+  whole point of constitution VI, and the two write paths (live, via this sink; reprocess, via
+  `ReprocessRunner`'s own separate call — left as-is, redundant but harmless, same value, outside
+  this session's file ownership) never disagree because both ultimately read the one fingerprint
+  built by `PassBFactory.create`. This does not break the "reprocess-only" invariant the entity's
+  kdoc used to state — that invariant is retired, replaced with the fuller history above, in
+  `TransmissionEntity.kt`'s own doc comment.
+
+**Verified:**
+- `.\gradlew :data:test :pipeline:testDebugUnitTest -PortAllowMissingBundledAssets=true` — green,
+  including 6 new `DataPassBResultSinkTest` cases (R-1032/R-1033, all three `PassBOutcome`
+  branches), 4 new `TransmissionDaoTest` cases, 2 new `RigSupervisorTest`/3 new
+  `SharedPreferencesCaptureConfigurationStoreTest` cases (R-1030), the new
+  `RealCaptureServiceManualFrequencyTest` file (R-1030/R-1031, real `ServiceController`, no ASR
+  needed), and a new `RealCaptureServiceTest` case (R-1032/R-1033, full live pipeline through
+  `FakeAsrEngine` to `COMPLETE`).
+- `.\gradlew ":app:testDebugUnitTest" --tests 'org.ort.app.ui.setup.*'` — green, including 2 new
+  `SetupCaptureConfigurationAdapterTest` cases.
+- Every new test shown to discriminate: production change reverted, test re-run and observed to
+  fail for the stated reason, production change restored, test re-run and observed to pass — for
+  the adapter wiring, the preferences round trip, the `RigSupervisor` call site, the `appVersion`
+  literal, and both `DataPassBResultSink` writes.
+- `.\gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue`
+  — green in the foreground (an earlier backgrounded attempt caught two real `ktlint`/`detekt`
+  line-length findings in the new test file, fixed, then re-run clean).
+- `.\gradlew -p buildSrc test` — green. `python tools\spec-check\spec_check.py` — OK, all 8 checks.
+- `.\gradlew coverageMatrix` then `.\gradlew coverageMatrixCheck` (separate invocations) — 466
+  requirements, 260 covered; `results/coverage-matrix.md` regenerated and committed alongside (a
+  generated artifact these two tasks themselves produce and validate, not a hand-maintained file).
+
+**Left open / not done:**
+- **No schema migration was needed.** `frequencyHz`/`frequencyProvenance`/`executionProvider`/
+  `processedTier` are all pre-existing columns (back to schema v4/v9) — this session only wired
+  write paths to columns nothing had ever populated in production.
+- **The operator's own already-recorded sessions/transmissions cannot be corrected
+  retroactively** — every session on that device still reads `appVersion = "smoke-test"`, and every
+  over still carries `frequencyHz: null`/`frequencyProvenance: "unknown"`/`executionProvider: null`/
+  `processedTier: null` forever. No `SessionDao`/`TransmissionDao` backfill exists, and building one
+  from a single anecdotal device is out of this session's scope.
+- **`ReprocessRunner.kt`'s own `setProcessedTier` call is now redundant** (this sink already writes
+  the identical value first) but was left untouched — that file is outside this session's file
+  ownership (`pipeline/.../reprocess/**` was not on WPPROV's owned-files list).
+
+---
+
 ## 2026-09-12 (WPV: R-1023 — the live monitor's timestamp column stops using a fixed width; R-1024 — `overnight-live-monitor` seeds a real level envelope; R-1025 — the tour's live-bar tap waits for the tagged node to exist before tapping)
 
 ### d4b6a250 — WPV: three small live-monitor defects from N07's first capture — R-1023/R-1024/R-1025

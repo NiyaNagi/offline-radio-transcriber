@@ -159,17 +159,34 @@ public class SharedPreferencesCaptureConfigurationStore(
         val rigTransportKind = prefs.getString(key(prefix, KEY_RIG_TRANSPORT_KIND), null)
             ?.let { name -> runCatching { RigTransportKind.valueOf(name) }.getOrNull() }
         val rigParams = decodeParams(prefs.getString(key(prefix, KEY_RIG_PARAMS), null))
-        return CaptureConfiguration(mode, selectedInputId, rigId, rigTransportKind, rigParams)
+        // R-1030: absent (never written, or explicitly cleared) reads back null via -1L's absence
+        // sentinel below -- see writeTo's own comment for why a plain getLong default cannot tell
+        // "never set" from "set to 0 Hz" apart.
+        val manualFrequencyHz = if (prefs.contains(key(prefix, KEY_MANUAL_FREQUENCY_HZ))) {
+            prefs.getLong(key(prefix, KEY_MANUAL_FREQUENCY_HZ), 0L)
+        } else {
+            null
+        }
+        return CaptureConfiguration(mode, selectedInputId, rigId, rigTransportKind, rigParams, manualFrequencyHz)
     }
 
     private fun writeTo(prefix: String, config: CaptureConfiguration) {
-        prefs.edit()
+        val editor = prefs.edit()
             .putString(key(prefix, KEY_MODE), config.mode.name)
             .putString(key(prefix, KEY_SELECTED_INPUT_ID), config.selectedInputId)
             .putString(key(prefix, KEY_RIG_ID), config.rigId)
             .putString(key(prefix, KEY_RIG_TRANSPORT_KIND), config.rigTransportKind?.name)
             .putString(key(prefix, KEY_RIG_PARAMS), encodeParams(config.rigParams))
-            .apply()
+        // R-1030: SharedPreferences has no nullable-Long put -- a null is removed outright (never
+        // silently coerced to a real-looking 0 Hz reading) rather than written and re-read as one;
+        // readFrom's own prefs.contains(...) check above is the other half of this round-trip.
+        val manualFrequencyHz = config.manualFrequencyHz
+        if (manualFrequencyHz == null) {
+            editor.remove(key(prefix, KEY_MANUAL_FREQUENCY_HZ))
+        } else {
+            editor.putLong(key(prefix, KEY_MANUAL_FREQUENCY_HZ), manualFrequencyHz)
+        }
+        editor.apply()
     }
 
     private fun key(prefix: String, name: String): String = "$prefix.$name"
@@ -200,6 +217,7 @@ public class SharedPreferencesCaptureConfigurationStore(
         private const val KEY_RIG_ID = "rig_id"
         private const val KEY_RIG_TRANSPORT_KIND = "rig_transport_kind"
         private const val KEY_RIG_PARAMS = "rig_params"
+        private const val KEY_MANUAL_FREQUENCY_HZ = "manual_frequency_hz"
         private const val ENTRY_SEPARATOR = ";"
         private const val KEY_VALUE_SEPARATOR = "="
     }

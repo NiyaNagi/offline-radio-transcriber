@@ -276,6 +276,27 @@ class RigSupervisorTest {
         assertEquals(FrequencyProvenance.MANUAL, reading.provenance)
     }
 
+    /**
+     * Register R-1030: the operator's own dump had `frequencyProvenance: "unknown"` on every over
+     * despite S10b's "logged by hand" escape hatch — traced to [RealCaptureService] never calling
+     * [RigSupervisor.setManualFrequencyOverrideHz] at all (the wiring gap this register row is
+     * about), never to this method's own precedence order, which already checks the override
+     * before ever consulting [descriptorRigModule]. This proves that order directly: connected with
+     * [CaptureConfiguration.DEFAULT] — no rig id, no transport, the exact S10b "no radio" case —
+     * the override still resolves to `MANUAL`, not `UNKNOWN`.
+     */
+    @Test
+    @Requirement("FR-RIG-8", "FR-RIG-9", "R-1030")
+    fun `R_1030 a manual override is reachable with no rig connected at all`() {
+        val supervisor = newSupervisor(FakeRigTransport())
+        supervisor.connect(CaptureConfiguration.DEFAULT)
+        supervisor.setManualFrequencyOverrideHz(146_520_000L)
+
+        val reading = supervisor.frequencyForTransmission(band = null, startNanos = 0L, endNanos = 1_000L)
+        assertEquals(146_520_000L, reading.frequencyHz)
+        assertEquals(FrequencyProvenance.MANUAL, reading.provenance)
+    }
+
     @Test
     @Requirement("FR-RIG-9")
     fun `FR_RIG_9 nothing known yet reads UNKNOWN, never a fabricated value`() {

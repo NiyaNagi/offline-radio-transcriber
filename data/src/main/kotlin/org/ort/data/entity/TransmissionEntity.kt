@@ -14,15 +14,22 @@ import org.ort.core.TransmissionState
  * pass fingerprints, not stored (technical design §7.2) — but [isReprocessCandidate] is the
  * flag FR-RUN-4 sets when shedding or a fingerprint mismatch marks the row for reprocessing.
  *
- * [processedTier] (schema v4, register R-204 follow-up, FR-REP-2/9): the tier the most recent
- * *completed* Pass B/C run actually ran this transmission at — `null` until a pass first
- * completes for it (this column tracks reprocessing outcomes, not live capture's own tier, which
- * `SessionEntity.deviceTier` already carries). [org.ort.pipeline.reprocess.ReprocessRunner] is the
- * only writer, via [org.ort.data.dao.TransmissionDao.setProcessedTier], set on both a completed
+ * [processedTier] (schema v4, register R-204 follow-up, FR-REP-2/9; register R-1033 amendment): the
+ * tier the most recent completed-or-rejected Pass B/C run actually ran this transmission at —
+ * `null` until a pass first finishes for it. **Since R-1033, this includes live capture, not only
+ * reprocessing**: [org.ort.pipeline.passb.DataPassBResultSink.record] — the one sink every real
+ * `PassB` (live or reprocessed, [org.ort.pipeline.passb.PassBFactory.create]'s own `sink`) writes
+ * through — stamps it via [org.ort.data.dao.TransmissionDao.setProcessedTier] on both a completed
  * and a rejected outcome (both mean "Pass B genuinely ran at this tier"), never on a failed one
- * (which means it did not). This is what lets a read path answer "which records still need
- * improving" without re-offering one a reprocess already brought current
- * ([org.ort.data.dao.TransmissionDao.idsBelowProcessedTier]).
+ * (which means it did not). Before R-1033, live capture always ran at `Tier.T0` and this column
+ * stayed `null` until an explicit reprocess touched the record — an unrecorded live tier, the same
+ * provenance hole [executionProvider] had (constitution VI: "no number without ... provenance");
+ * a transcript whose tier is unknown cannot be compared with one whose tier is known.
+ * [org.ort.pipeline.reprocess.ReprocessRunner] also calls [org.ort.data.dao.TransmissionDao.setProcessedTier]
+ * itself, redundantly (the identical value, from the same [org.ort.core.PassFingerprint.tier]) —
+ * harmless, and left as-is rather than removed by a change outside this package's ownership. This
+ * is what lets a read path answer "which records still need improving" without re-offering one a
+ * reprocess already brought current ([org.ort.data.dao.TransmissionDao.idsBelowProcessedTier]).
  *
  * [rigStateChangedMidTransmission] (schema v9, WPC3, FR-RIG-6): the rig reported a different
  * reading before this transmission ended than it had at the start -- either a genuine
@@ -80,6 +87,16 @@ public data class TransmissionEntity(
     val utcOffsetMinutes: Int,
     val calibrationId: String?,
     val enhancementApplied: List<String> = emptyList(),
+    /**
+     * Register R-1032 (constitution VI: "no number without ... execution provider"): the real
+     * execution provider ([org.ort.core.PassFingerprint.provider], e.g. `"cpu"`) the most recent
+     * Pass B/C run for this transmission actually ran on — `null` until a real pass has ever run
+     * for it (the segment-persist insert always writes `null` here; nothing else has happened yet).
+     * [org.ort.data.dao.TransmissionDao.setExecutionProvider] is the only writer, called by
+     * [org.ort.pipeline.passb.DataPassBResultSink.record] for every outcome, live capture and
+     * reprocessing alike — before that call existed, [PassFingerprint.provider] was computed and
+     * thrown away, and this column silently stayed `null` forever on every real device.
+     */
     val executionProvider: String?,
     val isReprocessCandidate: Boolean = false,
     val processedTier: Tier? = null,

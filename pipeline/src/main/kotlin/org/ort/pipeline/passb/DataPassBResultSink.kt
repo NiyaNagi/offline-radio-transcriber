@@ -43,10 +43,27 @@ import org.ort.lexicon.SlotDetail
  * — per-slot score/kept-alternate for D05, and the char span for D01/D03's transcript highlight —
  * is persisted alongside it, into `:data`'s new `lattice_slot` table
  * ([org.ort.data.entity.LatticeSlotEntity]), in the same transaction. See [persistSlotDetails].
+ *
+ * **Register R-1032/R-1033 (constitution VI: "no number without ... execution provider"):
+ * [result]'s own [PassBResult.fingerprint] is the one production source of both facts, for every
+ * caller of this sink — live capture (`RealCaptureService`, always `Tier.T0`) and reprocessing
+ * (`ReprocessRunner`, any tier) alike, since both build their real `PassB` through the same
+ * [PassBFactory.create]:
+ * - **executionProvider** ([org.ort.data.dao.TransmissionDao.setExecutionProvider]) is written for
+ *   *every* outcome, including [PassBOutcome.Failed] — even a failed attempt genuinely ran (or
+ *   genuinely could not, `"none"`) on this provider; provenance is a fact about the attempt, not
+ *   the outcome.
+ * - **processedTier** ([org.ort.data.dao.TransmissionDao.setProcessedTier]) is written only for
+ *   [PassBOutcome.Accepted] and [PassBOutcome.Rejected] — see
+ *   [org.ort.data.entity.TransmissionEntity.processedTier]'s own doc comment for why `Failed` must
+ *   leave it untouched (a transmission that did not genuinely run at this tier stays eligible).
  */
 public class DataPassBResultSink(private val db: OrtDatabase) : PassBResultSink {
 
     override suspend fun record(result: PassBResult): Unit = db.inWriteTransaction {
+        // R-1032: unconditional -- the provider a pass ran on is known the moment it ran, whatever
+        // it concluded (see this class's own kdoc).
+        db.transmissionDao().setExecutionProvider(result.transmissionId, result.fingerprint.provider)
         when (val outcome = result.outcome) {
             is PassBOutcome.Accepted -> {
                 db.transcriptDao().supersede(
@@ -72,9 +89,14 @@ public class DataPassBResultSink(private val db: OrtDatabase) : PassBResultSink 
                     confidence = result.attribution.confidence,
                     sourceTransmissionId = result.attribution.sourceTransmissionId?.ulid?.value,
                 )
+                // R-1033: this outcome means Pass B genuinely ran this record at fingerprint.tier
+                // -- see TransmissionEntity.processedTier's own doc comment.
+                db.transmissionDao().setProcessedTier(result.transmissionId, result.fingerprint.tier)
             }
             is PassBOutcome.Rejected -> {
                 db.transmissionDao().setRejectionReason(result.transmissionId, "${outcome.rule}: ${outcome.detail}")
+                // R-1033: a rejection is still a genuine run at this tier (rejected is not failed).
+                db.transmissionDao().setProcessedTier(result.transmissionId, result.fingerprint.tier)
             }
             is PassBOutcome.Failed -> Unit
         }

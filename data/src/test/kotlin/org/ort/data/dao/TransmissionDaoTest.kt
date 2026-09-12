@@ -81,4 +81,40 @@ public class TransmissionDaoTest {
 
         assertEquals(Tier.T3, db.transmissionDao().getById("TX1")!!.processedTier)
     }
+
+    // Register R-1032 (constitution VI: "no number without ... execution provider"):
+    // TransmissionDao.setExecutionProvider -- see TransmissionEntity.executionProvider's own doc
+    // comment for why this column existed but nothing in production ever wrote to it.
+
+    @Test
+    @Requirement("R-1032")
+    public fun R_1032_a_fresh_transmission_carries_no_execution_provider(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+
+        assertNull(db.transmissionDao().getById("TX1")!!.executionProvider)
+    }
+
+    @Test
+    @Requirement("R-1032")
+    public fun R_1032_setExecutionProvider_stamps_the_real_provider_a_run_actually_used(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+
+        db.transmissionDao().setExecutionProvider("TX1", "cpu")
+
+        assertEquals("cpu", db.transmissionDao().getById("TX1")!!.executionProvider)
+    }
+
+    @Test
+    @Requirement("R-1032")
+    public fun R_1032_setExecutionProvider_overwrites_a_previous_value_rather_than_stacking(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+
+        db.transmissionDao().setExecutionProvider("TX1", "cpu")
+        db.transmissionDao().setExecutionProvider("TX1", "nnapi")
+
+        assertEquals("nnapi", db.transmissionDao().getById("TX1")!!.executionProvider)
+    }
 }

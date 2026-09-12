@@ -20,6 +20,16 @@ import org.ort.rig.RigTransportKind
  * non-null value together with [rigId] `== NullRigModule.ID` is treated the same as "no rig" by
  * [org.ort.pipeline.rig.RigSupervisor] (constitution I: an invalid combination degrades to the
  * null module rather than asserting a transport that names no radio).
+ *
+ * [manualFrequencyHz] (register R-1030, FR-CAP-13, FR-RIG-8): S10b's "Continue without connecting
+ * — the frequency is logged by hand until you link the radio" escape hatch. Carried through from
+ * `SetupStore.manualFrequencyHz`/[org.ort.app.ui.setup.SetupCaptureConfigurationAdapter] exactly
+ * as the operator typed it, `null` when nothing was ever entered (never a fabricated 0).
+ * [org.ort.pipeline.capture.RealCaptureService] passes it to
+ * [org.ort.pipeline.rig.RigSupervisor.setManualFrequencyOverrideHz] once, at session start
+ * (unrelated to [rigId]/[rigTransportKind] — the override applies with or without a rig
+ * configured, since [RigSupervisor.frequencyForTransmission] checks it before ever consulting the
+ * rig module).
  */
 public data class CaptureConfiguration(
     public val mode: CaptureMode,
@@ -27,6 +37,7 @@ public data class CaptureConfiguration(
     public val rigId: String = NullRigModule.ID,
     public val rigTransportKind: RigTransportKind? = null,
     public val rigParams: Map<String, String> = emptyMap(),
+    public val manualFrequencyHz: Long? = null,
 ) {
     public companion object {
         /** FR-CAP-8's audio-only v1 default — local microphone, no rig (FR-RIG-2). */

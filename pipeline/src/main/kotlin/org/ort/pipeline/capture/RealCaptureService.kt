@@ -289,6 +289,12 @@ public class RealCaptureService : Service() {
         val supervisor = RigSupervisor(dependencies.rigTransportFactory(applicationContext), scope)
         rigSupervisor = supervisor
         supervisor.connect(activeConfiguration)
+        // R-1030 (FR-CAP-13): S10b's "logged by hand" escape hatch, wired end to end -- the manual
+        // override takes precedence over whatever the rig (or lack of one) reports regardless of
+        // rigId/rigTransportKind (RigSupervisor.frequencyForTransmission checks it before ever
+        // consulting descriptorRigModule -- see that method's own kdoc), so this call is
+        // unconditional, not gated on "no rig configured".
+        supervisor.setManualFrequencyOverrideHz(activeConfiguration.manualFrequencyHz)
 
         // A real enumerated device — never a fabricated descriptor, which RouteVerifier would
         // (correctly) reject on the first read, halting capture. See defaultInputDevice()'s kdoc.
@@ -438,7 +444,12 @@ public class RealCaptureService : Service() {
                 endedAt = null,
                 profileId = null,
                 deviceTier = null,
-                appVersion = "smoke-test",
+                // R-1031 (constitution VI "no number without ... provenance", constitution I
+                // "never fabricate"): every real session was stamped with this v0 wiring's own
+                // literal since the class's first commit (see the top of this file's own doc
+                // comment) -- realAppVersion() reads the same packageManager.getPackageInfo(...)
+                // .versionName :app's DeviceJsonProducer/SettingsPolling already use, honestly.
+                appVersion = realAppVersion(applicationContext),
                 terminationReason = null,
                 sourceId = null,
                 schemaVersion = OrtDatabase.SCHEMA_VERSION,
@@ -1316,6 +1327,25 @@ internal class ThermalTrackingPass(
  */
 internal fun buildHeartbeatRecord(sessionId: String, samplePosition: () -> Long): HeartbeatRecord =
     HeartbeatRecord(sessionId, SystemClock.monotonicNanos(), SystemClock.wallMillis(), samplePosition())
+
+/**
+ * Register R-1031 (constitution VI: "no number without ... provenance"; constitution I: "never
+ * fabricate"): the real `versionName` this build shipped as, for [SessionEntity.appVersion] —
+ * `:pipeline` has no `BuildConfig` (only `:app` enables it), but it has the same real
+ * [android.content.Context] `:app`'s `DeviceJsonProducer.appVersionLabel`/`SettingsPolling` already
+ * read `packageManager.getPackageInfo(...).versionName` through. `"unknown"`, never a guess, on the
+ * (packaging-only, in practice never-taken) failure path — an honest "unknown" beats inventing a
+ * number that looks real. A plain top-level function, not a [RealCaptureService.Dependencies] seam:
+ * unlike every other seam in that class, this has no fake/real distinction worth injecting — a
+ * Robolectric test's own [android.content.pm.PackageManager] already answers this exactly as a real
+ * device's would, and the failure branch is exercised directly against a [android.content.Context]
+ * whose package name genuinely does not resolve (see this function's own test).
+ */
+internal fun realAppVersion(context: android.content.Context): String = try {
+    context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
+} catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+    "unknown"
+}
 
 /**
  * audit F-028: the seam that joins `:capture-android`'s [GapTracker] output to
