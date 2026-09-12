@@ -82,6 +82,35 @@ class SetupCaptureConfigurationAdapterTest {
         assertEquals(RigTransportKind.BLUETOOTH_SPP, config?.rigTransportKind)
     }
 
+    /** Register R-1030 (FR-CAP-13): S10b's "logged by hand" frequency must reach the
+     * [org.ort.pipeline.rig.CaptureConfiguration] `RealCaptureService` actually reads, or the
+     * screen's own claim that it does is false. */
+    @Test
+    fun `R_1030 a manually entered frequency carries through to the capture configuration`() {
+        val store = InMemorySetupStore(
+            captureMode = CaptureMode.LOCAL_MICROPHONE,
+            rigId = NullRigModule.ID,
+            manualFrequencyHz = 146_520_000L,
+        )
+
+        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)
+
+        assertEquals(146_520_000L, config?.manualFrequencyHz)
+    }
+
+    @Test
+    fun `R_1030 no frequency ever entered carries through as null, never a fabricated 0`() {
+        val store = InMemorySetupStore(
+            captureMode = CaptureMode.LOCAL_MICROPHONE,
+            rigId = NullRigModule.ID,
+            manualFrequencyHz = null,
+        )
+
+        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)
+
+        assertNull(config?.manualFrequencyHz)
+    }
+
     @Test
     fun `USB rig transport carries no bluetooth address param, never a stale one`() {
         val store = InMemorySetupStore(

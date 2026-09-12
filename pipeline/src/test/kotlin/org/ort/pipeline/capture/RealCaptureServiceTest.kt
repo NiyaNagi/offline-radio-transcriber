@@ -145,6 +145,65 @@ public class RealCaptureServiceTest {
         }
     }
 
+    /**
+     * Register R-1032/R-1033: [org.ort.core.PassFingerprint.provider]/`.tier` were computed by
+     * [org.ort.pipeline.passb.PassBFactory] and reached [org.ort.data.entity.TransmissionEntity]
+     * nowhere — `executionProvider` stayed the literal `null` [org.ort.pipeline.passb.PassB]'s
+     * caller wrote at segment-persist time, and `processedTier` stayed `null` forever for a
+     * transmission no reprocess ever touched, since live capture never wrote it. Follows AC_31's
+     * own pattern through to the same real, COMPLETE transmission.
+     */
+    @Test
+    @Requirement("R-1032", "R-1033")
+    public fun `R_1032_R_1033 a real live capture stamps the execution provider and the tier it ran at`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+        repeat(12) { fakeIo.enqueueFrames(silentBlock()) }
+
+        val engine = FakeAsrEngine(
+            FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "test transmission received")),
+        )
+        val sessionId = "TEST-SESSION-1032"
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Available(engine, AssetRef("fake-asr-model", "1"), "test-fake") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            val transmissionId = "$sessionId-0"
+            waitUntil(20_000) {
+                val state = runBlocking { db.transmissionDao().getById(transmissionId) }?.processingState
+                state == TransmissionState.COMPLETE
+            }
+            val transmission = runBlocking { db.transmissionDao().getById(transmissionId) }!!
+
+            assertEquals(
+                "the real execution provider RealAsrEngineProvider/AsrEngineAvailability reported",
+                "test-fake",
+                transmission.executionProvider,
+            )
+            assertEquals(
+                "live capture's own tier (PassBFactory.create's default), not left null forever",
+                org.ort.core.Tier.T0,
+                transmission.processedTier,
+            )
+        } finally {
+            controller.destroy()
+        }
+    }
+
     @Test
     @Requirement("AC-48", "F-028", "F-011")
     public fun `AC_48 an interruption produces a capture gap row through the running service`() {

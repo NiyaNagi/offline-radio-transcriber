@@ -4,6 +4,7 @@ import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -202,5 +203,97 @@ class DataPassBResultSinkTest {
 
         assertFalse(db.catalogDao().candidatesFor("TX1").isNotEmpty())
         assertFalse(db.catalogDao().latticesFor("TX1").isNotEmpty())
+    }
+
+    private fun rejectedResult(transmissionId: String = "TX1") = PassBResult(
+        transmissionId = transmissionId,
+        outcome = PassBOutcome.Rejected(
+            rule = org.ort.asrapi.rules.RejectionRuleId.TOO_SHORT,
+            detail = "too short",
+            partialResult = null,
+        ),
+        lattice = null,
+        ranked = emptyList(),
+        attribution = Attribution.unknown(),
+        fingerprint = fingerprint(),
+    )
+
+    private fun failedResult(transmissionId: String = "TX1") = PassBResult(
+        transmissionId = transmissionId,
+        outcome = PassBOutcome.Failed(reason = "engine threw", cause = null),
+        lattice = null,
+        ranked = emptyList(),
+        attribution = Attribution.unknown(),
+        fingerprint = fingerprint(),
+    )
+
+    // Register R-1032 (constitution VI "no number without ... execution provider"): before this,
+    // PassFingerprint.provider was computed and thrown away -- the column's only writer was the
+    // literal `executionProvider = null` at segment-persist time, before any pass ran.
+
+    @Test
+    fun `R_1032 executionProvider is persisted on an accepted outcome`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(acceptedResult())
+
+        assertEquals("cpu", db.transmissionDao().getById("TX1")!!.executionProvider)
+    }
+
+    @Test
+    fun `R_1032 executionProvider is persisted on a rejected outcome`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(rejectedResult())
+
+        assertEquals("cpu", db.transmissionDao().getById("TX1")!!.executionProvider)
+    }
+
+    @Test
+    fun `R_1032 executionProvider is persisted even on a failed outcome -- provenance is a fact about the attempt`() =
+        runTest {
+            val db = freshDb()
+            val sink = DataPassBResultSink(db)
+
+            sink.record(failedResult())
+
+            assertEquals("cpu", db.transmissionDao().getById("TX1")!!.executionProvider)
+        }
+
+    // Register R-1033: since this fix, live capture's Pass B (always Tier.T0) stamps the same
+    // TransmissionEntity.processedTier column reprocessing already did -- see that field's own doc
+    // comment for the full reasoning and why Failed must never write it.
+
+    @Test
+    fun `R_1033 processedTier is stamped on an accepted outcome, live tier included`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(acceptedResult())
+
+        assertEquals(Tier.T0, db.transmissionDao().getById("TX1")!!.processedTier)
+    }
+
+    @Test
+    fun `R_1033 processedTier is stamped on a rejected outcome -- rejected is a genuine run, not a failure`() =
+        runTest {
+            val db = freshDb()
+            val sink = DataPassBResultSink(db)
+
+            sink.record(rejectedResult())
+
+            assertEquals(Tier.T0, db.transmissionDao().getById("TX1")!!.processedTier)
+        }
+
+    @Test
+    fun `R_1033 processedTier is left untouched on a failed outcome -- the record is still eligible`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(failedResult())
+
+        assertNull(db.transmissionDao().getById("TX1")!!.processedTier)
     }
 }

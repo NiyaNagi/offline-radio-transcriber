@@ -40,6 +40,10 @@ public object SetupCaptureConfigurationAdapter {
             // converted here at the one seam that needs both.
             rigTransportKind = store.rigTransport?.let(RigPickerCatalogue::fromPresetKind),
             rigParams = rigParams,
+            // R-1030: S10b's hand-logged frequency (SetupActivity.onEnterFrequency) -- carried
+            // through exactly as entered, independent of the rig axes above (the override applies
+            // with or without a rig configured; see CaptureConfiguration's own doc comment).
+            manualFrequencyHz = store.manualFrequencyHz,
         )
     }
 }

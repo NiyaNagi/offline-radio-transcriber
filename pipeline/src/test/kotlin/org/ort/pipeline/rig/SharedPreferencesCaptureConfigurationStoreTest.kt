@@ -137,4 +137,43 @@ public class SharedPreferencesCaptureConfigurationStoreTest {
         val reader = SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false })
         assertEquals(withParams, reader.current())
     }
+
+    // Register R-1030 (FR-CAP-13): S10b's hand-logged frequency must survive a process death
+    // between "entered" and "session started" -- the same reasoning every other field here is
+    // tested for round-tripping through a SECOND store instance over the same file.
+
+    @Test
+    @Requirement("R-1030", "FR-CAP-13")
+    public fun `R_1030 a manual frequency round-trips through the preferences file`() {
+        val prefs = freshPrefs("test-capture-configuration-manual-frequency")
+        val withFrequency = usbConfig.copy(manualFrequencyHz = 146_520_000L)
+        SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false }).update(withFrequency)
+
+        val reader = SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false })
+        assertEquals(146_520_000L, reader.current().manualFrequencyHz)
+        assertEquals(withFrequency, reader.current())
+    }
+
+    @Test
+    @Requirement("R-1030", "FR-CAP-13")
+    public fun `R_1030 no manual frequency ever entered reads back null, never a fabricated 0 Hz`() {
+        val prefs = freshPrefs("test-capture-configuration-no-manual-frequency")
+        SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false }).update(usbConfig)
+
+        val reader = SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false })
+        assertNull(reader.current().manualFrequencyHz)
+    }
+
+    @Test
+    @Requirement("R-1030", "FR-CAP-13")
+    public fun `R_1030 clearing a previously-set manual frequency removes it, not leaves a stale value`() {
+        val prefs = freshPrefs("test-capture-configuration-clear-manual-frequency")
+        val store = SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false })
+        store.update(usbConfig.copy(manualFrequencyHz = 146_520_000L))
+
+        store.update(usbConfig.copy(manualFrequencyHz = null))
+
+        val reader = SharedPreferencesCaptureConfigurationStore(prefs, isCapturing = { false })
+        assertNull(reader.current().manualFrequencyHz)
+    }
 }
