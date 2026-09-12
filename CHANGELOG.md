@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (R-1003: pinned bottom action bars now clear the navigation bar / gesture pill)
 
-### (this commit) — WPN · R-1003: every pinned-bottom action bar reserves real navigation-bar clearance, one shared mechanism
+### bd82fa26 — WPN · R-1003: every pinned-bottom action bar reserves real navigation-bar clearance, one shared mechanism
 
 **Scope:** new `app/src/main/kotlin/org/ort/app/ui/components/SafeArea.kt`;
 `app/src/main/kotlin/org/ort/app/ui/setup/SetupScaffold.kt`, `WelcomeScreen.kt`;
