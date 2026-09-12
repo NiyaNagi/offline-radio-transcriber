@@ -32,6 +32,79 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-11 (WPG follow-up: CI red on a fresh checkout — fetchBundledAssets never reached test's task graph)
+
+### b3fcec14 — merge*Assets now depends on fetchBundledAssets, so tests and the app see the same packaged set
+
+**Scope:** `buildSrc/src/main/kotlin/ort.android-app.gradle.kts` only. No app or test source
+changed — the five failing tests (`WpiScenariosTest.R_865…`, `R_841…` ×2,
+`ModelsScreenRejectionTest.R_934…`, `SettingsPollingTest.R_915…`) were never wrong; the build
+graph never gave them the packaged assets they read through the real installer.
+
+**Requirements/ACs:** FR-AST-3 (one build variant, no first-run download — tests must see the
+same packaged set the app ships, never a stale or empty one).
+
+**What changed:** CI on pushed main (run 34660541461, commit 8a8e8ea1) was red in
+`:app:testDebugUnitTest` with exactly the five tests that install through the real
+`AndroidBundledAssetSource`. Root cause: `app/src/main/assets/bundled/` is gitignored, so a fresh
+checkout starts with none of it on disk, and Robolectric reads it through
+`mergeDebugUnitTestAssets`, which AGP wires to depend on `mergeDebugAssets` — but nothing made
+`mergeDebugAssets` itself depend on `fetchBundledAssets`. The existing
+`assembleDebug`/`assembleRelease` → `fetchBundledAssets` `dependsOn` only helped when one of
+*those* was also requested in the same invocation, and the broad `mustRunAfter` sweep added
+across earlier rounds deliberately excluded `UnitTest`/`AndroidTest`-named tasks (at the time, to
+keep `:app:testDebugUnitTest` free of any network dependency) — so a plain
+`:app:testDebugUnitTest` invocation, exactly what CI's `android` job and every local run of mine
+across every prior round used, never scheduled `fetchBundledAssets` at all. Locally every prior
+round's gate passed only because an earlier manual `fetchBundledAssets` run had already left the
+files on disk in this worktree — never proof of the real, from-clean task graph.
+
+Fixed by giving `mergeDebugAssets` and `mergeReleaseAssets` (the two *main*-variant merge tasks,
+matched by exact name) a real `dependsOn(fetchBundledAssets)`. This is a stronger edge than the
+existing `mustRunAfter` sweep and reaches every task that reads the merged assets through one
+dependency — the app, `mergeDebugUnitTestAssets`, `mergeDebugAndroidTestAssets`, and therefore
+every unit/instrumentation test — without needing to touch the `UnitTest`/`AndroidTest` exclusion
+in the broad sweep (now redundant for these two tasks specifically, since `dependsOn` already
+gives the ordering `mustRunAfter` would; left as-is because it still legitimately serves every
+*other* task in the sweep). Deliberate consequence, called out explicitly in both the inline
+comment and here: `:app:testDebugUnitTest` now needs a real `HF_TOKEN` (or the escape hatch) to
+run standalone, the same as `assembleDebug` always has — tests and the app must see the identical
+packaged asset set, never a fresher or emptier one. `HF_TOKEN` absent behaves exactly as before
+in every other respect: `fetchBundledAssets` fails with its existing one-line message unless
+`-PortAllowMissingBundledAssets=true`/`ORT_ALLOW_MISSING_BUNDLED_ASSETS=1` is set, in which case
+it packages the 4 non-gated assets and marks the gated one `missing`, same as always.
+
+Checked `.github/workflows/ci.yml`'s `android` job (the one that runs `:app:testDebugUnitTest`):
+it already sets `HF_TOKEN: ${{ secrets.HF_TOKEN }}` at the job level (added in an earlier round,
+originally only for the `assembleDebug` step later in the same job) — that scope already covers
+the `android unit tests` step now that it needs the token too, so no workflow edit was needed.
+The `lint` job (`ktlintCheck detekt`, `dependencyRules`) and the `unit` job (plain JVM modules,
+never `:app`) don't touch `fetchBundledAssets` at all — ktlint/detekt depend only on
+`generateBundledAssetCatalog` (no network), confirmed by running `ktlintCheck detekt` locally with
+no `HF_TOKEN` and no escape hatch, which stayed green.
+
+**Verified (the coordinator's own CI-faithful reproduction, run twice):**
+1. Removed `app/src/main/assets/bundled/` entirely (it is gitignored — a real fresh-checkout
+   state). With a real `HF_TOKEN` in the environment and no escape hatch:
+   `./gradlew :app:testDebugUnitTest --tests SettingsPollingTest --tests WpiScenariosTest --tests
+   ModelsScreenRejectionTest` → `fetchBundledAssets` ran as part of the task graph (confirmed:
+   `app/src/main/assets/bundled/` was repopulated with all 5 assets, Gemma included, immediately
+   after — nobody ran it manually this time), and all previously-failing tests passed; `BUILD
+   SUCCESSFUL`, 180 actionable tasks.
+2. Removed the directory again. With no `HF_TOKEN` and `-PortAllowMissingBundledAssets=true`:
+   `./gradlew :app:testDebugUnitTest` (the full suite, not just the five) → `fetchBundledAssets`
+   packaged 4/5 assets, Gemma correctly `missing: true` in the regenerated
+   `assets/bundled/manifest.json`; `BUILD SUCCESSFUL` for the whole `:app` unit-test suite.
+3. `./gradlew ktlintCheck detekt` — green, no `HF_TOKEN`, no escape hatch needed (confirms the
+   lint/detekt path stays decoupled from the fetch, as designed).
+4. `./gradlew build dependencyRules platformGuards -PortAllowMissingBundledAssets=true` — green,
+   the full standard gate, no regression from this change.
+5. `coverageMatrix` then `coverageMatrixCheck` as separate invocations — `241/450 covered`,
+   unchanged; `python tools/spec-check/spec_check.py` — all 8 checks PASS.
+
+**Left open / not done:** none — this was purely a task-graph wiring defect; the five tests
+themselves needed no change, matching the coordinator's own diagnosis and confirmation run.
+
 ## 2026-09-11 (merge record: every merge to main during the capture-modes program)
 
 ### merge record — the merge commits of 2026-09-10/11, oldest first

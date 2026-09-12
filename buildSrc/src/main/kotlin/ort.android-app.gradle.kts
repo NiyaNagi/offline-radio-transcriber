@@ -206,6 +206,28 @@ tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" }.co
     dependsOn(fetchBundledAssets)
 }
 
+// CI regression (register, 2026-09-11, commit 8a8e8ea1): a fresh checkout has no
+// `app/src/main/assets/bundled/` (gitignored) and `:app:testDebugUnitTest` never pulled
+// `fetchBundledAssets` into its own task graph — the assembleDebug/assembleRelease `dependsOn`
+// above only helps when one of *those* is also requested, and the broad `mustRunAfter` sweep
+// below deliberately excludes `UnitTest`-named tasks, so a plain `:app:testDebugUnitTest`
+// invocation (exactly what CI's `android` job and Robolectric run) never scheduled the fetch at
+// all. Robolectric reads assets through `mergeDebugUnitTestAssets`, which itself depends on
+// `mergeDebugAssets` (AGP's own wiring, not ours) to combine the main and test asset sets — so a
+// direct `dependsOn(fetchBundledAssets)` on `mergeDebugAssets`/`mergeReleaseAssets` (the two
+// *main*-variant merge tasks, matched by exact name so no other task's assets are touched) is
+// the one place that reaches both the real app and every test that reads its packaged assets
+// through one real dependency edge, not a same-invocation-only ordering hint. This does mean
+// `:app:testDebugUnitTest` now needs a real `HF_TOKEN` (or the escape hatch) to run standalone,
+// same as `assembleDebug` always has — deliberate, per this fix: tests and the app must see the
+// identical packaged asset set (FR-AST-3), never a fresher one than what shipped. `HF_TOKEN`
+// absent behaves exactly as before: `fetchBundledAssets` fails with its one-line message unless
+// `-PortAllowMissingBundledAssets=true`/`ORT_ALLOW_MISSING_BUNDLED_ASSETS=1` is set, in which case
+// it packages the 4 non-gated assets and marks the gated one `missing`.
+tasks.matching { it.name == "mergeDebugAssets" || it.name == "mergeReleaseAssets" }.configureEach {
+    dependsOn(fetchBundledAssets)
+}
+
 // `app/src/main/assets/bundled/` (fetchBundledAssets' own output) is an *implicit* input to a
 // whole family of AGP-internal tasks that read the main variant's assets directly — not just
 // `mergeDebugAssets`/`mergeReleaseAssets`, but also lint's own model-writer tasks
@@ -219,16 +241,20 @@ tasks.matching { it.name == "assembleDebug" || it.name == "assembleRelease" }.co
 //
 //  - `fetchBundledAssets`/`generateBundledAssetCatalog` themselves (ordering a task after itself
 //    is a Gradle error).
-//  - Anything with `UnitTest`/`AndroidTest` in its name — `:app:testDebugUnitTest` is its own
-//    listed gate step precisely because it must run with no network and no `HF_TOKEN`
-//    (constitution II/V); `mergeDebugUnitTestAssets` already depends on `mergeDebugAssets` and
-//    would otherwise drag the whole test task along with it.
+//  - Anything with `UnitTest`/`AndroidTest` in its name — `mustRunAfter` on these would be
+//    redundant, not a relaxation: since the fix above made `mergeDebugAssets`/`mergeReleaseAssets`
+//    (and therefore `mergeDebugUnitTestAssets`/`mergeDebugAndroidTestAssets`, which AGP wires to
+//    depend on the corresponding main-variant merge) carry a real `dependsOn(fetchBundledAssets)`,
+//    every unit/instrumentation test that reads the merged assets already has a `dependsOn`-strength
+//    ordering guarantee — a stronger property than `mustRunAfter` gives, so adding the weaker hint
+//    on top would say nothing new. `:app:testDebugUnitTest` therefore DOES need a real `HF_TOKEN`
+//    (or the escape hatch) to run standalone now, same as `assembleDebug` — see the
+//    `mergeDebugAssets`/`mergeReleaseAssets` block above for why.
 //
 // `mustRunAfter`, deliberately not `dependsOn`, for every one of them: it only orders the two
 // tasks *when both are already scheduled* — true for `assembleDebug`/`assembleRelease` (which
-// `dependsOn` the fetch task explicitly, above) and every task that in turn depends on those, and
-// a no-op for a plain `testDebugUnitTest` invocation that never pulls `fetchBundledAssets` into
-// its task graph at all.
+// `dependsOn` the fetch task explicitly, above), for `mergeDebugAssets`/`mergeReleaseAssets` (ditto,
+// above) and every task that in turn depends on any of those (which now includes the test tasks).
 tasks.matching { task ->
     task.name != fetchBundledAssets.name &&
         task.name != generateBundledAssetCatalog.name &&
