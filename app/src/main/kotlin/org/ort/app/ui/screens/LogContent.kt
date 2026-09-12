@@ -71,6 +71,11 @@ private val LogFilterSelectionSaver: Saver<LogFilterSelection, Any> = listSaver(
             selection.showGaps,
             selection.fromMillis,
             selection.toMillis,
+            // IA-3 (WPNAV): [LogFilterSelection.stationId]/[transmissionIds], the same generalised
+            // shape [frequencyHz] already was — `null`/joined-empty round-trips to exactly today's
+            // unnarrowed selection for every caller that predates these two fields.
+            selection.stationId,
+            selection.transmissionIds?.joinToString(ATTRIBUTION_STATES_DELIMITER),
         )
     },
     restore = { saved: List<Any?> ->
@@ -82,6 +87,7 @@ private val LogFilterSelectionSaver: Saver<LogFilterSelection, Any> = listSaver(
                 runCatching { AttributionState.valueOf(name) }.getOrNull()
             }.toSet()
         }
+        val transmissionIdsField = saved.getOrNull(7) as String?
         LogFilterSelection(
             frequencyHz = saved[0] as Long?,
             attributionStates = states,
@@ -89,6 +95,9 @@ private val LogFilterSelectionSaver: Saver<LogFilterSelection, Any> = listSaver(
             showGaps = saved[3] as Boolean,
             fromMillis = saved[4] as Long?,
             toMillis = saved[5] as Long?,
+            stationId = saved.getOrNull(6) as String?,
+            transmissionIds = transmissionIdsField?.takeIf { it.isNotEmpty() }
+                ?.split(ATTRIBUTION_STATES_DELIMITER)?.toSet(),
         )
     },
 )

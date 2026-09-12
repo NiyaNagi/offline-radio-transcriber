@@ -3,6 +3,8 @@ package org.ort.app.ui
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -126,8 +128,11 @@ class ReaderAccessibilityTest {
         // dependent trailing count (`ImproveCounts.canGetBetterCount` here, with no seeded data)
         // is not this test's own concern — `DrawerContentTest.kt`'s `R_546_drawer_rows_own_their_
         // description` is what pins the description's own real shape. This test's own concern
-        // (stated above) is only "reachable, not silently clipped".
-        ReaderDestination.entries.filter { it != ReaderDestination.SEARCH }.forEach { destination ->
+        // (stated above) is only "reachable, not silently clipped". IA-5 (information-architecture
+        // review, approved — WPNAV): `Search` now has a real row too (`Drawer.kt`'s own doc
+        // comment) — no longer excluded, since it is exactly as reachable-not-clipped a concern as
+        // every other row here.
+        ReaderDestination.entries.forEach { destination ->
             composeTestRule.onNodeWithTag("drawer-row-${destination.name}")
                 .performScrollTo()
                 .assertIsDisplayed()
@@ -143,7 +148,13 @@ class ReaderAccessibilityTest {
             }
         }
 
-        composeTestRule.onNodeWithContentDescription("Search").assertIsDisplayed().performClick()
+        // IA-5: `Search` now has a real drawer row too, carrying the identical exact description
+        // (`Drawer.kt`'s own `drawerRowDescription` — the plain destination label, no trailing
+        // figure) — its closed rows stay composed off-screen (`ModalNavigationDrawer`'s own
+        // content slot), so the header's own magnifier needs disambiguating from it here.
+        composeTestRule.onNode(hasContentDescription("Search") and !hasTestTag("drawer-row-SEARCH"))
+            .assertIsDisplayed()
+            .performClick()
         // Round 5 (R-200): `SEARCH` no longer shows the host's `ScreenHeader` — `SearchContent`
         // draws its own back chevron instead (`SearchScreen.kt`'s `search-back-chevron`,
         // `contentDescription = "Back"`), so this asserts *that* marker is what actually opened,

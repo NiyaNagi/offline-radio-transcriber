@@ -132,6 +132,50 @@ private val SearchFilterInputSaver: Saver<SearchFilterInput, String> = Saver(
 )
 
 /**
+ * IA-3 (information-architecture review, approved — WPNAV): the one shape every filtered-Log
+ * entry point now shares — which drill-in, if any, to reopen when the operator backs out of the
+ * filtered Log, generalising the R-276 mechanism that already worked for [Frequency] alone to
+ * [Station] (ST02) and [Capture] (N07, `Live-Monitor.dc.html`'s own `Full log`) too, rather than
+ * building a second, parallel mechanism for each. [None] is a plain, ordinary reach (the drawer
+ * row) — back behaves exactly as leaving any other destination does, no restore at all.
+ */
+private sealed interface LogFilterOrigin {
+    data object None : LogFilterOrigin
+    data class Frequency(val frequencyHz: Long) : LogFilterOrigin
+    data class Station(val stationId: String) : LogFilterOrigin
+    data object Capture : LogFilterOrigin
+}
+
+/**
+ * R-129's own crash class, again: [LogFilterOrigin] is a plain sealed type, not directly
+ * Bundle-saveable under a real `SaveableStateRegistry` — the identical reason this file's own
+ * [SearchFilterInputSaver] and `LogContent.kt`'s `LogQuickFilterIdSaver` each need one. Encoded the
+ * same way `LogQuickFilterIdSaver` already is (a plain, delimiter-free discriminator string, since
+ * every payload here is itself delimiter-safe — a `Long` or a station id, never free text).
+ */
+private val LogFilterOriginSaver: Saver<LogFilterOrigin, String> = Saver(
+    save = { origin ->
+        when (origin) {
+            LogFilterOrigin.None -> "None"
+            LogFilterOrigin.Capture -> "Capture"
+            is LogFilterOrigin.Frequency -> "Frequency:${origin.frequencyHz}"
+            is LogFilterOrigin.Station -> "Station:${origin.stationId}"
+        }
+    },
+    restore = { encoded ->
+        when {
+            encoded == "None" -> LogFilterOrigin.None
+            encoded == "Capture" -> LogFilterOrigin.Capture
+            encoded.startsWith("Frequency:") ->
+                encoded.removePrefix("Frequency:").toLongOrNull()?.let { LogFilterOrigin.Frequency(it) }
+                    ?: LogFilterOrigin.None
+            encoded.startsWith("Station:") -> LogFilterOrigin.Station(encoded.removePrefix("Station:"))
+            else -> LogFilterOrigin.None // an unrecognised saved value never crashes restore.
+        }
+    },
+)
+
+/**
  * The navigation host (build-plan P13, extended by P14, P17 and ui-conformance-plan WP3): the
  * drawer `Menu.dc.html` specifies, wrapping whichever destination is current, under WP2's
  * [ScreenHeader] (R-003/R-004/R-015 — drawer icon, live dot + elapsed, search icon; no title text,
@@ -223,11 +267,7 @@ public fun OrtNavHost(
                 badges = drawerLive.badges,
                 counts = drawerLive.counts,
                 improveRecordsCount = drawerLive.improveRecordsCount,
-                onSelect = { destination ->
-                    current = destination
-                    navState.closeDrillIns()
-                    scope.launch { drawerState.close() }
-                },
+                onSelect = drawerOnSelect(navigator.currentState, navState, drawerState, scope),
             )
         },
     ) {
@@ -316,7 +356,7 @@ public fun OrtNavHost(
  * states plainly it has no way to express "back goes to `Settings-Storage`, not my own list" —
  * "a host that needs 'back to `Settings-Storage`' instead wraps this composable with its own
  * header/back at the call site" — so this handler owns that restore the same way it already owns
- * [canReturnToFrequency]'s.
+ * [canReturnToLogOrigin]'s.
  *
  * **Known gap, reported, not fixed here**: the `Log` filter sheet (`LogContent.kt`, L02) and
  * `Search`'s own filter sheet (`SearchContent.kt`) are each a private, un-exported boolean
@@ -341,29 +381,41 @@ private fun OrtNavHostBackHandler(
         navState.openStationId.value != null ||
         navState.openFrequencyHz.value != null ||
         navState.openThreadId.value != null
-    // Round 9/10, register R-276: `Log` reached via `Frequency-Change`'s "The N overs" — a
-    // drill-in-shaped pop in every way that matters here, kept as its own named condition only
-    // because it is not one of the four ids [isDrillInOpen] already checks.
-    val canReturnToFrequency = current == ReaderDestination.LOG && navState.logFrequencyOrigin.value != null
+    // IA-3 (generalises round 9/10's own register R-276): `Log` reached via [NavHostNavState
+    // .openLogFiltered] — a drill-in-shaped pop in every way that matters here, kept as its own
+    // named condition only because it is not one of the four ids [isDrillInOpen] already checks.
+    val canReturnToLogOrigin = current == ReaderDestination.LOG &&
+        navState.logFilterOrigin.value != LogFilterOrigin.None
     // Round 11, register R-133: `Earlier nights` reached via `Settings-Storage`'s `Review` link —
     // see this function's own doc comment above.
     val canReturnToSettingsStorage = current == ReaderDestination.EARLIER_NIGHTS &&
         navState.pendingReviewSessionId.value != null
 
     BackHandler(
-        enabled = drawerState.isOpen || isDrillInOpen || canReturnToFrequency || canReturnToSettingsStorage,
+        enabled = drawerState.isOpen || isDrillInOpen || canReturnToLogOrigin || canReturnToSettingsStorage,
     ) {
         when {
             drawerState.isOpen -> scope.launch { drawerState.close() }
             isDrillInOpen -> navState.closeDrillIns()
-            canReturnToFrequency -> {
-                val frequencyHz = navState.logFrequencyOrigin.value
-                navState.logFrequencyOrigin.value = null
+            canReturnToLogOrigin -> {
+                val origin = navState.logFilterOrigin.value
+                navState.logFilterOrigin.value = LogFilterOrigin.None
                 navState.pendingLogFilter.value = null
-                if (frequencyHz != null) {
-                    navState.openedFrom.value = ReaderDestination.LOG
-                    navState.frequencyInitialView.value = FrequencyDetailView.Change
-                    navState.openFrequencyHz.value = frequencyHz
+                when (origin) {
+                    is LogFilterOrigin.Frequency -> {
+                        navState.openedFrom.value = ReaderDestination.LOG
+                        navState.frequencyInitialView.value = FrequencyDetailView.Change
+                        navState.openFrequencyHz.value = origin.frequencyHz
+                    }
+                    is LogFilterOrigin.Station -> {
+                        navState.openedFrom.value = ReaderDestination.LOG
+                        navState.openStationId.value = origin.stationId
+                    }
+                    LogFilterOrigin.Capture -> {
+                        navigator.currentState.value = ReaderDestination.CAPTURE
+                        navState.openCaptureLiveMonitor.value = true
+                    }
+                    LogFilterOrigin.None -> Unit
                 }
             }
             canReturnToSettingsStorage -> {
@@ -403,18 +455,18 @@ private data class NavHostNavState(
     // (`navHostCallbacks`'s `onOpenCapture`) rather than a Settings action.
     val openCaptureLiveMonitor: MutableState<Boolean>,
     // Round 9, register R-276: the filter `LogContent` should seed on its own next fresh
-    // composition — see [openLogFilteredByFrequency]. A plain `remember`, not `rememberSaveable`:
+    // composition — see [openLogFiltered]. A plain `remember`, not `rememberSaveable`:
     // it only has to survive until `LogContent`'s own `initialFilter` read, which happens
     // synchronously within the same process this tap fired in — by the time a `recreate()` could
     // ever observe this, `LogContent`'s *own* `rememberSaveable` `selection` has already captured
     // the value into the `SaveableStateRegistry` (the same reasoning `searchResult` below rests
     // on: WP7's own doc comment on why `SearchResult` needs no Saver of its own).
     val pendingLogFilter: MutableState<LogFilterSelection?>,
-    // Round 9, register R-276: the frequency drill-in to reopen when the operator backs out of a
-    // `Log` reached via `openLogFilteredByFrequency` — `rememberSaveable` (a plain `Long?`, no
-    // custom Saver needed) since, unlike [pendingLogFilter], this is read only by a later user
+    // IA-3 (generalises round 9's own register R-276): the drill-in, if any, to reopen when the
+    // operator backs out of a `Log` reached via [openLogFiltered] — `rememberSaveable` (via
+    // [LogFilterOriginSaver]) since, unlike [pendingLogFilter], this is read only by a later user
     // action (the back gesture), which can genuinely happen after a `recreate()`.
-    val logFrequencyOrigin: MutableState<Long?>,
+    val logFilterOrigin: MutableState<LogFilterOrigin>,
     // Round 10, register R-276 (WP8 shipped `FrequencyDetailContent.initialView`): which of that
     // composable's own two sub-screens a freshly-opened frequency drill-in should land on —
     // `Detail` for every ordinary open (`onOpenFrequency`, this default), `Change` only when the
@@ -430,11 +482,11 @@ private data class NavHostNavState(
     // Round 11, register R-133: the session `Earlier nights` should seed
     // `SessionsContent.initialSessionId` with, set by [openReviewSession] and read back by
     // [OrtNavHostBackHandler]'s own `canReturnToSettingsStorage` — non-null doubles as that flag
-    // the same way [logFrequencyOrigin] doubles as both `Frequency-Change`'s return target and its
+    // the same way [logFilterOrigin] doubles as both a filtered Log's return target and its
     // own "did we come this way" check. `rememberSaveable`, not a plain `remember`: unlike
     // [pendingLogFilter] (read synchronously by `LogContent`'s own first composition),
     // `SessionsContent.initialSessionId` is read on ITS first composition and this value is read
-    // again later by the back gesture — the same reasoning [logFrequencyOrigin] itself rests on.
+    // again later by the back gesture — the same reasoning [logFilterOrigin] itself rests on.
     val pendingReviewSessionId: MutableState<String?>,
     // R-840: which of `Earlier nights`' two screens [pendingReviewSessionId] should land on — see
     // [NavSeed.reviewSessionView]'s own doc comment. Only meaningful alongside
@@ -454,11 +506,11 @@ private data class NavHostNavState(
         // R-1007: same reasoning again — an ordinary way of reaching `Capture` must not leave a
         // stale live-monitor landing behind for a later, unrelated visit.
         openCaptureLiveMonitor.value = false
-        // Same reasoning, round 9: any ordinary way of reaching `Log` (the drawer row) must not
-        // silently reapply a stale filter or resurrect a "back to the frequency" promise a normal
-        // navigation never made.
+        // Same reasoning, round 9 (generalised by IA-3): any ordinary way of reaching `Log` (the
+        // drawer row) must not silently reapply a stale filter or resurrect a "back to the
+        // frequency/station/capture" promise a normal navigation never made.
         pendingLogFilter.value = null
-        logFrequencyOrigin.value = null
+        logFilterOrigin.value = LogFilterOrigin.None
         // Round 10: same reasoning again — an ordinary drill-in close must not leave a stale
         // `Change` behind for whatever frequency is opened next.
         frequencyInitialView.value = FrequencyDetailView.Detail
@@ -482,34 +534,32 @@ private data class NavHostNavState(
     }
 
     /**
-     * R-276 (`Frequency-Change.dc.html`'s "The N overs"): routes to `Log`, filtered to
-     * [frequencyHz] and [window], from the frequency drill-in currently showing at
-     * [currentFrequencyHz] (always non-null in practice — this only ever fires from inside
-     * `FrequencyDetailContent`, which only composes while `openFrequencyHz` already holds one).
-     * [closeDrillIns] first clears the live frequency drill-in (its id has absolute priority over
-     * `current` in `NavHostBody`'s own dispatch — leaving it set would keep showing the frequency
+     * IA-3 (information-architecture review, approved — WPNAV): the one filter model every one of
+     * the seven Log entry points now shares — routes to `Log` filtered by [filter], recording
+     * [origin] so a later back gesture can reopen whatever this was opened from, with its own state
+     * intact. [closeDrillIns] first clears any live drill-in (a drill-in's id has absolute priority
+     * over `current` in `NavHostBody`'s own dispatch — leaving one set would keep showing that
      * screen no matter what `current` became) and any stale pending filter from a previous trip;
-     * [currentFrequencyHz] is saved into [logFrequencyOrigin] *after* that clear so back can reopen
-     * the same frequency's drill-in — landing on `FrequencyDetailContent`'s own root/`NONE`
-     * sub-screen, not the `Frequency-Change` sub-screen this was opened from (that sub-screen is
-     * `FrequencyDetailContent`'s own internal, unexported state — restoring it exactly would need a
-     * change to that file, WP8's, not lead-approved this round; reported in this round's own
-     * report/CHANGELOG, not silently pretended).
+     * [origin] is set *after* that clear, the same ordering [openReviewSession] below already uses.
+     *
+     * Generalises round 9's own R-276 mechanism (`Frequency-Change.dc.html`'s "The N overs", the
+     * only one of the seven that already worked end to end and the only one whose back already
+     * returned) rather than building a second, parallel one for [LogFilterOrigin.Station] (ST02) or
+     * [LogFilterOrigin.Capture] (N07). [LogFilterOrigin.Frequency]'s own back still lands on
+     * `FrequencyDetailContent`'s own root/`NONE` sub-screen, not the `Frequency-Change` sub-screen
+     * it was opened from — that sub-screen is `FrequencyDetailContent`'s own internal, unexported
+     * state, unchanged by this round, reported the same way the original R-276 round already did.
      */
-    fun openLogFilteredByFrequency(currentFrequencyHz: Long?, frequencyHz: Long, window: TimeWindow) {
+    fun openLogFiltered(filter: LogFilterSelection, origin: LogFilterOrigin) {
         closeDrillIns()
-        logFrequencyOrigin.value = currentFrequencyHz
-        pendingLogFilter.value = LogFilterSelection(
-            frequencyHz = frequencyHz,
-            fromMillis = window.startMillis,
-            toMillis = window.endMillis,
-        )
+        logFilterOrigin.value = origin
+        pendingLogFilter.value = filter
     }
 
     /**
      * Round 11, register R-133 (`Settings-Storage`'s "Next deletion … Review" link,
      * `SettingsContent.onReviewSession`): routes to `Earlier nights`, seeded on [sessionId]'s own
-     * detail (DG04) — the same shape as [openLogFilteredByFrequency]. [closeDrillIns] first clears
+     * detail (DG04) — the same shape as [openLogFiltered]. [closeDrillIns] first clears
      * any stale drill-in or filter state before [pendingReviewSessionId] is set, so the value it
      * leaves behind is only ever this call's own.
      */
@@ -560,10 +610,14 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
     // routed to whichever package owns `app/src/debug/**`); every ordinary reach (the pinned bar's
     // own tap) still works, seeded `false` only.
     val openCaptureLiveMonitor = rememberSaveable { mutableStateOf(false) }
-    // Round 9, register R-276 — see `NavHostNavState.pendingLogFilter`/`logFrequencyOrigin`'s own
+    // Round 9, register R-276 — see `NavHostNavState.pendingLogFilter`/`logFilterOrigin`'s own
     // doc comments for why one is a plain `remember` and the other `rememberSaveable`.
     val pendingLogFilter = remember { mutableStateOf(seed?.pendingLogFilter) }
-    val logFrequencyOrigin = rememberSaveable { mutableStateOf<Long?>(null) }
+    // IA-3: [LogFilterOriginSaver], the same R-129 crash class every plain-sealed-type
+    // `rememberSaveable` in this file already needs a custom Saver for.
+    val logFilterOrigin = rememberSaveable(stateSaver = LogFilterOriginSaver) {
+        mutableStateOf<LogFilterOrigin>(LogFilterOrigin.None)
+    }
     // Round 10, register R-276 — a plain two-value enum, Bundle-saveable via the default Saver the
     // same way `ReaderDestination` (above) already is, no custom Saver needed.
     val frequencyInitialView = rememberSaveable {
@@ -591,12 +645,36 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
         openCaptureLevelMeter,
         openCaptureLiveMonitor,
         pendingLogFilter,
-        logFrequencyOrigin,
+        logFilterOrigin,
         frequencyInitialView,
         openStationSubScreen,
         pendingReviewSessionId,
         reviewSessionView,
     )
+}
+
+/** [ReaderDrawerContent]'s own `onSelect` — split out of [OrtNavHost] purely to keep that
+ * function under detekt's `LongMethod` limit; IA-5's own `Search`-row addition is what pushed it
+ * over, the same reason [NavHostBody]/[DestinationContent] were themselves split out before this
+ * round.
+ *
+ * IA-5 (information-architecture review, approved — WPNAV): `Search` now has a drawer row too
+ * (`Drawer.kt`'s own doc comment) — the same `searchOpenedFrom`-before-switching invariant
+ * [navHostCallbacks]'s own `onSearchDestination` (the header magnifier) already keeps, so
+ * `SearchContent`'s own back-chevron returns here too, not wherever it was last left pointing.
+ */
+private fun drawerOnSelect(
+    currentState: MutableState<ReaderDestination>,
+    navState: NavHostNavState,
+    drawerState: DrawerState,
+    scope: CoroutineScope,
+): (ReaderDestination) -> Unit = { destination ->
+    if (destination == ReaderDestination.SEARCH) {
+        navState.searchOpenedFrom.value = currentState.value
+    }
+    currentState.value = destination
+    navState.closeDrillIns()
+    scope.launch { drawerState.close() }
 }
 
 /** Builds [NavHostBody]'s [NavHostCallbacks] — split out of [OrtNavHost] purely to keep that
@@ -626,17 +704,37 @@ private fun navHostCallbacks(
             navState.closeDrillIns()
             navState.openCaptureLiveMonitor.value = true
         },
-        // R-1007: `Live-Monitor.dc.html`'s own `Full log` action — the plain, unfiltered `Log`,
-        // the same shape `onOpenStations` already is for its own destination.
+        // R-1007 (N07, generalised by IA-3): `Live-Monitor.dc.html`'s own `Full log` action — the
+        // plain, unfiltered `Log`, now through the one filter model so back reopens `Capture` on
+        // its own live monitor instead of discarding that context entirely (register: N07 used to
+        // be the one link of the seven with no origin to restore at all).
         onOpenLog = {
+            navState.openLogFiltered(LogFilterSelection(), LogFilterOrigin.Capture)
             currentState.value = ReaderDestination.LOG
-            navState.closeDrillIns()
         },
         onOpenTransmission = { id ->
             navState.onOpenDrillIn(currentState.value) { navState.openTransmissionId.value = id }
         },
         onOpenStation = { id ->
             navState.onOpenDrillIn(currentState.value) { navState.openStationId.value = id }
+        },
+        // IA-3 (ST02, `Station.dc.html`'s own "Overs · Log"/"Recent overs · All N"): the station
+        // drill-in's own "the rest of my overs" action — real now that `StationDetailContent`
+        // wires `onViewAllOvers` through (this package's own row); `closeDrillIns()` inside
+        // [NavHostNavState.openLogFiltered] clears the live station drill-in first, [stationId]
+        // itself is saved as the origin so back reopens the same station.
+        onOpenStationOvers = { stationId ->
+            navState.openLogFiltered(LogFilterSelection(stationId = stationId), LogFilterOrigin.Station(stationId))
+            currentState.value = ReaderDestination.LOG
+        },
+        // IA-6 (information-architecture review, approved — WPNAV): a transmission's own
+        // attributed station, one tap away — mirrors [onOpenActivationThread] below's own shape
+        // for "open a *different* drill-in kind from inside one already open": the live
+        // transmission drill-in is closed first, so `NavHostDispatch`'s own `when` does not keep
+        // matching the now-stale `transmissionId` branch ahead of the new `stationId` one.
+        onOpenAttributedStation = { stationId ->
+            navState.closeDrillIns()
+            navState.onOpenDrillIn(currentState.value) { navState.openStationId.value = stationId }
         },
         onOpenFrequency = { hz ->
             navState.onOpenDrillIn(currentState.value) { navState.openFrequencyHz.value = hz }
@@ -658,12 +756,17 @@ private fun navHostCallbacks(
             currentState.value = ReaderDestination.CAPTURE
             navState.openCaptureLevelMeter.value = true
         },
-        // Round 9, register R-276: `Frequency-Change`'s "The N overs" — real now that WP5 merged
-        // `LogContent.initialFilter` (confirmed by reading `ui/screens/LogContent.kt` before wiring
-        // this). See `NavHostNavState.openLogFilteredByFrequency`'s own doc comment for exactly
-        // what this does and does not restore on back.
+        // Round 9, register R-276 (generalised by IA-3): `Frequency-Change`'s "The N overs" — real
+        // now that WP5 merged `LogContent.initialFilter` (confirmed by reading
+        // `ui/screens/LogContent.kt` before wiring this). See `NavHostNavState.openLogFiltered`'s
+        // own doc comment for exactly what this does and does not restore on back. `hz` is the
+        // frequency drill-in this fires from in every real call (this only ever fires from inside
+        // `FrequencyDetailContent`, which only composes while `openFrequencyHz` already holds it).
         onOpenOvers = { hz, window ->
-            navState.openLogFilteredByFrequency(navState.openFrequencyHz.value, hz, window)
+            navState.openLogFiltered(
+                LogFilterSelection(frequencyHz = hz, fromMillis = window.startMillis, toMillis = window.endMillis),
+                LogFilterOrigin.Frequency(hz),
+            )
             currentState.value = ReaderDestination.LOG
         },
         // Round 11, register R-133: `Settings-Storage`'s "Next deletion … Review" link
@@ -810,6 +913,10 @@ private data class NavHostCallbacks(
     // Round 17, register R-432: see `navHostCallbacks`'s own construction site and
     // `ActivationThreadRouting`'s own doc comment for what resolves the id this expects.
     val onOpenActivationThread: (String) -> Unit,
+    // IA-3 (ST02): see `navHostCallbacks`'s own construction site.
+    val onOpenStationOvers: (String) -> Unit,
+    // IA-6: see `navHostCallbacks`'s own construction site.
+    val onOpenAttributedStation: (String) -> Unit,
 )
 
 /**
@@ -1026,6 +1133,8 @@ private fun NavHostDispatch(
             player = audioPlayer,
             onBack = callbacks.onCloseDrillIns,
             onOpenTransmission = callbacks.onOpenTransmission,
+            // IA-6: real now — the transmission's own attributed station, one tap away.
+            onOpenStation = callbacks.onOpenAttributedStation,
             backLabel = ids.openedFrom.label,
             initialRevisionsOpen = ids.transmissionInitialRevisionsOpen,
         )
@@ -1040,6 +1149,10 @@ private fun NavHostDispatch(
             // WP12 tour's own `NavSeed.openStationSubScreen` ever sets this to `PATTERN`/
             // `IDENTITY`/`SPLIT`.
             initialSubScreen = ids.stationInitialSubScreen,
+            // IA-3 (ST02): real now — `Station.dc.html`'s own "Overs · Log"/"Recent overs · All N",
+            // dead taps before this round (`StationDetailContent`'s own doc comment on
+            // `onViewAllOvers`).
+            onViewAllOvers = { callbacks.onOpenStationOvers(ids.stationId) },
         )
 
         ids.frequencyHz != null -> {

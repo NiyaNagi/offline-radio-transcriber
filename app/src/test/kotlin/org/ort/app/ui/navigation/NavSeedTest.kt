@@ -7,6 +7,9 @@ import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
@@ -156,6 +159,29 @@ class NavSeedTest {
         // `DetailRevisionsScreen`'s own title — the fact that distinguishes landing directly on
         // `Revisions` from the plain detail root (both share the same `DrillInHeader` parent label).
         composeTestRule.waitUntilTextExists("Earlier versions")
+    }
+
+    // IA-6 (information-architecture review, approved — WPNAV): the transmission's own attributed
+    // station, one tap away — every other drill-in reachable from a transmission already had a
+    // way in; the station it was actually attributed to did not. `TX1` is `CONFIRMED` to
+    // `STATION_ID` (this class's own fixture), so the link is real, not merely rendered.
+    @Test
+    fun `IA_6 View station on a transmission opens its real attributed station`() {
+        composeTestRule.setContent {
+            OrtTheme { OrtNavHost(sessionId = SESSION_ID, seed = NavSeed(openTransmissionId = TRANSMISSION_ID)) }
+        }
+        composeTestRule.waitUntilContentDescriptionExists("Back to Log")
+
+        composeTestRule.onNodeWithText("View station").performScrollTo().performClick()
+
+        // `StationScreen.kt`'s own "Attribution, N confirmed · N inferred · N corrected" fact row —
+        // present only on the station's own detail screen, never the transmission's (whose header
+        // already shows the same callsign text regardless, so that alone would not prove real
+        // navigation happened). Not a second, stacked drill-in on top of the transmission's own
+        // (`onOpenAttributedStation` closes it first, the same shape `onOpenActivationThread`
+        // already uses).
+        composeTestRule.waitUntilContentDescriptionExists("Attribution,")
+        composeTestRule.waitUntilContentDescriptionExists("Back to Log")
     }
 
     @Test

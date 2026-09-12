@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
@@ -188,6 +189,71 @@ class SessionsContentTest {
         composeTestRule.onNodeWithText("The 1 over").performClick()
 
         assert(tapped == "TX1") { "expected onOpenTransmission(\"TX1\"), got $tapped" }
+    }
+
+    @Test
+    @Requirement("FR-DIG-9")
+    fun `IA_3 Digest-Item's The N overs, more than one, opens the Log filtered to that curated set`() {
+        // Historical baseline (the identical shape `DigestPollingTest`'s own `FR_DIG_2a` fixture
+        // uses) so `T-long`'s 8 overs clear the real, computed "unusually long" threshold rather
+        // than a threshold this test invented.
+        runBlocking {
+            db.sessionDao().insert(session().copy(id = "S-hist", startedAt = -1_000L, endedAt = -500L))
+            db.transmissionDao().insert(transmission("TX-h1").copy(sessionId = "S-hist", threadId = "T-other-1"))
+            db.transmissionDao().insert(transmission("TX-h2").copy(sessionId = "S-hist", threadId = "T-other-2"))
+            db.transmissionDao().insert(transmission("TX-h3").copy(sessionId = "S-hist", threadId = "T-other-3"))
+
+            db.sessionDao().insert(session())
+            (1..8).forEach { n ->
+                db.transmissionDao().insert(
+                    transmission("TX-long-$n", stationId = "W7NPC")
+                        .copy(threadId = "T-long", startedAtUtc = n * 1_000L),
+                )
+            }
+        }
+        CaptureState.capturing("S1")
+        var openedSingleTransmission = false
+
+        composeTestRule.setContent {
+            OrtTheme {
+                SessionsContent(
+                    context = context,
+                    onDrawer = {},
+                    onOpenTransmission = { openedSingleTransmission = true },
+                )
+            }
+        }
+
+        composeTestRule.waitUntilTextExists("Tonight")
+        composeTestRule.onNodeWithText("Tonight", substring = true).performClick()
+        composeTestRule.waitUntilTextExists("Digest")
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Digest"))
+        composeTestRule.onNodeWithText("Digest").performClick()
+
+        composeTestRule.waitUntilTextExists("A thread ran 8 over(s)")
+        composeTestRule.onNodeWithText("A thread ran 8 over(s)", substring = true).performClick()
+
+        composeTestRule.waitUntilTextExists("The 8 overs")
+        composeTestRule.onNodeWithText("The 8 overs").performClick()
+
+        // Before this fix, tapping "The 8 overs" discarded every id but the first and handed only
+        // that one up through `onOpenTransmission` — the other seven were unreachable, and (since
+        // this composable has no drill-in surface of its own) nothing on screen ever changed for a
+        // caller that, like every real one, does not itself drill in from that callback alone. Now
+        // it opens the Log — WP5's own `TIME`/`STATION` columns prove it, not a bare guess at what
+        // rendered.
+        composeTestRule.waitUntilTextExists("TIME")
+        composeTestRule.onNodeWithText("TIME").assertExists()
+        assert(!openedSingleTransmission) {
+            "expected the Log to open with every id reachable, not a single transmission drill-in"
+        }
+
+        // IA-3: back restores the exact `Digest-Item` this was opened from, with its own state
+        // intact (the same real item, not the plain `Digest` list) — the same "back returns to
+        // origin" contract every other filtered-Log entry point now shares.
+        composeTestRule.onNodeWithContentDescription("Back to Digest").performClick()
+        composeTestRule.waitUntilTextExists("The 8 overs")
+        composeTestRule.onNodeWithText("The 8 overs").assertExists()
     }
 
     @Test

@@ -89,7 +89,14 @@ class DrawerContentTest {
 
     @Test
     @Requirement("R-015")
-    fun `R_015 Search is reached from the header, never rendered as its own drawer row`() {
+    fun `IA_5 Search is reachable from its own drawer row too, not only the header magnifier`() {
+        // IA-5 (information-architecture review, approved — WPNAV): this test used to assert the
+        // opposite — that `Search` rendered no drawer row of its own, reachable only from the
+        // header's magnifier. That held only for the destinations drawing the generic
+        // `ScreenHeader`; `Search`, `Settings` and `Earlier nights` each draw their own header with
+        // no magnifier at all, leaving no way to reach `Search` from any of the three. `Search` now
+        // gets the identical drawer row every other real destination does (`Drawer.kt`'s own
+        // updated doc comment).
         composeTestRule.setContent {
             OrtTheme {
                 ReaderDrawerContent(
@@ -103,7 +110,7 @@ class DrawerContentTest {
             }
         }
 
-        composeTestRule.onNodeWithContentDescription("Open Search").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("drawer-row-SEARCH").assertExists()
     }
 
     @Test
@@ -196,7 +203,7 @@ class DrawerContentTest {
         // way) but `useUnmergedTree = true` matches every other assertion below this row's own
         // `clearAndSetSemantics` change touches, in case that ever stops being true.
         composeTestRule.onAllNodesWithText("not built", useUnmergedTree = true).assertCountEquals(
-            ReaderDestination.entries.count { !it.hasScreen && it != ReaderDestination.SEARCH },
+            ReaderDestination.entries.count { !it.hasScreen },
         )
     }
 
@@ -261,6 +268,8 @@ class DrawerContentTest {
         // count-pill), not a bare "Open Improve records" that silently drops the figure.
         listOf(
             "NOW" to "Now",
+            // IA-5: no trailing figure of its own (`trailingFor`'s own `else -> null`).
+            "SEARCH" to "Search",
             "LOG" to "Log, 5",
             "STATIONS" to "Stations, 12",
             "FREQUENCIES" to "Frequencies, 4",

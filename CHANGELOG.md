@@ -32,6 +32,156 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPNAV: IA-3 generalises the Log's own frequency-filter mechanism to a station, a curated set of overs and Capture's own Full log, all with a real back restore; IA-5 gives Search a drawer row; IA-6 links a transmission to its attributed station)
+
+### <pending> — WPNAV: one filter model for the Log (IA-3), Search reachable from anywhere via the drawer (IA-5), a transmission's attributed station one tap away (IA-6)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/**` (`OrtNavHost.kt`, `Drawer.kt`);
+`app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt` (the station link only),
+`TransmissionDetailContent.kt` (threading that link's callback through — see Left open),
+`StationDetailContent.kt` (`onViewAllOvers` wiring), `LogContent.kt` (the filter Saver);
+`app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt` (`LogFilterSelection.stationId`/
+`transmissionIds` — a boundary judgment call, see Left open); `app/src/main/kotlin/org/ort/app/ui/digest/SessionsContent.kt`
+(the embedded `SessionsPage.Log`'s own filter/origin, `LogReturn`); matching tests under
+`app/src/test/kotlin/org/ort/app/ui/{navigation,screens,digest,data}/**` and
+`ReaderAccessibilityTest.kt`/`DrawerContentTest.kt` (collateral fixes, see What changed).
+
+**Requirements/ACs:** none new — this is the approved information-architecture review's IA-3, IA-5
+and IA-6 findings, not a functional-spec requirement. IA-4 (unifying Capture's private sub-screen
+mechanisms) is deliberately not in this package — Capture's sub-screens are about to be redesigned.
+
+**What changed:**
+- **IA-3, the one filter model.** `OrtNavHost.kt` gains `LogFilterOrigin` (`None`/`Frequency`/
+  `Station`/`Capture`), a `rememberSaveable` sealed type via its own `LogFilterOriginSaver` (the
+  identical R-129 crash class `LogQuickFilterId`/`LogFilterSelection` already needed one for), and
+  `NavHostNavState.openLogFiltered(filter, origin)` generalises round 9's own `openLogFilteredByFrequency`
+  — the only one of the seven Log links that already worked end to end — rather than building a
+  parallel mechanism per link. `OrtNavHostBackHandler`'s `canReturnToLogOrigin` restores whichever
+  drill-in (or Capture's own Live Monitor) the operator came from, with its own state intact.
+  - **FQ02/FQ03** (`Frequency-Change`'s "Busier than usual"/"The N overs"): unchanged behaviour,
+    now expressed through the generalised mechanism — regression-proven by the existing
+    `R_276`/`R_432` real-`Activity` tests, both still green.
+  - **ST02** (`Station.dc.html`'s "Overs · Log"/"Recent overs · All N"): `StationDetailScreen.onViewAllOvers`
+    already existed and rendered both taps — `StationDetailContent` never passed a real callback
+    through, so both were dead taps. Now wired to `LogFilterOrigin.Station` + `LogFilterSelection.stationId`
+    (new field, `LogItemsMapper.matchesStation`); back restores the station.
+  - **N07** (`Live-Monitor.dc.html`'s "Full log"): was the one link with no origin to restore at
+    all (Capture is not a drill-in) — back used to exit past it. Now `LogFilterOrigin.Capture`
+    reopens `Capture` on its own Live Monitor.
+  - **DG01/DG05** (Digest's "Full log"/"Read the overs"): already worked, but back always landed on
+    the plain session `Detail`, silently discarding the `Digest` the operator was actually reading
+    — a real instance of the same defect this round fixes. `SessionsContent.kt`'s own embedded
+    `SessionsPage.Log` gains a `returnTo: LogReturn` (`Detail`/`Digest`/`DigestItem`), generalising
+    its own local navigation the identical way, entirely within this package (see Left open on why
+    it stays embedded rather than routing through `OrtNavHost`).
+  - **DG02** ("The N overs" on a digest item, N > 1): used to discard every id but the first and
+    hand only that one to `onOpenTransmission` — the other N-1 were unreachable from this tap at
+    all. N ≤ 1 still drills straight into the transmission (unchanged, regression-proven by the
+    pre-existing `FR_DIG_9` test); N > 1 now opens the embedded Log filtered to exactly that
+    curated set (`LogFilterSelection.transmissionIds`, new field, `LogItemsMapper.matchesTransmissionIds`),
+    `returnTo = LogReturn.DigestItem` so back restores the same item.
+  - **N01** (Now's activity-by-hour chart bar → Log filtered to that hour): **not built.** No click
+    handler exists anywhere in `ActivityPatternChart`/`HourBar`/`NowScreen`/`NowContent` — see Left
+    open.
+- **IA-5, Search reachable from anywhere.** `Drawer.kt` drops its `.filter { it != SEARCH }` —
+  `Search` now renders the identical drawer row every other real destination does (no trailing
+  figure). `OrtNavHost.kt`'s drawer `onSelect` (split into `drawerOnSelect` to stay under detekt's
+  `LongMethod` limit) sets `searchOpenedFrom` before switching, the same invariant the header
+  magnifier's own `onSearchDestination` already keeps, so `SearchContent`'s back-chevron returns to
+  wherever the row was tapped from. `Settings` and `Earlier nights` already had a working drawer
+  button of their own (`onDrawer`); `Search` itself has none yet — see Left open.
+- **IA-6, a transmission's own attributed station.** `TransmissionDetailScreen.kt` gains a
+  `StationLinkSection` ("View station"), rendered only when `detail.attribution.stationId != null`
+  — structurally impossible for `AMBIGUOUS`/`UNKNOWN` (`Attribution`'s own private constructor plus
+  its four factories), so there is never a dead or guessed link (constitution I). Threaded through
+  `TransmissionDetailContent.kt` → `OrtNavHost.kt`'s new `onOpenAttributedStation`, which closes the
+  transmission drill-in first (the same shape `onOpenActivationThread` already uses) before opening
+  the station — never a second, stacked drill-in. The transmission's own `DisposableEffect(detail.id)`
+  that stops playback on leave needed no change: it already fires on any composition change, this
+  new path included.
+- **Collateral test fixes** (IA-5's drawer row is a real, additive change to what the drawer
+  renders, so anything that counted or excluded `Search` needed a look): `ReaderAccessibilityTest`'s
+  `R_015` case now disambiguates the header's magnifier from the drawer's own new `Search` row
+  (both carry the identical exact content description) and its drawer-reachability sweep no longer
+  excludes `Search`; `DrawerContentTest`'s own `R_015` case is inverted (it used to assert `Search`
+  had no drawer row at all) and its `R-546` description table gains `Search`'s own row.
+
+**Verified:**
+- `:app:testDebugUnitTest --tests 'org.ort.app.ui.navigation.*' --tests 'org.ort.app.ui.screens.*'
+  --tests 'org.ort.app.ui.digest.*' --tests 'org.ort.app.ui.data.*' --tests
+  'org.ort.app.ui.ReaderAccessibilityTest'` — green.
+- `:app:smokeTestDebugUnitTest` (full suite, includes `NavSeedTest`, `OrtNavHostDestinationDispatchTest`,
+  `ReaderActivityDestinationSmokeTest`, `StationDetailContentTest`, `TransmissionDetailContentTest`)
+  — green, twice (once before, once after the detekt-driven refactor below).
+- `:app:lintDebug dependencyRules platformGuards :app:assembleDebug` — green.
+- `dependencyRules platformGuards build -PortAllowMissingBundledAssets=true --continue` — green
+  (BUILD SUCCESSFUL in 10m41s; a first pass caught four detekt findings — `SessionsContent`/
+  `OrtNavHost` over `LongMethod`, `TransmissionDetailContent` over `LongParameterList`, one unused
+  `val r` — fixed and reconfirmed clean with a second `:app:detekt` run before the full gate).
+- `-p buildSrc test` — green. `python tools/spec-check/spec_check.py` — OK, all 8 checks pass.
+- `coverageMatrix` (475 requirements, 260 covered, `results/coverage-matrix.md` unchanged — no diff,
+  confirming it was already in sync) then `coverageMatrixCheck` separately — green.
+- Every new/changed test proven to discriminate: production change reverted, test watched fail for
+  the stated reason, change restored, test watched pass again — for
+  `LogViewDataTest`'s two new filter tests, `StationDetailContentTest`'s `onViewAllOvers` test,
+  `TransmissionDetailScreenTest`'s three `IA_6` tests (including the negative-case guard itself),
+  `SessionsContentTest`'s `IA_3` DG02 test, `ReaderActivityDestinationSmokeTest`'s two new real-
+  `Activity` tests (ST02 and N07, each including a real `recreate()` round trip through the new
+  `LogFilterOriginSaver`), `DrawerContentTest`'s inverted `IA_5` test, and `NavSeedTest`'s `IA_6`
+  nav-level test.
+- Root checkout (`C:\Users\Adam Steenwyk\Documents\Code\offline-radio-transcriber`) confirmed clean
+  via `git status` before this session's own commit — no file leaked outside this worktree.
+
+**Left open / not done:**
+- **N01 (Now's chart bar → Log filtered to that hour): not built.** `ActivityPatternChart`/`HourBar`
+  (`ui/components/**`, off limits to this package) has no click parameter at all, and `NowScreen`/
+  `NowContent` wire no `onOpenLog`-shaped callback either — building this needs a new click seam in
+  a components file this package cannot touch, plus the matching `NowContent`/`NowScreen` wiring.
+  Reported, not routed around.
+- **D11 (`Detail-Propagated.dc.html`'s "View the 6 affected overs" → L01 filtered) and R04
+  (`Improve-Done.dc.html`'s "Review changes" → L01 filtered to revised): not built.** Neither
+  affordance exists in the built screen at all — `PropagatedScreen.kt`'s `AffectedRow` is not
+  clickable (though `AffectedOverViewState.transmissionId` is already there to wire), and
+  `ImproveDoneScreen` renders only `Done`, with no changed-transmission-id list surviving to
+  `ImproveDoneViewState` to filter by. Both need new screen content in files outside this package's
+  ownership (`ui/screens/PropagatedScreen.kt`, `ui/improve/**`) — reported, not built.
+- **N07's exact one-line change for `LiveMonitorScreen`:** none needed for the fix itself — the
+  origin/back-restore lives entirely in `OrtNavHost.kt`'s own `onOpenLog` callback, which already
+  knows the current destination is `Capture` at the moment `Full log` fires. If "Full log" is meant
+  to inherit whichever band/frequency Live Monitor is currently showing (matching the D75A's
+  two-band reality) rather than staying the plain, unfiltered log `Live-Monitor.dc.html` itself
+  specifies, `LiveMonitorActions.onOpenFullLog` would need to change from `() -> Unit` to
+  `(frequencyHz: Long?) -> Unit` — a signature change in an off-limits file, not made here.
+- **The embedded `SessionsPage.Log` stays embedded**, not routed through `OrtNavHost`'s own
+  `LogFilterOrigin` model — judged safe to leave as is: it already has its own working back
+  mechanism (now generalised the identical way via `LogReturn`), and routing it through the global
+  model would mean tearing down `Earlier nights`' whole navigation stack to reach `Log`, then
+  rebuilding it on the way back, for no behavioural gain.
+- **Two deliberate file-ownership judgment calls**, both narrow and additive, flagged per "a builder
+  that needs a file outside its package stops and reports": `LogFilterSelection`'s two new fields
+  and their `matches*` predicates in `ui/data/LogViewData.kt`, and `TransmissionDetailContent.kt`'s
+  three-function pass-through for `onOpenStation` — both needed to avoid shipping the exact
+  "setter with no writer"/"a fix a new screen doesn't reuse" defect class this round's own brief
+  warned about.
+- **`LogFilterSelection.stationId`/`transmissionIds`'s own round trip through `LogContent.kt`'s
+  `LogFilterSelectionSaver`** (a mechanical, four-line extension of the existing pattern) has no
+  dedicated Saver test of its own — the filtering logic itself is fully covered
+  (`LogViewDataTest`), and the wiring is proven end to end through a real `recreate()` for the
+  *origin* half (`ReaderActivityDestinationSmokeTest`'s new `IA_3_station...` case), but not
+  specifically for a station-filtered `Log`'s own selection surviving a config change independent
+  of the origin.
+- **IA-5: `SearchContent.kt` still has no drawer button of its own** — `Settings`/`Earlier nights`
+  already had one (`onDrawer`), so the drawer's new `Search` row is reachable from both, but a
+  caller already inside `Search` has no header affordance to open the drawer at all (its own header
+  is a back-chevron plus the inline query field, confirmed by reading the file — no `onDrawer`
+  parameter exists). Out of this package's ownership (`ui/screens/SearchContent.kt`, WP7's file) —
+  reported, not built.
+- Not run: the visual/screenshot tour (`tools/ui-audit/**`), per this round's own explicit
+  instruction — none of these three IA fixes changes a screen's rendered content (IA-4, which
+  would, is explicitly out of scope this round).
+
+---
+
 ## 2026-09-12 (WPDUMP: a single local-save checklist replaces `Preview`/`Save bundle`/`Save debug dump`; R-1035 — the ADIF export states its exportable count before the write)
 
 ### 372368ae — WPDUMP: one Save button, twelve checkboxes, everything the operator could only get by saving three separate files before; R-1035's export count

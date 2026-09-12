@@ -278,7 +278,18 @@ class ReaderActivityDestinationSmokeTest {
         runReaderActivity(ReaderDestination.SETTINGS) { rule ->
             rule.waitUntilContentDescriptionExists("Open navigation")
             rule.assertExactlyOneContentDescription("Open navigation")
-            rule.assertExactlyOneContentDescription("Search")
+            // IA-5 (information-architecture review, approved — WPNAV): the drawer's own closed
+            // rows stay composed off-screen (`Drawer.kt`'s own `ModalNavigationDrawer` content), and
+            // `Search` now has a real row there too (`drawer-row-SEARCH`) alongside the header's own
+            // magnifier — excluded explicitly, the same allowance `IA_3_station_overs_link...`
+            // above already makes for `drawer-row-LOG`, so this still asserts the one fact it always
+            // has: the header itself draws no *second* magnifier of its own.
+            val searchIconCount = rule.onAllNodes(
+                hasContentDescription("Search", substring = true) and !hasTestTag("drawer-row-SEARCH"),
+            ).fetchSemanticsNodes().size
+            check(searchIconCount == 1) {
+                "expected exactly one Search icon (excluding the drawer's own row), found $searchIconCount"
+            }
 
             rule.activityRule.scenario.recreate()
             rule.waitForIdle()
@@ -506,6 +517,96 @@ class ReaderActivityDestinationSmokeTest {
             rule.waitForIdle()
             rule.waitUntilContentDescriptionExists("Open navigation")
             rule.waitUntilContentDescriptionExists(OVERS_FREQUENCY_LABEL)
+        }
+    }
+
+    // IA-3 (information-architecture review, approved — WPNAV): ST02, `Station.dc.html`'s own
+    // "Overs · Log" trailing action (`StationScreen.kt`'s `TextAction(text = "Log", onClick =
+    // onViewAllOvers)`) — a dead tap before this round (`StationDetailContent` never passed a real
+    // callback through). Real now, routed through the same one filter model FQ02/FQ03 already
+    // proved end to end above: `LogFilterOrigin.Station` records the origin, and system back
+    // restores it — the same real `OnBackPressedDispatcher` `R_276`'s own test above uses, proving
+    // this against the genuine crash class (R-129) a plain `createComposeRule()` test cannot: a
+    // real `recreate()` round trip through [LogFilterOriginSaver].
+    @Test
+    fun `IA_3_station_overs_link_opens_Log_filtered_to_that_station, back restores the station`() {
+        runReaderActivity(ReaderDestination.STATIONS) { rule ->
+            rule.waitUntilContentDescriptionExists(STATION_ID)
+            rule.onNode(hasContentDescription(STATION_ID, substring = true) and hasClickAction()).performClick()
+            rule.waitUntilContentDescriptionExists("Back to Stations")
+
+            // `StationScreen.kt`'s own `KeyValueRow(key = "Overs", ..., trailingMarker = {
+            // TextAction(text = "Log", onClick = onViewAllOvers) })` — `TextAction` sets its own
+            // `contentDescription` to its visible text (`Controls.kt`'s R-380 fix). The closed
+            // drawer's own `LOG` row (`drawer-row-LOG`) matches the same description/click-action
+            // shape while still composed off-screen — excluded explicitly, the same allowance
+            // `assertScrollEndsAtLiveBarTop` above already makes for the drawer's own rows.
+            rule.onNode(
+                hasContentDescription("Log") and hasClickAction() and !hasTestTag("drawer-row-LOG"),
+            ).performClick()
+
+            // `Log` is a normal destination — the host's own `ScreenHeader` renders for it.
+            rule.waitUntilContentDescriptionExists("Open navigation")
+            rule.onNode(hasContentDescription("Filter") and hasClickAction()).assertExists()
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            // Proves `LogFilterOriginSaver` round-trips a real save/restore without crashing — the
+            // exact R-129 crash class this suite already found once for `LogQuickFilterId`/
+            // `LogFilterSelection`, now guarded for this file's own new sealed type too.
+            rule.waitUntilContentDescriptionExists("Open navigation")
+
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
+
+            // Back restores the station drill-in this was opened from, with its own state intact —
+            // never a bare `Stations` list, and never system back exiting past it. `"Back to Log"`,
+            // not `"Back to Stations"` — the exact same breadcrumb shape
+            // [LogFilterOrigin.Frequency]'s own already-working, already-tested restore uses
+            // (`openedFrom.value = LOG`, `R_276` above): once the operator has bounced through a
+            // filtered `Log`, a second back press from the reopened drill-in returns there again,
+            // not to wherever the drill-in was *first* opened from.
+            rule.waitUntilContentDescriptionExists("Back to Log")
+            // `StationScreen.kt`'s own title (`Text(text = state.label, ...)`) carries no
+            // `ContentDescription` of its own — unlike `StationsScreen`'s list row above, whose
+            // nested `AttributionRow` does — so this checks the visible text instead.
+            rule.waitUntilTextExists(STATION_ID)
+        }
+    }
+
+    // IA-3: N07, `Live-Monitor.dc.html`'s own `Full log` — before this round the only one of the
+    // seven Log entry points with no origin to restore at all (`Capture` is not a drill-in, so
+    // system back from a plain, unfiltered `Log` reached this way just exited past it). Reached the
+    // identical way `R_1007` (`OrtNavHostDestinationDispatchTest.kt`) already proves the pinned
+    // live bar's own tap opens `LiveMonitorScreen` — this class's own real `Activity`/back
+    // dispatcher is what additionally proves back actually returns.
+    @Test
+    fun `IA_3_N07_full_log_from_Live_Monitor_opens_the_plain_unfiltered_Log, back restores Live Monitor`() {
+        val liveSessionId = "ia3-n07-session"
+        try {
+            CaptureState.capturing(liveSessionId)
+            runReaderActivity(ReaderDestination.STATIONS, sessionId = liveSessionId) { rule ->
+                rule.waitUntilTestTagExists("live-bar-clearance")
+                rule.onNodeWithTag("live-bar-clearance").performClick()
+
+                // `LiveMonitorScreen.kt`'s own `testTag("live-monitor-back")`/`testTag
+                // ("live-monitor-full-log")`.
+                rule.waitUntilTestTagExists("live-monitor-full-log")
+                rule.onNodeWithTag("live-monitor-full-log").performClick()
+
+                rule.waitUntilContentDescriptionExists("Open navigation")
+                rule.onNode(hasContentDescription("Filter") and hasClickAction()).assertExists()
+
+                rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                rule.waitForIdle()
+
+                // Back reopens `Capture` on its own live monitor — not `Capture`'s plain status
+                // root, and not system back exiting past it.
+                rule.waitUntilTestTagExists("live-monitor-back")
+            }
+        } finally {
+            CaptureState.idle(clearSession = true)
         }
     }
 
