@@ -10,9 +10,11 @@ import org.ort.app.ui.data.realCaptureConfigurationStore
 import org.ort.core.SystemClock
 import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.RigStatus
+import org.ort.pipeline.capture.RigVerification
 import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.rig.DefaultRigTransportFactory
 import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
+import org.ort.rig.RigCapability
 import org.ort.rig.RigTransportKind
 import org.ort.rig.descriptor.BundledDescriptors
 import org.robolectric.RobolectricTestRunner
@@ -175,6 +177,10 @@ class SettingsRigFactsTest {
             bands = emptyList(),
             transportKind = RigTransportKind.BLUETOOTH_SPP,
             descriptorId = BundledDescriptors.kenwoodThD75a().id,
+            // R-1020: this test is about the CAT-mnemonic rendering, not the verification claim —
+            // stated explicitly as Full so it keeps testing that fact rather than accidentally
+            // relying on RigVerification's default (see the R_1020 tests below for that fact).
+            verification = RigVerification.Full,
         )
         val state = SettingsPolling.rig(context)
         // R-923 (Reviewer C2, run 3): `docs/reference/th-d75a-cat.md`'s own verified command
@@ -187,6 +193,62 @@ class SettingsRigFactsTest {
         }
         assert(!state.rigModuleLabel.contains("FQ BY FO BC MR ME AI BL"))
         assert(!state.rigModuleLabel.contains("FREQUENCY"))
+    }
+
+    @Test
+    fun `R_1020 the Rig-module row never claims verified when verification is Unknown, the default`() {
+        // No `verification` argument at all — RigVerification.Unknown is the default (the trap the
+        // register row names: a required parameter would have broken 63 call sites, so the compiler
+        // does not force this branch to be handled).
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        val state = SettingsPolling.rig(context)
+        assert(!state.rigModuleLabel.contains("verified")) {
+            "an Unknown verification must never render as verified, got ${state.rigModuleLabel}"
+        }
+        assert(state.rigModuleLabel == "kenwood-thd75a · built in · command set not confirmed this session") {
+            "expected the honest not-confirmed label, got ${state.rigModuleLabel}"
+        }
+    }
+
+    @Test
+    fun `R_1020 the Rig-module row never claims verified for a Partial verification, naming what is missing`() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+            verification = RigVerification.Partial(setOf(RigCapability.MODE)),
+        )
+        val state = SettingsPolling.rig(context)
+        assert(!state.rigModuleLabel.contains("verified")) {
+            "a Partial verification must never render as verified, got ${state.rigModuleLabel}"
+        }
+        assert(state.rigModuleLabel == "kenwood-thd75a · built in · command set partially confirmed · missing FO") {
+            "expected the honest partially-confirmed label naming FO, got ${state.rigModuleLabel}"
+        }
+    }
+
+    @Test
+    fun `R_1020 a Stale rig also reads its lastKnown verification, never claiming verified for Unknown`() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = emptyList(),
+            transportKind = RigTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
+        RigStatus.stale(
+            lastKnown = RigStatus.state as RigStatus.State.Connected,
+            sinceMillis = SystemClock.wallMillis(),
+        )
+        val state = SettingsPolling.rig(context)
+        assert(!state.rigModuleLabel.contains("verified")) {
+            "a stale rig's Unknown lastKnown verification must never render as verified, got ${state.rigModuleLabel}"
+        }
     }
 
     @Test
