@@ -295,10 +295,9 @@ public class WorkQueue(
          *    is not "waiting out" anything; it is re-asking a pure function the same question.
          * 2. **A human is watching.** [WorkQueueBackoff]'s ladder costs up to 150s per item at
          *    [DEFAULT_MAX_ATTEMPTS] — free when nobody is watching, a stalled progress bar when
-         *    someone is. Retrying a foreground action with a growing delay for a fault a second,
-         *    identical attempt is not expected to fix trades a real spec fix (FR-RUN-9's backoff)
-         *    for a worse foreground UX than either doing nothing or trying once and reporting
-         *    honestly.
+         *    someone is. Retrying a foreground action with a growing delay, for a fault a second,
+         *    identical attempt is not expected to fix, buys nothing over trying once and
+         *    reporting honestly — it only trades a stalled progress bar for the same outcome.
          *
          * A single attempt still writes the same [org.ort.data.entity.WorkAttemptEntity] audit
          * row [failPass] always writes, and the transmission still reaches terminal `FAILED` with
