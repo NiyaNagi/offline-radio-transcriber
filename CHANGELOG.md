@@ -170,6 +170,24 @@ this commit).
 
 **Left open / not done:** none for this commit's own scope.
 
+### b96aa3b0 — WPLINK: R-1042 measures the new drawer icon's own touch target rather than assuming it
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/screens/SearchScreenTest.kt` only.
+
+**Requirements/ACs:** register R-1042, constitution VII (the accessibility floor).
+
+**What changed:** a real bounds test proving the new `search-drawer-icon`'s own rendered footprint
+is at least as large as the pre-existing `search-back-chevron` beside it — found while writing it
+that **neither meets the 44dp floor** (this screen's header icons are bare `Icon` +
+`.clickable()`, not wrapped the way `ui/components/Rows.kt`'s `ScreenHeader` icons are). This is a
+pre-existing gap the new icon matches rather than introduces or worsens; flagged here rather than
+silently accepted, not fixed in this round (fixing it means touching `SearchHeaderRow`'s shared
+icon-sizing pattern, which both header icons use, not just the new one — a separate, intentionally
+scoped fix).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchScreenTest"`
+green (including the new case). `:app:ktlintCheck :app:detekt` green.
+
 ---
 
 ## 2026-09-12 (WPNAV: IA-3 generalises the Log's own frequency-filter mechanism to a station, a curated set of overs and Capture's own Full log, all with a real back restore; IA-5 gives Search a drawer row; IA-6 links a transmission to its attributed station)
