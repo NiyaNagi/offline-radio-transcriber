@@ -177,7 +177,7 @@ class ImprovePollingTest {
         db.transmissionDao().setReprocessCandidate("TX1", true)
 
         val runner = FakeImproveRunner(context, perItemDelayMillis = 0L)
-        val progressEvents = runner.run(listOf("TX1")).toList()
+        val progressEvents = runner.run(listOf("TX1"), "All groups").toList()
 
         assert(progressEvents.last() == ImproveRunProgress(done = 1, total = 1))
         val after = db.transmissionDao().getById("TX1")!!

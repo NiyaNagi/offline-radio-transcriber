@@ -105,6 +105,22 @@ public interface TransmissionDao {
     public suspend fun setProcessedTier(id: String, tier: Tier)
 
     /**
+     * Register R-1067 round 4 (coordinator review, constitution I/FR-REP-11): [setReprocessCandidate]
+     * and [setProcessedTier] used to be two separate statements at [id]'s own reprocess-outcome call
+     * site (`ReprocessRunner.recordOutcome`) — a real device trace (round-2 evidence, a kill between
+     * an interrupted attempt and its resume) found exactly three transmissions left with
+     * `isReprocessCandidate = 0` but `processedTier` still `NULL` and their attribution/transcript
+     * never actually revised: the candidate flag had been cleared while the tier stamp — and, by
+     * implication, the real Pass B write it is meant to certify — never landed. One `UPDATE`
+     * statement is atomic by SQLite's own single-statement guarantee (no partial application is
+     * possible, killed mid-write or not) where two separate calls are not. Unconditional, same
+     * reasoning as [setProcessedTier] itself: which tier last cleared a record's candidacy is a fact
+     * about the pipeline run.
+     */
+    @Query("UPDATE transmission SET isReprocessCandidate = 0, processedTier = :tier WHERE id = :id")
+    public suspend fun markProcessedAtTier(id: String, tier: Tier)
+
+    /**
      * Register R-1032 (constitution VI: "no number without ... execution provider"): the real
      * execution provider a Pass B/C run [id] actually ran under — see
      * [org.ort.data.entity.TransmissionEntity.executionProvider]'s own doc comment. Written by

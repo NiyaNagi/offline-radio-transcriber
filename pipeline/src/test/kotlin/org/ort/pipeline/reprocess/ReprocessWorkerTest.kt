@@ -73,8 +73,9 @@ class ReprocessWorkerTest {
         )
     }
 
-    private fun inputDataFor(ids: List<String>): Data = Data.Builder()
+    private fun inputDataFor(ids: List<String>, headline: String = "All groups"): Data = Data.Builder()
         .putStringArray(ReprocessWorker.KEY_TRANSMISSION_IDS, ids.toTypedArray())
+        .putString(ReprocessWorker.KEY_HEADLINE, headline)
         .putStringArray(ReprocessWorker.KEY_PASSES, arrayOf(PassId.B_OFFLINE.name))
         .build()
 
@@ -147,6 +148,85 @@ class ReprocessWorkerTest {
     }
 
     // ---------------------------------------------------------------------------------------
+    // Round 4 (coordinator review, constitution I/FR-REP-11): a real device trace found a
+    // checkpoint that recorded an id as done while the transmission row was still a genuine
+    // reprocess candidate (a kill between an interrupted attempt and its resume, three ids left
+    // with isReprocessCandidate=0 but processedTier never stamped) -- the resumed attempt then
+    // skipped those ids forever while reporting the whole run "processed." These two tests cover
+    // the resume-time reconciliation this class must do, and the honest finished count that must
+    // follow from it.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_1067_round4 a resumed worker redoes an id checkpointed done that the DB still shows as a candidate`() =
+        runBlocking {
+            seed("TX1")
+            seed("TX2")
+            // The exact shape the round-2 device trace found: a real candidate row (the write this
+            // id's earlier attempt should have durably cleared never actually landed) whose
+            // checkpoint nonetheless says "done" -- see `TransmissionDao.markProcessedAtTier`'s own
+            // kdoc for the real trace this reproduces.
+            db.transmissionDao().setReprocessCandidate("TX1", true)
+            val workId = UUID.randomUUID()
+            ReprocessRunState(context.filesDir, workId.toString()).apply {
+                remainingOrInit(listOf("TX1", "TX2"))
+                markDone("TX1")
+            }
+            val worker = TestListenableWorkerBuilder<ReprocessWorker>(context)
+                .setId(workId)
+                .setInputData(inputDataFor(listOf("TX1", "TX2")))
+                .build()
+
+            val result = worker.doWork()
+
+            assertTrue(result is ListenableWorker.Result.Success)
+            assertTrue(
+                "TX1's checkpoint said done, but it was still a genuine candidate in the DB -- the " +
+                    "resumed attempt must redo it, never skip it forever",
+                db.workQueueDao().findByTransmissionAndPass("TX1", PassId.B_OFFLINE.name).isNotEmpty(),
+            )
+        }
+
+    @Test
+    fun `R_1067_round4 the finished-while-away count comes from the DB, never a blind trust of the checkpoint`() =
+        runBlocking {
+            seed("TX1")
+            seed("TX2")
+            db.transmissionDao().setReprocessCandidate("TX1", true)
+            val workId = UUID.randomUUID()
+            ReprocessRunState(context.filesDir, workId.toString()).apply {
+                remainingOrInit(listOf("TX1", "TX2"))
+                markDone("TX1")
+            }
+            val worker = TestListenableWorkerBuilder<ReprocessWorker>(context)
+                .setId(workId)
+                .setInputData(inputDataFor(listOf("TX1", "TX2")))
+                .build()
+
+            val result = worker.doWork()
+
+            val output = (result as ListenableWorker.Result.Success).outputData
+            // KEY_DONE/KEY_TOTAL stay "attempts concluded" (ImproveRunner.run's own documented
+            // done == total contract, unaffected by this fix) -- both ids genuinely were attempted
+            // this run (TX1 redone via reconciliation, TX2 normally), regardless of outcome.
+            assertEquals(2, output.getInt(ReprocessWorker.KEY_DONE, -1))
+            assertEquals(2, output.getInt(ReprocessWorker.KEY_TOTAL, -1))
+            // KEY_IMPROVED_COUNT is the separate, narrower, DB-verified fact Root's own "finished
+            // while you were away" line reads. TX1 is redone but -- no ASR model installed --
+            // genuinely FAILS again (Errored, bounded retry exhausted), which never clears
+            // isReprocessCandidate (see `ReprocessRunner.recordOutcome`'s own comment: only
+            // Completed/Rejected does). TX2's own default fixture is never a candidate to begin
+            // with. The honest count is 1 (TX2 alone), never the naive "both attempted so both
+            // improved" the checkpoint alone would report.
+            assertEquals(
+                "the finished-while-away count must reflect the real DB state (TX1 is still a " +
+                    "genuine candidate after failing again), not just 'both ids were attempted'",
+                1,
+                output.getInt(ReprocessWorker.KEY_IMPROVED_COUNT, -1),
+            )
+        }
+
+    // ---------------------------------------------------------------------------------------
     // (b) unique work — a second start is a no-op, never a duplicate run.
     // ---------------------------------------------------------------------------------------
 
@@ -154,8 +234,8 @@ class ReprocessWorkerTest {
     fun `R_1067 a second start while one is already enqueued does not create a second run`() {
         initTestWorkManager()
 
-        ReprocessWorker.start(context, listOf("TX1"))
-        ReprocessWorker.start(context, listOf("TX2"))
+        ReprocessWorker.start(context, listOf("TX1"), headline = "All groups")
+        ReprocessWorker.start(context, listOf("TX2"), headline = "All groups")
 
         val infos = WorkManager.getInstance(context).getWorkInfosForUniqueWork(ReprocessWorker.UNIQUE_WORK_NAME).get()
         assertEquals(1, infos.size)
@@ -205,14 +285,14 @@ class ReprocessWorkerTest {
             WorkInfo.State.ENQUEUED,
             emptySet(),
             Data.EMPTY,
-            progressDataFor(done = 5, total = 12),
+            progressDataFor(done = 5, total = 12, headline = "All groups"),
             2,
             0,
         )
 
         val snapshot = info.toReprocessRunSnapshot()
 
-        assertEquals(ReprocessRunSnapshot.Waiting(done = 5, total = 12), snapshot)
+        assertEquals(ReprocessRunSnapshot.Waiting(done = 5, total = 12, headline = "All groups"), snapshot)
     }
 
     @Test
@@ -222,14 +302,17 @@ class ReprocessWorkerTest {
             WorkInfo.State.RUNNING,
             emptySet(),
             Data.EMPTY,
-            progressDataFor(done = 3, total = 12, currentId = "TX4"),
+            progressDataFor(done = 3, total = 12, currentId = "TX4", headline = "Captured at tier 1"),
             1,
             0,
         )
 
         val snapshot = info.toReprocessRunSnapshot()
 
-        assertEquals(ReprocessRunSnapshot.Running(done = 3, total = 12, currentId = "TX4"), snapshot)
+        assertEquals(
+            ReprocessRunSnapshot.Running(done = 3, total = 12, currentId = "TX4", headline = "Captured at tier 1"),
+            snapshot,
+        )
     }
 
     @Test
@@ -238,7 +321,7 @@ class ReprocessWorkerTest {
             UUID.randomUUID(),
             WorkInfo.State.SUCCEEDED,
             emptySet(),
-            progressDataFor(done = 12, total = 12, finishedAtMillis = 999L),
+            progressDataFor(done = 12, total = 12, finishedAtMillis = 999L, headline = "All groups"),
             Data.EMPTY,
             1,
             0,
@@ -246,7 +329,41 @@ class ReprocessWorkerTest {
 
         val snapshot = info.toReprocessRunSnapshot()
 
-        assertEquals(ReprocessRunSnapshot.Finished(done = 12, total = 12, finishedAtMillis = 999L), snapshot)
+        assertEquals(
+            ReprocessRunSnapshot.Finished(
+                done = 12,
+                total = 12,
+                finishedAtMillis = 999L,
+                headline = "All groups",
+                improvedCount = 12,
+            ),
+            snapshot,
+        )
+    }
+
+    @Test
+    fun `R_1067_round4 a manufactured Running WorkInfo with no headline in its progress data falls back honestly`() {
+        val info = WorkInfo(
+            UUID.randomUUID(),
+            WorkInfo.State.RUNNING,
+            emptySet(),
+            Data.EMPTY,
+            Data.Builder().putInt(ReprocessWorker.KEY_DONE, 1).putInt(ReprocessWorker.KEY_TOTAL, 2).build(),
+            1,
+            0,
+        )
+
+        val snapshot = info.toReprocessRunSnapshot()
+
+        assertEquals(
+            ReprocessRunSnapshot.Running(
+                done = 1,
+                total = 2,
+                currentId = null,
+                headline = ReprocessWorker.DEFAULT_HEADLINE,
+            ),
+            snapshot,
+        )
     }
 
     @Test
@@ -259,10 +376,12 @@ class ReprocessWorkerTest {
         total: Int,
         currentId: String? = null,
         finishedAtMillis: Long? = null,
+        headline: String = "All groups",
     ): Data = Data.Builder()
         .putInt(ReprocessWorker.KEY_DONE, done)
         .putInt(ReprocessWorker.KEY_TOTAL, total)
         .putString(ReprocessWorker.KEY_CURRENT_ID, currentId)
+        .putString(ReprocessWorker.KEY_HEADLINE, headline)
         .apply { if (finishedAtMillis != null) putLong(ReprocessWorker.KEY_FINISHED_AT_MILLIS, finishedAtMillis) }
         .build()
 

@@ -41,8 +41,15 @@ public interface ImproveRunner {
      *
      * **No longer cooperative for stopping the work itself (R-1067).** A collector that stops
      * collecting must leave a real run running; use [cancel] to actually stop one.
+     *
+     * [headline] (round 4, coordinator item 2) — the real group label this run started against
+     * ("All groups", "Captured at tier 1", ...), carried into [RealImproveRunner]'s own
+     * `ReprocessWorker.start` call so a board that later reattaches with no local page state
+     * ([ImproveContent.kt]'s own `reattachToRunningWork`, `transmissionIds = emptyList()`) reads the
+     * *real* scope from [org.ort.pipeline.reprocess.ReprocessRunSnapshot] instead of a generic
+     * placeholder — see that snapshot type's own kdoc.
      */
-    public fun run(transmissionIds: List<String>): Flow<ImproveRunProgress>
+    public fun run(transmissionIds: List<String>, headline: String): Flow<ImproveRunProgress>
 
     /**
      * The operator's own explicit stop (register R-1067d) — the only way a real run ends before
@@ -83,7 +90,7 @@ public class FakeImproveRunner(
      */
     private val perItemDelayMillis: Long = 150L,
 ) : ImproveRunner {
-    override fun run(transmissionIds: List<String>): Flow<ImproveRunProgress> = flow {
+    override fun run(transmissionIds: List<String>, headline: String): Flow<ImproveRunProgress> = flow {
         val db = OrtDatabase.create(context.applicationContext)
         transmissionIds.forEachIndexed { index, id ->
             db.transmissionDao().setReprocessCandidate(id, false)

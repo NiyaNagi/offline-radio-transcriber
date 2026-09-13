@@ -112,7 +112,7 @@ class RealImproveRunnerTest {
         // coverage against a fake ASR engine.
         val runner = RealImproveRunner(context)
 
-        val progress = runner.run(listOf("TX1")).toList()
+        val progress = runner.run(listOf("TX1"), "All groups").toList()
 
         assertEquals(1, progress.last().total)
         assertEquals(progress.last().total, progress.last().done)

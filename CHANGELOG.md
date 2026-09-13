@@ -32,6 +32,96 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPREPLIFE round 4: a real checkpoint/DB durability gap, the lost group label, the 0-of-0 board)
+
+### WPREPLIFE round 4 — R-1067: an atomic DB write, resume-time reconciliation, an honest finished-while-away count, the real group label carried through reattach, an honest starting board
+
+**Scope:** `data/src/main/kotlin/org/ort/data/dao/TransmissionDao.kt` (one new atomic DAO method,
+flagged out-of-package per this round's own file-ownership map — additive only, nothing existing
+changed); `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/` (`ReprocessRunner.kt`,
+`ReprocessWorker.kt`); `app/src/main/kotlin/org/ort/app/ui/improve/` (`ImproveRunner.kt`,
+`RealImproveRunner.kt`, `ImproveContent.kt`); their tests.
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution I. Register R-1067, coordinator round 4.
+
+**What changed — three defects the coordinator's own round-4 device-capture review found:**
+
+1. **A real data-loss risk (constitution I, FR-REP-11), investigated and closed.** The coordinator's
+   own reading of round-2's captures found `c-finished-while-away.png` claiming "12 of 12 overs
+   processed" while Root still showed 3 candidates — and named the likely cause: the checkpoint
+   recording an id done before its DB write is durable. Queried the on-device DB directly
+   (`adb shell run-as org.ort.app sqlite3 databases/ort.db`) for the exact 12 field-tier1 ids: the
+   first 3 (processed before the round-2 force-stop) showed `isReprocessCandidate = 0` but
+   `processedTier` still **NULL** and `attributionState` still the scenario's original seed value —
+   the candidate flag cleared while the tier stamp (and the real Pass B write it exists to certify)
+   never landed, exactly as suspected. Root cause: `ReprocessRunner.recordOutcome` wrote
+   `setReprocessCandidate` and `setProcessedTier` as two separate statements — safe under normal
+   Kotlin-level sequencing, but not atomic at the SQLite level, so a hard kill between them (or any
+   other cause that tears them apart) can leave exactly this half-written state. Fixed two ways:
+   - **Root cause:** new `TransmissionDao.markProcessedAtTier(id, tier)` — one `UPDATE` statement
+     setting both columns together, atomic by SQLite's own single-statement guarantee. Replaces the
+     two separate calls in `recordOutcome`.
+   - **Defense in depth:** `ReprocessWorker.doWork()` now re-verifies every id its own checkpoint
+     already considers done against the real DB (`staleCandidateIds`) before starting, and hands any
+     id still genuinely `isReprocessCandidate = true` back into this attempt's working set
+     (`reconcileRemaining`) — relying on `ReprocessRunner`'s own idempotency to redo it safely. This
+     recovers from *any* future cause of the same desync, not just the one now-closed race.
+   - **The finished-while-away count is now DB-verified**, never the checkpoint's own bookkeeping
+     alone: a new `KEY_IMPROVED_COUNT` field (`realDoneCount`, a real query for how many of this
+     run's own ids are no longer reprocess candidates) is what Root's "N of M overs processed" line
+     reads (`ReprocessRunSnapshot.Finished.improvedCount`) — kept deliberately separate from
+     `KEY_DONE`/`KEY_TOTAL`, which stay "attempts concluded" (`ImproveRunner.run`'s own documented
+     `done == total` contract, which `Improve-Running`'s live board and every existing `observe()`
+     caller already depend on, and which a genuinely-failed-but-attempted item must still satisfy).
+2. **The group label lost on reattach.** `b-after-kill.png` read "Improving / Improving · 11 of 12"
+   where a normal board reads "All groups · N of 12" — `reattachToRunningWork`'s own
+   `onReattachRunning` hardcoded a generic "Improving" headline since `ImprovePage.Running` built
+   from a reattach has no local `transmissionIds`/group state to read it from. Fixed by carrying the
+   real headline through the run's own `WorkManager` input/progress data: `ImproveRunner.run` and
+   `ReprocessWorker.start` both gained a `headline: String` parameter, stamped into every
+   `progressData`/`finishedData` `Data` blob via a new `KEY_HEADLINE`, and read back into
+   `ReprocessRunSnapshot.Waiting`/`Running`/`Finished` (all three now carry `headline`) —
+   `reattachToRunningWork` passes `snapshot.headline` to `onReattachRunning` instead of a literal.
+3. **The immediate-pause "0 of 0" board.** A reattach landing before `ReprocessWorker`'s own first
+   per-item `setProgress` call read WorkManager's still-empty progress `Data` as a literal "0 of 0"
+   — confusing though honest (nothing had been reported yet). Fixed: `doWork()` now publishes one
+   `setProgress` call with the real, already-known total (and the real headline) immediately after
+   computing the reconciled working set, before `ReprocessRunner.run` is ever invoked — a fresh
+   reattach now always sees the real total, never a false zero.
+
+**Verified:**
+- `./gradlew.bat ":pipeline:testDebugUnitTest" --tests "org.ort.pipeline.reprocess.*"` — 24 tests
+  green. New: `R_1067_round4 a completed outcome clears the candidate flag and stamps the tier
+  together` (the atomic-write regression check); `R_1067_round4 a resumed worker redoes an id
+  checkpointed done that the DB still shows as a candidate` and `R_1067_round4 the finished-while-
+  away count comes from the DB, never a blind trust of the checkpoint` — both run against the code
+  before this round's fix and confirmed failing for the right reason (the first: TX1 never handed
+  back to the runner, `workQueueDao` row absent; the second: the assertion on the DB-verified count
+  failed before `KEY_IMPROVED_COUNT` existed to carry it) — then passing after; a headline-fallback
+  mapping test.
+- `./gradlew.bat ":app:testDebugUnitTest" --tests "org.ort.app.ui.improve.*"` — 38 tests green. New:
+  two `ReattachToRunningWorkTest` cases proving `onReattachRunning` receives the run's own real
+  headline (`Waiting` and `Running` snapshots) rather than a placeholder. One existing test,
+  `RealImproveRunnerTest`'s own `done == total` case, is the direct proof the two-field split (item
+  1) was necessary — it broke against a first draft that overloaded `KEY_DONE` with the DB-verified
+  count, confirming `KEY_DONE`/`KEY_TOTAL` must stay "attempts concluded."
+- Full `./gradlew.bat ":app:testDebugUnitTest" ":pipeline:testDebugUnitTest" ":data:testDebugUnitTest"`
+  — `BUILD SUCCESSFUL in 17m 8s`, 211 actionable tasks, no failures anywhere in the log.
+- `./gradlew.bat ":pipeline:ktlintCheck" ":app:ktlintCheck" ":data:ktlintCheck" ":pipeline:detekt"
+  ":app:detekt" ":data:detekt"` — all green.
+
+**Out-of-package touch, flagged:** `TransmissionDao.markProcessedAtTier` in `:data` — additive only
+(the two existing methods it replaces at one call site are untouched and still used elsewhere,
+e.g. `FakeImproveRunner`), same shape as round 1/2's own flagged `WorkManagerTestInitHelper`
+additions in files outside this round's direct ownership.
+
+**Left open / not done:** device evidence for this round — the coordinator's own requested
+recapture (the kill-mid-run sequence ending on Root with the DB query before/after, and a
+reattached Running board showing its real group) — follows this entry once captured, per the
+coordinator's own instruction to save it under the session scratchpad, never a checkout.
+
+---
+
 ## 2026-09-13 (WPREPLIFE round 3: device evidence on real bundled models, merge, full gate)
 
 ### WPREPLIFE round 3 — R-1067: device evidence for reattach/kill/finish-while-away on real bundled models, merged origin/main (WPRC02), full gate green

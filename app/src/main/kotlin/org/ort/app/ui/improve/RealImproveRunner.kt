@@ -27,9 +27,9 @@ import org.ort.pipeline.reprocess.ReprocessWorker
  */
 public class RealImproveRunner(private val context: Context) : ImproveRunner {
 
-    override fun run(transmissionIds: List<String>): Flow<ImproveRunProgress> {
+    override fun run(transmissionIds: List<String>, headline: String): Flow<ImproveRunProgress> {
         val appContext = context.applicationContext
-        ReprocessWorker.start(appContext, transmissionIds)
+        ReprocessWorker.start(appContext, transmissionIds, headline)
         return ReprocessWorker.observe(appContext).map { progress ->
             ImproveRunProgress(done = progress.done, total = progress.total)
         }

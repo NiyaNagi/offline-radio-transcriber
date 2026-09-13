@@ -201,7 +201,7 @@ public fun ImproveContent(
             runner = runner,
             isRunningPage = page is ImprovePage.Running,
             isRootPage = page is ImprovePage.Root,
-            onReattachRunning = { page = ImprovePage.Running(transmissionIds = emptyList(), headline = "Improving") },
+            onReattachRunning = { headline -> page = ImprovePage.Running(emptyList(), headline) },
             onJustFinished = { finished -> justFinished = finished },
         )
     }
@@ -300,7 +300,7 @@ internal suspend fun reattachToRunningWork(
     runner: ImproveRunner,
     isRunningPage: Boolean,
     isRootPage: Boolean,
-    onReattachRunning: () -> Unit,
+    onReattachRunning: (headline: String) -> Unit,
     onJustFinished: (JustFinishedRun) -> Unit,
 ) {
     val snapshot = try {
@@ -310,11 +310,17 @@ internal suspend fun reattachToRunningWork(
         ReprocessRunSnapshot.NotRunning
     }
     when (snapshot) {
-        is ReprocessRunSnapshot.Waiting, is ReprocessRunSnapshot.Running -> {
-            if (!isRunningPage) onReattachRunning()
-        }
+        // Round 4 (coordinator item 2): the real group label, not a generic placeholder -- see
+        // ReprocessRunSnapshot's own kdoc for where it comes from.
+        is ReprocessRunSnapshot.Waiting -> if (!isRunningPage) onReattachRunning(snapshot.headline)
+        is ReprocessRunSnapshot.Running -> if (!isRunningPage) onReattachRunning(snapshot.headline)
         is ReprocessRunSnapshot.Finished -> {
-            if (isRootPage) onJustFinished(JustFinishedRun(doneCount = snapshot.done, totalCount = snapshot.total))
+            // Round 4 (coordinator item 1): the real, DB-verified count -- never `snapshot.done`
+            // ("attempts concluded," which a genuinely-failed-but-attempted over also satisfies) --
+            // see ReprocessRunSnapshot.Finished.improvedCount's own kdoc for the real device trace.
+            if (isRootPage) {
+                onJustFinished(JustFinishedRun(doneCount = snapshot.improvedCount, totalCount = snapshot.total))
+            }
         }
         ReprocessRunSnapshot.NotRunning -> Unit
     }
@@ -358,7 +364,7 @@ private fun RunningPage(
         // this composition did not start it, see ImproveContent's own top-level LaunchedEffect)
         // must only ever observe, never start a degenerate empty-id run.
         if (current.transmissionIds.isNotEmpty()) {
-            runner.run(current.transmissionIds)
+            runner.run(current.transmissionIds, current.headline)
         }
         // R-1067 round 2: the single source of truth for display either way -- `Waiting` included,
         // which a plain `ImproveRunProgress` (done/total only) cannot express. Never stalls or owns

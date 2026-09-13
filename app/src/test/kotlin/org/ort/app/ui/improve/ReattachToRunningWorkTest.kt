@@ -20,7 +20,7 @@ import org.ort.pipeline.reprocess.ReprocessRunSnapshot
 class ReattachToRunningWorkTest {
 
     private class ThrowingImproveRunner(private val exception: Throwable) : ImproveRunner {
-        override fun run(transmissionIds: List<String>) = flowOf(ImproveRunProgress(0, 0))
+        override fun run(transmissionIds: List<String>, headline: String) = flowOf(ImproveRunProgress(0, 0))
         override suspend fun cancel() = Unit
 
         // Thrown synchronously from the call itself -- the real shape `ReprocessWorker
@@ -28,6 +28,56 @@ class ReattachToRunningWorkTest {
         // deferred to Flow collection).
         override fun observeState(): Flow<ReprocessRunSnapshot> = throw exception
     }
+
+    /** Round 4 (coordinator item 2): a real snapshot, not a throw -- proves `onReattachRunning`
+     * receives the snapshot's own real group label, never a hardcoded placeholder. */
+    private class SnapshotImproveRunner(private val snapshot: ReprocessRunSnapshot) : ImproveRunner {
+        override fun run(transmissionIds: List<String>, headline: String) = flowOf(ImproveRunProgress(0, 0))
+        override suspend fun cancel() = Unit
+        override fun observeState(): Flow<ReprocessRunSnapshot> = flowOf(snapshot)
+    }
+
+    @Test
+    fun `R_1067_round4 reattaching to a Waiting run carries the run's own real group label, not a placeholder`() =
+        runBlocking {
+            val runner = SnapshotImproveRunner(
+                ReprocessRunSnapshot.Waiting(done = 3, total = 12, headline = "Captured at tier 1"),
+            )
+            var reattachedHeadline: String? = null
+
+            reattachToRunningWork(
+                runner = runner,
+                isRunningPage = false,
+                isRootPage = true,
+                onReattachRunning = { headline -> reattachedHeadline = headline },
+                onJustFinished = {},
+            )
+
+            assertEquals(
+                "reattaching must carry the run's own real group label, never the generic placeholder",
+                "Captured at tier 1",
+                reattachedHeadline,
+            )
+        }
+
+    @Test
+    fun `R_1067_round4 reattaching to a Running run carries the run's own real group label, not a placeholder`() =
+        runBlocking {
+            val runner = SnapshotImproveRunner(
+                ReprocessRunSnapshot.Running(done = 3, total = 12, currentId = "TX4", headline = "All groups"),
+            )
+            var reattachedHeadline: String? = null
+
+            reattachToRunningWork(
+                runner = runner,
+                isRunningPage = false,
+                isRootPage = true,
+                onReattachRunning = { headline -> reattachedHeadline = headline },
+                onJustFinished = {},
+            )
+
+            assertEquals("All groups", reattachedHeadline)
+        }
 
     @Test
     fun `R_1067_round3 the WorkManager-not-initialized message is caught and treated as NotRunning`() = runBlocking {
