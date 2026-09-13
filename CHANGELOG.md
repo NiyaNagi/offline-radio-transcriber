@@ -138,11 +138,23 @@ R-957/R-262/R-910/R-911 live-bar-clearance geometry cases).
 own text measurement did not reproduce the real device's tighter layout (the same documented class
 of gap constitution VIII names: "Robolectric's ... text measurement ... differ from a device").
 The fix stands on `bannerCapViewportHeight`'s own discriminating unit test and the reasoning above,
-not on that one Compose-level test failing first; the device-level uiautomator dump and before/
-after screenshots this round's own report includes are the real evidence per constitution VIII
-("the screenshot wins"). The banner's own scroll-internally/collapse-chevron behaviour (R-883) is
-unchanged — the artboards support a *cap*, not a collapse or a scroll-away, for this class of
-squeeze; see this round's own report for the artboard comparison.
+not on that one Compose-level test failing first. **No existing debug scenario combines all three
+of the register's own reported factors** — a real live session, a genuinely too-quiet
+`LevelStatus` (`level-low` has both but zero transmissions), and Improve-eligible tier-1 records
+(`field-tier1` has the records but is not live and sets no `LevelStatus`) — so the exact three-way
+device repro (`Improve all 12` squeezed under a live bar and a too-quiet banner together) could
+not be captured this round; that is a `Scenarios.kt` fixture gap (`app/src/debug/kotlin/org/ort/
+app/debug/Scenarios.kt`), outside this round's own `ui/navigation`/`ui/failures` file ownership.
+Two new tour steps were added instead (`field-tier1/R01-improve@2x`/`@2x-end`,
+`overnight/R01-improve@2x`/`@2x-end` — the latter scenario's own tier is already fully current, so
+its board renders the empty state, not `Improve all N`), and real-device evidence was captured for
+the *general* mechanism instead: `storage-warn/L01-log-banner@2x` (a real too-quiet-shaped storage
+banner and the host's own real pinned live bar together, at real system `font_scale=2.0`, on
+`LOG`) shows the destination's own last content line (bottom `y=2463`) clearing the live bar's own
+top (`y=2534`) with a real `uiautomator dump` to prove it. The banner's own scroll-internally/
+collapse-chevron behaviour (R-883) is unchanged — the artboards support a *cap*, not a collapse or
+a scroll-away, for this class of squeeze. See this round's own report for every capture path and
+what each one does and does not prove.
 
 ---
 
