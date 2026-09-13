@@ -274,6 +274,10 @@
     { "id": "overnight/L01-log-filtered-overs@2x", "scenario": "overnight", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02" }, "fontScale": 2.0 },
 
     { "id": "stations-14-nights/RC01-recordings@2x", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS", "fontScale": 2.0 },
-    { "id": "stations-14-nights/RC01-recordings@2x-end", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS", "fontScale": 2.0, "scroll": "end" }
+    { "id": "stations-14-nights/RC01-recordings@2x-end", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS", "fontScale": 2.0, "scroll": "end" },
+
+    { "id": "stations-14-nights/RC01-drawer", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS", "drillIn": { "openDrawer": "true" } },
+    { "id": "recordings-budget-exceeded/RC01-recordings", "scenario": "recordings-budget-exceeded", "destination": "EARLIER_NIGHTS" },
+    { "id": "recordings-archive-removed/RC01-recordings", "scenario": "recordings-archive-removed", "destination": "EARLIER_NIGHTS" }
   ]
 }

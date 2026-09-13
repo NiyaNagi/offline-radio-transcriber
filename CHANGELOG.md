@@ -32,6 +32,30 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
+
+### 4110dcdc — WPREC: RC01's own tour steps — the drawer's Recordings row and the two new scenario states
+
+**Scope:** `tools/ui-audit/tour.json` only (append-only, per this session's ownership).
+**Requirements/ACs:** constitution VIII (screens captured and compared to artboards).
+**What changed:** three new steps appended after RC01's existing `stations-14-nights` steps:
+`stations-14-nights/RC01-drawer` (`openDrawer` drillIn, same shape as `overnight/N00-drawer`,
+proves the drawer's "Recordings" row), `recordings-budget-exceeded/RC01-recordings` and
+`recordings-archive-removed/RC01-recordings` (RC01's own two constitution-bearing states,
+D40/AC-160 and P9/D39, seeded by the previous commit's two new debug scenarios).
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourSpecTest"` —
+12/12 green (unique ids, real scenario/destination names). `gradlew :app:testDebugUnitTest
+--tests "org.ort.app.debug.tour.TourStepsTest"` — green, every step (including the three new
+ones) lands on its expected marker. A real capture run
+(`tools\ui-audit\tour.ps1 -Port 5566 -Only "..."`) on `ort_audit_wpmodel` produced all three new
+PNGs plus the pre-existing RC01 1.0/@2x/@2x-end steps; every image was viewed and described in
+pixel terms (see this round's own report).
+**Left open / not done:** interactive (non-tour) navigation on a local fixture-asset debug build
+crashes the whole process (`RealCaptureService`'s VAD load throws an uncaught native exception on
+the placeholder model) — unrelated to RC01, flagged separately rather than fixed here; the
+uiautomator dumps for this round were taken by racing a dump against the tour activity's own
+brief real-Compose-tree window instead (see this round's own report for the technique and bounds).
+
 ## 2026-09-12 (WPREC: RC01 Recordings, replacing Earlier nights as the home for sessions)
 
 ### 4fe89e81 — WPREC: two debug scenarios for RC01's constitution-bearing states, with discriminating tests
