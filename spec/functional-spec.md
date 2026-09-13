@@ -185,6 +185,7 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D38 | **Retained over audio and voiceprint embeddings may be included in a field report, each behind its own toggle, both defaulting off**, with a consent screen naming every file and its real size before each upload. Against a **public** destination, both categories are refused unless a visible Settings switch is explicitly turned off. This **amends FR-SPK-20**, whose own text required that "if any future change proposes contributing, syncing or backing up voiceprints, the default must move to explicit opt-in in the same change" — D38 is that change, and discharges the obligation. | Product owner direction, taken with the conflict stated. The destination is `github.com/NiyaNagi/offline-radio-transcriber`, verified public; the product owner said "just push to this public repo for now — I am just testing." The lead's condition — the uploader reads the destination's visibility and gates accordingly — is recorded as a requirement (FR-OBS-10) rather than as a refusal, because the redacted bundle already diagnoses every defect reported so far without audio or voiceprints. See FR-OBS-9, FR-OBS-10, R19 and Q18 |
 | D39 | **Reversed: the continuous archive (FR-SEG-9) defaults ON, budgeted at 60 GB.** This **amends Q14**, whose recorded answer was "yes, and keep it always available… Default off; budgeted under D26." The mechanism and its budget-not-time-limit shape (D26) are unchanged; only the default flips. | Product owner direction: they want the raw audio for model training and no longer consider the storage cost a reason to keep it off by default. The cost, stated rather than sold: at 16 kHz mono, **FLAC is 50–60% of PCM's 115.2 MB/hour** (FR-STO-2a), so continuous capture costs **~58–69 MB per wall-clock hour**, about **0.5 GB per 8-hour night**, and **~15 GB per month** of nightly use — against the 60 GB budget that is roughly four months of nightly use before anything is pruned. See FR-STO-3d for what pruning does when the budget is reached, and Q14 for the amendment note in place |
 | D40 | **Reaching the over-audio budget warns loudly and deletes nothing.** Capture continues past it; only genuine device storage exhaustion stops capture, and it does so loudly (FR-STO-4, constitution IV). The operator frees space by deleting sessions themselves. This **withdraws** FR-STO-3a's opt-in automatic-pruning option for the **over-audio** budget specifically — the option is unaffected for the continuous archive (FR-STO-3d). | Product owner, closing register R-1037: FR-STO-3, FR-STO-3a and the new FR-STO-3d each specified something about pruning except the one budget nobody had been asked about — what happens when *over* audio, not the archive, fills. Over audio is the evidence behind every transcript and correction (FR-REP-4); none of it disappears without the operator choosing it. The stated cost of that guarantee: without a pruning option, a full over-audio budget is a **sustained warning** the operator must act on, not a one-time notice — see FR-STO-3e |
+| D41 | **Per-transmission VAD statistics are built, not narrowed away.** Q20 closes on its second option: FR-OBS-1 is amended to specify exactly what a `vad_stats` line records, at one line per closed segment, accepted or rejected, and the debug dump carries the same statistics. | Product owner direction: "making sure I have great debugging data." A 12-minute field session produced a 202-byte `capture.log` holding two route lines and no evidence at all about how its eight overs were segmented — so a missed, split or truncated over could not be diagnosed from anything the device sent back. The segmenter already computed a per-frame VAD decision and the level meter already estimated a noise floor; both were thrown away. The cost, stated: ~106 KB for a 400-over night inside the existing 2 MiB rotation, and because the dump reads the statistics back out of `capture.log` rather than a database column, a dump taken after roughly 8,000 transmissions since the last rotation carries only the most recent generation. See FR-OBS-1 (amended), AC-161, Q20 |
 
 ---
 
@@ -1475,6 +1476,17 @@ Required because most failures here are silent.
 per-pass latency, rejection reasons, tier changes, rig connection events, and service
 lifecycle.
 
+> **Amended by D41.** "VAD statistics" is now specified rather than assumed. Every segment the
+> segmenter closes — accepted **and** rejected (constitution III) — SHALL write one
+> `DiagnosticsLog.Category.CAPTURE` line, `vad_stats`, carrying only numbers and closed enums: the
+> transmission id, its outcome, its close reason (`SILENCE`, `MAX_DURATION`, `END_OF_STREAM`), its
+> duration, the VAD frame count and speech-frame count over the active window, peak and mean level
+> in dBFS, and the noise-floor estimate at onset. A value the pipeline could not measure SHALL be
+> written as absent (`NONE`), never as zero (constitution I). No transcript text and no callsign may
+> appear in the line — the same structural discipline FR-OBS-6 holds. The line SHALL be written off
+> the audio frame path and inside `capture.log`'s existing rotation (FR-RUN-1), and the debug dump
+> (FR-OBS-13) SHALL carry the same statistics per transmission. Cost, stated: ~200–265 bytes a
+> line, ~106 KB for a 400-over night, against the 2 MiB rotation `capture.log` already shares.
 **FR-OBS-2 (M)** — Surface a health screen showing rolling statistics: transmissions/hour,
 rejection rate by reason, mean per-pass latency, backlog depth, attribution state
 distribution.
@@ -2732,7 +2744,12 @@ NFR-2 stated latency targets that nothing tested.
   surface), the archive's on/off state and its monthly rate are stated beside the control that
   turns it off; once a measured rate exists it replaces the estimate (FR-STO-3f, FR-STO-5,
   FR-UI-7, constitution VI).
-- **AC-126** Station and frequency views show activity patterns that **distinguish "not heard"
+- **AC-161** Every segment the segmenter closes, accepted or rejected, produces exactly one
+  `vad_stats` line in `capture.log` and the same statistics in the debug dump, carrying numbers and
+  closed enums only; a statistic the pipeline could not measure reads as absent, never as zero —
+  verified by driving a segment closed by silence, one forced at maximum duration and one rejected
+  as too short, and by driving one with no noise-floor reading available (FR-OBS-1, D41,
+  constitution I, constitution III).- **AC-126** Station and frequency views show activity patterns that **distinguish "not heard"
   from "not listening"**, verified against a session containing a capture gap (FR-UI-11,
   FR-UI-12).
 - **AC-80** Full database and audio export completes and re-imports on another device,
@@ -3243,6 +3260,7 @@ product; all of them are what make the reference experience world-class.
 | D26 Retention is a storage budget | FR-STO-3, FR-STO-3a..c, AC-124, AC-125 |
 | D39 Continuous archive defaults on, budgeted at 60 GB | FR-STO-3d, FR-STO-3f, AC-150, AC-151, AC-158, AC-159, Q14 (amended) |
 | D40 Over-audio budget warns, never deletes | FR-STO-3a (amended), FR-STO-3e, FR-UI-7, AC-156, AC-157, AC-160 |
+| D41 Per-transmission VAD statistics built | FR-OBS-1 (amended), AC-161, Q20 |
 | D27 Own public repository | §2.1 (technical design), Q15 |
 | D28 Persistent voice library | FR-SPK-11..26, R15, AC-104..110, AC-121, AC-122 |
 | D29 Station knowledge accumulates | FR-DIG-7..14, R16, AC-116..120 |

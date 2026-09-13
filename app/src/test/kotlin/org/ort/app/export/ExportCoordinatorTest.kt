@@ -16,6 +16,7 @@ import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.export.ExportAttribution
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -343,6 +344,163 @@ class ExportCoordinatorTest {
         assertEquals(1, preview.totalCount)
         assertEquals(1, preview.exportableCount)
         assertEquals(0, preview.excludedCount)
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // R-1039 (halt): the Save file write path must never throw on real, reachable data — a
+    // CONFIRMED/INFERRED transmission whose station carries no catalog callsign (the `station`
+    // table is a lazily-populated secondary aggregate, never guaranteed to have a row for every
+    // callsign a transmission was attributed to), and a corrected INFERRED row with no confidence
+    // ([org.ort.core.Attribution.withCorrection]'s own real shape). Discriminating: each test below
+    // was run against the pre-fix `toExportAttribution` (reverted locally) and observed to throw
+    // `IllegalArgumentException` for exactly the case it now covers; restoring the fix makes it pass.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_1039 a CONFIRMED transmission with no catalog station row exports using its own stationId, never throws`() =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L))
+            // Deliberately no `db.catalogDao().insert(station(...))` call — the real `overnight`
+            // scenario's own shape for most of its CONFIRMED overs (`OvernightScenario.kt`): a
+            // resolved callsign on the transmission row with no corresponding `station` catalog row
+            // at all.
+            db.transmissionDao().insert(
+                transmission("T1", "S1", AttributionState.CONFIRMED, stationId = "W7NPC", attributionConfidence = 0.94),
+            )
+
+            val csv = ExportCoordinator.build(
+                context,
+                ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.CSV),
+            ).toString(Charsets.UTF_8)
+            val adif = ExportCoordinator.build(
+                context,
+                ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.ADIF),
+            ).toString(Charsets.UTF_8)
+
+            assertTrue("expected the transmission's own stationId used as the callsign", csv.contains("W7NPC"))
+            assertTrue(csv.contains("CONFIRMED"))
+            assertTrue("expected a real QSO record, not an excluded row", adif.contains("<CALL:5>W7NPC"))
+        }
+
+    @Test
+    fun `R_1039 a station row whose callsign is null falls back to the transmission's own stationId, never throws`() =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L))
+            db.catalogDao().insert(
+                StationEntity(
+                    id = "W7NPC",
+                    callsign = null,
+                    firstHeardAt = null,
+                    lastHeardAt = null,
+                    transmissionCount = 0,
+                    notes = null,
+                    userName = "the Tuesday net control",
+                    frequenciesHeard = null,
+                    activityByHourDow = null,
+                    potaRefs = null,
+                    spokenGrids = null,
+                    ituRegionFromPrefix = null,
+                    overCountsByAttributionState = null,
+                ),
+            )
+            db.transmissionDao().insert(
+                transmission("T1", "S1", AttributionState.CONFIRMED, stationId = "W7NPC", attributionConfidence = 0.94),
+            )
+
+            val csv = ExportCoordinator.build(
+                context,
+                ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.CSV),
+            ).toString(Charsets.UTF_8)
+
+            assertTrue("expected the fallback to the transmission's own stationId", csv.contains("W7NPC"))
+        }
+
+    @Test
+    fun `R_1039 a corrected INFERRED transmission with no confidence never throws — real callsign, empty confidence`() =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L))
+            db.transmissionDao().insert(
+                transmission(
+                    "T1",
+                    "S1",
+                    AttributionState.INFERRED,
+                    stationId = "KJ7ABC",
+                    attributionConfidence = null,
+                ),
+            )
+
+            val csv = ExportCoordinator.build(
+                context,
+                ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.CSV),
+            ).toString(Charsets.UTF_8)
+
+            assertTrue(csv.contains("KJ7ABC"))
+            assertTrue(csv.contains("INFERRED"))
+            val row = csv.lines()[1].split(",")
+            assertEquals("expected an empty confidence cell, never a fabricated value, got row: $row", "", row[9])
+        }
+
+    @Test
+    fun `R_1039 a CONFIRMED transmission with a genuinely null stationId is exported honestly, never thrown on`() =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L))
+            // A structurally anomalous row `Attribution.confirmed`'s own factory could never
+            // produce (it requires a non-blank station id) — reachable only via a raw DAO write or
+            // a corrupted restore, exactly the case `ExportAttribution.UnresolvedCallsign` exists
+            // for.
+            db.transmissionDao().insert(
+                transmission("T1", "S1", AttributionState.CONFIRMED, stationId = null, attributionConfidence = 0.94),
+            )
+
+            val csv = ExportCoordinator.build(
+                context,
+                ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.CSV),
+            ).toString(Charsets.UTF_8)
+            val adif = ExportCoordinator.build(
+                context,
+                ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.ADIF),
+            ).toString(Charsets.UTF_8)
+
+            assertTrue("expected the real CONFIRMED state stated, never relabelled", csv.contains("CONFIRMED"))
+            assertFalse(
+                "UnresolvedCallsign must never be confused with AMBIGUOUS/UNKNOWN's own placeholder",
+                csv.lines()[1].split(",")[8] == "UNIDENTIFIED",
+            )
+            assertFalse("no fabricated <EOR> record for a row with no nameable callsign", adif.contains("<EOR>"))
+            val header = adif.substringBefore("<EOH>")
+            assertTrue("expected the row's real CONFIRMED state named in the ADIF header", header.contains("CONFIRMED"))
+        }
+
+    @Test
+    fun `R_1039 previewCount never throws for the same shape that used to crash the Settings-Export screen`() =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L))
+            db.transmissionDao().insert(
+                transmission("T1", "S1", AttributionState.CONFIRMED, stationId = "W7NPC", attributionConfidence = 0.94),
+            )
+
+            val preview = ExportCoordinator.previewCount(
+                context,
+                ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.ADIF),
+            )
+
+            assertEquals(1, preview.totalCount)
+            assertEquals(1, preview.exportableCount)
+            assertEquals(0, preview.excludedCount)
+        }
+
+    @Test
+    fun `R_1039 toExportAttribution never throws for a missing callsign — CONFIRMED and INFERRED alike`() {
+        val confirmed = transmission("T1", "S1", AttributionState.CONFIRMED, attributionConfidence = 0.9)
+        val inferred = transmission("T2", "S1", AttributionState.INFERRED, attributionConfidence = null)
+
+        val confirmedAttribution = ExportCoordinator.toExportAttribution(confirmed, callsign = null)
+        val inferredAttribution = ExportCoordinator.toExportAttribution(inferred, callsign = null)
+
+        assertTrue(confirmedAttribution is ExportAttribution.UnresolvedCallsign)
+        assertTrue(inferredAttribution is ExportAttribution.UnresolvedCallsign)
+        assertEquals(AttributionState.CONFIRMED, (confirmedAttribution as ExportAttribution.UnresolvedCallsign).state)
+        assertEquals(AttributionState.INFERRED, (inferredAttribution as ExportAttribution.UnresolvedCallsign).state)
     }
 
     @Test

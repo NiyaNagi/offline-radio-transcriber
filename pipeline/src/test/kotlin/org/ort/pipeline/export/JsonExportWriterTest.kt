@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.core.AttributionState
 
 /** Register R-1009 (WPX). JSON is one of the four formats `Settings-Export.dc.html` already
  * offers; this is its real producer. Assertions read specific `"key":` substrings rather than
@@ -87,5 +88,27 @@ class JsonExportWriterTest {
         assertTrue(json.trim().endsWith("]"))
         assertTrue(json.contains("\"transmissionId\":\"t1\""))
         assertTrue(json.contains("\"transmissionId\":\"t2\""))
+    }
+
+    @Test
+    fun `R_1039 a CONFIRMED record with no resolvable callsign never throws and states its real reason`() {
+        val json = JsonExportWriter.write(
+            listOf(record(ExportAttribution.UnresolvedCallsign(AttributionState.CONFIRMED, "no station id recorded"))),
+        )
+        assertTrue(json.contains("\"state\":\"CONFIRMED\""))
+        assertTrue(json.contains("\"callsign\":null"))
+        assertTrue(json.contains("\"note\":\"no station id recorded\""))
+    }
+
+    @Test
+    fun `R_1039 a corrected INFERRED record with no confidence carries its real callsign and a null confidence`() {
+        val json = JsonExportWriter.write(
+            listOf(record(ExportAttribution.Inferred(callsign = "KJ7ABC", confidence = null, corrected = true))),
+        )
+        assertTrue(json.contains("\"state\":\"INFERRED\""))
+        assertTrue(json.contains("\"callsign\":\"KJ7ABC\""))
+        assertTrue(json.contains("\"confidence\":null"))
+        assertTrue(json.contains("\"corrected\":true"))
+        assertTrue(json.contains("\"note\":null"))
     }
 }

@@ -258,6 +258,8 @@
     { "id": "llm-enabled-prose/DG05-digest-prose@2x", "scenario": "llm-enabled-prose", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self", "reviewSessionView": "DIGEST" }, "fontScale": 2.0 },
     { "id": "llm-disabled/DG01-digest", "scenario": "llm-disabled", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self", "reviewSessionView": "DIGEST" } },
 
-    { "id": "overnight-live/N01-now-live@2x", "scenario": "overnight-live", "destination": "NOW", "fontScale": 2.0 }
+    { "id": "overnight-live/N01-now-live@2x", "scenario": "overnight-live", "destination": "NOW", "fontScale": 2.0 },
+    { "id": "overnight/CF07-settings-export@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "EXPORT" }, "fontScale": 2.0 },
+    { "id": "overnight/CF07-settings-export@2x-end", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "EXPORT" }, "fontScale": 2.0, "scroll": "end" }
   ]
 }
