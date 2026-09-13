@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPUI: C10 the transport bar, replacing the plain live bar host-wide, and its own reversal of R-1006's stop-on-leave — the bar, not the screen, now owns playback)
 
-### <pending> — WPUI: the transport bar (C10) and the R-1006 reversal — the bar owns playback, so leaving a screen never stops it
+### 6340b3e7 — WPUI: the transport bar (C10) and the R-1006 reversal — the bar owns playback, so leaving a screen never stops it
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/components/TransportBar.kt` (new),
 `app/src/main/kotlin/org/ort/app/ui/audio/TransportPlaybackController.kt` (new),
