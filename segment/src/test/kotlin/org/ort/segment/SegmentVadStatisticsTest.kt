@@ -6,18 +6,23 @@ import org.ort.segment.fake.ScriptedVad
 import org.ort.testing.Requirement
 
 /**
- * FR-OBS-1 (Q20): the per-transmission VAD statistics `capture.log` was promised since draft 1 and
- * never wrote (spec/open-questions.md Q20) — [SegmentRecord.closeReason], [SegmentRecord.vadFrameCount]
- * and [SegmentRecord.vadSpeechFrameCount] are the segmenter's own honest half of that gap. Each case
- * here is a discriminating one: reverting the [Segmenter] changes that thread [SegmentCloseReason]
- * and the frame tally through [Segmenter.closeSpeech]/[Segmenter.emitRejected] makes every one of
- * these fail (either a compile error from the reintroduced `forced: Boolean` parameter, or a wrong
- * [SegmentCloseReason]/count once a placeholder is substituted).
+ * FR-OBS-1 (Q20, amended by D41 into AC-161): the per-transmission VAD statistics `capture.log`
+ * was promised since draft 1 and never wrote (spec/open-questions.md Q20) —
+ * [SegmentRecord.closeReason], [SegmentRecord.vadFrameCount] and [SegmentRecord.vadSpeechFrameCount]
+ * are the segmenter's own honest half of that gap, and the ground truth AC-161's three
+ * segmenter-side driven cases (closed by silence, forced at maximum duration, rejected as too
+ * short) depend on. Each case here is a discriminating one: reverting the [Segmenter] changes that
+ * thread [SegmentCloseReason] and the frame tally through [Segmenter.closeSpeech]/
+ * [Segmenter.emitRejected] makes every one of these fail (either a compile error from the
+ * reintroduced `forced: Boolean` parameter, or a wrong [SegmentCloseReason]/count once a
+ * placeholder is substituted). The fourth driven case (no noise-floor reading available) and "the
+ * same statistics in the debug dump" are proven downstream, in `:pipeline`'s
+ * `RealSegmentSinkTest`/`DiagnosticsLogTest` and `:app`'s `DebugDumpBuilderTest`.
  */
 class SegmentVadStatisticsTest {
 
     @Test
-    @Requirement("FR-OBS-1")
+    @Requirement("FR-OBS-1", "AC-161")
     fun `a segment that closes on the VAD hangover timeout reports SILENCE and its real frame tally`() {
         // 10 SPEECH frames (confirms at frame 8, default minSpeechMs=250ms=8 frames of 32ms) then
         // 19 SILENCE frames (default minSilenceMs=600ms needs 19*32ms=608ms to trip the hangover
@@ -37,7 +42,7 @@ class SegmentVadStatisticsTest {
     }
 
     @Test
-    @Requirement("FR-OBS-1", "AC-70")
+    @Requirement("FR-OBS-1", "AC-70", "AC-161")
     fun `a segment forced closed by the maximum-duration cap reports MAX_DURATION, not SILENCE`() {
         val config = SegmentConfig(maxSegmentMs = 60_000)
         val totalMs = 150_000 // 150 s of continuous carrier, never a VAD close
@@ -76,7 +81,7 @@ class SegmentVadStatisticsTest {
     }
 
     @Test
-    @Requirement("FR-OBS-1")
+    @Requirement("FR-OBS-1", "AC-161")
     fun `a candidate that returns to silence before confirming reports SILENCE, not END_OF_STREAM`() {
         // 3 SPEECH frames, then silence -- below the confirm floor, rejected while the stream
         // keeps running (never reaches Segmenter.finish() in a TENTATIVE state).

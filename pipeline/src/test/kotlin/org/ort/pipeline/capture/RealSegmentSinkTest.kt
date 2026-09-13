@@ -297,10 +297,11 @@ public class RealSegmentSinkTest {
      * segment that closed cleanly produced no line of any kind. This proves an accepted segment's
      * real peak/mean dBFS (computed from the exact PCM this writer's own [SegmentWriter.append]
      * saw, not invented), the injected onset noise floor, and every [SegmentRecord] field it
-     * carries all land in one `vad_stats` line.
+     * carries all land in one `vad_stats` line. AC-161's first driven case: a segment closed by
+     * silence.
      */
     @Test
-    @Requirement("FR-OBS-1")
+    @Requirement("FR-OBS-1", "AC-161")
     public fun `a closed SPEECH segment logs its real peak, mean and onset noise floor to capture log`(): Unit =
         runBlocking {
             DiagnosticsLog.configure(filesDir, TestClock())
@@ -363,10 +364,11 @@ public class RealSegmentSinkTest {
      * genuinely has nothing to report yet, the line must say so honestly (the literal `NONE`),
      * never a fabricated `0.0` (constitution I). Also covers a `REJECTED_TOO_SHORT` segment, which
      * gets a `vad_stats` line exactly like an accepted one (constitution III: rejected segments
-     * stay reachable).
+     * stay reachable). AC-161's third and fourth driven cases together: a segment rejected as too
+     * short, with no noise-floor reading available.
      */
     @Test
-    @Requirement("FR-OBS-1")
+    @Requirement("FR-OBS-1", "AC-161")
     public fun `a rejected segment still logs vad_stats, with an unmeasurable noise floor as NONE`(): Unit =
         runBlocking {
             DiagnosticsLog.configure(filesDir, TestClock())
@@ -416,5 +418,54 @@ public class RealSegmentSinkTest {
                 "NONE",
                 field(line, "noiseFloorDbfsAtOnset"),
             )
+        }
+
+    /**
+     * AC-161's second driven case: a segment forced closed at the maximum-duration cap must log
+     * its real `MAX_DURATION` close reason in `capture.log` -- not the `SILENCE` a hangover timeout
+     * would report, and not a value hardcoded regardless of what the segment actually did.
+     */
+    @Test
+    @Requirement("AC-161", "AC-70")
+    public fun `a MAX_DURATION forced segment logs its real close reason to capture log`(): Unit =
+        runBlocking {
+            DiagnosticsLog.configure(filesDir, TestClock())
+            val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+            val sampleClock = SampleClock(
+                anchorMonotonicNanos = clock.monotonicNanos(),
+                anchorWallMillis = clock.wallMillis(),
+                anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+                sampleRate = FrameSpec.SAMPLE_RATE,
+            )
+            val queue = WorkQueue(db, clock)
+            val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, SegmentConfig()) {}
+
+            val endSample = FrameSpec.SAMPLE_RATE.toLong() * 60 // the maximum-segment cap itself
+            val writer = sink.open(SegmentId(0), 0L)
+            writer.append(FloatArray(1_000) { 0.2f })
+            writer.close(
+                SegmentRecord(
+                    id = SegmentId(0),
+                    startSample = 0L,
+                    endSample = endSample,
+                    vadStartSample = 0L,
+                    vadEndSample = endSample,
+                    sampleCount = endSample,
+                    outcome = SegmentOutcome.SPEECH,
+                    forcedSplit = true,
+                    closeReason = SegmentCloseReason.MAX_DURATION,
+                    vadFrameCount = 1_875,
+                    vadSpeechFrameCount = 1_875,
+                ),
+            )
+            DiagnosticsLog.flush()
+
+            val lines = captureLogLines()
+            assertEquals(1, lines.size)
+            val line = lines.single()
+            assertEquals("SPEECH", field(line, "outcome"))
+            assertEquals("MAX_DURATION", field(line, "closeReason"))
+            assertEquals(60_000L.toString(), field(line, "durationMs"))
+            assertEquals("1875", field(line, "vadFrameCount"))
         }
 }

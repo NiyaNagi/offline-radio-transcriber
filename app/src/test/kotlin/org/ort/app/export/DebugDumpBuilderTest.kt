@@ -208,12 +208,15 @@ class DebugDumpBuilderTest {
         }
 
     /**
-     * FR-OBS-1 (Q20): a `vad_stats` line — accepted and rejected alike — is parsed straight out
-     * of `capture.log`'s own real file format, not fabricated, and every value the writer logged
-     * as the literal `NONE` round-trips here as JSON `null`, never `0`/`0.0` (constitution I).
+     * FR-OBS-1 (Q20), AC-161 (D41): a `vad_stats` line — accepted and rejected alike — is parsed
+     * straight out of `capture.log`'s own real file format, not fabricated, and every value the
+     * writer logged as the literal `NONE` round-trips here as JSON `null`, never `0`/`0.0`
+     * (constitution I). Covers AC-161's "closed by silence" and "rejected as too short"/"no
+     * noise-floor reading available" driven cases, and its "same statistics in the debug dump"
+     * clause; the "forced at maximum duration" case is proven separately below.
      */
     @Test
-    fun `FR_OBS_1 a capture log vad_stats line for both an accepted and a rejected segment lands in the dump`() =
+    fun `FR_OBS_1 AC_161 a capture log vad_stats line for both an accepted and a rejected segment lands in the dump`() =
         runTest {
             val logDir = DiagnosticsLogPaths.logDir(context)
             logDir.mkdirs()
@@ -249,6 +252,30 @@ class DebugDumpBuilderTest {
                 rejected.isNull("peakDbfs") && rejected.isNull("meanDbfs") && rejected.isNull("noiseFloorDbfsAtOnset"),
             )
         }
+
+    /**
+     * AC-161's second driven case, proven at the debug-dump layer: a segment forced closed at the
+     * maximum-duration cap carries its real `MAX_DURATION` close reason in the dump too, not just
+     * in `capture.log` (proven separately by `RealSegmentSinkTest`).
+     */
+    @Test
+    fun `AC_161 a MAX_DURATION forced segment's vad_stats line also lands in the debug dump`() = runTest {
+        val logDir = DiagnosticsLogPaths.logDir(context)
+        logDir.mkdirs()
+        File(logDir, "capture.log").writeText(
+            "2026-01-01T00:00:03Z INFO vad_stats transmissionId=SESSION01-6 outcome=SPEECH " +
+                "closeReason=MAX_DURATION durationMs=60000 vadFrameCount=1875 vadSpeechFrameCount=1875 " +
+                "peakDbfs=-1.0 meanDbfs=-6.5 noiseFloorDbfsAtOnset=-50.0\n",
+        )
+
+        val lines = readLines(DebugDumpBuilder.build(context))
+        val line = lines.single { it.optString("type") == "vad_stats" }
+        assertEquals("SESSION01-6", line.getString("transmissionId"))
+        assertEquals("SPEECH", line.getString("outcome"))
+        assertEquals("MAX_DURATION", line.getString("closeReason"))
+        assertEquals(60_000L, line.getLong("durationMs"))
+        assertEquals(1_875, line.getInt("vadFrameCount"))
+    }
 
     @Test
     fun `R_1009 no voiceprint, user name or note ever appears in the dump`() = runTest {

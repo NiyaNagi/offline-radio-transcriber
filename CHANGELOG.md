@@ -32,6 +32,63 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPVAD follow-up: AC-161 tests tagged and completed, now covered in the matrix)
+
+### WPVAD follow-up — AC-161's four driven cases each carry the annotation/name the coverage matrix scans for; the missing MAX_DURATION case (log line and debug dump) added
+
+**Scope:** `segment/src/test/kotlin/org/ort/segment/SegmentVadStatisticsTest.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/capture/RealSegmentSinkTest.kt`,
+`app/src/test/kotlin/org/ort/app/export/DebugDumpBuilderTest.kt`, `results/coverage-matrix.md`
+(regenerated). No production code, `spec/**`, `results/ui-audit/register.md` or UI path touched.
+
+**Requirements/ACs:** AC-161 (D41 — Q20 closed; FR-OBS-1 amended). Builds on the WPVAD commit
+(`c0fe8e79`, merged at `8bf31976`) that implemented the behaviour before AC-161 existed to name it.
+
+**What changed:**
+- **The coverage-matrix gap was attribution, not behaviour.** Every AC-161 driven case already
+  worked (WPVAD landed the whole mechanism); the tests proving it were named for `FR-OBS-1`, the
+  requirement, not `AC-161`, the criterion D41 added afterward — `coverageMatrix` only counts a
+  requirement id it finds in an `@Requirement(...)` annotation or a `_`-separated test name, so
+  AC-161 read uncovered despite being fully exercised.
+- **`@Requirement("AC-161")` added** to `SegmentVadStatisticsTest`'s three segmenter-level driven
+  cases (closed by silence, forced at maximum duration, rejected as too short) and to
+  `RealSegmentSinkTest`'s two capture.log-level cases (the silence-close with real dBFS values;
+  the too-short rejection with the `NONE` noise floor). `DebugDumpBuilderTest`'s existing dump test
+  was renamed to embed `AC_161` alongside its existing `FR_OBS_1`, matching this file's own
+  name-embedded-id convention (no `@Requirement` import previously existed in this file).
+- **One driven case was genuinely missing a test, not just a tag: MAX_DURATION never had a test
+  proving it reaches `capture.log` or the debug dump** (only `SegmentVadStatisticsTest` exercised
+  it, at the segmenter level, before any `DiagnosticsLog`/dump involvement). Added
+  `RealSegmentSinkTest`'s `a MAX_DURATION forced segment logs its real close reason to capture log`
+  and `DebugDumpBuilderTest`'s `AC_161 a MAX_DURATION forced segment's vad_stats line also lands
+  in the debug dump`, both tagged/named for AC-161.
+
+**Verified:**
+- `./gradlew :segment:test` — `BUILD SUCCESSFUL`, all cases pass with the new annotations.
+- `./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.capture.RealSegmentSinkTest"` —
+  `BUILD SUCCESSFUL`, 7 tests including the new MAX_DURATION case. **Discrimination for the new
+  test**, shown live rather than asserted: temporarily hardcoded `RealCaptureService.kt`'s
+  `RealSegmentSink.close()` to pass `closeReason = SegmentCloseReason.SILENCE` to `logVadStats`
+  regardless of the record's real value, reran — the new `a MAX_DURATION forced segment logs its
+  real close reason to capture log` test failed exactly as expected
+  (`expected:<[MAX_DURATION]> but was:<[SILENCE]>`), while the silence-close test (which happens
+  to expect `SILENCE`) kept passing, showing the new case catches a regression the existing ones
+  cannot. Reverted the hardcode; reran clean.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.export.DebugDumpBuilderTest"` —
+  `BUILD SUCCESSFUL`, 9 tests including the new MAX_DURATION-in-the-dump case.
+- `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (separate invocations, per the
+  Gradle-validation constraint): `coverageMatrix: 483 requirements, 268 covered`;
+  `coverageMatrixCheck: up to date (268 covered of 483)`. `results/coverage-matrix.md`'s `AC-161`
+  row now reads: `DebugDumpBuilderTest.AC_161_a_MAX_DURATION_forced_segment's_vad_stats_line_also_lands_in_the_debug_dump`,
+  `DebugDumpBuilderTest.FR_OBS_1_AC_161_a_capture_log_vad_stats_line_for_both_an_accepted_and_a_rejected_segment_lands_in_the_dump`,
+  `RealSegmentSinkTest`, `SegmentVadStatisticsTest` — covered, not uncovered.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`, all 8 checks pass (no spec file
+  touched by this follow-up).
+
+**Left open / not done:** the full gate (`dependencyRules platformGuards build`, `-p buildSrc
+test`) is the lead's to run on merge, per this follow-up's own instruction — only the scoped test
+targets, `coverageMatrix`/`coverageMatrixCheck` and `spec_check.py` were run here.
+
 ## 2026-09-12 (spec: Q20 closed by D41 - per-transmission VAD statistics specified, after WPVAD built them)
 
 ### spec · D41: FR-OBS-1 amended to say exactly what a vad_stats line records; AC-161; Q20 closed
