@@ -137,7 +137,7 @@ covered both).
 **Left open / not done:** the `tour.ps1` manifest-poll race named above; `SessionsContent`/
 `DigestContent` do not carry the marker yet, per the R-1051 commit's own note.
 
-### pending — WPINIT: the detail screen's "No retained audio" card names the real, structured cause and its date, never a guessed one
+### 2ed58ba7 — WPINIT: the detail screen's "No retained audio" card names the real, structured cause and its date, never a guessed one
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt`, `CorrectionPolling.kt`;
 `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailContent.kt`,
