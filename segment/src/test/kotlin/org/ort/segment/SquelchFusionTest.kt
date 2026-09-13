@@ -212,5 +212,103 @@ class SquelchFusionTest {
             onAudioMethod.parameterTypes.any { it.name == "kotlin.coroutines.Continuation" },
             "Segmenter.onAudio must be a plain, non-suspending method",
         )
+        val markUnknownMethod = SquelchGate::class.java.getMethod("markUnknown", Long::class.java)
+        assertFalse(
+            markUnknownMethod.parameterTypes.any { it.name == "kotlin.coroutines.Continuation" },
+            "SquelchGate.markUnknown must be a plain, non-suspending method",
+        )
+    }
+
+    // --- R-1062 follow-up: squelch authority can be LOST, not just closed -----------------
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062")
+    fun `R_1062 a rig lost while squelch is closed reverts to VAD, a later speech burst is segmented`() {
+        val gate = SquelchGate()
+        gate.push(open = true, atSample = 0L)
+        gate.push(open = false, atSample = msToSamples(500))
+        // Squelch closed at 500ms; authority lost at 1000ms, well before the VAD-only speech
+        // burst at 3000-3999ms -- reverting from here on is the whole point of this test.
+        gate.markUnknown(atSample = msToSamples(1000))
+
+        val (vad, total) = regionScript(5000, 3000..3999)
+        val sink = RecordingSegmentSink()
+        runToCompletion(Segmenter(SegmentConfig(), vad, sink, squelchGate = gate), rampSignal(total))
+
+        val speechRecords = sink.records.filter { it.outcome == SegmentOutcome.SPEECH }
+        assertEquals(1, speechRecords.size, "the VAD-only burst after the loss must still become an over")
+        assertEquals(SegmentCloseReason.SILENCE, speechRecords.single().closeReason, "decided by VAD, not squelch")
+        assertFalse(speechRecords.single().rigSquelchFusionApplied)
+    }
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062")
+    fun `R_1062 a rig lost while squelch is open closes the segment at the loss sample as RIG_LOST`() {
+        val gate = SquelchGate()
+        gate.push(open = true, atSample = 0L)
+        val lossAtMs = 1000L
+        gate.markUnknown(atSample = msToSamples(lossAtMs))
+        // No further squelch transitions ever arrive -- the rig is gone for good.
+
+        val (vad, total) = regionScript(3000, 0 until lossAtMs.toInt())
+        val sink = RecordingSegmentSink()
+        runToCompletion(Segmenter(SegmentConfig(), vad, sink, squelchGate = gate), rampSignal(total))
+
+        val record = sink.records.single { it.outcome == SegmentOutcome.SPEECH }
+        assertEquals(SegmentCloseReason.RIG_LOST, record.closeReason)
+        assertFalse(record.rigSquelchFusionApplied, "an administrative cut is never a fusion decision")
+        // The generous post-roll around the loss point is kept, exactly like a genuine close.
+        assertTrue(
+            record.endSample >= msToSamples(lossAtMs) + msToSamples(SegmentConfig.DEFAULT_POST_ROLL_MS.toLong()) -
+                FrameSpec.SIZE,
+        )
+    }
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062")
+    fun `R_1062 every over after a rig loss is VAD-only until fusion is never re-engaged`() {
+        // The same loss-while-open scenario, but this time asserting on EVERYTHING that comes
+        // after -- the coordinator's own point: the in-flight segment closing honestly is not
+        // proof that later overs still appear. A second VAD-only speech burst, well after the
+        // loss, with no further squelch activity at all, must still become its own over.
+        val gate = SquelchGate()
+        gate.push(open = true, atSample = 0L)
+        gate.markUnknown(atSample = msToSamples(500))
+
+        val (vad, total) = regionScript(6000, 0..399, 3000..3999)
+        val sink = RecordingSegmentSink()
+        runToCompletion(Segmenter(SegmentConfig(), vad, sink, squelchGate = gate), rampSignal(total))
+
+        val speechRecords = sink.records.filter { it.outcome == SegmentOutcome.SPEECH }
+        assertEquals(2, speechRecords.size, "the loss-closed segment, then a later VAD-only over")
+        assertEquals(SegmentCloseReason.RIG_LOST, speechRecords[0].closeReason)
+        assertEquals(SegmentCloseReason.SILENCE, speechRecords[1].closeReason)
+        assertFalse(speechRecords[1].rigSquelchFusionApplied)
+    }
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062")
+    fun `R_1062 reconnect after a loss resumes fusion from the fresh transition`() {
+        val gate = SquelchGate()
+        gate.push(open = true, atSample = 0L)
+        gate.markUnknown(atSample = msToSamples(500))
+        // Reconnects at 3000ms with a fresh, real squelch open/close pair.
+        val reopenAtMs = 3000L
+        val recloseAtMs = 4000L
+        gate.push(open = true, atSample = msToSamples(reopenAtMs))
+        gate.push(open = false, atSample = msToSamples(recloseAtMs))
+
+        // Speech in both windows -- the pre-loss segment must report SPEECH (not
+        // REJECTED_NO_SPEECH) so both records are comparable by closeReason below.
+        val (vad, total) = regionScript(5000, 0..399, reopenAtMs.toInt() until recloseAtMs.toInt())
+        val sink = RecordingSegmentSink()
+        runToCompletion(Segmenter(SegmentConfig(), vad, sink, squelchGate = gate), rampSignal(total))
+
+        val speechRecords = sink.records.filter { it.outcome == SegmentOutcome.SPEECH }
+        assertEquals(2, speechRecords.size)
+        assertEquals(SegmentCloseReason.RIG_LOST, speechRecords[0].closeReason)
+        val resumed = speechRecords[1]
+        assertEquals(SegmentCloseReason.SQUELCH_CLOSE, resumed.closeReason, "fusion resumed from the fresh transition")
+        assertTrue(resumed.rigSquelchFusionApplied)
     }
 }

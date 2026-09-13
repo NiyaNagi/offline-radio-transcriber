@@ -15,8 +15,8 @@ package org.ort.segment
  *
  * **FR-SEG-5 fusion.** When constructed with a non-null [squelchGate], **rig squelch is
  * authoritative for boundaries; VAD is authoritative only for whether the gated interval
- * contains speech.** Concretely, once the first [SquelchTransition] has been drained (before
- * that, or with no [squelchGate] at all, this class behaves exactly as it always has — VAD-only
+ * contains speech.** Concretely, once the first [SquelchUpdate.Transition] has been drained
+ * (before that, or with no [squelchGate] at all, this class behaves exactly as it always has — VAD-only
  * boundaries, [SegmentRecord.rigSquelchFusionApplied] always `false`, matching "no squelch
  * capability, or rig disconnected" and "if rig state is late, segmentation proceeds on VAD"):
  * - Squelch open (while [State.IDLE]) starts a segment immediately, with the same [preRollMs]
@@ -33,11 +33,20 @@ package org.ort.segment
  * - A boundary decided by anything else — [SegmentCloseReason.MAX_DURATION]'s forced split, or
  *   [SegmentCloseReason.END_OF_STREAM] — is honestly *not* a fusion decision, so
  *   [SegmentRecord.rigSquelchFusionApplied] is `true` only when **both** the segment's open and
- *   its close were squelch-decided. This is also how "a rig drops mid-over closes honestly" falls
- *   out with no separate mechanism: if the rig goes silent and no more transitions ever arrive,
- *   the segment simply keeps running on the last known squelch state until FR-SEG-3's own
- *   maximum-length safety net eventually force-splits it — a boundary that is, correctly, not
- *   attributed to fusion.
+ *   its close were squelch-decided.
+ * - **R-1062 follow-up (constitution IV): squelch authority can be *lost*, not just closed.**
+ *   [SquelchGate.markUnknown] reverts [squelchOpen] to `null` — exactly the pre-first-transition
+ *   "not yet known" state — so the very next frame falls back to VAD-only, whether squelch was
+ *   open or closed at the moment authority was lost. A segment that was genuinely open when this
+ *   happens is not left running silently forever: it closes at the loss point with the same
+ *   generous post-roll a real close gets, tagged [SegmentCloseReason.RIG_LOST] (never
+ *   [SegmentCloseReason.SQUELCH_CLOSE], and [SegmentRecord.rigSquelchFusionApplied] always
+ *   `false`) — see [handleSquelchLoss]'s own kdoc. *Producing* that signal (a transport lost, a
+ *   disconnect, or squelch going stale past a bound) is `:pipeline`'s job, never this class's —
+ *   see [org.ort.segment.SquelchGate]'s own kdoc for the split of responsibility. FR-SEG-3's own
+ *   maximum-length safety net remains the backstop if a loss signal is ever missed entirely: a
+ *   squelch-gated interval that somehow never hears either a close or a loss still cannot run
+ *   unbounded, and that forced cut is likewise never attributed to fusion.
  *
  * **The constructor takes no [org.ort.core.Tier] and cannot be given one** (FR-SEG-7,
  * CON-SEG-1 → AC-94). See [SegmentConfig].
@@ -85,13 +94,21 @@ public class Segmenter(
     private val hangoverBuf = ArrayList<FloatArray>()
 
     // FR-SEG-5 fusion scratch. `squelchOpen == null` means "not yet known" -- the honest state
-    // before the first SquelchTransition ever arrives, in which this class behaves exactly as the
-    // pre-fusion VAD-only segmenter (see the dispatch in handleFrame()).
+    // before the first SquelchUpdate.Transition ever arrives, OR after a SquelchUpdate.Loss
+    // reverts it (R-1062 follow-up) -- in which this class behaves exactly as the pre-fusion
+    // VAD-only segmenter (see the dispatch in handleFrame()).
     private var squelchOpen: Boolean? = null
     private var openedBySquelch = false
     private var closedBySquelch = false
     private var squelchCloseVadEnd = 0L
     private val squelchPostRollBuf = ArrayList<FloatArray>()
+
+    // R-1062 follow-up: which SegmentCloseReason the current SQUELCH_POSTROLL window is heading
+    // toward -- SQUELCH_CLOSE for a genuine squelch close, RIG_LOST when authority was lost while
+    // the segment was open (see beginSquelchPostRollFromLoss()). MAX_DURATION always overrides it
+    // (squelchPostRollFrame()'s own hitMax check), so the default value here is never observed
+    // unless one of the two entry points below sets it first.
+    private var postRollCloseReason = SegmentCloseReason.SQUELCH_CLOSE
 
     // FR-OBS-1 (Q20): tallied per active window (TENTATIVE/SPEECH/HANGOVER/SQUELCH_OPEN/
     // SQUELCH_POSTROLL), reset to 0 the instant a segment or rejected candidate closes -- see
@@ -195,16 +212,52 @@ public class Segmenter(
 
     /**
      * FR-SEG-5 / FR-RUN-1: a plain, non-suspending queue drain -- never a suspension point, never
-     * a lock the rig's own coroutine could contend for. Transitions are applied in arrival order;
-     * the last one at or before this frame's own end is what this frame's decision uses (a
-     * squelch flap entirely inside one 32 ms frame is not expected to be separately observable at
-     * this granularity, and none of FR-SEG-5's callers need it to be).
+     * a lock the rig's own coroutine could contend for. Updates are applied in arrival order; the
+     * last one at or before this frame's own end is what this frame's decision uses (a squelch
+     * flap entirely inside one 32 ms frame is not expected to be separately observable at this
+     * granularity, and none of FR-SEG-5's callers need it to be).
+     *
+     * R-1062 follow-up: a [SquelchUpdate.Loss] is handled inline, in the same order as every
+     * [SquelchUpdate.Transition] -- both [squelchOpen] and (if a segment was open) the segment's
+     * own close are decided at the point in the batch the loss actually occurred, never
+     * retroactively.
      */
     private fun drainSquelchTransitions(frameStart: Long) {
         val gate = squelchGate ?: return
-        for (transition in gate.drainBefore(frameStart + frameSamples)) {
-            squelchOpen = transition.open
+        for (update in gate.drainBefore(frameStart + frameSamples)) {
+            when (update) {
+                is SquelchUpdate.Transition -> squelchOpen = update.open
+                is SquelchUpdate.Loss -> handleSquelchLoss(frameStart)
+            }
         }
+    }
+
+    /**
+     * R-1062 follow-up (FR-SEG-5, constitution IV): squelch authority is gone as of [frameStart]
+     * -- reverts to the honest "not yet known" state exactly as if no transition had ever
+     * arrived, so [handleFrame]'s own IDLE dispatch falls back to VAD immediately, on the very
+     * next frame. If a squelch-gated segment was actually open when authority was lost, it is not
+     * left running silently: it is cut here, with the same generous post-roll a genuine squelch
+     * close gets, tagged [SegmentCloseReason.RIG_LOST] rather than [SegmentCloseReason.SQUELCH_CLOSE]
+     * so nothing downstream can mistake an administrative cut for a real measurement -- and
+     * [SegmentRecord.rigSquelchFusionApplied] is `false` regardless of how the segment opened
+     * (this class's own "true only when both edges were squelch-decided" rule already gives that
+     * for free: `closedBySquelch` is never set true here).
+     *
+     * A loss while [State.SQUELCH_POSTROLL] is already in flight (a squelch close and a loss
+     * landing in close succession) is left to finish exactly as it was already going to -- the
+     * segment is already closing honestly; retagging it would not make it more honest, only more
+     * confusing. A loss while idle, or mid a pure-VAD segment that predates fusion ever engaging,
+     * touches nothing but [squelchOpen] itself.
+     */
+    private fun handleSquelchLoss(frameStart: Long) {
+        squelchOpen = null
+        if (state != State.SQUELCH_OPEN) return
+        closedBySquelch = false
+        squelchCloseVadEnd = frameStart
+        postRollCloseReason = SegmentCloseReason.RIG_LOST
+        squelchPostRollBuf.clear()
+        state = State.SQUELCH_POSTROLL
     }
 
     /**
@@ -405,6 +458,7 @@ public class Segmenter(
             // written -- squelchPostRollFrame()/finish() decide how much of it survives.
             closedBySquelch = true
             squelchCloseVadEnd = frameStart
+            postRollCloseReason = SegmentCloseReason.SQUELCH_CLOSE
             squelchPostRollBuf.clear()
             squelchPostRollBuf.add(frame.copyOf())
             state = State.SQUELCH_POSTROLL
@@ -456,7 +510,10 @@ public class Segmenter(
         if (buffered >= postRollSamples || hitMax) {
             val flushLimit = minOf(postRollSamples.toLong(), buffered)
             flushBuffered(squelchPostRollBuf, flushLimit)
-            val closeReason = if (hitMax) SegmentCloseReason.MAX_DURATION else SegmentCloseReason.SQUELCH_CLOSE
+            // R-1062 follow-up: postRollCloseReason carries whichever entry point this window
+            // actually started from (a genuine close, or a loss of authority) -- MAX_DURATION
+            // still overrides either, exactly as it already did for a genuine close.
+            val closeReason = if (hitMax) SegmentCloseReason.MAX_DURATION else postRollCloseReason
             val stillClosedBySquelch = closedBySquelch && !hitMax
             closeSquelchSegment(
                 vadEnd = squelchCloseVadEnd,

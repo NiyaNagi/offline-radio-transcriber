@@ -48,6 +48,17 @@ public enum class SegmentCloseReason {
      * opened — see [Segmenter]'s own kdoc for exactly when fusion engages.
      */
     SQUELCH_CLOSE,
+
+    /**
+     * R-1062 follow-up (FR-SEG-5, constitution IV "capture never lies"): squelch authority was
+     * **lost** — the rig disconnected, its transport was lost, or it went stale — while a
+     * squelch-gated segment was open. Kept generous post-roll exactly like [SQUELCH_CLOSE]
+     * (constitution never clips a callsign for want of it), but it is honestly a **different**
+     * fact: not a measurement of the transmission's real end, an administrative cut forced by
+     * losing the instrument that was measuring it. [SegmentRecord.rigSquelchFusionApplied] is
+     * always `false` for this reason — see [SquelchUpdate.Loss]'s own kdoc for the producer side.
+     */
+    RIG_LOST,
 }
 
 /**

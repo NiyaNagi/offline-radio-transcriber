@@ -23,8 +23,19 @@ import org.ort.segment.SquelchGate
  * (sample 0) instead is FR-RUN-1's "never blocks or crashes the audio path on the rig" applied to
  * this literal edge case, not a guessed sample: there is no more honest answer than "at or before
  * the first sample this session ever has".
+ *
+ * R-1062 follow-up: [RigSquelchTransition.open] `null` means squelch authority was lost (a
+ * transport drop, a disconnect, or staleness — see [RigSquelchTransition]'s own kdoc), pushed
+ * through as [SquelchGate.markUnknown] rather than [SquelchGate.push] — the same sample-position
+ * conversion and the same clamp apply to it unchanged.
  */
 internal fun pushSquelchTransition(gate: SquelchGate, sampleClock: SampleClock, transition: RigSquelchTransition) {
     val clampedNanos = maxOf(transition.timestampNanos, sampleClock.anchorMonotonicNanos)
-    gate.push(transition.open, sampleClock.samplePositionAtMonotonic(clampedNanos))
+    val samplePosition = sampleClock.samplePositionAtMonotonic(clampedNanos)
+    val open = transition.open
+    if (open == null) {
+        gate.markUnknown(samplePosition)
+    } else {
+        gate.push(open, samplePosition)
+    }
 }

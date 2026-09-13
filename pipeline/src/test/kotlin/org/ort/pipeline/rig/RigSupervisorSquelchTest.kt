@@ -72,11 +72,11 @@ class RigSupervisorSquelchTest {
     private fun freshUnconfinedScope(scheduler: TestCoroutineScheduler): CoroutineScope =
         CoroutineScope(Job() + UnconfinedTestDispatcher(scheduler))
 
-    private fun connectedConfig() = CaptureConfiguration(
+    private fun connectedConfig(transportKind: RigTransportKind = RigTransportKind.USB_SERIAL) = CaptureConfiguration(
         mode = CaptureMode.USB_RADIO,
         selectedInputId = "usb-1",
         rigId = TEST_RIG_ID,
-        rigTransportKind = RigTransportKind.USB_SERIAL,
+        rigTransportKind = transportKind,
     )
 
     /** Push-capable, dual-band, SQUELCH_STATE-declared -- FR-SEG-5's eligible case. */
@@ -200,7 +200,7 @@ class RigSupervisorSquelchTest {
 
             job.cancel()
             assertEquals(1, events.size, "the union must not re-emit while it is already open")
-            assertTrue(events.single().open)
+            assertEquals(true, events.single().open)
         } finally {
             sup.disconnect()
         }
@@ -243,5 +243,87 @@ class RigSupervisorSquelchTest {
 
         sup.disconnect()
         assertFalse(sup.squelchFusionEligible(), "no connection at all must never be eligible")
+    }
+
+    // --- R-1062 follow-up: RigSupervisor must actually EMIT the loss signal, not just the
+    // unit-level SquelchGate/Segmenter accepting one if it arrived. ------------------------
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062", "FR-RIG-15")
+    fun `R_1062 a real transport drop emits a squelch loss through RigSupervisor, not just RigStatus`() = runTest {
+        val transport = FakeRigTransport()
+        val testScope = freshUnconfinedScope(testScheduler)
+        val sup = newSupervisor(transport, pushSquelchDescriptor(), testScope)
+        try {
+            sup.connect(connectedConfig(RigTransportKind.USB_SERIAL))
+            val events = mutableListOf<RigSquelchTransition>()
+            val job = testScope.launch { sup.observeSquelchUnion().collect { events.add(it) } }
+
+            transport.pushUnsolicited("BY 0,1")
+            awaitBandSquelch("A", true)
+
+            transport.dropMidStream("cable pulled")
+            // RigStatus itself already proves the drop happened (RigSupervisorTest's own
+            // FR_RIG_7 case); this asserts the SEPARATE fact the coordinator's report found
+            // missing -- that the same drop also reaches observeSquelchUnion as a loss.
+            withTimeout(60_000) {
+                while (events.none { it.open == null }) delay(10)
+            }
+            job.cancel()
+            assertEquals(true, events.first().open)
+            assertEquals(null, events.last().open, "the transport drop must surface as a squelch loss too")
+        } finally {
+            sup.disconnect()
+        }
+    }
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062", "FR-RUN-17")
+    fun `R_1062 squelch staleness past the bound emits a loss even while the link is otherwise healthy`() = runTest {
+        val transport = FakeRigTransport()
+        val testScope = freshUnconfinedScope(testScheduler)
+        val sup = newSupervisor(transport, pushSquelchDescriptor(), testScope)
+        try {
+            sup.connect(connectedConfig())
+            val events = mutableListOf<RigSquelchTransition>()
+            val job = testScope.launch { sup.observeSquelchUnion().collect { events.add(it) } }
+
+            transport.pushUnsolicited("BY 0,1")
+            awaitBandSquelch("A", true)
+
+            // Nothing more ever arrives -- the transport itself never reports Lost (RigStatus
+            // would stay Connected), only squelch specifically goes stale past its own, tighter
+            // bound (2000ms for a push descriptor). The 5000ms window here is deliberately well
+            // under RigHealth's own generic 10s no-poll timeout, so this discriminates the
+            // squelch-specific watchdog from that separate, looser mechanism -- a test that
+            // waited long enough for either would pass even if only the generic one fired.
+            withTimeout(5_000) {
+                while (events.none { it.open == null }) delay(10)
+            }
+            job.cancel()
+            assertEquals(true, events.first().open)
+            assertEquals(null, events.last().open)
+        } finally {
+            sup.disconnect()
+        }
+    }
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062")
+    fun `R_1062 an explicit supervisor stop emits a squelch loss, not just eligibility going false`() = runTest {
+        val transport = FakeRigTransport()
+        val testScope = freshUnconfinedScope(testScheduler)
+        val sup = newSupervisor(transport, pushSquelchDescriptor(), testScope)
+        val events = mutableListOf<RigSquelchTransition>()
+        val job = testScope.launch { sup.observeSquelchUnion().collect { events.add(it) } }
+
+        sup.connect(connectedConfig())
+        transport.pushUnsolicited("BY 0,1")
+        awaitBandSquelch("A", true)
+
+        sup.disconnect()
+        job.cancel()
+        assertEquals(true, events.first().open)
+        assertEquals(null, events.last().open, "an explicit stop must emit a loss, not just reset internal state")
     }
 }

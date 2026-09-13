@@ -62,15 +62,22 @@ public data class BandAtStart(public val band: RigBand?, public val ambiguous: B
 }
 
 /**
- * FR-SEG-5 (WPSQUELCH): one squelch-union transition, timestamped in the session's own
- * *monotonic* domain (FR-RUN-17's "timestamped on receipt") — never a sample position, which is
- * `:segment`'s own `org.ort.segment.SquelchTransition` shape instead. Converting the two is
- * deliberately not this class's job: [RigSupervisor] only ever exposes the rig's own facts,
- * never an audio-timeline computation (`:pipeline`'s `RealCaptureService.buildSegmenter`, which
- * already owns a session's [org.ort.core.SampleClock], does that conversion — see
+ * FR-SEG-5 (WPSQUELCH): one squelch-union update, timestamped in the session's own *monotonic*
+ * domain (FR-RUN-17's "timestamped on receipt") — never a sample position, which is `:segment`'s
+ * own `org.ort.segment.SquelchUpdate` shape instead. Converting the two is deliberately not this
+ * class's job: [RigSupervisor] only ever exposes the rig's own facts, never an audio-timeline
+ * computation (`:pipeline`'s `RealCaptureService.buildSegmenter`, which already owns a session's
+ * [org.ort.core.SampleClock], does that conversion — see
  * `org.ort.pipeline.capture.pushSquelchTransition`).
+ *
+ * [open] is `null` for a **loss** (R-1062 follow-up, constitution IV): squelch authority has
+ * gone away — the transport was lost, this class disconnected, or the connection went stale past
+ * [RigSupervisor.squelchFusionEligible]'s own bound (see the private staleness watchdog for the
+ * exact rule and its margin) — and the receiving [org.ort.segment.SquelchGate] must revert
+ * fusion to VAD-only rather than freeze the last-known value. `true`/`false` is a genuine
+ * open/close transition, exactly as before this fix.
  */
-public data class RigSquelchTransition(public val open: Boolean, public val timestampNanos: Long)
+public data class RigSquelchTransition(public val open: Boolean?, public val timestampNanos: Long)
 
 /** Bundled descriptors this package knows how to resolve a [CaptureConfiguration.rigId] against,
  * without depending on `:app`'s [org.ort.rig.catalogue.RigCatalogue] import flow (that catalogue
@@ -203,6 +210,13 @@ public class RigSupervisor(
      * [squelchFusionEligible] holds — see [observeSquelchUnion]'s own kdoc. */
     private val squelchEvents = MutableSharedFlow<RigSquelchTransition>(extraBufferCapacity = 64)
 
+    /** R-1062 follow-up: the in-flight "declare squelch stale" countdown — restarted on every
+     * FRESH [RigState] (see [restartSquelchStaleWatchdog]'s own kdoc for why any fresh state is
+     * sufficient proof of liveness) and cancelled the moment this connection ends or goes STALE
+     * by some stronger signal first. `null` whenever no countdown is running. */
+    @Volatile
+    private var squelchStaleTimeoutJob: Job? = null
+
     /** FR-RIG-8: always available regardless of module, and takes precedence with provenance
      * `manual` once set (FR-RIG-9). `null` clears the override, returning to whatever the rig (or
      * nothing) reports. */
@@ -256,7 +270,14 @@ public class RigSupervisor(
     }
 
     /** Cancels every job, disconnects the underlying module (if any), releases whatever
-     * [transportFactory] allocated ([RigTransportFactory.dispose]) and reports [RigStatus.absent]. */
+     * [transportFactory] allocated ([RigTransportFactory.dispose]) and reports [RigStatus.absent].
+     *
+     * R-1062 follow-up (FR-SEG-5, constitution IV): a supervisor stop or rig change (this is also
+     * called at the top of every [connect]) is exactly as much a loss of squelch authority as a
+     * transport drop — emitted here, before anything else resets, so a caller building a fresh
+     * [org.ort.segment.SquelchGate]-bridged session never inherits a stale "still open" reading
+     * from whatever connection just ended.
+     */
     public fun disconnect() {
         observeJob?.cancel()
         observeJob = null
@@ -264,6 +285,8 @@ public class RigSupervisor(
         healthWatchJob = null
         healthStaleTimeoutJob?.cancel()
         healthStaleTimeoutJob = null
+        cancelSquelchStaleWatchdog()
+        emitSquelchLoss(clock.monotonicNanos())
         module.disconnect()
         transportFactory.dispose()
         module = NullRigModule()
@@ -275,7 +298,6 @@ public class RigSupervisor(
         staleSinceWallMillis = null
         perBandState.clear()
         seenCapabilities.clear()
-        squelchUnionOpen = null
         RigStatus.reset()
     }
 
@@ -472,6 +494,13 @@ public class RigSupervisor(
     private fun declareStaleFromSilence(silentSinceWallMillis: Long) {
         healthStaleTimeoutJob = null
         val connected = RigStatus.state as? RigStatus.State.Connected ?: return
+        // R-1062 follow-up: the generic link-silence timeout is also a squelch-authority loss --
+        // its own bound (5 poll cycles / a 5-10s floor, see defaultHealthStaleTimeoutMillis) is
+        // far looser than squelchStalenessBoundMillis's own, so in practice the tighter
+        // squelch-specific watchdog almost always fires first; this call is the honest backstop
+        // for whatever path declares silence, not a duplicate of it.
+        cancelSquelchStaleWatchdog()
+        emitSquelchLoss(clock.monotonicNanos())
         val base = lastKnownConnected ?: connected
         RigStatus.stale(base, silentSinceWallMillis, issue = RigHealthIssue.TIMEOUT)
         DiagnosticsLog.logRigStale(silentSinceWallMillis)
@@ -505,6 +534,11 @@ public class RigSupervisor(
         when (state.sourceConfidence) {
             RigStateConfidence.FRESH -> {
                 cancelHealthStaleTimeout()
+                // R-1062 follow-up: any fresh reading proves this connection is still genuinely
+                // talking, so it restarts the squelch staleness countdown regardless of whether
+                // this particular line carried squelch content — see restartSquelchStaleWatchdog's
+                // own kdoc.
+                restartSquelchStaleWatchdog()
                 seenCapabilities += capabilitiesPresentIn(state)
                 val connected = RigStatus.State.Connected(
                     descriptor = module.displayName,
@@ -527,6 +561,11 @@ public class RigSupervisor(
             }
             RigStateConfidence.STALE -> {
                 cancelHealthStaleTimeout()
+                // R-1062 follow-up: a transport-lost STALE reading is an immediate, certain loss
+                // of squelch authority -- no need to wait for the staleness watchdog to time out
+                // on its own when the transport has already announced the loss directly.
+                cancelSquelchStaleWatchdog()
+                emitSquelchLoss(state.timestampNanos)
                 val base = lastKnownConnected ?: RigStatus.State.Connected(
                     descriptor = module.displayName,
                     bands = bands,
@@ -559,13 +598,11 @@ public class RigSupervisor(
 
     /**
      * WPSQUELCH (FR-SEG-5, D23): recomputes the union across every band in [perBandState] and
-     * emits exactly on a genuine change — called for every [RigState], FRESH or STALE alike,
-     * which is also how a rig-link drop's "no more transitions" case falls out with no special
-     * casing: a STALE reading carries its `squelchOpen` forward unchanged
-     * ([DescriptorRigModule.markAllStale]), so the union it computes here is unchanged too, and
-     * nothing is emitted — [org.ort.segment.Segmenter] simply never hears a close, and its own
-     * FR-SEG-3 safety net is what eventually closes the transmission honestly (see this class's
-     * own report for why that is the correct, spec-faithful behaviour rather than a gap).
+     * emits exactly on a genuine change — called only for a FRESH [RigState] (a STALE one no
+     * longer reaches this method at all: [onRigState]'s STALE branch calls [emitSquelchLoss]
+     * directly instead, the R-1062 follow-up fix — a STALE reading's `squelchOpen`, carried
+     * forward unchanged by [DescriptorRigModule.markAllStale], must never be read as if it were
+     * still current).
      *
      * Gated on [squelchFusionEligible] so an ineligible connection (no [RigCapability.SQUELCH_STATE],
      * or a poll cadence too slow to trust — see that method's own kdoc) never emits at all, exactly
@@ -580,6 +617,90 @@ public class RigSupervisor(
         squelchEvents.tryEmit(RigSquelchTransition(unionOpen, state.timestampNanos))
     }
 
+    /**
+     * R-1062 follow-up (FR-SEG-5, constitution IV "capture never lies"): squelch authority is
+     * gone as of [timestampNanos] — a transport loss, a disconnect/rig change, or staleness (see
+     * [restartSquelchStaleWatchdog]). Emits [RigSquelchTransition] with `open = null` exactly
+     * once per genuine loss (guarded on [squelchUnionOpen] already being non-null, the same
+     * "only on a real change" discipline [emitSquelchUnionIfChanged] already applies) — a
+     * connection that was never [squelchFusionEligible] in the first place never had
+     * [squelchUnionOpen] set at all, so this is already a no-op for it, with no separate
+     * eligibility check needed here.
+     */
+    private fun emitSquelchLoss(timestampNanos: Long) {
+        if (squelchUnionOpen == null) return
+        squelchUnionOpen = null
+        squelchEvents.tryEmit(RigSquelchTransition(open = null, timestampNanos = timestampNanos))
+    }
+
+    /**
+     * R-1062 follow-up (FR-SEG-5 / FR-RUN-17): restarts the "declare squelch stale" countdown —
+     * cancelling whatever was already running first, so only the latest fresh reading's own
+     * countdown is ever live. Any FRESH [RigState] restarts it, not only one carrying squelch
+     * content: proving the transport is still talking at all is exactly the fact this watchdog
+     * needs, since [squelchFusionEligible] already guarantees that "talking at all" implies
+     * "would report squelch within [squelchStalenessBoundMillis], if there were anything to
+     * report" for both the push and poll cases it accepts (see that method's own kdoc for why a
+     * poll response is a genuine heartbeat, changed or not).
+     *
+     * A no-op for an ineligible connection (no descriptor yet, or [squelchFusionEligible] false)
+     * — there is nothing to keep alive in that case, matching [emitSquelchUnionIfChanged]'s own
+     * gate.
+     */
+    private fun restartSquelchStaleWatchdog() {
+        squelchStaleTimeoutJob?.cancel()
+        squelchStaleTimeoutJob = null
+        val descriptor = activeDescriptor ?: return
+        if (!squelchFusionEligible()) return
+        val boundMillis = squelchStalenessBoundMillis(descriptor)
+        squelchStaleTimeoutJob = scope.launch {
+            delay(boundMillis)
+            squelchStaleTimeoutJob = null
+            emitSquelchLoss(clock.monotonicNanos())
+        }
+    }
+
+    private fun cancelSquelchStaleWatchdog() {
+        squelchStaleTimeoutJob?.cancel()
+        squelchStaleTimeoutJob = null
+    }
+
+    /**
+     * R-1062 follow-up (FR-SEG-5 / FR-RUN-17): how long squelch authority may go unrefreshed
+     * before [restartSquelchStaleWatchdog] declares it lost — derived from the same descriptor
+     * shape [squelchFusionEligible] already reads, so the two can never disagree about which case
+     * a descriptor falls into.
+     *
+     * - **Push** ([RigDescriptor.unsolicited] present): there is no natural heartbeat — a quiet
+     *   radio with nothing to report sends nothing at all, by design (`docs/reference/th-d75a-cat.md`'s
+     *   own "AI gives push, not poll" finding). [PUSH_SQUELCH_STALENESS_MARGIN_MILLIS] is
+     *   therefore not a measured cadence but a stated bound on "how long a genuinely hung link
+     *   could masquerade as a merely-quiet one" — 2000 ms, chosen to sit comfortably above
+     *   [DescriptorRigModule]'s own per-line read timeout (1000 ms, so a couple of ordinary
+     *   retries never trip it) while being far tighter than [defaultHealthStaleTimeoutMillis]'s
+     *   generic 5-poll-cycle/10s bound, whose purpose is coarser (is the link alive at all, not
+     *   specifically "is squelch still trustworthy"). A false "stale" during genuine radio
+     *   silence is harmless: VAD alone produces no segment during silence either, so the only
+     *   real cost is the next transmission being VAD-only instead of fused, and fusion resumes
+     *   the instant the rig speaks again (`Segmenter`'s own "reconnect resumes fusion" rule).
+     *   Confirming this margin against the real TH-D75A is exactly the open hardware check this
+     *   task's report names.
+     * - **Poll** (`squelchFusionEligible` already requires `intervalMs <=`
+     *   [MAX_SQUELCH_CORRELATION_SKEW_MILLIS] for this branch to be reachable at all): a poll
+     *   descriptor has a genuine heartbeat — every cycle re-emits state, changed or not
+     *   ([DescriptorRigModule.applyMatch] has no dedup) — so [SQUELCH_STALENESS_POLL_MARGIN_MULTIPLIER]
+     *   × its own interval tolerates exactly one missed cycle from ordinary jitter without
+     *   falsely declaring loss, the same reasoning `squelchFusionEligible`'s own bound already
+     *   applies, at a tighter margin than [HEALTH_STALE_POLL_CYCLES] since squelch fusion's own
+     *   tolerance (FR-RUN-17's 250 ms) is already far tighter than link health's.
+     */
+    private fun squelchStalenessBoundMillis(descriptor: RigDescriptor): Long = if (descriptor.unsolicited != null) {
+        PUSH_SQUELCH_STALENESS_MARGIN_MILLIS
+    } else {
+        (descriptor.poll?.intervalMs ?: PUSH_SQUELCH_STALENESS_MARGIN_MILLIS) *
+            SQUELCH_STALENESS_POLL_MARGIN_MULTIPLIER
+    }
+
     private companion object {
         const val UNBANDED_LABEL = "-"
 
@@ -587,6 +708,12 @@ public class RigSupervisor(
          * that decides whether a rig's squelch correlation is trustworthy enough to fuse
          * (FR-SEG-5). */
         const val MAX_SQUELCH_CORRELATION_SKEW_MILLIS = 250L
+
+        /** See [squelchStalenessBoundMillis]'s own kdoc for the full reasoning and its source. */
+        const val PUSH_SQUELCH_STALENESS_MARGIN_MILLIS = 2_000L
+
+        /** See [squelchStalenessBoundMillis]'s own kdoc for the full reasoning and its source. */
+        const val SQUELCH_STALENESS_POLL_MARGIN_MULTIPLIER = 2L
 
         /** F9 (WPC3): step count of `UsbReconnectBackoff`/`BluetoothReconnectBackoff` (1s, 2s, 5s,
          * 10s, 30s, then holding) — copied by the same documented policy those two objects and
