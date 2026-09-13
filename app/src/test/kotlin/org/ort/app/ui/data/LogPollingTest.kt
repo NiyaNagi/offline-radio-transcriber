@@ -545,6 +545,135 @@ class LogPollingTest {
         assertEquals(true, state.quickFilters.single { it.id == LogQuickFilterId.All }.selected)
     }
 
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 loadingState carries loading true and no empty-state claim`() {
+        val state = LogPolling.loadingState()
+
+        assertTrue(state.loading)
+        assertTrue(state.items.isEmpty())
+        assertEquals(null, state.emptyState)
+    }
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 noSessionState never carries the loading flag`() {
+        val state = LogPolling.noSessionState()
+
+        assertEquals(false, state.loading)
+    }
+
+    // ---- Register R-1055 (spec): a curated transmissionIds/stationId filter reaches across every
+    // session, never just the live one named by sessionId ----
+
+    @Test
+    fun `R_1055 a curated transmissionIds filter finds overs from an earlier session, not the live one`(): Unit =
+        runTest {
+            db.sessionDao().insert(session("S-LIVE"))
+            db.sessionDao().insert(session("S-EARLIER"))
+            db.transmissionDao().insert(
+                transmission("EARLIER-1", sessionId = "S-EARLIER", samplePosition = 1L, stationId = "K7LWH"),
+            )
+            db.transmissionDao().insert(
+                transmission("EARLIER-2", sessionId = "S-EARLIER", samplePosition = 2L, stationId = "W7NPC"),
+            )
+
+            val state = LogPolling.screenState(
+                context,
+                "S-LIVE",
+                LogFilterSelection(transmissionIds = setOf("EARLIER-1", "EARLIER-2")),
+                LogQuickFilterId.All,
+            )
+
+            val rowIds = state.items.filterIsInstance<LogListItem.Row>().map { it.state.id }.toSet()
+            assertEquals(setOf("EARLIER-1", "EARLIER-2"), rowIds)
+            assertEquals("2 overs", state.appliedFilterLabel)
+            assertEquals(null, state.emptyState)
+        }
+
+    @Test
+    fun `R_1055 a requested id that no longer exists is honestly excluded from the count`(): Unit = runTest {
+        db.sessionDao().insert(session("S-LIVE"))
+        db.sessionDao().insert(session("S-EARLIER"))
+        db.transmissionDao().insert(
+            transmission("EARLIER-1", sessionId = "S-EARLIER", samplePosition = 1L, stationId = "K7LWH"),
+        )
+
+        val state = LogPolling.screenState(
+            context,
+            "S-LIVE",
+            LogFilterSelection(transmissionIds = setOf("EARLIER-1", "GONE-FOREVER")),
+            LogQuickFilterId.All,
+        )
+
+        val rowIds = state.items.filterIsInstance<LogListItem.Row>().map { it.state.id }.toSet()
+        assertEquals(setOf("EARLIER-1"), rowIds)
+        assertEquals("1 over", state.appliedFilterLabel)
+    }
+
+    @Test
+    fun `R_1055 a curated transmissionIds filter that finds nothing at all says so honestly`(): Unit = runTest {
+        db.sessionDao().insert(session("S-LIVE"))
+
+        val state = LogPolling.screenState(
+            context,
+            "S-LIVE",
+            LogFilterSelection(transmissionIds = setOf("GONE-1", "GONE-2")),
+            LogQuickFilterId.All,
+        )
+
+        assertTrue(state.items.isEmpty())
+        assertEquals("None of the requested overs could be found.", state.emptyState?.message)
+        assertTrue(state.emptyState?.subMessage.orEmpty().contains("2 requested"))
+    }
+
+    @Test
+    fun `R_1055 a curated stationId filter finds a station's overs from an earlier session`(): Unit = runTest {
+        db.sessionDao().insert(session("S-LIVE"))
+        db.sessionDao().insert(session("S-EARLIER"))
+        db.transmissionDao().insert(
+            transmission("EARLIER-1", sessionId = "S-EARLIER", samplePosition = 1L, stationId = "K7LWH"),
+        )
+
+        val state = LogPolling.screenState(
+            context,
+            "S-LIVE",
+            LogFilterSelection(stationId = "K7LWH"),
+            LogQuickFilterId.All,
+        )
+
+        val rowIds = state.items.filterIsInstance<LogListItem.Row>().map { it.state.id }.toSet()
+        assertEquals(setOf("EARLIER-1"), rowIds)
+    }
+
+    @Test
+    fun `R_1055 a curated filter never interleaves the live sessions own gaps`(): Unit = runTest {
+        db.sessionDao().insert(session("S-LIVE"))
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "G1",
+                sessionId = "S-LIVE",
+                startedAt = 0L,
+                endedAt = 1_000L,
+                cause = CaptureGapCause.INTERRUPTION,
+                recoveredAutomatically = false,
+            ),
+        )
+        db.sessionDao().insert(session("S-EARLIER"))
+        db.transmissionDao().insert(
+            transmission("EARLIER-1", sessionId = "S-EARLIER", samplePosition = 1L, stationId = "K7LWH"),
+        )
+
+        val state = LogPolling.screenState(
+            context,
+            "S-LIVE",
+            LogFilterSelection(transmissionIds = setOf("EARLIER-1")),
+            LogQuickFilterId.All,
+        )
+
+        assertTrue(state.items.none { it is LogListItem.Gap })
+    }
+
     private fun session(id: String, startedAt: Long = 0L, captureMode: String? = null, audioRouteKind: String? = null) =
         SessionEntity(
             id = id,

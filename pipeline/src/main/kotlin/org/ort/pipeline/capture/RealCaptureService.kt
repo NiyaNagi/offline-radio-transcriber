@@ -41,6 +41,7 @@ import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
 import org.ort.core.capture.AudioRouteKind
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.data.dao.WorkQueueDao
@@ -481,54 +482,15 @@ public class RealCaptureService : Service() {
         audioSource: AudioRecordSource,
         gapRelay: CaptureGapRelay,
     ) {
-        db.sessionDao().insert(
-            SessionEntity(
-                id = sessionId,
-                startedAt = startedAtWallMillis,
-                endedAt = null,
-                profileId = null,
-                deviceTier = null,
-                // R-1031 (constitution VI "no number without ... provenance", constitution I
-                // "never fabricate"): every real session was stamped with this v0 wiring's own
-                // literal since the class's first commit (see the top of this file's own doc
-                // comment) -- realAppVersion() reads the same packageManager.getPackageInfo(...)
-                // .versionName :app's DeviceJsonProducer/SettingsPolling already use, honestly.
-                appVersion = realAppVersion(applicationContext),
-                terminationReason = null,
-                sourceId = null,
-                schemaVersion = OrtDatabase.SCHEMA_VERSION,
-                // WPC2 (FR-CAP-13, AC-129): every session records its capture mode, audio route
-                // and rig transport at start -- from activeConfiguration (frozen this session
-                // start, FR-CAP-12) and the actual device the OS opened (audioSource.selectedDevice
-                // is not exposed; the device this session actually opened with is captured in
-                // startCapture() as [selectedInputDevice]).
-                captureMode = activeConfiguration.mode.name,
-                audioRouteKind = selectedInputDevice?.let { audioRouteKindFor(it.kind) }?.name,
-                audioRouteLabel = selectedInputDevice?.label,
-                bluetoothProfile = selectedInputDevice?.bluetoothProfile?.name,
-                // NOTE (see this package's report): stored as :rig's RigTransportKind.name, a
-                // superset of :core's own (mirrored) enum -- SessionEntity's kdoc says ":core's
-                // RigTransportKind.name", but :core's type cannot express BLE/NETWORK, which a real
-                // CaptureConfiguration can carry. USB_SERIAL/BLUETOOTH_SPP -- the two values that
-                // exist in both enums -- read identically either way.
-                rigTransport = activeConfiguration.rigTransportKind?.name,
-                // E2-A07: the rig this session was started with -- NullRigModule.ID (no rig
-                // configured) reads as null, never the sentinel string, so a reader never has to
-                // know that constant to tell "no rig" from "a real rig id".
-                rigDescriptorId = activeConfiguration.rigId.takeUnless { it == NullRigModule.ID },
-                // E2-A07: known synchronously once the device is opened, well before the first
-                // frame is ever read -- audioSource.deviceFormat is a constructor-computed val
-                // (AudioRecordSource's own kdoc), not something that waits on a real read.
-                audioNativeRateHz = audioSource.deviceFormat.sampleRate,
-                // E2-A07: audioRouteVerified is deliberately absent here (defaults to null) -- the
-                // OS has not actually routed anything yet at insert time (R-113's own reasoning,
-                // just above in this same file, for why InputStatus.opened() starts the same way).
-                // RealCaptureService.setAudioRouteVerifiedOnce writes the real outcome the moment
-                // it is first known, whichever way it resolves.
-            ),
-        )
+        // FR-SEG-10 (register R-1054, AC-162): resolved once, here, before the session row is ever
+        // inserted -- both this row and every transmission [buildSegmenter] later wires into
+        // RealSegmentSink read from the same [ResolvedVad], so a session and its own transmissions
+        // can never disagree about which detector actually cut them. See [resolveVad]'s own kdoc
+        // for why a session-scoped resolution (never re-read per segment) is the honest shape here.
+        val resolvedVad = resolveVad()
+        db.sessionDao().insert(buildSessionEntity(audioSource, resolvedVad))
 
-        val builtSegmenter = buildSegmenter(db, queue)
+        val builtSegmenter = buildSegmenter(db, queue, resolvedVad)
         segmenter = builtSegmenter
         archiveAttachment = buildArchiveAttachment(db)
 
@@ -627,12 +589,109 @@ public class RealCaptureService : Service() {
     }
 
     /**
+     * The one [SessionEntity] every session's [runCaptureFlow] inserts, split out of that function
+     * purely to keep it under this repo's own `LongMethod` bound (detekt) -- every field and its own
+     * reasoning is unchanged from before this split.
+     */
+    private fun buildSessionEntity(audioSource: AudioRecordSource, resolvedVad: ResolvedVad): SessionEntity =
+        SessionEntity(
+            id = sessionId,
+            startedAt = startedAtWallMillis,
+            endedAt = null,
+            profileId = null,
+            deviceTier = null,
+            // R-1031 (constitution VI "no number without ... provenance", constitution I
+            // "never fabricate"): every real session was stamped with this v0 wiring's own
+            // literal since the class's first commit (see the top of this file's own doc
+            // comment) -- realAppVersion() reads the same packageManager.getPackageInfo(...)
+            // .versionName :app's DeviceJsonProducer/SettingsPolling already use, honestly.
+            appVersion = realAppVersion(applicationContext),
+            terminationReason = null,
+            sourceId = null,
+            schemaVersion = OrtDatabase.SCHEMA_VERSION,
+            // WPC2 (FR-CAP-13, AC-129): every session records its capture mode, audio route
+            // and rig transport at start -- from activeConfiguration (frozen this session
+            // start, FR-CAP-12) and the actual device the OS opened (audioSource.selectedDevice
+            // is not exposed; the device this session actually opened with is captured in
+            // startCapture() as [selectedInputDevice]).
+            captureMode = activeConfiguration.mode.name,
+            audioRouteKind = selectedInputDevice?.let { audioRouteKindFor(it.kind) }?.name,
+            audioRouteLabel = selectedInputDevice?.label,
+            bluetoothProfile = selectedInputDevice?.bluetoothProfile?.name,
+            // NOTE (see this package's report): stored as :rig's RigTransportKind.name, a
+            // superset of :core's own (mirrored) enum -- SessionEntity's kdoc says ":core's
+            // RigTransportKind.name", but :core's type cannot express BLE/NETWORK, which a real
+            // CaptureConfiguration can carry. USB_SERIAL/BLUETOOTH_SPP -- the two values that
+            // exist in both enums -- read identically either way.
+            rigTransport = activeConfiguration.rigTransportKind?.name,
+            // E2-A07: the rig this session was started with -- NullRigModule.ID (no rig
+            // configured) reads as null, never the sentinel string, so a reader never has to
+            // know that constant to tell "no rig" from "a real rig id".
+            rigDescriptorId = activeConfiguration.rigId.takeUnless { it == NullRigModule.ID },
+            // E2-A07: known synchronously once the device is opened, well before the first
+            // frame is ever read -- audioSource.deviceFormat is a constructor-computed val
+            // (AudioRecordSource's own kdoc), not something that waits on a real read.
+            audioNativeRateHz = audioSource.deviceFormat.sampleRate,
+            // E2-A07: audioRouteVerified is deliberately absent here (defaults to null) -- the
+            // OS has not actually routed anything yet at insert time (R-113's own reasoning,
+            // just above in this same file, for why InputStatus.opened() starts the same way).
+            // RealCaptureService.setAudioRouteVerifiedOnce writes the real outcome the moment
+            // it is first known, whichever way it resolves.
+            // FR-SEG-10: the real detector this session's Segmenter is about to run, resolved
+            // just above -- never a fresh, possibly-different resolution later.
+            vadDetector = resolvedVad.detector,
+            vadDetectorVersion = resolvedVad.version,
+        )
+
+    /**
+     * FR-SEG-10 (register R-1054, AC-162): what [resolveVad] decided -- the [org.ort.segment.VadModel]
+     * [buildSegmenter] wraps in its `Segmenter`, alongside the exact identity that model has, so a
+     * caller can never wire one into the segmenter while recording a different one on the session
+     * and transmission rows. [version] is the detector's own version string when one is known --
+     * `null` today for both [VadDetectorKind.SILERO] and `.ENERGY` (neither [RealVadProvider] nor
+     * [EnergyVadModel] currently reports one anywhere this could read from), never a guessed value
+     * (constitution I).
+     */
+    private data class ResolvedVad(
+        val model: org.ort.segment.VadModel,
+        val detector: VadDetectorKind,
+        val version: String?,
+    )
+
+    /**
+     * FR-SEG-10 (register R-1054, AC-162): resolves the real Silero VAD when a model is installed,
+     * the RMS-energy stand-in otherwise -- never silently one pretending to be the other (build-plan
+     * P12; see [VadAvailability]) -- and names which one, honestly, alongside it. Called exactly
+     * once per session, from [runCaptureFlow] before the session row is inserted: this repo's
+     * capture architecture never re-checks VAD availability mid-session (a single [Segmenter],
+     * built once in [buildSegmenter], runs for a session's whole lifetime), so a genuine
+     * availability change -- e.g. the installer copying the model in between two launches -- can
+     * only ever be observed as a *new* session recording a different detector than an earlier one,
+     * never as two different detectors within the same session's own transmissions.
+     */
+    private fun resolveVad(): ResolvedVad {
+        val vadResult = RealVadProvider.provide(filesDir)
+        return when (vadResult) {
+            is VadProvisionResult.Available -> {
+                VadAvailability.real()
+                ResolvedVad(vadResult.vad, VadDetectorKind.SILERO, version = null)
+            }
+            is VadProvisionResult.Unavailable -> {
+                VadAvailability.stub(vadResult.reason)
+                ResolvedVad(EnergyVadModel(), VadDetectorKind.ENERGY, version = null)
+            }
+        }
+    }
+
+    /**
      * FR-RUN-15/16/18: the session's [SampleClock] is anchored once, here, from the same
      * wall/monotonic/offset triple captured together at session start -- never re-read per
-     * segment. Real Silero VAD when a model is installed, the RMS-energy stand-in otherwise --
-     * never silently one pretending to be the other (build-plan P12; see VadAvailability).
+     * segment. [resolvedVad] is [resolveVad]'s own decision, made once by the caller before the
+     * session row was inserted (see [runCaptureFlow]) -- wired into both the `Segmenter` and
+     * [RealSegmentSink] here so the model that actually cuts boundaries and the identity every
+     * transmission records can never drift apart.
      */
-    private fun buildSegmenter(db: OrtDatabase, queue: WorkQueue): Segmenter {
+    private fun buildSegmenter(db: OrtDatabase, queue: WorkQueue, resolvedVad: ResolvedVad): Segmenter {
         val segmentConfig = SegmentConfig()
         val sampleClock = SampleClock(
             anchorMonotonicNanos = startedAtMonotonicNanos,
@@ -667,22 +726,18 @@ public class RealCaptureService : Service() {
                     if (resolved.ambiguous) reading.copy(changedDuringTransmission = true) else reading
                 }
             },
+            vadDetector = resolvedVad.detector,
+            vadDetectorVersion = resolvedVad.version,
+            // FR-SEG-5: always false -- no code anywhere in :pipeline reads rig squelch state to
+            // gate a segment boundary yet (confirmed by search; see this package's report), so
+            // fusion genuinely never applies today. The real decision, once FR-SEG-5 is built, is
+            // this single call site's to wire -- never a guess made here in its absence.
+            rigSquelchFusionApplied = false,
         ) {
             transmissionCount++
             onHeartbeat()
         }
-        val vadResult = RealVadProvider.provide(filesDir)
-        val vadModel = when (vadResult) {
-            is VadProvisionResult.Available -> {
-                VadAvailability.real()
-                vadResult.vad
-            }
-            is VadProvisionResult.Unavailable -> {
-                VadAvailability.stub(vadResult.reason)
-                EnergyVadModel()
-            }
-        }
-        return Segmenter(segmentConfig, SileroVad(vadModel), sink)
+        return Segmenter(segmentConfig, SileroVad(resolvedVad.model), sink)
     }
 
     /**
@@ -1576,6 +1631,9 @@ internal class EnergyVadModel(private val threshold: Float = 0.02f) : org.ort.se
  * on close and persists a real [TransmissionEntity] + queue entry. [onSegmentPersisted] is called
  * after every successful persist so the caller can update its own counters/heartbeat.
  */
+@Suppress("LongParameterList") // every parameter is an independent, real fact this sink needs to
+// persist honestly (the same discipline DiagnosticsLog.logVadStats's own suppression already
+// documents) -- grouping them into a data class would only move the same facts one level down.
 internal class RealSegmentSink(
     private val filesDir: File,
     private val sessionId: String,
@@ -1588,6 +1646,27 @@ internal class RealSegmentSink(
      * every pre-existing caller/test of this class keeps compiling unchanged. */
     private val frequencyProvider: (startNanos: Long, endNanos: Long) -> FrequencyReading =
         { _, _ -> FrequencyReading.UNKNOWN },
+    /**
+     * FR-SEG-10 (register R-1054, AC-162): which voice-activity detector this session's whole
+     * `Segmenter` is actually running -- resolved once, by `RealCaptureService.resolveVad`, before
+     * this sink is ever constructed, so it is a plain value here (unlike [frequencyProvider], which
+     * genuinely varies per transmission) rather than a function. Defaults to
+     * [VadDetectorKind.UNKNOWN] so every pre-existing caller/test of this class keeps compiling
+     * unchanged, exactly the same convenience [frequencyProvider]'s own default note above states.
+     */
+    private val vadDetector: VadDetectorKind = VadDetectorKind.UNKNOWN,
+    /** The detector's own version string, when one is known -- see
+     * [org.ort.data.entity.TransmissionEntity.vadDetectorVersion]'s own kdoc for why this is `null`
+     * by default and, today, always. */
+    private val vadDetectorVersion: String? = null,
+    /**
+     * FR-SEG-5: whether rig squelch fusion actually gated this session's boundaries -- a plain
+     * value for the identical reason [vadDetector] is one (fusion, like the detector itself, is a
+     * whole-session fact today, decided once by the caller, never guessed here). Defaults to
+     * `false`, the only honest value while FR-SEG-5 fusion is not yet built anywhere in
+     * `:pipeline`.
+     */
+    private val rigSquelchFusionApplied: Boolean = false,
     /**
      * FR-OBS-1 (Q20): the noise-floor estimate at this segment's onset, read once at [open] time
      * -- `:capture-android`'s [org.ort.capture.android.LevelMeter] already computes this
@@ -1719,13 +1798,19 @@ internal class RealSegmentSink(
                     // reading is an ambiguous pick between them (see RealCaptureService's
                     // frequencyProvider wiring). Either way, never silently overwritten.
                     rigStateChangedMidTransmission = frequencyReading.changedDuringTransmission,
+                    // FR-SEG-10 (register R-1054, AC-162): this session's own detector/fusion
+                    // facts, resolved once by RealCaptureService.resolveVad and carried in as plain
+                    // constructor values (see [vadDetector]'s own kdoc) -- never re-derived here.
+                    vadDetector = vadDetector,
+                    vadDetectorVersion = vadDetectorVersion,
+                    rigSquelchFusionApplied = rigSquelchFusionApplied,
                 )
 
-                // FR-OBS-1 (Q20): logged for every closed segment, accepted and rejected alike
-                // (constitution III -- a rejected segment stays reachable, including here), and
-                // unconditionally before the FLAC encode below -- a diagnostics line about why a
-                // segment closed the way it did must not depend on that segment's audio having
-                // encoded successfully.
+                // FR-OBS-1 (Q20); FR-SEG-10 (register R-1054, AC-162): logged for every closed
+                // segment, accepted and rejected alike (constitution III -- a rejected segment
+                // stays reachable, including here), and unconditionally before the FLAC encode
+                // below -- a diagnostics line about why a segment closed the way it did must not
+                // depend on that segment's audio having encoded successfully.
                 DiagnosticsLog.logVadStats(
                     transmissionId = transmissionId,
                     outcome = record.outcome,
@@ -1736,6 +1821,8 @@ internal class RealSegmentSink(
                     peakDbfs = toDbfs(peakAbs),
                     meanDbfs = if (sampleTotal > 0) toDbfs(sqrt(sumSquares / sampleTotal)) else null,
                     noiseFloorDbfsAtOnset = noiseFloorAtOnsetDbfs,
+                    vadDetector = vadDetector,
+                    rigSquelchFusionApplied = rigSquelchFusionApplied,
                 )
 
                 val encoded = File(filesDir, entity.audioPath())

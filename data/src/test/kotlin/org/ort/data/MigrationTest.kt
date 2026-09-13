@@ -11,6 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.core.AttributionState
 import org.ort.core.Tier
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.dao.StationIdentityDao
 import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.PriorAdjustmentEntity
@@ -841,17 +842,105 @@ public class MigrationTest {
     }
 
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v12 — walks forward through
-     * the *entire* migration chain to v13 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v12,
+     * WPSEGPROV (FR-SEG-10, register R-1054, AC-162): v13 → v14 adds
+     * `session.vadDetector`/`.vadDetectorVersion` and
+     * `transmission.vadDetector`/`.vadDetectorVersion`/`.rigSquelchFusionApplied`. Proves both
+     * halves of FR-AST-5/6: a pre-existing `session` and `transmission` row each survive untouched
+     * with `vadDetector` defaulting to the honest `'UNKNOWN'` (never a fabricated `'SILERO'`) and
+     * `rigSquelchFusionApplied` to `false`, and the new write path
+     * ([OrtDatabase.transmissionDao]'s insert, using the real [VadDetectorKind] enum) is immediately
+     * usable afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-SEG-10", "AC-162")
+    public fun migration_from_v13_to_v14_preserves_existing_rows_and_adds_the_vad_detector_columns() {
+        val dbName = "migration-test-db-v14"
+        val v13 = helper.createDatabase(dbName, 13)
+        v13.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, captureMode, " +
+                "audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 13, 0, 0, NULL, NULL, NULL, NULL, NULL)",
+        )
+        v13.execSQL(
+            "INSERT INTO transmission (id, sessionId, threadId, startedAtUtc, endedAtUtc, durationMs, " +
+                "audioFormat, preRollMs, postRollMs, frequencyHz, frequencyProvenance, mode, signalStrength, " +
+                "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
+                "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
+                "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
+                "isReprocessCandidate, processedTier, rigStateChangedMidTransmission) VALUES ('TX1', 'S1', NULL, " +
+                "0, 1000, 1000, 'flac/16k/mono', 200, 200, NULL, 'measured', NULL, NULL, NULL, NULL, 'UNKNOWN', " +
+                "NULL, NULL, NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, NULL, 0)",
+        )
+        v13.close()
+
+        helper.runMigrationsAndValidate(dbName, 14, true, OrtDatabase.MIGRATION_13_14)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val migratedSession = runBlocking { db.sessionDao().getById("S1") }
+            assertEquals("test", migratedSession!!.appVersion) // pre-existing row survives
+            assertEquals(
+                "the new session column must default to the honest UNKNOWN, never a fabricated SILERO",
+                VadDetectorKind.UNKNOWN,
+                migratedSession.vadDetector,
+            )
+            assertEquals(null, migratedSession.vadDetectorVersion)
+
+            val migratedTransmission = runBlocking { db.transmissionDao().getById("TX1") }
+            assertEquals("flac/16k/mono", migratedTransmission!!.audioFormat) // pre-existing row survives
+            assertEquals(
+                "the new transmission column must default to the honest UNKNOWN",
+                VadDetectorKind.UNKNOWN,
+                migratedTransmission.vadDetector,
+            )
+            assertEquals(null, migratedTransmission.vadDetectorVersion)
+            assertEquals(
+                "the new fusion column must default to false, never a fabricated true",
+                false,
+                migratedTransmission.rigSquelchFusionApplied,
+            )
+            assertEquals(
+                "an UNKNOWN detector must never read as conforming to FR-SEG-1",
+                false,
+                migratedTransmission.conformsToFrSeg1(),
+            )
+
+            runBlocking {
+                db.transmissionDao().insert(
+                    migratedTransmission.copy(
+                        id = "TX2",
+                        vadDetector = VadDetectorKind.SILERO,
+                        vadDetectorVersion = "silero-v5",
+                        rigSquelchFusionApplied = true,
+                    ),
+                )
+            }
+            val newRow = runBlocking { db.transmissionDao().getById("TX2") }
+            // New write path usable post-migration, using the real enum type.
+            assertEquals(VadDetectorKind.SILERO, newRow!!.vadDetector)
+            assertEquals("silero-v5", newRow.vadDetectorVersion)
+            assertEquals(true, newRow.rigSquelchFusionApplied)
+            assertEquals(true, newRow.conformsToFrSeg1())
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v13 — walks forward through
+     * the *entire* migration chain to v14 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v13,
      * so the same insert works unmodified against every fixture version; what varies is only which
      * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
      * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v12_migrates_forward_to_v13_preserving_its_session_row() {
-        for (fixtureVersion in 1..12) {
+    public fun every_prior_fixture_from_v1_to_v13_migrates_forward_to_v14_preserving_its_session_row() {
+        for (fixtureVersion in 1..13) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -871,7 +960,7 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v13",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v14",
                     "test",
                     migrated!!.appVersion,
                 )
@@ -894,6 +983,17 @@ public class MigrationTest {
                     "fixture v$fixtureVersion: the v13 overAudioRemovedAtMillis column must default to NULL",
                     null,
                     migrated.overAudioRemovedAtMillis,
+                )
+                assertEquals(
+                    "fixture v$fixtureVersion: the v14 vadDetector column must default to the honest " +
+                        "UNKNOWN, never a fabricated SILERO",
+                    VadDetectorKind.UNKNOWN,
+                    migrated.vadDetector,
+                )
+                assertEquals(
+                    "fixture v$fixtureVersion: the v14 vadDetectorVersion column must default to NULL",
+                    null,
+                    migrated.vadDetectorVersion,
                 )
                 // The v8 table exists and is queryable from every fixture version, empty rather
                 // than absent — a missing table would throw here, not read as null.
@@ -931,14 +1031,14 @@ public class MigrationTest {
      * itself: the same factory function, with the same [androidx.sqlite.driver.bundled
      * .BundledSQLiteDriver], the shipped app and every other production caller use. `fixtureVersion`
      * 9 is the version named in the halt report (`data/schemas/org.ort.data.OrtDatabase/9.json`);
-     * the loop also covers every earlier released version (v12 added, WPDATA, head v13), since each
-     * is an on-disk shape a real device could still be carrying. Widening the range by one is the
-     * one change each new head version needs here.
+     * the loop also covers every earlier released version (v13 added, WPSEGPROV, head v14), since
+     * each is an on-disk shape a real device could still be carrying. Widening the range by one is
+     * the one change each new head version needs here.
      */
     @Test
     @Requirement("R-885", "AC-53", "FR-AST-5", "FR-AST-6")
-    public fun r_885_every_fixture_from_v1_to_v12_opens_through_OrtDatabase_create_and_reads_its_session_row() {
-        for (fixtureVersion in 1..12) {
+    public fun r_885_every_fixture_from_v1_to_v13_opens_through_OrtDatabase_create_and_reads_its_session_row() {
+        for (fixtureVersion in 1..13) {
             val dbName = "r885-real-open-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -973,6 +1073,10 @@ public class MigrationTest {
                 // through this connection-based path -- proven by using both new write paths
                 // (setOverAudioRemoved and transmissionLabelDao), not just "did not crash".
                 if (fixtureVersion == 12) runBlocking { verifyOverAudioAndLabelUsableThroughRealOpen(db) }
+                // WPSEGPROV: fixtureVersion 13 is the one whose real open runs exactly
+                // MIGRATION_13_14 through this connection-based path -- proven by writing a real
+                // VadDetectorKind through the transmission insert path, not just "did not crash".
+                if (fixtureVersion == 13) runBlocking { verifyVadDetectorUsableThroughRealOpen(db) }
             } finally {
                 db.close()
             }
@@ -1049,5 +1153,27 @@ public class MigrationTest {
         )
         val label = db.transmissionLabelDao().getByTransmissionId("TX-R885-V12")
         assertEquals(true, label?.markedForTraining)
+    }
+
+    /** WPSEGPROV: [org.ort.data.entity.TransmissionEntity.vadDetector] and its siblings, exercised
+     * through a real [OrtDatabase.create] open — see the caller's own doc comment. */
+    private suspend fun verifyVadDetectorUsableThroughRealOpen(db: OrtDatabase) {
+        db.transmissionDao().insert(
+            TestFixtures.transmission("TX-R885-V13", sessionId = "S1").copy(
+                vadDetector = VadDetectorKind.SILERO,
+                vadDetectorVersion = "silero-v5",
+                rigSquelchFusionApplied = true,
+            ),
+        )
+        val transmission = db.transmissionDao().getById("TX-R885-V13")
+        assertEquals(
+            "MIGRATION_13_14's vadDetector column must be usable through the real " +
+                "connection-based open, not just Room's legacy SupportSQLiteDatabase path",
+            VadDetectorKind.SILERO,
+            transmission?.vadDetector,
+        )
+        assertEquals("silero-v5", transmission?.vadDetectorVersion)
+        assertEquals(true, transmission?.rigSquelchFusionApplied)
+        assertEquals(true, transmission?.conformsToFrSeg1())
     }
 }

@@ -7,6 +7,8 @@ import androidx.room.PrimaryKey
 import org.ort.core.AttributionState
 import org.ort.core.Tier
 import org.ort.core.TransmissionState
+import org.ort.core.capture.VadDetectorKind
+import org.ort.core.capture.conformsToFrSeg1
 
 /**
  * Functional spec §8 `Transmission`, `processingState` taking its values **only** from
@@ -40,6 +42,23 @@ import org.ort.core.TransmissionState
  * -- never revisited afterwards (constitution III). `false` by default, meaning "no rig-state
  * change was ever recorded" -- never conflated with "no rig was connected", which
  * [frequencyProvenance] already states separately (constitution I).
+ *
+ * [vadDetector] (schema v14, FR-SEG-10, register R-1054, AC-162): which voice-activity detector
+ * actually cut *this* transmission's boundaries -- [VadDetectorKind.SILERO]/`.TEN_VAD` when it was
+ * one FR-SEG-1 names, [VadDetectorKind.ENERGY] for the RMS-energy fallback
+ * (`org.ort.pipeline.capture.EnergyVadModel`), [VadDetectorKind.UNKNOWN] only for a pre-v14 row
+ * (constitution I: never a fabricated `SILERO`). Set once, at persist time, by
+ * `org.ort.pipeline.capture.RealSegmentSink` from the same detector its session's `Segmenter` is
+ * actually running -- never re-derived later. [conformsToFrSeg1] is the one place that reads it to
+ * answer "does this boundary conform to FR-SEG-1", so UI and export never re-derive that rule a
+ * second, possibly-inconsistent way. [vadDetectorVersion] carries the model's own version string
+ * when one is known -- `null` today for every detector (neither the Silero binding nor the energy
+ * stand-in currently reports one anywhere this column could read from), never a guessed value.
+ * [rigSquelchFusionApplied] (FR-SEG-5): whether rig squelch fusion actually gated this
+ * transmission's boundaries -- `false` unconditionally today, because FR-SEG-5 fusion is not yet
+ * built anywhere in `:pipeline` (confirmed by search: no segmentation code reads squelch state);
+ * `false` is therefore the honest answer, not a placeholder guess, until a real fusion decision
+ * exists to report from.
  */
 @Entity(
     tableName = "transmission",
@@ -101,6 +120,9 @@ public data class TransmissionEntity(
     val isReprocessCandidate: Boolean = false,
     val processedTier: Tier? = null,
     val rigStateChangedMidTransmission: Boolean = false,
+    val vadDetector: VadDetectorKind = VadDetectorKind.UNKNOWN,
+    val vadDetectorVersion: String? = null,
+    val rigSquelchFusionApplied: Boolean = false,
 ) {
     /**
      * The derived on-disk path for this transmission's audio (technical design §12.2): paths
@@ -108,4 +130,11 @@ public data class TransmissionEntity(
      * should be — only about whether it exists (FR-AST-8).
      */
     public fun audioPath(): String = "audio/$sessionId/$id.flac"
+
+    /**
+     * FR-SEG-10: the one, data-layer answer to "does this transmission's boundary conform to
+     * FR-SEG-1" — see [org.ort.core.capture.conformsToFrSeg1]'s own kdoc for why this must never be
+     * re-derived a second way by a caller.
+     */
+    public fun conformsToFrSeg1(): Boolean = vadDetector.conformsToFrSeg1
 }

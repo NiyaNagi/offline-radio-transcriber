@@ -20,6 +20,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
@@ -344,5 +345,35 @@ class CaptureStatusContentTest {
         composeTestRule.waitUntilTagExists("live-monitor-full-log")
         composeTestRule.onNodeWithTag("live-monitor-full-log").performClick()
         assertTrue(openedFullLog)
+    }
+
+    /**
+     * Register R-1051 (halt, constitution I/IV): before this fix, this composable's own initial
+     * `remember` value was `idleCaptureStatus()` directly — a real "Not capturing" claim — so a
+     * session that is genuinely live from the very first frame (this test's own
+     * `CaptureState.capturing`, set before composition) still read "Not capturing" until the first
+     * poll landed. `mainClock.autoAdvance = false` freezes recomposition before `setContent`
+     * returns, so the first assertion below inspects the composed tree before the `LaunchedEffect`
+     * poll can ever be observed. Reverting the fix (seeding `idleCaptureStatus()` again) makes this
+     * fail with "Not capturing" visible in that first frame instead of the loading marker.
+     */
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 first frame is loading, never Not capturing, for an already-live session`() {
+        runBlocking {
+            db.sessionDao().insert(session("LIVE-1"))
+            db.transmissionDao().insert(transmission("LIVE-1-tx1", "LIVE-1", 1L))
+        }
+        CaptureState.capturing("LIVE-1")
+
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "LIVE-1") } }
+
+        composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertExists()
+        composeTestRule.onNodeWithText("Not capturing", substring = true).assertDoesNotExist()
+
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitUntilTagExists("capture-status-title")
+        composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertDoesNotExist()
     }
 }

@@ -47,6 +47,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.InProgressRing
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
@@ -112,17 +113,24 @@ public fun LiveMonitorScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = OrtSpacing.lg),
         ) {
-            LiveMonitorStateRow(status = status, modifier = Modifier.padding(top = OrtSpacing.sm))
-            LiveMonitorLevelCard(level = level, modifier = Modifier.padding(top = OrtSpacing.lg))
-            if (hearingText != null) {
-                LiveMonitorHearingCard(text = hearingText, modifier = Modifier.padding(top = OrtSpacing.lg))
+            // Register R-1051 (halt): [status] is the exact same [CaptureStatusViewState] this
+            // screen's own sibling [CaptureStatusScreen] renders — its own `loading` gate applies
+            // identically here, for the identical reason.
+            if (status.loading) {
+                LoadingState(message = "Loading capture status…", modifier = Modifier.padding(top = OrtSpacing.sm))
+            } else {
+                LiveMonitorStateRow(status = status, modifier = Modifier.padding(top = OrtSpacing.sm))
+                LiveMonitorLevelCard(level = level, modifier = Modifier.padding(top = OrtSpacing.lg))
+                if (hearingText != null) {
+                    LiveMonitorHearingCard(text = hearingText, modifier = Modifier.padding(top = OrtSpacing.lg))
+                }
+                LiveMonitorOversSection(
+                    overs = overs,
+                    onOpenOver = actions.onOpenOver,
+                    modifier = Modifier.padding(top = OrtSpacing.lg),
+                )
+                Spacer(modifier = Modifier.height(OrtSpacing.lg))
             }
-            LiveMonitorOversSection(
-                overs = overs,
-                onOpenOver = actions.onOpenOver,
-                modifier = Modifier.padding(top = OrtSpacing.lg),
-            )
-            Spacer(modifier = Modifier.height(OrtSpacing.lg))
         }
         LiveMonitorFooter(
             localMicrophone = localMicrophone,

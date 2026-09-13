@@ -43,6 +43,7 @@ import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.LiveBar
 import org.ort.app.ui.components.LiveBarViewState
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.SectionHeader
@@ -110,6 +111,10 @@ public fun NowScreen(
                 .padding(bottom = liveBarClearance),
         ) {
             when (state) {
+                // Register R-1051 (halt): the real "not yet known" seed
+                // (`NowContent`'s own `remember`) — never rendered as `Idle`'s "Not capturing"
+                // claim (see [NowViewState.Loading]'s own kdoc).
+                NowViewState.Loading -> LoadingState(message = "Loading…")
                 is NowViewState.Idle -> IdleContent(state = state, onStartCapture = onStartCapture)
                 is NowViewState.Active -> ActiveContent(
                     state = state,

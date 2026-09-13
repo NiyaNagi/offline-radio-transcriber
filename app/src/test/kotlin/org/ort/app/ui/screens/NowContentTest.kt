@@ -13,6 +13,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
@@ -191,5 +192,39 @@ class NowContentTest {
         assert(openedTo == sessionStart + 3_600_000L - 1) {
             "expected the real hour's own inclusive end, got $openedTo"
         }
+    }
+
+    /**
+     * Register R-1051 (halt, constitution I/IV): before this fix, `NowContent`'s own initial
+     * `remember` value was `NowViewState.Idle(...)` directly — a real "Not capturing" claim, not a
+     * placeholder — so a session that is genuinely live from the very first frame (this test's own
+     * `CaptureState.capturing`, set before composition) still read "Not capturing" until the first
+     * poll landed. `mainClock.autoAdvance = false` freezes recomposition before `setContent`
+     * returns, so the very first composed frame — before the `LaunchedEffect` poll can ever be
+     * observed — is what this test inspects. Reverting the fix (seeding `NowViewState.Idle`
+     * again) makes this fail with "Not capturing" visible in that first frame instead.
+     */
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 Now's first frame is loading, never Not capturing, for an already-live session`() {
+        runBlocking {
+            db.sessionDao().insert(session("LIVE-1"))
+            db.transmissionDao().insert(transmission("LIVE-1-tx1", "LIVE-1", 1L))
+        }
+        CaptureState.capturing("LIVE-1")
+
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.setContent {
+            OrtTheme {
+                NowContent(context = context, sessionId = "LIVE-1", onOpenTransmission = {}, onOpenStation = {})
+            }
+        }
+
+        composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertExists()
+        composeTestRule.onNodeWithText("Not capturing", substring = true).assertDoesNotExist()
+
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitUntilTextExists("1 over")
+        composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertDoesNotExist()
     }
 }

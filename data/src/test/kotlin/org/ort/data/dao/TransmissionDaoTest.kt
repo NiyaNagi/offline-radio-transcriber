@@ -82,6 +82,46 @@ public class TransmissionDaoTest {
         assertEquals(Tier.T3, db.transmissionDao().getById("TX1")!!.processedTier)
     }
 
+    // Register R-1055 (spec): listByIds/listByStationId — a curated Log filter's own cross-session
+    // read, never scoped to one session the way listBySession is.
+
+    @Test
+    public fun R_1055_listByIds_finds_rows_across_different_sessions(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session("S-LIVE"))
+        db.sessionDao().insert(TestFixtures.session("S-EARLIER"))
+        db.transmissionDao().insert(TestFixtures.transmission("EARLIER-1", sessionId = "S-EARLIER"))
+        db.transmissionDao().insert(TestFixtures.transmission("EARLIER-2", sessionId = "S-EARLIER"))
+        db.transmissionDao().insert(TestFixtures.transmission("LIVE-1", sessionId = "S-LIVE"))
+
+        val found = db.transmissionDao().listByIds(listOf("EARLIER-1", "EARLIER-2"))
+
+        assertEquals(setOf("EARLIER-1", "EARLIER-2"), found.map { it.id }.toSet())
+    }
+
+    @Test
+    public fun R_1055_listByIds_silently_omits_an_id_with_no_row_never_throws(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+
+        val found = db.transmissionDao().listByIds(listOf("TX1", "GHOST"))
+
+        assertEquals(listOf("TX1"), found.map { it.id })
+    }
+
+    @Test
+    public fun R_1055_listByStationId_finds_a_stations_overs_across_different_sessions(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session("S-LIVE"))
+        db.sessionDao().insert(TestFixtures.session("S-EARLIER"))
+        db.transmissionDao().insert(
+            TestFixtures.transmission("EARLIER-1", sessionId = "S-EARLIER", stationId = "K7LWH"),
+        )
+        db.transmissionDao().insert(TestFixtures.transmission("LIVE-1", sessionId = "S-LIVE", stationId = "W7NPC"))
+
+        val found = db.transmissionDao().listByStationId("K7LWH")
+
+        assertEquals(listOf("EARLIER-1"), found.map { it.id })
+    }
+
     // Register R-1032 (constitution VI: "no number without ... execution provider"):
     // TransmissionDao.setExecutionProvider -- see TransmissionEntity.executionProvider's own doc
     // comment for why this column existed but nothing in production ever wrote to it.

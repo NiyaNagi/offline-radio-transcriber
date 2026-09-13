@@ -13,6 +13,7 @@ import org.ort.app.diagnostics.DiagnosticsLogPaths
 import org.ort.core.AttributionState
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
@@ -117,6 +118,57 @@ class DebugDumpBuilderTest {
         assertEquals("cpu", overLine.getString("executionProvider"))
         assertEquals("cal-1", overLine.getString("calibrationId"))
         assertEquals(146_520_000L, overLine.getLong("frequencyHz"))
+    }
+
+    /**
+     * FR-SEG-10 (register R-1054, AC-162): the over's own database-recorded VAD provenance --
+     * detector, version, whether rig squelch fusion applied, and the single derived "conforms to
+     * FR-SEG-1" answer -- must all reach the dump, discriminating the two real detector identities
+     * against each other rather than checking only that some value is present.
+     */
+    @Test
+    fun `AC_162 an over records its real VAD detector, version, fusion flag and conformance in the dump`() = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.transmissionDao().insert(
+            transmission("T1", "S1").copy(
+                vadDetector = VadDetectorKind.SILERO,
+                vadDetectorVersion = "silero-v5",
+                rigSquelchFusionApplied = true,
+            ),
+        )
+        db.transmissionDao().insert(
+            transmission("T2", "S1").copy(vadDetector = VadDetectorKind.ENERGY),
+        )
+        val lines = readLines(DebugDumpBuilder.build(context))
+
+        val sileroOver = lines.first { it.optString("type") == "over" && it.getString("id") == "T1" }
+        assertEquals("SILERO", sileroOver.getString("vadDetector"))
+        assertEquals("silero-v5", sileroOver.getString("vadDetectorVersion"))
+        assertTrue(sileroOver.getBoolean("rigSquelchFusionApplied"))
+        assertTrue(
+            "Silero is one of the two detectors FR-SEG-1 names",
+            sileroOver.getBoolean("conformsToFrSeg1"),
+        )
+
+        val energyOver = lines.first { it.optString("type") == "over" && it.getString("id") == "T2" }
+        assertEquals("ENERGY", energyOver.getString("vadDetector"))
+        assertTrue("no version is known for the energy fallback", energyOver.isNull("vadDetectorVersion"))
+        assertFalse(energyOver.getBoolean("rigSquelchFusionApplied"))
+        assertFalse(
+            "the energy fallback must never be presented as conforming to FR-SEG-1",
+            energyOver.getBoolean("conformsToFrSeg1"),
+        )
+    }
+
+    /** FR-SEG-10: the session row's own denormalized detector -- see
+     * [org.ort.data.entity.SessionEntity.vadDetector]'s own kdoc for why a session names it too. */
+    @Test
+    fun `AC_162 a session records its own real VAD detector in the dump`() = runTest {
+        db.sessionDao().insert(session("S1").copy(vadDetector = VadDetectorKind.SILERO, vadDetectorVersion = "v5"))
+        val lines = readLines(DebugDumpBuilder.build(context))
+        val sessionLine = lines.first { it.optString("type") == "session" && it.getString("id") == "S1" }
+        assertEquals("SILERO", sessionLine.getString("vadDetector"))
+        assertEquals("v5", sessionLine.getString("vadDetectorVersion"))
     }
 
     @Test
@@ -275,6 +327,47 @@ class DebugDumpBuilderTest {
         assertEquals("MAX_DURATION", line.getString("closeReason"))
         assertEquals(60_000L, line.getLong("durationMs"))
         assertEquals(1_875, line.getInt("vadFrameCount"))
+    }
+
+    /**
+     * FR-SEG-10 (register R-1054, AC-162): the `vad_stats` line's own detector/fusion fields, parsed
+     * straight out of `capture.log` exactly like every other field on that line (see the class kdoc
+     * on why this producer reads the log rather than the database for `vad_stats`).
+     */
+    @Test
+    fun `AC_162 a vad_stats line's real detector and fusion flag land in the dump`() = runTest {
+        val logDir = DiagnosticsLogPaths.logDir(context)
+        logDir.mkdirs()
+        File(logDir, "capture.log").writeText(
+            "2026-01-01T00:00:04Z INFO vad_stats transmissionId=SESSION01-7 outcome=SPEECH " +
+                "closeReason=SILENCE durationMs=1000 vadFrameCount=30 vadSpeechFrameCount=25 " +
+                "peakDbfs=-6.0 meanDbfs=-20.0 noiseFloorDbfsAtOnset=-40.0 vadDetector=SILERO " +
+                "rigSquelchFusionApplied=false\n",
+        )
+
+        val lines = readLines(DebugDumpBuilder.build(context))
+        val line = lines.single { it.optString("type") == "vad_stats" }
+        assertEquals("SILERO", line.getString("vadDetector"))
+        assertFalse(line.getBoolean("rigSquelchFusionApplied"))
+    }
+
+    /** A pre-WPSEGPROV `capture.log` line (no `vadDetector`/`rigSquelchFusionApplied` tokens at all)
+     * must still parse -- the new fields read as JSON `null`, never throw and never guess a value
+     * that line never wrote. */
+    @Test
+    fun `AC_162 a pre-WPSEGPROV vad_stats line parses, missing detector fields read as null`() = runTest {
+        val logDir = DiagnosticsLogPaths.logDir(context)
+        logDir.mkdirs()
+        File(logDir, "capture.log").writeText(
+            "2026-01-01T00:00:05Z INFO vad_stats transmissionId=SESSION01-8 outcome=SPEECH " +
+                "closeReason=SILENCE durationMs=1000 vadFrameCount=30 vadSpeechFrameCount=25 " +
+                "peakDbfs=-6.0 meanDbfs=-20.0 noiseFloorDbfsAtOnset=-40.0\n",
+        )
+
+        val lines = readLines(DebugDumpBuilder.build(context))
+        val line = lines.single { it.optString("type") == "vad_stats" }
+        assertTrue(line.isNull("vadDetector"))
+        assertTrue(line.isNull("rigSquelchFusionApplied"))
     }
 
     @Test

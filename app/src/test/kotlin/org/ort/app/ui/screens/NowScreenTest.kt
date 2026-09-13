@@ -500,4 +500,38 @@ class NowScreenTest {
         composeTestRule.onNodeWithTag("now-idle-start-capture").performClick()
         assert(started)
     }
+
+    // -----------------------------------------------------------------------------------------
+    // Register R-1051 (halt, constitution I/IV): `NowViewState.Loading` renders distinctly from
+    // both `Idle` ("Not capturing") and `Active` — never conflated with either.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 Loading renders the loading marker, never Not capturing`() {
+        composeTestRule.setContent { OrtTheme { NowScreen(state = NowViewState.Loading) } }
+
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertExists()
+        composeTestRule.onNodeWithText("Not capturing", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithTag("now-idle-title").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 Idle renders Not capturing, never the loading marker`() {
+        val idle = NowViewState.Idle(null, null, null, null, emptyList(), null)
+        composeTestRule.setContent { OrtTheme { NowScreen(state = idle) } }
+
+        composeTestRule.onNodeWithTag("now-idle-title").assertExists()
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 Active renders real data, never the loading marker`() {
+        composeTestRule.setContent { OrtTheme { NowScreen(state = activeState()) } }
+
+        composeTestRule.onNodeWithText("412 overs", substring = true).assertExists()
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertDoesNotExist()
+    }
 }

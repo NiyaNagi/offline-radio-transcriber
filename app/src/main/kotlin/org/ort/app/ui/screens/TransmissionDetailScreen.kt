@@ -62,6 +62,7 @@ import org.ort.app.ui.components.TitleAttributionRow
 import org.ort.app.ui.components.WaveformCard
 import org.ort.app.ui.components.WaveformViewState
 import org.ort.app.ui.data.AmbiguousCandidateViewState
+import org.ort.app.ui.data.AudioAbsenceReason
 import org.ort.app.ui.data.DetailBodyViewState
 import org.ort.app.ui.data.DetailViewState
 import org.ort.app.ui.data.LabelCertainty
@@ -161,7 +162,7 @@ public fun TransmissionDetailScreen(
                 passFailure != null -> FailedPassHeaderSection(state.detail, passFailure)
                 else -> HeaderSection(state, onOpenTransmission)
             }
-            PlaybackSection(state.detail, player)
+            PlaybackSection(state.detail, player, state.audioAbsenceReason)
             when {
                 // R-242: a rejected segment's own text (if any survived rejection at all — most
                 // hallucination rejections have one, a squelch-tail-with-no-speech rejection may
@@ -575,7 +576,11 @@ private fun RejectedTranscriptSection(detail: TransmissionDetailViewState) {
  * CHANGELOG rather than faked.
  */
 @Composable
-private fun PlaybackSection(detail: TransmissionDetailViewState, player: TransmissionAudioPlayer) {
+private fun PlaybackSection(
+    detail: TransmissionDetailViewState,
+    player: TransmissionAudioPlayer,
+    audioAbsenceReason: AudioAbsenceReason?,
+) {
     val scope = rememberCoroutineScope()
     var unavailableReason by remember(detail.id) { mutableStateOf<String?>(null) }
     // C10 (reverses R-1006 — this function's own doc comment below): seeded from the shared
@@ -680,7 +685,7 @@ private fun PlaybackSection(detail: TransmissionDetailViewState, player: Transmi
             modifier = Modifier.testTag("waveform-card"),
         )
         if (!detail.hasAudio) {
-            NoAudioNotice(detail)
+            NoAudioNotice(audioAbsenceReason)
         }
         if (playing) {
             Row(modifier = Modifier.padding(top = OrtSpacing.sm)) {
@@ -756,24 +761,26 @@ private suspend fun togglePlayback(
 }
 
 /**
- * R-193, `Detail-Playback.dc.html`'s "No audio retained" card: distinguishes a real record that
- * was processed before its audio was removed ("deleted by retention... transcript, attribution
- * and lattice were kept") from one that never had audio at all. `:data` keeps no stored flag for
- * *which* — this reads the honest signal that does exist: `attribution.state != UNKNOWN` means a
- * real attribution was resolved, which only happens after real audio was processed, so its later
- * absence is retention's doing; `UNKNOWN` with nothing else recorded is consistent with audio
- * never having existed to process. A real inference from real data, not a stored fact — disclosed
- * as exactly that, never a fabricated date (the board's own "on 8 Aug" needs a retention-event
- * timestamp this package cannot honestly cite).
+ * This task (constitution I, III — replaces R-193's own heuristic). `Detail-Playback.dc.html`'s
+ * "No audio retained" card now names the real, structured cause ([AudioAbsenceReason]) instead of
+ * inferring one from `attribution.state`/`inspection` — an inference that conflated "audio was
+ * genuinely deleted by the operator" with "audio never existed to process" whenever the two
+ * happened to look alike from attribution state alone, and never carried a date the way the
+ * board's own "on 8 Aug" does. [reason] `null` (a caller that has not looked it up, or a genuinely
+ * audio-present over reaching this by mistake) renders the one honest sentence available when
+ * nothing further is known — never a guessed cause.
  */
 @Composable
-private fun NoAudioNotice(detail: TransmissionDetailViewState) {
-    val everProcessed = detail.attribution.state != AttributionState.UNKNOWN || !detail.inspection.isEmpty
+private fun NoAudioNotice(reason: AudioAbsenceReason?) {
     Text(
-        text = if (everProcessed) {
-            "Audio deleted by retention. Transcript, attribution and lattice were kept."
-        } else {
-            "Audio was never retained for this over."
+        text = when (reason) {
+            is AudioAbsenceReason.RemovedByOperator ->
+                "Removed by the operator on ${reason.dateLabel}. Transcript, attribution and lattice were kept."
+            is AudioAbsenceReason.PrunedByRetentionBudget ->
+                "Pruned by the retention budget on ${reason.dateLabel}. Transcript, attribution and lattice " +
+                    "were kept."
+            AudioAbsenceReason.NeverRetained -> "Audio was never retained for this over."
+            AudioAbsenceReason.Unknown, null -> "No retained audio for this transmission. The reason is not recorded."
         },
         style = OrtType.cardBody,
         color = OrtColors.textFaint,
