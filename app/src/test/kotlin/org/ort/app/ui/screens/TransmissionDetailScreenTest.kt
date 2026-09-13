@@ -4,6 +4,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -615,8 +616,13 @@ class TransmissionDetailScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("No retained audio for this transmission. The reason is not recorded.")
-            .assertExists()
+        // R-1066 (polish): the cause line states only the cause — it must never repeat the grey
+        // box's own title ("No retained audio for this transmission", `Inspection.kt`'s
+        // `WaveformMessageCard`). Asserted structurally: that exact title text appears exactly
+        // once (the box itself) — a second occurrence would mean the cause line duplicated it.
+        composeTestRule.onAllNodesWithText("No retained audio for this transmission", substring = true)
+            .assertCountEquals(1)
+        composeTestRule.onNodeWithText("The reason is not recorded.").assertExists()
         composeTestRule.onNodeWithText("never retained", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
     }
@@ -698,8 +704,10 @@ class TransmissionDetailScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("No retained audio for this transmission. The reason is not recorded.")
-            .assertExists()
+        // R-1066: structural, not prose — the cause line must not restate the box's own title.
+        composeTestRule.onAllNodesWithText("No retained audio for this transmission", substring = true)
+            .assertCountEquals(1)
+        composeTestRule.onNodeWithText("The reason is not recorded.").assertExists()
     }
 
     // ---- R-195 (Fail-Pass) tests moved to `PassFailureDetailScreenTest.kt` — see that file's own doc comment. ----

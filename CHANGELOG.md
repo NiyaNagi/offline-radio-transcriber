@@ -32,6 +32,44 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPDIGINIT: R-1066 the no-audio cause line no longer repeats the box's own title)
+
+### <pending> — WPDIGINIT Part B: R-1066 - the transmission detail's audio-absence cause line states only the cause
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt` (`NoAudioNotice`);
+`app/src/test/kotlin/org/ort/app/ui/screens/TransmissionDetailScreenTest.kt`.
+
+**Requirements/ACs:** R-1066 (register, polish), constitution VIII (screen not fixed until
+re-captured against its artboard).
+
+**What changed:** `Detail-Playback.dc.html`'s grey audio box already names the absence
+("No retained audio for this transmission" — `WaveformCard`'s own `NoAudio` message,
+`ui/components/Inspection.kt`, untouched). The sentence directly beneath it
+(`NoAudioNotice`, gated on `AudioAbsenceReason`) repeated that exact title verbatim before
+naming the cause, for the `Unknown`/`null` case: "No retained audio for this transmission. The
+reason is not recorded." Changed that one branch to state only the cause: "The reason is not
+recorded." The `RemovedByOperator`/`PrunedByRetentionBudget`/`NeverRetained` branches already
+stated only their own cause and are unchanged.
+
+**Verified:** `./gradlew :app:testDebugUnitTest --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` — reverted the fix first and confirmed
+`audio absence with no reason looked up yet reads as the honest unknown sentence` failed for the
+right reason (`assertCountEquals`: "Expected exactly '1' node but found '2' nodes" matching "No
+retained audio for this transmission" as a substring — the box and the duplicated cause line both
+matched); restored the fix and reran — 36 tests passed. Two tests
+(`audio absence with no reason looked up yet reads as the honest unknown sentence`,
+`AudioAbsenceReason Unknown reads as the honest unknown sentence, never a guessed cause`) now
+assert structurally (`onAllNodesWithText(..., substring = true).assertCountEquals(1)`) that the
+box's own title text appears exactly once, rather than asserting the exact old (or new) sentence —
+per this task's own instruction, a test that pinned exact prose would not have caught the class of
+defect this fixes. Device evidence captured under Part A's verification below (the same detail
+screen, both an unknown cause and an operator removal).
+
+**Left open / not done:** none for this row — R-1066 is closed by this commit, pending the device
+capture and hosted CI/Release green recorded in the gate section of this session's report.
+
+---
+
 ## 2026-09-13 (WPINIT round 2, coordinator review before merge: `NeverRetained` was itself an unrecorded guess — replaced with `Unknown`; fresh, single-AVD device evidence for Parts A/B/C and R-1055)
 
 ### cf5a327d — WPINIT: R-1055 device evidence — a dedicated debug scenario proves the cross-session filter fix on a real device, on this builder's own named AVD
