@@ -32,6 +32,47 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPSESSCOV round 2: nav tests updated for R-1070's corrected label, busierThanUsual pluralized)
+
+### WPSESSCOV round 2 — the two nav-layer tests that encoded R-1070's own defect now assert the fix, plus one more R-1072 (s) site
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/navigation/{NavSeedTest.kt, ReaderActivityDestinationSmokeTest.kt}`
+(ownership extended to these two assertions only, by the session lead, since they encoded R-1070's
+own defect as expected behaviour and updating them is part of that fix, not a different package's
+own concern) and `app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt` /
+`DigestPollingTest.kt` (already owned).
+**Requirements/ACs:** R-1070, R-1072 (register).
+**What changed:**
+1. `NavSeedTest.kt:261` (`pendingReviewSessionId lands on the reviewed session detail directly`)
+   and `ReaderActivityDestinationSmokeTest.kt:887`
+   (`R_133_settings_storage_review_link_opens_the_session_and_back_returns_to_settings_storage`)
+   both asserted `"Back to Earlier nights"` for the seeded-review path — the exact defect the
+   previous WPSESSCOV commit (`ac652016`) fixed to read `"Back to Recordings"` instead. Both now
+   assert the corrected label. No other assertion in either file touched.
+2. **R-1072, one more site**, found while re-reading `DigestPolling.kt`: `busierThanUsualItems`'s
+   subLine used a literal `"$tonightCount overs against a usual %.0f"` — always "overs", even for a
+   real tonight count of exactly 1 (reachable: `NightlyDeparture.isBusierThanUsual` only requires
+   tonight's count to clear twice a small enough usual average, which a real, sparse history can
+   produce at 1). Replaced with `Plurals.count(tonightCount, "over")`, matching every other site
+   R-1072 already fixed.
+**Verified:** discrimination shown for both: (a) reverted `SessionDetailScreen`'s `parentLabel`
+default to ignore its own parameter (the R-1070 defect, reintroduced) — both `NavSeedTest` and
+`ReaderActivityDestinationSmokeTest`'s own updated assertions failed; restored, both green.
+(b) reverted `busierThanUsualItems`'s pluralization — the new
+`R_1072 a frequency busier than usual with exactly one over tonight reads singular, never 1 overs`
+test failed (`"1 overs against a usual 0"`, the exact old shape); restored, green. (The sibling
+plural-count case does not discriminate on its own — 3 is plural either way — which is why the
+singular case was added.) `gradlew :app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.navigation.NavSeedTest" --tests
+"org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"` and `gradlew :app:testDebugUnitTest
+--tests "org.ort.app.ui.digest.DigestPollingTest"` — both green. `gradlew
+:app:ktlintTestSourceSetCheck :app:ktlintMainSourceSetCheck` — green (two wrapped-signature style
+fixes needed on the new busier-than-usual tests, the same class WPSESSCOV's own prior follow-up
+commit already fixed once).
+**Left open / not done:** none for this round.
+
+---
+
 ## 2026-09-13 (WPSESSCOV follow-up: ktlint line-wrap fix)
 
 ### WPSESSCOV follow-up — ktlint line-wrap style on the two new R-1069/R-1072 test functions

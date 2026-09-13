@@ -445,7 +445,7 @@ public object DigestPolling {
             DigestItemViewState(
                 id = "busy-$frequencyHz",
                 headline = "%.3f was busier than usual".format(Locale.ROOT, frequencyHz / 1_000_000.0),
-                subLine = "$tonightCount overs against a usual %.0f".format(Locale.ROOT, usual),
+                subLine = "${Plurals.count(tonightCount, "over")} against a usual ${"%.0f".format(Locale.ROOT, usual)}",
                 reason = "departure from usual pattern",
                 ambiguousTone = true,
                 transmissionIds = transmissions.filter { it.frequencyHz == frequencyHz }.map { it.id },

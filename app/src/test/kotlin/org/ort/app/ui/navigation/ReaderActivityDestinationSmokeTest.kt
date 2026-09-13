@@ -884,7 +884,11 @@ class ReaderActivityDestinationSmokeTest {
             rule.onNode(hasScrollAction() and verticalScroll and !hasTestTag("drawer-rows"))
                 .performScrollToNode(hasText("Review"))
             rule.onNode(hasText("Review") and hasClickAction()).performClick()
-            rule.waitUntilContentDescriptionExists("Back to Earlier nights")
+            // R-1070 (register, polish): the seeded session detail's own back label reads
+            // "Recordings" now — the destination that replaced DG03's own "Earlier nights"
+            // (design-intent.md's own DG03 row) — never opened via `SessionsContent`'s internal
+            // list, so it never earns that list's own "Earlier nights" label.
+            rule.waitUntilContentDescriptionExists("Back to Recordings")
 
             rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
             rule.waitForIdle()

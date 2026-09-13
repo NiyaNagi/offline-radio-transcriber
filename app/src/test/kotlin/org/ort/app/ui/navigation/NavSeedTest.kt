@@ -256,9 +256,11 @@ class NavSeedTest {
         composeTestRule.setContent {
             OrtTheme { OrtNavHost(sessionId = SESSION_ID, seed = NavSeed(pendingReviewSessionId = SESSION_ID)) }
         }
-        // `SessionDetailScreen`'s own `DrillInHeader(parentLabel = "Earlier nights", ...)` — the
-        // same marker R-133's own real Review-link case already establishes.
-        composeTestRule.waitUntilContentDescriptionExists("Back to Earlier nights")
+        // R-1070 (register, polish): `SessionDetailScreen`'s own `DrillInHeader(parentLabel =
+        // "Recordings", ...)` default — `SessionsContent`'s only real caller today (this seeded
+        // `pendingReviewSessionId` path) never opened this screen via its own internal `List`, so
+        // it takes the "Recordings" default, not DG03's own superseded "Earlier nights".
+        composeTestRule.waitUntilContentDescriptionExists("Back to Recordings")
     }
 
     @Test

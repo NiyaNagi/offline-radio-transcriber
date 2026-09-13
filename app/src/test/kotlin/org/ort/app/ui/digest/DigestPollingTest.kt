@@ -1028,4 +1028,67 @@ class DigestPollingTest {
             assert(item.subLine == "first time heard · 2 overs this session") { "got '${item.subLine}'" }
             assert(!item.subLine.contains("(s)")) { "got '${item.subLine}'" }
         }
+
+    @Test
+    @Requirement("R-1072")
+    fun `R_1072 a frequency busier than usual reads its own real tonight count, plural by count`(): Unit = runTest {
+        // A frequency departing from its own usual nightly count (WP8's NightlyDeparture) — real
+        // calendar days relative to whenever this test runs (`buildNightlySequence`'s own 14-night
+        // window looks back from SystemClock.wallMillis(), which this function reads directly and
+        // has no test seam to override), never a literal previously copied from an artboard.
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.Instant.ofEpochMilli(org.ort.core.SystemClock.wallMillis()).atZone(zone).toLocalDate()
+        fun dayStart(daysAgo: Long) = today.minusDays(daysAgo).atStartOfDay(zone).toInstant().toEpochMilli()
+
+        // Two prior nights, one over each on the default 146.960 MHz — a real usual average of 1.
+        db.sessionDao().insert(session("S-2", startedAt = dayStart(2), endedAt = dayStart(2) + 3_600_000L))
+        db.transmissionDao().insert(transmission("TXP1", "S-2", startedAtUtc = dayStart(2) + 100_000L))
+        db.sessionDao().insert(session("S-1", startedAt = dayStart(1), endedAt = dayStart(1) + 3_600_000L))
+        db.transmissionDao().insert(transmission("TXP2", "S-1", startedAtUtc = dayStart(1) + 100_000L))
+
+        // Tonight: 3 overs on the same frequency — more than double the usual average of 1.
+        db.sessionDao().insert(session("S1", startedAt = dayStart(0), endedAt = dayStart(0) + 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", startedAtUtc = dayStart(0) + 100_000L))
+        db.transmissionDao().insert(transmission("TX2", "S1", startedAtUtc = dayStart(0) + 200_000L))
+        db.transmissionDao().insert(transmission("TX3", "S1", startedAtUtc = dayStart(0) + 300_000L))
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val item = digest.items.single { it.id == "busy-146960000" }
+        assert(item.subLine == "3 overs against a usual 1") { "got '${item.subLine}'" }
+    }
+
+    @Test
+    @Requirement("R-1072")
+    fun `R_1072 a frequency busier than usual with exactly one over tonight reads singular, never 1 overs`(): Unit =
+        runTest {
+            // The case the literal "$tonightCount overs" formerly could never get right: tonight's
+            // own real count is exactly 1, which still clears NightlyDeparture's own "more than
+            // double the usual" bar against a small enough usual average (three prior nights, two
+            // genuinely listened-through with nothing heard and one with a single over — average
+            // 1/3).
+            val zone = java.time.ZoneId.systemDefault()
+            val wallMillis = org.ort.core.SystemClock.wallMillis()
+            val today = java.time.Instant.ofEpochMilli(wallMillis).atZone(zone).toLocalDate()
+            fun dayStart(daysAgo: Long) = today.minusDays(daysAgo).atStartOfDay(zone).toInstant().toEpochMilli()
+
+            // Three prior nights: two genuinely listened-through with nothing heard on this
+            // frequency, one with a single over — a real usual average of 1/3, rounding to 0 for
+            // display.
+            db.sessionDao().insert(session("S-3", startedAt = dayStart(3), endedAt = dayStart(3) + 3_600_000L))
+            db.sessionDao().insert(session("S-2", startedAt = dayStart(2), endedAt = dayStart(2) + 3_600_000L))
+            db.sessionDao().insert(session("S-1", startedAt = dayStart(1), endedAt = dayStart(1) + 3_600_000L))
+            db.transmissionDao().insert(transmission("TXP1", "S-1", startedAtUtc = dayStart(1) + 100_000L))
+
+            // Tonight: exactly 1 over on the same frequency — more than double the usual average of
+            // 1/3.
+            db.sessionDao().insert(session("S1", startedAt = dayStart(0), endedAt = dayStart(0) + 3_600_000L))
+            db.transmissionDao().insert(transmission("TX1", "S1", startedAtUtc = dayStart(0) + 100_000L))
+
+            val digest = DigestPolling.digest(context, "S1")!!
+
+            val item = digest.items.single { it.id == "busy-146960000" }
+            assert(item.subLine == "1 over against a usual 0") { "got '${item.subLine}'" }
+            assert(!item.subLine.contains("(s)") && !item.subLine.startsWith("1 overs")) { "got '${item.subLine}'" }
+        }
 }
