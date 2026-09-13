@@ -342,6 +342,33 @@ defect is scenario-only.
 
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
 
+### (this commit) — WPRESEED: R-1076 follow-up - merged WPDETAILRES's resolver-output seeding (R-1071) into the same branch as the WPNAVHOST merge above and this round's own R-1076 fix
+
+**Scope:** `CHANGELOG.md` only (a merge conflict resolution, keeping both sides' entries); no code
+conflict.
+
+**Requirements/ACs:** none new — R-1071 lands exactly as WPDETAILRES's own entry above describes;
+R-1076/R-1061 are unaffected.
+
+**What changed:** merged `worktree-agent-a268fe901c2c4bbc7` (WPDETAILRES, R-1071's
+`ScenarioFixtures.seedConfirmedResolverOutput` calls across `Scenarios.kt`/`OvernightScenario.kt`/
+`StationsFixtures.kt`/`FrequencyChangeFixtures.kt`, plus `ResolverOutputScenariosTest`) into this
+branch, after the WPNAVHOST merge above. `Scenarios.kt` itself merged with no conflict — every
+`seedConfirmedResolverOutput(db, ...)` call WPDETAILRES adds sits immediately after an existing
+`db.transcriptDao().insert(...)` call in a scenario builder's own seeding path, never inside a
+`republish<Scenario>Facets()` function (those take no `db` parameter at all, so a DB write could not
+land there even by accident) — confirmed by reading every call site after the merge, not assumed.
+Only `CHANGELOG.md` conflicted (both branches inserted a new `## 2026-09-13 (...)` section at the
+same point); resolved by keeping both sections in sequence, ahead of the pre-existing
+`WPTESTROBUST` one.
+
+**Verified:** `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.*"` — green,
+`BUILD SUCCESSFUL` (180 actionable tasks), including `ResolverOutputScenariosTest`'s own `R_1071`
+case and this fix's own `R_1076` case together. `./gradlew ktlintCheck detekt` (every module) —
+green, `BUILD SUCCESSFUL`.
+
+**Left open / not done:** none new.
+
 ### (this commit) — WPRESEED: R-1076 follow-up - merged WPNAVHOST's `improve-live-quiet` scenario (R-1061) and extracted its own `LevelStatus`/`CaptureState` facets into `republishImproveLiveQuietFacets()`
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (the one extraction, on top of the
