@@ -32,6 +32,39 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (spec: Q20 closed by D41 - per-transmission VAD statistics specified, after WPVAD built them)
+
+### spec · D41: FR-OBS-1 amended to say exactly what a vad_stats line records; AC-161; Q20 closed
+
+**Scope:** `spec/functional-spec.md` (FR-OBS-1 amendment note, D41 in the decision table, AC-161, a
+D41 row in the section 16 traceability table), `spec/open-questions.md` (draft 3.5 note, Q20 marked
+closed with its answer, the status table down to four), `AGENTS.md` (counts: 161 acceptance
+criteria, 41 decisions), `results/coverage-matrix.md` (regenerated). Lead-owned documents only; no
+product code.
+
+**Requirements/ACs:** FR-OBS-1 (amended), D41 (new), AC-161 (new), Q20 (closed).
+
+**What changed:** Q20 had asked whether FR-OBS-1's promised VAD statistics were worth building or
+whether the requirement should be narrowed to what `capture.log` actually carried. The product
+owner asked for great debugging data, and a 12-minute field session had sent back a 202-byte
+`capture.log` that could not say how any of its eight overs was segmented, so the question closes on
+building. FR-OBS-1 now specifies the line rather than leaving a builder to infer it from one word:
+one `vad_stats` line per segment the segmenter closes, accepted or rejected (constitution III), with
+the transmission id, outcome, close reason, duration, VAD frame and speech-frame counts, peak and
+mean dBFS and noise floor at onset; numbers and closed enums only; `NONE` rather than zero when a
+value was not measured (constitution I); off the frame path inside the existing rotation; and the
+same statistics in the debug dump. D41 states the cost and its one limit: the dump reads the
+statistics back out of `capture.log`, so it carries only what rotation kept - roughly the last
+8,000 transmissions. The specification was written after the build (WPVAD, merged `8bf31976`) and
+describes what exists rather than what was hoped for.
+
+**Verified:** `python tools/spec-check/spec_check.py` - all 8 checks PASS. `./gradlew coverageMatrix`
+then `./gradlew coverageMatrixCheck` - both exit 0.
+
+**Left open / not done:** AC-161 is listed **uncovered** in the regenerated matrix. WPVAD's tests
+establish the behaviour but are named for FR-OBS-1, not AC-161, so the matrix cannot see them; they
+need an `@Requirement("AC-161")` tag, or a test named for it, before AC-161 reads covered. The line has
+not yet been seen on the reference device - it closes on a real field dump.
 ## 2026-09-12 (WPVAD: FR-OBS-1/Q20 — `capture.log` finally carries the per-transmission VAD statistics the requirement has promised since draft 1)
 
 ### WPVAD — the segmenter's own close reason and frame tally, wired into `capture.log` and the debug dump, for every closed segment, accepted and rejected alike

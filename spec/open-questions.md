@@ -24,6 +24,10 @@ FR-STO-2a's own stated 50–60% FLAC ratio — the table was wrong, and is now b
 with FR-STO-2a's ratio. Also opened: **Q20**, whether FR-OBS-1's promised per-transmission VAD
 statistics are worth building, now that an audit found `capture.log` carries none.
 
+**Draft 3.5 update.** **Q20 is closed by D41**: the product owner asked for "great debugging data",
+and the statistics are specified in an amendment to FR-OBS-1 and built — one `vad_stats` line per
+closed segment, accepted or rejected, carried into the debug dump as well.
+
 ## Status, 7 September 2026 — the register is nearly empty
 
 **Closed:** Q3–Q11, Q13, Q14, Q15 and Q17, recorded as D19–D32 in spec §3. Q1 is closed but for
@@ -31,9 +35,9 @@ three hardware verifications (VID/PID, command terminator, whether `AI` pushes `
 [`../docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md). **Q12 is settled by
 rule**: a reference-tier lever that does not measure on the eval fold is deleted, not disabled.
 
-**Five remain.** Two concern the same hour of audio; two more were opened by the field-report
-channel (D37, D38) and concern where it uploads to and how long what it uploads is kept; one more
-was opened by an audit of what `capture.log` actually contains against what FR-OBS-1 promises:
+**Four remain.** Two concern the same hour of audio; two more were opened by the field-report
+channel (D37, D38) and concern where it uploads to and how long what it uploads is kept. Q20, opened
+by an audit of what `capture.log` actually contained against what FR-OBS-1 promised, is closed by D41:
 
 | # | Question | Why it is still open |
 |---|---|---|
@@ -41,7 +45,6 @@ was opened by an audit of what `capture.log` actually contains against what FR-O
 | **Q16** | The labelling protocol | Gates labelling that hour. Also much smaller now: callsigns and speaker turns only |
 | **Q18** | Field-report destination | The repository is public today, by the product owner's own choice, "for now" — see D38. It closes when a gated upload happens against it, or the destination goes private, whichever comes first |
 | **Q19** | Uploaded bundle retention | Nothing yet says how long a field report survives at the destination, or who is responsible for deleting it |
-| **Q20** | Per-transmission VAD statistics | FR-OBS-1 promises them in `capture.log`; none exist. Whether they are worth building is a product call, not a defect |
 
 Everything else that could be decided on paper has been decided. **Q14 stays closed**: the
 product owner did not reopen the question, they reversed the answer — see D39 below.
@@ -552,7 +555,7 @@ retained indefinitely at the destination.
 
 ---
 
-### Q20 — Is per-transmission VAD logging worth building? · owner: product
+### Q20 — Is per-transmission VAD logging worth building? · **CLOSED** · owner: product
 
 **Question.** FR-OBS-1 says the diagnostics log covers "audio route changes, **VAD statistics**,
 per-pass latency, rejection reasons, tier changes, rig connection events, and service lifecycle."
@@ -580,6 +583,16 @@ VAD statistic should record and at what rate, so a builder is not left inferring
 a decade-old requirement sentence. Until decided, `capture.log`'s current session/fault-level
 scope stands, and no requirement or acceptance criterion should be written that assumes
 per-transmission VAD logging exists.
+
+**Answer — D41.** Build it. The product owner asked for great debugging data, and a 12-minute field
+session had sent back a 202-byte `capture.log` that could not say how a single one of its eight overs
+was segmented. The second option in the recommendation is taken: FR-OBS-1 is amended to specify the
+line exactly — transmission id, outcome, close reason, duration, VAD frame and speech-frame counts,
+peak and mean dBFS, and the noise floor at onset; numbers and closed enums only; absent rather than
+zero when unmeasured — at one line per closed segment, accepted or rejected, with the same statistics
+in the debug dump (AC-161). Most of it was already computed and discarded: the segmenter's per-frame
+VAD decision and the level meter's noise-floor estimate. The cost is stated in D41, including its one
+limit — the dump reads the statistics back out of `capture.log`, so it holds only what rotation kept.
 
 ---
 
