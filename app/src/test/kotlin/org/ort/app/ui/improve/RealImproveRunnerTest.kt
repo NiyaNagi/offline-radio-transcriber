@@ -1,10 +1,14 @@
 package org.ort.app.ui.improve
 
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.capture.android.codec.DeflatePredictiveCodec
@@ -17,15 +21,24 @@ import org.robolectric.RobolectricTestRunner
 import java.io.File
 
 /**
- * register R-091 (WP11d): [RealImproveRunner] is the thin [ImproveRunner] adapter over
- * `org.ort.pipeline.reprocess.ReprocessRunner` — real end-to-end (a real `OrtDatabase`, a real
- * transmission, no fake queue) proves the adapter actually wires through, not just that it
- * compiles against the interface. Robolectric (JVM) only.
+ * register R-091 (WP11d), addendum R-1067: [RealImproveRunner] is the thin [ImproveRunner] adapter
+ * — now over `org.ort.pipeline.reprocess.ReprocessWorker`, not `ReprocessRunner` directly (see that
+ * class's own kdoc) — real end-to-end (a real `OrtDatabase`, a real transmission, no fake queue,
+ * a real test `WorkManager`) proves the adapter actually wires through, not just that it compiles
+ * against the interface. Robolectric (JVM) only.
  */
 @RunWith(RobolectricTestRunner::class)
 class RealImproveRunnerTest {
 
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+    @Before
+    fun initWorkManager() {
+        // R-1067: WorkManager.getInstance(...) is not auto-initialized under Robolectric --
+        // see the identical setup in org.ort.pipeline.digest.ProseDigestRunnerTest.
+        val config = Configuration.Builder().setExecutor(SynchronousExecutor()).build()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+    }
 
     private fun session(id: String) = SessionEntity(
         id = id,
@@ -99,7 +112,7 @@ class RealImproveRunnerTest {
         // coverage against a fake ASR engine.
         val runner = RealImproveRunner(context)
 
-        val progress = runner.run(listOf("TX1")).toList()
+        val progress = runner.run(listOf("TX1"), "All groups").toList()
 
         assertEquals(1, progress.last().total)
         assertEquals(progress.last().total, progress.last().done)

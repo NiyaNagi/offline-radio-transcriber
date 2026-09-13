@@ -270,11 +270,13 @@ public class ReprocessRunner(
                 outcome.reason?.let { tally.failureReasons.add(it) }
             }
             PassAttemptOutcome.Completed, PassAttemptOutcome.Rejected -> {
-                db.transmissionDao().setReprocessCandidate(id, false)
                 // Register R-204 follow-up (FR-REP-2, FR-REP-9): both outcomes mean Pass B
                 // genuinely ran this record at `tier` -- only Failed (handled above) means it did
                 // not, so only Failed must leave `processedTier` untouched, still eligible.
-                db.transmissionDao().setProcessedTier(id, tier)
+                // Round 4 (coordinator review): one atomic statement, not two separate calls --
+                // see `TransmissionDao.markProcessedAtTier`'s own kdoc for the real device trace
+                // that found a torn write between them.
+                db.transmissionDao().markProcessedAtTier(id, tier)
                 if (outcome == PassAttemptOutcome.Rejected) {
                     tally.rejected++
                 } else {

@@ -18,6 +18,11 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
+import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -76,6 +81,25 @@ class OrtNavHostDestinationDispatchTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    /**
+     * register R-1067 round 2 (out-of-package, minimal, mechanical fix -- flagged in that
+     * register row's own builder report): composing `IMPROVE_RECORDS` here now reaches
+     * `org.ort.app.ui.improve.ImproveContent`'s own top-level reattachment check on every
+     * composition (not only when a run is actually started), which calls
+     * `WorkManager.getInstance(context)` through `RealImproveRunner.observeState`. Not
+     * auto-initialized under Robolectric -- the same reason
+     * `org.ort.pipeline.digest.ProseDigestRunnerTest`,
+     * `org.ort.app.ui.improve.RealImproveRunnerTest`/`ImproveContentActivityTest`/
+     * `ImproveContentReattachTest`, and (round 1) `ReaderActivityDestinationSmokeTest` each already
+     * carry this identical setup.
+     */
+    @Before
+    fun initWorkManager() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val config = Configuration.Builder().setExecutor(SynchronousExecutor()).build()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+    }
 
     private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 15_000) {
         waitUntil(timeoutMillis) { onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty() }

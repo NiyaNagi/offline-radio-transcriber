@@ -10,8 +10,15 @@ import androidx.compose.ui.test.performClick
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
+import androidx.work.Configuration
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.Description
@@ -26,6 +33,7 @@ import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.ShedStatus
+import org.ort.pipeline.reprocess.ReprocessWorker
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 
@@ -69,6 +77,10 @@ class ImproveContentActivityTest {
     @Before
     fun setUp() {
         ShedStatus.reset()
+        // R-1067: WorkManager.getInstance(...) is not auto-initialized under Robolectric -- see
+        // the identical setup in org.ort.pipeline.digest.ProseDigestRunnerTest.
+        val config = Configuration.Builder().setExecutor(SynchronousExecutor()).build()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
     }
 
     @After
@@ -200,6 +212,67 @@ class ImproveContentActivityTest {
                 rule.onAllNodes(hasText("waiting", substring = true)).fetchSemanticsNodes().isNotEmpty()
             }
             rule.onNodeWithText("This phone can do more", substring = true).assertDoesNotExist()
+        }
+    }
+
+    /**
+     * register R-1067 (FR-REP-9, FR-REP-11): the discriminating case the register row itself
+     * names — "a" in the build prompt. Before this fix, no `ReprocessWorker` existed at all: the
+     * run lived only inside `RunningPage`'s own `LaunchedEffect`, which a real Activity recreation
+     * cancels outright (cooperative cancellation of `ReprocessRunner`'s `Flow`) — R-1063 made the
+     * *board* survive, but the run underneath it silently restarted from zero. The discriminating
+     * assertion is the `WorkInfo` id itself: **identical** before and after `recreate()`, proving
+     * the same underlying WorkManager job kept running, never a freshly re-enqueued one.
+     */
+    @Test
+    fun `R_1067 a real Activity recreation does not cancel the reprocess run -- same WorkInfo id, still running`() {
+        seedTierSession("s-r1067", "s-r1067-tx")
+
+        runImproveActivity { rule ->
+            val groupRow = hasText("Captured at tier 1", substring = true) and hasClickAction()
+            rule.waitUntil(15_000) { rule.onAllNodes(groupRow).fetchSemanticsNodes().isNotEmpty() }
+            rule.onNode(groupRow).performClick()
+
+            val startButton = hasText("Improve 1 overs") and hasClickAction()
+            rule.waitUntil(15_000) { rule.onAllNodes(startButton).fetchSemanticsNodes().isNotEmpty() }
+
+            // Freeze the run at its very first item (the engine's own capture-priority yield) so
+            // it cannot race to Done before this test observes a stable WorkInfo -- the identical
+            // technique the R_1063 Running case above already uses.
+            CaptureState.capturing("live-session")
+            ShedStatus.update(level = 3, backlog = 0) // ReprocessRunner.BUSY_SHED_LEVEL_THRESHOLD
+            rule.onNode(startButton).performClick()
+
+            rule.waitUntil(15_000) {
+                rule.onAllNodes(hasText("waiting", substring = true)).fetchSemanticsNodes().isNotEmpty()
+            }
+
+            val infosBefore = WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWork(ReprocessWorker.UNIQUE_WORK_NAME).get()
+            assertEquals("exactly one run must be enqueued, never a duplicate", 1, infosBefore.size)
+            val idBefore = infosBefore.single().id
+            assertEquals(WorkInfo.State.RUNNING, infosBefore.single().state)
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            rule.waitUntil(15_000) {
+                rule.onAllNodes(hasText("waiting", substring = true)).fetchSemanticsNodes().isNotEmpty()
+            }
+
+            val infosAfter = WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWork(ReprocessWorker.UNIQUE_WORK_NAME).get()
+            assertEquals(1, infosAfter.size)
+            assertEquals(
+                "the SAME WorkInfo id must still be running -- a different id would mean the " +
+                    "recreation cancelled the old run and a fresh LaunchedEffect started a new one",
+                idBefore,
+                infosAfter.single().id,
+            )
+            assertTrue(
+                "the run must still be RUNNING (or freshly re-observed as such), never CANCELLED",
+                infosAfter.single().state == WorkInfo.State.RUNNING,
+            )
         }
     }
 

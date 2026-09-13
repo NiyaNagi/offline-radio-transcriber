@@ -32,6 +32,494 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPREPLIFE round 4: device evidence for the durability fix, merge, full gate)
+
+### WPREPLIFE round 4 — R-1067: device evidence for the checkpoint/DB durability fix and the real-group reattach, merged origin/main (R-1053/R-1043 now fixed), full gate green
+
+**Scope:** device evidence only (`wpreplife-evidence\round4\`, under the session scratchpad per the
+coordinator's own instruction — never a checkout); `CHANGELOG.md`; `results/coverage-matrix.md`
+(regenerated, `R-1067` now also covered by `ReprocessRunnerTest`).
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution I, VIII; AGENTS.md item 7. Register R-1067,
+coordinator round 4.
+
+**What changed — captures, an unplanned discovery, then the merge and gate:**
+
+1. **The kill-mid-run sequence, ending on Root with zero candidates, DB-verified before and after.**
+   `wpreplife-evidence\round4\db-before-after-clean.txt`: loaded `field-tier1` fresh, froze the run
+   at 6 of 12 via the operator Pause, queried the DB directly (`adb shell run-as org.ort.app sqlite3
+   databases/ort.db`) — the 6 done ids show `processedTier=T3` and `isReprocessCandidate=0`
+   **together**, no torn state, confirming the atomic `markProcessedAtTier` write from the code
+   entry above. `am kill` alone did not stop the (foreground) process; `am force-stop` did.
+   Reopened: the resumed attempt (same WorkSpec id, `run_attempt_count=2`) finished the remaining 6
+   for real. Root: "A run finished while you were away — 12 of 12 overs processed." directly above
+   "Nothing can get better right now." — no contradiction. Final DB query: all 12 ids
+   `processedTier=T3`, `isReprocessCandidate=0` (`kill-mid-run-root-clean.png`).
+2. **A reattached Running board showing its real group.** Disposed and recomposed `ImproveContent`
+   mid-run (drawer to Log and back, no Activity recreation) — the board read "Paused · All groups ·
+   6 of 12" (`reattach-real-group.png`), never the old generic "Improving," and never a false "0 of
+   0" — both the headline-threading fix (item 2) and the honest-starting-progress fix (item 3)
+   confirmed together in one capture.
+3. **An unplanned but real discovery, reported and flagged, not fixed here (out of this round's
+   ownership — `app/debug/**`, not `app/ui/improve/**`):** the first attempt at capture (1) used
+   `adb shell am start -n org.ort.app/.debug.ScenarioReaderActivity ...` to relaunch after the kill,
+   which restarts the whole process — and a manifest-registered debug-only `ContentProvider`,
+   `ActiveScenarioRepublishProvider` (register R-873), runs before any Activity on every such
+   restart and, whenever a scenario was ever loaded and never cleared, re-runs the **entire**
+   `Scenarios.load` (delete + re-insert every DB row for that scenario) rather than only
+   republishing the in-memory facets its own kdoc says it exists for. That reseed reverted the 6
+   already-completed ids back to their original fixture defaults *after* they were correctly
+   processed, producing exactly the contradiction pattern round 2 first found ("12 of 12 processed"
+   next to "6 overs can get better") — but this time from stale test-tooling, not the reprocessing
+   code. Diagnosed directly (`wpreplife-evidence\round4\db-before-after-kill.txt`, its own header
+   note has the full trace); confirmed by clearing the marker file
+   (`run-as org.ort.app rm -f shared_prefs/org.ort.app.debug.active_scenario.xml`) before the
+   relaunch and repeating the identical test, which produced the clean result in item 1 above.
+   Flagged as its own follow-up task (spawned this session) rather than fixed here.
+
+**Then, per the coordinator's own instruction:**
+- Merged `origin/main` — one conflict, in `CHANGELOG.md` (both sides' entries kept). Brings in
+  WPTESTROBUST's own fixes for the known flakes: R-1053 (`SettingsContentExportAndDebugDumpTest`'s
+  `CalledFromWrongThreadException`) and part of R-1043, both now merged and fixed on `main`.
+- Full local gate re-run twice from the merged tip. First run:
+  `./gradlew.bat dependencyRules platformGuards build` failed on exactly one test,
+  `CaptureStatusContentTest`'s own `R_172` case, with a Robolectric `ActivityController
+  .windowFocusChanged` `NullPointerException` — a file wholly outside this round's diff
+  (`app/ui/capture/**`). Re-ran `:app:smokeTestDebugUnitTest` (the task that failed) alone: green,
+  confirming a genuine environment flake, not a regression — reported here per the coordinator's
+  own "report it if it appears" standard, not silently retried away. Re-ran the full gate a second
+  time end to end: `BUILD SUCCESSFUL in 18m 29s`, no failures anywhere in the log (the named
+  R-1053/R-1043 flakes did not appear either). `-p buildSrc test` green. `spec_check.py` all 8
+  checks PASS. `coverageMatrix`/`coverageMatrixCheck` — 275/485, `R-1067` now also attributed to
+  `ReprocessRunnerTest`. `corpus pytest` green (one skip).
+
+**Left open / not done:**
+- The `ActiveScenarioRepublishProvider` over-reseeding defect (item 3 above) — flagged, not fixed,
+  out of this round's file ownership.
+- Device evidence for this round is not yet reviewed by the coordinator/lead against the
+  artboards — per constitution VIII this diff is not "done" until that review closes it.
+- Not pushed, per the coordinator's own instruction for this round.
+
+---
+
+## 2026-09-13 (WPREPLIFE round 4: a real checkpoint/DB durability gap, the lost group label, the 0-of-0 board)
+
+### WPREPLIFE round 4 — R-1067: an atomic DB write, resume-time reconciliation, an honest finished-while-away count, the real group label carried through reattach, an honest starting board
+
+**Scope:** `data/src/main/kotlin/org/ort/data/dao/TransmissionDao.kt` (one new atomic DAO method,
+flagged out-of-package per this round's own file-ownership map — additive only, nothing existing
+changed); `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/` (`ReprocessRunner.kt`,
+`ReprocessWorker.kt`); `app/src/main/kotlin/org/ort/app/ui/improve/` (`ImproveRunner.kt`,
+`RealImproveRunner.kt`, `ImproveContent.kt`); their tests.
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution I. Register R-1067, coordinator round 4.
+
+**What changed — three defects the coordinator's own round-4 device-capture review found:**
+
+1. **A real data-loss risk (constitution I, FR-REP-11), investigated and closed.** The coordinator's
+   own reading of round-2's captures found `c-finished-while-away.png` claiming "12 of 12 overs
+   processed" while Root still showed 3 candidates — and named the likely cause: the checkpoint
+   recording an id done before its DB write is durable. Queried the on-device DB directly
+   (`adb shell run-as org.ort.app sqlite3 databases/ort.db`) for the exact 12 field-tier1 ids: the
+   first 3 (processed before the round-2 force-stop) showed `isReprocessCandidate = 0` but
+   `processedTier` still **NULL** and `attributionState` still the scenario's original seed value —
+   the candidate flag cleared while the tier stamp (and the real Pass B write it exists to certify)
+   never landed, exactly as suspected. Root cause: `ReprocessRunner.recordOutcome` wrote
+   `setReprocessCandidate` and `setProcessedTier` as two separate statements — safe under normal
+   Kotlin-level sequencing, but not atomic at the SQLite level, so a hard kill between them (or any
+   other cause that tears them apart) can leave exactly this half-written state. Fixed two ways:
+   - **Root cause:** new `TransmissionDao.markProcessedAtTier(id, tier)` — one `UPDATE` statement
+     setting both columns together, atomic by SQLite's own single-statement guarantee. Replaces the
+     two separate calls in `recordOutcome`.
+   - **Defense in depth:** `ReprocessWorker.doWork()` now re-verifies every id its own checkpoint
+     already considers done against the real DB (`staleCandidateIds`) before starting, and hands any
+     id still genuinely `isReprocessCandidate = true` back into this attempt's working set
+     (`reconcileRemaining`) — relying on `ReprocessRunner`'s own idempotency to redo it safely. This
+     recovers from *any* future cause of the same desync, not just the one now-closed race.
+   - **The finished-while-away count is now DB-verified**, never the checkpoint's own bookkeeping
+     alone: a new `KEY_IMPROVED_COUNT` field (`realDoneCount`, a real query for how many of this
+     run's own ids are no longer reprocess candidates) is what Root's "N of M overs processed" line
+     reads (`ReprocessRunSnapshot.Finished.improvedCount`) — kept deliberately separate from
+     `KEY_DONE`/`KEY_TOTAL`, which stay "attempts concluded" (`ImproveRunner.run`'s own documented
+     `done == total` contract, which `Improve-Running`'s live board and every existing `observe()`
+     caller already depend on, and which a genuinely-failed-but-attempted item must still satisfy).
+2. **The group label lost on reattach.** `b-after-kill.png` read "Improving / Improving · 11 of 12"
+   where a normal board reads "All groups · N of 12" — `reattachToRunningWork`'s own
+   `onReattachRunning` hardcoded a generic "Improving" headline since `ImprovePage.Running` built
+   from a reattach has no local `transmissionIds`/group state to read it from. Fixed by carrying the
+   real headline through the run's own `WorkManager` input/progress data: `ImproveRunner.run` and
+   `ReprocessWorker.start` both gained a `headline: String` parameter, stamped into every
+   `progressData`/`finishedData` `Data` blob via a new `KEY_HEADLINE`, and read back into
+   `ReprocessRunSnapshot.Waiting`/`Running`/`Finished` (all three now carry `headline`) —
+   `reattachToRunningWork` passes `snapshot.headline` to `onReattachRunning` instead of a literal.
+3. **The immediate-pause "0 of 0" board.** A reattach landing before `ReprocessWorker`'s own first
+   per-item `setProgress` call read WorkManager's still-empty progress `Data` as a literal "0 of 0"
+   — confusing though honest (nothing had been reported yet). Fixed: `doWork()` now publishes one
+   `setProgress` call with the real, already-known total (and the real headline) immediately after
+   computing the reconciled working set, before `ReprocessRunner.run` is ever invoked — a fresh
+   reattach now always sees the real total, never a false zero.
+
+**Verified:**
+- `./gradlew.bat ":pipeline:testDebugUnitTest" --tests "org.ort.pipeline.reprocess.*"` — 24 tests
+  green. New: `R_1067_round4 a completed outcome clears the candidate flag and stamps the tier
+  together` (the atomic-write regression check); `R_1067_round4 a resumed worker redoes an id
+  checkpointed done that the DB still shows as a candidate` and `R_1067_round4 the finished-while-
+  away count comes from the DB, never a blind trust of the checkpoint` — both run against the code
+  before this round's fix and confirmed failing for the right reason (the first: TX1 never handed
+  back to the runner, `workQueueDao` row absent; the second: the assertion on the DB-verified count
+  failed before `KEY_IMPROVED_COUNT` existed to carry it) — then passing after; a headline-fallback
+  mapping test.
+- `./gradlew.bat ":app:testDebugUnitTest" --tests "org.ort.app.ui.improve.*"` — 38 tests green. New:
+  two `ReattachToRunningWorkTest` cases proving `onReattachRunning` receives the run's own real
+  headline (`Waiting` and `Running` snapshots) rather than a placeholder. One existing test,
+  `RealImproveRunnerTest`'s own `done == total` case, is the direct proof the two-field split (item
+  1) was necessary — it broke against a first draft that overloaded `KEY_DONE` with the DB-verified
+  count, confirming `KEY_DONE`/`KEY_TOTAL` must stay "attempts concluded."
+- Full `./gradlew.bat ":app:testDebugUnitTest" ":pipeline:testDebugUnitTest" ":data:testDebugUnitTest"`
+  — `BUILD SUCCESSFUL in 17m 8s`, 211 actionable tasks, no failures anywhere in the log.
+- `./gradlew.bat ":pipeline:ktlintCheck" ":app:ktlintCheck" ":data:ktlintCheck" ":pipeline:detekt"
+  ":app:detekt" ":data:detekt"` — all green.
+
+**Out-of-package touch, flagged:** `TransmissionDao.markProcessedAtTier` in `:data` — additive only
+(the two existing methods it replaces at one call site are untouched and still used elsewhere,
+e.g. `FakeImproveRunner`), same shape as round 1/2's own flagged `WorkManagerTestInitHelper`
+additions in files outside this round's direct ownership.
+
+**Left open / not done:** device evidence for this round — the coordinator's own requested
+recapture (the kill-mid-run sequence ending on Root with the DB query before/after, and a
+reattached Running board showing its real group) — follows this entry once captured, per the
+coordinator's own instruction to save it under the session scratchpad, never a checkout.
+
+---
+
+## 2026-09-13 (WPREPLIFE round 3: device evidence on real bundled models, merge, full gate)
+
+### WPREPLIFE round 3 — R-1067: device evidence for reattach/kill/finish-while-away on real bundled models, merged origin/main (WPRC02), full gate green
+
+**Scope:** device evidence only (`wpreplife-evidence\round2\`); `CHANGELOG.md`;
+`results/coverage-matrix.md` (regenerated, no content change). No product code in this entry — see
+the narrowed-catch entry above for that.
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution VIII, AGENTS.md item 7. Register R-1067,
+coordinator round 3 items 1 and 2.
+
+**What changed — device recovery, then captures, both under coordinator round 3's explicit
+instructions:**
+
+1. **Device recovery.** Confirmed `ort_audit_replife` (port 5566) was this builder's own AVD via
+   `Get-CimInstance Win32_Process -Filter "Name like 'qemu-system%'"` before touching anything.
+   Found and killed two of this builder's own stale `adb` clients left over from round 2's
+   instability (`pm clear`/`install`, both `-s emulator-5566`, both naming this worktree's own APK
+   path) — never `adb kill-server` (three other builders' emulators were attached to the same adb
+   server). The emulator's own shell was unresponsive to a trivial `getprop` even after that, so
+   this builder's own qemu process (and only that one, verified by AVD name in its command line)
+   was killed and rebooted via `tools\ui-audit\boot.ps1 -Avd ort_audit_replife -Port 5566` (which
+   itself launches with `-no-snapshot`); booted clean, `sys.boot_completed=1`.
+2. **Captures**, under `wpreplife-evidence\round2\`, operator geometry (`wm size 1260x2772`,
+   density 420), a real `HF_TOKEN` build (`fetchBundledAssets: 5/5 assets verified`, no
+   `-PortAllowMissingBundledAssets` escape hatch), the `field-tier1` debug scenario (12 real,
+   decodable FLAC overs at tier 1):
+   - **(a)** `a1-running-1x.png`/`a2-running-2x.png`/`a3-running-return.png` — a real run frozen via
+     the operator Pause control (`ReprocessPauseControl.paused`) at a genuine, still-climbing count
+     ("Paused, All groups · 3 of 12"): captured at font scale 1.0, captured again unchanged after
+     switching to font scale 2.0 (an Activity recreation), then captured a third time unchanged
+     after leaving to Log and returning (a plain composition dispose/recompose, no Activity
+     recreation) — the exact two persistence paths rounds 1 and 2 built.
+   - **(b)** `b-after-kill.png` — `adb shell am kill org.ort.app` alone did **not** kill the
+     process (it was foreground; `ps` still showed it live), so `am force-stop org.ort.app` was
+     used instead (noted here per the coordinator's own instruction) and confirmed the process was
+     gone. Reopening Improve showed **Running** with a real, honestly-climbing count picked up from
+     the checkpoint — not restarted from zero, not duplicated — because the killed process reset
+     the in-JVM `ReprocessPauseControl` flag to unpaused, so WorkManager's own retry of the
+     interrupted attempt simply raced on from where the checkpoint left off.
+   - **(c)** `c-finished-while-away.png` — let the same run finish while on Log, returned to Root:
+     "A run finished while you were away — 12 of 12 overs processed."
+   - **(d)** `d-workmanager-db-state.txt`, `d-jobscheduler-during-a.txt`, `d-jobscheduler-final.txt`
+     — the real WorkManager Room DB (`no_backup/androidx.work.workdb`, not the empty
+     `databases/androidx.work.workdb` — WorkManager keeps its live DB out of the backup-eligible
+     path) queried via `adb shell run-as org.ort.app sqlite3` across (a)/(b)/(c): the
+     `reprocess-run` unique work name maps to the **same** `WorkSpec` id
+     (`19dc2248-16cc-4bf2-afe1-9b528005a7a0`) through RUNNING (a), the force-stop and WorkManager's
+     own restart (b), and SUCCEEDED (c) — never a second, duplicate id. A second, unrelated
+     `WorkSpec` row (`40eaec60...`, ENQUEUED throughout) is a separate periodic job, not this one.
+
+**A genuine finding surfaced while capturing (a)-3, reported rather than fixed (out of this
+round's named scope):** `ReprocessWorker.doWork()` only calls `setProgress` inside its
+per-item `collect` block (`ReprocessWorker.kt`), so if the run is paused before its very first item
+completes, WorkManager's own progress `Data` never carries a real total. `RunningPage` in
+`ImproveContent.kt` seeds `total` from `current.transmissionIds.size` (correct while the same
+composition that started the run is still alive) but a *fresh* reattach (`onReattachRunning`
+builds `ImprovePage.Running` with `transmissionIds = emptyList()`) has only that WorkManager
+snapshot to fall back on — so a reattach that lands before the worker's first `setProgress` shows
+an honest but confusing "Improving · 0 of 0" rather than the real total. Reproduced directly
+(paused immediately after starting, then left to Log and back) before redoing the capture with the
+run paused after item 3 instead, which is what (a) above shows. Not fixed here: it is not part of
+round 3's named "narrow the defensive catch" item, and the display is honest (it reflects real,
+if incomplete, WorkManager data — constitution I) rather than fabricated, just confusing. Left for
+the coordinator to route.
+
+**Then, per the coordinator's own instruction:**
+- Merged `origin/main` (now including WPRC02 rounds 2/3 and the WPDIGINIT/WPSQUELCH/WPMODLOG/WPINIT
+  history already in main): one conflict, in `CHANGELOG.md` (both sides' entries kept, this
+  branch's own round-3 entries first); `results/coverage-matrix.md` merged automatically.
+- Full local gate re-run from the merged tip: `./gradlew.bat dependencyRules platformGuards build`
+  — `BUILD SUCCESSFUL in 20m 23s`, 1109 actionable tasks, no failing tests anywhere in the log
+  (checked explicitly for `SettingsContentExportAndDebugDumpTest`/`CalledFromWrongThreadException`
+  — register R-1053, now routed to WPTESTROBUST and marked "recurring, blocking" as of today — it
+  did **not** appear in this run). `./gradlew.bat -p buildSrc test` green. `python
+  tools/spec-check/spec_check.py` — all 8 checks PASS. `./gradlew.bat coverageMatrix` then
+  `coverageMatrixCheck` as separate invocations — 275/485 requirements covered, matrix already
+  up to date (no diff to commit). `cd corpus && python -m pytest -q` — all green (one skip).
+
+**Left open / not done:**
+- The "0 of 0 on an immediate reattach" finding above (device-confirmed, not fixed this round).
+- Device evidence is screenshots/text under `wpreplife-evidence\round2\`, not yet reviewed by the
+  coordinator/lead against the artboards — per constitution VIII this diff is not "done" until
+  that review closes it.
+- Not pushed, per the coordinator's own instruction for this round.
+
+---
+
+## 2026-09-13 (WPREPLIFE round 3: the defensive catch is narrowed to the one named case)
+
+### WPREPLIFE round 3 — R-1067: `reattachToRunningWork`'s catch narrowed to WorkManager's own not-initialized message, discrimination-tested
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImproveContent.kt` (the
+`reattachToRunningWork` catch and its kdoc, the new `WORK_MANAGER_NOT_INITIALIZED_MESSAGE`
+constant, visibility `private` → `internal` so a test can call it directly); new
+`app/src/test/kotlin/org/ort/app/ui/improve/ReattachToRunningWorkTest.kt`.
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution I. Register R-1067, coordinator round 3
+item 3.
+
+**What changed:** round 2's catch around `runner.observeState()` caught *any*
+`IllegalStateException` and folded it to `ReprocessRunSnapshot.NotRunning` — coordinator round 3
+named this a real risk: in production it would show Root as if nothing were running while a
+genuine bug (in this code or in `ImproveRunner.observeState()`/`ReprocessWorker.observeSnapshot`
+itself) was the actual cause, exactly the "screen looks fine while broken" failure constitution I
+exists to prevent. The catch now checks
+`e.message?.startsWith(WORK_MANAGER_NOT_INITIALIZED_MESSAGE)` — the fixed prefix of the one real
+`IllegalStateException` `WorkManager.getInstance` throws when nothing has initialized it (never
+true on a real device, only a Robolectric harness composing `ImproveContent` without
+`WorkManagerTestInitHelper`) — and rethrows anything else. No `DiagnosticsLog` call was added:
+that class is outside this package's ownership per the file-ownership map; a comment on the catch
+records the one case it is for instead, per the coordinator's own stated alternative.
+
+**Verified:**
+- New `ReattachToRunningWorkTest` (3 tests): the named not-initialized message is still caught and
+  treated as `NotRunning`; an unrelated `IllegalStateException` is never swallowed (propagates,
+  asserted both via `@Test(expected = ...)` and by asserting the caught exception's own message);
+  `./gradlew.bat ":app:testDebugUnitTest" --tests "org.ort.app.ui.improve.ReattachToRunningWorkTest"`
+  — 3/3 green.
+- Discrimination check performed and confirmed by hand: catch temporarily reverted to round 2's
+  broad, unguarded form (no message check) — the same test run then failed exactly the two
+  "unrelated exception" tests (`AssertionError: Expected exception: java.lang.IllegalStateException`
+  and the propagated-message assertion), while the named-message test still passed, proving the
+  narrowing is what those two tests actually exercise. Catch restored to the narrowed form; the
+  same 3 tests re-run green.
+
+**Left open / not done:** device evidence (coordinator round 3 item 2), the `origin/main`
+merge (now including WPRC02) and a fresh full local gate are addressed in a following entry, per
+the coordinator's own ordering of round 3's items.
+
+---
+
+## 2026-09-13 (WPREPLIFE round 2: reattach on any composition, an honest Waiting state, the 10-minute execution limit)
+
+### WPREPLIFE round 2 — R-1067: Improve reattaches on any composition (not just recreation), a stop-and-reschedule decision with an honest "Waiting to resume" board
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessWorker.kt` (new
+`ReprocessRunSnapshot`, `observeSnapshot`, `KEY_FINISHED_AT_MILLIS`; `ReprocessRunner` itself still
+untouched), `app/src/main/kotlin/org/ort/app/ui/improve/` (`ImproveRunner.kt`, `RealImproveRunner
+.kt`, `ImproveContent.kt`, `ImproveScreens.kt`, `ImproveViewData.kt`), their tests (new
+`ImproveContentReattachTest.kt`).
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution I. Register R-1067, coordinator round 2.
+
+**What changed — three items the coordinator's round-2 review named:**
+
+1. **Returning to Improve now shows the running job, not Root.** Round 1's fix (R-1063's
+   `rememberSaveable`) protects `ImprovePage` across an Activity *recreation* only — it does not
+   survive `OrtNavHost` disposing and recomposing `ImproveContent` on a plain drawer switch away and
+   back, which round 1 had wrongly left as an "OrtNavHost problem." `ImproveContent` now reads
+   `ImproveRunner.observeState()` (new — `org.ort.pipeline.reprocess.ReprocessWorker.observeSnapshot`)
+   once on every (re)composition: a run `Waiting` or `Running` forces `page` onto `Running`
+   regardless of what was last remembered; a run that `Finished` while the screen was gone surfaces
+   as a plain, real line on Root ("A run finished while you were away — N of M overs processed"),
+   built only from `WorkInfo.outputData` (`KEY_DONE`/`KEY_TOTAL`/the new `KEY_FINISHED_AT_MILLIS`,
+   a real timestamp `ReprocessWorker` stamps itself) — never the richer per-category
+   `ReprocessStatus.Summary`, which is process-memory only and cannot be honestly reconstructed once
+   nobody was watching when the run ended.
+2. **WorkManager's ~10-minute execution limit — decision: stop-and-reschedule, not a foreground
+   service.** Justified in `ReprocessWorker`'s own kdoc: the checkpoint already makes a stop-and-
+   resume cycle exactly as correct as an uninterrupted run (FR-REP-11's bar is met either way);
+   ColorOS is documented to kill even foreground services under aggressive battery states, so a
+   foreground service would reduce risk, not eliminate the need to handle a stop honestly; and the
+   permission/notification/channel work belongs to `:app`, not this round. The honest cost —
+   `ReprocessRunSnapshot.Waiting` (new: `WorkInfo.State.ENQUEUED` with real, already-recorded
+   progress) — is what keeps `Improve-Running` from lying about it: "Waiting to resume, N of M
+   done," never fake live progress and never a premature Done (`ImproveRunningViewState
+   .waitingToResume`, rendered in `ImproveScreens.kt`).
+3. **Real-device evidence for a run that takes real time** — see "Verified" below.
+
+**Verified:**
+- `./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"` — 29 tests green.
+  New: four `ReprocessRunSnapshot` mapping tests (`Waiting`/`Running`/`Finished`/`NotRunning`, each
+  built from a manufactured real `WorkInfo`) and a full stop-then-resume cycle test
+  (`R_1067_round2 a worker stopped mid-run leaves its checkpoint intact for a fresh attempt to
+  finish`) — frozen via the operator-pause signal before item 1, the real coroutine `doWork()` is
+  suspended inside is cancelled at a real in-flight suspension point (the same signal a
+  `CoroutineWorker`'s `onStopped()` delivers), proving the checkpoint survives untouched and a fresh
+  attempt finishes everything. Run 5× in a row clean after fixing an initial timing race (waiting
+  on a `work_queue_item` row's mere existence, a lease, not a finished outcome).
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — 33 tests green. New:
+  `ImproveContentReattachTest` (`ImproveContent` itself — no Activity — disposed via a plain
+  Compose `if (show)` toggle and recomposed; asserts the identical `WorkInfo` id, proven to fail
+  (`ComposeTimeoutException`) with the reattachment effect reverted, confirming `rememberSaveable`
+  alone does **not** survive a bare composition removal the way it does a real Activity recreation)
+  and two `ImproveScreensTest` cases for the `waitingToResume` board text and the Root finished-run
+  line.
+- Every new/changed assertion shown to fail for the right reason before the fix and pass after,
+  reverted and restored in place: the `ENQUEUED → Waiting` mapping (temporarily mapped to
+  `NotRunning`), the reattachment `LaunchedEffect` (temporarily removed), the stop-then-resume
+  checkpoint assertion (temporarily let the checkpoint remain untouched by the buggy path).
+- On-device evidence: own AVD `ort_audit_replife`, real bundled `HF_TOKEN` build — see the session
+  report for capture paths and literal descriptions; not duplicated here per this file's own
+  "verified" convention (commands and pass/fail counts, not image inventories).
+- Full local gate after merging `origin/main` (WPMODLOG, WPSQUELCH, WPDIGINIT): see the session
+  report for the exact green run and durations.
+
+**Out-of-package fixes, flagged (mechanical, same shape as round 1's identical fix):** round 2's own
+reattachment check runs on *every* composition of `ImproveContent`, not only when a run is started
+— a strictly wider trigger than round 1's (which only fired on an explicit `run()`/`cancel()` call).
+Two more Robolectric test files that compose a real `OrtNavHost`/`ImproveContent` broke on the full
+gate after merging `origin/main` for exactly that reason, needing the same one `@Before`
+(`WorkManagerTestInitHelper.initializeTestWorkManager`) this repository's other Worker-touching
+Robolectric tests already carry:
+- `OrtNavHostDestinationDispatchTest.kt` (`ui/navigation`).
+- `TourStepsTest.kt` (`app/debug/tour`) — the canonical screenshot-tour driver.
+
+**Defensive hardening, added while chasing the fixes above:** `reattachToRunningWork` now catches
+`IllegalStateException` from `WorkManager.getInstance` and treats it as an honest
+`ReprocessRunSnapshot.NotRunning` — never true on a real device (WorkManager auto-initializes),
+only a test harness composing `ImproveContent` without a test `WorkManager`. This check runs on
+every composition (not only when a run starts), so treating that condition as fatal would make it
+the single most fragile line on the whole screen. Also: `ImproveContentReattachTest`'s own `@After`
+now explicitly cancels the unique work it freezes indefinitely (found the hard way — leaving it
+running past the test method poisoned a later Compose test sharing the same JVM fork with
+`AppNotIdleException`).
+
+**Left open / not done:**
+- The stop-then-resume test simulates the system's stop via cancelling the coroutine `doWork()` is
+  suspended in, not `WorkManagerTestInitHelper`'s `TestDriver` — `TestDriver`'s public surface
+  (`setAllConstraintsMet`/`setPeriodDelayMet`) does not expose a way to simulate an execution-time-
+  limit stop at all (that boundary is the platform's own JobScheduler); cancelling the coroutine is
+  the documented, faithful substitute (identical to what a `CoroutineWorker`'s own `onStopped()`
+  does), not a shortcut around a harder but possible test.
+- No foreground-service notification was built — see decision (2) above; this trades resume
+  promptness for one round's scope, never correctness (the checkpoint holds either way).
+- `Improve-Done`'s own richer per-category summary is still process-memory only; a run that
+  finishes while the screen is gone is reported plainly (item counts, not a category breakdown) —
+  intentional, not a gap (constitution I: no fabricated diff), but worth naming as a real UX
+  limitation of the current design.
+
+---
+
+## 2026-09-13 (WPREPLIFE: R-1067 - the reprocess run now lives in a WorkManager job, not the Improve screen)
+
+### WPREPLIFE — R-1067: reprocess run survives Activity recreation via `ReprocessWorker`, `Improve-Running` observes rather than owns it
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/` (new: `ReprocessWorker.kt`, `ReprocessRunState.kt`,
+`ReprocessPauseControl.kt`; `ReprocessRunner.kt` itself untouched), `app/src/main/kotlin/org/ort/app/ui/improve/`
+(`ImproveRunner.kt`, `RealImproveRunner.kt`, `ImproveContent.kt`), their tests, plus one out-of-package,
+mechanical fix (`ReaderActivityDestinationSmokeTest.kt`, flagged below) and one test-only dependency
+(`app/build.gradle.kts`).
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11 (interruptible and resumable; a failed/interrupted run never leaves a
+record worse than before). Register R-1067 (closes the gap R-1063 disclosed while fixing itself).
+
+**What changed:** `ReprocessRunner` (`FR-REP-9`: "the user SHALL be able to reprocess candidates ... in bulk, with
+progress"; `FR-REP-11`: "interruptible and resumable ... SHALL never leave a record in a worse state") ran inside
+`Improve-Running`'s own `LaunchedEffect` — its coroutine was cancelled the instant the Activity was destroyed
+(rotation, font scale, dark mode, or ColorOS killing the Activity in the background), silently restarting the run
+from zero on recreation. `ReprocessWorker`, a real `androidx.work.CoroutineWorker` (the same shape
+`ProseDigestRunner` already established in this package), now runs it instead:
+- **Unique work** (`ExistingWorkPolicy.KEEP`), no constraints — deliberately unlike `ProseDigestRunner`'s
+  charging+idle gate: this is FR-REP-5's own "on-device reprocess **action**," an operator-invoked "now," not a
+  passive background schedule. A second tap of "Improve all"/"Start" never starts a duplicate run.
+- **`ReprocessRunState`**: a durable per-work-id checkpoint (a flat file under `filesDir`, never a `:data` table)
+  recording which transmission ids a worker attempt has not yet finished — a worker attempt WorkManager restarts
+  after process death resumes exactly that remainder, reporting honest *cumulative* progress against the run's
+  real original total, and never re-hands an already-done id back to `ReprocessRunner`. Cleared only on a
+  non-cancelled finish or an explicit operator cancel — never on a stop this class did not choose, so an
+  interrupted attempt's checkpoint survives for the next one.
+- **`ReprocessPauseControl`**: the operator's own Pause/Resume, now a process-wide signal `ReprocessWorker` folds
+  into `ReprocessRunner.isCaptureBusy` alongside the engine's own capture-priority auto-pause — the pre-existing
+  "stall the collector" mechanism stopped meaning anything once the run stopped living inside the screen.
+- `ImproveRunner` is no longer a `fun interface`: `run` now only starts (idempotently) and observes; `cancel` is
+  the one explicit, operator-only stop (`FakeImproveRunner.cancel` is a documented no-op — it has no persistent
+  run to stop). `RealImproveRunner` calls only `ReprocessWorker.start/observe/cancel`, all plain `:pipeline` types
+  — no `androidx.work.*` import anywhere in `:app` main code, so no main-source `app/build.gradle.kts` change was
+  needed.
+
+**Out-of-package fix, flagged:** `ReaderActivityDestinationSmokeTest.kt` (`ui/navigation`, not this package's
+ownership) broke because it now reaches `RealImproveRunner`'s real `WorkManager.getInstance(...)` call without
+initializing a test `WorkManager` under Robolectric (`IllegalStateException: WorkManager is not initialized
+properly`) — the identical setup every other Robolectric test touching a real Worker in this repo already carries
+(`ProseDigestRunnerTest`, `RealImproveRunnerTest`, `ImproveContentActivityTest`). Added the same one `@Before`
+there, mechanically, nothing else in that file touched. `app/build.gradle.kts` gained one `testImplementation
+(libs.androidx.work.testing)` line for the same reason (`:pipeline` already depends on `androidx.work.runtime.ktx`
+for main code; `:app`'s test source set needed `work-testing` to run a test `WorkManager` at all).
+
+**Verified:**
+- `./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"` — 24 tests green, including new
+  `ReprocessRunStateTest` (5) and `ReprocessWorkerTest` (4: unique-work dedup, resumed-worker-never-reprocesses-a-
+  done-id, operator-cancel-cancels, checkpoint-cleared-on-cancel).
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — 30 tests green, including the new
+  `ImproveContentActivityTest` case `R_1067 a real Activity recreation does not cancel the reprocess run -- same
+  WorkInfo id, still running` (a real `ReaderActivity`, real recreate(), asserts the identical `WorkInfo` id before
+  and after).
+- Every new/changed assertion shown to fail for the right reason before the fix and pass after (reverted and
+  restored in place, not left reverted): the `b` (`ExistingWorkPolicy.KEEP` → `APPEND_OR_REPLACE`), `c`
+  (checkpoint honored → ignored) and `d` (`cancelUniqueWork` present → removed) `ReprocessWorkerTest` cases, and
+  the `ImproveContentActivityTest` `R_1067` case (`RealImproveRunner` reverted to construct `ReprocessRunner`
+  directly, as before this change).
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — green, `12m 22s`. One
+  transient failure on an earlier run of the same command,
+  `SettingsContentTest > AC_144 a category toggled on and cancelled is off again the next time the consent screen
+  opens`, `ComposeTimeoutException` at a fixed 5000 ms `waitUntil` — the exact symptom register R-1043 already
+  documents as a load-sensitive flake (unrelated file, unrelated package); reran alone (green) and reran the
+  whole gate (green) to confirm.
+- `./gradlew -p buildSrc test`, `python tools/spec-check/spec_check.py`, `./gradlew coverageMatrix` (274/485,
+  unchanged) then `./gradlew coverageMatrixCheck` (separate invocation, up to date) — all green.
+- Real device: `ort_audit_replife` (own AVD, port 5566, Pixel 6/API 34/x86_64), real bundled-model install (real
+  `HF_TOKEN`), scenario `field-tier1`. Real `ReprocessWorker` executions confirmed in logcat
+  (`WM-WorkerWrapper: Worker result SUCCESS ... tags={ org.ort.pipeline.reprocess.ReprocessWorker }`); a real
+  12-over reprocess reached Done (`12 transcripts changed · 12 attributions changed · 0 rejected · 0 failed`) at
+  font scale 1.0 and 2.0. Evidence under this session's own scratch directory (see the session report — not
+  committed to `results/ui-audit/`, which register R-1067's builder does not own).
+
+**Left open / not done:**
+- **Real-device "font scale changed mid-run" capture not obtained.** `whisper-tiny-en-int8` over this scenario's
+  short fixture audio completes a 12-item run in well under one second on this hardware — faster than any manual
+  or scripted `adb` interaction could interject a font-scale change between start and finish (confirmed twice).
+  The Robolectric-level equivalent (`ImproveContentActivityTest`'s `R_1067` case, using the exact capture-priority
+  freeze technique `R_1063`'s own precedent already established) is the rigorous, repeatable proof of the same
+  claim — same `WorkInfo` id, still `RUNNING`, across a real `recreate()` — and is the evidence this entry treats
+  as load-bearing for that requirement.
+- **Leaving Improve for another drawer destination and returning does not restore `Done` (or `Running`)** — it
+  shows Root's own honest empty state once the real work is finished (`Nothing can get better right now`, true
+  given the real data). `ImprovePage`'s `rememberSaveable` state (R-1063) protects against Activity recreation,
+  not against `OrtNavHost` disposing and recomposing `ImproveContent` on a destination switch — a `ui/navigation`
+  question (`OrtNavHost.kt`, WPRC02's ownership, outside this row) orthogonal to R-1067: the real background run
+  is never affected either way (it is not owned by any composition), only which sub-screen is shown on return.
+  Flagged, not fixed here.
+- Operator Pause reuses the engine's existing capture-priority yield rather than a new WorkManager-native pause
+  primitive (none exists) — not itself required by FR-REP, decided to keep the pre-existing UI control honest
+  now that its old mechanism (stalling the screen's own collector) no longer means anything.
+
+---
+
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
 
 ### 3e7cbf5f — WPTESTROBUST: R-1043 - NavSeedTest's searchFiltersOpen now waits for the tag instead of asserting immediately, and SettingsContentTest's fixed waitUntil(5_000) calls use a shared, generous timeout constant

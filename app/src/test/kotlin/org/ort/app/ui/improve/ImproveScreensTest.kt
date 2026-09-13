@@ -68,6 +68,31 @@ class ImproveScreensTest {
     }
 
     @Test
+    @Requirement("R-1067")
+    fun `R_1067_round2 waitingToResume reads Waiting to resume with the real count, never Improving or Paused`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveRunningScreen(
+                    state = ImproveRunningViewState(
+                        headline = "Field, Thu 3 Sep",
+                        doneCount = 5,
+                        totalCount = 12,
+                        paused = false,
+                        waitingToResume = true,
+                    ),
+                    onPause = {},
+                    onCancel = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Waiting to resume").assertExists()
+        composeTestRule.onNodeWithText("Field, Thu 3 Sep · 5 of 12").assertExists()
+        composeTestRule.onNodeWithText("Improving").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Paused").assertDoesNotExist()
+    }
+
+    @Test
     @Requirement("R-143")
     fun `R_143_improve_done_shows_measured_counts`() {
         composeTestRule.setContent {
@@ -133,6 +158,30 @@ class ImproveScreensTest {
 
         composeTestRule.onNodeWithText("Every recorded session is at tier 3", substring = true).assertExists()
         composeTestRule.onNodeWithText("T3", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1067")
+    fun `R_1067_round2 root shows a plain finished-run line with the real count, from real WorkInfo output`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveScreen(
+                    state = ImproveRootViewState(
+                        totalOverCount = 0,
+                        allTransmissionIds = emptyList(),
+                        currentTierLabel = "3",
+                        groups = emptyList(),
+                        everythingElseCount = 0,
+                        justFinished = JustFinishedRun(doneCount = 12, totalCount = 12),
+                    ),
+                    onDrawer = {},
+                    onImproveAll = {},
+                    onOpenGroup = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("A run finished while you were away — 12 of 12 overs processed.").assertExists()
     }
 
     @Test

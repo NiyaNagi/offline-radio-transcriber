@@ -23,6 +23,9 @@ import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
@@ -142,6 +145,25 @@ class ReaderActivityDestinationSmokeTest {
 
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val sessionId = "smoke-session"
+
+    /**
+     * register R-1067 (out-of-package, minimal, mechanical fix -- flagged in that register row's
+     * own builder report): `IMPROVE_RECORDS` destinations here now reach a real
+     * `org.ort.app.ui.improve.RealImproveRunner`, which starts an actual
+     * `org.ort.pipeline.reprocess.ReprocessWorker` through `WorkManager.getInstance(context)` --
+     * not auto-initialized under Robolectric (the same reason
+     * `org.ort.pipeline.digest.ProseDigestRunnerTest`,
+     * `org.ort.app.ui.improve.RealImproveRunnerTest` and
+     * `org.ort.app.ui.improve.ImproveContentActivityTest` each carry this identical setup). Without
+     * it, `R_350_improve_done_install_action_opens_settings_assets_for_a_real_missing_model_failure`
+     * (and any other case here reaching Improve's real run path) throws
+     * `IllegalStateException: WorkManager is not initialized properly` the instant it starts a run.
+     */
+    @Before
+    fun initWorkManager() {
+        val config = Configuration.Builder().setExecutor(SynchronousExecutor()).build()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+    }
 
     @Before
     fun seedSession(): Unit = runBlocking {

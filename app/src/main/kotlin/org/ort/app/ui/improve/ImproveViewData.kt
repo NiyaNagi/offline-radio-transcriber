@@ -27,7 +27,17 @@ public data class ImproveRootViewState(
     val currentTierLabel: String,
     val groups: List<ImproveGroupViewState>,
     val everythingElseCount: Int,
+    /** register R-1067 round 2: non-null only when a real reprocess run finished while nobody was
+     * on this screen to see it reach `Improve-Done` — built from the real, final
+     * `org.ort.pipeline.reprocess.ReprocessRunSnapshot.Finished` WorkManager itself still carries
+     * ([org.ort.pipeline.reprocess.ReprocessWorker]'s own stamped `WorkInfo.outputData`), never the
+     * richer per-category summary (that is process-memory only and does not survive being away
+     * when the run ended) — constitution I: a plain, real count, never a fabricated diff. */
+    val justFinished: JustFinishedRun? = null,
 )
+
+/** See [ImproveRootViewState.justFinished]'s own doc comment. */
+public data class JustFinishedRun(val doneCount: Int, val totalCount: Int)
 
 public data class ImproveSelectViewState(
     val group: ImproveGroupViewState,
@@ -47,6 +57,12 @@ public data class ImproveRunningViewState(
      * [paused], which is the operator's own Pause toggle. `FakeImproveRunner` never touches
      * `ReprocessStatus`, so this is `null` for every run that engine drives. */
     val autoPausedReason: String? = null,
+    /** register R-1067 round 2 (coordinator item 2b): true exactly while the real
+     * `org.ort.pipeline.reprocess.ReprocessRunSnapshot` observed for this run is `Waiting` —
+     * `WorkInfo.State.ENQUEUED`, honestly ambiguous between "not yet picked up" and "a stopped
+     * attempt WorkManager has requeued for retry" (see that class's own kdoc). The board must never
+     * claim live progress or read as done while this is true. */
+    val waitingToResume: Boolean = false,
 )
 
 public data class ImproveDoneViewState(

@@ -207,6 +207,34 @@ class ReprocessRunnerTest {
     }
 
     @Test
+    @Requirement("FR-REP-2", "FR-REP-9", "R-1067")
+    fun `R_1067_round4 a completed outcome clears the candidate flag and stamps the tier together`() = runBlocking {
+        // register R-1067 round 4 (coordinator review): a real device trace found exactly this
+        // pair torn apart -- isReprocessCandidate cleared, processedTier left null -- when the
+        // two writes were separate statements (`TransmissionDao.markProcessedAtTier`'s own kdoc
+        // has the full trace). This is the direct regression check for that one atomic write.
+        val txId = "TX-ATOMIC"
+        seedTransmission(txId, text = "old text")
+        writeAudioFixture(txId)
+        val engine =
+            FakeAsrEngine(FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "new text")))
+        val runner = ReprocessRunner(
+            db = db,
+            filesDir = filesDir,
+            currentTier = { Tier.T2 },
+            passFor = { tier ->
+                PassBFactory.create(filesDir, db, engine, AssetRef("fake-asr-model", "1"), "cpu", tier = tier)
+            },
+        )
+
+        runner.run(listOf(txId)).toList()
+
+        val after = db.transmissionDao().getById(txId)
+        assertEquals(false, after?.isReprocessCandidate)
+        assertEquals(Tier.T2, after?.processedTier)
+    }
+
+    @Test
     @Requirement("R-290", "FR-RUN-9", "FR-REP-11")
     fun `R_290_a_missing_retained_audio_file_fails_that_item_without_crashing_the_run`() = runBlocking {
         val missingAudioId = "TX-NO-AUDIO"
