@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPAUDX: RC02's session-audio export replaces the typed stub — a per-session slice of FR-STO-6, streamed, with a full provenance manifest)
 
-### <pending> — WPAUDX: `SessionAudioExport` replaces the WPDATA typed "unavailable" stub with a real per-session audio export — a streamed zip (over audio and/or the raw continuous archive) with a full provenance manifest, never buffering a whole file into memory
+### 3df61335 — WPAUDX: `SessionAudioExport` replaces the WPDATA typed "unavailable" stub with a real per-session audio export — a streamed zip (over audio and/or the raw continuous archive) with a full provenance manifest, never buffering a whole file into memory
 
 **Scope:** `:pipeline` only — `pipeline/src/main/kotlin/org/ort/pipeline/archive/SessionAudioExport.kt` (rewritten; the stub removed, no dead path left), `pipeline/src/main/kotlin/org/ort/pipeline/archive/SessionAudioExportManifest.kt` (new: the manifest model and its hand-rolled JSON writer), and their tests. No `:data` schema, UI, or `ExportCoordinator` touched.
 
