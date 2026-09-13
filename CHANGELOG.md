@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPMODLOG: model verification failures logged, honestly no longer silent)
 
-### <pending> — WPMODLOG R-1058: model verification failures are now logged, once per launch, closed vocabulary
+### e7be30ac — WPMODLOG R-1058: model verification failures are now logged, once per launch, closed vocabulary
 
 **Scope:** `core/src/main/kotlin/org/ort/core/assets/ModelFileVerifier.kt` (new
 `ModelVerificationFailureKind` on `ModelVerification.Failed`);
@@ -78,7 +78,7 @@ capture session already does; not a new gap this change introduces, and out of t
 to fix (would mean configuring `DiagnosticsLog` app-wide, a bigger change). Device/logcat
 confirmation is combined with R-1060's below, since both need the same no-token build.
 
-### <pending> — WPMODLOG R-1057: the asset-swap board names the real staged asset, not always "the lexicon"
+### 415d4b0f — WPMODLOG R-1057: the asset-swap board names the real staged asset, not always "the lexicon"
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureViewState.kt` (new `AssetSwapKind`,
 `AssetSwapViewState.kind`/`.assetLabel`), `FailureMapper.kt` (`assetSwapViewState` now computes and
@@ -105,12 +105,19 @@ the heading's `state.kind` branch to the old hardcoded `"Lexicon"`, confirmed th
 `R_1057 F21 a staged model...` test fails (1 failed, 39 passed) for the right reason, restored,
 confirmed green. `gradlew :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :app:detekt`
 — green.
-**Left open / not done:** the device re-capture constitution VIII requires for a screen change —
-staging a VAD from a file during a live session on `ort_audit_wpmodlog` at 1.0 and 2.0, plus a
-lexicon staging for contrast — is recorded separately in this session's report once captured (see
-this row's own evidence path); not yet captured at the time this entry was written.
+**Verified on device (constitution VIII):** own AVD `ort_audit_wpmodlog` (Pixel 6, API 34,
+1260×2772@420), a real (`HF_TOKEN`) build. Evidence at
+`%TEMP%\claude\...\scratchpad\wpmodlog-evidence\`: `05-models.png`/`06-picker.png` — a real
+Silero VAD file, pushed to `/sdcard/Download/` and installed through the actual system
+`OpenDocument` picker during the `overnight-live` scenario's live session; `07-after-pick.png`
+(1.0) and `08-staged-2x.png` (2.0) — the board reads *Installed, not yet active*, heading
+**MODEL** (not LEXICON), body *"Replacing Silero VAD under a live capture could change what the
+rest of tonight's session hears — for the VAD, even where each over is cut — with no record of
+where the line is."*, no clipping at either scale. `09-lexicon-1x.png`/`10-lexicon-2x.png` — the
+`asset-swap` debug scenario's own lexicon board for contrast: heading **LEXICON**, body still
+*"Replacing the lexicon under a live capture..."*, unchanged and correct at both scales.
 
-### <pending> — WPMODLOG R-1060: placeholder assets are marked durably, refused before native code, and a release build can never mark one
+### 858f1fb2 — WPMODLOG R-1060: placeholder assets are marked durably, refused before native code, and a release build can never mark one
 
 **Scope:** `core/src/main/kotlin/org/ort/core/assets/ModelFileVerifier.kt` (new
 `placeholderMarkerFile`/`recordPlaceholder`/`clearPlaceholder`, new `PLACEHOLDER` kind, `verify()`
@@ -155,9 +162,38 @@ passed), restored, confirmed green again. `gradlew :core:detekt :core:ktlintMain
 :pipeline:ktlintTestSourceSetCheck` — green (one `ReturnCount` detekt finding in the new `verify()`
 fixed by splitting the size check into its own `checkSize` helper, matching the file's own existing
 `verifyHash` split).
-**Left open / not done:** on-device confirmation (a no-token build's real app opening honestly,
-with R-1058's placeholder event in logcat) is recorded once captured on `ort_audit_wpmodlog`; not
-yet captured at the time this entry was written.
+**Verified on device:** same `ort_audit_wpmodlog` AVD. A genuinely no-token build (`HF_TOKEN`
+unset for that one `assemble` invocation, `-PortAllowMissingBundledAssets` default true — every
+other asset already cache-hit real, so only the gated `LLM_GEMMA3_1B` came out `missing:true`,
+the same shape the escape hatch produces for anyone lacking the licence, not just a fully offline
+machine), installed fresh (`-Clear`). `11-notoken-launch.png` — `MainActivity` opens onto
+onboarding, no crash. `12-logcat-launch-raw.txt` — filtered for
+`SIGABRT|Fatal signal|tombstone|Ort::Exception|AndroidRuntime|FATAL EXCEPTION`: no matches.
+`14-notoken-models.png` — Settings > Models reports the digest model honestly (*"marker present,
+bytes missing — 0 KB of 555 MB on disk · re-verified on next launch"*) while Whisper/Silero VAD
+stay genuinely active, never a false "installed". `16-ondevice-models-listing.txt` — the on-device
+`files/models/llm/gemma3-1b-it-int4.task.placeholder` marker itself, its exact content
+(`"this build does not carry a real asset for this destination (no-token/local build)"`) matching
+`ModelFileVerifier.recordPlaceholder`'s own text — written by the real installer on first launch,
+proving the mechanism reaches the actual device. The listing also shows a `.sha256` marker at the
+same path (confirmed to hold the *real* asset's genuine pinned digest, `e3d981c0...`) left by the
+`overnight-live` debug scenario's own "every model asset installed" fixture, loaded afterward for
+unrelated setup purposes — exactly the "a stale/fake marker with the real hash text at the same
+path" shape this fix exists for, and the Settings screen and `ModelFileVerifier.verify()` both
+still read it honestly rather than as installed, corroborating the fix live rather than only in a
+unit test.
+**Left open / not done:** confirming R-1058's `model_verification_failed` event actually lands in
+`pipeline.log` on device was attempted (`adb shell cmd jobscheduler run -f` to force the
+`ProseDigestRunner` work item) but not achieved this session — no `diagnostics-logs/` directory
+was ever created on this device, because nothing had called `DiagnosticsLog.configure()` yet (only
+`RealCaptureService`, at a **real** capture-session start, calls it; this session's live-session
+evidence above used the `overnight-live` scenario, which seeds fake data rather than starting a
+real foreground service, and the forced digest-work run likely never reached the verification
+check at all — `ProseDigestWorkRunner`'s own device-idle/charging gate almost certainly refused it
+first). The event itself is proven at the unit level for all three asset kinds (`DiagnosticsLogTest`,
+and the per-provider tests in `RealVadProviderTest`/`AsrEngineProvisioningTest`/
+`ProseDigestRunnerTest`); a full real-capture-session walk (setup completed, not scenario-seeded)
+would be needed to see the log line land on a real device, and is left to a follow-up session.
 
 ---
 
