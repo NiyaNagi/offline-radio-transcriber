@@ -32,6 +32,76 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPREPLIFE round 4: device evidence for the durability fix, merge, full gate)
+
+### WPREPLIFE round 4 — R-1067: device evidence for the checkpoint/DB durability fix and the real-group reattach, merged origin/main (R-1053/R-1043 now fixed), full gate green
+
+**Scope:** device evidence only (`wpreplife-evidence\round4\`, under the session scratchpad per the
+coordinator's own instruction — never a checkout); `CHANGELOG.md`; `results/coverage-matrix.md`
+(regenerated, `R-1067` now also covered by `ReprocessRunnerTest`).
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution I, VIII; AGENTS.md item 7. Register R-1067,
+coordinator round 4.
+
+**What changed — captures, an unplanned discovery, then the merge and gate:**
+
+1. **The kill-mid-run sequence, ending on Root with zero candidates, DB-verified before and after.**
+   `wpreplife-evidence\round4\db-before-after-clean.txt`: loaded `field-tier1` fresh, froze the run
+   at 6 of 12 via the operator Pause, queried the DB directly (`adb shell run-as org.ort.app sqlite3
+   databases/ort.db`) — the 6 done ids show `processedTier=T3` and `isReprocessCandidate=0`
+   **together**, no torn state, confirming the atomic `markProcessedAtTier` write from the code
+   entry above. `am kill` alone did not stop the (foreground) process; `am force-stop` did.
+   Reopened: the resumed attempt (same WorkSpec id, `run_attempt_count=2`) finished the remaining 6
+   for real. Root: "A run finished while you were away — 12 of 12 overs processed." directly above
+   "Nothing can get better right now." — no contradiction. Final DB query: all 12 ids
+   `processedTier=T3`, `isReprocessCandidate=0` (`kill-mid-run-root-clean.png`).
+2. **A reattached Running board showing its real group.** Disposed and recomposed `ImproveContent`
+   mid-run (drawer to Log and back, no Activity recreation) — the board read "Paused · All groups ·
+   6 of 12" (`reattach-real-group.png`), never the old generic "Improving," and never a false "0 of
+   0" — both the headline-threading fix (item 2) and the honest-starting-progress fix (item 3)
+   confirmed together in one capture.
+3. **An unplanned but real discovery, reported and flagged, not fixed here (out of this round's
+   ownership — `app/debug/**`, not `app/ui/improve/**`):** the first attempt at capture (1) used
+   `adb shell am start -n org.ort.app/.debug.ScenarioReaderActivity ...` to relaunch after the kill,
+   which restarts the whole process — and a manifest-registered debug-only `ContentProvider`,
+   `ActiveScenarioRepublishProvider` (register R-873), runs before any Activity on every such
+   restart and, whenever a scenario was ever loaded and never cleared, re-runs the **entire**
+   `Scenarios.load` (delete + re-insert every DB row for that scenario) rather than only
+   republishing the in-memory facets its own kdoc says it exists for. That reseed reverted the 6
+   already-completed ids back to their original fixture defaults *after* they were correctly
+   processed, producing exactly the contradiction pattern round 2 first found ("12 of 12 processed"
+   next to "6 overs can get better") — but this time from stale test-tooling, not the reprocessing
+   code. Diagnosed directly (`wpreplife-evidence\round4\db-before-after-kill.txt`, its own header
+   note has the full trace); confirmed by clearing the marker file
+   (`run-as org.ort.app rm -f shared_prefs/org.ort.app.debug.active_scenario.xml`) before the
+   relaunch and repeating the identical test, which produced the clean result in item 1 above.
+   Flagged as its own follow-up task (spawned this session) rather than fixed here.
+
+**Then, per the coordinator's own instruction:**
+- Merged `origin/main` — one conflict, in `CHANGELOG.md` (both sides' entries kept). Brings in
+  WPTESTROBUST's own fixes for the known flakes: R-1053 (`SettingsContentExportAndDebugDumpTest`'s
+  `CalledFromWrongThreadException`) and part of R-1043, both now merged and fixed on `main`.
+- Full local gate re-run twice from the merged tip. First run:
+  `./gradlew.bat dependencyRules platformGuards build` failed on exactly one test,
+  `CaptureStatusContentTest`'s own `R_172` case, with a Robolectric `ActivityController
+  .windowFocusChanged` `NullPointerException` — a file wholly outside this round's diff
+  (`app/ui/capture/**`). Re-ran `:app:smokeTestDebugUnitTest` (the task that failed) alone: green,
+  confirming a genuine environment flake, not a regression — reported here per the coordinator's
+  own "report it if it appears" standard, not silently retried away. Re-ran the full gate a second
+  time end to end: `BUILD SUCCESSFUL in 18m 29s`, no failures anywhere in the log (the named
+  R-1053/R-1043 flakes did not appear either). `-p buildSrc test` green. `spec_check.py` all 8
+  checks PASS. `coverageMatrix`/`coverageMatrixCheck` — 275/485, `R-1067` now also attributed to
+  `ReprocessRunnerTest`. `corpus pytest` green (one skip).
+
+**Left open / not done:**
+- The `ActiveScenarioRepublishProvider` over-reseeding defect (item 3 above) — flagged, not fixed,
+  out of this round's file ownership.
+- Device evidence for this round is not yet reviewed by the coordinator/lead against the
+  artboards — per constitution VIII this diff is not "done" until that review closes it.
+- Not pushed, per the coordinator's own instruction for this round.
+
+---
+
 ## 2026-09-13 (WPREPLIFE round 4: a real checkpoint/DB durability gap, the lost group label, the 0-of-0 board)
 
 ### WPREPLIFE round 4 — R-1067: an atomic DB write, resume-time reconciliation, an honest finished-while-away count, the real group label carried through reattach, an honest starting board
