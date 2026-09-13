@@ -32,7 +32,160 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-12 (WPNAV: IA-3 generalises the Log's own frequency-filter mechanism to a station, a curated set of overs and Capture's own Full log, all with a real back restore; IA-5 gives Search a drawer row; IA-6 links a transmission to its attributed station)
+## 2026-09-12 (WPUI: C10 the transport bar, replacing the plain live bar host-wide, and its own reversal of R-1006's stop-on-leave — the bar, not the screen, now owns playback)
+
+### <pending> — WPUI: the transport bar (C10) and the R-1006 reversal — the bar owns playback, so leaving a screen never stops it
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/TransportBar.kt` (new),
+`app/src/main/kotlin/org/ort/app/ui/audio/TransportPlaybackController.kt` (new),
+`app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (the pinned-bar construction/render
+site and the new `resolveTransportBarState` decision function), `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt`
+(`PlaybackSection`'s R-1006 stop-on-dispose removed, its `playing`/`positionFraction` seeded from
+the shared controller when one is in play, `togglePlayback` now also feeds the bar's
+callsign/duration on a successful play); matching tests under
+`app/src/test/kotlin/org/ort/app/ui/{components,audio,navigation,screens}/**`.
+**Not touched this round, and explicitly out of scope — see Left open**: Capture (N08), Recordings
+(RC01), Recording-Session (RC02), the `EARLIER_NIGHTS`→`RECORDINGS` drawer change, the FR-OBS-4
+label migration, and session deletion.
+
+**Requirements/ACs:** IA-1, IA-2, FR-UI-5, constitution IV (the live dot persists during playback
+so capture is never out of sight). Register R-1006 (`results/ui-audit/register.md` — status there
+is the lead's to update, not this entry's). R-1021's own rule (never match on the live label's
+text) is unaffected — the playback half of the bar carries no such label at all.
+
+**What changed:**
+- **`TransportBar` (new, `ui/components/TransportBar.kt`)**: one composable, two modes, matching
+  `design/canvas/Transport-Bar.dc.html` exactly. `TransportBarViewState.Live` delegates straight
+  to the existing `LiveBar` (states 1-3, unchanged pixels — nothing about the live rendering
+  changed, only what decides when to show it). `TransportBarViewState.Playback` (new, states 4-6)
+  renders the pause/play toggle (44dp target, reusing `Inspection.kt`'s own
+  `waveformControlGlyph`/`PauseGlyph`/`OrtIcons.play` pairing rather than a second hand-drawn
+  glyph), the `m:ss / m:ss` elapsed/total (mono, locale-independent — plain integer division,
+  never a formatted number per constitution II), a scrub track (44dp touch target around a 3dp
+  visual bar, reusing `Inspection.kt`'s own `scrubFraction`), the callsign (falls back to
+  "Unknown", never blank), a small live dot only while playing during a real capture session
+  (state 5), and the `×` clear control — drawn, per the artboard, only in the paused state (a
+  bar mid-play has no dismiss control; pause first). `TransportBarViewState.Hidden` renders
+  nothing. The artboard's own "tap → that transmission" is scoped to the callsign specifically,
+  not the whole row — the row also hosts three other independent 44dp targets, and a single
+  row-wide `clickable`/`clearAndSetSemantics` (the shape `LiveBar`'s own single-target row uses)
+  would either swallow their touches or erase their individual descriptions from the
+  accessibility tree entirely (confirmed by trying it first and watching
+  `TransportBarTest`'s glyph-tag assertions fail against a merged tree).
+- **`TransportPlaybackController` (new, `ui/audio/TransportPlaybackController.kt`)**: wraps the
+  single `TransmissionAudioPlayer` instance `OrtNavHost` has always owned, implementing the same
+  interface by delegation so every existing call site typed to that plain interface —
+  `TransmissionDetailScreen`/`TransmissionDetailContent`, `NavHostBody`/`NavHostDispatch` — keeps
+  compiling and behaving unchanged; only `OrtNavHost`'s own construction site changes what
+  concrete instance flows through. Every interface call updates the controller's own observable
+  state (`loadedTransmissionId`, `callsignLabel`, `durationSeconds`, `isPlayingState`,
+  `positionFractionState`) as a side effect, regardless of which screen made the call, so the bar
+  and whichever screen is on top never disagree about what is playing. `poll()` is the one
+  playback poll loop, hoisted to `OrtNavHost` (a `LaunchedEffect` running every 150ms regardless of
+  destination) rather than living per-screen as it used to — this is what lets end-of-track
+  detection and position refresh keep working while the loaded transmission's own detail screen is
+  not even on screen. `clear()` is the bar's own named `×` action (same effect as `stop()`, a
+  distinct entry point so a test can name what it asserts without leaning on the interface
+  method's more generic doc comment).
+- **`OrtNavHost.kt`**: `audioPlayer` is now a `TransportPlaybackController` wrapping the same
+  `RealTransmissionAudioPlayer` construction as before (one line changed at the construction site);
+  a new `resolveTransportBarState(transportPlayback, liveBar, embedsOwnLiveBar, openTransmissionId)`
+  (pulled out to a plain, `internal`, directly-unit-testable function — the same "pull the
+  decision out of the composable" discipline this file's own `bannerClearance` already
+  established) replaces the inline `shownLiveBar`/`LiveBar(...)` block that used to render the
+  pinned bar directly. The decision: playback wins over live whenever something is loaded
+  (`TransportBarStateResolutionTest`'s own "one mode at a time" case) *except* on the playing
+  transmission's own detail screen (hidden there — that screen already shows full playback
+  controls of its own); live shows only when nothing is loaded, and only on a destination that
+  does not already embed its own copy (`Now`/`Capture`, IA-2, unchanged from R-022's original
+  rule) — critically, *unlike* live, **playback still shows on `Now`/`Capture`**, since it is a
+  different mode the artboard's own "playing while capturing" state (5) requires to be visible
+  there too.
+- **R-1006 reversal, `TransmissionDetailScreen.kt`'s `PlaybackSection`**: the
+  `DisposableEffect(detail.id) { onDispose { player.stop() } }` this function added for R-1006 is
+  removed outright, not narrowed — both shapes it used to cover (a genuine navigate-away, and a
+  same-screen switch to a different over's detail before that over's own play control is ever
+  tapped) are now cases the artboard requires playback to survive. What still stops playback is
+  unchanged: reaching the over's own recorded end (the poll loop, untouched — a real `AudioTrack`
+  never flips `playState` on its own) and the bar's own `×`; neither lives in this screen anymore,
+  because the bar, not the screen, owns the decision. `playing`/`positionFraction` now seed from
+  the shared `TransportPlaybackController` (via an `as?` check — `null` for every existing test
+  that passes a plain `FakeTransmissionAudioPlayer`, so no behaviour change for any caller that
+  does not opt into the controller) so a still-playing transmission returned to reads "Pause"
+  immediately rather than resetting to a stale "Play". `togglePlayback` also calls
+  `setNowPlayingMeta` on a successful play, since `TransmissionAudioPlayer.play()` itself has no
+  way to carry a callsign or duration to the bar.
+
+**Verified:**
+- `TransportPlaybackControllerTest` (11 tests, plain JVM, no Robolectric) — play/pause/resume/
+  seek/clear/poll, end-of-track clearing, stale-id metadata rejection, "a second play stops
+  whatever was loaded". All pass.
+- `TransportBarTest` (10 tests, Robolectric) — hidden/live/playback dispatch, pause vs. play
+  glyph, `×` present only when paused, the toggle firing its own action rather than the row's,
+  the capturing dot's visibility, the "Unknown" fallback, scrub reporting a `0f..1f` fraction, the
+  44dp targets, and `formatTransportBarTime`. All pass.
+- `TransportBarLayoutTest` (5 tests, Robolectric, `@GraphicsMode(NATIVE)` at 2.0) — no overlap
+  between the toggle/scrub/callsign at 390dp and 480dp, font scale 1.0 and 2.0, and the row's own
+  44dp floor. All pass. **Not proven by any Robolectric test in this repo** (per
+  `ui/components/SafeArea.kt`'s own doc comment, unchanged by this round): that the bar clears the
+  real navigation-bar inset — `WindowInsets.navigationBars` reads zero under this project's
+  Robolectric setup by every method that file's own investigation tried. Structurally unchanged
+  from before this round: the bar occupies the exact `Column` slot the plain `LiveBar` it replaces
+  already did, under the same `.safeAreaBottomPadding()` the host applies once to that whole
+  column — a device dump is the only evidence that would close this, not written here.
+- `TransportBarStateResolutionTest` (9 tests, plain JVM) — every branch of
+  `resolveTransportBarState`: nothing loaded and no live session hides the bar; a live session
+  shows live; `Now`/`Capture` hide the host's own live copy (IA-2); playback wins over live and
+  shows even on `Now`/`Capture`; the playing transmission's own screen hides the bar; a
+  *different* open transmission still shows it; callsign/position/capturing-dot carry through
+  correctly, including no dot while paused. All pass.
+- `PlaybackControlDetailScreenTest` — the R-1006 suite, two of its three tests replaced with the
+  opposite assertion (`R_1006_leaving_the_screen_mid_playback_does_not_stop_the_players_audio`,
+  `R_1006_showing_a_different_over_without_playing_it_does_not_stop_the_first_ones_playback`),
+  the third (reaching the recorded end) unchanged. **Discrimination proven**: temporarily restored
+  the removed `DisposableEffect`, confirmed both new tests fail
+  (`expected:<0> but was:<1>` on `stopCallCount`), reverted, confirmed both pass again.
+- Full regression, `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.navigation.*" --tests "org.ort.app.ui.screens.*" --tests "org.ort.app.ui.components.*" --tests "org.ort.app.ui.audio.*"`
+  — BUILD SUCCESSFUL, every test green (~1000+ tests across those four packages, including
+  `TransmissionDetailScreenTest`, `TransmissionDetailScreenCorrectionTest`'s FR-OBS-4 suite,
+  `DrawerContentTest`, every `*ScreenTest` in `ui.screens`).
+- The Compose-idle-poisoning-isolated classes this project runs under a separate task
+  (`app/build.gradle.kts`'s own `smokeTestDebugUnitTest`) run and pass individually:
+  `NavSeedTest` (15/15), `OrtNavHostDestinationDispatchTest` (26/26 — including every
+  `R_910 exactly one live bar on <destination>` case across all ten destinations, `R_957`'s live-bar
+  boundary geometry, and `R_1007`'s tap-opens-Live-Monitor), `ReaderActivityDestinationSmokeTest`
+  (30/30 — every destination composing and surviving recreation, `R_333`'s back-pop ordering,
+  `R_276`'s frequency-overs-link/back-restore), `ReaderAccessibilityTest` (3/3),
+  `TransmissionDetailContentTest` (17/17, a real `OrtDatabase`-backed integration test of the
+  exact screen this round edited), `FailureHostTest` (9/9).
+- `./gradlew dependencyRules platformGuards` — OK (20 modules, no forbidden edge; no analytics/
+  telemetry, `INTERNET` declared by `:net` only).
+- `python tools/spec-check/spec_check.py` — OK, all 8 checks pass.
+- `./gradlew -p buildSrc test` — BUILD SUCCESSFUL.
+- `./gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true` — BUILD
+  SUCCESSFUL in 13m 47s (1109 actionable tasks), on this shared, heavily-loaded workstation —
+  covers the whole gate: dependency-rule/platform-guard checks, ktlint, detekt, lint, every
+  module's unit tests (including `:app`'s ~1200-test `testDebugUnitTest` and the isolated
+  `smokeTestDebugUnitTest` classes above, run again here as part of `check`), and both the debug
+  and release APK assembly.
+
+**Left open / not done:** The full WPUI brief also asked for Capture (N08, merging N04/N06/N07
+into one surface with the over-audio budget warning), Recordings (RC01, absorbing DG03, both
+storage-budget policies, filter chips), Recording-Session (RC02, coverage timeline, per-over play/
+label/delete with reclaimed-space-before-confirming), the `EARLIER_NIGHTS`→`RECORDINGS` drawer
+row, the FR-OBS-4 label/rating Room migration, and a session-deletion path satisfying
+FR-STO-3a/3b/3e. None of that is built. Reason, stated plainly rather than silently dropped: this
+is a genuinely separate, large scope from the transport bar — RC02's delete action alone requires
+a new transactional deletion subsystem with no existing code to reuse (confirmed by investigation:
+no manual over-audio deletion path exists anywhere in `:app`/`:pipeline` today), and N08/RC01/RC02
+each need their own artboard-accurate layout work, Robolectric bounds tests and tour captures on
+top of that. Attempting all of it in one pass risked exactly the kind of half-finished, unverified
+work AGENTS.md's working agreement warns against. No tour capture was taken this round (nothing
+visual changed for the live-bar rendering path — it is the same `LiveBar` composable, unchanged
+pixels, dispatched through a new decision function — and no scenario/seed exists yet to put the
+bar into its playback mode for a tour step; building that seam was judged out of scope for this
+slice). `design/design-intent.md`'s C10 row is left for the lead to update, per this package's own
+instructions.
 
 ### 7584d1cc — WPNAV: one filter model for the Log (IA-3), Search reachable from anywhere via the drawer (IA-5), a transmission's attributed station one tap away (IA-6)
 

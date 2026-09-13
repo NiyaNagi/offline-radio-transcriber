@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -44,6 +43,7 @@ import kotlinx.coroutines.launch
 import org.ort.app.ui.audio.PlaybackOutcome
 import org.ort.app.ui.audio.PlaybackRate
 import org.ort.app.ui.audio.TransmissionAudioPlayer
+import org.ort.app.ui.audio.TransportPlaybackController
 import org.ort.app.ui.audio.WaveformSummary
 import org.ort.app.ui.components.ActionBar
 import org.ort.app.ui.components.Badge
@@ -578,26 +578,36 @@ private fun RejectedTranscriptSection(detail: TransmissionDetailViewState) {
 private fun PlaybackSection(detail: TransmissionDetailViewState, player: TransmissionAudioPlayer) {
     val scope = rememberCoroutineScope()
     var unavailableReason by remember(detail.id) { mutableStateOf<String?>(null) }
-    var playing by remember(detail.id) { mutableStateOf(false) }
-    var positionFraction by remember(detail.id) { mutableStateOf(0f) }
+    // C10 (reverses R-1006 — this function's own doc comment below): seeded from the shared
+    // [TransportPlaybackController] when [player] is one, so a still-playing transmission
+    // returned to reads "Pause" immediately rather than a stale "Play" — see
+    // [initialPlaybackState]'s own doc comment for exactly what this does and does not change.
+    val controller = player as? TransportPlaybackController
+    val (initialPlaying, initialPosition) = remember(detail.id) { initialPlaybackState(controller, detail.id) }
+    var playing by remember(detail.id) { mutableStateOf(initialPlaying) }
+    var positionFraction by remember(detail.id) { mutableStateOf(initialPosition) }
     var rate by remember(detail.id) { mutableStateOf(PlaybackRate.NORMAL) }
     var waveform by remember(detail.id) { mutableStateOf<WaveformSummary?>(null) }
 
-    // R-1006 (register): `stop()` existed and was correct but nothing ever called it — leaving
-    // this screen (a back navigation, or a drill-in to a different over reusing the same
-    // composable slot) left the `AudioTrack` running with no control left on screen able to reach
-    // it. Keyed on `detail.id` alone (not `playing`, unlike the poll loop below) so this disposes
-    // — and therefore stops whatever was playing — both on a genuine leave and on a same-screen
-    // switch to a different over, before that over's own state is even set up.
-    // R-1006 (register): `stop()` existed and was correct but nothing ever called it — leaving
-    // this screen (a back navigation, or a drill-in to a different over reusing the same
-    // composable slot) left the `AudioTrack` running with no control left on screen able to reach
-    // it. Keyed on `detail.id` alone (not `playing`, unlike the poll loop below) so this disposes
-    // — and therefore stops whatever was playing — both on a genuine leave and on a same-screen
-    // switch to a different over, before that over's own state is even set up.
-    DisposableEffect(detail.id) {
-        onDispose { player.stop() }
-    }
+    /*
+     * R-1006 (register): `stop()` existed and was correct but nothing ever called it — leaving
+     * this screen (a back navigation, or a drill-in to a different over reusing the same
+     * composable slot) left the `AudioTrack` running with no control left on screen able to reach
+     * it.
+     *
+     * C10 (`design/canvas/Transport-Bar.dc.html`) REVERSES that fix: "the bar owns playback ...
+     * leaving a screen never stops the audio; × or the end of the over does." The
+     * `DisposableEffect(detail.id) { onDispose { player.stop() } }` this function used to have
+     * *was* the stop-on-leave this reverses — removed outright, not merely narrowed, because both
+     * of the shapes it used to cover (a genuine navigate-away, and a same-screen switch to a
+     * different over's detail before that over's own play control is ever tapped) are now cases
+     * the artboard requires playback to survive. What still stops playback is unchanged: reaching
+     * the over's own recorded end (the poll loop just below, untouched) and the transport bar's
+     * own `×` (`TransportBarTest.kt`, C10's own suite) — neither lives in this screen any more,
+     * because the bar, not the screen, now owns the decision (`TransportPlaybackController`).
+     * `PlaybackControlDetailScreenTest.kt`'s own two replaced tests assert the opposite of what
+     * they asserted before this round; its third (end-of-track) is untouched and still passes.
+     */
 
     LaunchedEffect(detail.id, playing) {
         while (playing) {
@@ -689,8 +699,31 @@ private fun PlaybackSection(detail: TransmissionDetailViewState, player: Transmi
 }
 
 /**
+ * C10: [PlaybackSection]'s own seed for its local `playing`/`positionFraction` — a plain function
+ * (pulled out, the same "pull the decision out of the composable" precedent this file's own
+ * [org.ort.app.ui.screens.highlightedTranscript] and `Inspection.kt`'s `scrubFraction` already
+ * set) so it is directly testable. `false`/`0f` unless [controller] is genuinely playing
+ * [transmissionId] right now — a plain [org.ort.app.ui.audio.FakeTransmissionAudioPlayer] (every
+ * existing test that does not opt into the controller) makes [controller] `null` here, so this
+ * returns exactly what the two literal defaults used to, unchanged.
+ */
+internal fun initialPlaybackState(
+    controller: TransportPlaybackController?,
+    transmissionId: String,
+): Pair<Boolean, Float> = if (controller?.loadedTransmissionId == transmissionId) {
+    controller.isPlayingState to controller.positionFractionState
+} else {
+    false to 0f
+}
+
+/**
  * The waveform's own play/pause tap, pulled out of [PlaybackSection] to keep that composable under
  * detekt's `LongMethod` threshold — a plain data move, not a behaviour change.
+ *
+ * C10: when [player] is the shared [TransportPlaybackController], a
+ * successful [TransmissionAudioPlayer.play] also gets told this transmission's callsign and
+ * duration right away — [TransmissionAudioPlayer.play] itself has no way to carry either, so the
+ * transport bar would otherwise show "Unknown" and `0:00` until its own next poll tick.
  */
 private suspend fun togglePlayback(
     detail: TransmissionDetailViewState,
@@ -708,6 +741,11 @@ private suspend fun togglePlayback(
         PlaybackOutcome.Played -> {
             onUnavailableReason(null)
             onPlaying(true)
+            (player as? TransportPlaybackController)?.setNowPlayingMeta(
+                transmissionId = detail.id,
+                callsignLabel = detail.attribution.stationId,
+                durationSeconds = detail.durationLabel.removeSuffix("s").toDoubleOrNull() ?: 0.0,
+            )
         }
 
         is PlaybackOutcome.Unavailable -> {
