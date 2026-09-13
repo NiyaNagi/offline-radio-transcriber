@@ -494,13 +494,20 @@ public class RigSupervisor(
     private fun declareStaleFromSilence(silentSinceWallMillis: Long) {
         healthStaleTimeoutJob = null
         val connected = RigStatus.state as? RigStatus.State.Connected ?: return
-        // R-1062 follow-up: the generic link-silence timeout is also a squelch-authority loss --
-        // its own bound (5 poll cycles / a 5-10s floor, see defaultHealthStaleTimeoutMillis) is
-        // far looser than squelchStalenessBoundMillis's own, so in practice the tighter
-        // squelch-specific watchdog almost always fires first; this call is the honest backstop
-        // for whatever path declares silence, not a duplicate of it.
         cancelSquelchStaleWatchdog()
-        emitSquelchLoss(clock.monotonicNanos())
+        // R-1062 round 3: the generic link-silence timeout is a squelch-authority loss too, but
+        // ONLY for a descriptor that actually polls -- a push-only descriptor with no poll at all
+        // is the exact case round 3 fixed the watchdog for (a quiet radio genuinely sends
+        // nothing, by design, so silence proves nothing), and this backstop must honour that same
+        // rule identically, or it would silently reintroduce the false loss the watchdog fix just
+        // removed via a second path. For a descriptor that does poll, this bound (5 poll cycles /
+        // a 5-10s floor, see defaultHealthStaleTimeoutMillis) is far looser than
+        // squelchStalenessBoundMillis's own, so in practice the tighter squelch-specific watchdog
+        // almost always fires first; this is the honest backstop for whatever silence this path
+        // alone catches, not a duplicate of it.
+        if (activeDescriptor?.poll != null) {
+            emitSquelchLoss(clock.monotonicNanos())
+        }
         val base = lastKnownConnected ?: connected
         RigStatus.stale(base, silentSinceWallMillis, issue = RigHealthIssue.TIMEOUT)
         DiagnosticsLog.logRigStale(silentSinceWallMillis)
@@ -634,25 +641,37 @@ public class RigSupervisor(
     }
 
     /**
-     * R-1062 follow-up (FR-SEG-5 / FR-RUN-17): restarts the "declare squelch stale" countdown —
-     * cancelling whatever was already running first, so only the latest fresh reading's own
-     * countdown is ever live. Any FRESH [RigState] restarts it, not only one carrying squelch
-     * content: proving the transport is still talking at all is exactly the fact this watchdog
-     * needs, since [squelchFusionEligible] already guarantees that "talking at all" implies
-     * "would report squelch within [squelchStalenessBoundMillis], if there were anything to
-     * report" for both the push and poll cases it accepts (see that method's own kdoc for why a
-     * poll response is a genuine heartbeat, changed or not).
+     * R-1062 round 3 (FR-SEG-5 / FR-RUN-17, constitution IV): restarts the "declare squelch
+     * stale" countdown — cancelling whatever was already running first, so only the latest fresh
+     * reading's own countdown is ever live. Any FRESH [RigState] restarts it, not only one
+     * carrying squelch content: proving the transport is still talking at all is what this
+     * watchdog needs, since a poll cycle re-emits state on schedule regardless of content
+     * ([DescriptorRigModule.applyMatch] has no dedup).
      *
-     * A no-op for an ineligible connection (no descriptor yet, or [squelchFusionEligible] false)
-     * — there is nothing to keep alive in that case, matching [emitSquelchUnionIfChanged]'s own
-     * gate.
+     * **A no-op unless the descriptor actually polls** ([RigDescriptor.poll] non-null) — this is
+     * round 3's own fix. Round 2 gave every push-capable descriptor a flat, short bound, on the
+     * reasoning that a quiet radio sending nothing "looked like" silence worth watching. That
+     * reasoning was wrong for the real TH-D75A descriptor, which declares **both** `unsolicited`
+     * *and* a 2000 ms `poll` fallback: `DescriptorRigModule`'s poll loop writes every command for
+     * a cycle back-to-back, then sleeps the *whole* interval before writing the next cycle (see
+     * that class's own `startLoops`), so the natural gap between one cycle's last reply and the
+     * next cycle's first reply is genuinely close to the interval itself, plus real reply
+     * latency — round 2's watchdog was firing on this ordinary rhythm, cutting an over that was
+     * never actually interrupted (CON-SEG-1: unlike every other bug, this one cannot be
+     * reprocessed away). A push-only descriptor with **no** poll fallback has no natural heartbeat
+     * at all — a quiet radio with nothing to report sends nothing, by design
+     * (`docs/reference/th-d75a-cat.md`'s own "`AI` gives push, not poll" finding) — so silence
+     * from it is not evidence of anything, and this watchdog must not run for it at all. Loss for
+     * such a descriptor comes only from the transport-lost and disconnect paths (still exactly as
+     * before), unless a future descriptor adds a real heartbeat command — which this class does
+     * not do today, and this comment says so explicitly rather than silently assuming one exists.
      */
     private fun restartSquelchStaleWatchdog() {
         squelchStaleTimeoutJob?.cancel()
         squelchStaleTimeoutJob = null
-        val descriptor = activeDescriptor ?: return
         if (!squelchFusionEligible()) return
-        val boundMillis = squelchStalenessBoundMillis(descriptor)
+        val pollIntervalMs = activeDescriptor?.poll?.intervalMs ?: return
+        val boundMillis = squelchStalenessBoundMillis(pollIntervalMs)
         squelchStaleTimeoutJob = scope.launch {
             delay(boundMillis)
             squelchStaleTimeoutJob = null
@@ -666,40 +685,40 @@ public class RigSupervisor(
     }
 
     /**
-     * R-1062 follow-up (FR-SEG-5 / FR-RUN-17): how long squelch authority may go unrefreshed
-     * before [restartSquelchStaleWatchdog] declares it lost — derived from the same descriptor
-     * shape [squelchFusionEligible] already reads, so the two can never disagree about which case
-     * a descriptor falls into.
+     * R-1062 round 3 (FR-SEG-5 / FR-RUN-17): how long squelch authority may go unrefreshed, for a
+     * descriptor with a genuine poll heartbeat, before [restartSquelchStaleWatchdog] declares it
+     * lost. Only ever called with [pollIntervalMs] from a real [RigDescriptor.poll] — see that
+     * method's own kdoc for why a push-only descriptor never reaches this at all.
      *
-     * - **Push** ([RigDescriptor.unsolicited] present): there is no natural heartbeat — a quiet
-     *   radio with nothing to report sends nothing at all, by design (`docs/reference/th-d75a-cat.md`'s
-     *   own "AI gives push, not poll" finding). [PUSH_SQUELCH_STALENESS_MARGIN_MILLIS] is
-     *   therefore not a measured cadence but a stated bound on "how long a genuinely hung link
-     *   could masquerade as a merely-quiet one" — 2000 ms, chosen to sit comfortably above
-     *   [DescriptorRigModule]'s own per-line read timeout (1000 ms, so a couple of ordinary
-     *   retries never trip it) while being far tighter than [defaultHealthStaleTimeoutMillis]'s
-     *   generic 5-poll-cycle/10s bound, whose purpose is coarser (is the link alive at all, not
-     *   specifically "is squelch still trustworthy"). A false "stale" during genuine radio
-     *   silence is harmless: VAD alone produces no segment during silence either, so the only
-     *   real cost is the next transmission being VAD-only instead of fused, and fusion resumes
-     *   the instant the rig speaks again (`Segmenter`'s own "reconnect resumes fusion" rule).
-     *   Confirming this margin against the real TH-D75A is exactly the open hardware check this
-     *   task's report names.
-     * - **Poll** (`squelchFusionEligible` already requires `intervalMs <=`
-     *   [MAX_SQUELCH_CORRELATION_SKEW_MILLIS] for this branch to be reachable at all): a poll
-     *   descriptor has a genuine heartbeat — every cycle re-emits state, changed or not
-     *   ([DescriptorRigModule.applyMatch] has no dedup) — so [SQUELCH_STALENESS_POLL_MARGIN_MULTIPLIER]
-     *   × its own interval tolerates exactly one missed cycle from ordinary jitter without
-     *   falsely declaring loss, the same reasoning `squelchFusionEligible`'s own bound already
-     *   applies, at a tighter margin than [HEALTH_STALE_POLL_CYCLES] since squelch fusion's own
-     *   tolerance (FR-RUN-17's 250 ms) is already far tighter than link health's.
+     * **The bound is `[pollIntervalMs] × [SQUELCH_STALENESS_POLL_MARGIN_MULTIPLIER]`, and here is
+     * the arithmetic that multiplier has to survive**, worked out against the real TH-D75A
+     * descriptor and `DescriptorRigModule`'s actual poll loop (`bands=[0,1]`, `perBand=[FQ, BY]`,
+     * so 4 writes per cycle, issued back-to-back with no wait between them, before the loop
+     * sleeps [pollIntervalMs] and repeats):
+     * - Every reply lands at write-time + its own round-trip latency. Modelling a realistic link
+     *   (≥40 ms base, occasionally another ~300 ms of jitter — Bluetooth SPP's own worst case,
+     *   per this task's own report) puts any single reply's latency in roughly `[40, 340]` ms.
+     * - This watchdog restarts on *every* fresh reply, so the *last* restart in cycle N happens
+     *   at cycle N's own write-time + that cycle's *slowest* reply (up to 340 ms) — the earliest
+     *   the *next* restart can happen is cycle N+1's write-time (exactly [pollIntervalMs] later)
+     *   plus that cycle's *fastest* reply (as little as 40 ms).
+     * - **Worst-case real gap between restarts** is therefore `[pollIntervalMs] + 340 − 40` =
+     *   `[pollIntervalMs] + 300` ms — for the TH-D75A's 2000 ms interval, up to 2300 ms, **already
+     *   above the flat 2000 ms bound round 2 used**, which is exactly the defect this round fixes.
+     * - `× 2` gives 4000 ms against that 2300 ms worst case — 1700 ms (74%) of headroom above the
+     *   worst realistic single-cycle gap this task's own model produces, comfortably absorbing
+     *   real-world variance beyond that model (a slower Bluetooth SPP link, an occasional dropped
+     *   reply) while still declaring a link that has missed *two full cycles* — genuinely
+     *   abnormal — lost within a bounded time. `AC_69`-style precision at the 250 ms grade
+     *   [MAX_SQUELCH_CORRELATION_SKEW_MILLIS] gives fresh, on-time data is not what this bound is
+     *   for; it exists only to catch a link that has actually gone quiet.
+     * - `RigSupervisorSquelchTest`'s realistic-latency cases drive this arithmetic directly
+     *   against the real bundled descriptor and assert zero false losses over 30 s of continuous
+     *   squelch-open virtual time; confirming the margin against the real hardware (not just this
+     *   modelled latency range) is this task's own named hardware check.
      */
-    private fun squelchStalenessBoundMillis(descriptor: RigDescriptor): Long = if (descriptor.unsolicited != null) {
-        PUSH_SQUELCH_STALENESS_MARGIN_MILLIS
-    } else {
-        (descriptor.poll?.intervalMs ?: PUSH_SQUELCH_STALENESS_MARGIN_MILLIS) *
-            SQUELCH_STALENESS_POLL_MARGIN_MULTIPLIER
-    }
+    private fun squelchStalenessBoundMillis(pollIntervalMs: Long): Long =
+        pollIntervalMs * SQUELCH_STALENESS_POLL_MARGIN_MULTIPLIER
 
     private companion object {
         const val UNBANDED_LABEL = "-"
@@ -708,9 +727,6 @@ public class RigSupervisor(
          * that decides whether a rig's squelch correlation is trustworthy enough to fuse
          * (FR-SEG-5). */
         const val MAX_SQUELCH_CORRELATION_SKEW_MILLIS = 250L
-
-        /** See [squelchStalenessBoundMillis]'s own kdoc for the full reasoning and its source. */
-        const val PUSH_SQUELCH_STALENESS_MARGIN_MILLIS = 2_000L
 
         /** See [squelchStalenessBoundMillis]'s own kdoc for the full reasoning and its source. */
         const val SQUELCH_STALENESS_POLL_MARGIN_MULTIPLIER = 2L

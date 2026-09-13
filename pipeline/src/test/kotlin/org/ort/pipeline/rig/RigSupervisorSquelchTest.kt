@@ -28,6 +28,7 @@ import org.ort.rig.descriptor.TransportSpec
 import org.ort.rig.descriptor.UnsolicitedSpec
 import org.ort.rig.fakes.FakeRigTransport
 import org.ort.testing.Requirement
+import kotlin.random.Random
 
 private const val TEST_RIG_ID = "test-squelch-rig"
 
@@ -48,6 +49,22 @@ private suspend fun awaitBandSquelch(bandName: String, squelchOpen: Boolean, tim
             delay(10)
         }
     }
+}
+
+/**
+ * R-1062 round 3: scripts the real `kenwood-thd75a.json` descriptor's own poll replies for both
+ * of its declared bands (`FQ {band}`/`BY {band}` -- see `DescriptorRigModule.startLoops`'s poll
+ * loop for the exact wire strings this must match) -- band 0's squelch per [bandAOpen], band 1
+ * always closed, frequencies arbitrary but well-formed (10-digit Hz, matching the descriptor's
+ * own `expect` pattern). [FakeRigTransport.scriptReply] resends the same queued reply on every
+ * matching [FakeRigTransport.write], so this correctly models "every poll cycle reports the same
+ * value" for as long as the test lets the poll loop keep running.
+ */
+private fun FakeRigTransport.scriptPerBandReplies(bandAOpen: Boolean) {
+    scriptReply("FQ 0", "FQ 0,0014250000")
+    scriptReply("BY 0", "BY 0,${if (bandAOpen) 1 else 0}")
+    scriptReply("FQ 1", "FQ 1,0014300000")
+    scriptReply("BY 1", "BY 1,0")
 }
 
 /**
@@ -117,6 +134,42 @@ class RigSupervisorSquelchTest {
             patterns = listOf(PatternSpec(expect = "^FQ(\\d{10})$", map = mapOf("frequencyHz" to "$1"))),
         ),
     )
+
+    /** R-1062 round 3: no `unsolicited` at all -- a pure poll rig, fast enough ([intervalMs]
+     * default 100ms) to be [RigSupervisor.squelchFusionEligible], with a genuine poll heartbeat
+     * `restartSquelchStaleWatchdog` can watch. */
+    private fun pollOnlySquelchDescriptor(intervalMs: Long = 100): RigDescriptor = RigDescriptor(
+        schemaVersion = 1,
+        id = TEST_RIG_ID,
+        displayName = "Poll-Only Squelch Rig",
+        transports = listOf(TransportSpec(kind = "usb_serial", capabilities = listOf("SQUELCH_STATE"))),
+        poll = PollSpec(
+            intervalMs = intervalMs,
+            commands = listOf(CommandSpec(send = "BY", expect = "^BY(\\d)$", map = mapOf("squelchOpen" to "$1"))),
+        ),
+    )
+
+    /** The real bundled TH-D75A descriptor's own rig id, driven through the production
+     * [org.ort.pipeline.rig.bundledDescriptorById] default resolver -- never a hand-rolled stand-in
+     * -- for R-1062 round 3's realistic-latency cases. */
+    private fun kenwoodConfig(transportKind: RigTransportKind = RigTransportKind.USB_SERIAL) = CaptureConfiguration(
+        mode = CaptureMode.USB_RADIO,
+        selectedInputId = "usb-1",
+        rigId = "kenwood-thd75a",
+        rigTransportKind = transportKind,
+    )
+
+    /** [RigSupervisor] with the real, production default `descriptorForId` (`::bundledDescriptorById`)
+     * -- unlike [newSupervisor], which always substitutes a hand-rolled test descriptor for
+     * [TEST_RIG_ID]. */
+    private fun newSupervisorForBundledDescriptor(
+        transport: FakeRigTransport,
+        testScope: CoroutineScope,
+    ): RigSupervisor {
+        val s = RigSupervisor(transportFactory = RigTransportFactory { _, _, _ -> transport }, scope = testScope)
+        supervisor = s
+        return s
+    }
 
     private fun newSupervisor(
         transport: FakeRigTransport,
@@ -279,25 +332,35 @@ class RigSupervisorSquelchTest {
 
     @Test
     @Requirement("FR-SEG-5", "R-1062", "FR-RUN-17")
-    fun `R_1062 squelch staleness past the bound emits a loss even while the link is otherwise healthy`() = runTest {
+    fun `R_1062 a genuinely dead polled link reverts to VAD-only past its own derived bound`() = runTest {
+        // Round 3 (coordinator finding): a push-capable descriptor with NO poll fallback has no
+        // natural heartbeat at all -- a quiet radio genuinely sends nothing, by design -- so the
+        // staleness watchdog must not run for one (see the push-only 30s-silence case below).
+        // This test proves the OTHER half still works: a descriptor that DOES poll, with its
+        // link genuinely gone (no more replies ever, matching R_1015's own established
+        // "pushUnsolicited once, then silence" pattern for a transport that stays nominally
+        // Open but stops answering), still reverts to VAD-only within its own derived bound.
         val transport = FakeRigTransport()
         val testScope = freshUnconfinedScope(testScheduler)
-        val sup = newSupervisor(transport, pushSquelchDescriptor(), testScope)
+        val descriptor = pollOnlySquelchDescriptor(intervalMs = 100)
+        val sup = newSupervisor(transport, descriptor, testScope)
         try {
             sup.connect(connectedConfig())
             val events = mutableListOf<RigSquelchTransition>()
             val job = testScope.launch { sup.observeSquelchUnion().collect { events.add(it) } }
 
-            transport.pushUnsolicited("BY 0,1")
-            awaitBandSquelch("A", true)
+            // One genuine reading, exactly like R_1015's own fixture -- the poll loop keeps
+            // writing "BY" every 100ms forever, but nothing is ever scripted for it, so every
+            // write after this gets no reply at all: a link that stays Open yet answers nothing.
+            transport.pushUnsolicited("BY1")
+            withTimeout(2_000) { while (events.isEmpty()) delay(10) }
 
-            // Nothing more ever arrives -- the transport itself never reports Lost (RigStatus
-            // would stay Connected), only squelch specifically goes stale past its own, tighter
-            // bound (2000ms for a push descriptor). The 5000ms window here is deliberately well
-            // under RigHealth's own generic 10s no-poll timeout, so this discriminates the
-            // squelch-specific watchdog from that separate, looser mechanism -- a test that
-            // waited long enough for either would pass even if only the generic one fired.
-            withTimeout(5_000) {
+            // The derived bound is 100ms * 2 = 200ms (squelchStalenessBoundMillis). 2000ms here
+            // is 10x that -- comfortably long enough to prove it fires -- but nowhere near
+            // RigHealth's own generic floor (5 * 100 = 500, coerced up to its 5000ms minimum),
+            // so a pass here can only be the squelch-specific watchdog, not that separate,
+            // far looser mechanism.
+            withTimeout(2_000) {
                 while (events.none { it.open == null }) delay(10)
             }
             job.cancel()
@@ -307,6 +370,97 @@ class RigSupervisorSquelchTest {
             sup.disconnect()
         }
     }
+
+    // --- R-1062 round 3 (coordinator finding): the staleness bound must survive a poll
+    // descriptor's own ordinary rhythm, not just fire eventually. -------------------------
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062", "FR-RUN-17")
+    fun `R_1062 the real TH-D75A descriptor with realistic reply latency holds one open over for 30s, zero losses`() =
+        runTest {
+            val testScope = freshUnconfinedScope(testScheduler)
+            val transport = FakeRigTransport(scope = testScope).apply {
+                replyLatencyMillis = 40
+                scriptPerBandReplies(bandAOpen = true)
+            }
+            val sup = newSupervisorForBundledDescriptor(transport, testScope)
+            try {
+                sup.connect(kenwoodConfig())
+                val events = mutableListOf<RigSquelchTransition>()
+                val job = testScope.launch { sup.observeSquelchUnion().collect { events.add(it) } }
+
+                // Established by the descriptor's own poll cycle (no manual push at all) --
+                // the real, unmodified kenwood-thd75a.json descriptor is what is under test.
+                withTimeout(60_000) { while (events.isEmpty()) delay(10) }
+                assertEquals(true, events.single().open, "band 0 opened from the poll's own BY 0 reply")
+
+                // 30 seconds of virtual time, band 0 held open by every subsequent poll cycle's
+                // identical BY 0 reply, nothing else ever changing.
+                delay(30_000)
+
+                job.cancel()
+                assertEquals(1, events.size, "no loss and no re-open across 30s of a genuinely continuous over")
+                assertTrue(events.none { it.open == null })
+            } finally {
+                sup.disconnect()
+            }
+        }
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062", "FR-RUN-17")
+    fun `R_1062 the real TH-D75A descriptor with occasional 300ms jitter still holds one open over for 30s`() =
+        runTest {
+            val testScope = freshUnconfinedScope(testScheduler)
+            val transport = FakeRigTransport(scope = testScope, random = Random(1062L)).apply {
+                replyLatencyMillis = 40
+                replyJitterMillis = 300
+                scriptPerBandReplies(bandAOpen = true)
+            }
+            val sup = newSupervisorForBundledDescriptor(transport, testScope)
+            try {
+                sup.connect(kenwoodConfig())
+                val events = mutableListOf<RigSquelchTransition>()
+                val job = testScope.launch { sup.observeSquelchUnion().collect { events.add(it) } }
+
+                withTimeout(60_000) { while (events.isEmpty()) delay(10) }
+                assertEquals(true, events.single().open)
+
+                delay(30_000)
+
+                job.cancel()
+                assertEquals(1, events.size, "occasional 300ms jitter must never masquerade as a lost link")
+                assertTrue(events.none { it.open == null })
+            } finally {
+                sup.disconnect()
+            }
+        }
+
+    @Test
+    @Requirement("FR-SEG-5", "R-1062")
+    fun `R_1062 a push-only descriptor with no poll fallback never runs the staleness watchdog over 30s of silence`() =
+        runTest {
+            val testScope = freshUnconfinedScope(testScheduler)
+            val transport = FakeRigTransport(scope = testScope)
+            val sup = newSupervisor(transport, pushSquelchDescriptor(), testScope)
+            try {
+                sup.connect(connectedConfig())
+                val events = mutableListOf<RigSquelchTransition>()
+                val job = testScope.launch { sup.observeSquelchUnion().collect { events.add(it) } }
+
+                transport.pushUnsolicited("BY 0,1")
+                awaitBandSquelch("A", true)
+
+                // 30 seconds of genuine radio silence -- a real quiet AI-mode radio sends
+                // nothing at all in this window, by design (no poll fallback to fall back on).
+                delay(30_000)
+
+                job.cancel()
+                assertEquals(1, events.size, "a push-only descriptor must never declare loss from mere silence")
+                assertEquals(true, events.single().open)
+            } finally {
+                sup.disconnect()
+            }
+        }
 
     @Test
     @Requirement("FR-SEG-5", "R-1062")
