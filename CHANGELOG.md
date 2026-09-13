@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPMODEL round 2: R-1052's own fix regressed real installs — every downloaded or side-loaded model would have read Failed; fixed with one shared sidecar rule across bundled/download/sideload, an upgrade path for a sha256-only record, and an atomic sideload)
 
-### (pending) — WPMODEL round 2: R-1052 fix's own regression closed — ModelAcquisition.fetch/sideload now write the same verified-install sidecars ModelFileVerifier reads, sideload is atomic, and a sha256-only upgrade install still loads
+### bb3dd013 — WPMODEL round 2: R-1052 fix's own regression closed — ModelAcquisition.fetch/sideload now write the same verified-install sidecars ModelFileVerifier reads, sideload is atomic, and a sha256-only upgrade install still loads
 
 **Scope:** `:core` (`assets/ModelFileVerifier.kt` — new `recordVerifiedInstall`, upgrade-path
 verify), `:net` (`ModelAcquisition.kt` — atomic `sideload`, shared sidecar writes), `:app`
