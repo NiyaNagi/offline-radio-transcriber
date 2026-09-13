@@ -67,7 +67,11 @@ class DrawerContentTest {
             "Threads",
             "Stations",
             "Frequencies",
-            "Earlier nights",
+            // WPREC (design-intent row RC01, IA-1): the drawer's own visible text for
+            // `EARLIER_NIGHTS` is now `drawerLabel` ("Recordings") — see `ReaderDestination.kt`'s
+            // own doc comment for why `label` itself ("Earlier nights") stays as it was, for every
+            // drill-in's own "Back to <label>" origin text.
+            "Recordings",
             "Capture",
             "Improve records",
             "Settings",

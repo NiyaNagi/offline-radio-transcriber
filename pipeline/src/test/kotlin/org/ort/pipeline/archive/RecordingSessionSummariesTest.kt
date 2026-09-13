@@ -7,6 +7,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.CaptureGapCause
+import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.TransmissionLabelEntity
 import org.ort.pipeline.PipelineTestFixtures
 import org.ort.testing.Requirement
@@ -73,5 +75,42 @@ class RecordingSessionSummariesTest {
         assertEquals(0, summary.overCount)
         assertEquals(0, summary.failedCount)
         assertEquals(0, summary.labelledCount)
+        assertEquals(0, summary.stationCount)
+        assertEquals(0, summary.gapCount)
+    }
+
+    /** design-intent row RC01 (`Recordings.dc.html`'s own "N overs · N stations · N gaps"
+     * sub-line) — the artboard's real, distinct facts, not the over count repeated three times. */
+    @Test
+    @Requirement("FR-STO-3", "FR-RUN-12")
+    fun `station and gap counts are real, distinct facts, never derived from the over count`() = runBlocking {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session(id = "S1"))
+        db.transmissionDao().insert(
+            PipelineTestFixtures.transmission("TX1", sessionId = "S1").copy(stationId = "W7NPC"),
+        )
+        db.transmissionDao().insert(
+            PipelineTestFixtures.transmission("TX2", sessionId = "S1").copy(stationId = "W7NPC"),
+        )
+        db.transmissionDao().insert(
+            PipelineTestFixtures.transmission("TX3", sessionId = "S1").copy(stationId = "K7LWH"),
+        )
+        db.transmissionDao().insert(PipelineTestFixtures.transmission("TX4", sessionId = "S1"))
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "G1",
+                sessionId = "S1",
+                startedAt = 1_000L,
+                endedAt = 2_000L,
+                cause = CaptureGapCause.INPUT_LOST,
+                recoveredAutomatically = true,
+            ),
+        )
+
+        val summary = recordingSessionSummaries(db).single()
+
+        assertEquals(4, summary.overCount)
+        assertEquals("2 distinct stations, never a repeat of the over count", 2, summary.stationCount)
+        assertEquals(1, summary.gapCount)
     }
 }

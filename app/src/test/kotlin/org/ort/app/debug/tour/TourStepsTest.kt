@@ -145,6 +145,20 @@ class TourStepsTest {
         drillIn.containsKey("thread") -> Expected.Text("Threads")
         drillIn.containsKey("frequency") -> Expected.Text("Frequencies")
         drillIn.containsKey("logFilterFrequency") -> Expected.Text("Log")
+        // WPREC (register, this session's own find): this case's own "Earlier nights" marker was
+        // never actually reading the Digest's own header — `DigestScreens.kt`'s `DigestScreen`
+        // draws `DrillInHeader(parentLabel = "Session", ...)` ("Back to Session"), never "Earlier
+        // nights" at all. It passed regardless, on every build before this row's own drawer change,
+        // only because `ModalNavigationDrawer`'s `drawerContent` is *always* composed
+        // (`Expected.DisplayedTag`'s own doc comment above) and the drawer's own `EARLIER_NIGHTS`
+        // row used to render that literal text too — an accidental match on off-screen drawer
+        // content, not the Digest screen this case exists to verify. `ReaderDestination
+        // .EARLIER_NIGHTS.drawerLabel` now reads "Recordings" instead (RC01 absorbs that row), which
+        // is what exposed this: the accidental match is gone, and the real check was wrong all
+        // along. Split by `reviewSessionView` so each half checks the screen it actually reaches:
+        // `SessionDetailScreen`'s own real header ("Earlier nights") for the default `Session` view,
+        // `DigestScreen`'s own real header ("Session") for `DIGEST`.
+        drillIn["reviewSessionView"] == "DIGEST" -> Expected.Text("Session")
         drillIn.containsKey("reviewSession") -> Expected.Text("Earlier nights")
         // Every Settings sub-screen carries its own "‹ Settings" back chevron (confirmed by
         // reading a real device capture of Settings-Capture/-Storage/-Assets before writing
@@ -163,7 +177,11 @@ class TourStepsTest {
         "FREQUENCIES" -> Expected.Text("Frequencies")
         "CAPTURE" -> Expected.Tag("capture-status-title")
         "IMPROVE_RECORDS" -> Expected.Text("Improve records")
-        "EARLIER_NIGHTS" -> Expected.Text("Earlier nights")
+        // WPREC (design-intent row RC01): a plain reach (no drillIn) now lands on
+        // `RecordingsContent` (`Recordings.dc.html`), not the old `SessionsContent` list root — a
+        // `reviewSession` drillIn (DG04/DG05) is still checked first, above, and still expects
+        // "Earlier nights" (`expectedForDrillIn`'s own `reviewSession` case, unchanged).
+        "EARLIER_NIGHTS" -> Expected.Text("Recordings")
         "SETTINGS" -> Expected.Text("Settings")
         else -> error("TourStepsTest has no expected marker for destination '$destination'")
     }
@@ -289,7 +307,13 @@ class TourStepsTest {
             try {
                 composeTestRule.waitUntil(WAIT_UNTIL_TIMEOUT_MILLIS) { isFound() }
                 true
-            } catch (timeout: Exception) {
+            } catch (timeout: Throwable) {
+                // WPREC (this session's own find): `ComposeTimeoutException` does not extend
+                // `Exception` — the previous `catch (timeout: Exception)` here never once caught
+                // it, so any step whose marker genuinely never appeared crashed this whole test
+                // hard (an uncaught exception, no "wrong-screen captures" list at all) instead of
+                // being collected as one clean, readable failure the way every other wrong-screen
+                // case already is. `Throwable` is the honest catch for a step-level timeout.
                 false
             }
         }

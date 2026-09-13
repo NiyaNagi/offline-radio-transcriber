@@ -188,7 +188,7 @@ private fun drawerRowDescription(destination: ReaderDestination, trailing: Drawe
     val spokenLabel = if (destination == ReaderDestination.IMPROVE_RECORDS && trailingPhrase != null) {
         "Improve"
     } else {
-        destination.label
+        destination.drawerLabel
     }
     val notBuiltPhrase = "not built".takeUnless { destination.hasScreen }
     return listOfNotNull(spokenLabel, trailingPhrase, notBuiltPhrase).joinToString(", ")
@@ -277,7 +277,10 @@ private fun DrawerRow(
         )
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = destination.label,
+                // WPREC: `drawerLabel`, not `label` — see `ReaderDestination.kt`'s own doc comment
+                // for why the two differ for `EARLIER_NIGHTS` ("Recordings" here, "Earlier nights"
+                // for every drill-in's own "Back to <label>" origin).
+                text = destination.drawerLabel,
                 style = OrtType.rowTitle.copy(fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal),
                 color = labelColor,
             )
