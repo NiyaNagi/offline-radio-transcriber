@@ -2,6 +2,7 @@ package org.ort.pipeline.capture
 
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -16,9 +17,11 @@ import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.pipeline.PipelineTestFixtures
+import org.ort.pipeline.diagnostics.DiagnosticsLog
 import org.ort.pipeline.rig.FrequencyProvenance
 import org.ort.pipeline.rig.FrequencyReading
 import org.ort.segment.FrameSpec
+import org.ort.segment.SegmentCloseReason
 import org.ort.segment.SegmentConfig
 import org.ort.segment.SegmentId
 import org.ort.segment.SegmentOutcome
@@ -49,6 +52,11 @@ public class RealSegmentSinkTest {
         db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
         filesDir = ApplicationProvider.getApplicationContext<android.content.Context>().filesDir
         runBlocking { db.sessionDao().insert(PipelineTestFixtures.session(sessionId)) }
+    }
+
+    @After
+    public fun tearDown() {
+        DiagnosticsLog.shutdown()
     }
 
     @Test
@@ -87,6 +95,9 @@ public class RealSegmentSinkTest {
                 vadEndSample = endSample,
                 sampleCount = FrameSpec.SAMPLE_RATE.toLong(),
                 outcome = SegmentOutcome.SPEECH,
+                closeReason = SegmentCloseReason.SILENCE,
+                vadFrameCount = 30,
+                vadSpeechFrameCount = 30,
             ),
         )
 
@@ -151,6 +162,9 @@ public class RealSegmentSinkTest {
                     vadEndSample = endSample,
                     sampleCount = endSample,
                     outcome = SegmentOutcome.REJECTED_TOO_SHORT,
+                    closeReason = SegmentCloseReason.SILENCE,
+                    vadFrameCount = 3,
+                    vadSpeechFrameCount = 3,
                 ),
             )
 
@@ -215,6 +229,9 @@ public class RealSegmentSinkTest {
                     vadEndSample = endSample,
                     sampleCount = endSample,
                     outcome = SegmentOutcome.SPEECH,
+                    closeReason = SegmentCloseReason.SILENCE,
+                    vadFrameCount = 31,
+                    vadSpeechFrameCount = 31,
                 ),
             )
 
@@ -256,6 +273,9 @@ public class RealSegmentSinkTest {
                 vadEndSample = endSample,
                 sampleCount = endSample,
                 outcome = SegmentOutcome.SPEECH,
+                closeReason = SegmentCloseReason.SILENCE,
+                vadFrameCount = 31,
+                vadSpeechFrameCount = 31,
             ),
         )
 
@@ -263,4 +283,138 @@ public class RealSegmentSinkTest {
         assertNotNull(persisted)
         assertFalse(persisted!!.rigStateChangedMidTransmission)
     }
+
+    private fun captureLogLines(): List<String> {
+        val file = File(File(filesDir, "diagnostics-logs"), DiagnosticsLog.Category.CAPTURE.fileName)
+        return if (file.isFile) file.readLines() else emptyList()
+    }
+
+    private fun field(line: String, key: String): String =
+        line.trim().split(" ").single { it.startsWith("$key=") }.substringAfter("=")
+
+    /**
+     * FR-OBS-1 (Q20): before this, `capture.log` carried only session/fault-level events — a
+     * segment that closed cleanly produced no line of any kind. This proves an accepted segment's
+     * real peak/mean dBFS (computed from the exact PCM this writer's own [SegmentWriter.append]
+     * saw, not invented), the injected onset noise floor, and every [SegmentRecord] field it
+     * carries all land in one `vad_stats` line.
+     */
+    @Test
+    @Requirement("FR-OBS-1")
+    public fun `a closed SPEECH segment logs its real peak, mean and onset noise floor to capture log`(): Unit =
+        runBlocking {
+            DiagnosticsLog.configure(filesDir, TestClock())
+            val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+            val sampleClock = SampleClock(
+                anchorMonotonicNanos = clock.monotonicNanos(),
+                anchorWallMillis = clock.wallMillis(),
+                anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+                sampleRate = FrameSpec.SAMPLE_RATE,
+            )
+            val queue = WorkQueue(db, clock)
+            val sink = RealSegmentSink(
+                filesDir,
+                sessionId,
+                db,
+                queue,
+                sampleClock,
+                SegmentConfig(),
+                noiseFloorDbfsProvider = { -37.5f },
+            ) {}
+
+            val endSample = FrameSpec.SAMPLE_RATE.toLong()
+            val writer = sink.open(SegmentId(0), 0L)
+            // Constant 0.25 amplitude: peak and mean dBFS are then the same, known value --
+            // 20*log10(0.25) ~= -12.04 dBFS -- an exact hand check, not a fabricated expectation.
+            writer.append(FloatArray(endSample.toInt()) { 0.25f })
+            writer.close(
+                SegmentRecord(
+                    id = SegmentId(0),
+                    startSample = 0L,
+                    endSample = endSample,
+                    vadStartSample = 0L,
+                    vadEndSample = endSample,
+                    sampleCount = endSample,
+                    outcome = SegmentOutcome.SPEECH,
+                    closeReason = SegmentCloseReason.SILENCE,
+                    vadFrameCount = 31,
+                    vadSpeechFrameCount = 20,
+                ),
+            )
+            DiagnosticsLog.flush()
+
+            val lines = captureLogLines()
+            assertEquals(1, lines.size)
+            val line = lines.single()
+            assertTrue(line.contains("vad_stats"))
+            assertEquals("$sessionId-0", field(line, "transmissionId"))
+            assertEquals("SPEECH", field(line, "outcome"))
+            assertEquals("SILENCE", field(line, "closeReason"))
+            assertEquals("31", field(line, "vadFrameCount"))
+            assertEquals("20", field(line, "vadSpeechFrameCount"))
+            assertEquals(1_000L.toString(), field(line, "durationMs"))
+            assertEquals(-12.04f, field(line, "peakDbfs").toFloat(), 0.01f)
+            assertEquals(-12.04f, field(line, "meanDbfs").toFloat(), 0.01f)
+            assertEquals(-37.5f, field(line, "noiseFloorDbfsAtOnset").toFloat(), 0.0f)
+        }
+
+    /**
+     * FR-OBS-1 (Q20): the other half of the discrimination above -- when the noise-floor meter
+     * genuinely has nothing to report yet, the line must say so honestly (the literal `NONE`),
+     * never a fabricated `0.0` (constitution I). Also covers a `REJECTED_TOO_SHORT` segment, which
+     * gets a `vad_stats` line exactly like an accepted one (constitution III: rejected segments
+     * stay reachable).
+     */
+    @Test
+    @Requirement("FR-OBS-1")
+    public fun `a rejected segment still logs vad_stats, with an unmeasurable noise floor as NONE`(): Unit =
+        runBlocking {
+            DiagnosticsLog.configure(filesDir, TestClock())
+            val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+            val sampleClock = SampleClock(
+                anchorMonotonicNanos = clock.monotonicNanos(),
+                anchorWallMillis = clock.wallMillis(),
+                anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+                sampleRate = FrameSpec.SAMPLE_RATE,
+            )
+            val queue = WorkQueue(db, clock)
+            val sink = RealSegmentSink(
+                filesDir,
+                sessionId,
+                db,
+                queue,
+                sampleClock,
+                SegmentConfig(),
+                noiseFloorDbfsProvider = { null },
+            ) {}
+
+            val endSample = FrameSpec.SAMPLE_RATE / 10L
+            val writer = sink.open(SegmentId(0), 0L)
+            writer.append(FloatArray(endSample.toInt()) { 0.1f })
+            writer.close(
+                SegmentRecord(
+                    id = SegmentId(0),
+                    startSample = 0L,
+                    endSample = endSample,
+                    vadStartSample = 0L,
+                    vadEndSample = endSample,
+                    sampleCount = endSample,
+                    outcome = SegmentOutcome.REJECTED_TOO_SHORT,
+                    closeReason = SegmentCloseReason.SILENCE,
+                    vadFrameCount = 3,
+                    vadSpeechFrameCount = 3,
+                ),
+            )
+            DiagnosticsLog.flush()
+
+            val lines = captureLogLines()
+            assertEquals(1, lines.size)
+            val line = lines.single()
+            assertEquals("REJECTED_TOO_SHORT", field(line, "outcome"))
+            assertEquals(
+                "an unmeasurable noise floor must be the literal NONE, never a fabricated 0.0",
+                "NONE",
+                field(line, "noiseFloorDbfsAtOnset"),
+            )
+        }
 }

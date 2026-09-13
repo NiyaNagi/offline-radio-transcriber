@@ -9,6 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.diagnostics.DiagnosticsLogPaths
 import org.ort.core.AttributionState
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
@@ -22,6 +23,7 @@ import org.ort.data.entity.WorkAttemptOutcome
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 
 /**
  * Register R-1009 (WPX) — the debug dump: "An NDJSON export of sessions, overs, attributions,
@@ -203,6 +205,49 @@ class DebugDumpBuilderTest {
             )
             val lines = readLines(DebugDumpBuilder.build(context))
             assertFalse(lines.any { it.optString("type") == "pass_outcome" })
+        }
+
+    /**
+     * FR-OBS-1 (Q20): a `vad_stats` line — accepted and rejected alike — is parsed straight out
+     * of `capture.log`'s own real file format, not fabricated, and every value the writer logged
+     * as the literal `NONE` round-trips here as JSON `null`, never `0`/`0.0` (constitution I).
+     */
+    @Test
+    fun `FR_OBS_1 a capture log vad_stats line for both an accepted and a rejected segment lands in the dump`() =
+        runTest {
+            val logDir = DiagnosticsLogPaths.logDir(context)
+            logDir.mkdirs()
+            File(logDir, "capture.log").writeText(
+                "2026-01-01T00:00:00Z INFO route_verified deviceKind=USB_DEVICE sampleRateHz=48000 matches=true\n" +
+                    "2026-01-01T00:00:01Z INFO vad_stats transmissionId=SESSION01-4 outcome=SPEECH " +
+                    "closeReason=SILENCE durationMs=2340 vadFrameCount=73 vadSpeechFrameCount=61 " +
+                    "peakDbfs=-3.2 meanDbfs=-18.7 noiseFloorDbfsAtOnset=-42.1\n" +
+                    "2026-01-01T00:00:02Z INFO vad_stats transmissionId=SESSION01-5 outcome=REJECTED_TOO_SHORT " +
+                    "closeReason=END_OF_STREAM durationMs=90 vadFrameCount=3 vadSpeechFrameCount=3 " +
+                    "peakDbfs=NONE meanDbfs=NONE noiseFloorDbfsAtOnset=NONE\n",
+            )
+
+            val lines = readLines(DebugDumpBuilder.build(context))
+            val vadStatsLines = lines.filter { it.optString("type") == "vad_stats" }
+            assertEquals(2, vadStatsLines.size)
+
+            val accepted = vadStatsLines.first { it.getString("transmissionId") == "SESSION01-4" }
+            assertEquals("SPEECH", accepted.getString("outcome"))
+            assertEquals("SILENCE", accepted.getString("closeReason"))
+            assertEquals(2340L, accepted.getLong("durationMs"))
+            assertEquals(73, accepted.getInt("vadFrameCount"))
+            assertEquals(61, accepted.getInt("vadSpeechFrameCount"))
+            assertEquals(-3.2, accepted.getDouble("peakDbfs"), 0.001)
+            assertEquals(-18.7, accepted.getDouble("meanDbfs"), 0.001)
+            assertEquals(-42.1, accepted.getDouble("noiseFloorDbfsAtOnset"), 0.001)
+
+            val rejected = vadStatsLines.first { it.getString("transmissionId") == "SESSION01-5" }
+            assertEquals("REJECTED_TOO_SHORT", rejected.getString("outcome"))
+            assertEquals("END_OF_STREAM", rejected.getString("closeReason"))
+            assertTrue(
+                "an unmeasurable NONE value must round-trip as JSON null, never a fabricated 0.0",
+                rejected.isNull("peakDbfs") && rejected.isNull("meanDbfs") && rejected.isNull("noiseFloorDbfsAtOnset"),
+            )
         }
 
     @Test

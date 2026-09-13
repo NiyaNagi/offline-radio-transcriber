@@ -54,6 +54,12 @@ public class Segmenter(
     private var silenceMs = 0
     private val hangoverBuf = ArrayList<FloatArray>()
 
+    // FR-OBS-1 (Q20): tallied per active window (TENTATIVE/SPEECH/HANGOVER), reset to 0 the
+    // instant a segment or rejected candidate closes -- see handleFrame()'s own comment for
+    // exactly which frames count.
+    private var activeFrameCount = 0
+    private var activeSpeechFrameCount = 0
+
     /** Absolute sample position of the next sample to be fed. */
     public fun position(): Long = originSample + consumed
 
@@ -72,8 +78,15 @@ public class Segmenter(
     /** End of stream: close whatever is open. */
     public fun finish() {
         when (state) {
-            State.TENTATIVE -> emitRejected(endSample = originSample + consumed)
-            State.SPEECH -> closeSpeech(vadEnd = originSample + consumed, end = originSample + consumed, forced = false)
+            State.TENTATIVE -> emitRejected(
+                endSample = originSample + consumed,
+                closeReason = SegmentCloseReason.END_OF_STREAM,
+            )
+            State.SPEECH -> closeSpeech(
+                vadEnd = originSample + consumed,
+                end = originSample + consumed,
+                closeReason = SegmentCloseReason.END_OF_STREAM,
+            )
             State.HANGOVER -> {
                 // Computed once, before flushHangover() clears hangoverBuf — calling
                 // bufferedHangoverSamples() a second time after the clear silently sees 0 and
@@ -86,7 +99,7 @@ public class Segmenter(
                 closeSpeech(
                     vadEnd = hangoverStartSample,
                     end = hangoverStartSample + flushed,
-                    forced = false,
+                    closeReason = SegmentCloseReason.END_OF_STREAM,
                 )
             }
             State.IDLE -> Unit
@@ -97,6 +110,16 @@ public class Segmenter(
     private fun handleFrame(frame: FloatArray, frameStart: Long) {
         val wasIdle = state == State.IDLE
         val decision = vad.accept(frame)
+        // FR-OBS-1 (Q20): a frame counts toward the active window's tally either when a window is
+        // already open (TENTATIVE/SPEECH/HANGOVER) or when this very frame is the one that opens
+        // one (IDLE + SPEECH, about to dispatch into beginTentative() below) -- together that is
+        // exactly "this frame belongs to the segment or candidate it is about to be written into".
+        // Reset back to 0 happens once, in emitRejected()/closeSpeech(), the moment that window
+        // actually closes (see those methods' own comments).
+        if (state != State.IDLE || decision == VadDecision.SPEECH) {
+            activeFrameCount++
+            if (decision == VadDecision.SPEECH) activeSpeechFrameCount++
+        }
         when (state) {
             State.IDLE -> if (decision == VadDecision.SPEECH) beginTentative(frame, frameStart)
             State.TENTATIVE -> tentative(frame, frameStart, decision)
@@ -119,7 +142,7 @@ public class Segmenter(
 
     private fun tentative(frame: FloatArray, frameStart: Long, decision: VadDecision) {
         if (decision == VadDecision.SILENCE) {
-            emitRejected(endSample = frameStart)
+            emitRejected(endSample = frameStart, closeReason = SegmentCloseReason.SILENCE)
             return
         }
         tentativeFrames.add(frame)
@@ -154,7 +177,7 @@ public class Segmenter(
         w.append(frame)
         val end = frameStart + frameSamples
         if (end - segStartSample >= maxSegmentSamples) {
-            closeSpeech(vadEnd = end, end = end, forced = true)
+            closeSpeech(vadEnd = end, end = end, closeReason = SegmentCloseReason.MAX_DURATION)
             segId = SegmentId(nextId++)
             segStartSample = end
             segVadStartSample = end
@@ -180,7 +203,7 @@ public class Segmenter(
             closeSpeech(
                 vadEnd = hangoverStartSample,
                 end = hangoverStartSample + postRollSamples,
-                forced = false,
+                closeReason = SegmentCloseReason.SILENCE,
             )
         }
     }
@@ -203,8 +226,16 @@ public class Segmenter(
         hangoverBuf.clear()
     }
 
-    private fun closeSpeech(vadEnd: Long, end: Long, forced: Boolean) {
+    private fun closeSpeech(vadEnd: Long, end: Long, closeReason: SegmentCloseReason) {
         val w = writer ?: return
+        val forced = closeReason == SegmentCloseReason.MAX_DURATION
+        // FR-OBS-1 (Q20): snapshot this segment's own tally before resetting it below -- whatever
+        // comes next (IDLE, or a fresh forced-split segment starting at `end`) must start from 0,
+        // never carry over frames that belonged to the segment just closed.
+        val frameCount = activeFrameCount
+        val speechFrameCount = activeSpeechFrameCount
+        activeFrameCount = 0
+        activeSpeechFrameCount = 0
         w.close(
             SegmentRecord(
                 id = segId,
@@ -215,18 +246,27 @@ public class Segmenter(
                 sampleCount = 0,
                 outcome = SegmentOutcome.SPEECH,
                 forcedSplit = forced,
+                closeReason = closeReason,
+                vadFrameCount = frameCount,
+                vadSpeechFrameCount = speechFrameCount,
             ),
         )
         writer = null
         if (!forced) state = State.IDLE
     }
 
-    private fun emitRejected(endSample: Long) {
+    private fun emitRejected(endSample: Long, closeReason: SegmentCloseReason) {
         val id = SegmentId(nextId++)
         val start = maxOf(originSample, triggerSample - preRollSamples)
         val w = sink.open(id, start)
         w.append(preRoll.snapshot(atMost = (triggerSample - start).toInt()))
         for (f in tentativeFrames) w.append(f)
+        // FR-OBS-1 (Q20): see closeSpeech()'s identical comment -- this rejected candidate's own
+        // tally, reset to 0 the instant it closes.
+        val frameCount = activeFrameCount
+        val speechFrameCount = activeSpeechFrameCount
+        activeFrameCount = 0
+        activeSpeechFrameCount = 0
         w.close(
             SegmentRecord(
                 id = id,
@@ -236,6 +276,9 @@ public class Segmenter(
                 vadEndSample = endSample,
                 sampleCount = 0,
                 outcome = SegmentOutcome.REJECTED_TOO_SHORT,
+                closeReason = closeReason,
+                vadFrameCount = frameCount,
+                vadSpeechFrameCount = speechFrameCount,
             ),
         )
         tentativeFrames.clear()

@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.ort.app.BuildConfig
+import org.ort.app.diagnostics.DiagnosticsLogPaths
 import org.ort.core.SystemClock
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapEntity
@@ -15,6 +16,8 @@ import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.WorkAttemptEntity
 import org.ort.data.entity.WorkQueueItemEntity
+import org.ort.pipeline.diagnostics.DiagnosticsLog
+import java.io.File
 import java.time.Instant
 
 /**
@@ -24,8 +27,8 @@ import java.time.Instant
  * that is exactly what nineteen silently-failed overs looked like from the outside this week."*
  *
  * One JSON object per line (NDJSON — a workstation reads it with `jq`/a streaming line reader,
- * never a single 100 MB array a tool must load whole), `type` discriminating five closed record
- * shapes: `meta`, `session`, `over`, `gap`, `pass_outcome`. Constitution VI ("no number without
+ * never a single 100 MB array a tool must load whole), `type` discriminating six closed record
+ * shapes: `meta`, `session`, `over`, `gap`, `pass_outcome`, `vad_stats`. Constitution VI ("no number without
  * its provenance"): the `meta` line carries the schema version, the real app version and the real
  * git commit; every `over` line carries its own `executionProvider`/`calibrationId` (the pass
  * identity that actually produced it) rather than a single dump-wide claim that would be wrong the
@@ -47,6 +50,14 @@ import java.time.Instant
  * callsign is the public over-the-air identity the whole product exists to capture — but this
  * particular producer has no need of one for its own purpose (correlating sessions, overs, gaps
  * and pass failures), so it simply never looks one up.
+ *
+ * **`vad_stats` (FR-OBS-1, register Q20):** one line per closed segment — accepted and rejected
+ * alike (constitution III) — parsed back out of `capture.log` (and its one `.1` rotation
+ * generation) rather than a database table, because [org.ort.pipeline.diagnostics.DiagnosticsLog]
+ * is exactly where the segmenter's real-time facts already land (see that object's own kdoc for
+ * why they are not duplicated into a Room column). A field the writer logged as the literal
+ * `NONE` (never measured, never fabricated as `0.0` — constitution I) round-trips here as JSON
+ * `null`, the same discipline every other nullable field in this file already uses.
  */
 public object DebugDumpBuilder {
 
@@ -68,6 +79,8 @@ public object DebugDumpBuilder {
         for (item in db.workQueueDao().selectFailed(pass = null, lastErrorPrefix = null)) {
             lines += passOutcomeLine(item, db.workQueueDao().attemptsFor(item.id)).toString()
         }
+
+        for (vadStats in vadStatsLines(context)) lines += vadStats.toString()
 
         lines.joinToString("\n").toByteArray(Charsets.UTF_8)
     }
@@ -176,4 +189,58 @@ public object DebugDumpBuilder {
                 ),
             )
         }
+
+    /**
+     * FR-OBS-1 (Q20): every [DiagnosticsLog.logVadStats] line this session's `capture.log` (and
+     * its one `.1` rotation generation, oldest first — [DiagnosticsLog]'s own rotation kdoc) still
+     * holds, parsed back into the closed shape [logVadStatsLine] emits. A line this parser cannot
+     * make sense of (any other `capture.log` event, or a line rotation split mid-write) is simply
+     * skipped, never guessed at.
+     */
+    private fun vadStatsLines(context: Context): List<JSONObject> {
+        val dir = DiagnosticsLogPaths.logDir(context)
+        val fileName = DiagnosticsLog.Category.CAPTURE.fileName
+        val rawLines = listOf(File(dir, "$fileName.1"), File(dir, fileName))
+            .filter { it.isFile }
+            .flatMap { it.readLines() }
+        return rawLines.mapNotNull(::parseLogLine)
+            .filter { it.event == DiagnosticsLog.EVENT_VAD_STATS }
+            .map(::vadStatsLine)
+    }
+
+    private data class ParsedLogLine(val event: String, val fields: Map<String, String>)
+
+    /** `capture.log`'s own line shape (see [DiagnosticsLog]'s kdoc): ISO-8601 timestamp, level,
+     * event, then space-separated `key=value` fields — never a value containing a space, since
+     * every field [DiagnosticsLog] writes is a number, an enum name, an id, or the literal `NONE`. */
+    private fun parseLogLine(raw: String): ParsedLogLine? {
+        val parts = raw.trim().split(" ")
+        if (parts.size < 3) return null
+        val fields = parts.drop(3).mapNotNull { token ->
+            val eq = token.indexOf('=')
+            if (eq <= 0) null else token.substring(0, eq) to token.substring(eq + 1)
+        }.toMap()
+        return ParsedLogLine(event = parts[2], fields = fields)
+    }
+
+    /** `null`/absent exactly when [DiagnosticsLog.logVadStats] wrote the literal `NONE` for a
+     * value it genuinely could not measure — never a fabricated `0`/`0.0` (constitution I). */
+    private fun numericFieldOrNull(fields: Map<String, String>, key: String): Double? {
+        val raw = fields[key] ?: return null
+        return if (raw == "NONE") null else raw.toDoubleOrNull()
+    }
+
+    private fun vadStatsLine(parsed: ParsedLogLine): JSONObject = JSONObject().apply {
+        val f = parsed.fields
+        put("type", "vad_stats")
+        put("transmissionId", f["transmissionId"] ?: JSONObject.NULL)
+        put("outcome", f["outcome"] ?: JSONObject.NULL)
+        put("closeReason", f["closeReason"] ?: JSONObject.NULL)
+        put("durationMs", f["durationMs"]?.toLongOrNull() ?: JSONObject.NULL)
+        put("vadFrameCount", f["vadFrameCount"]?.toIntOrNull() ?: JSONObject.NULL)
+        put("vadSpeechFrameCount", f["vadSpeechFrameCount"]?.toIntOrNull() ?: JSONObject.NULL)
+        put("peakDbfs", numericFieldOrNull(f, "peakDbfs") ?: JSONObject.NULL)
+        put("meanDbfs", numericFieldOrNull(f, "meanDbfs") ?: JSONObject.NULL)
+        put("noiseFloorDbfsAtOnset", numericFieldOrNull(f, "noiseFloorDbfsAtOnset") ?: JSONObject.NULL)
+    }
 }
