@@ -19,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.rules.ActivityScenarioRule
@@ -572,6 +573,99 @@ class ReaderActivityDestinationSmokeTest {
             // `ContentDescription` of its own — unlike `StationsScreen`'s list row above, whose
             // nested `AttributionRow` does — so this checks the visible text instead.
             rule.waitUntilTextExists(STATION_ID)
+        }
+    }
+
+    // R-1041 (D11, register): `Detail-Propagated.dc.html`'s own "View the N affected overs" — a
+    // dead tap before this round (`PropagatedScreen` drew nothing there at all). Real now, routed
+    // through the same one filter model FQ02/FQ03/ST02 already prove end to end above:
+    // `LogFilterOrigin.Transmission` records the origin, and system back restores the same
+    // transmission drill-in it was reached through — the same real `OnBackPressedDispatcher`
+    // `IA_3_station_overs_link...` above uses, proving the [LogFilterOriginSaver] round trip for
+    // this new case too, not just the callback wiring. A second transmission (`TX2`, a different
+    // station, never corrected) is seeded only in this test so "Show 1 overs" genuinely
+    // discriminates "filtered to the one affected over" from "the whole two-over session" — the
+    // shared `@Before` above seeds `TX1` alone, which every filter (or none) would satisfy equally.
+    @Test
+    fun `R_1041_D11_view_affected_overs_link_opens_Log_filtered_to_that_over, back restores the transmission`() {
+        runBlocking {
+            val db = OrtDatabase.create(context)
+            db.transmissionDao().insert(
+                TransmissionEntity(
+                    id = "TX2",
+                    sessionId = sessionId,
+                    threadId = null,
+                    startedAtUtc = 2_000L,
+                    endedAtUtc = 2_500L,
+                    durationMs = 500L,
+                    audioFormat = "flac/16k/mono",
+                    preRollMs = 200,
+                    postRollMs = 200,
+                    frequencyHz = FREQUENCY_HZ,
+                    frequencyProvenance = "measured",
+                    mode = null,
+                    signalStrength = 7.0,
+                    channelName = null,
+                    voiceprintId = null,
+                    attributionState = AttributionState.CONFIRMED,
+                    stationId = "N0OTHR",
+                    attributionConfidence = 0.9,
+                    attributionSourceTransmissionId = null,
+                    processingState = TransmissionState.COMPLETE,
+                    rejectionReason = null,
+                    samplePosition = 2L,
+                    monotonicStartNanos = 0L,
+                    utcOffsetMinutes = 0,
+                    calibrationId = null,
+                    executionProvider = null,
+                ),
+            )
+        }
+
+        runReaderActivity(ReaderDestination.LOG, sessionId = sessionId) { rule ->
+            rule.waitUntilContentDescriptionExists(STATION_ID)
+            rule.onNode(hasContentDescription(STATION_ID, substring = true) and hasClickAction()).performClick()
+            rule.waitUntilContentDescriptionExists("Back to Log")
+
+            rule.onNode(hasText("Not right?") and hasClickAction()).performClick()
+            rule.waitUntilTextExists("Type a callsign")
+            rule.onNode(hasText("Type a callsign") and hasClickAction()).performScrollTo().performClick()
+            rule.onNode(hasContentDescription("Typed callsign")).performScrollTo().performTextInput("KA7LWH")
+            rule.onNode(hasText("Save unverified correction") and hasClickAction()).performScrollTo().performClick()
+            rule.waitUntilTextExists("Corrected to KA7LWH")
+
+            // `PropagatedScreen.kt`'s own `TextAction(text = "View the 1 affected over", ...)`.
+            rule.onNode(hasText("View the 1 affected over") and hasClickAction()).performScrollTo().performClick()
+
+            // `Log` is a normal destination — the host's own `ScreenHeader` renders for it.
+            rule.waitUntilContentDescriptionExists("Open navigation")
+            // The real, honest proof this landed filtered to exactly `TX1`, never the whole
+            // two-over session: `TX1`'s own row (now `KA7LWH`, the real corrected callsign) shows;
+            // `TX2` (`N0OTHR`, never corrected, never named by this link) does not — `Log-Filter
+            // .dc.html`'s own "Show N overs" count line does not check this narrowing (a separate,
+            // pre-existing gap in `LogItemsMapper.filterSheetState`, outside R-1041's own scope),
+            // so the row content itself, not that line, is this test's real discriminator.
+            rule.waitUntilContentDescriptionExists("KA7LWH")
+            rule.onNode(hasContentDescription("N0OTHR", substring = true)).assertDoesNotExist()
+
+            rule.activityRule.scenario.recreate()
+            rule.waitForIdle()
+
+            // Proves `LogFilterOriginSaver` round-trips the new `Transmission` case without
+            // crashing — the exact R-129 crash class this suite exists to catch, now for this
+            // origin too.
+            rule.waitUntilContentDescriptionExists("Open navigation")
+
+            rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+            rule.waitForIdle()
+
+            // Back reopens the corrected transmission's own drill-in, not a bare `Log` — the same
+            // "root, not the exact sub-screen" breadcrumb [LogFilterOrigin.Frequency]/[.Station]
+            // already establish. It lands on the drill-in's own `Main` sub-state (this package's
+            // own doc comment on [LogFilterOrigin.Transmission]: never the momentary `Propagated`
+            // state) — the real, already-persisted correction still shows there.
+            rule.waitUntilContentDescriptionExists("Back to Log")
+            rule.waitUntilContentDescriptionExists("KA7LWH")
         }
     }
 

@@ -232,6 +232,377 @@ right reason, restored it). `:app:compileDebugKotlin` green.
   `onOpenOverAudioBudget`) but not yet confirmed with a real `uiautomator` touch-target dump — filed
   for the capture pass alongside RC02's.
 
+---
+
+## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor); R-1047 sent back once and re-fixed so the statement is actually visible)
+
+### 16b2432d — WPLINK: R-1047 fix — the applied-filter statement is now visible without scrolling
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/LogScreen.kt`;
+`app/src/test/kotlin/org/ort/app/ui/screens/LogScreenTest.kt`; `tools/ui-audit/tour.json`.
+
+**Requirements/ACs:** register R-1047 (sent back), constitution I.
+
+**What changed:** sent back by the coordinator — `dc5358cc` rendered the applied-filter statement
+as the sixth (last) member of the same horizontally-scrollable `FilterChipRow` the quick chips
+use. On a real device with five real quick chips ahead of it (`All`/`145.230`/`146.960`/`Named`/
+`Rejected · 1`) it clipped off the visible edge at both `390dp` and `480dp` — the operator saw a
+Log holding one over with nothing on screen saying why, discoverable only by a scroll gesture
+nobody has a reason to make. Checked `design/canvas` first: no Log filtered-state artboard exists
+(`Log.dc.html`, `Log-Filter.dc.html` — the filter sheet, not a filtered-result state —
+`Log-Partial.dc.html`, `Log-Rejected.dc.html`, `Log-Empty.dc.html` are the whole set). Fixed by
+moving the statement onto its own full-width line between the chip row and the column heads,
+reusing the position and shape `state.rejectedExplanation` already established immediately below
+it for the dedicated Rejected view, rather than inventing a second pattern for the same job. Reads
+"Filtered to `<label>`" with a `Clear` `TextAction` beside it (44dp floor, reused component);
+`fillMaxWidth` so it can never itself be scrolled out of a viewport the way a chip-row member can.
+The guard that no quick chip reads selected while the statement is present is unchanged
+(`LogViewData.kt` was not touched this round). Node tag renamed
+`log-applied-filter-chip` → `log-applied-filter-statement`; its dismiss affordance changed from a
+`FilterChip`'s dismiss icon to the visible `Clear` text.
+
+**Verified:** replaced the old "never collides" checks (which used a two-chip test fixture that
+never reproduced the real overflow — the register's own "how this slipped through") with four
+`R_1047` "is visible without scrolling" cases at `w390dp`/`w480dp` × font scale 1.0/2.0, using the
+real five-quick-chip fixture from the device capture, asserting the statement node's own
+left/right edges lie within the viewport width and its bottom clears the first log row — never
+merely `assertExists()`/`assertIsSelected()`. Shown failing first against the old chip-row
+placement (all four failed on the right-edge assertion, confirming the reproduction); passing
+again after the fix. `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.screens.LogScreenTest"`, `:app:testDebugUnitTest` (full app module, 10m04s),
+`:app:ktlintCheck :app:detekt` — all green. Device re-capture on `ort_audit_2`/port 5560
+(`tools\ui-audit\tour.ps1 -Only "overnight/L01-log-filtered-overs*"`): `steps: 2  ok: 2  errors: 0`
+— at 1.0 and a new `@2x` step (appended at the end of `tour.json`) the Log filtered to one over now
+reads "Filtered to 1 over" with "Clear" beside it, directly beneath the chip row and above the
+column heads, fully on screen at both scales.
+
+**Left open / not done:** none for this commit's own scope.
+
+### 165cbc4c — WPLINK: R-1047 verification — the tour can now seed an hour-window or curated-overs Log filter
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourIds,TourSpec}.kt`;
+`app/src/test/kotlin/org/ort/app/debug/tour/TourIdsTest.kt`; `tools/ui-audit/tour.json`.
+
+**Requirements/ACs:** register R-1047 (verification tooling, not the fix itself — see `dc5358cc`).
+
+**What changed:** `TourIds.resolveLogFilter` only ever built a `LogFilterSelection` when
+`logFilterFrequency` was present, so an hour-window-only or curated-overs-only filter — the exact
+shape R-1047's own fix needed to verify on a real device, since it has no frequency chip to
+piggyback on — had no drillIn shape able to reach the Log in that state at all. Fixed to build a
+selection from any of four keys: the existing `logFilterFrequency`/`logFilterFromMillis`/
+`logFilterToMillis`, plus a new `logFilterTransmissionIds` (a comma-joined list of literal
+transmission ids, parsed into `LogFilterSelection.transmissionIds` — added to `TourStep`'s
+`SUPPORTED_DRILL_IN_KEYS`); `null` only when none of the four is present, unchanged from before.
+Appended two new steps at the end of `tour.json`: `overnight/L01-log-filtered-overs`
+(`logFilterTransmissionIds: scenario-overnight-tx02`, a real, deterministic fixture id) and
+`corrected/D02-inferred-corrected` (`transmission: inferred`, against the `corrected` scenario).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*" --tests
+"org.ort.app.debug.TourParityFixtureTest"` — all green, including two new `R_1047` cases in
+`TourIdsTest` and the existing `TourSpecTest`/`TourStepsTest` suite validating both new `tour.json`
+steps parse, name real scenarios/destinations, and land on the screen they claim to.
+Discrimination: reverting the four-key OR-gate back to frequency-only failed exactly the
+hour-window case; nulling out the new `transmissionIds` parse failed exactly its own case.
+`.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+
+### 4e89348e — WPLINK: R-1048 Search header's drawer icon and back chevron reach the 44dp touch-target floor
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/SearchScreen.kt`,
+`app/src/test/kotlin/org/ort/app/ui/screens/SearchScreenTest.kt`.
+
+**Requirements/ACs:** register R-1048, constitution VII (the accessibility floor) — closes the gap
+`b96aa3b0`'s own bounds test flagged rather than fixed.
+
+**What changed:** `SearchHeaderRow` put `clickable` directly on the drawer icon's and back
+chevron's own `Modifier.size(21.dp)`/`.size(20.dp)` glyphs, so the real hit-test region was the
+glyph's own bounds — under the 44dp floor for both. Fixed the same way `SetupScaffold.kt`'s
+`ScaffoldHeaderRow` already does it for its own back target: a new private
+`SearchHeaderTouchTargetIcon` composable wraps each icon in an outer `Box` carrying `.size(44.dp)`
+and the `clickable`, with the `Icon` centred inside at its own original, unchanged glyph size —
+raising the touch target without changing what is drawn. Pulled into its own composable (rather
+than two inline `Box`/`Icon` pairs) because inlining both pushed `SearchHeaderRow` over detekt's
+`LongMethod` threshold.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchScreenTest"`
+— all green. `b96aa3b0`'s own parity-only bounds test is replaced by `R_1048 the drawer icon and
+the back chevron both meet the 44dp touch-target floor` — a real floor assertion instead of a
+parity check that would have passed even under the old, broken sizing — plus a second new case,
+`R_1048 the 44dp touch target does not change either glyph's own size`, pinning the 21dp/20dp
+glyphs directly against the `Icon` nodes themselves (`useUnmergedTree`), never the new outer box.
+Discrimination: shrinking the drawer icon's outer `Box` to 30dp failed exactly the floor test,
+while the glyph-size test stayed green, confirming the two are not accidentally coupled.
+`.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+A real device `uiautomator dump` of the Search header's own node bounds, and a re-capture of Q01
+at 1.0/`@2x` on `ort_audit_2`/port 5560, are recorded in this round's own report (see the register).
+
+**Left open / not done:** none for this commit's own scope.
+
+### 9369fbbc — WPLINK: R-1046 a corrected attribution no longer claims a voice match it never had
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/CorrectionPolling.kt`, `DetailViewState.kt`;
+`app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailContent.kt`; matching tests under
+`app/src/test/kotlin/org/ort/app/ui/data/{CorrectionPollingTest,DetailViewStateMapperTest}.kt`.
+`TransmissionDetailScreen.kt` (owned by another builder this round, R-1006) was not touched.
+
+**Requirements/ACs:** register R-1046, constitution I (never assert a claim the data cannot back).
+
+**What changed:** `DetailViewState.kt`'s INFERRED explanation fell back to its generic "Not heard
+in this over. Matched by voice." sentence for every INFERRED attribution with no resolved source
+over — but `Attribution.withCorrection` (what `CorrectionPolling.currentAttribution` returns for
+any corrected row) produces exactly that shape for every human correction, typed or verified
+alike, so a typed, unverified correction read as if the voice itself had matched it. Told apart
+now using two real facts: `Attribution.corrected` (already carried on the attribution itself, no
+extra read needed) and the new `CorrectionPolling.correctionTyped(context, transmissionId)`, which
+reads the transmission's most recent correction audit row (`CorrectionDao.correctionsFor`, newest
+last) and reports whether its `field` was `CorrectionDao.FIELD_STATION_UNVERIFIED` — `null`, never
+a guessed `false`, when there is no correction or no surviving audit row to say which. A corrected
+INFERRED now reads "The operator corrected this" (or "…typed and unverified" when
+`correctionTyped` is true) instead of the old, misleading fallback; a genuine voice-matched
+INFERRED with no resolved source keeps its own unchanged text.
+`DetailBodyViewState.Inferred` gains structured `corrected`/`correctionTyped` fields so a caller
+(and this round's own tests) can assert the fact directly rather than parsing prose out of
+`explanation` (constitution II). `TransmissionDetailContent.kt`'s `pollDetail` looks up
+`correctionTyped` only when the polled attribution is genuinely INFERRED-and-corrected, the same
+per-state gating `ambiguousEvidence`/`unknownContext` already use.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.DetailViewStateMapperTest"
+--tests "org.ort.app.ui.data.CorrectionPollingTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailContentTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` — all green, including 6 new `R_1046` cases
+in each of `DetailViewStateMapperTest`/`CorrectionPollingTest` asserting the variant/structure
+(`corrected`, `correctionTyped`), never the exact sentence. Discrimination proven twice: reverting
+the `attribution.corrected` branch condition failed exactly the "never claims a voice match" case;
+reverting `correctionTyped`'s `lastOrNull` to `firstOrNull` failed exactly the
+"most-recent-of-several" case. `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+
+**Left open / not done:** the corrected detail screen's own re-capture on `ort_audit_2`/port 5560
+is recorded in this round's own report (see the register), not repeated here.
+
+### dc5358cc — WPLINK: R-1047 the Log states its own applied filter instead of leaving All selected
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/{LogScreen,LogContent}.kt`; matching tests under
+`app/src/test/kotlin/org/ort/app/ui/{data,screens}/Log{ViewData,Polling,Screen}Test.kt`.
+
+**Requirements/ACs:** register R-1047, constitution I ("the operator reads 'this is everything'").
+Affects the three `R-1041` entry points (N01, D11, R04) plus WPNAV's DG02 and station Overs, all of
+which route through this same mechanism.
+
+**What changed:** a `LogFilterSelection` carrying `transmissionIds`, an hour window
+(`fromMillis`/`toMillis`) or a `stationId` left the `All` quick chip reading selected and drew no
+other indication a filter was applied — the operator reads "this is everything" while looking at a
+narrowed Log. Root cause: `LogContent` tracked `quickFilter` (chip UI state) separately from
+`selection` (the real filter), and `LogItemsMapper.quickFilters` built every chip's `selected` flag
+from the former alone. Fixed by adding `LogItemsMapper.appliedFilterLabel`, a real, honest
+statement of the applied filter built from the selection itself — a count of overs
+(`transmissionIds`), a station callsign, an hour window ("23:00 – 00:00"), or a frequency not
+already covered by a quick chip; `null` when nothing narrows the view. Threaded through
+`LogPolling.screenState` as `LogScreenViewState.appliedFilterLabel`, and `quickFilters` no longer
+marks `All` selected while that label is non-null. `LogScreen` renders it as a dismissable
+`FilterChip` inside the existing `FilterChipRow` (never a second row, so it can never collide with
+the chip row or the first log row by construction) — the same dismissable-chip shape
+`SearchScreen`'s own applied-filter chips already use, since no Log filtered-state artboard exists
+in `design/canvas` to follow instead. `LogContent`'s `onClearAppliedFilter` resets both `selection`
+and `quickFilter` back to their unfiltered defaults.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.LogViewDataTest"
+--tests "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.screens.LogScreenTest"` — all
+green, including new `R_1047` cases covering every selection kind, quick-chip suppression,
+dismiss/clear, and Robolectric collision-bounds checks at `w390dp-h844dp-420dpi` and `480dp`, font
+scale 1.0/2.0. Discrimination: reverting the `!hasAppliedFilterStatement` guard failed exactly one
+test, for the right reason. `.\gradlew.bat :app:ktlintCheck :app:detekt` — green (`LogScreenTest.kt`
+now carries `@Suppress("LargeClass")`, the same established pattern as `ModelsScreenTest.kt`/
+`DigestPollingTest.kt`, once this round's own cases pushed it over the threshold).
+
+**Left open / not done:** the re-capture of D11 (or a new tour step) on `ort_audit_2`/port 5560 is
+recorded in this round's own report (see the register), not repeated here.
+
+### 4b78e721 — WPLINK: R-1041 the real per-transmission changed set behind a reprocess run's own `changedCount`
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessStatus.kt`,
+`ReprocessRunner.kt`; `pipeline/src/test/kotlin/org/ort/pipeline/reprocess/ReprocessRunnerTest.kt`.
+
+**Requirements/ACs:** none new — a data-layer prerequisite for R-1041's R04 (`Improve-Done`'s
+"Review the N changes" needs the real ids, not just the count).
+
+**What changed:** `ReprocessStatus.Summary` gains `changedTransmissionIds: Set<String>` (default
+empty, every existing caller compiles unchanged) — the exact per-transmission ids behind
+`transcriptsChanged`/`attributionsChanged`, a `Set` so an over whose transcript *and* attribution
+both changed contributes exactly one id, never a fabricated wider set (constitution I). Populated
+in `ReprocessRunner.run`'s own per-item comparison, alongside the existing counts. The function's
+own per-item bookkeeping was pulled into a new `RunTally`/`BeforeState`/`recordOutcome` split
+(detekt's `LongMethod`; a plain data move, no behaviour change to the existing counts).
+
+**Verified:** `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"` —
+all green, including three updated `ReprocessRunnerTest` cases now asserting the real set (a
+single-item run, a missing-audio-file run where the failed item never joins the set, and the
+four-item `R_143` mix proving the no-double-count-on-both-changed case). `:pipeline:detekt` and
+`:pipeline:ktlintCheck` both green.
+
+### 9967fe4e — WPLINK: R-1041 N01's chart bar, D11's affected-overs link, R04's review-changes link, all real now — routed through the existing `LogFilterOrigin`/`openLogFiltered` mechanism
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/ActivityPatternChart.kt` (the tappable
+bar); `app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt` (`sessionStartedAtUtc`,
+`hourFilterWindow`), `LogViewData.kt` (`LogPolling.attributionFrom`'s own R-189-class fix, found
+while proving D11 — see Left open); `app/src/main/kotlin/org/ort/app/ui/screens/NowScreen.kt`,
+`NowContent.kt` (`onOpenHour`), `PropagatedScreen.kt` (`onViewAffectedOvers`),
+`TransmissionDetailContent.kt` (threading it through), `SearchScreen.kt`, `SearchContent.kt` (the
+drawer icon, R-1042); `app/src/main/kotlin/org/ort/app/ui/improve/ImproveScreens.kt`
+(`onReviewChanges`), `ImproveContent.kt` (`onOpenChangedOvers`); matching tests under
+`app/src/test/kotlin/org/ort/app/ui/{components,data,screens,improve}/**`;
+`tools/ui-audit/tour.json` (one new step, appended: `overnight-live/N01-now-live@2x` — the
+populated chart had no font-scale-2.0 capture at all before this).
+
+**Requirements/ACs:** register R-1041, R-1042 (design-conformance findings, not functional-spec
+requirements). Existing filter mechanisms reused, not duplicated: `LogFilterSelection.fromMillis`/
+`toMillis` (N01's hour window) and `.transmissionIds` (D11's affected overs, R04's changed overs)
+already existed — no new field added to the filter model itself.
+
+**What changed:**
+- **N01** (`Main.dc.html`'s chart bar → `L01` filtered to that hour): `ActivityPatternChart` gains
+  `onBarClick: ((Int) -> Unit)?` — real only for a bar whose own `heardCount > 0` (gated inside the
+  component itself, never left to a caller to re-derive; an hour with nothing heard is never a
+  dead tap). Bumps its own row height to 44dp only while tappable (every other caller — ST03's
+  day-of-week grid, the sparkline — passes no callback and is unaffected). `NowViewState.Active`
+  carries the session's own real `sessionStartedAtUtc`; the new top-level `hourFilterWindow(start,
+  index)` turns a tapped bar's index back into the real `[fromMillis, toMillis]` window
+  `ActivityPatternMapper.buildSessionElapsedPattern` folded it from. `NowScreen`/`NowContent` gain
+  `onOpenHour`, defaulted to a no-op.
+- **D11** (`Detail-Propagated.dc.html`'s "View the N affected overs" → `L01` filtered to those
+  overs): `PropagatedScreen` gains `onViewAffectedOvers: (Set<String>) -> Unit`, rendering the link
+  only when `outcome.affected` is non-empty, passing exactly `outcome.affected`'s own transmission
+  ids (never `overCount` alone, which the register's own fixture convention keeps deliberately
+  desynced from `affected.size` for other reasons). Threaded through
+  `TransmissionDetailContent`/`PropagatedDestination`.
+- **R04** (`Improve-Done`'s "Review the N changes" → `L01` filtered to those overs):
+  `ImproveDoneScreen` renders a `SecondaryButton` beside `Done` reading "Review the
+  &lt;Plurals.count&gt;" only when `summary.changedTransmissionIds` is non-empty — never the whole
+  attempted batch, so a run where nothing changed (every item failed or rejected) shows no link at
+  all. `ImproveContent` gains `onOpenChangedOvers`.
+- **Q01 (R-1042)**: `Search`'s own header (drawn by `SearchScreen` itself, per R-200 — the host
+  never renders its generic `ScreenHeader` for `SEARCH`) had no drawer icon at all, so an operator
+  reaching `Search` from its own new drawer row (IA-5) had no way back into the drawer except
+  system back. Added the same `OrtIcons.drawer` icon `ScreenHeader` draws for every other
+  destination, before the back chevron.
+- **Bonus fix, found proving D11 on a real device**: `LogPolling.attributionFrom`
+  (`LogViewData.kt`) duplicated `ReaderPolling`'s attribution derivation, including the identical
+  R-189 bug `CorrectionPolling.currentAttribution` already patches for the detail screen alone —
+  every real correction writes `INFERRED` with a `NULL` confidence (`Attribution.withCorrection`),
+  and the state-based branch required a non-null one for `INFERRED`, silently downgrading a
+  corrected row back to `UNKNOWN` in the **Log** specifically (never the detail screen, which was
+  already patched). A corrected transmission read as its real, corrected callsign in `Detail` and
+  as `UNKNOWN` in `Log` — found only because D11's own device verification opens exactly that Log.
+  Fixed with the identical `entity.corrected`-aware check `CorrectionPolling.currentAttribution`
+  already uses.
+
+**Verified:**
+`.\gradlew.bat :app:testDebugUnitTest` (full, unfiltered) — green.
+`.\gradlew.bat :app:smokeTestDebugUnitTest` (full, unfiltered) — green, including the new
+`ReaderActivityDestinationSmokeTest`/`NowContentTest`/`TransmissionDetailContentTest` cases (see
+the nav-host commit below for the real-`Activity` D11 round trip).
+`.\gradlew.bat :app:detekt :app:ktlintCheck` — green.
+Real-device verification (constitution VIII), AVD `ort_audit_2`, `emulator-5560`: N01
+(`overnight-live` scenario) and Q01 (`search-corpus` scenario) captured via
+`tools\ui-audit\tour.ps1 -Only <id>* -Out <scratch>` at 1.0 and 2.0 — chart height/tap affordance
+and the new drawer icon both render cleanly at both scales, no clipping or overlap, matching
+`Main.dc.html`/`Search.dc.html`. D11 driven live on-device (the `corrected` scenario, a real
+free-text "Not right?" correction, `KJ7ABC` → `KA7DEMO`): the propagated screen's own "View the 1
+affected over" link renders, opens the filtered Log for real, and system back reopens the
+corrected transmission's own detail — screenshots in the builder's own scratch directory (see
+report). R04 could not be captured on-device: its own affordance requires a real transcript or
+attribution change from an actual ASR pass, which needs a bundled model this local,
+no-`HF_TOKEN` install does not have — proven instead by `ReprocessRunnerTest`'s real
+change-detection and `ImproveScreensTest`'s real rendering/gating (both listed above), plus the
+existing `R_350` smoke test's own real `Improve-Done` round trip (missing-model failure path).
+
+**Left open / not done:** R04's own "changes present" visual state is unverified on a device —
+see Verified. N01's own tour step was added only at 1.0/2.0, not `@2x-end` — `overnight-live`'s
+own populated `Now` did not visibly need scrolling in the 1.0/2.0 captures taken, but this was not
+separately confirmed against a scroll-to-end capture.
+
+### 241e01b4 — WPLINK: nav-host wiring for R-1041's three new `LogFilterOrigin` cases (isolated commit — see report)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` only;
+`app/src/test/kotlin/org/ort/app/ui/navigation/ReaderActivityDestinationSmokeTest.kt` (the new D11
+real-`Activity` round trip, which exercises this wiring specifically).
+
+**Requirements/ACs:** register R-1041.
+
+**What changed:** `LogFilterOrigin` gains three cases — `Now` (data object, back to `Now`),
+`Transmission(transmissionId)` (back reopens that transmission's own drill-in at its `Main`
+sub-state, never the momentary `Propagated` one — the same "root, not the exact sub-screen"
+precedent `Frequency`/`Station` already established), `Improve` (data object, back to `Improve
+records`'s own list root) — with matching `LogFilterOriginSaver` encode/decode branches.
+`OrtNavHostBackHandler`'s own restore `when` was pulled into a new `restoreLogFilterOrigin`
+function (detekt's `CyclomaticComplexMethod`; a plain data move). `NavHostCallbacks` gains
+`onOpenHour`/`onViewAffectedOvers`/`onOpenChangedOvers`, each building the matching
+`LogFilterSelection` + origin and switching to `LOG`; wired into `NowContent` (NOW), into
+`TransmissionDetailContent` (the transmission drill-in), and into `ImproveContent`
+(IMPROVE_RECORDS). `SearchDestinationContent` gained an `onDrawer` parameter wired to the existing
+`NavHostCallbacks.onOpenDrawer` (R-1042's own nav-host half).
+
+**Verified:** `.\gradlew.bat :app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"` — full class green (36 cases),
+including the new `R_1041_D11_view_affected_overs_link_opens_Log_filtered_to_that_over` case,
+which seeds a second, never-corrected transmission specifically so "the Log shows only the
+corrected one" is a real discriminator, and proves `LogFilterOriginSaver`'s new `Transmission`
+case survives a real `Activity` `recreate()` (the R-129 crash class) without crashing.
+`.\gradlew.bat :app:testDebugUnitTest`, `:app:smokeTestDebugUnitTest` (full, unfiltered),
+`:app:detekt`, `:app:ktlintCheck` — all green (same runs as the feature commit above, taken after
+this commit).
+
+**Left open / not done:** none for this commit's own scope.
+
+### b96aa3b0 — WPLINK: R-1042 measures the new drawer icon's own touch target rather than assuming it
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/screens/SearchScreenTest.kt` only.
+
+**Requirements/ACs:** register R-1042, constitution VII (the accessibility floor).
+
+**What changed:** a real bounds test proving the new `search-drawer-icon`'s own rendered footprint
+is at least as large as the pre-existing `search-back-chevron` beside it — found while writing it
+that **neither meets the 44dp floor** (this screen's header icons are bare `Icon` +
+`.clickable()`, not wrapped the way `ui/components/Rows.kt`'s `ScreenHeader` icons are). This is a
+pre-existing gap the new icon matches rather than introduces or worsens; flagged here rather than
+silently accepted, not fixed in this round (fixing it means touching `SearchHeaderRow`'s shared
+icon-sizing pattern, which both header icons use, not just the new one — a separate, intentionally
+scoped fix).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchScreenTest"`
+green (including the new case). `:app:ktlintCheck :app:detekt` green.
+## 2026-09-12 (WPAUDX: RC02's session-audio export replaces the typed stub — a per-session slice of FR-STO-6, streamed, with a full provenance manifest)
+
+### 3df61335 — WPAUDX: `SessionAudioExport` replaces the WPDATA typed "unavailable" stub with a real per-session audio export — a streamed zip (over audio and/or the raw continuous archive) with a full provenance manifest, never buffering a whole file into memory
+
+**Scope:** `:pipeline` only — `pipeline/src/main/kotlin/org/ort/pipeline/archive/SessionAudioExport.kt` (rewritten; the stub removed, no dead path left), `pipeline/src/main/kotlin/org/ort/pipeline/archive/SessionAudioExportManifest.kt` (new: the manifest model and its hand-rolled JSON writer), and their tests. No `:data` schema, UI, or `ExportCoordinator` touched.
+
+**Requirements/ACs:** FR-STO-6, AC-80 (this is that export's per-session slice — see What changed for why no second format was invented), FR-EXP-4 (attribution confidence travels with every callsign in the manifest; `AMBIGUOUS`/`UNKNOWN` never carry one, reusing `org.ort.pipeline.export.ExportAttribution`), FR-SPK-20/FR-SPK-25 (voiceprints, embeddings, user-supplied station names/notes structurally excluded — stricter here than FR-STO-6 itself allows for its own future whole-database export), Q21 (open — training labels excluded from this export until decided), constitution I/III/VI, P9.
+
+**What changed:**
+- Searched first, per the prompt: no backup/export/archive writer of any kind existed anywhere in this codebase before this change. `org.ort.app.export.ExportCoordinator`'s four formats (ADIF/CSV/JSON/TEXT) are text-only; FR-STO-6's "export of the full database and audio archive" had no implementation at all. WPDATA's `SessionAudioExport.unavailable(sessionId)` was a typed stub naming exactly that gap for RC02's Export action (`Recording-Session.dc.html`). This change is FR-STO-6's audio export, applied to one session — not a second, competing format — and is shaped (both files' own kdoc says so) so a future whole-database export can nest many of these unchanged: the same `audio/<sessionId>/…`/`archive/<sessionId>/…` zip-entry layout the app's own on-disk directories already use, and the same manifest schema, one per session.
+- `SessionAudioExportTarget` (`OVER_AUDIO`/`RAW_ARCHIVE`/`BOTH`), mirroring `SessionAudioDeletionService`'s own `SessionAudioTarget` shape for the same screen's sibling action.
+- `canExport`/`preview`/`write`: `canExport` returns a typed `SessionAudioExportRefusal` (`SessionNotFound`, `NothingToExport(reason)`, `ArchiveCapturingNow`) or `null`; `preview` reports every file that will be written and the real total bytes (`File.length()`, never an estimate), `null` only for an unknown session — mirroring `SessionAudioDeletionService.preview`'s own null-for-unknown shape; `write` streams one zip to a caller-supplied `OutputStream` (the same shape `DiagnosticsBundleBuilder.write` already uses, so `:pipeline` never needs `Uri`/`ContentResolver`), refusing first and never touching the stream at all if refused.
+- Container chosen and justified: a zip, audio entries `ZipEntry.STORED` (FLAC is already compressed; re-deflating it wastes CPU on a container that can be gigabytes — the continuous archive, D39 — for essentially no size benefit), `manifest.json` alone left deflated (small text, compression is free). `STORED` requires size/CRC32 known before `putNextEntry`; both are computed by reading the file in 64 KiB chunks — never `File.readBytes()` — so a file is read twice, never loaded whole into memory.
+- `SessionAudioExportManifest`/`SessionAudioManifestWriter` (new file): session id, start/end, the real captured app version (`SessionEntity.appVersion`), the export target, both audio halves' state with an honest `includedInThisExport` flag kept distinct from "removed"/"never existed" (P9 — nothing reads as silently absent), and one row per over regardless of target — time, duration, frequency+provenance (deliberately per-over, never invented as one session-wide fact: a session can span many frequencies in scanner mode), attribution via the existing `ExportAttribution`/`toCells()` (reused, not reinvented — the same FR-EXP-4 structural guarantee `JsonExportWriter` already has), the current transcript version, processed tier and execution provider when recorded, and `audioIncluded` stating plainly whether this row's own FLAC actually made it into this particular zip. Hand-rolled JSON (no library on this module's classpath, matching `JsonExportWriter`'s own reasoning) rather than widening that object's private helpers past its own file.
+- Refusal rules: `SessionNotFound` for an unknown session; `NothingToExport` when everything the target asked for is already gone (over audio removed, or — for `RAW_ARCHIVE` — no archive was ever kept, or it was removed), the reason naming which, plainly; `ArchiveCapturingNow` for `RAW_ARCHIVE`/`BOTH` against the session capturing right now (`CaptureState`) — the continuous archive's trailing chunk is only flushed at session end (`ContinuousArchiveAttachment.finishAndAwait`), so reading the directory mid-session could ship a truncated chunk as though it were the whole recording. Over audio for overs already closed is never refused for this reason (each over's FLAC is written and verified independently the moment that over ends); a `BOTH` request while capturing is refused whole rather than silently downgraded to over-audio-only.
+- Excluded structurally, never merely filtered after being read: `VoiceprintEntity`/its embedding, `StationEntity.userName`/`.notes`, `OperatorLocationEntity`, and every `TransmissionLabelDao`/`TransmissionLabelEntity` field (Q21) — this object never queries any of them at all. Proven, not merely assumed: each marker seeded in the same database the export reads from, and asserted absent from the *decompressed* manifest entry (the raw zip bytes are not a valid absence proof for the deflated `manifest.json` entry — a bug caught and fixed in this same round, see Verified).
+- Naming: `SessionAudioExport.suggestedFileName` mirrors `ExportCoordinator.suggestedFileName`'s shape (scope/target word, UTC timestamp, real extension) — cannot literally share the function (`:pipeline` may not depend on `:app`, where `ExportCoordinator` lives).
+- Removed the WPDATA stub (`SessionAudioExportUnavailable`, `SessionAudioExport.unavailable`) entirely. RC02's future UI Export action is named as this file's consumer in its own KDoc, per the prompt, for whichever package wires it next.
+
+**Verified:**
+- Strict TDD, discriminating, revert-and-restore: (1) reverted `putStoredFileEntry`'s streaming loop to `zip.write(file.readBytes())` — `a large over-audio file is streamed in bounded chunks, never buffered whole into one write call` failed for the right reason (`the largest single write() call was 8388608 bytes`), restored, green again. (2) Added a `db.transmissionLabelDao().getByTransmissionId(...)` lookup feeding `label?.note` into `transcriptText` when no transcript exists — `training labels never appear in the export` failed for the right reason, restored, green again. Fixing (2) also caught a real weakness in two other exclusion tests (`station knowledge…`, `no voiceprint…`): they asserted absence against the *raw*, deflate-compressed zip bytes, which cannot prove absence from a compressed entry's plaintext — fixed to assert against the decompressed `manifest.json` entry instead.
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.archive.*"` — 45 tests green (36 new across `SessionAudioExportTest`/`SessionAudioManifestWriterTest`; the 9 pre-existing tests in the package unaffected).
+- `.\gradlew.bat dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — **BUILD SUCCESSFUL in 14m 34s**, 1109 tasks; `dependencyRules: OK` (20 modules, every edge permitted); `platformGuards: OK` (no analytics/telemetry SDK, no HTTP client outside `:net`, `INTERNET` declared by `:net` only). One `ktlint` round-trip along the way: `:pipeline:ktlintTestSourceSetCheck` flagged this round's own new `SessionAudioExportTest.kt` (`standard:function-signature` — a multi-line parameter list that fit under 120 columns collapsed), fixed with `:pipeline:ktlintFormat` (formatting-only, diff read before trusting it), reverified green (`:pipeline:ktlintTestSourceSetCheck`, `:pipeline:detekt`, the archive package's tests) before the full gate re-run above.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) — `coverageMatrix: 483 requirements, 271 covered -> results\coverage-matrix.md` (up from 269); `coverageMatrixCheck: up to date (271 covered of 483)`. `FR-STO-6`, `FR-SPK-20`, `FR-SPK-25` and `Q21` now list `SessionAudioExportTest`/`SessionAudioManifestWriterTest`.
+
+**Left open / not done:** FR-REP-10 (offering reprocessing after an import) and the rest of AC-80 (a real whole-database export/import) are not built — this change is FR-STO-6's per-session audio slice only, as scoped, and says so in its own KDoc. Q21 (whether training labels may ever leave the device) stays open; this export excludes them structurally rather than deciding the question. RC02's UI Export action (the consumer) and the future whole-database export that would reuse this manifest shape are both out of this package's ownership and not built here.
+
+---
+
+## 2026-09-12 (WPUI: C10 the transport bar, replacing the plain live bar host-wide, and its own reversal of R-1006's stop-on-leave — the bar, not the screen, now owns playback)
+
 ### 48d5687d — WPUI: R-1049 halt fixed — the playback bar was a full-height panel, not a bottom strip
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/components/TransportBar.kt` (the fix), plus one new
@@ -549,6 +920,7 @@ pixels, dispatched through a new decision function — and no scenario/seed exis
 bar into its playback mode for a tour step; building that seam was judged out of scope for this
 slice). `design/design-intent.md`'s C10 row is left for the lead to update, per this package's own
 instructions.
+
 ## 2026-09-12 (WPDATA fix: R-1043 correction — the v12→v13 migration test's own long name broke Windows MAX_PATH, not the environment)
 
 ### WPDATA fix — root cause found and fixed: `migration_from_v12_to_v13_...`'s combination of its own (correctly descriptive) test name and a long `dbName` pushed the resolved Robolectric sandbox path past Windows' 260-character limit; shortening `dbName` fixes it, verified 3× alone and 3× in the full `:data` suite

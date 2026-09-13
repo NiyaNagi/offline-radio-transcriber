@@ -44,6 +44,15 @@ public object ReprocessStatus {
         public val failed: Int = 0,
         public val correctedCount: Int = 0,
         public val failureReasons: List<String> = emptyList(),
+        /**
+         * R-1041 (R04, `LogFilterOrigin.Improve`): the real transmission ids behind [changedCount]
+         * — the exact set whose transcript or attribution (or both) was observably different after
+         * this run, never the whole attempted [transmissionIds] batch. A "review the changes" link
+         * built on this, rather than the attempted batch, never shows an unattempted, failed or
+         * genuinely-unchanged over as though it had been revised (constitution I). Defaulted empty
+         * so every `Summary` built before this existed keeps compiling unchanged.
+         */
+        public val changedTransmissionIds: Set<String> = emptySet(),
     ) {
         /** Every transmission whose stored record is observably different after the run. */
         public val changedCount: Int get() = transcriptsChanged + attributionsChanged

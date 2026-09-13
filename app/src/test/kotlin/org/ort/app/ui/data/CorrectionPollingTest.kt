@@ -576,6 +576,71 @@ class CorrectionPollingTest {
         assertEquals(fallback, attribution)
     }
 
+    // ---- R-1046 (register, halt): `correctionTyped` tells a typed, unverified correction apart
+    // from one picked from a resolved candidate/known station — the real audit-row fact
+    // `DetailViewStateMapper` needs so the Detail screen never claims a typed guess was "Matched by
+    // voice." ----
+
+    @Test
+    fun R_1046_correctionTyped_is_true_for_a_free_text_correction(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        db.correctionDao().recordCorrection(
+            request("TX1", "K7LWH", "VE7ABC", tier = CorrectionTier.FREE_TEXT).toEntity(),
+        )
+
+        assertEquals(true, CorrectionPolling.correctionTyped(context, "TX1"))
+    }
+
+    @Test
+    fun R_1046_correctionTyped_is_false_for_a_picked_candidate_correction(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        db.correctionDao().recordCorrection(
+            request("TX1", "K7LWH", "VE7ABC", tier = CorrectionTier.PICK_CANDIDATE).toEntity(),
+        )
+
+        assertEquals(false, CorrectionPolling.correctionTyped(context, "TX1"))
+    }
+
+    @Test
+    fun R_1046_correctionTyped_is_false_for_a_searched_lexicon_correction(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        db.correctionDao().recordCorrection(
+            request("TX1", "K7LWH", "VE7ABC", tier = CorrectionTier.SEARCH_LEXICON).toEntity(),
+        )
+
+        assertEquals(false, CorrectionPolling.correctionTyped(context, "TX1"))
+    }
+
+    @Test
+    fun R_1046_correctionTyped_reads_the_most_recent_correction_when_there_have_been_several(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        db.correctionDao().recordCorrection(
+            request("TX1", "K7LWH", "VE7ABC", tier = CorrectionTier.PICK_CANDIDATE).toEntity(),
+        )
+        db.correctionDao().recordCorrection(
+            request("TX1", "VE7ABC", "W7NPC", tier = CorrectionTier.FREE_TEXT).toEntity(),
+        )
+
+        assertEquals(true, CorrectionPolling.correctionTyped(context, "TX1"))
+    }
+
+    @Test
+    fun R_1046_correctionTyped_is_null_for_an_uncorrected_row_never_a_guessed_false(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+
+        assertEquals(null, CorrectionPolling.correctionTyped(context, "TX1"))
+    }
+
+    @Test
+    fun R_1046_correctionTyped_is_null_for_a_transmission_that_no_longer_exists(): Unit = runTest {
+        assertEquals(null, CorrectionPolling.correctionTyped(context, "does-not-exist"))
+    }
+
     // ---- R-321: `Undo all` restores the exact recorded prior attribution, through the real DAO ----
 
     /**

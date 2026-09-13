@@ -41,13 +41,35 @@ public sealed interface DetailBodyViewState {
      * "02:14:07") is carried through *structured*, not just baked into [explanation]'s prose, so
      * [org.ort.app.ui.screens.TransmissionDetailScreen] can make that timestamp itself the tappable
      * link the board draws it as — a separate `Open the source over` line beneath the sentence is
-     * not what the board shows. `null` when no source id is known yet, the same case [explanation]
-     * already falls back to its generic "Matched by voice." wording for.
+     * not what the board shows. `null` when no source id is known yet — either a genuine voice
+     * match with nothing resolved ([explanation]'s honest generic "Matched by voice." fallback,
+     * exactly as before) or, since register R-1046, a human correction (see [corrected]/
+     * [correctionTyped] below for how [explanation] tells that case apart instead of reusing the
+     * same sentence for both).
      */
     public data class Inferred(
         override val explanation: String,
         val sourceTransmissionId: String?,
         val sourceOverTimeLabel: String? = null,
+        /**
+         * Register R-1046: the real [org.ort.core.Attribution.corrected] fact, mirrored here
+         * structurally so a caller (a test, or a future
+         * [org.ort.app.ui.screens.TransmissionDetailScreen] render) can tell a human correction
+         * apart from a genuine voice match **without parsing [explanation]'s prose** — the
+         * constitution II rule this register's own test obeys. `false` is this class's original,
+         * unchanged case (a genuine voice-matched INFERRED, corrected or not is never ambiguous
+         * here: it simply was not).
+         */
+        val corrected: Boolean = false,
+        /**
+         * Register R-1046: `true`/`false` when [corrected] is true and the correction's own audit
+         * row says whether it was typed/unverified
+         * ([org.ort.data.dao.CorrectionDao.FIELD_STATION_UNVERIFIED]) or picked from a resolved
+         * candidate/known station ([org.ort.data.dao.CorrectionDao.FIELD_STATION]); `null` when
+         * [corrected] is false (nothing to say) or the caller has not looked it up / no audit row
+         * survives to say which — never a guessed `false` standing in for "verified" (constitution I).
+         */
+        val correctionTyped: Boolean? = null,
     ) : DetailBodyViewState
 
     public data class Ambiguous(
@@ -221,6 +243,15 @@ public object DetailViewStateMapper {
      * passes it through, and its absence (still possible — a source id [TransmissionId.parse] cannot
      * resolve, or a caller that has not looked it up yet) falls back to the honest generic phrasing
      * rather than fabricating a time.
+     *
+     * Register R-1046 (halt). [correctionTyped] is
+     * [org.ort.app.ui.data.CorrectionPolling.correctionTyped]'s own real fact: `true`/`false` when a
+     * human correction is on record and the audit row that applied it says which, `null` when there
+     * is none to read. [bodyFor] only ever consults it when [org.ort.core.Attribution.corrected] is
+     * itself true, so a caller that has not looked it up for an uncorrected row never mis-explains
+     * one. See [bodyFor]'s own INFERRED branch for how this and `Attribution.corrected` together
+     * replace the old, single generic fallback that used to run for both a typed correction and a
+     * genuine unresolved-source voice match alike.
      */
     @Suppress("LongParameterList") // every parameter after `detail` is an additive, defaulted fact
     // a caller opts into once it has looked one up — see each parameter's own doc comment above.
@@ -248,9 +279,14 @@ public object DetailViewStateMapper {
         // every existing call site compiles unchanged; a caller that has looked it up via
         // `SessionRouteFacts` (`TransmissionDetailContent`) passes it through.
         btAudioMark: Boolean = false,
+        // Register R-1046: whether a corrected INFERRED attribution was typed/unverified — see this
+        // function's own doc comment above. Defaulted to `null` so every existing call site compiles
+        // unchanged; a caller that has looked it up
+        // ([org.ort.app.ui.data.CorrectionPolling.correctionTyped]) passes it through.
+        correctionTyped: Boolean? = null,
     ): DetailViewState = DetailViewState(
         detail = detail,
-        body = bodyFor(detail, sourceOverTimeLabel, ambiguousEvidence, unknownContext),
+        body = bodyFor(detail, sourceOverTimeLabel, ambiguousEvidence, unknownContext, correctionTyped),
         why = whyFor(detail.inspection),
         passFailure = passFailure,
         rejected = rejected,
@@ -264,6 +300,7 @@ public object DetailViewStateMapper {
         sourceOverTimeLabel: String? = null,
         ambiguousEvidence: Map<String, CorrectionPolling.AmbiguousCandidateEvidenceViewState> = emptyMap(),
         unknownContext: UnknownTriedContextViewState? = null,
+        correctionTyped: Boolean? = null,
     ): DetailBodyViewState {
         val attribution = detail.attribution
         return when (attribution.state) {
@@ -282,17 +319,38 @@ public object DetailViewStateMapper {
                 // R-423: no "Confidence 0.82." clause — `Detail.dc.html` carries no such sentence
                 // (confirmed by reading its own markup); the chip beside the callsign already shows
                 // that number (FR-UI-4).
-                val explanation = if (sourceId != null) {
-                    val whereClause = sourceOverTimeLabel?.let { "to $it" } ?: "to the source over"
-                    "Not heard in this over. Matched by voice $whereClause, where the callsign was " +
-                        "heard clearly."
-                } else {
-                    "Not heard in this over. Matched by voice."
+                // R-1046 (halt): a *corrected* INFERRED (`attribution.corrected`) never reaches the
+                // `sourceId != null` branch above it — `applyCorrectedAttribution` always nulls the
+                // source — so before this fix every corrected row with no source fell straight into
+                // the same "Matched by voice." sentence a genuine, uncorrected voice match without a
+                // resolved source also uses. That conflated a human's typed guess with the system's
+                // own inference (constitution I: "the operator reads a claim this row cannot back").
+                // Told apart here using the real, non-fabricated facts: `attribution.corrected` (the
+                // data-layer flag `Attribution.withCorrection` sets) plus [correctionTyped] (the real
+                // audit-row fact naming *which* correction field wrote it — a caller that has not
+                // looked it up leaves the corrected branch honestly non-committal on typed-vs-picked,
+                // never assuming "verified").
+                val explanation = when {
+                    sourceId != null -> {
+                        val whereClause = sourceOverTimeLabel?.let { "to $it" } ?: "to the source over"
+                        "Not heard in this over. Matched by voice $whereClause, where the callsign was " +
+                            "heard clearly."
+                    }
+
+                    attribution.corrected -> if (correctionTyped == true) {
+                        "Not heard in this over. The operator corrected this, typed and unverified."
+                    } else {
+                        "Not heard in this over. The operator corrected this."
+                    }
+
+                    else -> "Not heard in this over. Matched by voice."
                 }
                 DetailBodyViewState.Inferred(
                     explanation = explanation,
                     sourceTransmissionId = sourceId,
                     sourceOverTimeLabel = sourceId?.let { sourceOverTimeLabel },
+                    corrected = attribution.corrected,
+                    correctionTyped = if (attribution.corrected) correctionTyped else null,
                 )
             }
 

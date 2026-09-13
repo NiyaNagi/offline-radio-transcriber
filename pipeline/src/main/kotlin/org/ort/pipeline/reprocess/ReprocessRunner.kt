@@ -5,6 +5,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import org.ort.core.AssetRef
+import org.ort.core.AttributionState
 import org.ort.core.Clock
 import org.ort.core.PassId
 import org.ort.core.SystemClock
@@ -186,12 +187,7 @@ public class ReprocessRunner(
         val drainRunner = PassDrainRunner(queue, runId)
 
         var done = 0
-        var transcriptsChanged = 0
-        var attributionsChanged = 0
-        var rejected = 0
-        var failed = 0
-        var correctedCount = 0
-        val failureReasons = LinkedHashSet<String>()
+        val tally = RunTally()
 
         ReprocessStatus.running(done, total, null)
 
@@ -205,49 +201,41 @@ public class ReprocessRunner(
                 emit(ReprocessProgress(done, total, id))
                 continue
             }
-            if (transmission.corrected) correctedCount++
+            if (transmission.corrected) tally.correctedCount++
 
-            val beforeTranscript = db.transcriptDao().getCurrent(id)?.text
-            val beforeState = transmission.attributionState
-            val beforeStation = transmission.stationId
+            val before = BeforeState(
+                transcript = db.transcriptDao().getCurrent(id)?.text,
+                attributionState = transmission.attributionState,
+                stationId = transmission.stationId,
+            )
 
             val outcome = runOnePass(queue, drainRunner, pass, id, passes.first(), done, total)
-
-            when (outcome) {
-                is PassAttemptOutcome.Failed -> {
-                    failed++
-                    outcome.reason?.let { failureReasons.add(it) }
-                }
-                PassAttemptOutcome.Completed, PassAttemptOutcome.Rejected -> {
-                    db.transmissionDao().setReprocessCandidate(id, false)
-                    // Register R-204 follow-up (FR-REP-2, FR-REP-9): both outcomes mean Pass B
-                    // genuinely ran this record at `tier` -- only Failed (handled above) means it
-                    // did not, so only Failed must leave `processedTier` untouched, still eligible.
-                    db.transmissionDao().setProcessedTier(id, tier)
-                    if (outcome == PassAttemptOutcome.Rejected) {
-                        rejected++
-                    } else {
-                        val after = db.transmissionDao().getById(id)
-                        val afterTranscript = db.transcriptDao().getCurrent(id)?.text
-                        if (afterTranscript != beforeTranscript) transcriptsChanged++
-                        // Never true for a corrected transmission -- TransmissionDao
-                        // .updateAttribution's own "AND corrected = 0" guard means `after`
-                        // is unchanged from `before` here, structurally (see class kdoc).
-                        if (after != null &&
-                            (after.attributionState != beforeState || after.stationId != beforeStation)
-                        ) {
-                            attributionsChanged++
-                        }
-                    }
-                }
-            }
+            recordOutcome(tally, id, tier, outcome, before)
 
             done++
             ReprocessStatus.running(done, total, id)
             emit(ReprocessProgress(done, total, id))
         }
 
-        val summary = ReprocessStatus.Summary(
+        ReprocessStatus.done(tally.toSummary(total))
+    }
+
+    /** [run]'s own per-item counters, pulled into one mutable holder purely to keep that function
+     * under detekt's `LongMethod` limit — a plain data move, not a behaviour change. */
+    private class RunTally {
+        var correctedCount = 0
+        var transcriptsChanged = 0
+        var attributionsChanged = 0
+        var rejected = 0
+        var failed = 0
+        val failureReasons = LinkedHashSet<String>()
+
+        // R-1041: the real ids behind transcriptsChanged/attributionsChanged, a Set so a
+        // transmission whose transcript *and* attribution both changed still contributes exactly
+        // one id — see `ReprocessStatus.Summary.changedTransmissionIds`'s own kdoc.
+        val changedTransmissionIds = LinkedHashSet<String>()
+
+        fun toSummary(total: Int): ReprocessStatus.Summary = ReprocessStatus.Summary(
             total = total,
             transcriptsChanged = transcriptsChanged,
             attributionsChanged = attributionsChanged,
@@ -255,8 +243,59 @@ public class ReprocessRunner(
             failed = failed,
             correctedCount = correctedCount,
             failureReasons = failureReasons.toList(),
+            changedTransmissionIds = changedTransmissionIds,
         )
-        ReprocessStatus.done(summary)
+    }
+
+    /** [id]'s own attribution/transcript just before [runOnePass] ran, for [recordOutcome]'s own
+     * before/after comparison — pulled into one type for the same reason [RunTally] is. */
+    private data class BeforeState(
+        val transcript: String?,
+        val attributionState: AttributionState,
+        val stationId: String?,
+    )
+
+    /** [run]'s own per-item bookkeeping once [outcome] is known, split out purely to keep that
+     * function under detekt's `LongMethod` limit — a plain data move, not a behaviour change. */
+    private suspend fun recordOutcome(
+        tally: RunTally,
+        id: String,
+        tier: Tier,
+        outcome: PassAttemptOutcome,
+        before: BeforeState,
+    ) {
+        when (outcome) {
+            is PassAttemptOutcome.Failed -> {
+                tally.failed++
+                outcome.reason?.let { tally.failureReasons.add(it) }
+            }
+            PassAttemptOutcome.Completed, PassAttemptOutcome.Rejected -> {
+                db.transmissionDao().setReprocessCandidate(id, false)
+                // Register R-204 follow-up (FR-REP-2, FR-REP-9): both outcomes mean Pass B
+                // genuinely ran this record at `tier` -- only Failed (handled above) means it did
+                // not, so only Failed must leave `processedTier` untouched, still eligible.
+                db.transmissionDao().setProcessedTier(id, tier)
+                if (outcome == PassAttemptOutcome.Rejected) {
+                    tally.rejected++
+                } else {
+                    val after = db.transmissionDao().getById(id)
+                    val afterTranscript = db.transcriptDao().getCurrent(id)?.text
+                    if (afterTranscript != before.transcript) {
+                        tally.transcriptsChanged++
+                        tally.changedTransmissionIds.add(id)
+                    }
+                    // Never true for a corrected transmission -- TransmissionDao
+                    // .updateAttribution's own "AND corrected = 0" guard means `after` is
+                    // unchanged from `before` here, structurally (see class kdoc).
+                    if (after != null &&
+                        (after.attributionState != before.attributionState || after.stationId != before.stationId)
+                    ) {
+                        tally.attributionsChanged++
+                        tally.changedTransmissionIds.add(id)
+                    }
+                }
+            }
+        }
     }
 
     /** Capture-priority yield (see the class kdoc) -- polls, publishing [ReprocessStatus.Paused], until clear. */

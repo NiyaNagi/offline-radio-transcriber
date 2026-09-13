@@ -54,6 +54,13 @@ public fun ImproveContent(
     onDrawer: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenModels: () -> Unit = {},
+    // R-1041 (R04, `LogFilterOrigin.Improve`): `Improve-Done`'s own "Review the N changes" —
+    // needs the Log, which this package cannot reach on its own (no drill-in of that shape exists
+    // inside `ui/improve`, and `OrtNavHost.kt` is outside this round's file ownership) — the same
+    // reason [onOpenModels] above is already a callback rather than a direct navigation. Defaulted
+    // to a no-op so every existing caller keeps compiling unchanged; the host is expected to wire
+    // it the same way it wires [onOpenModels].
+    onOpenChangedOvers: (Set<String>) -> Unit = {},
 ) {
     val runner = remember { RealImproveRunner(context) }
     var page by remember { mutableStateOf<ImprovePage>(ImprovePage.Root) }
@@ -115,6 +122,7 @@ public fun ImproveContent(
             onDone = { page = ImprovePage.Root },
             modifier = modifier,
             onInstallModel = onOpenModels,
+            onReviewChanges = onOpenChangedOvers,
         )
     }
 }

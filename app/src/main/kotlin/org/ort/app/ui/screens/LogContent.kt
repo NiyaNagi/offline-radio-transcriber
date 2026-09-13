@@ -184,6 +184,14 @@ public fun LogContent(
             onQuickFilterSelect = { id -> quickFilter = id },
             onFilterClick = { sheetOpen = true },
             onOpenThread = onOpenThread,
+            // R-1047 (register): resets both halves of what a "no filter" state means here — the
+            // real selection (every narrowing field this chip could have been reporting) and the
+            // separately-tracked quick-chip id (so `All` itself reads selected again on the very
+            // next recomposition, not just on this filter's own dismissal).
+            onClearAppliedFilter = {
+                selection = LogFilterSelection()
+                quickFilter = LogQuickFilterId.All
+            },
         )
 
         val currentSheetState = sheetState
