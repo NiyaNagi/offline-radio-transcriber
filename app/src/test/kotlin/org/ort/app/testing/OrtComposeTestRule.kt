@@ -9,6 +9,19 @@ import org.ort.app.ui.data.DebugSearchOverride
 import org.ort.app.ui.data.ModelsController
 
 /**
+ * WPTESTROBUST (R-1043): the generous, shared wall-clock ceiling for a `composeTestRule.waitUntil`
+ * that polls for a real asynchronous result — a `LaunchedEffect` load, real disk/DB I/O — that
+ * idling alone (`waitForIdle`, `mainClock.advanceTimeBy`) cannot express because the wait is on
+ * data arriving, not on a pending frame settling. A fixed `5_000`, fine alone, was observed to trip
+ * `ComposeTimeoutException` under a loaded full gate (register R-1043, `SettingsContentTest`'s own
+ * `AC_144`) — this is a single named constant precisely so raising it again, if a slower or more
+ * loaded gate needs it, is a one-line change instead of a re-grep across every call site that
+ * copied the old literal. Never use this to paper over a wait that should instead be expressed as
+ * idling; reach for this only where this file's own class doc already says idling cannot reach.
+ */
+public const val ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS: Long = 15_000L
+
+/**
  * idle-root task (2026-09-10, CHANGELOG's own entry has the full account): root-causes the
  * `AppNotIdleException` wedge two earlier sessions ("poison hunt", cb1d8cd; "poison hunt 2",
  * 7ac846b) worked around with `forkEvery` tuning and per-class JVM isolation, never a single
