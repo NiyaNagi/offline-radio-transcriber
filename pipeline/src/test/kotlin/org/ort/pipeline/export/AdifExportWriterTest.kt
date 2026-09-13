@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.core.AttributionState
 
 /**
  * Register R-1009 (WPX), FR-EXP-1: "Export stations heard as ADIF, for logging software." ADIF's
@@ -92,5 +93,27 @@ class AdifExportWriterTest {
         )
         val eorCount = Regex("<EOR>").findAll(adif).count()
         assertEquals(2, eorCount) { "expected exactly 2 QSO records (confirmed + inferred), got:\n$adif" }
+    }
+
+    @Test
+    fun `R_1039 a CONFIRMED row with no resolvable callsign is excluded, never crashes, never becomes AMBIGUOUS`() {
+        val adif = AdifExportWriter.write(
+            listOf(
+                record(
+                    ExportAttribution.UnresolvedCallsign(AttributionState.CONFIRMED, "no station id recorded"),
+                    id = "t-unresolved",
+                ),
+            ),
+        )
+        assertFalse(adif.contains("<CALL:")) { "no callsign field may exist when this row cannot name one" }
+        assertFalse(adif.contains("<EOR>")) { "no QSO record may exist for a row that cannot name a callsign" }
+        val header = adif.substringBefore("<EOH>")
+        assertTrue(header.contains("t-unresolved"))
+        assertTrue(header.contains("CONFIRMED")) {
+            "expected the row's real CONFIRMED state named, never folded into AMBIGUOUS/UNKNOWN, got: $header"
+        }
+        assertTrue(header.contains("no station id recorded")) {
+            "expected the real reason named in the header, got: $header"
+        }
     }
 }

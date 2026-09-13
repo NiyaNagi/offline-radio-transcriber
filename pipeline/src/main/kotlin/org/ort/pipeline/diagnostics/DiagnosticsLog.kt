@@ -13,6 +13,8 @@ import org.ort.core.PassId
 import org.ort.core.SystemClock
 import org.ort.core.Tier
 import org.ort.data.entity.TerminationReason
+import org.ort.segment.SegmentCloseReason
+import org.ort.segment.SegmentOutcome
 import java.io.File
 import java.time.Instant
 
@@ -60,6 +62,10 @@ import java.time.Instant
 public object DiagnosticsLog {
 
     public const val ROTATE_AT_BYTES: Long = 2L * 1024 * 1024
+
+    /** The event name [logVadStats] writes — exported so a reader parsing `capture.log` back
+     * (`org.ort.app.export.DebugDumpBuilder`) never hand-copies the literal. */
+    public const val EVENT_VAD_STATS: String = "vad_stats"
 
     public enum class Category(public val fileName: String) {
         LIFECYCLE("lifecycle.log"),
@@ -220,6 +226,51 @@ public object DiagnosticsLog {
 
     public fun logOverrun(droppedMillis: Long) {
         enqueue(Category.CAPTURE, Level.WARN, "overrun", listOf("droppedMillis" to droppedMillis.toString()))
+    }
+
+    /**
+     * FR-OBS-1's "VAD statistics" (register Q20): one line per closed segment, **accepted and
+     * rejected alike** (constitution III — a rejected segment stays reachable, including here) —
+     * every field the segmenter genuinely has for diagnosing a missed or split over, and nothing
+     * it does not. [transmissionId] is an opaque `<sessionId>-<index>` id
+     * (`RealSegmentSink`'s own scheme), never a callsign; [outcome] and [closeReason] are the two
+     * closed enums [org.ort.segment.SegmentOutcome]/[org.ort.segment.SegmentCloseReason] carry the
+     * rejection reason and the hangover/close reason respectively — there is only one rejection
+     * reason the segmenter can report today ([SegmentOutcome.REJECTED_TOO_SHORT]), so no separate
+     * free-text reason field exists to carry it. [peakDbfs], [meanDbfs] and
+     * [noiseFloorDbfsAtOnset] are `null` — logged as the literal `NONE`, never `0.0` — exactly when
+     * the caller genuinely could not measure them (constitution I: never zero-filled).
+     */
+    @Suppress("LongParameterList") // every parameter is an independent, real VAD-statistic field
+    // (matches DiagnosticsLog's own no-free-text-parameter discipline above) — grouping them into
+    // a data class would only move the same nine facts one level down, not reduce them.
+    public fun logVadStats(
+        transmissionId: String,
+        outcome: SegmentOutcome,
+        closeReason: SegmentCloseReason,
+        durationMs: Long,
+        vadFrameCount: Int,
+        vadSpeechFrameCount: Int,
+        peakDbfs: Float?,
+        meanDbfs: Float?,
+        noiseFloorDbfsAtOnset: Float?,
+    ) {
+        enqueue(
+            Category.CAPTURE,
+            Level.INFO,
+            EVENT_VAD_STATS,
+            listOf(
+                "transmissionId" to transmissionId,
+                "outcome" to outcome.name,
+                "closeReason" to closeReason.name,
+                "durationMs" to durationMs.toString(),
+                "vadFrameCount" to vadFrameCount.toString(),
+                "vadSpeechFrameCount" to vadSpeechFrameCount.toString(),
+                "peakDbfs" to (peakDbfs?.toString() ?: "NONE"),
+                "meanDbfs" to (meanDbfs?.toString() ?: "NONE"),
+                "noiseFloorDbfsAtOnset" to (noiseFloorDbfsAtOnset?.toString() ?: "NONE"),
+            ),
+        )
     }
 
     // --- pipeline.log (FR-OBS-1: "per-pass latency ... rejection reasons ... tier changes") -----

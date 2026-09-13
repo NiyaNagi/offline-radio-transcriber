@@ -106,16 +106,20 @@ public fun SettingsExportScreen(
     // R-1035: `null` exactly while a freshly-selected combination's own preview has not resolved
     // yet, while `RANGE` is selected (no [ExportRequestScope] exists for it —
     // [ExportScope.toRequestScope]'s own kdoc — so no request, and no preview, is ever built for
-    // it), or while [previewCount] itself failed — found running the real tour against the real
-    // `overnight` scenario while verifying this fix: [ExportCoordinator.previewCount]'s own real
-    // read can throw on data this build can apparently produce (`IllegalArgumentException:
-    // CONFIRMED transmission ... has no resolvable callsign`, `ExportCoordinator
-    // .toExportAttribution`, outside this file's own ownership — flagged separately, not fixed
-    // here). Before this round, this screen never called [previewCount] at all, so merely opening
-    // it could never crash on that data; a diagnostic preview must not turn a read-only screen
-    // into a new crash surface — `runCatching` treats a failure the same honest way a
-    // `notMeasuredReason` elsewhere in this codebase treats an absent signal: nothing shown, never
-    // a crash and never a fabricated count (constitution I).
+    // it), or while [previewCount] itself failed. Register R-1039 (halt): found running the real
+    // tour against the real `overnight` scenario while verifying this fix,
+    // [ExportCoordinator.previewCount]'s own real read *used to* throw on data this build can
+    // produce (`IllegalArgumentException: CONFIRMED transmission ... has no resolvable callsign`,
+    // `ExportCoordinator.toExportAttribution`) — that specific crash is now fixed at the
+    // coordinator layer itself (a missing catalog callsign falls back to the transmission's own
+    // real `stationId`; a genuine data inconsistency is represented honestly via
+    // `org.ort.pipeline.export.ExportAttribution.UnresolvedCallsign` rather than thrown). This
+    // `runCatching` stays regardless, as defence-in-depth for a real Room read this screen cannot
+    // fully control the failure modes of (I/O, cancellation, a future regression) — a diagnostic
+    // preview must not turn a read-only screen into a new crash surface, and this already logs
+    // rather than hiding, so it costs nothing to keep: `runCatching` treats a failure the same
+    // honest way a `notMeasuredReason` elsewhere in this codebase treats an absent signal: nothing
+    // shown, never a crash and never a fabricated count (constitution I).
     var preview by remember { mutableStateOf<ExportCountPreview?>(null) }
     val context = LocalContext.current
 

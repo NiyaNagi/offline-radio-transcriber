@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.core.AttributionState
 
 /** Register R-1009 (WPX), FR-EXP-2: "CSV with all fields including confidence and provenance." */
 class CsvExportWriterTest {
@@ -30,7 +31,7 @@ class CsvExportWriterTest {
         for (column in listOf(
             "transmission_id", "session_id", "started_at_utc", "ended_at_utc", "frequency_hz",
             "mode", "channel_name", "attribution_state", "callsign", "confidence", "corrected",
-            "transcript_model_id", "transcript_model_version", "transcript_text",
+            "transcript_model_id", "transcript_model_version", "transcript_text", "attribution_note",
         )) {
             assertTrue(header.contains(column)) { "expected header to name $column, got $header" }
         }
@@ -100,9 +101,33 @@ class CsvExportWriterTest {
             ),
         )
         val dataLine = csv.lines()[1]
-        // A naive split on comma would produce more than 14 fields if the transcript were not quoted.
-        assertEquals(14, splitCsvLine(dataLine).size) { "expected exactly 14 columns, got: $dataLine" }
+        // A naive split on comma would produce more than 15 fields if the transcript were not quoted.
+        assertEquals(15, splitCsvLine(dataLine).size) { "expected exactly 15 columns, got: $dataLine" }
         assertTrue(dataLine.contains("\"he said, \"\"break, break\"\"\""))
+    }
+
+    @Test
+    fun `R_1039 a CONFIRMED row with no resolvable callsign never throws and states its real reason`() {
+        val csv = CsvExportWriter.write(
+            listOf(record(ExportAttribution.UnresolvedCallsign(AttributionState.CONFIRMED, "no station id recorded"))),
+        )
+        val row = csv.lines()[1]
+        assertTrue(row.contains("CONFIRMED")) { "expected the real CONFIRMED state, got: $row" }
+        assertTrue(row.contains("no station id recorded")) { "expected the real reason in the note column, got: $row" }
+        assertFalse(row.contains("UNIDENTIFIED")) {
+            "UnresolvedCallsign must read differently from AMBIGUOUS/UNKNOWN's own placeholder, got: $row"
+        }
+    }
+
+    @Test
+    fun `R_1039 a corrected INFERRED row with no confidence carries its real callsign and an empty confidence cell`() {
+        val csv = CsvExportWriter.write(
+            listOf(record(ExportAttribution.Inferred(callsign = "KJ7ABC", confidence = null, corrected = true))),
+        )
+        val row = csv.lines()[1].split(",")
+        assertEquals("KJ7ABC", row[8]) { "expected the real callsign in the callsign column, got row: $row" }
+        assertEquals("", row[9]) { "expected an empty confidence cell, never a fabricated 0, got row: $row" }
+        assertEquals("true", row[10]) { "expected corrected=true carried through, got row: $row" }
     }
 
     /** A minimal RFC4180-aware splitter for this test only — never used by the writer itself. */

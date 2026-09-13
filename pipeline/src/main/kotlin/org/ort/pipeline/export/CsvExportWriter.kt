@@ -16,6 +16,10 @@ public object CsvExportWriter {
         "transmission_id", "session_id", "started_at_utc", "ended_at_utc", "frequency_hz",
         "mode", "channel_name", "attribution_state", "callsign", "confidence", "corrected",
         "transcript_model_id", "transcript_model_version", "transcript_text",
+        // Register R-1039: empty for every row except ExportAttribution.UnresolvedCallsign, where
+        // it carries the real reason a resolved (CONFIRMED/INFERRED) row cannot name a callsign —
+        // a trailing, additive column so no existing reader keyed on the columns above it breaks.
+        "attribution_note",
     )
 
     public fun write(records: List<ExportOverRecord>): String {
@@ -37,6 +41,7 @@ public object CsvExportWriter {
                 record.transcriptModelId ?: "",
                 record.transcriptModelVersion ?: "",
                 record.transcriptText ?: "",
+                cells.noteCell,
             ).joinToString(",", transform = ::csvField)
         }
         return lines.joinToString("\n")

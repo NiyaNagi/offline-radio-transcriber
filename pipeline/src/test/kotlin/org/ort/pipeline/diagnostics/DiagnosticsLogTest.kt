@@ -11,6 +11,8 @@ import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.PassId
 import org.ort.core.Tier
 import org.ort.data.entity.TerminationReason
+import org.ort.segment.SegmentCloseReason
+import org.ort.segment.SegmentOutcome
 import org.ort.testing.Requirement
 import org.ort.testing.TestClock
 import java.io.File
@@ -105,6 +107,67 @@ class DiagnosticsLogTest {
         assertTrue(written[4].contains("droppedMillis=220"))
     }
 
+    /**
+     * Q20 (FR-OBS-1): the per-transmission VAD statistics `capture.log` was promised since draft 1
+     * and, before this, never wrote — this proves an accepted segment's real fields land verbatim,
+     * and that a value the caller genuinely could not measure is logged as the literal `NONE`,
+     * never a fabricated `0.0` (constitution I).
+     */
+    @Test
+    @Requirement("FR-OBS-1")
+    fun `FR_OBS_1_vad_stats an accepted segment logs its real fields, and an unmeasurable one logs NONE not zero`() {
+        val filesDir = tempFilesDir()
+        DiagnosticsLog.configure(filesDir, TestClock())
+
+        DiagnosticsLog.logVadStats(
+            transmissionId = "SESSION01-4",
+            outcome = SegmentOutcome.SPEECH,
+            closeReason = SegmentCloseReason.SILENCE,
+            durationMs = 2_340L,
+            vadFrameCount = 73,
+            vadSpeechFrameCount = 61,
+            peakDbfs = -3.2f,
+            meanDbfs = -18.7f,
+            noiseFloorDbfsAtOnset = -42.1f,
+        )
+        DiagnosticsLog.logVadStats(
+            transmissionId = "SESSION01-5",
+            outcome = SegmentOutcome.REJECTED_TOO_SHORT,
+            closeReason = SegmentCloseReason.END_OF_STREAM,
+            durationMs = 90L,
+            vadFrameCount = 3,
+            vadSpeechFrameCount = 3,
+            peakDbfs = null,
+            meanDbfs = null,
+            noiseFloorDbfsAtOnset = null,
+        )
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = lines(filesDir, DiagnosticsLog.Category.CAPTURE)
+        assertEquals(2, written.size)
+        assertWellFormedLine(written[0], "vad_stats")
+        assertTrue(written[0].contains("transmissionId=SESSION01-4"))
+        assertTrue(written[0].contains("outcome=SPEECH"))
+        assertTrue(written[0].contains("closeReason=SILENCE"))
+        assertTrue(written[0].contains("durationMs=2340"))
+        assertTrue(written[0].contains("vadFrameCount=73"))
+        assertTrue(written[0].contains("vadSpeechFrameCount=61"))
+        assertTrue(written[0].contains("peakDbfs=-3.2"))
+        assertTrue(written[0].contains("meanDbfs=-18.7"))
+        assertTrue(written[0].contains("noiseFloorDbfsAtOnset=-42.1"))
+
+        assertWellFormedLine(written[1], "vad_stats")
+        assertTrue(written[1].contains("transmissionId=SESSION01-5"))
+        assertTrue(written[1].contains("outcome=REJECTED_TOO_SHORT"))
+        assertTrue(written[1].contains("closeReason=END_OF_STREAM"))
+        assertTrue(
+            "an unmeasurable value must be the literal NONE, never a fabricated 0.0",
+            written[1].contains("peakDbfs=NONE") &&
+                written[1].contains("meanDbfs=NONE") &&
+                written[1].contains("noiseFloorDbfsAtOnset=NONE"),
+        )
+    }
+
     @Test
     @Requirement("FR-OBS-1")
     fun `FR_OBS_1_pipeline latency, rejections, tier changes and SafePass failures all land in pipeline log`() {
@@ -172,6 +235,42 @@ class DiagnosticsLogTest {
     }
 
     /**
+     * FR-OBS-1 (Q20): a busy net can write hundreds of `vad_stats` lines to `capture.log` in one
+     * session — this proves that volume is bounded by the *same* rotation [DiagnosticsLog] already
+     * applies to every other category, not a special case that could grow unbounded. Never reads
+     * `ROTATE_AT_BYTES` real bytes' worth of real calls (slow); instead proves the mechanism is the
+     * same file/rotation path every category already shares, by tripping it with a single real
+     * `vad_stats` line the same way the generic rotation test above trips it with a pre-sized file.
+     */
+    @Test
+    @Requirement("FR-OBS-1")
+    fun `FR_OBS_1_vad_stats capture log rotation is the same shared mechanism, not a special case`() {
+        val filesDir = tempFilesDir()
+        DiagnosticsLog.configure(filesDir, TestClock())
+        val logDir = File(filesDir, "diagnostics-logs")
+        logDir.mkdirs()
+        val active = File(logDir, DiagnosticsLog.Category.CAPTURE.fileName)
+        active.writeBytes(ByteArray(DiagnosticsLog.ROTATE_AT_BYTES.toInt()) { 'x'.code.toByte() })
+
+        DiagnosticsLog.logVadStats(
+            transmissionId = "SESSION01-1",
+            outcome = SegmentOutcome.SPEECH,
+            closeReason = SegmentCloseReason.SILENCE,
+            durationMs = 1_000L,
+            vadFrameCount = 30,
+            vadSpeechFrameCount = 25,
+            peakDbfs = -6f,
+            meanDbfs = -20f,
+            noiseFloorDbfsAtOnset = -40f,
+        )
+        runBlocking { DiagnosticsLog.flush() }
+
+        val backup = File(logDir, "${DiagnosticsLog.Category.CAPTURE.fileName}.1")
+        assertTrue("a vad_stats write must roll an oversized capture.log exactly like any other event", backup.isFile)
+        assertTrue("the active file must be fresh, holding only this one vad_stats line", active.length() < 1_000L)
+    }
+
+    /**
      * AC-109: the real, representative leak risk in this design is not the closed id/enum/number
      * parameters below (production code never populates a `sessionId`/`transmissionId` from a
      * callsign — they are [org.ort.core.Ulid] values) — it is a caller reaching for
@@ -201,6 +300,17 @@ class DiagnosticsLogTest {
         DiagnosticsLog.logInputLost(1_000L)
         DiagnosticsLog.logLevelClip(1, -0.1)
         DiagnosticsLog.logOverrun(50L)
+        DiagnosticsLog.logVadStats(
+            transmissionId = "SESSION01-9",
+            outcome = SegmentOutcome.SPEECH,
+            closeReason = SegmentCloseReason.SILENCE,
+            durationMs = 1_000L,
+            vadFrameCount = 30,
+            vadSpeechFrameCount = 25,
+            peakDbfs = -6f,
+            meanDbfs = -20f,
+            noiseFloorDbfsAtOnset = -40f,
+        )
         DiagnosticsLog.logPassLatency(PassId.B_OFFLINE, Tier.T0, 100L)
         DiagnosticsLog.logRejection(RejectionRuleId.BLOCKLIST)
         DiagnosticsLog.logTierChange(Tier.T0, Tier.T2, 3)

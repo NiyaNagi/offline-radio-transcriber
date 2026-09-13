@@ -16,9 +16,31 @@ public enum class SegmentOutcome {
 }
 
 /**
+ * Why a segment (or a too-short candidate) stopped growing — FR-OBS-1's "VAD statistics", the
+ * hangover/close reason half of it (Q20). One of the genuinely three ways [Segmenter] ever closes
+ * anything; never invented per-instance, always the exact branch that fired.
+ */
+public enum class SegmentCloseReason {
+    /** The VAD's hangover/silence window elapsed naturally, or (for a rejected candidate) the VAD
+     * flipped back to silence before [SegmentConfig.minSpeechMs] was reached. */
+    SILENCE,
+
+    /** [SegmentConfig.maxSegmentMs] forced this cut, not a silence (AC-70). */
+    MAX_DURATION,
+
+    /** The audio stream ended ([Segmenter.finish]) while this segment or candidate was still open. */
+    END_OF_STREAM,
+}
+
+/**
  * The closed record of one segment. Boundaries are reported twice on purpose:
  * [vadStartSample]/[vadEndSample] are the keying edges (what AC-69 measures), while
  * [startSample]/[endSample] include the generous pre- and post-roll (FR-SEG-8 → AC-95).
+ *
+ * [closeReason], [vadFrameCount] and [vadSpeechFrameCount] are FR-OBS-1's per-transmission VAD
+ * statistics (Q20): the honest facts the segmenter itself has about *why* it stopped and *how much
+ * of the window the VAD called speech* — a speech-frame ratio is [vadSpeechFrameCount] over
+ * [vadFrameCount], left to the reader to divide rather than pre-computed and rounded here.
  */
 public data class SegmentRecord(
     val id: SegmentId,
@@ -28,8 +50,16 @@ public data class SegmentRecord(
     val vadEndSample: Long,
     val sampleCount: Long,
     val outcome: SegmentOutcome,
-    /** `true` when [SegmentConfig.maxSegmentMs] forced this cut, not a silence (AC-70). */
+    /** `true` when [SegmentConfig.maxSegmentMs] forced this cut, not a silence (AC-70). Equivalent
+     * to `closeReason == SegmentCloseReason.MAX_DURATION`, kept as its own field since it predates
+     * [closeReason] and existing callers already match on it. */
     val forcedSplit: Boolean = false,
+    val closeReason: SegmentCloseReason,
+    /** Total VAD frames evaluated over this segment's (or candidate's) own active window — from
+     * the frame that triggered it to the frame that closed it, inclusive. */
+    val vadFrameCount: Int,
+    /** Of [vadFrameCount], how many the VAD called [VadDecision.SPEECH]. */
+    val vadSpeechFrameCount: Int,
 )
 
 /**

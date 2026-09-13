@@ -187,6 +187,334 @@ bar into its playback mode for a tour step; building that seam was judged out of
 slice). `design/design-intent.md`'s C10 row is left for the lead to update, per this package's own
 instructions.
 
+## 2026-09-12 (WPVAD follow-up: AC-161 tests tagged and completed, now covered in the matrix)
+
+### WPVAD follow-up — AC-161's four driven cases each carry the annotation/name the coverage matrix scans for; the missing MAX_DURATION case (log line and debug dump) added
+
+**Scope:** `segment/src/test/kotlin/org/ort/segment/SegmentVadStatisticsTest.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/capture/RealSegmentSinkTest.kt`,
+`app/src/test/kotlin/org/ort/app/export/DebugDumpBuilderTest.kt`, `results/coverage-matrix.md`
+(regenerated). No production code, `spec/**`, `results/ui-audit/register.md` or UI path touched.
+
+**Requirements/ACs:** AC-161 (D41 — Q20 closed; FR-OBS-1 amended). Builds on the WPVAD commit
+(`c0fe8e79`, merged at `8bf31976`) that implemented the behaviour before AC-161 existed to name it.
+
+**What changed:**
+- **The coverage-matrix gap was attribution, not behaviour.** Every AC-161 driven case already
+  worked (WPVAD landed the whole mechanism); the tests proving it were named for `FR-OBS-1`, the
+  requirement, not `AC-161`, the criterion D41 added afterward — `coverageMatrix` only counts a
+  requirement id it finds in an `@Requirement(...)` annotation or a `_`-separated test name, so
+  AC-161 read uncovered despite being fully exercised.
+- **`@Requirement("AC-161")` added** to `SegmentVadStatisticsTest`'s three segmenter-level driven
+  cases (closed by silence, forced at maximum duration, rejected as too short) and to
+  `RealSegmentSinkTest`'s two capture.log-level cases (the silence-close with real dBFS values;
+  the too-short rejection with the `NONE` noise floor). `DebugDumpBuilderTest`'s existing dump test
+  was renamed to embed `AC_161` alongside its existing `FR_OBS_1`, matching this file's own
+  name-embedded-id convention (no `@Requirement` import previously existed in this file).
+- **One driven case was genuinely missing a test, not just a tag: MAX_DURATION never had a test
+  proving it reaches `capture.log` or the debug dump** (only `SegmentVadStatisticsTest` exercised
+  it, at the segmenter level, before any `DiagnosticsLog`/dump involvement). Added
+  `RealSegmentSinkTest`'s `a MAX_DURATION forced segment logs its real close reason to capture log`
+  and `DebugDumpBuilderTest`'s `AC_161 a MAX_DURATION forced segment's vad_stats line also lands
+  in the debug dump`, both tagged/named for AC-161.
+
+**Verified:**
+- `./gradlew :segment:test` — `BUILD SUCCESSFUL`, all cases pass with the new annotations.
+- `./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.capture.RealSegmentSinkTest"` —
+  `BUILD SUCCESSFUL`, 7 tests including the new MAX_DURATION case. **Discrimination for the new
+  test**, shown live rather than asserted: temporarily hardcoded `RealCaptureService.kt`'s
+  `RealSegmentSink.close()` to pass `closeReason = SegmentCloseReason.SILENCE` to `logVadStats`
+  regardless of the record's real value, reran — the new `a MAX_DURATION forced segment logs its
+  real close reason to capture log` test failed exactly as expected
+  (`expected:<[MAX_DURATION]> but was:<[SILENCE]>`), while the silence-close test (which happens
+  to expect `SILENCE`) kept passing, showing the new case catches a regression the existing ones
+  cannot. Reverted the hardcode; reran clean.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.export.DebugDumpBuilderTest"` —
+  `BUILD SUCCESSFUL`, 9 tests including the new MAX_DURATION-in-the-dump case.
+- `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (separate invocations, per the
+  Gradle-validation constraint): `coverageMatrix: 483 requirements, 268 covered`;
+  `coverageMatrixCheck: up to date (268 covered of 483)`. `results/coverage-matrix.md`'s `AC-161`
+  row now reads: `DebugDumpBuilderTest.AC_161_a_MAX_DURATION_forced_segment's_vad_stats_line_also_lands_in_the_debug_dump`,
+  `DebugDumpBuilderTest.FR_OBS_1_AC_161_a_capture_log_vad_stats_line_for_both_an_accepted_and_a_rejected_segment_lands_in_the_dump`,
+  `RealSegmentSinkTest`, `SegmentVadStatisticsTest` — covered, not uncovered.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`, all 8 checks pass (no spec file
+  touched by this follow-up).
+
+**Left open / not done:** the full gate (`dependencyRules platformGuards build`, `-p buildSrc
+test`) is the lead's to run on merge, per this follow-up's own instruction — only the scoped test
+targets, `coverageMatrix`/`coverageMatrixCheck` and `spec_check.py` were run here.
+
+## 2026-09-12 (spec: Q20 closed by D41 - per-transmission VAD statistics specified, after WPVAD built them)
+
+### spec · D41: FR-OBS-1 amended to say exactly what a vad_stats line records; AC-161; Q20 closed
+
+**Scope:** `spec/functional-spec.md` (FR-OBS-1 amendment note, D41 in the decision table, AC-161, a
+D41 row in the section 16 traceability table), `spec/open-questions.md` (draft 3.5 note, Q20 marked
+closed with its answer, the status table down to four), `AGENTS.md` (counts: 161 acceptance
+criteria, 41 decisions), `results/coverage-matrix.md` (regenerated). Lead-owned documents only; no
+product code.
+
+**Requirements/ACs:** FR-OBS-1 (amended), D41 (new), AC-161 (new), Q20 (closed).
+
+**What changed:** Q20 had asked whether FR-OBS-1's promised VAD statistics were worth building or
+whether the requirement should be narrowed to what `capture.log` actually carried. The product
+owner asked for great debugging data, and a 12-minute field session had sent back a 202-byte
+`capture.log` that could not say how any of its eight overs was segmented, so the question closes on
+building. FR-OBS-1 now specifies the line rather than leaving a builder to infer it from one word:
+one `vad_stats` line per segment the segmenter closes, accepted or rejected (constitution III), with
+the transmission id, outcome, close reason, duration, VAD frame and speech-frame counts, peak and
+mean dBFS and noise floor at onset; numbers and closed enums only; `NONE` rather than zero when a
+value was not measured (constitution I); off the frame path inside the existing rotation; and the
+same statistics in the debug dump. D41 states the cost and its one limit: the dump reads the
+statistics back out of `capture.log`, so it carries only what rotation kept - roughly the last
+8,000 transmissions. The specification was written after the build (WPVAD, merged `8bf31976`) and
+describes what exists rather than what was hoped for.
+
+**Verified:** `python tools/spec-check/spec_check.py` - all 8 checks PASS. `./gradlew coverageMatrix`
+then `./gradlew coverageMatrixCheck` - both exit 0.
+
+**Left open / not done:** AC-161 is listed **uncovered** in the regenerated matrix. WPVAD's tests
+establish the behaviour but are named for FR-OBS-1, not AC-161, so the matrix cannot see them; they
+need an `@Requirement("AC-161")` tag, or a test named for it, before AC-161 reads covered. The line has
+not yet been seen on the reference device - it closes on a real field dump.
+## 2026-09-12 (WPVAD: FR-OBS-1/Q20 — `capture.log` finally carries the per-transmission VAD statistics the requirement has promised since draft 1)
+
+### WPVAD — the segmenter's own close reason and frame tally, wired into `capture.log` and the debug dump, for every closed segment, accepted and rejected alike
+
+**Scope:** `segment/src/main/kotlin/org/ort/segment/{SegmentSink.kt,Segmenter.kt}` and their tests
+(`SegmentVadStatisticsTest.kt` new; `RealSegmentSinkTest.kt`'s four pre-existing `SegmentRecord(...)`
+constructions updated to the new required fields); `pipeline/src/main/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLog.kt`
+(`logVadStats`, `EVENT_VAD_STATS`) and `DiagnosticsLogTest.kt`; the one minimal call site in
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`'s `RealSegmentSink` (peak/
+mean dBFS accumulation in `SegmentWriter.append`, the onset noise-floor read in `open`, the
+`logVadStats` call in `close`) and its test; `app/src/main/kotlin/org/ort/app/export/DebugDumpBuilder.kt`
+(a `vad_stats` NDJSON line parsed back out of `capture.log`) and its test. Did not touch
+`spec/open-questions.md` (Q20 is the lead's to close) or any UI/`tools/ui-audit` path.
+
+**Requirements/ACs:** FR-OBS-1, Q20 (spec/open-questions.md). Builds on the existing FR-OBS-13/14
+provenance discipline and constitution I ("never fabricate"), III ("never delete quietly"), IV
+("capture never blocks"), VI ("no number without its provenance").
+
+**What changed:**
+- **Wired an existing mechanism, mostly; built one new fact.** Before this, `DiagnosticsLog.Category.CAPTURE`
+  had exactly five call sites (`route_verified`, `route_mismatch`, `input_lost`, `level_clip`,
+  `overrun`) — all session/fault-level, none per-transmission, confirming Q20's audit finding
+  exactly. `:segment`'s `Segmenter` already ran a per-frame VAD decision loop but threw the tally
+  away the instant a segment closed; `:capture-android`'s `LevelMeter`/`LevelStatus` already
+  computed a continuously-updated noise floor off the audio-reading thread but nothing downstream
+  ever read it at a segment's onset. Both were wiring gaps, not missing arithmetic — fixed by
+  threading through what already existed. The one genuinely new computation is peak/mean dBFS,
+  which no existing per-segment mechanism produced (`LevelMeter` is a session-wide live gauge, not
+  a per-segment accumulator) — added as O(n) arithmetic in `RealSegmentSink`'s own `SegmentWriter.append`,
+  over PCM already in memory, the same "never blocks capture" discipline `LevelMeter`'s own kdoc
+  documents.
+- **`Segmenter`/`SegmentSink` (`:segment`).** New `SegmentCloseReason` enum (`SILENCE`,
+  `MAX_DURATION`, `END_OF_STREAM`) and two new `SegmentRecord` fields, `vadFrameCount`/
+  `vadSpeechFrameCount` — the honest speech-frame-ratio numerator/denominator, left as raw counts
+  rather than a pre-divided ratio so nothing is rounded before a reader sees it. `closeSpeech`'s old
+  `forced: Boolean` parameter is now `closeReason: SegmentCloseReason` (`forcedSplit` on the record
+  is unchanged, now derived as `closeReason == MAX_DURATION`); `emitRejected` gained the same
+  parameter. Every one of the three real closing paths — the hangover timeout, the max-duration
+  force-split, and `Segmenter.finish()` (stream end, mid-`TENTATIVE`/`SPEECH`/`HANGOVER`) — now
+  passes its own genuine reason; previously a stream-end truncation was indistinguishable from a
+  natural silence close. The frame tally is accumulated in `handleFrame()` (one increment per frame
+  that belongs to the active window, including the exact frame whose decision closes it) and reset
+  to `0` the instant a segment or rejected candidate closes — proven not to leak across segments by
+  a dedicated two-segment test.
+- **`DiagnosticsLog.logVadStats`, CAPTURE category (`:pipeline`).** One `vad_stats` line per closed
+  segment — **accepted and rejected alike** (constitution III) — carrying `transmissionId` (the
+  same opaque `<sessionId>-<index>` id `RealSegmentSink` already mints, never a callsign),
+  `outcome`/`closeReason` (the two closed enums; there being only one rejection reason the
+  segmenter can report today, `REJECTED_TOO_SHORT`, no separate free-text reason field exists),
+  `durationMs`, `vadFrameCount`/`vadSpeechFrameCount`, and `peakDbfs`/`meanDbfs`/
+  `noiseFloorDbfsAtOnset` — the last three logged as the literal `NONE`, never a fabricated `0.0`,
+  exactly when genuinely unmeasurable (constitution I). `@Suppress("LongParameterList")`: every
+  parameter is an independent, real fact, matching this file's own no-free-text-parameter
+  discipline stated at the top of the class.
+- **`RealSegmentSink` wiring (`:pipeline`, minimal call site as scoped).** `SegmentWriter.append`
+  tallies peak/mean (as sum-of-squares) alongside the existing byte-encoding loop, over the same
+  samples, no second pass. `open` reads `LevelStatus.state`'s `noiseFloorDbfs` once, at segment
+  open — a plain `@Volatile` field read, never blocking — via a new defaulted constructor
+  parameter `noiseFloorDbfsProvider` (placed *before* the existing trailing-lambda
+  `onSegmentPersisted` parameter so no existing call site's `{ ... }` binds to the wrong
+  parameter). `close` calls `logVadStats` unconditionally, before the FLAC encode/verify step —
+  a diagnostics line about why a segment closed must not depend on its audio having encoded
+  successfully.
+- **`DebugDumpBuilder` (`:app`).** A `vad_stats` NDJSON line type, parsed back out of
+  `capture.log` (and its one `.1` rotation generation, oldest first) rather than a new database
+  column — `DiagnosticsLog` is already exactly where these facts land, and no build-plan wave
+  scoped a schema migration here. A field logged as `NONE` round-trips as JSON `null`, matching
+  every other nullable field this file already emits.
+
+**Byte cost / bound (per the ask):** a `vad_stats` line is ASCII, one line, no transcript/callsign
+content — typical (moderate values, a 2-digit segment index) ≈ 200–235 bytes; worst case (longest
+enum names `REJECTED_TOO_SHORT`/`END_OF_STREAM`, a 4-digit segment index, `-120.0` floor values on
+every dBFS field) ≈ 264 bytes. A busy net of 400 overs in one session: 400 × 264 ≈ 106 KB —
+about 5% of `DiagnosticsLog.ROTATE_AT_BYTES`'s 2 MiB per-generation cap, which `capture.log`
+already shares with `route_verified`/`route_mismatch`/`input_lost`/`level_clip`/`overrun`. It would
+take roughly 8,000 transmissions in a single, never-rotated capture.log generation to fill 2 MiB
+from `vad_stats` lines alone — far past any plausible session — so this does not materially change
+`capture.log`'s existing growth profile; when it does grow past the cap, the existing 2 MiB × 2
+generation rotation (unchanged) applies exactly as it already did, confirmed here by a real
+`logVadStats` call tripping the same rotation path a pre-existing test already proved for another
+category.
+
+**Verified:**
+- `./gradlew :segment:test` — `BUILD SUCCESSFUL`, all 22 tests (including six new
+  `SegmentVadStatisticsTest` cases). Discrimination: reverting `Segmenter`'s `closeReason`/
+  frame-tally threading back to the old `forced: Boolean` signature (a) fails to compile every new
+  test (the `SegmentCloseReason`/`vadFrameCount`/`vadSpeechFrameCount` named arguments have no
+  target) and (b), with a minimal stub restoring the fields but hardcoding `SegmentCloseReason.SILENCE`/
+  `0`/`0` instead of the real per-branch values, fails all six new tests on the exact assertion each
+  case names (e.g. `a segment forced closed by the maximum-duration cap reports MAX_DURATION, not
+  SILENCE` asserts `MAX_DURATION` on the forced records and `END_OF_STREAM` on the last one from the
+  same run — a single hardcoded constant cannot satisfy either, let alone both).
+- `./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.diagnostics.DiagnosticsLogTest"` and
+  `--tests "org.ort.pipeline.capture.RealSegmentSinkTest"` — both `BUILD SUCCESSFUL`. Discrimination
+  for the peak/mean math: a constant-0.25-amplitude one-second segment asserts `peakDbfs`/`meanDbfs`
+  both ≈ `-12.04` (20·log₁₀(0.25)) within 0.01 — reverting the accumulation loop in `append()` (so
+  `peakAbs`/`sumSquares` stay `0.0`) makes both assert against the `FLOOR_DBFS` sentinel `-120.0`
+  instead, failing loudly. Discrimination for the `NONE`-not-`0.0` rule: a rejected-segment test
+  injects `noiseFloorDbfsProvider = { null }` and asserts the literal string `"NONE"`; reverting the
+  `?: "NONE"` fallback to `?: "0.0"` fails that assertion directly.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.export.DebugDumpBuilderTest"` — `BUILD
+  SUCCESSFUL`, including the new round-trip test (a hand-written `capture.log` fixture with one
+  unrelated `route_verified` line and two `vad_stats` lines, one accepted with real numeric fields,
+  one rejected with three `NONE` fields) — asserts exactly 2 `vad_stats` lines parsed (the
+  unrelated line excluded), the accepted line's fields exactly, and the rejected line's three
+  `NONE` fields round-tripping as JSON `null` via `JSONObject.isNull`.
+- `./gradlew dependencyRules platformGuards` — `OK` (no new module edges; `:capture-*` still has no
+  edge to `:asr-*`/`:lexicon`/`:identity`).
+- `./gradlew build` (real `HF_TOKEN`, no escape hatch) — `BUILD SUCCESSFUL in 16m 42s`, 1107
+  actionable tasks (two detekt/ktlint round-trips along the way: `LongParameterList` on
+  `logVadStats`, suppressed with the file's own established rationale; a `MaxLineLength` test name
+  and an import-order violation in the new `SegmentVadStatisticsTest.kt`, both fixed).
+- `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`, all 8 checks pass (no spec file
+  touched by this change).
+
+**Left open / not done:**
+- **Q20 itself is not closed here** — that is the lead's call (spec is not this package's file),
+  per the prompt's own instruction. What this package would record for it: FR-OBS-1's "VAD
+  statistics" now means, concretely, one `vad_stats` line per closed segment carrying
+  `outcome`/`closeReason`/`durationMs`/`vadFrameCount`/`vadSpeechFrameCount`/`peakDbfs`/`meanDbfs`/
+  `noiseFloorDbfsAtOnset` — every field the segmenter and the existing level meter genuinely have,
+  nothing invented, `NONE` (never `0`) where a value cannot be measured.
+- **No new rejection reason was invented.** The segmenter can currently only report
+  `REJECTED_TOO_SHORT`; if a future segmenter change adds a second rejection path, `logVadStats`'s
+  `outcome` field already carries it without a schema change, but there is deliberately no separate
+  `rejectionReason: String` field, since that would reopen exactly the free-text risk this file's
+  class kdoc is built to close off structurally.
+- **`DebugDumpBuilder`'s `vad_stats` correlation is by `transmissionId` string match against the
+  `over` line's own `id`**, left as two separate NDJSON line types rather than merged into one
+  `over` record — merging would have meant adding VAD-stat columns to `TransmissionEntity` (a
+  `:data` schema migration, outside this package's ownership and outside FR-OBS-1's own scope,
+  which is about the diagnostics log, not the transmission table).
+- **Peak/mean dBFS are computed over every sample this segment's `SegmentWriter` actually
+  appended** — pre-roll, the confirmed speech, and (for a natural `SILENCE` close) the trimmed
+  post-roll actually written to the sink — not over the full, untrimmed hangover buffer some of
+  which is discarded. This matches what the persisted audio itself contains, not a larger window
+  the operator cannot hear back.
+
+## 2026-09-12 (WPEXP2: R-1039 — the export Save-file path no longer throws on real data; R-1040 — Settings-Export gets its own font-scale 2.0 tour steps)
+
+### 4aec9531 — WPEXP2: R-1039 a CONFIRMED/INFERRED transmission whose station carries no catalog callsign exports honestly instead of throwing; R-1040 adds the CF07 `@2x`/`@2x-end` tour steps
+
+**Scope:** `app/src/main/kotlin/org/ort/app/export/ExportCoordinator.kt`;
+`pipeline/src/main/kotlin/org/ort/pipeline/export/ExportAttribution.kt`,
+`AdifExportWriter.kt`, `CsvExportWriter.kt`, `JsonExportWriter.kt`, `TextExportWriter.kt`;
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt` (doc comment only, no
+behaviour change); `tools/ui-audit/tour.json`; tests for all of the above.
+
+**Requirements/ACs:** FR-EXP-4, FR-EXP-5, constitution I (Uncertainty Is Content). Register
+R-1039 (halt), R-1040 (process).
+
+**What changed:**
+- **R-1039.** `ExportCoordinator.toExportAttribution` threw `IllegalArgumentException` for a
+  CONFIRMED/INFERRED transmission whose station carried no catalog callsign — reachable on real
+  data, not a fixture defect. Evidence: `CallsignResolver` (`pipeline/.../passb/CallsignResolver.kt`)
+  is the only site that ever creates a fresh CONFIRMED attribution, and it always sets
+  `stationId` to `top.candidate.text` — a real, `CallsignGrammar`-valid callsign taken straight
+  from the audio, never an opaque catalog id. The `station` catalog table is a separate, lazily
+  populated aggregate with no production write path that upserts a row for every resolved
+  callsign (`CorrectionPolling.searchHeardStations`'s own kdoc: "every station this device has
+  heard is only reachable by walking every transmission" — there is no `:data` query for a
+  catalog-backed list). Every other reader in the codebase already defends against this gap —
+  `LiveMonitorViewData`'s own `callsign = entity.stationId`, and the `station?.callsign ?:
+  stationId` idiom repeated across `StationPolling.kt` — `ExportCoordinator` was the one outlier
+  reading only the catalog's copy with no fallback. The `overnight` debug scenario's shape (most
+  of its CONFIRMED transmissions have no corresponding `StationEntity` row) is therefore a
+  realistic state, not something to "fix" in the fixture.
+  A second, independently reachable throw was also found and fixed: `Attribution.withCorrection`
+  (`core/.../Attribution.kt`) — the real, everyday write path behind a human overriding a
+  callsign (`CorrectionPolling.applyCorrectedAttribution`) — produces a genuine `INFERRED` row
+  with `null` confidence, which `toExportAttribution`'s old `requireNotNull(attributionConfidence)`
+  would also have thrown on.
+  Fix: `ExportCoordinator.toExportOverRecord` now resolves a transmission's callsign as
+  `station?.callsign?.takeIf { it.isNotBlank() } ?: transmission.stationId` before handing it to
+  `toExportAttribution`, matching the established codebase idiom instead of trusting the catalog
+  alone. `ExportAttribution.CallsignKnown.confidence` is now `Double?` (a corrected row's real
+  callsign travels with an honestly empty confidence cell, never a fabricated `0.0`). For the one
+  case that remains genuinely unresolvable — `transmission.stationId` itself `null`/blank despite
+  a resolved state, which `Attribution`'s own factory functions cannot produce but a raw
+  `TransmissionDao.updateAttribution` call, a migration or a corrupted restore theoretically could
+  — a new sealed branch `ExportAttribution.UnresolvedCallsign(state, reason)` states the real
+  `CONFIRMED`/`INFERRED` state and a reason, never a callsign (it is not `CallsignKnown`, so no
+  writer can read one from it — the same structural, exhaustive-`when` guarantee the type already
+  held), and never folded into `AMBIGUOUS`/`UNKNOWN` (which would hide a resolution that genuinely
+  happened). Every writer represents it distinctly from an `AMBIGUOUS`/`UNKNOWN` row: `AdifExportWriter`
+  excludes it from `<EOR>` the same way (ADIF has no "unknown" `CALL` value) but names its real
+  state and reason in the header, ahead of `<EOH>`, with a different placeholder word
+  (`CALLSIGN UNAVAILABLE`, not `UNIDENTIFIED`) and a new `AttributionCells.noteCell`;
+  `CsvExportWriter` gains a trailing `attribution_note` column (additive — every existing column
+  keeps its index); `JsonExportWriter` gains a `note` field on the `attribution` object (`null`
+  except for this branch); `TextExportWriter` appends the reason to its bracketed clause.
+  `confirmedOnly` (FR-EXP-5) excludes an `UnresolvedCallsign(CONFIRMED)` row from the
+  conservative log the same way it already excludes `AMBIGUOUS`/`UNKNOWN` — it is not
+  `ExportAttribution.Confirmed`, so nothing changed there.
+  `SettingsExportScreen.kt`'s preview `runCatching` (added for this same crash while it was still
+  open) is kept, not removed or narrowed: it is defence-in-depth for a real Room read whose full
+  failure surface this screen cannot enumerate (a future regression, I/O, cancellation), it
+  already logs via `Log.w` rather than hiding a failure, and it costs nothing to keep now that the
+  specific R-1039 crash is closed at the coordinator layer. Its doc comment, and
+  `SettingsExportScreenTest`'s matching regression test's own comment, are updated to say so.
+- **R-1040.** `tools/ui-audit/tour.json` had no `@2x`/`@2x-end` steps for Settings › Export (CF07),
+  so R-1035's export-count preview row had only been seen at font scale 1.0. Added
+  `overnight/CF07-settings-export@2x` and `overnight/CF07-settings-export@2x-end` — appended at
+  the end of the file's `steps` array (not inline after the base CF07 entry) per the session
+  lead's mid-task instruction, since another builder is concurrently adding its own steps to the
+  same file.
+
+**Verified:** `./gradlew :pipeline:testDebugUnitTest --tests 'org.ort.pipeline.export.*'` (46
+tests, green); `./gradlew :app:testDebugUnitTest --tests 'org.ort.app.export.*' --tests
+'org.ort.app.ui.settings.*' --tests 'org.ort.app.debug.*'` (397 tests, green);
+`./gradlew :app:smokeTestDebugUnitTest :app:lintDebug dependencyRules platformGuards
+:app:assembleDebug` (green); `./gradlew dependencyRules platformGuards build
+-PortAllowMissingBundledAssets=true --continue` (green, `BUILD SUCCESSFUL in 12m 45s`); `./gradlew
+-p buildSrc test` (green); `python tools/spec-check/spec_check.py` (all 8 checks PASS); `./gradlew
+coverageMatrix` then `./gradlew coverageMatrixCheck` as separate invocations (260 of 482
+requirements covered, up to date). Every new test proven to discriminate: the fix was reverted
+(`ExportCoordinator.toExportOverRecord`'s fallback and `toExportAttribution`'s branching, and
+separately the whole of `ExportAttribution.kt`), the new tests were watched to fail for the exact
+original reason (`IllegalArgumentException: CONFIRMED transmission ... has no resolvable
+callsign` for the coordinator; `Unresolved reference 'noteCell'` compile errors across all four
+writers for the pipeline type), then the fix was restored and the same tests watched to pass
+again — machine: this workstation (Windows, JDK 17.0.20.101, local Gradle daemon), fold: unit
+tests only, no fold-sensitive numbers reported.
+
+**Left open / not done:** did not run the visual re-verification tour myself — the shared audit
+emulators (5558, 5560) are in use by other builders concurrently, and this round's own diff
+touches no screen's layout or rendering (`SettingsExportScreen.kt`'s change is a doc comment only;
+`tour.json` is tour data, not product code), so no capture was owed for this diff itself; the two
+new CF07 steps ride along on the session lead's own canonical tour run. Did not extend
+`tools/ui-audit/screens.json` — read fully first; it carries no `settings` entries at all (a
+smaller, separate tap-sequence catalogue covering only the six top-level nav destinations plus one
+drill-in), so there was no existing Settings convention there to follow for R-1040. Did not touch
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsContent.kt` (the real Save-file write path,
+`ExportCoordinator.build` call site) — outside this package's ownership map and unnecessary once
+the coordinator itself stopped throwing.
+## 2026-09-12 (WPNAV: IA-3 generalises the Log's own frequency-filter mechanism to a station, a curated set of overs and Capture's own Full log, all with a real back restore; IA-5 gives Search a drawer row; IA-6 links a transmission to its attributed station)
+
 ### 7584d1cc — WPNAV: one filter model for the Log (IA-3), Search reachable from anywhere via the drawer (IA-5), a transmission's attributed station one tap away (IA-6)
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/**` (`OrtNavHost.kt`, `Drawer.kt`);
