@@ -284,15 +284,17 @@ class SettingsExportScreenTest {
     /**
      * **R-1035 follow-up** (found running the real tour against the real `overnight` scenario
      * while verifying this fix, not by inspection): `ExportCoordinator.previewCount`'s own real
-     * `effectiveRecords` read can throw — a real device crash, `IllegalArgumentException: CONFIRMED
-     * transmission ... has no resolvable callsign — data integrity defect`
-     * (`ExportCoordinator.toExportAttribution`, outside this file's own ownership; flagged
-     * separately) — for data this build can apparently produce. Before this fix, `Settings-Export`
-     * never called `previewCount` at all, so merely *opening* the screen could never crash on it;
-     * this fix must not turn a read-only screen into a new crash surface for data
-     * `previewCount`'s own real implementation cannot handle. A failing preview is exactly the
-     * `notMeasuredReason`/absent-signal shape constitution I already asks for elsewhere: honestly
-     * absent, never a crash and never a fabricated count.
+     * `effectiveRecords` read *used to* throw — a real device crash, `IllegalArgumentException:
+     * CONFIRMED transmission ... has no resolvable callsign — data integrity defect`
+     * (`ExportCoordinator.toExportAttribution`) — for data this build can produce. Register R-1039
+     * (halt) fixed that specific crash at the coordinator layer itself, so this exact scenario no
+     * longer throws in practice; this test still injects a `previewCount` that throws directly
+     * (never the real coordinator), because the screen must stay safe against *any* unexpected
+     * failure from a real Room read, not just the one R-1039 already closed — see
+     * `SettingsExportScreen.kt`'s own updated doc comment on why `runCatching` stays as
+     * defence-in-depth. A failing preview is exactly the `notMeasuredReason`/absent-signal shape
+     * constitution I already asks for elsewhere: honestly absent, never a crash and never a
+     * fabricated count.
      */
     @Test
     fun `R_1035 a previewCount that throws never crashes the screen — no preview row, Save file still works`() {

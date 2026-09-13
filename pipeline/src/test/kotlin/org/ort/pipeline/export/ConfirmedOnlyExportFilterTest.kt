@@ -3,6 +3,7 @@ package org.ort.pipeline.export
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.core.AttributionState
 
 /** Register R-1009 (WPX), FR-EXP-5: "Offer a filtered export of confirmed-only records for users
  * who want a conservative log." */
@@ -51,5 +52,19 @@ class ConfirmedOnlyExportFilterTest {
         assertEquals(2, csv.lines().size) { "header + exactly one confirmed row" }
         assertTrue(csv.contains("KI7ABC"))
         assertTrue(!csv.contains("KJ7XYZ"))
+    }
+
+    @Test
+    fun `R_1039 a CONFIRMED UnresolvedCallsign row is excluded — a conservative log needs a real callsign`() {
+        val records = listOf(
+            record(ExportAttribution.Confirmed("KI7ABC", 0.94, corrected = false), "confirmed"),
+            record(
+                ExportAttribution.UnresolvedCallsign(AttributionState.CONFIRMED, "no station id recorded"),
+                "unresolved",
+            ),
+        )
+        val filtered = confirmedOnly(records)
+        assertEquals(1, filtered.size)
+        assertEquals("confirmed", filtered.single().transmissionId)
     }
 }

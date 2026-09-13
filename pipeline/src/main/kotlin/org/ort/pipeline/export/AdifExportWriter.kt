@@ -12,15 +12,19 @@ import java.util.Locale
  * was worked — the format has no field meaning "unidentified station".
  *
  * **The decision this writer makes about that gap** (constitution I: never fabricate, never drop
- * silently): an [ExportAttribution.Ambiguous] or [ExportAttribution.Unknown] over is **not**
- * written as a QSO record at all — inventing a `CALL` value (even a placeholder like `UNKNOWN`,
- * which a logging program could read back as a literal, confusable callsign) would be worse than
- * omitting the record. Instead, every excluded over is named in the ADIF **header** — the
- * free-text block ADIF itself allows before `<EOH>` — with its transmission id, timestamp,
+ * silently): any [ExportAttribution] that is not [ExportAttribution.CallsignKnown] — [ExportAttribution
+ * .Ambiguous], [ExportAttribution.Unknown], and (register R-1039) [ExportAttribution.UnresolvedCallsign]
+ * — is **not** written as a QSO record at all — inventing a `CALL` value (even a placeholder like
+ * `UNKNOWN`, which a logging program could read back as a literal, confusable callsign) would be
+ * worse than omitting the record. Instead, every excluded over is named in the ADIF **header** —
+ * the free-text block ADIF itself allows before `<EOH>` — with its transmission id, timestamp,
  * frequency and attribution state, so the file states what happened rather than pretending those
- * overs never occurred. `AdifExportWriterTest`'s own FR-EXP-4 tests prove this both ways: no
- * `<CALL:` field for an unidentified over, and no `<EOR>` record for one either — but its
- * transmission id is still present in the header text.
+ * overs never occurred. [ExportAttribution.UnresolvedCallsign]'s own real reason travels with it
+ * there too — its excluded-row line states `CONFIRMED`/`INFERRED` (never folded into
+ * `AMBIGUOUS`/`UNKNOWN`), because the system *did* resolve a station for that row; only this file
+ * cannot name it. `AdifExportWriterTest`'s own FR-EXP-4/R-1039 tests prove this both ways: no
+ * `<CALL:` field for an unidentified or unresolved over, and no `<EOR>` record for one either —
+ * but its transmission id and real state are still present in the header text.
  *
  * `CONFIRMED` and `INFERRED` overs both become QSO records; every writer in this package must
  * still distinguish them (constitution I), which this one does with the `APP_ORT_ATTRIBUTION_STATE`
@@ -41,15 +45,19 @@ public object AdifExportWriter {
         header.append("ADIF_VER:3.1.4\n")
         if (excluded.isNotEmpty()) {
             header.append(
-                "${excluded.size} transmission(s) excluded: no station identified " +
-                    "(AMBIGUOUS or UNKNOWN attribution) — never fabricated as a callsign:\n",
+                "${excluded.size} transmission(s) excluded: ADIF has no CALL value for a station " +
+                    "that cannot be named — never fabricated as a callsign. Each row's own real " +
+                    "attribution state is named below; a state of CONFIRMED or INFERRED there means " +
+                    "the system resolved a station but this row cannot name it (see its own reason), " +
+                    "not that nothing was resolved:\n",
             )
             for (record in excluded) {
                 val cells = record.attribution.toCells()
+                val reasonSuffix = if (cells.noteCell.isNotEmpty()) " — ${cells.noteCell}" else ""
                 header.append(
                     "  ${record.transmissionId} " +
                         "${Instant.ofEpochMilli(record.startedAtUtcMillis)} " +
-                        "${record.frequencyHz ?: "unknown"}Hz (${cells.stateTag})\n",
+                        "${record.frequencyHz ?: "unknown"}Hz (${cells.stateTag}$reasonSuffix)\n",
                 )
             }
         }

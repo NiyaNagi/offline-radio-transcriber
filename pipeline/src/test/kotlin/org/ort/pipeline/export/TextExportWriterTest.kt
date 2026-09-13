@@ -3,6 +3,7 @@
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.core.AttributionState
 
 /** Register R-1009 (WPX). Plain-text is the fourth format `Settings-Export.dc.html` already
  * offers — a human-readable line per over, for reading rather than importing. */
@@ -51,5 +52,26 @@ class TextExportWriterTest {
         assertTrue(ambiguous.contains("AMBIGUOUS"))
         assertTrue(ambiguous.contains("UNIDENTIFIED"))
         assertFalse(ambiguous.contains("KI7ABC")) { "expected no fabricated callsign, got: $ambiguous" }
+    }
+
+    @Test
+    fun `R_1039 a CONFIRMED line with no resolvable callsign never throws and states its real reason`() {
+        val text = TextExportWriter.write(
+            listOf(record(ExportAttribution.UnresolvedCallsign(AttributionState.CONFIRMED, "no station id recorded"))),
+        )
+        assertTrue(text.contains("CONFIRMED"))
+        assertTrue(text.contains("no station id recorded"))
+        assertFalse(text.contains("UNIDENTIFIED")) {
+            "UnresolvedCallsign must read differently from AMBIGUOUS/UNKNOWN's own placeholder, got: $text"
+        }
+    }
+
+    @Test
+    fun `R_1039 a corrected INFERRED line with no confidence still names the real callsign`() {
+        val text = TextExportWriter.write(
+            listOf(record(ExportAttribution.Inferred(callsign = "KJ7ABC", confidence = null, corrected = true))),
+        )
+        assertTrue(text.contains("KJ7ABC"))
+        assertTrue(text.contains("INFERRED"))
     }
 }

@@ -2,8 +2,10 @@ package org.ort.pipeline.export
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.core.AttributionState
 import kotlin.reflect.full.isSubclassOf
 
 /**
@@ -13,16 +15,60 @@ import kotlin.reflect.full.isSubclassOf
 class ExportAttributionTest {
 
     @Test
-    fun `FR_EXP_4 the closed set has exactly four states, the same four as the data layer`() {
+    fun `FR_EXP_4 the closed set covers the same four data-layer states, plus one honest-inconsistency branch`() {
         // "Try to violate it": ExportAttribution must stay sealed with exactly these branches, so
-        // a fifth state added later cannot silently fall through an existing `when` anywhere in
-        // this package without the compiler flagging every non-exhaustive branch.
+        // a fifth data-layer state added later cannot silently fall through an existing `when`
+        // anywhere in this package without the compiler flagging every non-exhaustive branch.
+        // Register R-1039: UnresolvedCallsign is a fifth *branch*, not a fifth *state* — it always
+        // carries a real AttributionState (CONFIRMED or INFERRED) of its own, see this class's own
+        // `R_1039` tests below.
         val direct = ExportAttribution::class.sealedSubclasses.map { it.simpleName }.toSet()
-        assertEquals(setOf("CallsignKnown", "Ambiguous", "Unknown"), direct)
+        assertEquals(setOf("CallsignKnown", "Ambiguous", "Unknown", "UnresolvedCallsign"), direct)
         val callsignKnown = ExportAttribution.CallsignKnown::class.sealedSubclasses.map { it.simpleName }.toSet()
         assertEquals(setOf("Confirmed", "Inferred"), callsignKnown)
         assertTrue(ExportAttribution.Confirmed::class.isSubclassOf(ExportAttribution.CallsignKnown::class))
         assertTrue(ExportAttribution.Inferred::class.isSubclassOf(ExportAttribution.CallsignKnown::class))
+        assertFalse(ExportAttribution.UnresolvedCallsign::class.isSubclassOf(ExportAttribution.CallsignKnown::class)) {
+            "UnresolvedCallsign must never be able to carry a callsign"
+        }
+    }
+
+    @Test
+    fun `R_1039 UnresolvedCallsign refuses construction for AMBIGUOUS or UNKNOWN — those have their own branches`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ExportAttribution.UnresolvedCallsign(AttributionState.AMBIGUOUS, "should never construct")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ExportAttribution.UnresolvedCallsign(AttributionState.UNKNOWN, "should never construct")
+        }
+    }
+
+    @Test
+    fun `R_1039 a CONFIRMED UnresolvedCallsign states its real state and reason, never a callsign`() {
+        val unresolved = ExportAttribution.UnresolvedCallsign(AttributionState.CONFIRMED, "no station id recorded")
+        val cells = unresolved.toCells()
+        assertEquals("CONFIRMED", cells.stateTag)
+        assertEquals("no station id recorded", cells.noteCell)
+        assertEquals("", cells.confidenceCell)
+        assertFalse(unresolved is ExportAttribution.CallsignKnown)
+    }
+
+    @Test
+    fun `R_1039 an INFERRED UnresolvedCallsign is never indistinguishable from a CONFIRMED one`() {
+        val confirmed = ExportAttribution.UnresolvedCallsign(AttributionState.CONFIRMED, "reason")
+        val inferred = ExportAttribution.UnresolvedCallsign(AttributionState.INFERRED, "reason")
+        assertEquals("CONFIRMED", confirmed.toCells().stateTag)
+        assertEquals("INFERRED", inferred.toCells().stateTag)
+    }
+
+    @Test
+    fun `R_1039 a CallsignKnown row's confidence may be genuinely absent — a human correction, never a fabricated 0`() {
+        val corrected = ExportAttribution.Inferred(callsign = "KJ7ABC", confidence = null, corrected = true)
+        val cells = corrected.toCells()
+        assertEquals("KJ7ABC", cells.callsignCell)
+        assertEquals("INFERRED", cells.stateTag)
+        assertEquals("", cells.confidenceCell)
+        assertEquals("true", cells.correctedCell)
     }
 
     @Test

@@ -183,7 +183,24 @@ public object ExportCoordinator {
             frequencyHz = transmission.frequencyHz,
             mode = transmission.mode,
             channelName = transmission.channelName,
-            attribution = toExportAttribution(transmission, station?.callsign),
+            // Register R-1039: `station?.callsign` alone is not the real source of truth for a
+            // CONFIRMED/INFERRED transmission's callsign — the `station` catalog table is a
+            // secondary, lazily-populated aggregate (no production write path upserts a row for
+            // every resolved callsign; `CorrectionPolling.searchHeardStations`'s own kdoc states
+            // this directly: "every station this device has heard is only reachable by walking
+            // every transmission"). `transmission.stationId` is the real value every other reader in
+            // this codebase already trusts directly for exactly this (`LiveMonitorViewData
+            // .listEntryFromEntity`'s own `callsign = entity.stationId`, `StationPolling`'s
+            // `station?.callsign ?: stationId` idiom, repeated at every one of its own call sites) —
+            // `CallsignResolver`, the one place a CONFIRMED attribution is ever newly decided, always
+            // sets it to `top.candidate.text`, a real callsign already validated by `CallsignGrammar`.
+            // The catalog's own copy is preferred when present (it may carry a correction), falling
+            // back to the transmission's own value rather than treating an absent/stale catalog row
+            // as "no callsign exists" and throwing.
+            attribution = toExportAttribution(
+                transmission,
+                station?.callsign?.takeIf { it.isNotBlank() } ?: transmission.stationId,
+            ),
             transcriptText = transcript?.text,
             transcriptModelId = transcript?.modelId,
             transcriptModelVersion = transcript?.modelVersion,
@@ -193,35 +210,57 @@ public object ExportCoordinator {
 
     /**
      * The one place a `TransmissionEntity`'s flat attribution fields become the structural
-     * [ExportAttribution] every writer requires. `CONFIRMED`/`INFERRED` require a real
-     * `callsign`/`attributionConfidence` — [org.ort.core.Attribution]'s own factory functions
-     * ([org.ort.core.Attribution.confirmed]/[org.ort.core.Attribution.inferred]) already make
-     * constructing one without both impossible at the point a transmission is first attributed, so
-     * a row reaching here in that state with either missing is a data-integrity defect, not a
-     * reachable "just export it anyway" case — this throws rather than silently downgrading the
-     * row to `AMBIGUOUS`/`UNKNOWN` (which would misstate what the record actually says) or
-     * inventing a placeholder callsign (constitution I).
+     * [ExportAttribution] every writer requires.
+     *
+     * Register R-1039 (halt): before this fix, a missing [callsign] threw
+     * (`IllegalArgumentException: CONFIRMED transmission ... has no resolvable callsign`) — real,
+     * reachable data, not a fixture artifact (see this file's own `toExportOverRecord` call site
+     * kdoc for the evidence: the `station` catalog table is a lazily-populated secondary aggregate,
+     * never guaranteed to carry a row for every callsign a transmission was actually attributed to).
+     * [confidence] can also be genuinely absent for a real, callsign-known row —
+     * [org.ort.core.Attribution.withCorrection] (`CorrectionPolling.applyCorrectedAttribution`, an
+     * everyday human correction) produces exactly that: `INFERRED`, a real chosen callsign, `null`
+     * confidence. Neither case is a reason to throw, silently drop the row, invent a callsign, or
+     * relabel it `AMBIGUOUS`/`UNKNOWN` (constitution I: that would hide a confirmation or an
+     * inference that genuinely happened) — see [ExportAttribution.CallsignKnown] (nullable
+     * confidence) and [ExportAttribution.UnresolvedCallsign] (state stated, callsign honestly
+     * absent, reason stated) for how the type itself makes both representable.
+     *
+     * A row can still reach here with [callsign] `null` despite a resolved state: [org.ort.core
+     * .Attribution]'s own factory functions require a non-blank station id for `CONFIRMED`/
+     * `INFERRED`, but `TransmissionDao.updateAttribution` (a raw SQL update) does not itself enforce
+     * that invariant on the `transmission` row, so a future write path bypassing those factories —
+     * or a migration/corrupted restore — could still produce it. That is the genuine data-integrity
+     * defect [ExportAttribution.UnresolvedCallsign] exists for.
      */
     internal fun toExportAttribution(transmission: TransmissionEntity, callsign: String?): ExportAttribution =
         when (transmission.attributionState) {
-            AttributionState.CONFIRMED -> ExportAttribution.Confirmed(
-                callsign = requireNotNull(callsign) {
-                    "CONFIRMED transmission ${transmission.id} has no resolvable callsign — data integrity defect"
-                },
-                confidence = requireNotNull(transmission.attributionConfidence) {
-                    "CONFIRMED transmission ${transmission.id} has no confidence — data integrity defect"
-                },
-                corrected = transmission.corrected,
-            )
-            AttributionState.INFERRED -> ExportAttribution.Inferred(
-                callsign = requireNotNull(callsign) {
-                    "INFERRED transmission ${transmission.id} has no resolvable callsign — data integrity defect"
-                },
-                confidence = requireNotNull(transmission.attributionConfidence) {
-                    "INFERRED transmission ${transmission.id} has no confidence — data integrity defect"
-                },
-                corrected = transmission.corrected,
-            )
+            AttributionState.CONFIRMED -> if (!callsign.isNullOrBlank()) {
+                ExportAttribution.Confirmed(
+                    callsign = callsign,
+                    confidence = transmission.attributionConfidence,
+                    corrected = transmission.corrected,
+                )
+            } else {
+                ExportAttribution.UnresolvedCallsign(
+                    state = AttributionState.CONFIRMED,
+                    reason = "CONFIRMED transmission ${transmission.id} has no station id recorded — " +
+                        "data integrity defect",
+                )
+            }
+            AttributionState.INFERRED -> if (!callsign.isNullOrBlank()) {
+                ExportAttribution.Inferred(
+                    callsign = callsign,
+                    confidence = transmission.attributionConfidence,
+                    corrected = transmission.corrected,
+                )
+            } else {
+                ExportAttribution.UnresolvedCallsign(
+                    state = AttributionState.INFERRED,
+                    reason = "INFERRED transmission ${transmission.id} has no station id recorded — " +
+                        "data integrity defect",
+                )
+            }
             AttributionState.AMBIGUOUS -> ExportAttribution.Ambiguous
             AttributionState.UNKNOWN -> ExportAttribution.Unknown
         }

@@ -32,7 +32,103 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-12 (spec3: D40 — the over-audio budget warns and never deletes; FR-STO-3f — the archive's default-on state and rate must be disclosed)
+## 2026-09-12 (WPEXP2: R-1039 — the export Save-file path no longer throws on real data; R-1040 — Settings-Export gets its own font-scale 2.0 tour steps)
+
+### (pending — recorded in a follow-up commit) — WPEXP2: R-1039 a CONFIRMED/INFERRED transmission whose station carries no catalog callsign exports honestly instead of throwing; R-1040 adds the CF07 `@2x`/`@2x-end` tour steps
+
+**Scope:** `app/src/main/kotlin/org/ort/app/export/ExportCoordinator.kt`;
+`pipeline/src/main/kotlin/org/ort/pipeline/export/ExportAttribution.kt`,
+`AdifExportWriter.kt`, `CsvExportWriter.kt`, `JsonExportWriter.kt`, `TextExportWriter.kt`;
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt` (doc comment only, no
+behaviour change); `tools/ui-audit/tour.json`; tests for all of the above.
+
+**Requirements/ACs:** FR-EXP-4, FR-EXP-5, constitution I (Uncertainty Is Content). Register
+R-1039 (halt), R-1040 (process).
+
+**What changed:**
+- **R-1039.** `ExportCoordinator.toExportAttribution` threw `IllegalArgumentException` for a
+  CONFIRMED/INFERRED transmission whose station carried no catalog callsign — reachable on real
+  data, not a fixture defect. Evidence: `CallsignResolver` (`pipeline/.../passb/CallsignResolver.kt`)
+  is the only site that ever creates a fresh CONFIRMED attribution, and it always sets
+  `stationId` to `top.candidate.text` — a real, `CallsignGrammar`-valid callsign taken straight
+  from the audio, never an opaque catalog id. The `station` catalog table is a separate, lazily
+  populated aggregate with no production write path that upserts a row for every resolved
+  callsign (`CorrectionPolling.searchHeardStations`'s own kdoc: "every station this device has
+  heard is only reachable by walking every transmission" — there is no `:data` query for a
+  catalog-backed list). Every other reader in the codebase already defends against this gap —
+  `LiveMonitorViewData`'s own `callsign = entity.stationId`, and the `station?.callsign ?:
+  stationId` idiom repeated across `StationPolling.kt` — `ExportCoordinator` was the one outlier
+  reading only the catalog's copy with no fallback. The `overnight` debug scenario's shape (most
+  of its CONFIRMED transmissions have no corresponding `StationEntity` row) is therefore a
+  realistic state, not something to "fix" in the fixture.
+  A second, independently reachable throw was also found and fixed: `Attribution.withCorrection`
+  (`core/.../Attribution.kt`) — the real, everyday write path behind a human overriding a
+  callsign (`CorrectionPolling.applyCorrectedAttribution`) — produces a genuine `INFERRED` row
+  with `null` confidence, which `toExportAttribution`'s old `requireNotNull(attributionConfidence)`
+  would also have thrown on.
+  Fix: `ExportCoordinator.toExportOverRecord` now resolves a transmission's callsign as
+  `station?.callsign?.takeIf { it.isNotBlank() } ?: transmission.stationId` before handing it to
+  `toExportAttribution`, matching the established codebase idiom instead of trusting the catalog
+  alone. `ExportAttribution.CallsignKnown.confidence` is now `Double?` (a corrected row's real
+  callsign travels with an honestly empty confidence cell, never a fabricated `0.0`). For the one
+  case that remains genuinely unresolvable — `transmission.stationId` itself `null`/blank despite
+  a resolved state, which `Attribution`'s own factory functions cannot produce but a raw
+  `TransmissionDao.updateAttribution` call, a migration or a corrupted restore theoretically could
+  — a new sealed branch `ExportAttribution.UnresolvedCallsign(state, reason)` states the real
+  `CONFIRMED`/`INFERRED` state and a reason, never a callsign (it is not `CallsignKnown`, so no
+  writer can read one from it — the same structural, exhaustive-`when` guarantee the type already
+  held), and never folded into `AMBIGUOUS`/`UNKNOWN` (which would hide a resolution that genuinely
+  happened). Every writer represents it distinctly from an `AMBIGUOUS`/`UNKNOWN` row: `AdifExportWriter`
+  excludes it from `<EOR>` the same way (ADIF has no "unknown" `CALL` value) but names its real
+  state and reason in the header, ahead of `<EOH>`, with a different placeholder word
+  (`CALLSIGN UNAVAILABLE`, not `UNIDENTIFIED`) and a new `AttributionCells.noteCell`;
+  `CsvExportWriter` gains a trailing `attribution_note` column (additive — every existing column
+  keeps its index); `JsonExportWriter` gains a `note` field on the `attribution` object (`null`
+  except for this branch); `TextExportWriter` appends the reason to its bracketed clause.
+  `confirmedOnly` (FR-EXP-5) excludes an `UnresolvedCallsign(CONFIRMED)` row from the
+  conservative log the same way it already excludes `AMBIGUOUS`/`UNKNOWN` — it is not
+  `ExportAttribution.Confirmed`, so nothing changed there.
+  `SettingsExportScreen.kt`'s preview `runCatching` (added for this same crash while it was still
+  open) is kept, not removed or narrowed: it is defence-in-depth for a real Room read whose full
+  failure surface this screen cannot enumerate (a future regression, I/O, cancellation), it
+  already logs via `Log.w` rather than hiding a failure, and it costs nothing to keep now that the
+  specific R-1039 crash is closed at the coordinator layer. Its doc comment, and
+  `SettingsExportScreenTest`'s matching regression test's own comment, are updated to say so.
+- **R-1040.** `tools/ui-audit/tour.json` had no `@2x`/`@2x-end` steps for Settings › Export (CF07),
+  so R-1035's export-count preview row had only been seen at font scale 1.0. Added
+  `overnight/CF07-settings-export@2x` and `overnight/CF07-settings-export@2x-end` — appended at
+  the end of the file's `steps` array (not inline after the base CF07 entry) per the session
+  lead's mid-task instruction, since another builder is concurrently adding its own steps to the
+  same file.
+
+**Verified:** `./gradlew :pipeline:testDebugUnitTest --tests 'org.ort.pipeline.export.*'` (46
+tests, green); `./gradlew :app:testDebugUnitTest --tests 'org.ort.app.export.*' --tests
+'org.ort.app.ui.settings.*' --tests 'org.ort.app.debug.*'` (397 tests, green);
+`./gradlew :app:smokeTestDebugUnitTest :app:lintDebug dependencyRules platformGuards
+:app:assembleDebug` (green); `./gradlew dependencyRules platformGuards build
+-PortAllowMissingBundledAssets=true --continue` (green, `BUILD SUCCESSFUL in 12m 45s`); `./gradlew
+-p buildSrc test` (green); `python tools/spec-check/spec_check.py` (all 8 checks PASS); `./gradlew
+coverageMatrix` then `./gradlew coverageMatrixCheck` as separate invocations (260 of 482
+requirements covered, up to date). Every new test proven to discriminate: the fix was reverted
+(`ExportCoordinator.toExportOverRecord`'s fallback and `toExportAttribution`'s branching, and
+separately the whole of `ExportAttribution.kt`), the new tests were watched to fail for the exact
+original reason (`IllegalArgumentException: CONFIRMED transmission ... has no resolvable
+callsign` for the coordinator; `Unresolved reference 'noteCell'` compile errors across all four
+writers for the pipeline type), then the fix was restored and the same tests watched to pass
+again — machine: this workstation (Windows, JDK 17.0.20.101, local Gradle daemon), fold: unit
+tests only, no fold-sensitive numbers reported.
+
+**Left open / not done:** did not run the visual re-verification tour myself — the shared audit
+emulators (5558, 5560) are in use by other builders concurrently, and this round's own diff
+touches no screen's layout or rendering (`SettingsExportScreen.kt`'s change is a doc comment only;
+`tour.json` is tour data, not product code), so no capture was owed for this diff itself; the two
+new CF07 steps ride along on the session lead's own canonical tour run. Did not extend
+`tools/ui-audit/screens.json` — read fully first; it carries no `settings` entries at all (a
+smaller, separate tap-sequence catalogue covering only the six top-level nav destinations plus one
+drill-in), so there was no existing Settings convention there to follow for R-1040. Did not touch
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsContent.kt` (the real Save-file write path,
+`ExportCoordinator.build` call site) — outside this package's ownership map and unnecessary once
+the coordinator itself stopped throwing.
 
 ### 7fe87105 — spec3 follow-up: FR-STO-3e's persistent warning is tied to the two surfaces the operator actually sees — the capture status surface and the live/transport bar's own state label — not merely "reachable"
 
