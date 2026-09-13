@@ -34,6 +34,30 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
 
+### 40f0890a — WPCAP fix: TourStepsTest expects N08's real tags now that CAPTURE always renders the merged screen
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt` only.
+**Requirements/ACs:** none new — a test-suite consequence of the WPCAP N08 merge above.
+**What changed:** `TourStepsTest`'s generic `"CAPTURE" -> Expected.Tag("capture-status-title")`
+and its `captureLevelMeter` drillIn override (`-> Expected.Tag("level-meter-chart")`) both named
+tags only the superseded N04/N06 sub-screens carried. Since `CaptureStatusContent` now always
+renders the merged `CaptureScreen` regardless of destination step or drillIn, every CAPTURE step
+in `tools/ui-audit/tour.json` (all of N04/N06/N07/N08, ~28 steps) failed this check identically
+— caught only by running the full `org.ort.app.ui.*`/`org.ort.app.debug.*` sweep to completion,
+not by this package's own narrower test runs. Fixed to `capture-title` (`CaptureScreen`'s own
+title row) and `live-monitor-level-chart` (`LiveMonitorLevelCard`'s own chart, now reused inline
+on N08) respectively.
+**Verified:** `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.*" --tests "org.ort.app.debug.*"`
+run to completion twice — before this fix: 2 failures (this one plus the pre-existing
+`ImproveDestinationStatePreservationTest`, see below); after: 2296 tests, 1 failure (the same
+pre-existing one, confirmed unrelated). `ktlintCheck`/`detekt` both green.
+**Left open / not done:** `ImproveDestinationStatePreservationTest`'s
+`WorkManager is not initialized properly` failure (`RealImproveRunner.run` →
+`ReprocessWorker.start`) is confirmed pre-existing — present on `main` since `320775fd`
+(WPNAVHOST round 1, untouched by this row) and reproducible in complete isolation with no
+Capture code anywhere in its call stack. Not fixed here: outside this package's row (Improve/
+WorkManager test initialization, not Capture), flagged for whoever owns that area.
+
 ### 3b5d0e0a — WPCAP: N08 Capture built as one surface, merging N04/N06/N07, carrying D40's over-audio warning and D39's archive disclosure
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/CaptureScreen.kt` (new), `CaptureStatusContent.kt`
