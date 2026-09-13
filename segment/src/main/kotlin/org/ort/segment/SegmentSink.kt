@@ -13,6 +13,15 @@ public enum class SegmentOutcome {
 
     /** Below [SegmentConfig.minSpeechMs]; recorded, audio retained, **no ASR model invoked** (FR-SEG-6 → AC-72). */
     REJECTED_TOO_SHORT,
+
+    /**
+     * FR-SEG-5: a rig-squelch-gated interval (fusion active — [SegmentRecord.rigSquelchFusionApplied]
+     * where both edges were fusion-decided) that VAD found **no speech inside at all** — squelch
+     * opened and closed, but nothing was said (e.g. a carrier with no modulation, a stray key-up).
+     * Recorded and retained exactly like [REJECTED_TOO_SHORT] — **never silently dropped**
+     * (constitution III) — with no ASR model invoked, since there is nothing for one to transcribe.
+     */
+    REJECTED_NO_SPEECH,
 }
 
 /**
@@ -30,6 +39,15 @@ public enum class SegmentCloseReason {
 
     /** The audio stream ended ([Segmenter.finish]) while this segment or candidate was still open. */
     END_OF_STREAM,
+
+    /**
+     * FR-SEG-5: rig squelch closed while fusion was active for this interval — a genuine
+     * measurement, not a VAD inference (technical rationale: this is the entire point of fusion,
+     * converting the close from an inference into an observed fact). Never produced when no
+     * [SquelchGate] is wired, or when squelch state was not yet known at the time this interval
+     * opened — see [Segmenter]'s own kdoc for exactly when fusion engages.
+     */
+    SQUELCH_CLOSE,
 }
 
 /**
@@ -60,6 +78,18 @@ public data class SegmentRecord(
     val vadFrameCount: Int,
     /** Of [vadFrameCount], how many the VAD called [VadDecision.SPEECH]. */
     val vadSpeechFrameCount: Int,
+    /**
+     * FR-SEG-5 / FR-SEG-10: whether rig squelch fusion actually decided **both** of this
+     * segment's edges — the start (a squelch-open event, not a VAD trigger) and the end (a
+     * squelch-close event, not VAD hangover or a forced split). `false` whenever either edge was
+     * decided some other way, so a segment that started on a real squelch open but was cut short
+     * by [SegmentCloseReason.MAX_DURATION] — or whose rig went silent before ever reporting a
+     * close — reports this honestly as `false` rather than claiming a fusion decision that only
+     * half happened (constitution I: an attribution without its confidence state is a bug, and
+     * the same discipline applies to this boundary's own provenance). Always `false` when no
+     * [SquelchGate] was wired at all — the pre-FR-SEG-5 path, unchanged.
+     */
+    val rigSquelchFusionApplied: Boolean = false,
 )
 
 /**

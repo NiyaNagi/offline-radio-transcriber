@@ -3,6 +3,8 @@ package org.ort.pipeline.rig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import org.ort.core.Clock
 import org.ort.core.SystemClock
@@ -58,6 +60,17 @@ public data class BandAtStart(public val band: RigBand?, public val ambiguous: B
         public val NONE: BandAtStart = BandAtStart(band = null, ambiguous = false)
     }
 }
+
+/**
+ * FR-SEG-5 (WPSQUELCH): one squelch-union transition, timestamped in the session's own
+ * *monotonic* domain (FR-RUN-17's "timestamped on receipt") — never a sample position, which is
+ * `:segment`'s own `org.ort.segment.SquelchTransition` shape instead. Converting the two is
+ * deliberately not this class's job: [RigSupervisor] only ever exposes the rig's own facts,
+ * never an audio-timeline computation (`:pipeline`'s `RealCaptureService.buildSegmenter`, which
+ * already owns a session's [org.ort.core.SampleClock], does that conversion — see
+ * `org.ort.pipeline.capture.pushSquelchTransition`).
+ */
+public data class RigSquelchTransition(public val open: Boolean, public val timestampNanos: Long)
 
 /** Bundled descriptors this package knows how to resolve a [CaptureConfiguration.rigId] against,
  * without depending on `:app`'s [org.ort.rig.catalogue.RigCatalogue] import flow (that catalogue
@@ -124,6 +137,11 @@ public class RigSupervisor(
     private var activeTransportKind: RigTransportKind = RigTransportKind.NONE
     private var activeDescriptorId: String = NullRigModule.ID
 
+    /** WPSQUELCH (FR-SEG-5): the descriptor behind the current connection, if any — needed only
+     * by [squelchFusionEligible] to read the descriptor's own latency shape (`unsolicited`
+     * vs. `poll`); every other use in this class already goes through [module]/[descriptorRigModule]. */
+    private var activeDescriptor: RigDescriptor? = null
+
     private var observeJob: Job? = null
 
     /** R-1015: watches [DescriptorRigModule.health] for the whole life of one [connect] —
@@ -173,6 +191,18 @@ public class RigSupervisor(
     @Volatile
     private var healthStaleTimeoutJob: Job? = null
 
+    /** WPSQUELCH (FR-SEG-5): the union (across every band) of the rig's own squelch state, as
+     * seen by [onRigState] — `null` until the first genuine squelch reading arrives this
+     * connection, exactly the "not yet known" state [org.ort.segment.Segmenter] treats as
+     * VAD-only fallback. Reset on every [connect]/[disconnect] so a fresh connection starts
+     * honestly unknown again, never carrying a stale union from a previous rig. */
+    @Volatile
+    private var squelchUnionOpen: Boolean? = null
+
+    /** WPSQUELCH (FR-SEG-5): emits only on a genuine union-level change, and only while
+     * [squelchFusionEligible] holds — see [observeSquelchUnion]'s own kdoc. */
+    private val squelchEvents = MutableSharedFlow<RigSquelchTransition>(extraBufferCapacity = 64)
+
     /** FR-RIG-8: always available regardless of module, and takes precedence with provenance
      * `manual` once set (FR-RIG-9). `null` clears the override, returning to whatever the rig (or
      * nothing) reports. */
@@ -217,8 +247,10 @@ public class RigSupervisor(
         descriptorRigModule = built
         activeTransportKind = transportKind
         activeDescriptorId = descriptor.id
+        activeDescriptor = descriptor
         perBandState.clear()
         seenCapabilities.clear()
+        squelchUnionOpen = null
         watch(built)
         watchHealth(built, descriptor)
     }
@@ -238,11 +270,64 @@ public class RigSupervisor(
         descriptorRigModule = null
         activeTransportKind = RigTransportKind.NONE
         activeDescriptorId = NullRigModule.ID
+        activeDescriptor = null
         lastKnownConnected = null
         staleSinceWallMillis = null
         perBandState.clear()
         seenCapabilities.clear()
+        squelchUnionOpen = null
         RigStatus.reset()
+    }
+
+    /**
+     * FR-SEG-5 / FR-RUN-17: the union (across every band) of the rig's own squelch state, one
+     * event per genuine open/closed transition — see [Segmenter][org.ort.segment.Segmenter]'s own
+     * kdoc for the fusion rule this feeds. **D23's two-band finding applies here as the
+     * conservative "union of open intervals" this task's own report names**: a single
+     * `org.ort.segment.Segmenter` processes one, already-mixed audio stream (the TH-D75A receives
+     * on both bands at once and mixes the audio into one output — `docs/reference/th-d75a-cat.md`),
+     * so a segment boundary can only honestly reflect "some band is open", never "band A alone" —
+     * frequency/band *attribution* for a resulting transmission is a separate, already-solved
+     * concern ([bandAtTransmissionStart]), untouched by this method. **Open question, reported
+     * rather than silently resolved (constitution I):** two genuinely overlapping but distinct
+     * transmissions on different bands are, under this rule, fused into one segment when their
+     * open intervals overlap — correct per the union rule, but a spec reader might reasonably want
+     * them split. Splitting would need a second, band-aware `Segmenter` per band, which the
+     * current one-audio-stream architecture does not support; flagged for the lead/spec, not
+     * resolved here.
+     *
+     * Emits nothing at all — matching [org.ort.segment.Segmenter]'s own "no squelch capability"
+     * fallback — unless [squelchFusionEligible] holds: no [RigCapability.SQUELCH_STATE], or a
+     * poll-only descriptor whose cadence cannot honestly meet FR-RUN-17's ≤250 ms correlation
+     * bound, means no event is ever pushed, exactly the same as no [org.ort.segment.SquelchGate]
+     * being wired at all.
+     */
+    public fun observeSquelchUnion(): Flow<RigSquelchTransition> = squelchEvents
+
+    /**
+     * FR-SEG-5 / FR-RUN-17: whether this connection's squelch reporting is trustworthy enough to
+     * fuse into segmentation boundaries — true exactly when [RigCapability.SQUELCH_STATE] is
+     * declared for the active transport **and** the descriptor's own latency shape keeps the
+     * receipt-timestamp-to-transition skew within FR-RUN-17's ≤250 ms bound.
+     *
+     * The reference doc's own finding (`docs/reference/th-d75a-cat.md`, "`AI` gives push, not
+     * poll") is the source for the two cases distinguished here. An `unsolicited` (push)
+     * descriptor reports a transition the instant it happens, so the receipt timestamp
+     * [DescriptorRigModule.applyMatch] already stamps (FR-RUN-17: "timestamped on receipt") is a
+     * tight bound on the true transition instant — comfortably inside 250 ms, exactly the
+     * reference doc's own "makes the budget comfortable". A poll-only descriptor's receipt
+     * timestamp can lag the true transition by up to a full poll interval; where that interval
+     * itself exceeds the bound (the TH-D75A's own documented resync-only fallback is 2000 ms),
+     * the skew cannot be bounded and this returns `false` — FR-RUN-17's own "downgrade" rule,
+     * applied here to squelch fusion since the spec states no separate rule for it (reported in
+     * this task's own report as a spec-level decision worth confirming explicitly).
+     */
+    public fun squelchFusionEligible(): Boolean {
+        val descriptor = activeDescriptor ?: return false
+        if (RigCapability.SQUELCH_STATE !in module.capabilities(activeTransportKind)) return false
+        if (descriptor.unsolicited != null) return true
+        val pollIntervalMs = descriptor.poll?.intervalMs ?: return false
+        return pollIntervalMs <= MAX_SQUELCH_CORRELATION_SKEW_MILLIS
     }
 
     /**
@@ -306,7 +391,9 @@ public class RigSupervisor(
         descriptorRigModule = null
         activeTransportKind = RigTransportKind.NONE
         activeDescriptorId = NullRigModule.ID
+        activeDescriptor = null
         staleSinceWallMillis = null
+        squelchUnionOpen = null
         RigStatus.absent()
         DiagnosticsLog.logRigAbsent()
     }
@@ -404,6 +491,7 @@ public class RigSupervisor(
 
     private fun onRigState(state: RigState) {
         perBandState[state.band] = state
+        emitSquelchUnionIfChanged(state)
         val bands = synchronized(perBandState) {
             perBandState.values.map { s ->
                 RigStatus.BandState(
@@ -469,8 +557,36 @@ public class RigSupervisor(
         }
     }
 
+    /**
+     * WPSQUELCH (FR-SEG-5, D23): recomputes the union across every band in [perBandState] and
+     * emits exactly on a genuine change — called for every [RigState], FRESH or STALE alike,
+     * which is also how a rig-link drop's "no more transitions" case falls out with no special
+     * casing: a STALE reading carries its `squelchOpen` forward unchanged
+     * ([DescriptorRigModule.markAllStale]), so the union it computes here is unchanged too, and
+     * nothing is emitted — [org.ort.segment.Segmenter] simply never hears a close, and its own
+     * FR-SEG-3 safety net is what eventually closes the transmission honestly (see this class's
+     * own report for why that is the correct, spec-faithful behaviour rather than a gap).
+     *
+     * Gated on [squelchFusionEligible] so an ineligible connection (no [RigCapability.SQUELCH_STATE],
+     * or a poll cadence too slow to trust — see that method's own kdoc) never emits at all, exactly
+     * matching "no squelch capability" from a [org.ort.segment.Segmenter]'s point of view.
+     */
+    private fun emitSquelchUnionIfChanged(state: RigState) {
+        if (state.squelchOpen == null) return
+        if (!squelchFusionEligible()) return
+        val unionOpen = synchronized(perBandState) { perBandState.values.any { it.squelchOpen == true } }
+        if (unionOpen == squelchUnionOpen) return
+        squelchUnionOpen = unionOpen
+        squelchEvents.tryEmit(RigSquelchTransition(unionOpen, state.timestampNanos))
+    }
+
     private companion object {
         const val UNBANDED_LABEL = "-"
+
+        /** FR-RUN-17's own bound, restated here since [squelchFusionEligible] is the one place
+         * that decides whether a rig's squelch correlation is trustworthy enough to fuse
+         * (FR-SEG-5). */
+        const val MAX_SQUELCH_CORRELATION_SKEW_MILLIS = 250L
 
         /** F9 (WPC3): step count of `UsbReconnectBackoff`/`BluetoothReconnectBackoff` (1s, 2s, 5s,
          * 10s, 30s, then holding) — copied by the same documented policy those two objects and

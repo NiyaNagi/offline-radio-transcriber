@@ -2,7 +2,8 @@ package org.ort.segment
 
 /**
  * The capture-side segmenter: an explicit `IDLE → SPEECH → HANGOVER → CLOSED` state machine
- * over VAD frames (technical design §6).
+ * over VAD frames (technical design §6), extended by FR-SEG-5 with a parallel
+ * `IDLE → SQUELCH_OPEN → SQUELCH_POSTROLL → CLOSED` path driven by rig squelch instead of VAD.
  *
  * - Audio is written to the [SegmentSink] **incrementally** once a segment is confirmed, never
  *   buffered for its whole length — a 60-second stuck carrier costs one open writer.
@@ -12,6 +13,32 @@ package org.ort.segment
  * - A run of speech shorter than [SegmentConfig.minSpeechMs] is recorded
  *   `REJECTED_TOO_SHORT` with **no ASR model invoked** (FR-SEG-6 → AC-72).
  *
+ * **FR-SEG-5 fusion.** When constructed with a non-null [squelchGate], **rig squelch is
+ * authoritative for boundaries; VAD is authoritative only for whether the gated interval
+ * contains speech.** Concretely, once the first [SquelchTransition] has been drained (before
+ * that, or with no [squelchGate] at all, this class behaves exactly as it always has — VAD-only
+ * boundaries, [SegmentRecord.rigSquelchFusionApplied] always `false`, matching "no squelch
+ * capability, or rig disconnected" and "if rig state is late, segmentation proceeds on VAD"):
+ * - Squelch open (while [State.IDLE]) starts a segment immediately, with the same [preRollMs]
+ *   generosity a VAD trigger gets, regardless of what VAD says about that same frame — squelch
+ *   closed is likewise authoritative for staying idle, so a stray VAD trigger while squelch is
+ *   known closed never opens anything (this is exactly what stops squelch-tail hallucination).
+ * - While the squelch-gated interval is open, VAD only tallies whether any frame was speech; on
+ *   close, an interval with **no** speech frames is recorded [SegmentOutcome.REJECTED_NO_SPEECH]
+ *   — never silently dropped (constitution III) — one with any speech is [SegmentOutcome.SPEECH].
+ * - Squelch close starts the same [postRollMs] window FR-SEG-8 gives a VAD hangover close,
+ *   trimmed to the stream's own end exactly as the VAD path already is. A brief re-open during
+ *   that window resumes the **same** segment rather than splitting it, mirroring VAD hangover's
+ *   own "speech resumed" reunification.
+ * - A boundary decided by anything else — [SegmentCloseReason.MAX_DURATION]'s forced split, or
+ *   [SegmentCloseReason.END_OF_STREAM] — is honestly *not* a fusion decision, so
+ *   [SegmentRecord.rigSquelchFusionApplied] is `true` only when **both** the segment's open and
+ *   its close were squelch-decided. This is also how "a rig drops mid-over closes honestly" falls
+ *   out with no separate mechanism: if the rig goes silent and no more transitions ever arrive,
+ *   the segment simply keeps running on the last known squelch state until FR-SEG-3's own
+ *   maximum-length safety net eventually force-splits it — a boundary that is, correctly, not
+ *   attributed to fusion.
+ *
  * **The constructor takes no [org.ort.core.Tier] and cannot be given one** (FR-SEG-7,
  * CON-SEG-1 → AC-94). See [SegmentConfig].
  */
@@ -19,6 +46,9 @@ public class Segmenter(
     private val config: SegmentConfig,
     private val vad: Vad,
     private val sink: SegmentSink,
+    /** FR-SEG-5: `null` (the default) is the pre-fusion, VAD-only segmenter. See this class's own
+     * kdoc for the exact fusion rule once one is supplied. */
+    private val squelchGate: SquelchGate? = null,
     private val originSample: Long = 0L,
 ) {
     init {
@@ -27,7 +57,7 @@ public class Segmenter(
         }
     }
 
-    private enum class State { IDLE, TENTATIVE, SPEECH, HANGOVER }
+    private enum class State { IDLE, TENTATIVE, SPEECH, HANGOVER, SQUELCH_OPEN, SQUELCH_POSTROLL }
 
     private val frameSamples = FrameSpec.SIZE
     private val frameMs = FrameSpec.DURATION_MS
@@ -54,9 +84,18 @@ public class Segmenter(
     private var silenceMs = 0
     private val hangoverBuf = ArrayList<FloatArray>()
 
-    // FR-OBS-1 (Q20): tallied per active window (TENTATIVE/SPEECH/HANGOVER), reset to 0 the
-    // instant a segment or rejected candidate closes -- see handleFrame()'s own comment for
-    // exactly which frames count.
+    // FR-SEG-5 fusion scratch. `squelchOpen == null` means "not yet known" -- the honest state
+    // before the first SquelchTransition ever arrives, in which this class behaves exactly as the
+    // pre-fusion VAD-only segmenter (see the dispatch in handleFrame()).
+    private var squelchOpen: Boolean? = null
+    private var openedBySquelch = false
+    private var closedBySquelch = false
+    private var squelchCloseVadEnd = 0L
+    private val squelchPostRollBuf = ArrayList<FloatArray>()
+
+    // FR-OBS-1 (Q20): tallied per active window (TENTATIVE/SPEECH/HANGOVER/SQUELCH_OPEN/
+    // SQUELCH_POSTROLL), reset to 0 the instant a segment or rejected candidate closes -- see
+    // handleFrame()'s own comment for exactly which frames count.
     private var activeFrameCount = 0
     private var activeSpeechFrameCount = 0
 
@@ -92,14 +131,30 @@ public class Segmenter(
                 // bufferedHangoverSamples() a second time after the clear silently sees 0 and
                 // under-reports endSample versus what was actually appended to the sink (found
                 // by adversarial review: a stream ending mid-hangover, before minSilenceMs
-                // elapses, produced a SegmentRecord whose endSample - startSample didn't match
+                // elapsed, produced a SegmentRecord whose endSample - startSample didn't match
                 // its real sampleCount).
-                val flushed = minOf(postRollSamples.toLong(), bufferedHangoverSamples())
-                flushHangover(limitSamples = flushed)
+                val flushed = minOf(postRollSamples.toLong(), bufferedSamples(hangoverBuf))
+                flushBuffered(hangoverBuf, flushed)
                 closeSpeech(
                     vadEnd = hangoverStartSample,
                     end = hangoverStartSample + flushed,
                     closeReason = SegmentCloseReason.END_OF_STREAM,
+                )
+            }
+            State.SQUELCH_OPEN -> closeSquelchSegment(
+                vadEnd = originSample + consumed,
+                end = originSample + consumed,
+                closeReason = SegmentCloseReason.END_OF_STREAM,
+                closedBySquelch = false,
+            )
+            State.SQUELCH_POSTROLL -> {
+                val flushed = minOf(postRollSamples.toLong(), bufferedSamples(squelchPostRollBuf))
+                flushBuffered(squelchPostRollBuf, flushed)
+                closeSquelchSegment(
+                    vadEnd = squelchCloseVadEnd,
+                    end = squelchCloseVadEnd + flushed,
+                    closeReason = SegmentCloseReason.END_OF_STREAM,
+                    closedBySquelch = false,
                 )
             }
             State.IDLE -> Unit
@@ -110,26 +165,66 @@ public class Segmenter(
     private fun handleFrame(frame: FloatArray, frameStart: Long) {
         val wasIdle = state == State.IDLE
         val decision = vad.accept(frame)
-        // FR-OBS-1 (Q20): a frame counts toward the active window's tally either when a window is
-        // already open (TENTATIVE/SPEECH/HANGOVER) or when this very frame is the one that opens
-        // one (IDLE + SPEECH, about to dispatch into beginTentative() below) -- together that is
-        // exactly "this frame belongs to the segment or candidate it is about to be written into".
-        // Reset back to 0 happens once, in emitRejected()/closeSpeech(), the moment that window
-        // actually closes (see those methods' own comments).
-        if (state != State.IDLE || decision == VadDecision.SPEECH) {
-            activeFrameCount++
-            if (decision == VadDecision.SPEECH) activeSpeechFrameCount++
-        }
+
+        drainSquelchTransitions(frameStart)
+        tallyActiveWindow(decision)
+
         when (state) {
-            State.IDLE -> if (decision == VadDecision.SPEECH) beginTentative(frame, frameStart)
+            State.IDLE -> when {
+                squelchOpen == true -> beginSquelchSegment(frame, frameStart)
+                // FR-SEG-5: squelch known closed is authoritative; VAD is not consulted for opening.
+                squelchOpen == false -> Unit
+                // squelch unknown: pre-fusion VAD-only behaviour, unchanged.
+                else -> if (decision == VadDecision.SPEECH) beginTentative(frame, frameStart)
+            }
             State.TENTATIVE -> tentative(frame, frameStart, decision)
             State.SPEECH -> speech(frame, frameStart, decision)
             State.HANGOVER -> hangover(frame, frameStart, decision)
+            State.SQUELCH_OPEN -> squelchOpenFrame(frame, frameStart)
+            State.SQUELCH_POSTROLL -> squelchPostRollFrame(frame, frameStart)
         }
-        // Only audio that stayed idle backs the pre-roll ring — anything claimed by a tentative
-        // or open segment is already written via tentativeFrames/hangoverBuf/the writer, and
-        // must not also be replayed out of the ring (that would duplicate it in the output).
-        if (wasIdle && decision == VadDecision.SILENCE) preRoll.push(frame)
+        // Only audio that stayed idle for this whole frame backs the pre-roll ring -- anything
+        // claimed by a tentative/open segment or squelch-gated interval is already written via
+        // tentativeFrames/hangoverBuf/squelchPostRollBuf/the writer, and must not also be replayed
+        // out of the ring (that would duplicate it in the output). Equivalent to the pre-fusion
+        // `decision == SILENCE` guard when squelch is unknown or absent (IDLE only ever leaves
+        // IDLE on a VAD SPEECH trigger in that case) and correctly generalises it for squelch
+        // known-closed, where a spurious VAD SPEECH frame must still be treated as unclaimed.
+        if (wasIdle && state == State.IDLE) preRoll.push(frame)
+    }
+
+    /**
+     * FR-SEG-5 / FR-RUN-1: a plain, non-suspending queue drain -- never a suspension point, never
+     * a lock the rig's own coroutine could contend for. Transitions are applied in arrival order;
+     * the last one at or before this frame's own end is what this frame's decision uses (a
+     * squelch flap entirely inside one 32 ms frame is not expected to be separately observable at
+     * this granularity, and none of FR-SEG-5's callers need it to be).
+     */
+    private fun drainSquelchTransitions(frameStart: Long) {
+        val gate = squelchGate ?: return
+        for (transition in gate.drainBefore(frameStart + frameSamples)) {
+            squelchOpen = transition.open
+        }
+    }
+
+    /**
+     * FR-OBS-1 (Q20): a frame counts toward the active window's tally either when a window is
+     * already open (TENTATIVE/SPEECH/HANGOVER/SQUELCH_OPEN/SQUELCH_POSTROLL) or when this very
+     * frame is the one about to open one -- a VAD trigger while squelch is unknown (the
+     * pre-fusion rule), or any frame at all while squelch is known open (FR-SEG-5: squelch alone
+     * decides the open, not VAD). A frame that stays IDLE because squelch is known *closed* is
+     * correctly excluded even if VAD called it SPEECH -- that frame was never claimed by anything
+     * (see [handleFrame]'s dispatch), so it must not be tallied into a window that never opened.
+     * Reset back to 0 happens once, in emitRejected()/closeSpeech()/closeSquelchSegment(), the
+     * moment that window actually closes.
+     */
+    private fun tallyActiveWindow(decision: VadDecision) {
+        val aboutToOpen = state == State.IDLE &&
+            (squelchOpen == true || (squelchOpen == null && decision == VadDecision.SPEECH))
+        if (state != State.IDLE || aboutToOpen) {
+            activeFrameCount++
+            if (decision == VadDecision.SPEECH) activeSpeechFrameCount++
+        }
     }
 
     private fun beginTentative(frame: FloatArray, frameStart: Long) {
@@ -199,7 +294,7 @@ public class Segmenter(
         hangoverBuf.add(frame.copyOf())
         silenceMs += frameMs
         if (silenceMs >= config.minSilenceMs) {
-            flushHangover(limitSamples = postRollSamples.toLong())
+            flushBuffered(hangoverBuf, postRollSamples.toLong())
             closeSpeech(
                 vadEnd = hangoverStartSample,
                 end = hangoverStartSample + postRollSamples,
@@ -208,12 +303,12 @@ public class Segmenter(
         }
     }
 
-    private fun bufferedHangoverSamples(): Long = hangoverBuf.sumOf { it.size.toLong() }
+    private fun bufferedSamples(buf: List<FloatArray>): Long = buf.sumOf { it.size.toLong() }
 
-    private fun flushHangover(limitSamples: Long) {
+    private fun flushBuffered(buf: MutableList<FloatArray>, limitSamples: Long) {
         val w = writer ?: return
         var remaining = limitSamples
-        for (f in hangoverBuf) {
+        for (f in buf) {
             if (remaining <= 0) break
             if (f.size <= remaining) {
                 w.append(f)
@@ -223,7 +318,7 @@ public class Segmenter(
                 remaining = 0
             }
         }
-        hangoverBuf.clear()
+        buf.clear()
     }
 
     private fun closeSpeech(vadEnd: Long, end: Long, closeReason: SegmentCloseReason) {
@@ -249,6 +344,7 @@ public class Segmenter(
                 closeReason = closeReason,
                 vadFrameCount = frameCount,
                 vadSpeechFrameCount = speechFrameCount,
+                rigSquelchFusionApplied = false, // FR-SEG-5: the pure-VAD path never fuses.
             ),
         )
         writer = null
@@ -279,10 +375,148 @@ public class Segmenter(
                 closeReason = closeReason,
                 vadFrameCount = frameCount,
                 vadSpeechFrameCount = speechFrameCount,
+                rigSquelchFusionApplied = false, // FR-SEG-5: the pure-VAD path never fuses.
             ),
         )
         tentativeFrames.clear()
         state = State.IDLE
+    }
+
+    // --- FR-SEG-5 fusion: squelch-gated path -----------------------------------------------
+
+    private fun beginSquelchSegment(frame: FloatArray, frameStart: Long) {
+        segId = SegmentId(nextId++)
+        segVadStartSample = frameStart
+        segStartSample = maxOf(originSample, frameStart - preRollSamples)
+        val w = sink.open(segId, segStartSample)
+        writer = w
+        w.append(preRoll.snapshot(atMost = (frameStart - segStartSample).toInt()))
+        w.append(frame)
+        openedBySquelch = true
+        closedBySquelch = false
+        state = State.SQUELCH_OPEN
+    }
+
+    private fun squelchOpenFrame(frame: FloatArray, frameStart: Long) {
+        if (squelchOpen == false) {
+            // Squelch just closed -- start the post-roll window kept around the edge (FR-SEG-8),
+            // the same generosity FR-CAP-4/FR-SEG-8 already give a VAD hangover close, applied
+            // here to a squelch close instead. This frame's own audio is buffered, not yet
+            // written -- squelchPostRollFrame()/finish() decide how much of it survives.
+            closedBySquelch = true
+            squelchCloseVadEnd = frameStart
+            squelchPostRollBuf.clear()
+            squelchPostRollBuf.add(frame.copyOf())
+            state = State.SQUELCH_POSTROLL
+            return
+        }
+        val w = writer ?: return
+        w.append(frame)
+        val end = frameStart + frameSamples
+        if (end - segStartSample >= maxSegmentSamples) {
+            // FR-SEG-3: the stuck-carrier safety net applies just as much to a squelch-gated
+            // interval as to a VAD one -- and it is also, correctly, how a rig that goes silent
+            // mid-over (no more transitions ever arrive) eventually closes: not a fusion decision
+            // (closedBySquelch = false), an honest administrative cut.
+            closeSquelchSegment(
+                vadEnd = end,
+                end = end,
+                closeReason = SegmentCloseReason.MAX_DURATION,
+                closedBySquelch = false,
+            )
+            segId = SegmentId(nextId++)
+            segStartSample = end
+            segVadStartSample = end
+            writer = sink.open(segId, segStartSample)
+            openedBySquelch = false
+            closedBySquelch = false
+            state = State.SQUELCH_OPEN
+        }
+    }
+
+    private fun squelchPostRollFrame(frame: FloatArray, frameStart: Long) {
+        if (squelchOpen == true) {
+            // Flap: squelch reopened before the post-roll window finished flushing -- the
+            // buffered tail is genuine mid-transmission audio after all, so it is written in
+            // full and the SAME segment resumes, mirroring hangover()'s own "speech resumed"
+            // reunification (a brief squelch chatter must never fragment one real transmission
+            // into several).
+            val w = writer
+            if (w != null) for (f in squelchPostRollBuf) w.append(f)
+            squelchPostRollBuf.clear()
+            closedBySquelch = false
+            state = State.SQUELCH_OPEN
+            squelchOpenFrame(frame, frameStart)
+            return
+        }
+        squelchPostRollBuf.add(frame.copyOf())
+        val end = frameStart + frameSamples
+        val hitMax = end - segStartSample >= maxSegmentSamples
+        val buffered = bufferedSamples(squelchPostRollBuf)
+        if (buffered >= postRollSamples || hitMax) {
+            val flushLimit = minOf(postRollSamples.toLong(), buffered)
+            flushBuffered(squelchPostRollBuf, flushLimit)
+            val closeReason = if (hitMax) SegmentCloseReason.MAX_DURATION else SegmentCloseReason.SQUELCH_CLOSE
+            val stillClosedBySquelch = closedBySquelch && !hitMax
+            closeSquelchSegment(
+                vadEnd = squelchCloseVadEnd,
+                end = squelchCloseVadEnd + flushLimit,
+                closeReason = closeReason,
+                closedBySquelch = stillClosedBySquelch,
+            )
+            if (hitMax) {
+                // Vanishingly unlikely in practice (postRollMs << maxSegmentMs) but handled
+                // honestly rather than assumed impossible: the forced-split continuation exactly
+                // mirrors squelchOpenFrame()'s own.
+                segId = SegmentId(nextId++)
+                segStartSample = end
+                segVadStartSample = end
+                writer = sink.open(segId, segStartSample)
+                openedBySquelch = false
+                closedBySquelch = false
+                state = State.SQUELCH_OPEN
+            }
+        }
+    }
+
+    private fun closeSquelchSegment(
+        vadEnd: Long,
+        end: Long,
+        closeReason: SegmentCloseReason,
+        closedBySquelch: Boolean,
+    ) {
+        val w = writer ?: return
+        val forced = closeReason == SegmentCloseReason.MAX_DURATION
+        val frameCount = activeFrameCount
+        val speechFrameCount = activeSpeechFrameCount
+        activeFrameCount = 0
+        activeSpeechFrameCount = 0
+        // FR-SEG-5: VAD's only remaining job inside a squelch-gated interval -- whether it heard
+        // any speech at all. An interval with none is retained and reported, never dropped
+        // (constitution III, FR-SEG-6's same discipline applied to this new outcome).
+        val outcome = if (speechFrameCount > 0) SegmentOutcome.SPEECH else SegmentOutcome.REJECTED_NO_SPEECH
+        // FR-SEG-10: true only when BOTH edges were squelch-decided -- see this class's own kdoc
+        // for why a forced split or an end-of-stream cut must never claim a fusion decision it
+        // only half made.
+        val fusionApplied = openedBySquelch && closedBySquelch
+        w.close(
+            SegmentRecord(
+                id = segId,
+                startSample = segStartSample,
+                endSample = end,
+                vadStartSample = segVadStartSample,
+                vadEndSample = vadEnd,
+                sampleCount = 0,
+                outcome = outcome,
+                forcedSplit = forced,
+                closeReason = closeReason,
+                vadFrameCount = frameCount,
+                vadSpeechFrameCount = speechFrameCount,
+                rigSquelchFusionApplied = fusionApplied,
+            ),
+        )
+        writer = null
+        if (!forced) state = State.IDLE
     }
 }
 

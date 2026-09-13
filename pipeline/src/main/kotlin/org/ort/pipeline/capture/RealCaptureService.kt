@@ -66,6 +66,7 @@ import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.rig.CaptureConfigurationStore
 import org.ort.pipeline.rig.DefaultRigTransportFactory
 import org.ort.pipeline.rig.FrequencyReading
+import org.ort.pipeline.rig.RigSquelchTransition
 import org.ort.pipeline.rig.RigSupervisor
 import org.ort.pipeline.rig.RigTransportFactory
 import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
@@ -83,6 +84,7 @@ import org.ort.segment.SegmentSink
 import org.ort.segment.SegmentWriter
 import org.ort.segment.Segmenter
 import org.ort.segment.SileroVad
+import org.ort.segment.SquelchGate
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -240,6 +242,12 @@ public class RealCaptureService : Service() {
     // drop (FR-RIG-15) never touches gapRelay/GapPersister the way an audio-route drop does.
     private var rigSupervisor: RigSupervisor? = null
 
+    // WPSQUELCH (FR-SEG-5): this session's own fusion input, created once in startCapture()
+    // before rigSupervisor even connects, so a squelch transition arriving on the rig's own
+    // coroutine has somewhere to land immediately -- built later into buildSegmenter()'s
+    // Segmenter. null only briefly, before startCapture() has run at all this launch.
+    private var squelchGate: SquelchGate? = null
+
     // R-113: captured once at open so every InputStatus republish (route change, device loss,
     // resume) reuses the same expected device and open timestamp rather than re-deriving them.
     // io/device are locals inside startCapture(); these are the fields the event handlers in
@@ -336,6 +344,30 @@ public class RealCaptureService : Service() {
         // consulting descriptorRigModule -- see that method's own kdoc), so this call is
         // unconditional, not gated on "no rig configured".
         supervisor.setManualFrequencyOverrideHz(activeConfiguration.manualFrequencyHz)
+
+        // WPSQUELCH (FR-SEG-5, FR-RUN-16/17): this session's own fusion input, wired into
+        // buildSegmenter()'s Segmenter further down runCaptureFlow(). The bridging coroutine below
+        // is the ONLY consumer of RigSupervisor.observeSquelchUnion() -- a plain collect() on
+        // scope, running independently of the audio frame path (constitution IV / FR-RUN-1):
+        // pushSquelchTransition()/SquelchGate.push() never suspend, so a slow or silent rig can
+        // never stall this coroutine into blocking anything else, and the audio path never awaits
+        // it either (Segmenter.onAudio drains the gate itself, opportunistically, off a plain
+        // queue -- see SquelchGate's own kdoc). Anchors reused from the same triple every other
+        // per-session SampleClock in this file is built from (FR-RUN-15/18) -- already set, above,
+        // in onStartCommand(), before startCapture() (and therefore this line) ever runs.
+        val gate = SquelchGate()
+        squelchGate = gate
+        val squelchSampleClock = SampleClock(
+            anchorMonotonicNanos = startedAtMonotonicNanos,
+            anchorWallMillis = startedAtWallMillis,
+            anchorUtcOffsetMinutes = startedAtUtcOffsetMinutes,
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        scope.launch {
+            supervisor.observeSquelchUnion().collect { transition: RigSquelchTransition ->
+                pushSquelchTransition(gate, squelchSampleClock, transition)
+            }
+        }
 
         // A real enumerated device — never a fabricated descriptor, which RouteVerifier would
         // (correctly) reject on the first read, halting capture. See defaultInputDevice()'s kdoc.
@@ -728,16 +760,21 @@ public class RealCaptureService : Service() {
             },
             vadDetector = resolvedVad.detector,
             vadDetectorVersion = resolvedVad.version,
-            // FR-SEG-5: always false -- no code anywhere in :pipeline reads rig squelch state to
-            // gate a segment boundary yet (confirmed by search; see this package's report), so
-            // fusion genuinely never applies today. The real decision, once FR-SEG-5 is built, is
-            // this single call site's to wire -- never a guess made here in its absence.
-            rigSquelchFusionApplied = false,
+            // WPSQUELCH (FR-SEG-5): no longer a whole-session constant -- fusion genuinely varies
+            // per transmission now (a rig drop mid-over must close honestly, see Segmenter's own
+            // kdoc), so RealSegmentSink reads record.rigSquelchFusionApplied at close() time
+            // instead of taking a fixed value here. See that class's own kdoc for why the
+            // constructor parameter that used to carry this was removed rather than kept unused.
         ) {
             transmissionCount++
             onHeartbeat()
         }
-        return Segmenter(segmentConfig, SileroVad(resolvedVad.model), sink)
+        // WPSQUELCH (FR-SEG-5): squelchGate is this session's own fusion input (built in
+        // startCapture(), before this method is ever called) -- `null` only for the brief window
+        // before startCapture() has run at all, which buildSegmenter() itself is never reached
+        // during (see runCaptureFlow's own call site). See Segmenter's own kdoc for the exact
+        // fusion rule this wires in.
+        return Segmenter(segmentConfig, SileroVad(resolvedVad.model), sink, squelchGate = squelchGate)
     }
 
     /**
@@ -1660,14 +1697,6 @@ internal class RealSegmentSink(
      * by default and, today, always. */
     private val vadDetectorVersion: String? = null,
     /**
-     * FR-SEG-5: whether rig squelch fusion actually gated this session's boundaries -- a plain
-     * value for the identical reason [vadDetector] is one (fusion, like the detector itself, is a
-     * whole-session fact today, decided once by the caller, never guessed here). Defaults to
-     * `false`, the only honest value while FR-SEG-5 fusion is not yet built anywhere in
-     * `:pipeline`.
-     */
-    private val rigSquelchFusionApplied: Boolean = false,
-    /**
      * FR-OBS-1 (Q20): the noise-floor estimate at this segment's onset, read once at [open] time
      * -- `:capture-android`'s [org.ort.capture.android.LevelMeter] already computes this
      * continuously off the same audio-reading thread (see [LevelStatus]'s own kdoc: it is a pure
@@ -1690,6 +1719,10 @@ internal class RealSegmentSink(
     private companion object {
         /** FR-SEG-6 / AC-72's `rejected:too_short` tag, as the free-text `rejectionReason` value. */
         const val REJECTION_REASON_TOO_SHORT = "too_short"
+
+        /** WPSQUELCH (FR-SEG-5)'s `SegmentOutcome.REJECTED_NO_SPEECH` tag, the same free-text
+         * `rejectionReason` convention [REJECTION_REASON_TOO_SHORT] already uses. */
+        const val REJECTION_REASON_NO_SPEECH = "no_speech"
 
         /** Matches [org.ort.capture.android.LevelMeter.FLOOR_DBFS]'s own convention exactly: the
          * quietest reading ever reported for genuine digital silence, never a fabricated `0.0`. */
@@ -1756,6 +1789,10 @@ internal class RealSegmentSink(
                 val (processingState, rejectionReason) = when (record.outcome) {
                     SegmentOutcome.SPEECH -> TransmissionState.CAPTURED to null
                     SegmentOutcome.REJECTED_TOO_SHORT -> TransmissionState.REJECTED to REJECTION_REASON_TOO_SHORT
+                    // WPSQUELCH (FR-SEG-5): a rig-squelch-gated interval VAD found no speech in at
+                    // all -- retained and reported exactly like REJECTED_TOO_SHORT (constitution
+                    // III "never delete quietly"), never enqueued for Pass B either.
+                    SegmentOutcome.REJECTED_NO_SPEECH -> TransmissionState.REJECTED to REJECTION_REASON_NO_SPEECH
                 }
                 // WPC2 (FR-RIG-6/8/9): read once, at close, over this segment's own start/end on
                 // the session's monotonic timeline -- never a fresh "now" read (constitution III's
@@ -1798,12 +1835,16 @@ internal class RealSegmentSink(
                     // reading is an ambiguous pick between them (see RealCaptureService's
                     // frequencyProvider wiring). Either way, never silently overwritten.
                     rigStateChangedMidTransmission = frequencyReading.changedDuringTransmission,
-                    // FR-SEG-10 (register R-1054, AC-162): this session's own detector/fusion
-                    // facts, resolved once by RealCaptureService.resolveVad and carried in as plain
-                    // constructor values (see [vadDetector]'s own kdoc) -- never re-derived here.
+                    // FR-SEG-10 (register R-1054, AC-162): vadDetector/vadDetectorVersion are this
+                    // session's own detector facts, resolved once by RealCaptureService.resolveVad
+                    // and carried in as plain constructor values (see [vadDetector]'s own kdoc) --
+                    // never re-derived here. rigSquelchFusionApplied (WPSQUELCH, FR-SEG-5) is the
+                    // opposite shape on purpose: it genuinely varies per transmission (a rig drop
+                    // mid-over closes honestly, per Segmenter's own kdoc), so it is read straight
+                    // off the record Segmenter itself produced, never a session-wide constant.
                     vadDetector = vadDetector,
                     vadDetectorVersion = vadDetectorVersion,
-                    rigSquelchFusionApplied = rigSquelchFusionApplied,
+                    rigSquelchFusionApplied = record.rigSquelchFusionApplied,
                 )
 
                 // FR-OBS-1 (Q20); FR-SEG-10 (register R-1054, AC-162): logged for every closed
@@ -1822,7 +1863,7 @@ internal class RealSegmentSink(
                     meanDbfs = if (sampleTotal > 0) toDbfs(sqrt(sumSquares / sampleTotal)) else null,
                     noiseFloorDbfsAtOnset = noiseFloorAtOnsetDbfs,
                     vadDetector = vadDetector,
-                    rigSquelchFusionApplied = rigSquelchFusionApplied,
+                    rigSquelchFusionApplied = record.rigSquelchFusionApplied,
                 )
 
                 val encoded = File(filesDir, entity.audioPath())
