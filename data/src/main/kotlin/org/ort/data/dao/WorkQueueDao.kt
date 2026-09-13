@@ -145,4 +145,19 @@ public interface WorkQueueDao {
      * order the mockup lists them in, ending with the retry-limit line the caller renders itself. */
     @Query("SELECT * FROM work_attempt WHERE itemId = :itemId ORDER BY attemptNo")
     public suspend fun attemptsFor(itemId: Long): List<WorkAttemptEntity>
+
+    /**
+     * WPDATA (FR-STO-3): whether any transmission belonging to [sessionId] has an active
+     * work-queue item (`READY`, `LEASED` or `DEFERRED`) right now -- the check a session's audio
+     * deletion ([org.ort.pipeline.archive.SessionAudioDeletionService]) refuses against, so a
+     * delete can never race a pass reading the same file it is about to remove. A plain `JOIN`
+     * against `transmission` rather than a denormalised `sessionId` column on `work_queue_item`
+     * itself -- the queue table has never needed one, and adding it purely for this one check would
+     * be a schema change to avoid a one-line join.
+     */
+    @Query(
+        "SELECT COUNT(*) FROM work_queue_item wq JOIN transmission t ON wq.transmissionId = t.id " +
+            "WHERE t.sessionId = :sessionId AND wq.state IN ('READY', 'LEASED', 'DEFERRED')",
+    )
+    public suspend fun countActiveForSession(sessionId: String): Int
 }

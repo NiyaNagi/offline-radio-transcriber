@@ -97,4 +97,14 @@ public interface SessionDao {
      */
     @Query("UPDATE session SET archiveState = 'REMOVED', archiveRemovedAtMillis = :removedAtMillis WHERE id = :id")
     public suspend fun setArchiveRemoved(id: String, removedAtMillis: Long)
+
+    /**
+     * WPDATA (FR-STO-3e, D40, P9): marks this session's over audio as deleted by the operator —
+     * the row (and [org.ort.data.entity.SessionEntity.overAudioRemovedAtMillis]) stays, never
+     * deleted quietly. Unlike [setArchiveRemoved] there is no automatic caller: FR-STO-3e forbids
+     * any automatic deletion of over audio, so the only writer is an explicit operator action
+     * ([org.ort.pipeline.archive.SessionAudioDeletionService]).
+     */
+    @Query("UPDATE session SET overAudioRemovedAtMillis = :removedAtMillis WHERE id = :id")
+    public suspend fun setOverAudioRemoved(id: String, removedAtMillis: Long)
 }

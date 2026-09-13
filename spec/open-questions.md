@@ -28,6 +28,11 @@ statistics are worth building, now that an audit found `capture.log` carries non
 and the statistics are specified in an amendment to FR-OBS-1 and built — one `vad_stats` line per
 closed segment, accepted or rejected, carried into the debug dump as well.
 
+**Draft 3.6 update.** Operator training labels now exist in the data layer (schema v13, register
+WPDATA): an over can be marked for training and labelled with its true callsign, certainty, a rating
+and a free-text note. That opens **Q21**, whether any of it may ever leave the device. Until decided,
+labels are excluded from every outbound path.
+
 ## Status, 7 September 2026 — the register is nearly empty
 
 **Closed:** Q3–Q11, Q13, Q14, Q15 and Q17, recorded as D19–D32 in spec §3. Q1 is closed but for
@@ -35,9 +40,10 @@ three hardware verifications (VID/PID, command terminator, whether `AI` pushes `
 [`../docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md). **Q12 is settled by
 rule**: a reference-tier lever that does not measure on the eval fold is deleted, not disabled.
 
-**Four remain.** Two concern the same hour of audio; two more were opened by the field-report
-channel (D37, D38) and concern where it uploads to and how long what it uploads is kept. Q20, opened
-by an audit of what `capture.log` actually contained against what FR-OBS-1 promised, is closed by D41:
+**Five remain.** Two concern the same hour of audio; two more were opened by the field-report
+channel (D37, D38) and concern where it uploads to and how long what it uploads is kept; one more
+was opened when operator training labels were built. Q20, opened by an audit of what `capture.log`
+actually contained against what FR-OBS-1 promised, is closed by D41:
 
 | # | Question | Why it is still open |
 |---|---|---|
@@ -45,6 +51,7 @@ by an audit of what `capture.log` actually contained against what FR-OBS-1 promi
 | **Q16** | The labelling protocol | Gates labelling that hour. Also much smaller now: callsigns and speaker turns only |
 | **Q18** | Field-report destination | The repository is public today, by the product owner's own choice, "for now" — see D38. It closes when a gated upload happens against it, or the destination goes private, whichever comes first |
 | **Q19** | Uploaded bundle retention | Nothing yet says how long a field report survives at the destination, or who is responsible for deleting it |
+| **Q21** | May training labels leave the device? | Labels carry a third party's true callsign and a free-text note; the operator wants them for training, which may mean off-device. Excluded from every outbound path until decided |
 
 Everything else that could be decided on paper has been decided. **Q14 stays closed**: the
 product owner did not reopen the question, they reversed the answer — see D39 below.
@@ -552,6 +559,33 @@ voiceprint is exactly the kind of thing FR-CON-5's guarantee exists for elsewher
 at minimum, whether an uploaded bundle is deleted once the defect it documents is closed, and
 whether that deletion is manual or scheduled. Until decided, treat every uploaded bundle as
 retained indefinitely at the destination.
+
+---
+
+### Q21 — May operator training labels ever leave the device? · owner: product
+
+**Question.** The operator asked to mark, label and rate overs "for training". The data layer now
+stores, per over: marked-for-training, an outcome, the **true callsign** and its certainty, a
+tactical callsign, a **free-text note**, a rating and when each was set. Nothing yet says whether any
+of that may be included in a field report (D37, D38), a corpus contribution (D25), a diagnostics
+bundle, an export (FR-EXP) or a backup.
+
+**Why it matters, and why this is a product call.** Training usually happens somewhere other than a
+phone, so labels that can never leave the device may not serve the purpose they were built for. But
+a label is exactly the kind of content the non-negotiables guard: a true callsign is the operator's
+identification of a third party, often corrected by hand, and a free-text note can hold anything —
+names, locations, opinions. The existing rules already draw lines that would each answer differently:
+user-supplied names never leave the device; voiceprints may, per category, default off and gated
+against a public destination (D38); callsigns heard on air already travel in exports with their
+confidence state (FR-EXP-4). Labels sit between all three.
+
+**Recommendation.** Decide per field rather than per label: the structural fields (marked for
+training, outcome, certainty, rating) are no more sensitive than the attribution state that already
+leaves in an export; the true callsign could follow D38's shape (its own category, default off, named
+with its size before upload, refused against a public destination); the free-text note should never
+leave the device, by the same reasoning as a user-supplied station name. Until decided, **labels are
+excluded from every outbound path**, and no requirement or acceptance criterion should assume
+otherwise.
 
 ---
 

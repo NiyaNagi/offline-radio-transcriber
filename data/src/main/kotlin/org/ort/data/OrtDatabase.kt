@@ -27,6 +27,7 @@ import org.ort.data.dao.ShedEventDao
 import org.ort.data.dao.StationIdentityDao
 import org.ort.data.dao.TranscriptDao
 import org.ort.data.dao.TransmissionDao
+import org.ort.data.dao.TransmissionLabelDao
 import org.ort.data.dao.WorkQueueDao
 import org.ort.data.entity.ArchiveGapEntity
 import org.ort.data.entity.AssetEntity
@@ -49,6 +50,7 @@ import org.ort.data.entity.StationSummaryEntity
 import org.ort.data.entity.ThreadEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.TransmissionLabelEntity
 import org.ort.data.entity.VoiceprintBindingHistoryEntity
 import org.ort.data.entity.VoiceprintEntity
 import org.ort.data.entity.WorkAttemptEntity
@@ -86,7 +88,9 @@ import java.util.concurrent.Executors
  * [SessionEntity.archiveState]/`.archiveRemovedAtMillis` and the `archive_gap` table for
  * [ArchiveGapEntity] — see each one's own doc comment.
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
- * [Migration]s are tested against forward to head (FR-AST-5 → AC-53).
+ * [Migration]s are tested against forward to head (FR-AST-5 → AC-53). v13 (WPDATA, FR-STO-3e,
+ * FR-OBS-4, D40) adds [SessionEntity.overAudioRemovedAtMillis] and the `transmission_label` table
+ * for [TransmissionLabelEntity] — see each one's own doc comment.
  */
 @Database(
     entities = [
@@ -115,6 +119,7 @@ import java.util.concurrent.Executors
         LatticeSlotEntity::class,
         WorkAttemptEntity::class,
         ProseSummaryEntity::class,
+        TransmissionLabelEntity::class,
     ],
     version = OrtDatabase.SCHEMA_VERSION,
     exportSchema = true,
@@ -135,9 +140,10 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun shedEventDao(): ShedEventDao
     public abstract fun stationIdentityDao(): StationIdentityDao
     public abstract fun proseSummaryDao(): ProseSummaryDao
+    public abstract fun transmissionLabelDao(): TransmissionLabelDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 12
+        public const val SCHEMA_VERSION: Int = 13
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -456,6 +462,34 @@ public abstract class OrtDatabase : RoomDatabase() {
         )
 
         /**
+         * v12 → v13 (WPDATA, FR-STO-3e, D40, FR-OBS-4): adds `session.overAudioRemovedAtMillis`
+         * — see [SessionEntity]'s own doc comment — and the `transmission_label` table for
+         * [TransmissionLabelEntity]. No existing table or column is touched or dropped; every v12
+         * row survives untouched, the new `session` column `NULL` (over audio never deleted —
+         * honest, not a fabricated removal) (FR-AST-5/6 → AC-53), verified by `MigrationTest`.
+         */
+        public val MIGRATION_12_13: Migration = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_12_13_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_12_13_STATEMENTS.forEach(connection::execSQL)
+            }
+        }
+
+        private val MIGRATION_12_13_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `session` ADD COLUMN `overAudioRemovedAtMillis` INTEGER",
+            "CREATE TABLE IF NOT EXISTS `transmission_label` (" +
+                "`transmissionId` TEXT NOT NULL, `markedForTraining` INTEGER NOT NULL, `outcome` TEXT, " +
+                "`doubled` INTEGER NOT NULL, `truthCallsign` TEXT, `callsignCertainty` TEXT, " +
+                "`tacticalCallsign` TEXT, `note` TEXT, `rating` TEXT, `labelledAtMillis` INTEGER NOT NULL, " +
+                "PRIMARY KEY(`transmissionId`))",
+            "CREATE INDEX IF NOT EXISTS `index_transmission_label_markedForTraining` " +
+                "ON `transmission_label` (`markedForTraining`)",
+        )
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> = arrayOf(
@@ -470,6 +504,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             MIGRATION_9_10,
             MIGRATION_10_11,
             MIGRATION_11_12,
+            MIGRATION_12_13,
         )
 
         private suspend fun PooledConnection.exec(sql: String) {

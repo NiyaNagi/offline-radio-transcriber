@@ -762,17 +762,96 @@ public class MigrationTest {
     }
 
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v11 — walks forward through
-     * the *entire* migration chain to v12 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v11,
+     * WPDATA (FR-STO-3e, D40, FR-OBS-4): v12 → v13 adds `session.overAudioRemovedAtMillis` and the
+     * `transmission_label` table. Proves both halves of FR-AST-5/6: a pre-existing `session` row
+     * survives untouched with the new column `NULL` (over audio never deleted, never fabricated as
+     * removed), and the new write paths ([OrtDatabase.sessionDao]'s `setOverAudioRemoved` and
+     * [OrtDatabase.transmissionLabelDao]) are immediately usable afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-STO-3e", "FR-OBS-4")
+    public fun migration_from_v12_to_v13_preserves_existing_rows_and_adds_the_over_audio_and_label_columns() {
+        // R-1043 (second correction): this test's own long name, embedded verbatim by Robolectric
+        // into its per-test sandbox temp directory name, combined with a descriptive dbName, pushed
+        // the resolved absolute path (this file's own `%TEMP%\robolectric-<class>_<test name><random
+        // suffix>\...\databases\<dbName>`) to 253 characters -- under Windows' MAX_PATH (260) for the
+        // bare `.db` file itself, but over it once SQLite's own `-journal` sidecar file (needed the
+        // moment a connection opens, before WAL is even established -- exactly where the crash
+        // occurred, in `SQLiteConnection.setJournalMode`/`.setWalModeFromConfiguration`) added its own
+        // 8-character suffix (261 characters, one past the ceiling). Confirmed empirically: printing
+        // the real resolved path and its length reproduced exactly 253/261; shortening only `dbName`
+        // (never the test's own name, which carries the requirement id `MigrationTest`'s other cases
+        // rely on for traceability) brings every sidecar file safely under the limit again, the same
+        // budget every other case in this file already keeps to by using a short `dbName`.
+        val dbName = "migration-test-db-v13"
+        val v12 = helper.createDatabase(dbName, 12)
+        v12.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, captureMode, " +
+                "audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 12, 0, 0, NULL, NULL, NULL, NULL, NULL)",
+        )
+        v12.execSQL(
+            "INSERT INTO transmission (id, sessionId, threadId, startedAtUtc, endedAtUtc, durationMs, " +
+                "audioFormat, preRollMs, postRollMs, frequencyHz, frequencyProvenance, mode, signalStrength, " +
+                "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
+                "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
+                "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
+                "isReprocessCandidate, processedTier, rigStateChangedMidTransmission) VALUES ('TX1', 'S1', NULL, " +
+                "0, 1000, 1000, 'flac/16k/mono', 200, 200, NULL, 'measured', NULL, NULL, NULL, NULL, 'UNKNOWN', " +
+                "NULL, NULL, NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, NULL, 0)",
+        )
+        v12.close()
+
+        helper.runMigrationsAndValidate(dbName, 13, true, OrtDatabase.MIGRATION_12_13)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val migrated = runBlocking { db.sessionDao().getById("S1") }
+            assertEquals("test", migrated!!.appVersion) // pre-existing row survives
+            assertEquals(null, migrated.overAudioRemovedAtMillis) // new column defaults to NULL, never fabricated
+
+            runBlocking { db.sessionDao().setOverAudioRemoved("S1", removedAtMillis = 7_000L) }
+            val removed = runBlocking { db.sessionDao().getById("S1") }
+            assertEquals(7_000L, removed!!.overAudioRemovedAtMillis) // new write path usable post-migration
+
+            runBlocking {
+                db.transmissionLabelDao().upsert(
+                    org.ort.data.entity.TransmissionLabelEntity(
+                        transmissionId = "TX1",
+                        markedForTraining = true,
+                        outcome = org.ort.data.entity.LabelOutcome.SPEECH,
+                        truthCallsign = "K7ABC",
+                        callsignCertainty = org.ort.data.entity.LabelCertainty.CERTAIN,
+                        rating = "good",
+                        labelledAtMillis = 8_000L,
+                    ),
+                )
+            }
+            val label = runBlocking { db.transmissionLabelDao().getByTransmissionId("TX1") }
+            assertEquals("K7ABC", label?.truthCallsign) // transmission_label table usable post-migration
+            assertEquals("good", label?.rating)
+            val count = runBlocking { db.transmissionLabelDao().countMarkedForTrainingBySession("S1") }
+            assertEquals(1, count)
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v12 — walks forward through
+     * the *entire* migration chain to v13 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v12,
      * so the same insert works unmodified against every fixture version; what varies is only which
      * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
      * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v11_migrates_forward_to_v12_preserving_its_session_row() {
-        for (fixtureVersion in 1..11) {
+    public fun every_prior_fixture_from_v1_to_v12_migrates_forward_to_v13_preserving_its_session_row() {
+        for (fixtureVersion in 1..12) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -792,7 +871,7 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v12",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v13",
                     "test",
                     migrated!!.appVersion,
                 )
@@ -810,6 +889,11 @@ public class MigrationTest {
                     "fixture v$fixtureVersion: the v12 archiveState column must default to NULL",
                     null,
                     migrated.archiveState,
+                )
+                assertEquals(
+                    "fixture v$fixtureVersion: the v13 overAudioRemovedAtMillis column must default to NULL",
+                    null,
+                    migrated.overAudioRemovedAtMillis,
                 )
                 // The v8 table exists and is queryable from every fixture version, empty rather
                 // than absent — a missing table would throw here, not read as null.
@@ -847,14 +931,14 @@ public class MigrationTest {
      * itself: the same factory function, with the same [androidx.sqlite.driver.bundled
      * .BundledSQLiteDriver], the shipped app and every other production caller use. `fixtureVersion`
      * 9 is the version named in the halt report (`data/schemas/org.ort.data.OrtDatabase/9.json`);
-     * the loop also covers every earlier released version (v11 added, WPARC, head v12), since each
+     * the loop also covers every earlier released version (v12 added, WPDATA, head v13), since each
      * is an on-disk shape a real device could still be carrying. Widening the range by one is the
      * one change each new head version needs here.
      */
     @Test
     @Requirement("R-885", "AC-53", "FR-AST-5", "FR-AST-6")
-    public fun r_885_every_fixture_from_v1_to_v11_opens_through_OrtDatabase_create_and_reads_its_session_row() {
-        for (fixtureVersion in 1..11) {
+    public fun r_885_every_fixture_from_v1_to_v12_opens_through_OrtDatabase_create_and_reads_its_session_row() {
+        for (fixtureVersion in 1..12) {
             val dbName = "r885-real-open-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             fixture.execSQL(
@@ -880,59 +964,90 @@ public class MigrationTest {
                 // MIGRATION_10_11 through this connection-based path (the R-885 mistake shipped in
                 // a Migration overriding only the legacy migrate(SupportSQLiteDatabase) signature)
                 // -- proven by using the new column's write/read path, not just "did not crash".
-                if (fixtureVersion == 10) {
-                    runBlocking {
-                        db.transmissionDao().insert(TestFixtures.transmission("TX-R885-V10", sessionId = "S1"))
-                        val itemId = db.workQueueDao().insert(
-                            org.ort.data.entity.WorkQueueItemEntity(
-                                transmissionId = "TX-R885-V10",
-                                pass = org.ort.core.PassId.B_OFFLINE,
-                                state = org.ort.data.entity.WorkQueueState.READY,
-                                priority = 0,
-                                enqueuedAt = 0L,
-                            ),
-                        )
-                        db.workQueueDao()
-                            .retryReady(itemId, attemptCount = 1, error = "boom", retryNotBeforeMillis = 42L)
-                        val row = db.workQueueDao().getById(itemId)
-                        assertEquals(
-                            "MIGRATION_10_11's retryNotBeforeMillis column must be usable through the " +
-                                "real connection-based open, not just Room's legacy SupportSQLiteDatabase path",
-                            42L,
-                            row?.retryNotBeforeMillis,
-                        )
-                    }
-                }
+                if (fixtureVersion == 10) runBlocking { verifyRetryNotBeforeUsableThroughRealOpen(db) }
                 // WPARC: fixtureVersion 11 is the one whose real open runs exactly MIGRATION_11_12
                 // through this connection-based path -- proven by using both new write paths
                 // (setArchiveKept and archiveGapDao), not just "did not crash".
-                if (fixtureVersion == 11) {
-                    runBlocking {
-                        db.sessionDao().setArchiveKept("S1")
-                        db.archiveGapDao().insert(
-                            org.ort.data.entity.ArchiveGapEntity(
-                                id = "AG-R885-V11",
-                                sessionId = "S1",
-                                startSample = 0L,
-                                sampleCount = 480_000L,
-                                reason = "verification_failed",
-                                recordedAtMillis = 100L,
-                            ),
-                        )
-                        val kept = db.sessionDao().getById("S1")
-                        assertEquals(
-                            "MIGRATION_11_12's archiveState column must be usable through the real " +
-                                "connection-based open, not just Room's legacy SupportSQLiteDatabase path",
-                            "KEPT",
-                            kept?.archiveState,
-                        )
-                        val gaps = db.archiveGapDao().listBySession("S1")
-                        assertEquals("verification_failed", gaps.single().reason)
-                    }
-                }
+                if (fixtureVersion == 11) runBlocking { verifyArchiveColumnsUsableThroughRealOpen(db) }
+                // WPDATA: fixtureVersion 12 is the one whose real open runs exactly MIGRATION_12_13
+                // through this connection-based path -- proven by using both new write paths
+                // (setOverAudioRemoved and transmissionLabelDao), not just "did not crash".
+                if (fixtureVersion == 12) runBlocking { verifyOverAudioAndLabelUsableThroughRealOpen(db) }
             } finally {
                 db.close()
             }
         }
+    }
+
+    /** R-885 helper: [org.ort.data.dao.WorkQueueDao.retryReady]'s `retryNotBeforeMillis` column,
+     * exercised through a real [OrtDatabase.create] open — see the caller's own doc comment. */
+    private suspend fun verifyRetryNotBeforeUsableThroughRealOpen(db: OrtDatabase) {
+        db.transmissionDao().insert(TestFixtures.transmission("TX-R885-V10", sessionId = "S1"))
+        val itemId = db.workQueueDao().insert(
+            org.ort.data.entity.WorkQueueItemEntity(
+                transmissionId = "TX-R885-V10",
+                pass = org.ort.core.PassId.B_OFFLINE,
+                state = org.ort.data.entity.WorkQueueState.READY,
+                priority = 0,
+                enqueuedAt = 0L,
+            ),
+        )
+        db.workQueueDao().retryReady(itemId, attemptCount = 1, error = "boom", retryNotBeforeMillis = 42L)
+        val row = db.workQueueDao().getById(itemId)
+        assertEquals(
+            "MIGRATION_10_11's retryNotBeforeMillis column must be usable through the " +
+                "real connection-based open, not just Room's legacy SupportSQLiteDatabase path",
+            42L,
+            row?.retryNotBeforeMillis,
+        )
+    }
+
+    /** R-885 helper: [org.ort.data.entity.SessionEntity.archiveState] and `archive_gap`, exercised
+     * through a real [OrtDatabase.create] open — see the caller's own doc comment. */
+    private suspend fun verifyArchiveColumnsUsableThroughRealOpen(db: OrtDatabase) {
+        db.sessionDao().setArchiveKept("S1")
+        db.archiveGapDao().insert(
+            org.ort.data.entity.ArchiveGapEntity(
+                id = "AG-R885-V11",
+                sessionId = "S1",
+                startSample = 0L,
+                sampleCount = 480_000L,
+                reason = "verification_failed",
+                recordedAtMillis = 100L,
+            ),
+        )
+        val kept = db.sessionDao().getById("S1")
+        assertEquals(
+            "MIGRATION_11_12's archiveState column must be usable through the real " +
+                "connection-based open, not just Room's legacy SupportSQLiteDatabase path",
+            "KEPT",
+            kept?.archiveState,
+        )
+        val gaps = db.archiveGapDao().listBySession("S1")
+        assertEquals("verification_failed", gaps.single().reason)
+    }
+
+    /** R-885 helper: [org.ort.data.entity.SessionEntity.overAudioRemovedAtMillis] and
+     * `transmission_label`, exercised through a real [OrtDatabase.create] open — see the caller's
+     * own doc comment. */
+    private suspend fun verifyOverAudioAndLabelUsableThroughRealOpen(db: OrtDatabase) {
+        db.sessionDao().setOverAudioRemoved("S1", removedAtMillis = 55_000L)
+        db.transmissionDao().insert(TestFixtures.transmission("TX-R885-V12", sessionId = "S1"))
+        db.transmissionLabelDao().upsert(
+            org.ort.data.entity.TransmissionLabelEntity(
+                transmissionId = "TX-R885-V12",
+                markedForTraining = true,
+                labelledAtMillis = 66_000L,
+            ),
+        )
+        val session = db.sessionDao().getById("S1")
+        assertEquals(
+            "MIGRATION_12_13's overAudioRemovedAtMillis column must be usable through the " +
+                "real connection-based open, not just Room's legacy SupportSQLiteDatabase path",
+            55_000L,
+            session?.overAudioRemovedAtMillis,
+        )
+        val label = db.transmissionLabelDao().getByTransmissionId("TX-R885-V12")
+        assertEquals(true, label?.markedForTraining)
     }
 }

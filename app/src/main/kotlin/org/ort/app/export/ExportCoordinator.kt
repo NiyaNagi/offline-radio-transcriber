@@ -142,6 +142,23 @@ public object ExportCoordinator {
             )
         }
 
+    /**
+     * R-1045(b) (register, design: `Settings-Export.dc.html`'s `Save file` button reads
+     * "Save file · <filename> · <size>", the build showed only "Save file"). The real byte count
+     * `Save file` is about to write — never an estimate presented as a size (constitution I/VI) —
+     * resolved the same way [org.ort.app.fieldreport.bundle.FieldReportBundleBuilder.preview]
+     * already resolves a real pre-upload size for its own bundle: by running the *actual* producer
+     * before the write, not a second, independently-scoped guess. Here that producer is [build]
+     * itself — literally the same function [org.ort.app.ui.settings.SettingsExportScreen]'s own
+     * real `Save file` handler calls — so this is never a duplicated writer implementation that
+     * could silently disagree with what gets written, only a second *call* to the one real one
+     * (the same "read twice, write once" cost [previewCount] already accepts for its own counts,
+     * for the identical reason: a preview must answer before the operator has committed to
+     * anything, and only the real producer's own output is honest enough to show).
+     */
+    public suspend fun previewSizeBytes(context: Context, request: ExportRequest): Long =
+        build(context, request).size.toLong()
+
     /** The exact record list [build] hands a writer and [previewCount] counts against — shared so
      * the two can never drift (this object's own [previewCount] doc comment). */
     private suspend fun effectiveRecords(context: Context, request: ExportRequest): List<ExportOverRecord> {
