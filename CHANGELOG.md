@@ -34,6 +34,47 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
 
+### 64c1bc56 — WPREC: fix ktlintDebugSourceSetCheck violations in the two new recordings scenarios
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` only.
+**Requirements/ACs:** none new — formatting only, caught by the full gate's own
+`ktlintDebugSourceSetCheck` (the `app/src/debug` source set, which this session's earlier
+`ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck` runs never covered).
+**What changed:** three long lines in `recordingsBudgetExceeded`/`recordingsArchiveRemoved`
+(argument-list-wrapping, max-line-length) wrapped onto multiple lines; behaviour unchanged.
+**Verified:** `gradlew :app:ktlintDebugSourceSetCheck :app:detekt` — green. `gradlew
+:app:testDebugUnitTest --tests "org.ort.app.debug.ScenariosTest"` — green, unchanged behaviour.
+
+### 0b5471d5 — coverage matrix: regenerated after the WPREC merge of origin/main
+
+**Scope:** `results/coverage-matrix.md` (generated file) only.
+**Requirements/ACs:** none new.
+**What changed:** regenerated after merging `origin/main` (`849be96d`) into this branch.
+**Verified:** `gradlew coverageMatrix` — 272 of 483 requirements covered, no new orphans beyond
+this session's own known `RC01`/`P9`/constitution-tag entries. `gradlew coverageMatrixCheck` —
+green.
+
+### 6afd32ea — Merge origin/main into WPREC (WPMODEL round 2's ModelFileVerifier/sidecar fix, register updates)
+
+**Scope:** merge only — `CHANGELOG.md` conflict resolved keeping both sides (marker lines
+removed, both dated sections kept); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
+auto-merged clean; everything else (`ModelFileVerifier.kt`, `ModelAcquisition.kt`,
+`BundledAssetInstaller.kt`, `RealVadProvider.kt`, `ProseDigestRunner.kt`,
+`AsrEngineProvisioning.kt`, `results/ui-audit/register.md`, `results/coverage-matrix.md`) came in
+from `origin/main` unmodified by this branch.
+**Requirements/ACs:** none new to this branch — carries in main's own WPMODEL round 2
+(R-1052/R-1054) fix.
+**What changed:** brought `origin/main` (`849be96d`) into this branch so the final gate and
+report run against current `main`, per the coordinator's explicit "merge main again if it moved"
+instruction.
+**Verified:** `git grep -n -E "^(<<<<<<<|>>>>>>>)"` — no matches (conflict markers fully resolved).
+Full test/gate results reported separately in this round's own report.
+**Left open / not done:** none for the merge itself; note that `origin/main`'s own
+`ModelFileVerifier`/sidecar work independently addresses the same class of crash this round's own
+report flags for `RealCaptureService`'s VAD load on a fixture-asset local build — not verified
+against this branch's own interactive-navigation crash finding, left to the already-pending
+`task_eefe705c` background task.
+
 ### 4110dcdc — WPREC: RC01's own tour steps — the drawer's Recordings row and the two new scenario states
 
 **Scope:** `tools/ui-audit/tour.json` only (append-only, per this session's ownership).
