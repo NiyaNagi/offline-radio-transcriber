@@ -34,6 +34,80 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPSQUELCH: FR-SEG-5 rig squelch fusion, register R-1062)
 
+### 7cd7c13c — WPSQUELCH follow-up: FR-SEG-5 squelch authority can be lost, revert to VAD-only honestly
+
+**Scope:** `:segment` (`Segmenter`, `Squelch.kt`, `SegmentSink.kt`) and `:pipeline`
+(`RigSupervisor`, `SquelchSampleBridge.kt`), plus their tests — the same file set as `71ec04ec`
+below. No UI, no `DiagnosticsLog` internals (only the new `RIG_LOST` enum value, read generically
+by `logVadStats`'s existing `.name` — no edit to that file), no spec files, no register.
+**Requirements/ACs:** FR-SEG-5 (M), constitution IV; register R-1062 (this closes the silent-loss
+hole the lead found in `71ec04ec`'s own build, still pending the operator's hardware check below).
+**What changed:** the coordinator's review of `71ec04ec` found a severity-halt gap: once the
+first squelch transition arrived, `Segmenter.squelchOpen` was never reset to `null` on a rig
+drop. A rig lost while squelch was closed silently dropped every later over for the rest of the
+session (no transcript, no callsign, no Log row); a rig lost while squelch was open produced
+back-to-back maximum-length segments, silence included. This fixes it:
+- `SquelchGate` gains `markUnknown(atSample)`, a loss signal applied in the same arrival-ordered
+  queue as `push()`'s transitions (`SquelchUpdate.Transition`/`Loss`, replacing the bare
+  `SquelchTransition` type — never blocks, never throws, same discipline as `push()`).
+- `Segmenter.handleSquelchLoss` reverts `squelchOpen` to `null` — exactly the pre-first-transition
+  state, so the very next frame falls back to VAD — and, if a squelch-gated segment was actually
+  open, closes it at the loss point with the usual generous post-roll, a new
+  `SegmentCloseReason.RIG_LOST` (never `SQUELCH_CLOSE`), and `rigSquelchFusionApplied` always
+  `false`. A loss mid a pure-VAD segment or while idle touches nothing but `squelchOpen`. A fresh
+  transition after a loss resumes fusion with no separate "reconnect" mechanism needed.
+- `RigSquelchTransition.open` is now `Boolean?` — `null` means loss. `pushSquelchTransition`
+  routes it to `SquelchGate.markUnknown` instead of `push`, same sample-position conversion and
+  anchor clamp as before.
+- `RigSupervisor` now emits a loss on three paths: a transport-lost STALE `RigState` (immediate);
+  `disconnect()`/a rig change (before internal state resets, so a fresh connection never inherits
+  a stale "still open" reading); and a new squelch-specific staleness watchdog
+  (`restartSquelchStaleWatchdog`, restarted on every FRESH `RigState`). Staleness margin, derived
+  in one place (`squelchStalenessBoundMillis`) from the same descriptor shape
+  `squelchFusionEligible()` already reads: a push descriptor gets a stated 2000 ms bound (no
+  natural heartbeat exists for push — a quiet radio sends nothing at all, by design — so this
+  bounds how long a hung link could masquerade as a merely-quiet one, comfortably above
+  `DescriptorRigModule`'s own 1000 ms read timeout and far tighter than `RigHealth`'s generic
+  5-poll-cycle/10 s timeout, whose purpose is coarser); a poll descriptor gets 2× its own interval
+  (a poll response is a genuine heartbeat, changed or not — `applyMatch` has no dedup), tolerating
+  one missed cycle. The pre-existing generic link-silence path (`declareStaleFromSilence`) also
+  emits a loss now, as an honest backstop — its own looser bound (5–10 s) means the
+  squelch-specific watchdog almost always fires first in practice.
+**Verified:** `gradlew :segment:test` — 33/33 green (4 new `R_1062`-tagged `SquelchFusionTest`
+cases: rig lost while closed still segments a later VAD burst; rig lost while open closes at the
+loss sample as `RIG_LOST` with post-roll kept; every over after a loss stays VAD-only; reconnect
+resumes fusion from the fresh transition). `gradlew :pipeline:testDebugUnitTest` (full module) —
+green, including 3 new `RigSupervisorSquelchTest` cases proving `RigSupervisor` itself — not only
+the unit-level `SquelchGate` — emits the loss on a real `FakeRigTransport.dropMidStream`, on
+staleness past the bound, and on an explicit `disconnect()`. Discrimination (constitution II):
+reverted `Segmenter.handleSquelchLoss` to a no-op — all 4 new `SquelchFusionTest` cases failed for
+the right reason. Reverted `RigSupervisor.emitSquelchLoss` — all 3 new `RigSupervisorSquelchTest`
+loss cases failed. Reverted only `restartSquelchStaleWatchdog` (keeping `emitSquelchLoss` intact)
+and found the staleness test still passed — masked by the pre-existing generic 10 s health-silence
+path also calling `emitSquelchLoss`; tightened the test's own timeout window to 5000 ms (well
+under that 10 s bound, comfortably over the watchdog's own 2000 ms) so it discriminates the
+squelch-specific mechanism specifically — reran with the watchdog still disabled and confirmed it
+then failed alone. All three reverts restored and reconfirmed green. Full gate:
+`gradlew dependencyRules platformGuards build` — **green, 18m 7s, real `HF_TOKEN`, no escape
+hatch** (1109 tasks: 493 executed, 305 from cache, 311 up-to-date; includes `:app`'s full test
+suite, lint and release assembly). `gradlew -p buildSrc test` — green. `python
+tools/spec-check/spec_check.py` — OK (all 8 checks pass). `gradlew ktlintCheck detekt`
+(whole repo) — green (one ktlint wrap in `RigSupervisor.kt` and a `LoopWithTooManyJumpStatements`
+in `SquelchGate.drainBefore` from the prior commit were already fixed there; this commit introduced
+no new lint/detekt findings). `gradlew coverageMatrix` then `coverageMatrixCheck` (separate
+invocations) — green; new tracked id `R-1062` now shows covered by `RigSupervisorSquelchTest` and
+`SquelchFusionTest`, and `FR-RIG-15` gained `RigSupervisorSquelchTest` to its own list (the
+transport-drop loss test also exercises that requirement). `git merge origin/main` — already
+up to date (`origin/main` unchanged at `eba42f9f` since this branch was cut from it); `git grep
+-n -E "^(<<<<<<<|>>>>>>>)"` — no matches.
+**Left open / not done:** the hardware check for R-1062 (below) now also needs unplugging the
+rig while squelch is closed, confirming later overs still appear — see this session's own report
+for the full updated checklist. Two spec-level questions from `71ec04ec` remain open (poll-rig
+fusion eligibility exception; per-band segmenters for overlapping transmissions). The exact
+2000 ms push-staleness margin and the 2× poll-staleness multiplier are stated, reasoned defaults —
+confirming them against the real TH-D75A's actual `AI 1` push behaviour is part of the same
+hardware check. Register R-1062 and `results/ui-audit/register.md` remain the lead's to update.
+
 ### 71ec04ec — WPSQUELCH: FR-SEG-5 rig squelch fusion — segment boundaries from squelch, VAD decides speech inside
 
 **Scope:** `:segment` (`Segmenter`, `SegmentSink`, new `Squelch.kt`) and `:pipeline`
