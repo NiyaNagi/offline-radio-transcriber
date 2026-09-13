@@ -328,6 +328,8 @@ internal object OvernightScenario {
                 ituRegionFromPrefix = null, overCountsByAttributionState = null,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, tx5, "WA7HJR", 0.9, createdAt = t5 + 500L)
 
         // -- 6. Corrected: a human overrode the machine's INFERRED guess. --------------------------
         val tx6 = "$sessionId-tx06"
@@ -389,6 +391,8 @@ internal object OvernightScenario {
         )
         db.transmissionDao().insert(tx7entity)
         ScenarioFixtures.writeAudioFixture(context, tx7entity)
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, tx7, "W7NPC", 0.93, createdAt = t7 + 500L)
         db.transcriptDao().supersede(
             ScenarioFixtures.transcript(
                 "$tx7-t1",
@@ -483,6 +487,12 @@ internal object OvernightScenario {
                 text = "over $i on the QSO — copy?",
                 writeAudio = i % 2 == 0,
             )
+            // R-1071: a real CONFIRMED-with-confidence over always has a resolver row; the
+            // INFERRED overs here are genuinely voice-matched, never resolved from phonetics
+            // (attribution.corrected is not set on either), so they correctly carry none.
+            if (state == AttributionState.CONFIRMED) {
+                ScenarioFixtures.seedConfirmedResolverOutput(db, id, station, 0.85, createdAt = t + 500L)
+            }
         }
         db.catalogDao().insert(
             ThreadEntity(
@@ -526,6 +536,12 @@ internal object OvernightScenario {
                 text = "${phrases[i % phrases.size]} $station",
                 writeAudio = i % 2 == 0,
             )
+            // R-1071: a real CONFIRMED-with-confidence over always has a resolver row; the
+            // INFERRED fillers here are genuinely voice-matched (sourced from tx1), never
+            // resolved from phonetics, so they correctly carry none.
+            if (isConfirmed) {
+                ScenarioFixtures.seedConfirmedResolverOutput(db, id, station, 0.9, createdAt = t + 500L)
+            }
         }
 
         // WPUI follow-up (R-1006's on-device proof, coordinator message 2026-09-12): every other
@@ -544,12 +560,14 @@ internal object OvernightScenario {
         // CONFIRMED by `samplePosition`) still finds tx1 unchanged; reachable only via the new,
         // dedicated `confirmed-longest` drillIn value (see that file's own doc comment).
         if (scenarioName == "overnight-live") {
+            val confirmedLongestId = TransmissionId.new().toString()
+            val confirmedLongestStart = offset(400.0)
             insertTx(
                 db,
                 context,
                 ScenarioFixtures.transmission(
-                    id = TransmissionId.new().toString(), sessionId = sessionId,
-                    startedAtUtc = offset(400.0), samplePosition = nextSample(),
+                    id = confirmedLongestId, sessionId = sessionId,
+                    startedAtUtc = confirmedLongestStart, samplePosition = nextSample(),
                     durationMs = 24_000L,
                     frequencyHz = FREQ_A, signalStrength = 8.0,
                     attributionState = AttributionState.CONFIRMED, stationId = "W7NPC",
@@ -557,6 +575,14 @@ internal object OvernightScenario {
                 ),
                 text = "long test tone, retained for the transport bar's own on-device playback proof",
                 writeAudio = true,
+            )
+            // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+            ScenarioFixtures.seedConfirmedResolverOutput(
+                db,
+                confirmedLongestId,
+                "W7NPC",
+                0.94,
+                createdAt = confirmedLongestStart + 500L,
             )
         }
 

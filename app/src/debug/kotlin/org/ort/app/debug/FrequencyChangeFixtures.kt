@@ -75,6 +75,8 @@ internal object FrequencyChangeFixtures {
                         createdAt = t + 500L,
                     ),
                 )
+                // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+                ScenarioFixtures.seedConfirmedResolverOutput(db, id, station, 0.9, createdAt = t + 500L)
                 transmissionCount++
                 recordStation(station, t)
             }
@@ -119,6 +121,8 @@ internal object FrequencyChangeFixtures {
                     createdAt = t + 500L,
                 ),
             )
+            // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+            ScenarioFixtures.seedConfirmedResolverOutput(db, id, station, 0.9, createdAt = t + 500L)
             transmissionCount++
             recordStation(station, t)
         }
@@ -148,6 +152,8 @@ internal object FrequencyChangeFixtures {
                     createdAt = t + 500L,
                 ),
             )
+            // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+            ScenarioFixtures.seedConfirmedResolverOutput(db, id, NEW_STATION, 0.85, createdAt = t + 500L)
             transmissionCount++
             recordStation(NEW_STATION, t)
         }
@@ -196,6 +202,8 @@ internal object FrequencyChangeFixtures {
                     attributionConfidence = 0.9,
                 ),
             )
+            // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+            ScenarioFixtures.seedConfirmedResolverOutput(db, id, regulars[0], 0.9, createdAt = t + 500L)
             transmissionCount++
             recordStation(regulars[0], t)
         }

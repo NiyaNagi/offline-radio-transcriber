@@ -213,6 +213,49 @@ internal object ScenarioFixtures {
     )
 
     /**
+     * R-1071 (register, WPDETAILRES): every real CONFIRMED attribution reaches `:data` only through
+     * [org.ort.pipeline.passb.CallsignResolver.resolve], which never returns `CONFIRMED` unless the
+     * same call also produced a non-empty ranked candidate list — and
+     * [org.ort.pipeline.passb.DataPassBResultSink.record] persists that lattice/candidate pair in
+     * the *same* transaction as the attribution write (confirmed by reading both classes directly,
+     * not assumed). So a real CONFIRMED-with-confidence transmission always has a resolver row; a
+     * scenario that sets `attributionState = CONFIRMED` with a real `attributionConfidence` and
+     * skips this call is seeding a shape production cannot produce, which is exactly what let
+     * `Detail-Why.dc.html`'s "No resolver output recorded" contradict `Detail.dc.html`'s own "Heard
+     * in this over. Resolved from the phonetics at 0.95." header sentence (capture
+     * `audio-removed-by-operator/D06-audio-removed.png`). Every scenario that seeds a CONFIRMED
+     * over now calls this alongside it; [ScenariosTest]'s own
+     * `R_1071 every CONFIRMED attribution with a confidence carries a selected resolver candidate`
+     * is the regression proof.
+     *
+     * [score] follows this fixture suite's own established convention (`OvernightScenario.kt`'s
+     * tx1: confidence 0.94, candidate score 9.4) — a plain, real ranked-candidate `totalScore`, on
+     * the un-clamped scale [org.ort.lexicon.RankedCandidate.totalScore] actually uses, not the
+     * `[0,1]` probability [confidence] itself is calibrated to (see [CallsignResolver.resolve]'s own
+     * `coerceIn(0f, 1f)` clamp for why those two numbers are related but not identical) — never
+     * invented independently of it.
+     */
+    suspend fun seedConfirmedResolverOutput(
+        db: org.ort.data.OrtDatabase,
+        transmissionId: String,
+        callsign: String,
+        confidence: Double,
+        createdAt: Long,
+    ) {
+        db.catalogDao().insert(lattice("$transmissionId-lat", transmissionId, createdAt = createdAt))
+        db.catalogDao().insert(
+            candidate(
+                "$transmissionId-c1",
+                transmissionId,
+                callsign,
+                rank = 0,
+                score = confidence * 10.0,
+                selected = true,
+            ),
+        )
+    }
+
+    /**
      * R-421 (schema v5, register): the ordered [LatticeSlotEntity] rows for one **text-anchored**
      * candidate lattice (its own [lattice] row must be seeded with `source =
      * `[org.ort.data.entity.LatticeSource.TEXT_DERIVED]` — an acoustic lattice's slots carry no char

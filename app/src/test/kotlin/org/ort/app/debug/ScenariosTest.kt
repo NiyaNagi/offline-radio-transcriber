@@ -887,5 +887,9 @@ class ScenariosTest {
     // DebugFailureOverride — moved verbatim into FailureOverrideScenariosTest.kt (detekt's
     // LargeClass finding, this file's own size after the R-285 tests above; the same fix
     // RowsTest.kt's own NavRowTest.kt split already establishes as house style).
+    //
+    // R-1071 (register, WPDETAILRES): the resolver-output-consistency sweep across every declared
+    // scenario lives in ResolverOutputScenariosTest.kt instead — this file's own size after adding
+    // it tripped the same LargeClass finding, so it moved out the same way, verbatim.
     // -----------------------------------------------------------------------------------------
 }
