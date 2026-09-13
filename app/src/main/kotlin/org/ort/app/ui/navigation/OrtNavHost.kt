@@ -27,7 +27,9 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -300,7 +302,16 @@ public fun OrtNavHost(
 
     OrtNavHostBackHandler(current, navigator, navState, drawerState, scope)
 
-    val bannerReservedBottomHeight = bannerReservedBottomHeight(current, navState, drawerLive, transportPlayback)
+    // Register R-1061 (round 2): the host's own pinned live/transport bar's real, laid-out height
+    // — never a guessed constant (round 1's own `LIVE_BAR_RESERVE_HEIGHT = 96.dp` was exactly that
+    // guess, replaced this round after the coordinator's own review named it one) — reported by
+    // [NavHostBody] itself via `onLiveBarHeightChanged` the moment the bar's own `Box` is measured
+    // (the same `onGloballyPositioned` mechanism [org.ort.app.ui.failures.FailureHost] already uses
+    // for the banner's own height, R-178), and reset to `0.dp` the instant the bar stops showing —
+    // see [NavHostBody]'s own doc comment on exactly where. Zero on the very first frame before
+    // anything has been measured, matching the same one-frame lag `contentTopPadding` itself
+    // already has for the banner.
+    var liveBarHeight by remember { mutableStateOf(0.dp) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -331,8 +342,8 @@ public fun OrtNavHost(
             FailureHost(
                 sessionId = sessionId,
                 actions = failureActions,
-                // Register R-1061: see this file's own `bannerReservedBottomHeight` doc comment.
-                reservedBottomHeight = bannerReservedBottomHeight,
+                // Register R-1061: see this file's own `liveBarHeight` doc comment.
+                reservedBottomHeight = liveBarHeight,
                 // R-1003 (halt): `padding` already reflects this `Scaffold`'s own default
                 // `contentWindowInsets` (`WindowInsets.systemBars` — confirmed by decompiling
                 // `ScaffoldDefaults`/`SystemBarsDefaultInsets_androidKt` for this row; this
@@ -350,6 +361,7 @@ public fun OrtNavHost(
                     layout = NavHostLayout(
                         modifier = Modifier.fillMaxSize().safeAreaBottomPadding(),
                         contentTopPadding = contentTopPadding,
+                        onLiveBarHeightChanged = { liveBarHeight = it },
                     ),
                     ids = NavHostIds(
                         current,
@@ -971,8 +983,14 @@ private fun searchHostState(
  * comment for why that does not double-reserve against the `Scaffold`'s own padding above it) and,
  * register R-178, the banner-height top padding [org.ort.app.ui.failures.FailureHost] reports —
  * bundled, same reason as [NavHostIds]/[NavHostCallbacks], so [NavHostBody] stays under detekt's
- * `LongParameterList` rather than growing a parameter for the R-178 addition. */
-private data class NavHostLayout(val modifier: Modifier, val contentTopPadding: Dp = 0.dp)
+ * `LongParameterList` rather than growing a parameter for the R-178 addition. Register R-1061
+ * (round 2): [onLiveBarHeightChanged] joins this bundle for the identical reason — [OrtNavHost]'s
+ * own `liveBarHeight` doc comment has the full account of what this reports and why. */
+private data class NavHostLayout(
+    val modifier: Modifier,
+    val contentTopPadding: Dp = 0.dp,
+    val onLiveBarHeightChanged: (Dp) -> Unit = {},
+)
 
 /** The "land here fresh, not at the root" seeds three different destinations each take, bundled
  * purely to keep [NavHostIds] and [DestinationContent] under detekt's `LongParameterList` — the
@@ -1108,48 +1126,6 @@ private data class SearchHostState(
  * positioning, which this host has no access to and does not need. */
 private val HOST_HEADER_HEIGHT: Dp = 44.dp
 
-/** Register R-1061: a deliberately generous reserve for the host's own pinned
- * [org.ort.app.ui.components.TransportBar] — `TransportBarHostLayoutTest`'s own R-1049 measurements
- * bound the real row at 64.0dp (font scale 1.0) / 63.76dp (2.0) at 390dp width and asserted a 70dp/
- * 76dp ceiling with "a few px of real-density rounding headroom" — this is that same ceiling's own
- * shape, rounded up further so [FailureHost]'s own banner cap ([org.ort.app.ui.failures
- * .bannerCapViewportHeight]) reserves real room for the bar even before either one has actually
- * measured itself, not merely enough to clear a single measured sample. */
-private val LIVE_BAR_RESERVE_HEIGHT: Dp = 96.dp
-
-/**
- * Register R-1061: whether the host's own pinned bar will show *before* [FailureHost] composes its
- * banner — mirrors [NavHostBody]'s own `isDrillIn`/`embedsOwnLiveBar` exactly (four drill-in ids,
- * `NOW`/`CAPTURE` embed their own copy), computed here too because `FailureHost` wraps
- * [NavHostBody] and needs this fact *before* that composable runs its own copy of the same check —
- * see [FailureHost]'s own `reservedBottomHeight` kdoc for why the banner needs it at all, and
- * [resolveTransportBarState]'s own kdoc for the precedence rules this reuses verbatim rather than
- * re-deriving them a third way. Split out of [OrtNavHost] purely to keep that function under
- * detekt's `LongMethod` limit, the same reason [rememberDrawerLiveState]/[rememberTransportPlayback]
- * already are.
- */
-@Composable
-private fun bannerReservedBottomHeight(
-    current: ReaderDestination,
-    navState: NavHostNavState,
-    drawerLive: DrawerLiveState,
-    transportPlayback: TransportPlaybackController,
-): Dp {
-    val isDrillIn = navState.openTransmissionId.value != null ||
-        navState.openStationId.value != null ||
-        navState.openFrequencyHz.value != null ||
-        navState.openThreadId.value != null
-    val embedsOwnLiveBar = !isDrillIn &&
-        (current == ReaderDestination.NOW || current == ReaderDestination.CAPTURE)
-    val transportBarState = resolveTransportBarState(
-        transportPlayback = transportPlayback,
-        liveBar = drawerLive.liveBar,
-        embedsOwnLiveBar = embedsOwnLiveBar,
-        openTransmissionId = navState.openTransmissionId.value,
-    )
-    return if (transportBarState != TransportBarViewState.Hidden) LIVE_BAR_RESERVE_HEIGHT else 0.dp
-}
-
 /**
  * Round 16, register R-541 (halt): `FailureHost`'s own `BannerOverlay` always positions itself
  * [HOST_HEADER_HEIGHT] below the top of the viewport — it assumes a host `ScreenHeader` already
@@ -1229,6 +1205,16 @@ private fun NavHostBody(
     transportPlayback: TransportPlaybackController,
     search: SearchHostState,
 ) {
+    // Register R-1061 (round 2): `layout.onLiveBarHeightChanged` — see [OrtNavHost]'s own
+    // `liveBarHeight` doc comment. This is *not* R-262's own reverted mechanism (this function's
+    // next doc comment paragraph). That one fed a measured height back into *this same column's
+    // own* content-box padding, a genuine second reservation on top of what `Column`'s own weight
+    // distribution already gives for free (R-957's fix). This is a different consumer entirely:
+    // [org.ort.app.ui.failures.FailureHost], a composable *above* this one in the tree, which has
+    // no other way to know how tall the bar *will* be before it decides how much room its own
+    // banner may claim — nothing here changes how this column itself lays out the bar against the
+    // content box below it.
+    val onLiveBarHeightChanged = layout.onLiveBarHeightChanged
     // Register R-262 (accessibility validator), superseded by R-957 (root cause, WPI's host
     // comparison on 5558/5556): R-262 added an explicit `padding(bottom = liveBarHeight)` to the
     // content box below, real-measuring [LiveBar]'s own height via `onGloballyPositioned` the same
@@ -1353,14 +1339,33 @@ private fun NavHostBody(
             embedsOwnLiveBar = embedsOwnLiveBar,
             openTransmissionId = ids.transmissionId,
         )
+        // Register R-1061 (round 2): the bar's real height must reach [onLiveBarHeightChanged] as
+        // `0.dp` the instant it stops showing — a stale non-zero value here would leave
+        // `FailureHost`'s own banner cap permanently shrunk for a bar that is no longer pinned.
+        // Keyed on `transportState` itself (not just whether it is `Hidden`) so this fires again on
+        // every transition into `Hidden`, from whichever state preceded it.
+        LaunchedEffect(transportState) {
+            if (transportState == TransportBarViewState.Hidden) onLiveBarHeightChanged(0.dp)
+        }
         if (transportState != TransportBarViewState.Hidden) {
+            val density = LocalDensity.current
             // Wrapped, not passed as a `modifier` (the same reasoning this block's own prior form
             // had for `LiveBar`) — a plain `Column` sibling below the weighted content box above;
             // Compose's own layout already gives that box exactly the remaining height, no
-            // measured-height state needed (R-957). `testTag` (register R-262): a stable node for a
-            // test to read this wrapper's own `boundsInRoot`, independent of the bar's own
-            // runtime-varying label/callsign text.
-            Box(modifier = Modifier.testTag("live-bar-clearance")) {
+            // measured-height state needed for *this column's own* layout (R-957). `testTag`
+            // (register R-262): a stable node for a test to read this wrapper's own `boundsInRoot`,
+            // independent of the bar's own runtime-varying label/callsign text. `onGloballyPositioned`
+            // (register R-1061, round 2): the *real*, laid-out height of this exact box, reported
+            // upward via [onLiveBarHeightChanged] — see this function's own parameter doc comment
+            // for why this is a different consumer than the one R-957 already removed the mechanism
+            // for.
+            Box(
+                modifier = Modifier
+                    .testTag("live-bar-clearance")
+                    .onGloballyPositioned { coordinates ->
+                        onLiveBarHeightChanged(with(density) { coordinates.size.height.toDp() })
+                    },
+            ) {
                 TransportBar(
                     state = transportState,
                     actions = TransportBarActions(

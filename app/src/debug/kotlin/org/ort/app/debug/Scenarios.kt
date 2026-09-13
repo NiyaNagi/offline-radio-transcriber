@@ -179,6 +179,11 @@ public object Scenarios {
         "stations-14-nights",
         "frequency-change",
         "field-tier1",
+        // Register R-1061 (coordinator round 2): the one real combination the existing catalogue
+        // never provided — see [improveLiveQuiet]'s own doc comment for exactly why `field-tier1`
+        // (records, not live, no `LevelStatus`) and `level-low` (live, quiet, zero transmissions)
+        // could not stand in for it.
+        "improve-live-quiet",
         "search-corpus",
         "search-unavailable",
         "backlog",
@@ -298,6 +303,7 @@ public object Scenarios {
                 StationsFixtures.stations14Nights(db).also { seedConfiguredDeviceState(context) }
             "frequency-change" -> FrequencyChangeFixtures.frequencyChange(db)
             "field-tier1" -> fieldTier1(context, db)
+            "improve-live-quiet" -> improveLiveQuiet(context, db)
             "search-corpus" -> searchCorpus(db)
             "search-unavailable" -> searchUnavailable(db)
             "backlog" -> backlog(context, db)
@@ -1097,6 +1103,74 @@ public object Scenarios {
                 ),
             )
         }
+        return LoadResult(FIELD_TIER1_OVER_COUNT, 1, sessionId)
+    }
+
+    /**
+     * `improve-live-quiet` — register R-1061 (coordinator round 2): the combination the register's
+     * own reported evidence actually needs and no existing scenario provides. [fieldTier1] has
+     * `Improve all 12`'s own real, tier-1 records but is not live and sets no [LevelStatus] at all;
+     * [levelLow] is live and genuinely too-quiet (`Fail-Level.dc.html`'s own `-34 dBFS`) but seeds
+     * zero transmissions, so `Improve records` reads its own honest empty state on it, never
+     * `Improve all N`. This scenario is [fieldTier1]'s own session/transmission/audio-fixture shape
+     * (identical tier, over count and callsigns, so `Improve all 12` is the real, unfiltered board
+     * from a genuine tier-1 session, not a fabricated count) plus [levelLow]'s own two real
+     * additions layered on top: [ScenarioFixtures.markCapturing] (a genuinely live session, the
+     * host's own pinned bar) and a [LevelStatus.State.Measured] quiet enough to cross
+     * `FailureMapper.QUIET_PEAK_THRESHOLD_DBFS` (the real `Fail-Level.dc.html` banner, not a
+     * synthesized stand-in). Order matters: `markCapturing` last, the same reasoning
+     * [levelLow]'s own body already documents for its own `LevelStatus.update` call — a fresh
+     * heartbeat written after every insert above, not before.
+     */
+    private suspend fun improveLiveQuiet(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("improve-live-quiet")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 3_600_000L,
+                endedAt = null,
+                deviceTier = org.ort.core.Tier.T1.name,
+            ),
+        )
+        val baseStartedAt = SystemClock.wallMillis() - 400_000L
+        repeat(FIELD_TIER1_OVER_COUNT) { i ->
+            val txId = "$sessionId-tx${i + 1}"
+            val startedAt = baseStartedAt + i * 20_000L
+            val tx = ScenarioFixtures.transmission(
+                id = txId,
+                sessionId = sessionId,
+                startedAtUtc = startedAt,
+                samplePosition = (i + 1).toLong(),
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.INFERRED,
+                stationId = ScenarioFixtures.CALLSIGNS[i % ScenarioFixtures.CALLSIGNS.size],
+                attributionConfidence = 0.68,
+            )
+            db.transmissionDao().insert(tx)
+            ScenarioFixtures.writeAudioFixture(context, tx)
+            db.transcriptDao().insert(
+                ScenarioFixtures.transcript(
+                    id = "$txId-t1",
+                    transmissionId = txId,
+                    text = "roger that, good copy on the repeater this morning",
+                    isCurrent = true,
+                    createdAt = startedAt + 1_000L,
+                ),
+            )
+        }
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -34f,
+                rmsDbfs = -40f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = emptyList(),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
         return LoadResult(FIELD_TIER1_OVER_COUNT, 1, sessionId)
     }
 

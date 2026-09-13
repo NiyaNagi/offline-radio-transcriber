@@ -15,6 +15,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.debug.Scenarios
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
@@ -184,6 +185,95 @@ class NavHostBannerLiveBarSqueezeTest {
                 "live bar (top=$barTop) at font scale 2.0 with a too-quiet banner showing (register " +
                 "R-1061) — got an overlap of ${buttonBounds.bottom - barTop}",
             buttonBounds.bottom <= barTop,
+        )
+    }
+
+    /**
+     * Register R-1061 (coordinator round 2): the identical shape as the case above, but seeded
+     * entirely from the real `improve-live-quiet` debug scenario (`Scenarios.load`, the same entry
+     * point `tools/ui-audit/scenario.ps1` and `ScreenshotTourActivity` both drive) rather than this
+     * file's own hand-built fixture — the coordinator's own instruction: "using the new scenario's
+     * real content and the real bar at 2.0". `Scenarios.load` itself calls
+     * `CaptureState.idle()`/`LevelStatus.reset()` first, so no separate `setUp` arming is needed;
+     * `improveLiveQuiet`'s own doc comment (`Scenarios.kt`) has the full account of what this seeds
+     * and why neither `field-tier1` nor `level-low` alone could stand in for it.
+     *
+     * At rest (not scrolled) *and* scrolled to the button, both checked here — the coordinator's
+     * own "at rest and scrolled" request, mirrored from the device-capture requirement into the one
+     * Robolectric case that can assert both without a device.
+     */
+    /**
+     * Register R-1061 (coordinator round 2, honest result): run against the *real*
+     * `improve-live-quiet` scenario, this case does not fail on the pre-fix host either —
+     * confirmed directly by temporarily forcing `reservedBottomHeight = 0.dp` (the true pre-fix
+     * shape, not merely round 1's own guessed `96.dp`) and re-running: still `PASSED`. The measured
+     * numbers from that run, at rest (before any scroll): root `0..843.81dp`, the live bar
+     * `789.33..843.81dp` (height `54.48dp`), the banner `44.19..491.43dp` (height `447.24dp`,
+     * already close to its own `0.55` cap of the full `843.81dp` viewport), and `Improve all 12`'s
+     * own row at `742.86..790.86dp` — its bottom lands only `1.53dp` past the live bar's own top
+     * *before* any reservation at all, and `performScrollTo()` clears that trivially (a `1.53dp`
+     * near-miss is not "unreachable after scrolling" — constitution VIII's own distinction).
+     * Robolectric's real, native-mode text layout for this exact banner and card content — at
+     * 420dpi, font scale 2.0, `w390dp-h844dp` — renders measurably more compactly than the real
+     * device evidence in this round's own report (`round2/without-fix-2x-atrest.png`, captured on
+     * `ort_audit_navhost`): tens of dp of difference between what a real device's system font
+     * shaper lays this same copy out to and what Robolectric's own text measurement does, the same
+     * class of gap constitution VIII names outright ("Robolectric's ... text measurement ... differ
+     * from a device"). This is not a defect in the fix or in this test — the device capture is the
+     * real evidence for the defect and the fix both; see this round's own report for the actual
+     * before/after captures and their `uiautomator dump`s.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1061 the real improve-live-quiet scenario leaves Improve all reachable above the live bar at 2_0`() {
+        val result = runBlocking { Scenarios.load(context, "improve-live-quiet") }
+        val sessionId = requireNotNull(result.primarySessionId)
+
+        composeTestRule.setContent {
+            androidx.compose.runtime.CompositionLocalProvider(
+                androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
+                    density = androidx.compose.ui.platform.LocalDensity.current.density,
+                    fontScale = 2f,
+                ),
+            ) {
+                OrtTheme {
+                    OrtNavHost(
+                        sessionId = sessionId,
+                        navigator = rememberReaderNavigator(initialDestination = ReaderDestination.IMPROVE_RECORDS),
+                    )
+                }
+            }
+        }
+
+        val improveAllButton = hasText("Improve all 12", substring = true) and hasClickAction()
+        composeTestRule.waitUntil(15_000) {
+            composeTestRule.onAllNodes(improveAllButton).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.waitUntil(15_000) {
+            composeTestRule.onAllNodesWithTag("live-bar-clearance").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.waitUntil(15_000) {
+            composeTestRule.onAllNodesWithTag("failure-banner-overlay").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val barTop = composeTestRule.onNodeWithTag("live-bar-clearance").getUnclippedBoundsInRoot().top
+
+        // At rest: not asserted either way on its own (a squeeze that still needs a scroll is not
+        // itself a defect — constitution VIII: "content below the fold is not a defect if
+        // scrolling reaches it"); recorded so a failure message below carries it for context.
+        val atRestBottom = composeTestRule.onNode(improveAllButton).getUnclippedBoundsInRoot().bottom
+
+        // Scrolled: the discriminating assertion — must be fully reachable above the bar.
+        val scrolledBottom = composeTestRule.onNode(improveAllButton).performScrollTo()
+            .getUnclippedBoundsInRoot().bottom
+
+        assertTrue(
+            "expected 'Improve all 12' to be scrollable fully above the live bar (top=$barTop) with the " +
+                "real improve-live-quiet scenario at font scale 2.0 (register R-1061) — at rest bottom=" +
+                "$atRestBottom, scrolled bottom=$scrolledBottom, overlap after scrolling=" +
+                "${scrolledBottom - barTop}",
+            scrolledBottom <= barTop,
         )
     }
 }

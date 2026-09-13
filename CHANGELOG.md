@@ -32,6 +32,83 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
+
+### WPNAVHOST round 2 — R-1061: reproduced on a real device, the reservation is now the bar's own measured height, and a real scenario proves it
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`liveBarHeight`,
+`NavHostBody`'s new `onLiveBarHeightChanged`), `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
+(new `improve-live-quiet` scenario), and tests. No file outside these plus `tools/ui-audit/`
+touched.
+**Requirements/ACs:** constitution II (a test shown to discriminate; a manual/device gate recorded
+with evidence), constitution VIII; R-1061 (round 1, extended); R-1049 (precedent, not modified).
+**What changed, and why round 1 was not enough (coordinator round 2 review):**
+1. **Round 1's fix was unproven — now reproduced on a real device.** No existing scenario
+   combined a live session, a genuinely too-quiet `LevelStatus` and Improve-eligible tier-1
+   records; a new debug scenario, `improve-live-quiet` (`Scenarios.kt`, `ScenariosTest`'s own
+   `R_1061` case), is `field-tier1`'s own session/transmission/audio-fixture shape plus
+   `level-low`'s own `markCapturing`/quiet `LevelStatus.update` layered on top. Built from
+   origin/main (`745e01b7`) plus only this one new scenario (a separate worktree, the fix code
+   itself untouched) and installed on `ort_audit_navhost`: at rest, font scale 2.0, `Improve all
+   12`'s own row (`bounds=[110,2456][1150,2537]`) is cut to a sliver directly behind the pinned
+   "Quiet" live bar (`bounds=[0,2534][1260,2709]`) — a real `3px` overlap — and a real swipe over
+   the scrollable region leaves those bounds byte-identical (`uiautomator dump`, before and after):
+   genuinely unreachable, not merely below an ordinary fold. The same build with the fix installed
+   shows `Improve all 12` fully clear (`bounds=[110,2375][1150,2530]`, `4px` of real daylight above
+   the bar) at rest, no scroll needed.
+2. **`LIVE_BAR_RESERVE_HEIGHT = 96.dp` was a guess — replaced with the bar's own measured, laid-out
+   height.** `NavHostBody` now reports the real height of its own `live-bar-clearance` box via
+   `onGloballyPositioned` (the identical mechanism `FailureHost`'s own banner height already uses,
+   R-178) through a new `onLiveBarHeightChanged` callback, reset to `0.dp` the instant the bar
+   stops showing; `OrtNavHost` holds that value in `liveBarHeight` and passes it straight through
+   as `FailureHost`'s `reservedBottomHeight` — no destination/drill-in heuristic left to
+   independently drift from what the bar actually renders. `LiveBarHeightReservationTest` proves
+   the reservation *equals* the bar's measured height, at font scale 1.0 and 2.0: a real
+   `FailurePresentation.StorageWarning` banner (`DebugFailureOverride`, the same debug-only seam
+   `FailureHostTest`'s own `R_300` case already uses) with a four-stage timeline long enough to
+   exceed even the *unreserved* cap (confirmed via `failure-banner-scroll-hint`'s own existence,
+   the real "content still hidden" signal, R-883) — solving the cap's own `(viewport -
+   reservedBottomHeight) * 0.55f` formula for `reservedBottomHeight` from the banner's, bar's and
+   root's own measured heights matches the bar's real height within `2dp` at both scales (measured:
+   `45.33dp` at 1.0, `54.48dp` at 2.0 — nowhere near the old `96.dp` guess either way). Confirmed
+   discriminating by temporarily forcing `reservedBottomHeight = 96.dp` back in: both cases then
+   fail by `22-28dp`.
+3. **Done-restore, captured on device with real bundled models.** `field-tier1`, real installed
+   models (`Whisper tiny.en`/`Silero VAD`, already verified on `ort_audit_navhost` from earlier
+   sessions): `Improve all 12` → a real `Running` board (4 of 12, live) → `Done` ("12 transcripts
+   changed · 12 attributions changed · 0 rejected · 0 failed", a real model-driven change, not the
+   model-less honest-failure case round 1's own test used) → `Review the 12 changes` → `Log`
+   filtered to 12 real, "revised" rows → back → `Done` with the identical summary line, at font
+   scale 1.0, and again after switching the device to font scale 2.0 live (no restart) — still the
+   same summary, `rememberSaveable` surviving both the destination round trip and the configuration
+   change together.
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.navigation.LiveBarHeightReservationTest" --tests
+"org.ort.app.ui.navigation.NavHostBannerLiveBarSqueezeTest" --tests
+"org.ort.app.ui.failures.BannerCapViewportHeightTest" --tests
+"org.ort.app.ui.navigation.ImproveDestinationStatePreservationTest" --tests
+"org.ort.app.debug.ScenariosTest"` — all green. `.\gradlew.bat :app:smokeTestDebugUnitTest` —
+176/176 green (no regression from `NavHostBody`'s new parameter). `.\gradlew.bat
+:app:testDebugUnitTest --tests "org.ort.app.ui.digest.*" --tests "org.ort.app.ui.settings.*"
+--tests "org.ort.app.ui.recordings.*" --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.improve.*" --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.screens.*"` — green. Full gate (`dependencyRules platformGuards build`,
+`-p buildSrc test`, `spec_check.py`, `coverageMatrix`/`coverageMatrixCheck`) re-run in full after
+this round's own changes — see this round's own report for durations.
+**Left open / not done:** the Robolectric-level `NavHostBannerLiveBarSqueezeTest` case built on the
+real `improve-live-quiet` scenario still does not fail on a true pre-fix host (`reservedBottomHeight
+= 0.dp`, checked directly) — at rest, Robolectric's own native-mode text layout for this exact
+banner and card renders `Improve all 12`'s own row only `1.53dp` past the live bar's own top before
+any reservation at all (`root=0..843.81dp`, `bar=789.33..843.81dp`, `banner=44.19..491.43dp`,
+`button=742.86..790.86dp`), and `performScrollTo()` clears that trivially — never actually
+"unreachable after scrolling" the way the real device shows. The device capture above (not this
+Robolectric test) is the real evidence for both the defect and the fix, per constitution VIII ("the
+screenshot wins"); the specific measurement that differs is Robolectric's own text layout for this
+banner/card content at 420dpi rendering measurably more compactly than the real device's system
+font shaper does for the identical copy.
+
+---
+
 ## 2026-09-13 (WPNAVHOST: R-1061 banner/live-bar squeeze; R-1041 R04 Improve's Done state survives a Log round trip)
 
 ### WPNAVHOST round 1 — R-1041 (R04) / R-1055: Improve's Done summary now survives switching away to Log and back
