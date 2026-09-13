@@ -758,6 +758,9 @@ private fun navHostCallbacks(
         // "Install a model" lands directly on `Assets` instead of the root the operator used to
         // have to tap through themselves.
         onOpenModels = { navigator.openSettings(SettingsScreenId.ASSETS) },
+        // WPREC: `Recordings.dc.html`'s storage card — see `NavHostCallbacks.onOpenSettingsStorage`'s
+        // own doc comment.
+        onOpenSettingsStorage = { navigator.openSettings(SettingsScreenId.STORAGE) },
         // Round 6, register R-132: `SettingsContent`'s own `onOpenLevelMeter` (its doc comment:
         // "the host is expected to wire it the same way it wires every other cross-package
         // drill-in") — `Settings-Capture`'s `Meter` action switches to `Capture` and asks
@@ -916,6 +919,9 @@ private data class NavHostCallbacks(
     val onOpenThread: (String) -> Unit,
     val onOpenStations: () -> Unit,
     val onOpenModels: () -> Unit,
+    // WPREC: `Recordings.dc.html`'s own storage card — `Settings-Storage` (CF03), the same
+    // `navigator.openSettings` shape `onOpenModels` above already uses.
+    val onOpenSettingsStorage: () -> Unit,
     val onOpenLevelMeter: () -> Unit,
     val onOpenOvers: (Long, TimeWindow) -> Unit,
     // Round 11, register R-133: see `navHostCallbacks`'s own construction site.
@@ -1492,35 +1498,65 @@ private fun DestinationContent(
                 onReviewSession = callbacks.onReviewSession,
             )
 
-        // Round 5 (R-092/R-107): `onOpenTransmission` is real now — WP10 merged it (confirmed by
-        // reading `ui/digest/SessionsContent.kt` before wiring this). `onOpenDrillIn` (this file's
-        // `OrtNavHost`, where `callbacks.onOpenTransmission` is built) records `openedFrom = current`
-        // at the moment the tap fires, which is `EARLIER_NIGHTS` for every tap this dispatch can
-        // ever produce — so the transmission drill-in's `backLabel` reads `ReaderDestination
-        // .EARLIER_NIGHTS.label`, "Earlier nights", with no extra state needed here.
-        // Round 11, register R-133: `initialSessionId` is real now — WP10 merged it (`e390c60`,
-        // confirmed by reading `ui/digest/SessionsContent.kt` before wiring this) — seeds the
-        // `Review` link's own session detail; `null` (every ordinary way of reaching this
-        // destination) is that composable's own existing default, its own list root.
-        ReaderDestination.EARLIER_NIGHTS ->
-            org.ort.app.ui.digest.SessionsContent(
-                context = context,
-                onDrawer = onOpenDrawer,
-                modifier = content,
-                onOpenTransmission = onOpenTransmission,
-                initialSessionId = reviewSessionId,
-                // R-840: real now — WP10 merged `SessionsContent.openDigest` (confirmed by reading
-                // `ui/digest/SessionsContent.kt` before wiring this) — lands `Earlier nights` on
-                // that session's own `Digest` (DG01/DG05) instead of its `Session` (DG04) detail,
-                // seeded via `NavSeed.reviewSessionView = DIGEST`.
-                openDigest = reviewSessionView == ReviewSessionView.DIGEST,
-            )
+        // WPREC (design-intent row RC01): `EARLIER_NIGHTS` now means `Recordings.dc.html` (RC01)
+        // for an ordinary reach — see `ReaderDestination.kt`'s own doc comment, and
+        // [EarlierNightsDestinationContent]'s for the review-link split. Extracted purely to keep
+        // this function under detekt's `LongMethod` limit — the same reason [ImproveRecordsContent]
+        // below already is.
+        ReaderDestination.EARLIER_NIGHTS -> EarlierNightsDestinationContent(
+            context = context,
+            onOpenDrawer = onOpenDrawer,
+            modifier = content,
+            onOpenTransmission = onOpenTransmission,
+            reviewSessionId = reviewSessionId,
+            reviewSessionView = reviewSessionView,
+            onOpenSettingsStorage = callbacks.onOpenSettingsStorage,
+        )
 
         // Round 12, R-350: `onOpenModels` real now (WP10's `94c946c`) — same callback as `Now`'s
         // above. Call itself extracted to [ImproveRecordsContent] purely to keep this function
         // under detekt's `LongMethod` limit.
         ReaderDestination.IMPROVE_RECORDS ->
             ImproveRecordsContent(context, onOpenDrawer, content, callbacks.onOpenModels)
+    }
+}
+
+/**
+ * [DestinationContent]'s `EARLIER_NIGHTS` branch. [reviewSessionId] is non-null *only* when
+ * `Settings-Storage`'s "Next deletion … Review" link seeded it (`NavHostNavState
+ * .openReviewSession`) — the one path that still needs the old `SessionsContent` (DG04's `Session`
+ * review, or its own `Digest` — DG01/DG05 — per [reviewSessionView]); every ordinary reach (the
+ * drawer row) has `reviewSessionId == null` and lands on `Recordings.dc.html` (RC01) instead — see
+ * `ReaderDestination.kt`'s own doc comment for why the enum constant itself was not renamed.
+ * `RecordingsContent.onOpenSession` has nothing to open yet — `Recording-Session.dc.html` (RC02)
+ * is a separate build unit (see this session's own report for the stop point).
+ */
+@Composable
+private fun EarlierNightsDestinationContent(
+    context: android.content.Context,
+    onOpenDrawer: () -> Unit,
+    modifier: Modifier,
+    onOpenTransmission: (String) -> Unit,
+    reviewSessionId: String?,
+    reviewSessionView: ReviewSessionView,
+    onOpenSettingsStorage: () -> Unit,
+) {
+    if (reviewSessionId != null) {
+        org.ort.app.ui.digest.SessionsContent(
+            context = context,
+            onDrawer = onOpenDrawer,
+            modifier = modifier,
+            onOpenTransmission = onOpenTransmission,
+            initialSessionId = reviewSessionId,
+            openDigest = reviewSessionView == ReviewSessionView.DIGEST,
+        )
+    } else {
+        org.ort.app.ui.recordings.RecordingsContent(
+            context = context,
+            onDrawer = onOpenDrawer,
+            modifier = modifier,
+            onOpenOverAudioBudget = onOpenSettingsStorage,
+        )
     }
 }
 

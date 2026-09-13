@@ -34,7 +34,88 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPREC: RC01 Recordings, replacing Earlier nights as the home for sessions)
 
-### 06266fa4 — WPREC: RC01 Recordings — the session list, both storage budget cards, and the filter chips
+### 9e0500bc — WPREC: wire Recordings into the drawer and OrtNavHost, isolated from the RC01 commit
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/{ReaderDestination,Drawer,OrtNavHost}.kt`
+and the tests that assert on their exact behaviour
+(`app/src/test/kotlin/org/ort/app/ui/navigation/{DrawerContentTest,OrtNavHostDestinationDispatchTest,
+ReaderActivityDestinationSmokeTest}.kt`, `app/src/test/kotlin/org/ort/app/debug/tour/
+TourStepsTest.kt`). Deliberately its own commit, isolated from RC01's own — per this session's
+brief, so a later merge conflict here stays small.
+
+**Requirements/ACs:** design-intent row RC01, IA-1 ("Replaces Earlier nights (DG03) as the home for
+sessions"), FR-STO-3.
+
+**What changed:**
+- **`ReaderDestination.EARLIER_NIGHTS` is repurposed, not replaced.** No new enum value: an
+  ordinary reach (the drawer row) now dispatches to `RecordingsContent` (RC01); `Settings-Storage`'s
+  "Next deletion … Review" link still seeds the old `SessionsContent` (DG04's `Session` review, or
+  its own `Digest` — DG01/DG05) on this exact same destination, via the pre-existing
+  `NavSeed.pendingReviewSessionId`/`reviewSessionView` seam — `OrtNavHost.kt`'s new
+  `EarlierNightsDestinationContent` picks between the two on exactly that one fact
+  (`reviewSessionId != null`). This keeps DG04 and the Digest reachable, per this session's brief,
+  with no new navigation state and no change to `SessionsContent`/`SessionsScreens.kt` at all.
+- **A new `drawerLabel` property, separate from `label`.** `EARLIER_NIGHTS.drawerLabel = "Recordings"`
+  is what the drawer row now shows (`Drawer.kt`'s `DrawerRow`/`drawerRowDescription`); `label` stays
+  "Earlier nights" — the string every drill-in's own "Back to `<label>`" header reads
+  (`ids.openedFrom.label` throughout `OrtNavHost.kt`), including one opened from the *old*
+  `SessionsContent` path, which is still genuinely "Earlier nights" in exactly the sense those
+  headers already mean. Deliberately not renamed the enum constant nor reused the one `label`
+  property for both facts — see `ReaderDestination.kt`'s own doc comment for why, and this
+  session's own report for the regression that using one property for both would have caused a
+  false trail on (a fragile, pre-existing `TourStepsTest` timing case, root-caused and reported
+  separately, below).
+- `NavHostCallbacks.onOpenSettingsStorage` (new field): `Recordings.dc.html`'s storage card opens
+  `Settings-Storage` (CF03), the same `navigator.openSettings(...)` shape `onOpenModels` already
+  uses — the one genuine cross-package hop this host wires for RC01; the archive on/off toggle is
+  entirely internal to the `recordings` package (RC01's own commit).
+- `RecorderEvent.kt`'s `RecorderDestination` enum is untouched (no `RECORDINGS` case was needed —
+  `EARLIER_NIGHTS` already covers this destination for FR-OBS-6's own vocabulary, since the enum
+  constant was not renamed).
+
+**Found and fixed in the same change, reported in full:**
+- **`TourStepsTest.checkStep`'s `catch (timeout: Exception)` never once caught a step-level
+  timeout.** `androidx.compose.ui.test.ComposeTimeoutException` does not extend `Exception` — every
+  prior step whose marker genuinely never appeared crashed that whole test hard (an uncaught
+  exception, zero "wrong-screen captures" diagnostic) instead of being collected as one clean,
+  readable assertion failure the way every other wrong-screen case already is. Changed to
+  `catch (timeout: Throwable)`. This is a real, independent bug fix, not narrowly caused by this
+  change — confirmed by reproducing it against pristine, unmodified `main` with only this one-line
+  fix applied (see "Left open" below for what it then reveals).
+- Every other real test this destination touches was checked and updated to the new split
+  (`drawerLabel` vs `label`): `DrawerContentTest`'s own row-label list, `TourStepsTest`'s
+  `EARLIER_NIGHTS` destination-root marker (now "Recordings"; its own `reviewSession` drillIn case
+  was already, correctly, checking "Earlier nights" and needed no change),
+  `OrtNavHostDestinationDispatchTest`'s `EARLIER_NIGHTS dispatches to...` case, and
+  `ReaderActivityDestinationSmokeTest`'s `R_930` case's plain-reach half. Every "Back to Earlier
+  nights" assertion elsewhere in the suite (failure banners' own back headers, the Review-link
+  case, `R_840`'s Digest-vs-Session distinction) was individually read and confirmed unaffected —
+  each reads either `SessionsScreens.kt`'s own hardcoded `DrillInHeader(parentLabel = "Earlier
+  nights", ...)` string (untouched) or `.label` itself (untouched).
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` green.
+`.\gradlew.bat :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :app:detekt` all green.
+`.\gradlew.bat :app:testDebugUnitTest` (the full `:app` suite, 2209 tests) — 2208 passing, 1 known
+failure (below). `.\gradlew.bat dependencyRules platformGuards` green.
+
+**Left open / not done:**
+- **`TourStepsTest`'s `llm-enabled-prose/DG05-digest-prose`/`@2x` and `llm-disabled/DG01-digest`
+  steps time out (10s) on this machine, independent of this change.** Root-caused by isolating one
+  file at a time: with only the `catch (timeout: Throwable)` fix applied (no other edit in this
+  commit), the identical three steps fail against pristine `main` too — this class's own doc
+  comment already documents an `OutOfMemoryError` CI regression in this exact area, and this
+  session observed 22 concurrently-running `java` (Gradle daemon) processes accumulated on the
+  build machine by the time this was diagnosed. Reported, not papered over: the `Throwable` fix
+  makes a real future wrong-screen failure here legible; whether the digest-prose steps' own timeout
+  is a genuine performance regression in `DigestPolling.digest` (unbounded on `Dispatchers.IO`,
+  unlike this package's own `RecordingsPolling`) or purely local machine contention is not settled
+  here and needs a clean-machine (or CI) run to confirm either way.
+- RC02 (`Recording-Session.dc.html`) is not built — `RecordingsContent.onOpenSession` has nothing
+  to open to yet, by design (see this session's own report).
+- No emulator capture of RC01 exists yet — this commit is what makes it reachable at all; the
+  capture pass follows in this session's own report.
+
+### b385b7b9 — WPREC: RC01 Recordings — the session list, both storage budget cards, and the filter chips
 
 **Scope:** new package `app/src/main/kotlin/org/ort/app/ui/recordings/**` (`RecordingsViewData.kt`,
 `RecordingsViewStateMapper.kt`, `RecordingsPolling.kt`, `RecordingsScreen.kt`,

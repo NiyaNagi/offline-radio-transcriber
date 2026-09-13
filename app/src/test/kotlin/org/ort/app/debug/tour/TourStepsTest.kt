@@ -163,7 +163,11 @@ class TourStepsTest {
         "FREQUENCIES" -> Expected.Text("Frequencies")
         "CAPTURE" -> Expected.Tag("capture-status-title")
         "IMPROVE_RECORDS" -> Expected.Text("Improve records")
-        "EARLIER_NIGHTS" -> Expected.Text("Earlier nights")
+        // WPREC (design-intent row RC01): a plain reach (no drillIn) now lands on
+        // `RecordingsContent` (`Recordings.dc.html`), not the old `SessionsContent` list root — a
+        // `reviewSession` drillIn (DG04/DG05) is still checked first, above, and still expects
+        // "Earlier nights" (`expectedForDrillIn`'s own `reviewSession` case, unchanged).
+        "EARLIER_NIGHTS" -> Expected.Text("Recordings")
         "SETTINGS" -> Expected.Text("Settings")
         else -> error("TourStepsTest has no expected marker for destination '$destination'")
     }
@@ -289,7 +293,13 @@ class TourStepsTest {
             try {
                 composeTestRule.waitUntil(WAIT_UNTIL_TIMEOUT_MILLIS) { isFound() }
                 true
-            } catch (timeout: Exception) {
+            } catch (timeout: Throwable) {
+                // WPREC (this session's own find): `ComposeTimeoutException` does not extend
+                // `Exception` — the previous `catch (timeout: Exception)` here never once caught
+                // it, so any step whose marker genuinely never appeared crashed this whole test
+                // hard (an uncaught exception, no "wrong-screen captures" list at all) instead of
+                // being collected as one clean, readable failure the way every other wrong-screen
+                // case already is. `Throwable` is the honest catch for a step-level timeout.
                 false
             }
         }
