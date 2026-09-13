@@ -34,6 +34,34 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPREC: RC01 Recordings, replacing Earlier nights as the home for sessions)
 
+### 4fe89e81 — WPREC: two debug scenarios for RC01's constitution-bearing states, with discriminating tests
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (two new scenario names,
+additive), `app/src/test/kotlin/org/ort/app/debug/ScenariosTest.kt` (two new tests).
+**Requirements/ACs:** D40, AC-160 (over-audio budget genuinely exceeded), P9, D39 (a raw archive
+removal and an operator over-audio removal, never conflated) — constitution VIII (these are RC01's
+own two constitution-bearing states and must be captured for real, not only unit-tested).
+**What changed:** `recordings-budget-exceeded` writes a real ~1.1 GB sparse file (
+`RandomAccessFile.setLength`, no real disk block allocation) under `audio/<sessionId>/` and sets
+`SettingsStore.audioBudgetGb = 1`, so RC01's real read path (`measureStorageAccounting` then
+`overAudioBudgetState`) reports a genuinely exceeded budget rather than a fabricated flag.
+`recordings-archive-removed` seeds two sessions: one whose raw archive was kept then pruned
+(`setArchiveKept`/`setArchiveRemoved`, the same write path `ArchivePruner`'s automatic pruning
+uses), one whose over-audio the operator removed instead (`setOverAudioRemoved`), on a different
+real date, so the two badges `RecordingsViewStateMapperTest` already proves are never conflated
+at the mapper level are now backed by a real, capturable scenario.
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.ScenariosTest"` — 41/41
+green, including both new tests and the existing `R_110 every declared scenario name loads
+without throwing` sweep. Both new tests written first against the already-implemented scenario
+code (this session's own established discrimination convention, since the scenario functions
+were written together with the debug seeding work) and each individually confirmed to fail for
+the right reason: `recordings-budget-exceeded`'s test fails with `expected:<1> but was:<null>`
+when the `audioBudgetGb` write is removed; `recordings-archive-removed`'s test fails when
+`setArchiveRemoved` is removed. `gradlew :app:ktlintTestSourceSetCheck :app:detekt` — green (one
+`MaxLineLength` finding on the new test file fixed before this entry).
+**Left open / not done:** the actual tour capture of these two states (constitution VIII) is a
+separate, still-pending step — this commit only lands the seeding and its own test coverage.
+
 ### 22f460d0 — WPREC: RC01's row sub-line widens to "N overs · N stations · N gaps", per the artboard
 
 **Scope:** `:pipeline`'s `RecordingSessionSummary`/`recordingSessionSummaries` (additive: two new

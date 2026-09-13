@@ -86,6 +86,7 @@ import org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore
 import org.ort.rig.descriptor.BundledDescriptors
 import java.io.File
 import java.io.InputStream
+import java.io.RandomAccessFile
 import org.ort.rig.RigTransportKind as RigModuleTransportKind
 
 /**
@@ -179,6 +180,11 @@ public object Scenarios {
         "model-missing",
         "storage-warn",
         "storage-fine",
+        // WPREC (coordinator round, D40/AC-160, P9): RC01's own two constitution-bearing storage
+        // states — see each function's own doc comment for exactly what neither existing
+        // storage-* scenario above already covers.
+        "recordings-budget-exceeded",
+        "recordings-archive-removed",
         "thermal",
         "rig-lost",
         "rig-reconnected",
@@ -287,6 +293,8 @@ public object Scenarios {
             "model-missing" -> modelMissing(context, db)
             "storage-warn" -> storageWarn(context, db)
             "storage-fine" -> storageFine(context, db)
+            "recordings-budget-exceeded" -> recordingsBudgetExceeded(context, db)
+            "recordings-archive-removed" -> recordingsArchiveRemoved(context, db)
             "thermal" -> thermal(context, db)
             "rig-lost" -> rigLost(context, db)
             "rig-reconnected" -> rigReconnected(context, db)
@@ -1249,6 +1257,99 @@ public object Scenarios {
             ),
         )
         return LoadResult(0, 1, sessionId)
+    }
+
+    /**
+     * `recordings-budget-exceeded` — D40/AC-160 (coordinator round): `Recordings.dc.html`'s (RC01)
+     * own over-audio budget card must show the real, currently-exceeded state without any tap —
+     * no existing scenario ever drives that: `storage-warn`/`storage-fine` both set
+     * [StorageForecast] directly, a different signal RC01 does not read at all. RC01 reads real,
+     * measured bytes (`measureStorageAccounting`/`overAudioBudgetState`) against
+     * `SettingsStore.audioBudgetGb`, so this is the one scenario that actually needs a real file on
+     * disk under `audio/<sessionId>/` — [RandomAccessFile.setLength] makes it a *sparse* file
+     * (near-instant, no real disk block allocation for the unwritten span; `File.length()`/
+     * `measureDirectoryBytes` report its real *logical* size regardless), so a realistic-looking
+     * "1.1 of 1 GB" state costs nothing to create.
+     */
+    private suspend fun recordingsBudgetExceeded(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("recordings-budget-exceeded")
+        val startedAt = SystemClock.wallMillis() - 3 * 3_600_000L
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = startedAt, endedAt = startedAt + 3_300_000L),
+        )
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                "$sessionId-tx01",
+                sessionId = sessionId,
+                startedAtUtc = startedAt + 60_000L,
+                samplePosition = 0L,
+                frequencyHz = 146_520_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "W7NPC",
+            ),
+        )
+        SharedPreferencesSettingsStore(
+            context.applicationContext.getSharedPreferences(SharedPreferencesSettingsStore.PREFS_NAME, Context.MODE_PRIVATE),
+        ).audioBudgetGb = 1
+        val audioDir = File(context.filesDir, "audio/$sessionId")
+        audioDir.mkdirs()
+        RandomAccessFile(File(audioDir, "over.flac"), "rw").use { it.setLength(1_100_000_000L) }
+        return LoadResult(1, 1, sessionId)
+    }
+
+    /**
+     * `recordings-archive-removed` — P9/D39 (coordinator round): `Recordings.dc.html`'s (RC01) own
+     * "raw removed &lt;date&gt;" badge, and the same fact distinguished from the operator's own
+     * over-audio removal (a *different* badge, a *different* date) — the exact "never conflated"
+     * pair `RecordingSessionSummariesTest`'s own unit coverage already proves at the mapper level;
+     * this is the one scenario that renders it for real. Two sessions: one whose raw archive was
+     * kept then pruned by the archive budget (`setArchiveKept`/`setArchiveRemoved`, the identical
+     * write path `ArchivePruner`'s own automatic pruning uses), one whose *over audio* was removed
+     * by the operator instead (`setOverAudioRemoved`) — on a *different*, real date, so the two
+     * badges are never the same string by coincidence.
+     */
+    private suspend fun recordingsArchiveRemoved(context: Context, db: OrtDatabase): LoadResult {
+        val archiveSessionId = ScenarioFixtures.sessionId("recordings-archive-removed", "archive")
+        val overAudioSessionId = ScenarioFixtures.sessionId("recordings-archive-removed", "over-audio")
+        val startedAt = SystemClock.wallMillis() - 30L * 24 * 3_600_000L
+        db.sessionDao().insert(
+            ScenarioFixtures.session(archiveSessionId, startedAt = startedAt, endedAt = startedAt + 30_600_000L),
+        )
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                "$archiveSessionId-tx01",
+                sessionId = archiveSessionId,
+                startedAtUtc = startedAt + 60_000L,
+                samplePosition = 0L,
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "K7LWH",
+            ),
+        )
+        db.sessionDao().setArchiveKept(archiveSessionId)
+        db.sessionDao().setArchiveRemoved(archiveSessionId, removedAtMillis = SystemClock.wallMillis() - 24 * 3_600_000L)
+
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                overAudioSessionId,
+                startedAt = startedAt + 3_600_000L,
+                endedAt = startedAt + 33_600_000L,
+            ),
+        )
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                "$overAudioSessionId-tx01",
+                sessionId = overAudioSessionId,
+                startedAtUtc = startedAt + 3_660_000L,
+                samplePosition = 0L,
+                frequencyHz = 145_230_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "N7ABC",
+            ),
+        )
+        db.sessionDao().setOverAudioRemoved(overAudioSessionId, removedAtMillis = SystemClock.wallMillis() - 2 * 24 * 3_600_000L)
+
+        return LoadResult(2, 2, archiveSessionId)
     }
 
     /**
