@@ -5,8 +5,11 @@ import org.ort.asrapi.AsrResult
 import org.ort.asrapi.AsrUnavailableException
 import org.ort.asrapi.DecodeOptions
 import org.ort.asrsherpa.SherpaAsrEngine
+import org.ort.asrsherpa.SherpaDecoder
 import org.ort.asrsherpa.real.RealSherpaDecoder
 import org.ort.core.AssetRef
+import org.ort.core.assets.ModelFileVerifier
+import org.ort.core.assets.ModelVerification
 import org.ort.onnx.ModelDescriptor
 import org.ort.onnx.ModelFamily
 import org.ort.onnx.ModelSizeClass
@@ -68,7 +71,23 @@ public sealed interface AsrEngineAvailability {
  * runs in make no network call, ever); this class only ever *reads* app-private storage that some
  * other, out-of-this-session's-scope action already populated (see CHANGELOG "left open").
  */
-public class RealAsrEngineProvider(private val filesDir: File) {
+public class RealAsrEngineProvider(
+    private val filesDir: File,
+    /**
+     * Register R-1052 (halt): the seam standing in for [RealSherpaDecoder]'s constructor — the
+     * native `OfflineRecognizer(...)` load that threw an uncaught C++ exception, past
+     * `std::terminate`, when handed a corrupt file. [provide]'s own `catch (t: Throwable)` only
+     * ever saw ordinary JVM/JNI-bridge exceptions; it cannot stop a native abort, which is why
+     * [ModelFileVerifier.verify] runs first and this is never called unless all three files pass
+     * it. Returns the decoder alongside the [AutoCloseable] that releases it (the same object, in
+     * production) so a test can fake the whole native boundary without depending on
+     * [RealSherpaDecoder] or its own native library at all.
+     */
+    private val nativeLoader: (AsrModelFiles) -> Pair<SherpaDecoder, AutoCloseable> = { files ->
+        val decoder = RealSherpaDecoder(files.encoder.path, files.decoder.path, files.tokens.path)
+        decoder to decoder
+    },
+) {
     public fun provide(): AsrEngineAvailability {
         val files = AsrModelLocator.locate(filesDir)
             ?: return AsrEngineAvailability.Unavailable(
@@ -76,10 +95,20 @@ public class RealAsrEngineProvider(private val filesDir: File) {
                     "tiny.en-encoder.int8.onnx, tiny.en-decoder.int8.onnx, tiny.en-tokens.txt -- see " +
                     "asr-sherpa/README.md for the fetch URL; this build does not fetch it automatically)",
             )
+        // R-1052: never hand a path to native code without checking it first — a Kotlin
+        // catch (t: Throwable) around the constructor call below cannot stop a native abort.
+        for (file in listOf(files.encoder, files.decoder, files.tokens)) {
+            val verification = ModelFileVerifier.verify(file)
+            if (verification is ModelVerification.Failed) {
+                return AsrEngineAvailability.Unavailable(
+                    "ASR model file ${file.name} failed verification and was not loaded: ${verification.reason}",
+                )
+            }
+        }
         val modelRef = AssetRef(AsrModelLocator.MODEL_ID, "1")
         return try {
-            val decoder = RealSherpaDecoder(files.encoder.path, files.decoder.path, files.tokens.path)
-            val session = SherpaOnnxSession(modelRef, decoder)
+            val (decoder, closeable) = nativeLoader(files)
+            val session = SherpaOnnxSession(modelRef, closeable)
             val provider = session.descriptor.providerBinaries.sorted().joinToString(",")
             AsrEngineAvailability.Available(SherpaAsrEngine(session, decoder), modelRef, provider)
         } catch (t: Throwable) {
@@ -89,12 +118,16 @@ public class RealAsrEngineProvider(private val filesDir: File) {
 }
 
 /**
- * Wraps [RealSherpaDecoder]'s lifecycle behind [OnnxSession] so [SherpaAsrEngine] — which only
- * needs a session for its [OnnxSession.descriptor] and [OnnxSession.isClosed] bookkeeping, per its
- * own doc comment — can be constructed for a real decoder. [run] is never called: [SherpaAsrEngine]
+ * Wraps a native decoder's lifecycle behind [OnnxSession] so [SherpaAsrEngine] — which only needs
+ * a session for its [OnnxSession.descriptor] and [OnnxSession.isClosed] bookkeeping, per its own
+ * doc comment — can be constructed for a real decoder. [run] is never called: [SherpaAsrEngine]
  * decodes via the [org.ort.asrsherpa.SherpaDecoder] directly.
+ *
+ * [closeable] is typed as plain [AutoCloseable] rather than [RealSherpaDecoder] (R-1052's own
+ * `nativeLoader` seam) so this class carries no dependency on that concrete native type — in
+ * production it is the same object [RealAsrEngineProvider.nativeLoader] returned as the decoder.
  */
-internal class SherpaOnnxSession(assetRef: AssetRef, private val decoder: RealSherpaDecoder) : OnnxSession {
+internal class SherpaOnnxSession(assetRef: AssetRef, private val closeable: AutoCloseable) : OnnxSession {
     override val descriptor: ModelDescriptor = ModelDescriptor(
         assetRef = assetRef,
         family = ModelFamily.ASR_ENCODER_DECODER,
@@ -115,7 +148,7 @@ internal class SherpaOnnxSession(assetRef: AssetRef, private val decoder: RealSh
 
     override fun close() {
         if (!isClosed) {
-            decoder.close()
+            closeable.close()
             isClosed = true
         }
     }
