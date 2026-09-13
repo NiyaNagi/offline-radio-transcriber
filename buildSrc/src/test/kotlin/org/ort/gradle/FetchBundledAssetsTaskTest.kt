@@ -11,6 +11,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.net.InetSocketAddress
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * WPG (`spec/e2e-capture-modes-plan.md`, FR-AST-2/3/3b, D35/D36). Every test here uses a `file://`
@@ -302,6 +303,184 @@ class FetchBundledAssetsTaskTest {
             assertFalse(resolved.single().missing)
             assertEquals("Bearer secret-token-value", sawAuthHeader)
             assertEquals(body.toList(), File(dir, "out/models/llm/gemma.task").readBytes().toList())
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    // ---- R-1075 — retry on a transient server failure, never the token in a log line -----------
+
+    /**
+     * Register R-1075: CI run 34769228303 failed 17s in on a bare HTTP 500 from GitHub's
+     * release-asset CDN with no retry. This exercises the gated (`HF_TOKEN`) path specifically —
+     * the token must survive a retry (sent again on the successful second attempt) and must never
+     * appear in any logged line, including the retry log.
+     */
+    @Test
+    fun `R_1075 a 500 then a 200 succeeds after one retry and the token never appears in a log line`(
+        @TempDir dir: File,
+    ) {
+        val body = "gated bytes".toByteArray()
+        val requestCount = AtomicInteger(0)
+        val authHeadersSeen = mutableListOf<String?>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/gemma.task") { exchange ->
+            authHeadersSeen += exchange.requestHeaders.getFirst("Authorization")
+            if (requestCount.incrementAndGet() == 1) {
+                exchange.sendResponseHeaders(500, -1)
+                exchange.close()
+            } else {
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+        }
+        server.start()
+        try {
+            val manifestFile = File(dir, "bundled-assets.json").apply { writeText("""{"assets": []}""") }
+            val loggedLines = mutableListOf<String>()
+            val token = "secret-token-value"
+
+            val resolved = BundledAssetFetcher.fetchAll(
+                entries = listOf(
+                    entry(
+                        id = "LLM_GEMMA3_1B",
+                        url = "http://127.0.0.1:${server.address.port}/gemma.task",
+                        sha256 = sha256(body),
+                        gated = true,
+                        destination = "models/llm/gemma.task",
+                    ),
+                ),
+                cacheDir = File(dir, "cache"),
+                outDir = File(dir, "out"),
+                manifestFile = manifestFile,
+                hfToken = token,
+                allowMissing = false,
+                onInfo = { loggedLines += it },
+                onWarn = { loggedLines += it },
+                sleeper = { },
+            )
+
+            assertEquals(2, requestCount.get(), "must have retried exactly once")
+            assertFalse(resolved.single().missing)
+            assertEquals(listOf("Bearer $token", "Bearer $token"), authHeadersSeen, "the token must survive the retry")
+            assertEquals(body.toList(), File(dir, "out/models/llm/gemma.task").readBytes().toList())
+
+            val allLogText = loggedLines.joinToString("\n")
+            assertFalse(allLogText.contains(token), "the token must never appear in a log line: $allLogText")
+            assertFalse(allLogText.contains("Authorization"), "no log line should even mention the header: $allLogText")
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `R_1075 four consecutive 503s fail and the message lists all four attempts`(@TempDir dir: File) {
+        val requestCount = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/a.bin") { exchange ->
+            requestCount.incrementAndGet()
+            exchange.sendResponseHeaders(503, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val manifestFile = File(dir, "bundled-assets.json").apply { writeText("""{"assets": []}""") }
+
+            val url = "http://127.0.0.1:${server.address.port}/a.bin"
+            val thrown = assertThrows(GradleException::class.java) {
+                BundledAssetFetcher.fetchAll(
+                    entries = listOf(entry(url = url, sha256 = "a".repeat(64))),
+                    cacheDir = File(dir, "cache"),
+                    outDir = File(dir, "out"),
+                    manifestFile = manifestFile,
+                    hfToken = null,
+                    allowMissing = false,
+                    sleeper = { },
+                )
+            }
+
+            assertEquals(4, requestCount.get())
+            assertTrue(thrown.message!!.contains("after 4 attempts"), "got: ${thrown.message}")
+            assertEquals(4, Regex("HTTP 503").findAll(thrown.message!!).count(), "got: ${thrown.message}")
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `R_1075 a 404 fails on the first attempt with no retry`(@TempDir dir: File) {
+        val requestCount = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/a.bin") { exchange ->
+            requestCount.incrementAndGet()
+            exchange.sendResponseHeaders(404, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val manifestFile = File(dir, "bundled-assets.json").apply { writeText("""{"assets": []}""") }
+            val url = "http://127.0.0.1:${server.address.port}/a.bin"
+
+            assertThrows(GradleException::class.java) {
+                BundledAssetFetcher.fetchAll(
+                    entries = listOf(entry(url = url, sha256 = "a".repeat(64))),
+                    cacheDir = File(dir, "cache"),
+                    outDir = File(dir, "out"),
+                    manifestFile = manifestFile,
+                    hfToken = null,
+                    allowMissing = false,
+                    sleeper = { throw AssertionError("must not sleep/retry on a 404") },
+                )
+            }
+
+            assertEquals(1, requestCount.get(), "a 404 must never be retried")
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    /**
+     * A digest mismatch is never retried (Constitution I — a wrong asset is never quietly retried
+     * into acceptance) and, per R-1075's own atomicity requirement, no file is ever left at the
+     * final destination.
+     */
+    @Test
+    fun `R_1075 a 200 whose sha256 mismatches is never retried and leaves no file at the final path`(
+        @TempDir dir: File,
+    ) {
+        val body = "wrong bytes".toByteArray()
+        val requestCount = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/a.bin") { exchange ->
+            requestCount.incrementAndGet()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        try {
+            val manifestFile = File(dir, "bundled-assets.json").apply { writeText("""{"assets": []}""") }
+
+            val thrown = assertThrows(GradleException::class.java) {
+                BundledAssetFetcher.fetchAll(
+                    entries = listOf(
+                        entry(
+                            id = "BAD",
+                            url = "http://127.0.0.1:${server.address.port}/a.bin",
+                            sha256 = "0".repeat(64),
+                        ),
+                    ),
+                    cacheDir = File(dir, "cache"),
+                    outDir = File(dir, "out"),
+                    manifestFile = manifestFile,
+                    hfToken = null,
+                    allowMissing = false,
+                    sleeper = { throw AssertionError("a checksum mismatch must never be retried") },
+                )
+            }
+
+            assertEquals(1, requestCount.get(), "the download itself succeeded — never re-fetched")
+            assertTrue(thrown.message!!.contains("checksum mismatch"))
+            assertFalse(File(dir, "out/models/a.bin").exists())
         } finally {
             server.stop(0)
         }

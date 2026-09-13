@@ -12,8 +12,6 @@ import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URI
 import java.security.MessageDigest
 
 /**
@@ -119,11 +117,12 @@ object BundledAssetFetcher {
         allowMissing: Boolean,
         onInfo: (String) -> Unit = {},
         onWarn: (String) -> Unit = {},
+        sleeper: (Long) -> Unit = Thread::sleep,
     ): List<BundledAssetManifest.ResolvedEntry> {
         outDir.mkdirs()
         return entries.map { entry ->
             try {
-                fetchOne(entry, cacheDir, outDir, manifestFile, hfToken, onInfo)
+                fetchOne(entry, cacheDir, outDir, manifestFile, hfToken, onInfo, sleeper)
             } catch (failure: GradleException) {
                 if (!allowMissing) throw failure
                 onWarn(
@@ -144,6 +143,7 @@ object BundledAssetFetcher {
         manifestFile: File,
         hfToken: String?,
         onInfo: (String) -> Unit,
+        sleeper: (Long) -> Unit,
     ): BundledAssetManifest.ResolvedEntry {
         if (entry.gated && hfToken.isNullOrBlank()) {
             throw GradleException(
@@ -160,7 +160,7 @@ object BundledAssetFetcher {
 
         val alreadyCached = cachedFile.isFile && (pinned == null || sha256Of(cachedFile) == pinned)
         if (!alreadyCached) {
-            downloadTo(entry.url, cachedFile, if (entry.gated) hfToken else null)
+            downloadTo(entry.url, cachedFile, if (entry.gated) hfToken else null, entry.id, onInfo, sleeper)
         }
 
         val gotSha256 = sha256Of(cachedFile)
@@ -202,32 +202,33 @@ object BundledAssetFetcher {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private fun downloadTo(url: String, dest: File, bearerToken: String?) {
-        dest.parentFile?.mkdirs()
-        val connection = URI(url).toURL().openConnection()
-        if (connection is HttpURLConnection) {
-            connection.instanceFollowRedirects = true
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            if (!bearerToken.isNullOrBlank()) {
-                connection.setRequestProperty("Authorization", "Bearer $bearerToken")
-            }
-            val code = connection.responseCode
-            if (code !in HTTP_OK_RANGE) {
-                throw GradleException("fetchBundledAssets: download failed for $url — HTTP $code")
-            }
-        }
-        try {
-            connection.getInputStream().use { input -> dest.outputStream().use { output -> input.copyTo(output) } }
-        } catch (e: java.io.IOException) {
-            dest.delete()
-            throw GradleException("fetchBundledAssets: download failed for $url — ${e.message}", e)
-        }
+    /** R-1075: bounded retry with backoff on a transient failure — see [RetryingDownload]'s own
+     * KDoc for the policy and why. [bearerToken], if present, is sent as `Authorization: Bearer
+     * <token>` on every attempt but is never itself passed to [onInfo] — only the retry reason
+     * (a status code or exception class) and wait are logged, so the token never reaches a log. */
+    private fun downloadTo(
+        url: String,
+        dest: File,
+        bearerToken: String?,
+        entryId: String,
+        onInfo: (String) -> Unit,
+        sleeper: (Long) -> Unit,
+    ) {
+        val headers = if (!bearerToken.isNullOrBlank()) mapOf("Authorization" to "Bearer $bearerToken") else emptyMap()
+        RetryingDownload.download(
+            url = url,
+            dest = dest,
+            taskLabel = "fetchBundledAssets",
+            requestProperties = headers,
+            sleeper = sleeper,
+            onRetry = { attempt, reason, waitMs ->
+                onInfo(
+                    "fetchBundledAssets: attempt $attempt of ${RetryingDownload.MAX_ATTEMPTS} for $entryId " +
+                        "($url) failed ($reason) — retrying in ${waitMs}ms.",
+                )
+            },
+        )
     }
-
-    private const val CONNECT_TIMEOUT_MS = 30_000
-    private const val READ_TIMEOUT_MS = 180_000
-    private val HTTP_OK_RANGE = 200..299
 }
 
 /**

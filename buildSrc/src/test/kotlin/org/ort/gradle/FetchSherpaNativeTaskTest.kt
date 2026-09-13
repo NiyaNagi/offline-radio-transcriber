@@ -274,8 +274,189 @@ class FetchSherpaNativeTaskTest {
                 archiveUrl = "http://ort-sherpa-native-must-not-resolve.invalid/x.tar.bz2",
                 cacheDir = File(dir, "cache"),
                 outDir = File(dir, "out"),
+                sleeper = { /* a name that will never resolve is retried too (R-1075); no real wait in tests */ },
             )
         }
         assertTrue(thrown.message!!.contains("ort-sherpa-native-must-not-resolve.invalid"))
+    }
+
+    // ---- R-1075 — retry on a transient server failure, never on a bad request --------------------
+
+    /**
+     * Register R-1075 (CI run 34769228303 failed 17s in on a bare HTTP 500 for this exact archive
+     * URL, with no retry, while the Release workflow on the same commit fetched it fine).
+     * Discrimination: on today's single-attempt `downloadTo` this fails on the first 500 and never
+     * reaches the second, successful response — this test must fail against that code and pass
+     * once [SherpaNativeFetcher] retries via [RetryingDownload].
+     */
+    @Test
+    fun `R_1075 a 500 then a 200 succeeds after one retry`(@TempDir dir: File) {
+        val jniBytes = "fake jni bytes".toByteArray()
+        val archiveBytes = buildArchive(mapOf("jniLibs/arm64-v8a/libsherpa-onnx-jni.so" to jniBytes))
+        val requestCount = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/archive.tar.bz2") { exchange ->
+            if (requestCount.incrementAndGet() == 1) {
+                exchange.sendResponseHeaders(500, -1)
+                exchange.close()
+            } else {
+                exchange.sendResponseHeaders(200, archiveBytes.size.toLong())
+                exchange.responseBody.use { it.write(archiveBytes) }
+            }
+        }
+        server.start()
+        try {
+            val waits = mutableListOf<Long>()
+            val resolved = SherpaNativeFetcher.fetchAll(
+                libraries = listOf(entry(sha256 = sha256(jniBytes))),
+                archiveUrl = "http://127.0.0.1:${server.address.port}/archive.tar.bz2",
+                cacheDir = File(dir, "cache"),
+                outDir = File(dir, "out"),
+                sleeper = { waits += it },
+            )
+
+            assertEquals(2, requestCount.get(), "must have retried exactly once (2 attempts total)")
+            assertEquals(1, resolved.size)
+            assertTrue(File(dir, "out/arm64-v8a/libsherpa-onnx-jni.so").isFile)
+            assertEquals(listOf(2_000L), waits, "the first backoff step must be used for the one retry")
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    /**
+     * Discrimination: today's single-attempt `downloadTo` fails on the connection reset and never
+     * reaches the second, successful response.
+     */
+    @Test
+    fun `R_1075 a connection reset then a 200 succeeds after one retry`(@TempDir dir: File) {
+        val jniBytes = "fake jni bytes".toByteArray()
+        val archiveBytes = buildArchive(mapOf("jniLibs/arm64-v8a/libsherpa-onnx-jni.so" to jniBytes))
+        val requestCount = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/archive.tar.bz2") { exchange ->
+            if (requestCount.incrementAndGet() == 1) {
+                // Simulate a mid-response reset: close the raw socket without ever sending a
+                // response, so the client's connect/read fails with an IOException.
+                exchange.close()
+            } else {
+                exchange.sendResponseHeaders(200, archiveBytes.size.toLong())
+                exchange.responseBody.use { it.write(archiveBytes) }
+            }
+        }
+        server.start()
+        try {
+            val resolved = SherpaNativeFetcher.fetchAll(
+                libraries = listOf(entry(sha256 = sha256(jniBytes))),
+                archiveUrl = "http://127.0.0.1:${server.address.port}/archive.tar.bz2",
+                cacheDir = File(dir, "cache"),
+                outDir = File(dir, "out"),
+                sleeper = { },
+            )
+
+            assertEquals(2, requestCount.get(), "must have retried exactly once after the reset")
+            assertEquals(1, resolved.size)
+            assertTrue(File(dir, "out/arm64-v8a/libsherpa-onnx-jni.so").isFile)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `R_1075 four consecutive 503s fail and the message lists all four attempts`(@TempDir dir: File) {
+        val requestCount = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/archive.tar.bz2") { exchange ->
+            requestCount.incrementAndGet()
+            exchange.sendResponseHeaders(503, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val thrown = assertThrows(GradleException::class.java) {
+                SherpaNativeFetcher.fetchAll(
+                    libraries = listOf(entry(sha256 = "a".repeat(64))),
+                    archiveUrl = "http://127.0.0.1:${server.address.port}/archive.tar.bz2",
+                    cacheDir = File(dir, "cache"),
+                    outDir = File(dir, "out"),
+                    sleeper = { },
+                )
+            }
+
+            assertEquals(4, requestCount.get(), "must attempt exactly 4 times, no more")
+            assertTrue(thrown.message!!.contains("after 4 attempts"), "got: ${thrown.message}")
+            assertEquals(
+                4,
+                Regex("HTTP 503").findAll(thrown.message!!).count(),
+                "message must list all 4 attempts' reason, got: ${thrown.message}",
+            )
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `R_1075 a 404 fails on the first attempt with no retry`(@TempDir dir: File) {
+        val requestCount = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/archive.tar.bz2") { exchange ->
+            requestCount.incrementAndGet()
+            exchange.sendResponseHeaders(404, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val thrown = assertThrows(GradleException::class.java) {
+                SherpaNativeFetcher.fetchAll(
+                    libraries = listOf(entry(sha256 = "a".repeat(64))),
+                    archiveUrl = "http://127.0.0.1:${server.address.port}/archive.tar.bz2",
+                    cacheDir = File(dir, "cache"),
+                    outDir = File(dir, "out"),
+                    sleeper = { throw AssertionError("must not sleep/retry on a 404") },
+                )
+            }
+
+            assertEquals(1, requestCount.get(), "a 404 must never be retried")
+            assertTrue(thrown.message!!.contains("HTTP 404"))
+            assertFalse(
+                thrown.message!!.contains("after"),
+                "a non-retryable failure is not an attempts-exhausted message",
+            )
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun `R_1075 a checksum mismatch after a 200 is never retried and leaves no file at the final path`(
+        @TempDir dir: File,
+    ) {
+        val jniBytes = "real bytes".toByteArray()
+        val archiveBytes = buildArchive(mapOf("jniLibs/arm64-v8a/libsherpa-onnx-jni.so" to jniBytes))
+        val requestCount = AtomicInteger(0)
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/archive.tar.bz2") { exchange ->
+            requestCount.incrementAndGet()
+            exchange.sendResponseHeaders(200, archiveBytes.size.toLong())
+            exchange.responseBody.use { it.write(archiveBytes) }
+        }
+        server.start()
+        try {
+            val thrown = assertThrows(GradleException::class.java) {
+                SherpaNativeFetcher.fetchAll(
+                    libraries = listOf(entry(sha256 = "0".repeat(64))),
+                    archiveUrl = "http://127.0.0.1:${server.address.port}/archive.tar.bz2",
+                    cacheDir = File(dir, "cache"),
+                    outDir = File(dir, "out"),
+                    sleeper = { throw AssertionError("a checksum mismatch must never be retried") },
+                )
+            }
+
+            assertEquals(1, requestCount.get(), "the archive download itself succeeded — never re-fetched")
+            assertTrue(thrown.message!!.contains("checksum mismatch"))
+            assertFalse(File(dir, "out/arm64-v8a/libsherpa-onnx-jni.so").exists())
+        } finally {
+            server.stop(0)
+        }
     }
 }
