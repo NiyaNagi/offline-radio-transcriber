@@ -9,6 +9,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -25,6 +27,115 @@ private sealed interface ImprovePage {
     data class Running(val transmissionIds: List<String>, val headline: String) : ImprovePage
     data class Done(val headline: String, val clearedCount: Int, val summary: ReprocessStatus.Summary?) : ImprovePage
 }
+
+/**
+ * Register (coordinator round, WPIMPROVE): [ImprovePage] used to live in a plain `remember`, so a
+ * configuration change (font scale, rotation — anything without `android:configChanges` covering
+ * it, which `ReaderActivity` does not declare) recreated the Activity and silently dropped
+ * `Select`/`Running`/`Done` back to `Root` — mid-run, that hid a reprocess still in progress
+ * (FR-REP-9/11: an operator watching progress must not be told, in effect, that nothing is
+ * happening). The same `rememberSaveable` + hand-written [Saver] pattern this codebase already
+ * uses for every other file-private sealed navigation type — `OrtNavHost.kt`'s own
+ * `LogFilterOriginSaver`, `SessionsContent.kt`'s own `SessionsPageSaver` — since [ImprovePage] is
+ * not itself Bundle-safe (`Done` carries a whole [ReprocessStatus.Summary]) and, being
+ * file-private, cannot be reached by a test outside this file — the same reason those two Savers'
+ * own tests each drive the flow through the real composed screens rather than the Saver directly.
+ *
+ * One flat, delimiter-joined `String`, matching [SessionsContent.kt]'s own encoding convention
+ * exactly (never a second, nested `Saver` call for [ImproveGroupViewState]/[ReprocessStatus
+ * .Summary] — a single [IMPROVE_PAGE_FIELD_SEPARATOR]-delimited split must find every field at one
+ * flat depth) — [IMPROVE_PAGE_FIELD_SEPARATOR] is the same control character
+ * (`PAGE_FIELD_SEPARATOR` in that file) no real headline/sub-line/reason prose in this app ever
+ * produces. An unrecognised or truncated restored value falls back to [ImprovePage.Root], never a
+ * crash — the same "restore never crashes" contract [LogFilterOriginSaver] documents.
+ *
+ * **What does not survive, disclosed rather than hidden:** [RealImproveRunner]'s own kdoc already
+ * states the run is cooperatively cancelled the moment its collecting coroutine stops — which is
+ * exactly what happens to the `LaunchedEffect` driving it when the old Activity is destroyed. So a
+ * restored [ImprovePage.Running] shows the *board*, correctly, but [RunningPage]'s own fresh
+ * `LaunchedEffect` starts a new run over the same [ImprovePage.Running.transmissionIds] from its
+ * own zero — real progress for *that* run, never fabricated, but not a seamless continuation of
+ * whatever fraction the interrupted run had reached. Resuming a genuinely in-flight run across a
+ * process-surviving recreation would need the run itself to live somewhere longer-lived than a
+ * composition (a foreground service, `WorkManager`, or similar) — a `:pipeline`/architecture change
+ * outside this package's own file ownership, not attempted here.
+ */
+private const val IMPROVE_PAGE_FIELD_SEPARATOR = ""
+
+private val ImprovePageSaver: Saver<ImprovePage, String> = Saver(
+    save = { page ->
+        when (page) {
+            ImprovePage.Root -> "root"
+            is ImprovePage.Select -> listOf(
+                "select",
+                page.group.id,
+                page.group.headline,
+                page.group.subLine,
+                page.group.overCount.toString(),
+                page.group.transmissionIds.joinToString(","),
+                page.group.tierOrdinal.toString(),
+            ).joinToString(IMPROVE_PAGE_FIELD_SEPARATOR)
+            is ImprovePage.Running -> listOf(
+                "running",
+                page.transmissionIds.joinToString(","),
+                page.headline,
+            ).joinToString(IMPROVE_PAGE_FIELD_SEPARATOR)
+            is ImprovePage.Done -> listOf(
+                "done",
+                page.headline,
+                page.clearedCount.toString(),
+                (page.summary != null).toString(),
+                page.summary?.total?.toString() ?: "",
+                page.summary?.transcriptsChanged?.toString() ?: "",
+                page.summary?.attributionsChanged?.toString() ?: "",
+                page.summary?.rejected?.toString() ?: "",
+                page.summary?.failed?.toString() ?: "",
+                page.summary?.correctedCount?.toString() ?: "",
+                page.summary?.failureReasons?.joinToString(",") ?: "",
+                page.summary?.changedTransmissionIds?.joinToString(",") ?: "",
+            ).joinToString(IMPROVE_PAGE_FIELD_SEPARATOR)
+        }
+    },
+    restore = { saved ->
+        val parts = saved.split(IMPROVE_PAGE_FIELD_SEPARATOR)
+        when (parts.getOrNull(0)) {
+            "select" -> ImprovePage.Select(
+                ImproveGroupViewState(
+                    id = parts.getOrElse(1) { "" },
+                    headline = parts.getOrElse(2) { "" },
+                    subLine = parts.getOrElse(3) { "" },
+                    overCount = parts.getOrElse(4) { "0" }.toIntOrNull() ?: 0,
+                    transmissionIds = parts.getOrNull(5)?.takeIf { it.isNotEmpty() }?.split(",") ?: emptyList(),
+                    tierOrdinal = parts.getOrElse(6) { "0" }.toIntOrNull() ?: 0,
+                ),
+            )
+            "running" -> ImprovePage.Running(
+                transmissionIds = parts.getOrNull(1)?.takeIf { it.isNotEmpty() }?.split(",") ?: emptyList(),
+                headline = parts.getOrElse(2) { "" },
+            )
+            "done" -> ImprovePage.Done(
+                headline = parts.getOrElse(1) { "" },
+                clearedCount = parts.getOrElse(2) { "0" }.toIntOrNull() ?: 0,
+                summary = if (parts.getOrElse(3) { "false" }.toBoolean()) {
+                    ReprocessStatus.Summary(
+                        total = parts.getOrElse(4) { "0" }.toIntOrNull() ?: 0,
+                        transcriptsChanged = parts.getOrElse(5) { "0" }.toIntOrNull() ?: 0,
+                        attributionsChanged = parts.getOrElse(6) { "0" }.toIntOrNull() ?: 0,
+                        rejected = parts.getOrElse(7) { "0" }.toIntOrNull() ?: 0,
+                        failed = parts.getOrElse(8) { "0" }.toIntOrNull() ?: 0,
+                        correctedCount = parts.getOrElse(9) { "0" }.toIntOrNull() ?: 0,
+                        failureReasons = parts.getOrNull(10)?.takeIf { it.isNotEmpty() }?.split(",") ?: emptyList(),
+                        changedTransmissionIds = parts.getOrNull(11)?.takeIf { it.isNotEmpty() }
+                            ?.split(",")?.toSet() ?: emptySet(),
+                    )
+                } else {
+                    null
+                },
+            )
+            else -> ImprovePage.Root // an unrecognised/truncated saved value never crashes restore.
+        }
+    },
+)
 
 /**
  * R-091 (register): the stateful entry point `OrtNavHost` dispatches `IMPROVE_RECORDS` to — owns
@@ -63,7 +174,7 @@ public fun ImproveContent(
     onOpenChangedOvers: (Set<String>) -> Unit = {},
 ) {
     val runner = remember { RealImproveRunner(context) }
-    var page by remember { mutableStateOf<ImprovePage>(ImprovePage.Root) }
+    var page by rememberSaveable(stateSaver = ImprovePageSaver) { mutableStateOf<ImprovePage>(ImprovePage.Root) }
     var root by remember { mutableStateOf<ImproveRootViewState?>(null) }
     var refreshToken by remember { mutableStateOf(0) }
 
