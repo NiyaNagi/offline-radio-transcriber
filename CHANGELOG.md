@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPUI: C10 the transport bar, replacing the plain live bar host-wide, and its own reversal of R-1006's stop-on-leave — the bar, not the screen, now owns playback)
 
-### e0cec74e — WPUI follow-up: on-device proof of C10's Playing/Paused modes surviving navigation (R-1006)
+### 48e94a0d — WPUI follow-up: on-device proof of C10's Playing/Paused modes surviving navigation (R-1006)
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourSpec,TourIds,ScreenshotTourActivity}.kt`,
 `app/src/debug/kotlin/org/ort/app/debug/OvernightScenario.kt`, `tools/ui-audit/tour.json`, plus
