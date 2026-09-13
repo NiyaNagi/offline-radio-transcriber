@@ -410,6 +410,27 @@ class ScenariosTest {
         assertFalse(File(context.filesDir, tx.audioPath()).isFile)
     }
 
+    /**
+     * Register R-1066 (WPDIGINIT device evidence): the *other* real `AudioAbsenceReason` cause
+     * `no-audio` cannot produce — a session whose over audio genuinely was removed by the operator,
+     * so the detail screen's cause line names a real date, never the honest-but-uninformative
+     * "reason is not recorded" `no-audio` above reads as.
+     */
+    @Test
+    @Requirement("R-1066")
+    fun `R_1066 audio-removed-by-operator has no retained audio and a real removal timestamp`() = runTest {
+        val result = Scenarios.load(context, "audio-removed-by-operator")
+        val sessionId = requireNotNull(result.primarySessionId)
+        val tx = db.transmissionDao().listBySession(sessionId).single()
+        val session = requireNotNull(db.sessionDao().getById(sessionId))
+
+        assertFalse(File(context.filesDir, tx.audioPath()).isFile)
+        assertTrue(
+            "expected a real overAudioRemovedAtMillis, found null",
+            session.overAudioRemovedAtMillis != null,
+        )
+    }
+
     @Test
     @Requirement("R-110")
     fun `R_110 revisions carries one current and one superseded transcript version`() = runTest {

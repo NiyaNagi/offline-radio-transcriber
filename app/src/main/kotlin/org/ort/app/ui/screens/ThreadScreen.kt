@@ -28,6 +28,7 @@ import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.EmptyState
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.components.rememberCallsignColumnWidth
@@ -61,6 +62,12 @@ public fun ThreadScreen(
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         when (state) {
+            // Register R-1022/R-1051 (halt): the real "not yet known" seed (`ThreadContent`'s own
+            // `remember`) — never rendered as `Empty`'s "No overs yet." claim (see
+            // [ThreadListViewState.Loading]'s own kdoc).
+            ThreadListViewState.Loading ->
+                LoadingState(message = "Loading…", modifier = Modifier.fillMaxWidth().padding(OrtSpacing.lg))
+
             ThreadListViewState.Empty ->
                 EmptyState(
                     message = "No overs yet.",
