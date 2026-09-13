@@ -137,6 +137,81 @@ covered both).
 **Left open / not done:** the `tour.ps1` manifest-poll race named above; `SessionsContent`/
 `DigestContent` do not carry the marker yet, per the R-1051 commit's own note.
 
+### pending — WPINIT: the detail screen's "No retained audio" card names the real, structured cause and its date, never a guessed one
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt`, `CorrectionPolling.kt`;
+`app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailContent.kt`,
+`TransmissionDetailScreen.kt`; `app/src/test/kotlin/org/ort/app/ui/data/DetailViewStateMapperTest.kt`
+(new cases), `AudioAbsenceReasonMapperTest.kt` (new), `CorrectionPollingAudioAbsenceTest.kt` (new);
+`app/src/test/kotlin/org/ort/app/ui/screens/TransmissionDetailScreenTest.kt`,
+`TransmissionDetailContentTest.kt`; `results/coverage-matrix.md`.
+
+**Requirements/ACs:** constitution I, III (none of this prompt's own — no register/spec id was
+assigned; cited by the prompt's own text instead).
+
+**What changed:** `TransmissionDetailScreen.kt`'s `NoAudioNotice` used to *guess* the cause of a
+missing over's own audio from `attribution.state`/`inspection` (`everProcessed`) — an inference,
+not a fact, that rendered the identical "Audio deleted by retention" sentence for a genuine
+operator deletion and for a segment that plainly never had audio, and never carried a date despite
+the artboard's own "on 8 Aug" example. Replaced with a real, structured
+`AudioAbsenceReason` (`DetailViewState.kt`): `RemovedByOperator(dateLabel)` (mirrors
+`SessionEntity.overAudioRemovedAtMillis`, the one real signal
+`SessionAudioDeletionService` writes for RC02's own Delete action, against the exact
+`audio/<sessionId>/` directory `TransmissionDetail.hasAudio` checks), `NeverRetained` (the honest
+default — no removal was ever recorded), and `Unknown` (the owning session's own row could not be
+read at all — never silently folded into `NeverRetained`, which is itself a claim). A fourth case,
+`PrunedByRetentionBudget`, is modelled for a future automatic over-audio retention mechanism and is
+**deliberately never constructed against today's real data**: `OverAudioBudgetState`'s own doc
+comment states plainly that reaching the over-audio budget "only ever warns" (D40, register
+R-1037 forbid deleting over audio by any automatic means) and `ArchivePruner`'s own doc comment
+confirms its automatic pruning "never touches `audio/<sessionId>`" — `SessionEntity
+.archiveRemovedAtMillis` governs a wholly separate directory (the continuous re-segmentation
+archive) this screen's own playback never reads, so it is never consulted here; wiring it in would
+have been exactly the guess constitution I forbids. `CorrectionPolling.audioAbsenceReason` is the
+one real `:data` read this needs (only when `!hasAudio`); `TransmissionDetailContent.pollDetail`
+threads it through `DetailViewStateMapper.from`'s new `audioAbsenceReason` parameter into
+`DetailViewState`, and `NoAudioNotice` now renders it directly: "Removed by the operator on
+<date>...", "Audio was never retained for this over.", or "No retained audio for this transmission.
+The reason is not recorded." for `Unknown`.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.data.AudioAbsenceReasonMapperTest" --tests
+"org.ort.app.ui.data.CorrectionPollingAudioAbsenceTest" --tests
+"org.ort.app.ui.data.DetailViewStateMapperTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` and `:app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.screens.TransmissionDetailContentTest"` — all green. Discriminating proof of the
+one subtle rule (never read `archiveRemovedAtMillis`): temporarily wired
+`session?.archiveRemovedAtMillis` into `audioAbsenceReason`'s own `prunedByRetentionBudgetAtMillis`
+parameter and re-ran `CorrectionPollingAudioAbsenceTest` — "an archived-and-pruned session with no
+operator removal reads as NeverRetained" failed
+(`expected:<NeverRetained> but was:<PrunedByRetentionBudget(dateLabel=1 Aug)>`), the exact
+fabrication this design exists to prevent; reverted, passing again. Full gate, ktlint/detekt,
+spec-check: see the R-1051 commit above. `coverageMatrix`/`coverageMatrixCheck` (separate
+invocations) both green (271 of 483 requirements covered; `results/coverage-matrix.md` regenerated
+and committed with this change).
+
+Device (`ort_audit_cf07`/port 5564, real database, root adb — `ReaderActivity` is not exported, so
+a manually-edited `session` row's own facts were viewed through it directly by intent extras
+(`session_id`/`destination`) rather than through the tour, which unconditionally reseeds and would
+have overwritten the edit before it could render): captured all three practically-seedable causes
+against the real on-device `ort.db` for the "overnight" scenario's own W7NPC transmission —
+`overAudioRemovedAtMillis` set to a real epoch millis for 2026-08-08 plus its own `audio/
+scenario-overnight/` directory deleted → "Removed by the operator on 8 Aug. Transcript, attribution
+and lattice were kept."; the same with `overAudioRemovedAtMillis` cleared back to `NULL` → "Audio
+was never retained for this over."; the owning `session` row deleted outright (transmission rows
+untouched — no cascade) → "No retained audio for this transmission. The reason is not recorded."
+`PrunedByRetentionBudget` was not captured on device — confirmed unseedable by design (no scenario,
+and no real code path in this build, ever sets a value that would produce it; see "What changed"
+above). App data cleared and the emulator shut down after (`pm clear`, `adb emu kill`).
+
+**Left open / not done:** `PrunedByRetentionBudget` has no device evidence and cannot get any until
+a real automatic over-audio retention mechanism exists (none does today, by design — D40/R-1037);
+the type and mapper are ready for one without a second migration. Discovered, while chasing this on
+device, that `MainActivity` crashes (`RealCaptureService.runCaptureFlow`) when launched against a
+scenario-seeded session on this emulator — unrelated to this change (real capture trying to open
+real hardware this AVD does not have against fixture-only data) and not investigated further; flagged
+separately rather than fixed here (outside this prompt's own scope).
+
 ## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor); R-1047 sent back once and re-fixed so the statement is actually visible)
 
 ### 16b2432d — WPLINK: R-1047 fix — the applied-filter statement is now visible without scrolling

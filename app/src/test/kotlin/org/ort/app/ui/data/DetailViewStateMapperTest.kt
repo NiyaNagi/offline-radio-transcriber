@@ -348,4 +348,22 @@ class DetailViewStateMapperTest {
         val state = DetailViewStateMapper.from(detail(Attribution.confirmed("W7NPC", 0.94)), btAudioMark = false)
         assertFalse(state.btAudioMark)
     }
+
+    // ---- This task: audioAbsenceReason is a plain passthrough, defaulted so every existing call
+    // site compiles unchanged ----
+
+    @Test
+    fun `audioAbsenceReason defaults to null so every existing call site is unaffected`() {
+        val state = DetailViewStateMapper.from(detail(Attribution.confirmed("W7NPC", 0.94)))
+        assertNull(state.audioAbsenceReason)
+    }
+
+    @Test
+    fun `audioAbsenceReason carries the real reason when the caller passes it`() {
+        val state = DetailViewStateMapper.from(
+            detail(Attribution.confirmed("W7NPC", 0.94)),
+            audioAbsenceReason = AudioAbsenceReason.RemovedByOperator("8 Aug"),
+        )
+        assertEquals(AudioAbsenceReason.RemovedByOperator("8 Aug"), state.audioAbsenceReason)
+    }
 }

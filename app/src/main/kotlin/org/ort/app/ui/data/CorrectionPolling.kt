@@ -288,6 +288,27 @@ public object CorrectionPolling {
     }
 
     /**
+     * This task (constitution I, III): the real, structured cause behind a missing over's own audio
+     * file (`!TransmissionDetail.hasAudio`), for `Detail-Playback.dc.html`'s "No retained audio"
+     * card — see [AudioAbsenceReason]'s own kdoc for the full account of the two real writers this
+     * reads, and the one it deliberately never does. `hasAudio == true` short-circuits to `null`
+     * before this even reads the session row — nothing to explain. A [sessionId] whose own row
+     * cannot be found reads as [AudioAbsenceReason.Unknown], never a guessed
+     * [AudioAbsenceReason.NeverRetained] — see [AudioAbsenceReasonMapper.from]'s own `sessionKnown`
+     * parameter.
+     */
+    public suspend fun audioAbsenceReason(context: Context, sessionId: String, hasAudio: Boolean): AudioAbsenceReason? {
+        if (hasAudio) return null
+        val db = OrtDatabase.create(context.applicationContext)
+        val session = db.sessionDao().getById(sessionId)
+        return AudioAbsenceReasonMapper.from(
+            hasAudio = false,
+            sessionKnown = session != null,
+            overAudioRemovedAtMillis = session?.overAudioRemovedAtMillis,
+        )
+    }
+
+    /**
      * R-189 (halt): the real root cause behind two separately-filed reports — a detail rendering
      * UNKNOWN after `Undo all` even though the row genuinely reverted, *and* the same reversion
      * roughly 2s after applying a fresh typed correction, no `Undo` involved. Both go through the

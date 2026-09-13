@@ -856,4 +856,90 @@ class TransmissionDetailContentTest {
         composeTestRule.waitUntilTextExists("Nothing here can be deleted from this screen")
         composeTestRule.onNodeWithText("2 versions", substring = true).assertExists()
     }
+
+    // ---- This task: the real audio-absence cause, end to end through the real database read ----
+
+    @Test
+    fun `an operator-removed session's own over reads Removed by the operator, through the real read path`() {
+        val removedAt = java.time.LocalDate.of(2026, 8, 8)
+            .atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        runBlocking {
+            db.sessionDao().insert(session().copy(overAudioRemovedAtMillis = removedAt))
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+
+        composeTestRule.waitUntilTextExists("Removed by the operator on 8 Aug")
+        composeTestRule.onNodeWithText("Removed by the operator on 8 Aug", substring = true).assertExists()
+        composeTestRule.onNodeWithText("deleted by retention", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `a session whose over audio was never touched reads never retained, through the real read path`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+
+        composeTestRule.waitUntilTextExists("Audio was never retained for this over.")
+        composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
+    }
+
+    /**
+     * The decisive real-database case: the session's *continuous archive* was pruned
+     * ([SessionEntity.archiveRemovedAtMillis] set), but the operator never touched this session's
+     * over audio. See [AudioAbsenceReason]'s own kdoc and
+     * `CorrectionPollingAudioAbsenceTest`'s identical case at the pure-poll layer — this proves the
+     * same real fact holds true through the whole composable, not merely the function it calls.
+     */
+    @Test
+    fun `a pruned-archive session with no operator removal still reads never retained, never pruned by the budget`() {
+        val archivePrunedAt = java.time.LocalDate.of(2026, 8, 1)
+            .atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        runBlocking {
+            db.sessionDao().insert(
+                session().copy(archiveState = "REMOVED", archiveRemovedAtMillis = archivePrunedAt),
+            )
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+
+        composeTestRule.waitUntilTextExists("Audio was never retained for this over.")
+        composeTestRule.onNodeWithText("Pruned by the retention budget", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
+    }
 }
