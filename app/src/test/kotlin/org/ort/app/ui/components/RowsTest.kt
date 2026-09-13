@@ -37,6 +37,7 @@ import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 /** R-023 (ui-conformance-plan WP2): the row family from guide §6.5/`Rows.dc.html`. */
@@ -417,6 +418,48 @@ class RowsTest {
         composeTestRule.onNodeWithText("6:42").assertIsDisplayed()
         composeTestRule.onNodeWithTag("drillin").assertHeightIsAtLeast(44.dp)
         composeTestRule.onNodeWithTag("screenheader").assertHeightIsAtLeast(44.dp)
+    }
+
+    /**
+     * R-1073 (register: WPRC02's four uiautomator dumps found `DrillInHeader`'s back link at
+     * `[7,849][162,946]`, 155x97 px — about 37 dp tall on a 420dpi device — under FR-A11Y-2's
+     * 44dp floor. The shared component put `.clickable` directly on the 20dp chevron `Icon`
+     * itself rather than a real touch box around it. The fix is the pattern `SearchScreen`'s own
+     * `SearchHeaderTouchTargetIcon` already established for the identical shape (R-1048): an
+     * outer 44dp `Box` carries the floor and the `clickable`, the glyph inside keeps its own,
+     * unchanged 20dp size. Checked at both font scales — the touch box is a fixed 44dp square
+     * independent of text/glyph scaling, so a regression back to sizing the box from the glyph
+     * would fail this at either scale, not only at 2.0.
+     */
+    private fun assertDrillInHeaderBackTargetMeetsFloor(fontScale: Float) {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                OrtTheme {
+                    DrillInHeader(parentLabel = "Log", onBack = {}, modifier = Modifier.testTag("drillin"))
+                }
+            }
+        }
+        val backBounds = composeTestRule.onNodeWithTag("drill-in-header-back").getUnclippedBoundsInRoot()
+        val width = backBounds.right - backBounds.left
+        val height = backBounds.bottom - backBounds.top
+        assert(width >= 44.dp && height >= 44.dp) {
+            "expected the back touch target at least 44dp square at fontScale=$fontScale, got " +
+                "${width}x$height"
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1073 the back touch target meets the 44dp floor at font scale 1_0`() {
+        assertDrillInHeaderBackTargetMeetsFloor(fontScale = 1f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1073 the back touch target meets the 44dp floor at font scale 2_0`() {
+        assertDrillInHeaderBackTargetMeetsFloor(fontScale = 2f)
     }
 
     @Test

@@ -4,7 +4,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
@@ -18,12 +20,14 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -37,6 +41,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.junit.Rule
 import org.junit.Test
@@ -45,6 +50,9 @@ import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import kotlin.math.abs
 
 /**
  * R-023/R-024 (ui-conformance-plan WP2): the shared control set. None of these existed before —
@@ -685,5 +693,113 @@ class ControlsTest {
         assert(width in 150..250) {
             "expected the field to take its weighted share of the row (~200dp of 300dp), got ${width}px"
         }
+    }
+
+    /**
+     * R-1065 (register, WPIMPROVE, `overnight/wpimprove-evidence/08-done-2x-noscroll.png`): at font
+     * scale 2.0 `Review the 12 changes` wraps to three lines on Improve's own `Done` action, and the
+     * last line sits almost against the button's own lower border — the register's own dump measured
+     * a 297px box for the three-line label against 155px for a single line, i.e. the box grew to
+     * exactly the wrapped text's own height with no vertical inset at all. `PrimaryButton`/
+     * `SecondaryButton` (`Controls.kt` ~200-258) padded horizontally only
+     * (`padding(horizontal = 20.dp)`) — `requiredHeightIn(min = 44/48.dp)` only ever raises a floor,
+     * it adds no padding once real content already exceeds it. The fix adds a real, symmetric
+     * vertical inset (`padding(horizontal = 20.dp, vertical = OrtSpacing.sm)`), so a wrapped label
+     * keeps clearance above and below regardless of how many lines it takes, while an unwrapped
+     * single-line label — well within the 44/48dp floor either way — is unaffected (below).
+     */
+    private fun assertWrappedLabelKeepsSymmetricPadding(buttonTag: String, minHeight: Dp) {
+        val buttonBounds = composeTestRule.onNodeWithTag(buttonTag).getUnclippedBoundsInRoot()
+        // R-380's own `clearAndSetSemantics` puts the same text on *two* nodes — the outer
+        // clickable node (`text`/`contentDescription`, for the merged-tree/TalkBack routes) and
+        // the real, inner `Text` composable's own node underneath it. `onNodeWithText` alone
+        // matches both, so this selects the inner one specifically: only the real `Text` node
+        // carries `GetTextLayoutResult`, the outer clickable node does not.
+        val isRealTextNode = SemanticsMatcher("is the real Text node, not the outer clickable node") { node ->
+            node.config.getOrNull(SemanticsProperties.Text)
+                ?.any { it.text.contains("Review the 12 changes") } == true &&
+                node.config.getOrNull(SemanticsActions.GetTextLayoutResult) != null
+        }
+        val textBounds = composeTestRule.onNode(isRealTextNode, useUnmergedTree = true).getUnclippedBoundsInRoot()
+
+        // Sanity: this must actually force real multi-line wrap, or the test does not discriminate
+        // the defect at all — a single-line label already clears the 44/48dp floor by itself.
+        val textHeight = (textBounds.bottom - textBounds.top).value
+        assert(textHeight > minHeight.value) {
+            "test setup failed to force real multi-line wrap at fontScale=2.0 for '$buttonTag' — " +
+                "text height only ${textHeight}dp against a ${minHeight.value}dp floor " +
+                "(button=$buttonBounds text=$textBounds)"
+        }
+
+        val topInset = (textBounds.top - buttonBounds.top).value
+        val bottomInset = (buttonBounds.bottom - textBounds.bottom).value
+        assert(topInset >= 4f) {
+            "expected real padding above a wrapped label on '$buttonTag', got ${topInset}dp " +
+                "(button=$buttonBounds text=$textBounds)"
+        }
+        assert(bottomInset >= 4f) {
+            "expected real padding below a wrapped label on '$buttonTag', got ${bottomInset}dp " +
+                "(button=$buttonBounds text=$textBounds)"
+        }
+        assert(abs(topInset - bottomInset) <= 2f) {
+            "expected symmetric padding above/below a wrapped label on '$buttonTag', got " +
+                "top=${topInset}dp bottom=${bottomInset}dp"
+        }
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1065 a wrapped PrimaryButton label keeps symmetric padding above and below at font scale 2_0`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.requiredWidth(90.dp)) {
+                        PrimaryButton(
+                            text = "Review the 12 changes",
+                            onClick = {},
+                            modifier = Modifier.fillMaxWidth().testTag("primary-wrapped"),
+                        )
+                    }
+                }
+            }
+        }
+        assertWrappedLabelKeepsSymmetricPadding("primary-wrapped", 48.dp)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1065 a wrapped SecondaryButton label keeps symmetric padding above and below at font scale 2_0`() {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+                OrtTheme {
+                    Box(modifier = Modifier.requiredWidth(90.dp)) {
+                        SecondaryButton(
+                            text = "Review the 12 changes",
+                            onClick = {},
+                            modifier = Modifier.fillMaxWidth().testTag("secondary-wrapped"),
+                        )
+                    }
+                }
+            }
+        }
+        assertWrappedLabelKeepsSymmetricPadding("secondary-wrapped", 44.dp)
+    }
+
+    @Test
+    fun `R_1065 a single-line PrimaryButton and SecondaryButton still meet their 48dp_44dp floor`() {
+        // The added vertical padding must not push a single-line, unwrapped label's button past
+        // its own guide-specified floor into something taller than intended.
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    PrimaryButton(text = "Start capture", onClick = {}, modifier = Modifier.testTag("primary-1l"))
+                    SecondaryButton(text = "Not now", onClick = {}, modifier = Modifier.testTag("secondary-1l"))
+                }
+            }
+        }
+        composeTestRule.onNodeWithTag("primary-1l").assertHeightIsAtLeast(48.dp)
+        composeTestRule.onNodeWithTag("secondary-1l").assertHeightIsAtLeast(44.dp)
     }
 }

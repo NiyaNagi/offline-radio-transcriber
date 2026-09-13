@@ -241,7 +241,15 @@ public fun SectionHeader(
  * whole header just to relabel one icon. [kebabTestTag] is `null` by default (no test tag at all,
  * matching every caller before this existed); a caller that needs to drive the kebab by tag rather
  * than by its content description can supply one. Both are ignored when [onKebab] is `null` — there
- * is no kebab to name. */
+ * is no kebab to name.
+ *
+ * R-1073 (register: WPRC02's four `uiautomator` dumps, `[7,849][162,946]` — 155x97 px, about 37 dp
+ * tall on a 420dpi device, under FR-A11Y-2's 44dp floor): `.clickable` sat directly on the 20dp
+ * back chevron `Icon` itself rather than on a real touch box around it, and 29 or more screens
+ * share this component. The fix is the pattern `SearchScreen`'s own `SearchHeaderTouchTargetIcon`
+ * already established for the identical shape (R-1048): an outer, real 44dp `Box` carries the
+ * floor and the `clickable`, the chevron `Icon` inside keeps its own, unchanged 20dp size —
+ * a bigger hit region, never a bigger glyph. */
 @Composable
 public fun DrillInHeader(
     parentLabel: String,
@@ -257,14 +265,22 @@ public fun DrillInHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Icon(
-                imageVector = OrtIcons.back,
-                contentDescription = "Back to $parentLabel",
-                tint = OrtColors.accentGreen,
+            // R-1073: the outer Box carries the real 44dp floor and the clickable; the Icon
+            // inside keeps its own, unchanged 20dp size — see this composable's own doc comment.
+            Box(
                 modifier = Modifier
-                    .size(20.dp)
-                    .clickable(role = Role.Button, onClickLabel = "Back to $parentLabel", onClick = onBack),
-            )
+                    .size(44.dp)
+                    .clickable(role = Role.Button, onClickLabel = "Back to $parentLabel", onClick = onBack)
+                    .testTag("drill-in-header-back"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = OrtIcons.back,
+                    contentDescription = "Back to $parentLabel",
+                    tint = OrtColors.accentGreen,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
             Text(text = parentLabel, style = OrtType.bodyProse, color = OrtColors.accentGreen)
             Spacer(modifier = Modifier.weight(1f))
             if (onKebab != null) {

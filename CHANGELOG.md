@@ -34,6 +34,84 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
 
+### <pending> — WPCOMPONENTS: R-1065 - PrimaryButton/SecondaryButton keep symmetric vertical padding around a wrapped label; R-1073 - DrillInHeader's back chevron gets a real 44dp touch box
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Controls.kt`,
+`app/src/main/kotlin/org/ort/app/ui/components/Rows.kt`, their tests
+(`app/src/test/kotlin/org/ort/app/ui/components/ControlsTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/components/RowsTest.kt`).
+
+**Requirements/ACs:** R-1065, R-1073 (register), FR-A11Y-2 (44dp touch floor), constitution VII
+("guarantees are expressed as types/structure, not left to a caller to remember"), constitution
+VIII (visual conformance re-verified with a fresh capture and a device dump).
+
+**What changed.**
+- **R-1065**: `PrimaryButton`/`SecondaryButton` padded horizontally only
+  (`padding(horizontal = 20.dp)`). `requiredHeightIn(min = 44/48.dp)` only ever raises a floor —
+  once a wrapped label's own content already exceeds it (Improve's own "Review the 12 changes" at
+  font scale 2.0, three lines), the box grew to exactly the text's height with zero vertical inset,
+  the register's own dump measuring a 297px box for three lines against 155px for one. Both
+  composables now carry `padding(horizontal = 20.dp, vertical = OrtSpacing.sm)` — symmetric, so a
+  wrapped label keeps real clearance above and below regardless of line count, while a single-line
+  label (already well inside the 44/48dp floor) is visually unaffected.
+- **R-1073**: `DrillInHeader`'s back chevron put `.clickable` directly on the 20dp `Icon` itself —
+  measured 155x97 px (~37dp tall) in four `uiautomator` dumps against RC02, under the 44dp floor,
+  and shared by 29+ screens (station/frequency detail, Settings sub-screens, Digest, Failures,
+  Improve). Fixed with the same pattern `SearchScreen`'s `SearchHeaderTouchTargetIcon` already
+  established for the identical shape (R-1048): an outer, real 44dp `Box` now carries the floor and
+  the `clickable`, with a `testTag("drill-in-header-back")` for the new bounds test; the chevron
+  `Icon` inside keeps its own, unchanged 20dp size — a bigger hit region, never a bigger glyph.
+
+**Tests (strict TDD — written and shown failing before either fix).**
+- `ControlsTest.kt`: `R_1065 a wrapped PrimaryButton/SecondaryButton label keeps symmetric padding
+  above and below at font scale 2_0` — forces real multi-line wrap via `requiredWidth(90.dp)` at
+  `fontScale=2f`, measures the real inner `Text` node (disambiguated from the outer
+  `clearAndSetSemantics` node via a `SemanticsMatcher` requiring `GetTextLayoutResult`, since
+  `onNodeWithText` alone matches both), and asserts a real ≥4dp inset above and below, symmetric
+  within 2dp. `R_1065 a single-line PrimaryButton and SecondaryButton still meet their 48dp/44dp
+  floor` pins the un-wrapped case is unaffected.
+- `RowsTest.kt`: `R_1073 the back touch target meets the 44dp floor at font scale 1_0/2_0` —
+  `@GraphicsMode(NATIVE)`, `@Config(qualifiers = "w390dp-h844dp-420dpi")`, asserting the
+  `drill-in-header-back` node is at least 44dp square at both scales.
+- Discriminated: reverting each production change independently and re-running its own new tests
+  reproduces the exact pre-fix failure (0dp padding for R-1065; "no node satisfies
+  TestTag = 'drill-in-header-back'" for R-1073); restoring the fix turns both green again.
+- No existing assertion broke — `a drill-in header and a screen header carry their own targets and
+  descriptions` (queries by content description, on the default merged tree) still passes unchanged:
+  the chevron's `Icon` still carries the same literal `contentDescription`, merged up into the
+  clickable `Box`'s own node exactly as `SearchHeaderTouchTargetIcon`'s identical shape already does.
+
+**Visual re-verification (constitution VIII — this diff touches `ui/components/**`).**
+- Own AVD `ort_audit_components` (created via `tools\ui-audit\create-avd.ps1`), `emulator-5570`,
+  operator geometry `wm size 1260x2772` / density 420 (already native).
+- Scoped tour capture (`tools\ui-audit\tour.ps1 -Port 5570 -Only "overnight/RC02-recording-session@2x*"`)
+  into scratch: `overnight/RC02-recording-session@2x.png` and `@2x-end.png` — the header now has
+  visibly more vertical room around the back chevron.
+- Live device dump against RC02 (loaded the `overnight` scenario, navigated by hand since
+  `ReaderActivity` is not exported): the back target's real clickable node measured
+  `[45,1699][201,1835]` = 156x136 px = ~59.4x51.8dp at 420dpi — comfortably over the 44dp floor in
+  both dimensions (pre-fix register figure was 155x97 px, ~37dp tall). Saved as
+  `overnight/RC02-live-2x-back-header.png` alongside a matching `uiautomator dump`.
+- Live capture of Improve's own Done board (`field-tier1` scenario, "Improve all 12" →
+  "Improving" → "Done") at font scale 2.0: `Review the 12 changes` wraps to three lines with a
+  visible gap above and below the text, measuring 349px tall (up from the register's own pre-fix
+  297px, the added 2×`OrtSpacing.sm` accounting for the difference) while the single-line `Done`
+  button beside it stays at 155px, unaffected. Saved as `field-tier1/05-improve-done@2x.png`.
+- All evidence captured to this session's own scratch directory, per constitution VIII ("only a
+  full canonical tour replaces the committed capture set") — `results/ui-audit/` untouched.
+
+**Verified.**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.*"` — green, no regressions across the
+  whole `:app` UI test package.
+- `./gradlew :app:smokeTestDebugUnitTest` — green.
+- `./gradlew ktlintCheck detekt` — green (whole project).
+- Real HF_TOKEN from the user environment; no escape hatch used for these checks.
+
+**Left open / not done:** the lead's own full gate (`dependencyRules platformGuards build`) and CI
+are not run here — this batch is gated by the lead per the working agreement. `DestructiveButton`
+carries the identical horizontal-only-padding shape as `PrimaryButton`/`SecondaryButton` but was
+not in scope (R-1065 names only the two) and was left unchanged.
+
 ### 3e7cbf5f — WPTESTROBUST: R-1043 - NavSeedTest's searchFiltersOpen now waits for the tag instead of asserting immediately, and SettingsContentTest's fixed waitUntil(5_000) calls use a shared, generous timeout constant
 
 **Scope:** `app/src/test/kotlin/org/ort/app/testing/OrtComposeTestRule.kt` (new shared constant only);

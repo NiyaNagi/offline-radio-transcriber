@@ -195,7 +195,18 @@ public fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Mo
  * this file now shares.
  *
  * R-510-class: `requiredHeightIn`, not `heightIn` — see [TextAction]'s own doc comment for the
- * device finding this generalises from. */
+ * device finding this generalises from.
+ *
+ * R-1065 (register, WPIMPROVE, `overnight/wpimprove-evidence/08-done-2x-noscroll.png`): at font
+ * scale 2.0 a label that wraps (Improve's own "Review the 12 changes", three lines) had its last
+ * line sitting almost against the button's own lower border — the register's own dump measured a
+ * 297px box for the three-line label against 155px for one, i.e. once wrapped content exceeded
+ * `requiredHeightIn`'s own 48dp floor, the box grew to exactly the text's own height with no
+ * vertical inset at all (`padding(horizontal = 20.dp)` never had a vertical component). A real,
+ * symmetric `vertical = OrtSpacing.sm` inset fixes this the same way it already fixed
+ * [SecondaryButton] below — the floor still holds a single-line label exactly as before (this
+ * padding is well inside the existing 48dp minimum for one line), and a wrapped label now keeps
+ * real clearance above and below regardless of how many lines it takes. */
 @Composable
 public fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val bg = if (enabled) OrtColors.accentGreen else OrtColors.bgChip
@@ -205,7 +216,7 @@ public fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier =
             .requiredHeightIn(min = 48.dp)
             .background(bg, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 20.dp, vertical = OrtSpacing.sm)
             .clearAndSetSemantics {
                 contentDescription = text
                 // R-380 correction (WP2, gate-blocking) — see [TextAction]'s own doc comment.
@@ -228,7 +239,8 @@ public fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier =
 
 /** guide §6.7: the outlined companion to [PrimaryButton] — 44dp, `line/chip` border. R-380: see
  * [PrimaryButton]'s own doc comment — the identical fix. R-510-class: see [TextAction]'s own doc
- * comment — the identical fix. */
+ * comment — the identical fix. R-1065: see [PrimaryButton]'s own doc comment — the identical
+ * symmetric vertical padding fix, for the same wrapped-label defect. */
 @Composable
 public fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val fg = if (enabled) OrtColors.textBody else OrtColors.textDisabled
@@ -237,7 +249,7 @@ public fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier
             .requiredHeightIn(min = 44.dp)
             .border(1.dp, OrtColors.lineChip, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 20.dp, vertical = OrtSpacing.sm)
             .clearAndSetSemantics {
                 contentDescription = text
                 // R-380 correction (WP2, gate-blocking) — see [TextAction]'s own doc comment.
