@@ -182,9 +182,15 @@ public object FailureMapper {
      * fabricated). The two options are the two real actions available today: wait (the default —
      * [staged]'s own [StagedActivation.reason]), or activate now — safe to offer unconditionally
      * since [ModelsController.activateStaged] itself refuses, with no effect, while a session is
-     * still live (`FailureHost`'s own `onActivateStagedAsset` wiring calls it directly). */
+     * still live (`FailureHost`'s own `onActivateStagedAsset` wiring calls it directly).
+     *
+     * Register R-1057 (polish): [AssetSwapViewState.kind]/[AssetSwapViewState.assetLabel] are the
+     * real asset kind and its own label — `FailAssetSwapScreen` keys its "LEXICON" section heading
+     * and its "replacing X under a live capture" warning to these, never hardcoded to the lexicon.
+     */
     private fun assetSwapViewState(staged: StagedActivation, activeLabel: String?): AssetSwapViewState {
-        val assetName = if (staged.assetId == ModelsController.CALLSIGN_LEXICON_ASSET_ID) {
+        val isLexicon = staged.assetId == ModelsController.CALLSIGN_LEXICON_ASSET_ID
+        val assetName = if (isLexicon) {
             "callsign lexicon"
         } else {
             ModelId.entries.firstOrNull { it.name == staged.assetId }?.label ?: staged.assetId
@@ -201,6 +207,8 @@ public object FailureMapper {
                 ),
             ),
             selectedOption = 0,
+            kind = if (isLexicon) AssetSwapKind.LEXICON else AssetSwapKind.MODEL,
+            assetLabel = assetName,
         )
     }
 

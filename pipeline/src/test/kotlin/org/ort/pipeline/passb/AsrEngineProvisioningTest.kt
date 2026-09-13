@@ -1,6 +1,8 @@
 package org.ort.pipeline.passb
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -9,6 +11,9 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.ort.asrapi.DecodeOptions
 import org.ort.core.assets.ModelFileVerifier
+import org.ort.pipeline.diagnostics.DiagnosticsLog
+import org.ort.pipeline.diagnostics.ModelAssetId
+import org.ort.testing.TestClock
 import java.io.File
 import java.security.MessageDigest
 
@@ -19,6 +24,23 @@ import java.security.MessageDigest
  * silently returns text.
  */
 class AsrEngineProvisioningTest {
+
+    @AfterEach
+    fun tearDown() {
+        DiagnosticsLog.shutdown()
+    }
+
+    private fun capturePipelineLog(filesDir: File): List<String> {
+        val file = File(File(filesDir, "diagnostics-logs"), DiagnosticsLog.Category.PIPELINE.fileName)
+        return if (file.isFile) file.readLines() else emptyList()
+    }
+
+    /** Writes an unverifiable 64-byte stub at [file]'s exact path — no `.sha256`/`.size` sidecars
+     * at all, the shape R-1052's own scenario-fixture corruption takes. */
+    private fun writeCorrupt(file: File) {
+        file.parentFile?.mkdirs()
+        file.writeBytes(ByteArray(64))
+    }
 
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
@@ -153,5 +175,67 @@ class AsrEngineProvisioningTest {
         assertTrue(result is AsrEngineAvailability.Available, "expected Available, got $result")
         (result as AsrEngineAvailability.Available).engine // touch it, no exception expected
         assertFalse(closed, "close must not run just from a successful provide()")
+    }
+
+    // ---- Register R-1058 (spec): each of the three ASR files is verified independently and must
+    // log its own asset id -- never a single generic "ASR" event that hides which file failed. ---
+
+    @Test
+    fun `R_1058 a bad tokens file among two verified ones logs ASR_TOKENS, not the other two`(@TempDir tmp: File) {
+        DiagnosticsLog.configure(tmp, TestClock())
+        val dir = AsrModelLocator.modelsDir(tmp)
+        writeVerified(File(dir, "tiny.en-encoder.int8.onnx"), "encoder bytes".toByteArray())
+        writeVerified(File(dir, "tiny.en-decoder.int8.onnx"), "decoder bytes".toByteArray())
+        writeCorrupt(File(dir, "tiny.en-tokens.txt")) // no markers
+
+        RealAsrEngineProvider(tmp).provide()
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = capturePipelineLog(tmp)
+        assertEquals(1, written.size, "only the one bad file must be logged, got: $written")
+        assertTrue(written[0].contains("assetId=${ModelAssetId.ASR_TOKENS.name}"))
+        assertTrue(written[0].contains("kind=MISSING_RECORD"))
+    }
+
+    @Test
+    fun `R_1058 a bad encoder file logs ASR_ENCODER`(@TempDir tmp: File) {
+        DiagnosticsLog.configure(tmp, TestClock())
+        val dir = AsrModelLocator.modelsDir(tmp)
+        writeCorrupt(File(dir, "tiny.en-encoder.int8.onnx"))
+        writeVerified(File(dir, "tiny.en-decoder.int8.onnx"), "decoder bytes".toByteArray())
+        writeVerified(File(dir, "tiny.en-tokens.txt"), "tokens bytes".toByteArray())
+
+        RealAsrEngineProvider(tmp).provide()
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = capturePipelineLog(tmp)
+        assertEquals(1, written.size)
+        assertTrue(written[0].contains("assetId=${ModelAssetId.ASR_ENCODER.name}"))
+    }
+
+    @Test
+    fun `R_1058 three genuinely verified files log no verification failure`(@TempDir tmp: File) {
+        DiagnosticsLog.configure(tmp, TestClock())
+        val dir = AsrModelLocator.modelsDir(tmp)
+        val encoder = File(dir, "tiny.en-encoder.int8.onnx")
+        val decoder = File(dir, "tiny.en-decoder.int8.onnx")
+        val tokens = File(dir, "tiny.en-tokens.txt")
+        writeVerified(encoder, "encoder bytes".toByteArray())
+        writeVerified(decoder, "decoder bytes".toByteArray())
+        writeVerified(tokens, "tokens bytes".toByteArray())
+        val fakeDecoder = org.ort.asrsherpa.SherpaDecoder { _, _ ->
+            org.ort.asrsherpa.DecodedHypothesis(
+                text = "fake",
+                nBest = emptyList(),
+                noSpeechProb = null,
+                avgLogProb = null,
+                tokens = emptyList(),
+            )
+        }
+
+        RealAsrEngineProvider(tmp) { files -> fakeDecoder to AutoCloseable {} }.provide()
+        runBlocking { DiagnosticsLog.flush() }
+
+        assertTrue(capturePipelineLog(tmp).isEmpty())
     }
 }

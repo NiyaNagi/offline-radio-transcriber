@@ -82,6 +82,8 @@ public object DebugDumpBuilder {
 
         for (vadStats in vadStatsLines(context)) lines += vadStats.toString()
 
+        for (failure in modelVerificationFailureLines(context)) lines += failure.toString()
+
         lines.joinToString("\n").toByteArray(Charsets.UTF_8)
     }
 
@@ -259,5 +261,28 @@ public object DebugDumpBuilder {
         // (a line this build itself never writes without the field), never fabricated as a guess.
         put("vadDetector", f["vadDetector"] ?: JSONObject.NULL)
         put("rigSquelchFusionApplied", f["rigSquelchFusionApplied"]?.toBooleanStrictOrNull() ?: JSONObject.NULL)
+    }
+
+    /**
+     * R-1058: every [DiagnosticsLog.logModelVerificationFailed] line still held in `pipeline.log`
+     * (and its one `.1` rotation generation) — parsed back exactly like [vadStatsLines] reads
+     * `capture.log`, never re-derived from in-memory state (this process may not even be the one
+     * that logged it — a debug dump can run long after the launch that refused the model).
+     */
+    private fun modelVerificationFailureLines(context: Context): List<JSONObject> {
+        val dir = DiagnosticsLogPaths.logDir(context)
+        val fileName = DiagnosticsLog.Category.PIPELINE.fileName
+        val rawLines = listOf(File(dir, "$fileName.1"), File(dir, fileName))
+            .filter { it.isFile }
+            .flatMap { it.readLines() }
+        return rawLines.mapNotNull(::parseLogLine)
+            .filter { it.event == DiagnosticsLog.EVENT_MODEL_VERIFICATION_FAILED }
+            .map { parsed ->
+                JSONObject().apply {
+                    put("type", "model_verification_failed")
+                    put("assetId", parsed.fields["assetId"] ?: JSONObject.NULL)
+                    put("kind", parsed.fields["kind"] ?: JSONObject.NULL)
+                }
+            }
     }
 }

@@ -10,6 +10,7 @@ import org.ort.asrapi.rules.RejectionRuleId
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.PassId
 import org.ort.core.Tier
+import org.ort.core.assets.ModelVerificationFailureKind
 import org.ort.core.capture.VadDetectorKind
 import org.ort.data.entity.TerminationReason
 import org.ort.segment.SegmentCloseReason
@@ -207,6 +208,54 @@ class DiagnosticsLogTest {
         assertTrue(written[2].contains("from=T0") && written[2].contains("to=T1"))
         assertWellFormedLine(written[3], "safe_pass_failure")
         assertTrue(written[3].contains("errorClass=IllegalStateException"))
+    }
+
+    @Test
+    @Requirement("R-1058")
+    fun `R_1058 a model verification failure logs the closed asset id and kind, once per launch`() {
+        val filesDir = tempFilesDir()
+        DiagnosticsLog.configure(filesDir, TestClock())
+
+        DiagnosticsLog.logModelVerificationFailed(ModelAssetId.VAD, ModelVerificationFailureKind.HASH_MISMATCH)
+        DiagnosticsLog.logModelVerificationFailed(ModelAssetId.VAD, ModelVerificationFailureKind.HASH_MISMATCH)
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = lines(filesDir, DiagnosticsLog.Category.PIPELINE)
+        assertEquals("a second call for the same asset this launch must not log again", 1, written.size)
+        assertWellFormedLine(written[0], "model_verification_failed")
+        assertTrue(written[0].contains("assetId=VAD"))
+        assertTrue(written[0].contains("kind=HASH_MISMATCH"))
+    }
+
+    @Test
+    @Requirement("R-1058")
+    fun `R_1058 different assets each log their own event in the same launch`() {
+        val filesDir = tempFilesDir()
+        DiagnosticsLog.configure(filesDir, TestClock())
+
+        DiagnosticsLog.logModelVerificationFailed(ModelAssetId.ASR_ENCODER, ModelVerificationFailureKind.MISSING_FILE)
+        DiagnosticsLog.logModelVerificationFailed(ModelAssetId.ASR_DECODER, ModelVerificationFailureKind.SIZE_MISMATCH)
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = lines(filesDir, DiagnosticsLog.Category.PIPELINE)
+        assertEquals(2, written.size)
+        assertTrue(written[0].contains("assetId=ASR_ENCODER") && written[0].contains("kind=MISSING_FILE"))
+        assertTrue(written[1].contains("assetId=ASR_DECODER") && written[1].contains("kind=SIZE_MISMATCH"))
+    }
+
+    @Test
+    @Requirement("R-1058")
+    fun `R_1058 a new configure (a new launch) resets the once-per-launch dedupe`() {
+        val filesDir = tempFilesDir()
+        DiagnosticsLog.configure(filesDir, TestClock())
+        DiagnosticsLog.logModelVerificationFailed(ModelAssetId.LLM, ModelVerificationFailureKind.MISSING_FILE)
+        runBlocking { DiagnosticsLog.flush() }
+
+        DiagnosticsLog.configure(filesDir, TestClock())
+        DiagnosticsLog.logModelVerificationFailed(ModelAssetId.LLM, ModelVerificationFailureKind.MISSING_FILE)
+        runBlocking { DiagnosticsLog.flush() }
+
+        assertEquals(2, lines(filesDir, DiagnosticsLog.Category.PIPELINE).size)
     }
 
     @Test

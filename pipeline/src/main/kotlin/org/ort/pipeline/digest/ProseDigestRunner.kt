@@ -11,6 +11,8 @@ import org.ort.core.assets.ModelFileVerifier
 import org.ort.core.assets.ModelVerification
 import org.ort.data.OrtDatabase
 import org.ort.llm.mediapipe.MediaPipeLlmEngine
+import org.ort.pipeline.diagnostics.DiagnosticsLog
+import org.ort.pipeline.diagnostics.ModelAssetId
 import java.time.Duration
 
 /**
@@ -55,7 +57,11 @@ public class ProseDigestRunner(context: Context, params: WorkerParameters) : Cor
             // wrapped only in `catch (e: Exception)`, which cannot stop a native abort any more
             // than RealVadProvider's/RealAsrEngineProvider's Kotlin catches could) without first
             // checking the file against its verified-install record.
-            if (ModelFileVerifier.verify(modelFile) is ModelVerification.Failed) {
+            val verification = ModelFileVerifier.verify(modelFile)
+            if (verification is ModelVerification.Failed) {
+                // R-1058: logged before returning, once per launch — see
+                // DiagnosticsLog.logModelVerificationFailed's own kdoc.
+                DiagnosticsLog.logModelVerificationFailed(ModelAssetId.LLM, verification.kind)
                 return Result.failure()
             }
 
