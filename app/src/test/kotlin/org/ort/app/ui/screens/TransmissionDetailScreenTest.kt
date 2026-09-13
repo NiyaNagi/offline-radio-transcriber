@@ -621,8 +621,11 @@ class TransmissionDetailScreenTest {
         composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
     }
 
+    // Coordinator review (halt): NeverRetained is never constructed by the real mapper today (see
+    // AudioAbsenceReason's own kdoc) — this only proves the screen still renders it correctly
+    // structurally, for the one future case a genuine explicit record could produce it.
     @Test
-    fun `AudioAbsenceReason NeverRetained reads as never retained, never a guessed removal`() {
+    fun `AudioAbsenceReason NeverRetained, if ever constructed, renders its own real sentence`() {
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(

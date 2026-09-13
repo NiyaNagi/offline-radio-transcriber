@@ -212,24 +212,32 @@ public data class RejectedViewState(val reason: String?)
  * rendered the single generic sentence "Audio deleted by retention" for both a genuine operator
  * deletion and a segment that plainly never had audio to begin with, and never carried a date.
  *
- * **Only two causes this codebase can actually produce today, and this type says exactly why.**
+ * **Only one cause this codebase can actually produce today, and this type says exactly why.**
  * [RemovedByOperator] mirrors [org.ort.data.entity.SessionEntity.overAudioRemovedAtMillis] — the
  * one real signal [org.ort.pipeline.archive.SessionAudioDeletionService] writes when the operator
  * runs `Recording-Session.dc.html`'s (RC02) Delete action against `audio/<sessionId>/`, the exact
- * directory [TransmissionDetail.hasAudio] checks. [PrunedByRetentionBudget] is modelled for a
- * *future* automatic over-audio retention mechanism and is never constructed by
- * [AudioAbsenceReasonMapper] against today's real data: [org.ort.pipeline.capture
- * .OverAudioBudgetState]'s own doc comment states plainly that reaching the over-audio budget
- * "only ever warns" and D40/register R-1037 forbid deleting over audio by any automatic means, and
- * [org.ort.pipeline.archive.ArchivePruner]'s own doc comment confirms its automatic pruning "never
- * touches `audio/<sessionId>`" — `SessionEntity.archiveRemovedAtMillis` governs a wholly separate
- * directory (the continuous re-segmentation archive) this screen's own playback never reads, so it
- * is deliberately never consulted here; wiring it in would be exactly the guess constitution I
- * forbids. [NeverRetained] is the honest default — no removal was ever recorded, so the segment's
- * audio was never captured or persisted in the first place (e.g. a rejected segment, or a build
- * predating audio retention). [Unknown] is for the one case this mapper cannot honestly resolve
- * either way — the owning session's own record could not be read at all — and must never be
- * silently folded into [NeverRetained], which is itself a claim, not a fallback for ignorance.
+ * directory [TransmissionDetail.hasAudio] checks. [PrunedByRetentionBudget] and [NeverRetained] are
+ * both modelled for a *future* explicit record and are never constructed by
+ * [AudioAbsenceReasonMapper] against today's real data — every other case reads [Unknown].
+ *
+ * **Register (coordinator review, halt): [NeverRetained] used to be this mapper's own fallback —
+ * "no removal was recorded, so the audio must never have existed."** That is an inference, not a
+ * fact, and constitution I forbids stating an unrecorded cause: [org.ort.core.TransmissionState
+ * .CAPTURED]'s own doc comment ("Audio on disk, queued, no passes run. Entered on VAD close.")
+ * establishes that **every** transmission row is created only after its audio is already written —
+ * a `REJECTED` segment keeps its audio exactly the same way (confirmed directly:
+ * `TransmissionDetailContentTest`'s own R-242 case plays a rejected segment's retained audio), and
+ * no `:data` table records a session ever having audio retention turned off (no such setting exists
+ * — AGENTS.md's own "Audio is retained losslessly" bullet). So a real transmission whose audio is
+ * missing and whose session recorded no removal is indistinguishable, from this mapper's own data,
+ * between an unrecorded automatic prune, a lost/corrupted file, or a build that predates a column
+ * this schema does not have yet — [PrunedByRetentionBudget]'s own case for exactly this reasoning,
+ * generalised. [NeverRetained] is kept only for a genuine future explicit record (e.g. a session-
+ * level "retention was off" flag, if one is ever added) — the same "modelled, never guessed" shape
+ * [PrunedByRetentionBudget] already has. [Unknown] is now what every unrecorded absence reads as,
+ * whether the cause is "the session could not be read at all" or "the session was read and simply
+ * never recorded a removal" — both are the identical honest admission, never silently upgraded to
+ * a claim this mapper cannot back.
  */
 public sealed interface AudioAbsenceReason {
     public data class RemovedByOperator(val dateLabel: String) : AudioAbsenceReason
@@ -252,14 +260,14 @@ public object AudioAbsenceReasonMapper {
     /**
      * Pure (no `Context`, no I/O — the caller, [org.ort.app.ui.data.CorrectionPolling
      * .audioAbsenceReason], does the one real `:data` read this needs). `null` exactly when
-     * [hasAudio] is `true` — nothing to explain. [sessionKnown] is `false` only when the owning
-     * session's own row could not be read at all, distinct from a session that was read and simply
-     * carries no removal timestamp — see this type's own kdoc for why that distinction matters
-     * (never guess [AudioAbsenceReason.NeverRetained] for a session this mapper never actually saw).
-     * [prunedByRetentionBudgetAtMillis] defaults to `null` and is never set by any real caller today
-     * — see this type's own kdoc for why no such automatic over-audio pruning exists in this
-     * codebase; the parameter exists only so a future, genuine signal has somewhere honest to land
-     * without a second mapper.
+     * [hasAudio] is `true` — nothing to explain. [sessionKnown] `false` (the owning session's own
+     * row could not be read at all) and a session that *was* read but simply carries no removal
+     * timestamp both read [AudioAbsenceReason.Unknown] — see this type's own kdoc (the coordinator
+     * review) for why neither is ever [AudioAbsenceReason.NeverRetained], which this function never
+     * constructs. [prunedByRetentionBudgetAtMillis] defaults to `null` and is never set by any real
+     * caller today — see this type's own kdoc for why no such automatic over-audio pruning exists in
+     * this codebase; the parameter exists only so a future, genuine signal has somewhere honest to
+     * land without a second mapper.
      */
     public fun from(
         hasAudio: Boolean,
@@ -274,7 +282,10 @@ public object AudioAbsenceReasonMapper {
                 AudioAbsenceReason.RemovedByOperator(dateLabel(overAudioRemovedAtMillis))
             prunedByRetentionBudgetAtMillis != null ->
                 AudioAbsenceReason.PrunedByRetentionBudget(dateLabel(prunedByRetentionBudgetAtMillis))
-            else -> AudioAbsenceReason.NeverRetained
+            // Coordinator review (halt): no explicit record backs "never retained" anywhere in this
+            // schema (see this type's own kdoc) — an unrecorded absence is honestly Unknown, never a
+            // guessed claim.
+            else -> AudioAbsenceReason.Unknown
         }
     }
 }

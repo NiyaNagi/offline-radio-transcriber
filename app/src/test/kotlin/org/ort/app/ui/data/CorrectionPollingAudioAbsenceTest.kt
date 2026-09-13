@@ -84,7 +84,7 @@ class CorrectionPollingAudioAbsenceTest {
      * playback never reads.
      */
     @Test
-    fun `an archived-and-pruned session with no operator removal reads as NeverRetained`(): Unit = runTest {
+    fun `an archived-and-pruned session with no operator removal reads as Unknown`(): Unit = runTest {
         val archivePrunedAt = java.time.LocalDate.of(2026, 8, 1)
             .atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
         db.sessionDao().insert(
@@ -93,16 +93,18 @@ class CorrectionPollingAudioAbsenceTest {
 
         val reason = CorrectionPolling.audioAbsenceReason(context, sessionId = "S1", hasAudio = false)
 
-        assertEquals(AudioAbsenceReason.NeverRetained, reason)
+        assertEquals(AudioAbsenceReason.Unknown, reason)
     }
 
     @Test
-    fun `a session that was never touched at all reads as NeverRetained`(): Unit = runTest {
+    fun `a session that was never touched at all reads as Unknown, never a guessed NeverRetained`(): Unit = runTest {
+        // Coordinator review (halt): no explicit record backs "never retained" (see
+        // AudioAbsenceReason's own kdoc) — a session with no removal recorded is honestly Unknown.
         db.sessionDao().insert(session("S1"))
 
         val reason = CorrectionPolling.audioAbsenceReason(context, sessionId = "S1", hasAudio = false)
 
-        assertEquals(AudioAbsenceReason.NeverRetained, reason)
+        assertEquals(AudioAbsenceReason.Unknown, reason)
     }
 
     @Test

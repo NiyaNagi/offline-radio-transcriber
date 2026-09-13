@@ -6,9 +6,11 @@ import org.junit.Test
 /**
  * This task (constitution I, III): [AudioAbsenceReasonMapper.from]'s pure decision — no `Context`,
  * no I/O — see [AudioAbsenceReason]'s own kdoc for why [AudioAbsenceReason.PrunedByRetentionBudget]
- * is a real, modelled case that this mapper is never handed a real signal to construct today
- * (D40/register R-1037 forbid any automatic over-audio deletion), and why a session that could not
- * be read reads as [AudioAbsenceReason.Unknown], never a guessed [AudioAbsenceReason.NeverRetained].
+ * and [AudioAbsenceReason.NeverRetained] are both real, modelled cases this mapper is never handed a
+ * real signal to construct today (D40/register R-1037 forbid any automatic over-audio deletion, and
+ * no `:data` table ever records "this over's audio was, by design, never kept" — see that type's
+ * own kdoc, "coordinator review", for the full account) — both a session that could not be read at
+ * all and one that was read but simply recorded no removal read [AudioAbsenceReason.Unknown].
  */
 class AudioAbsenceReasonMapperTest {
 
@@ -37,18 +39,21 @@ class AudioAbsenceReasonMapperTest {
     }
 
     @Test
-    fun `no removal timestamp at all reads as NeverRetained, never a guessed removal`() {
+    fun `a session that recorded no removal at all reads as Unknown, never a guessed NeverRetained`() {
+        // Coordinator review (halt): no explicit `:data` record backs "never retained" — an
+        // unrecorded absence is honestly Unknown, indistinguishable here from an unrecorded
+        // automatic prune, a lost file, or a build predating a column this schema does not have.
         val reason = AudioAbsenceReasonMapper.from(
             hasAudio = false,
             sessionKnown = true,
             overAudioRemovedAtMillis = null,
         )
 
-        assertEquals(AudioAbsenceReason.NeverRetained, reason)
+        assertEquals(AudioAbsenceReason.Unknown, reason)
     }
 
     @Test
-    fun `a session that could not be read reads as Unknown, never NeverRetained`() {
+    fun `a session that could not be read at all also reads as Unknown, the identical honest admission`() {
         val reason = AudioAbsenceReasonMapper.from(
             hasAudio = false,
             sessionKnown = false,
@@ -56,6 +61,23 @@ class AudioAbsenceReasonMapperTest {
         )
 
         assertEquals(AudioAbsenceReason.Unknown, reason)
+    }
+
+    @Test
+    fun `NeverRetained is never constructed by this mapper against any input`() {
+        // The sealed case is kept only for a genuine future explicit record (this type's own kdoc)
+        // — every combination this mapper can actually be called with today must avoid it.
+        val everyRealCombination = listOf(
+            AudioAbsenceReasonMapper.from(hasAudio = false, sessionKnown = true, overAudioRemovedAtMillis = null),
+            AudioAbsenceReasonMapper.from(hasAudio = false, sessionKnown = false, overAudioRemovedAtMillis = null),
+            AudioAbsenceReasonMapper.from(
+                hasAudio = false,
+                sessionKnown = true,
+                overAudioRemovedAtMillis = epochMillisFor(2026, 8, 8),
+            ),
+        )
+
+        assertEquals(false, everyRealCombination.any { it is AudioAbsenceReason.NeverRetained })
     }
 
     @Test

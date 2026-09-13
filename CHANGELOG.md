@@ -32,7 +32,50 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-13 (WPINIT: R-1051 gives Log/Now/Capture status/Live monitor a real loading state distinct from empty, R-1022 replaces the tour's own text-matched placeholder check with a structural marker, the transmission detail screen names the real, structured cause of a missing over's own audio instead of guessing one, and R-1055 makes a curated Log filter reach across every session instead of just the live one)
+## 2026-09-13 (WPINIT round 2, coordinator review before merge: `NeverRetained` was itself an unrecorded guess — replaced with `Unknown`; fresh, single-AVD device evidence for Parts A/B/C and R-1055)
+
+### WPINIT: coordinator review — `NeverRetained` was never backed by an explicit record; it now reads `Unknown`
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt`;
+`app/src/test/kotlin/org/ort/app/ui/data/AudioAbsenceReasonMapperTest.kt`,
+`CorrectionPollingAudioAbsenceTest.kt`; `app/src/test/kotlin/org/ort/app/ui/screens/
+TransmissionDetailScreenTest.kt`, `TransmissionDetailContentTest.kt`.
+
+**Requirements/ACs:** constitution I (never state an unrecorded cause). No register/spec id —
+raised directly by the coordinator's own review of the prior WPINIT commit (`2ed58ba7`).
+
+**What changed:** the coordinator asked for the exact `file:line` this mapper's `NeverRetained`
+case was derived from. There isn't one. `AudioAbsenceReasonMapper.from`'s fallback branch (the
+one case reached when a session row exists, `overAudioRemovedAtMillis` is null, and audio is
+absent) previously returned `AudioAbsenceReason.NeverRetained` — but that is inferred purely from
+"the file is missing and no removal was recorded", never from an explicit field. Every
+transmission row in this schema is created only after its audio already exists on disk
+(`TransmissionState.CAPTURED`'s own doc comment: "Audio on disk, queued, no passes run. Entered on
+VAD close."), and `TransmissionDetailContentTest`'s own R-242 case proves a rejected segment still
+retains its audio — so there is no code path today, and no schema field, that ever means "this
+over's audio was deliberately never kept". Audio pruned by an older build, a lost file, or any
+future unmodelled cause would render the identical, now-disproven sentence. Fixed: the fallback
+now returns `AudioAbsenceReason.Unknown` — "No retained audio for this transmission. The reason is
+not recorded." `PrunedByRetentionBudget` is unaffected (still real-record-backed, still
+unreachable against today's data — see `2ed58ba7`'s own entry). `NeverRetained` itself is left in
+the sealed type, now documented as unconstructed by this mapper against any input today, kept only
+for a genuine future explicit record (e.g. a rejected-too-short state that by design keeps no
+audio, if one is ever added) rather than deleted and re-added later.
+
+**Verified:** discriminating — reverted the fallback to `NeverRetained`, re-ran
+`AudioAbsenceReasonMapperTest` and `CorrectionPollingAudioAbsenceTest`: both renamed tests failed
+for the right reason (`expected:<Unknown> but was:<NeverRetained>`); restored, green again.
+`.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.AudioAbsenceReasonMapperTest"
+--tests "org.ort.app.ui.data.CorrectionPollingAudioAbsenceTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` and `:app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.screens.TransmissionDetailContentTest"` — all green (7 + 4-updated
+`AudioAbsenceReasonMapperTest` cases including a new `NeverRetained is never constructed by this
+mapper against any input` sweep over real input combinations). `ktlintCheck`/`detekt` clean.
+
+**Left open / not done:** no device screenshot of the "session row missing entirely" `Unknown`
+sub-case exists from this dedicated AVD (`ort_audit_wpinit`) — see the R-1055/evidence commit's
+own entry below for why, and `CorrectionPollingAudioAbsenceTest`'s `a session id with no matching
+row at all reads as Unknown` for the real-`OrtDatabase`-backed proof of that exact path instead.
 
 ### b4a7c949 — WPINIT: R-1051 — a cold-start screen renders loading, never a false empty claim, until its first real query returns
 

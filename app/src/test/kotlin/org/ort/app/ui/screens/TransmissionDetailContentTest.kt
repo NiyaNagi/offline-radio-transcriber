@@ -886,7 +886,9 @@ class TransmissionDetailContentTest {
     }
 
     @Test
-    fun `a session whose over audio was never touched reads never retained, through the real read path`() {
+    fun `a session whose over audio was never touched reads Unknown, through the real read path`() {
+        // Coordinator review (halt): no explicit record backs "never retained" — a session with no
+        // removal recorded reads the honest Unknown sentence, never a guessed claim.
         runBlocking {
             db.sessionDao().insert(session())
             db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
@@ -904,8 +906,9 @@ class TransmissionDetailContentTest {
             }
         }
 
-        composeTestRule.waitUntilTextExists("Audio was never retained for this over.")
+        composeTestRule.waitUntilTextExists("No retained audio for this transmission. The reason is not recorded.")
         composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("never retained", substring = true).assertDoesNotExist()
     }
 
     /**
@@ -916,7 +919,7 @@ class TransmissionDetailContentTest {
      * same real fact holds true through the whole composable, not merely the function it calls.
      */
     @Test
-    fun `a pruned-archive session with no operator removal still reads never retained, never pruned by the budget`() {
+    fun `a pruned-archive session with no operator removal still reads Unknown, never pruned by the budget`() {
         val archivePrunedAt = java.time.LocalDate.of(2026, 8, 1)
             .atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
         runBlocking {
@@ -938,7 +941,7 @@ class TransmissionDetailContentTest {
             }
         }
 
-        composeTestRule.waitUntilTextExists("Audio was never retained for this over.")
+        composeTestRule.waitUntilTextExists("No retained audio for this transmission. The reason is not recorded.")
         composeTestRule.onNodeWithText("Pruned by the retention budget", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
     }
