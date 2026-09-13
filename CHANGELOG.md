@@ -32,6 +32,138 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
+
+### 3e7cbf5f — WPTESTROBUST: R-1043 - NavSeedTest's searchFiltersOpen now waits for the tag instead of asserting immediately, and SettingsContentTest's fixed waitUntil(5_000) calls use a shared, generous timeout constant
+
+**Scope:** `app/src/test/kotlin/org/ort/app/testing/OrtComposeTestRule.kt` (new shared constant only);
+`app/src/test/kotlin/org/ort/app/ui/navigation/NavSeedTest.kt`;
+`app/src/test/kotlin/org/ort/app/ui/settings/SettingsContentTest.kt`.
+
+**Requirements/ACs:** R-1043 (register, recurring under a loaded full gate), constitution II
+(assertions must not depend on timing that only holds on an idle machine).
+
+**What changed.**
+- **`ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS` (15,000ms)**, a new shared constant in
+  `OrtComposeTestRule.kt` — the file this suite's own build.gradle.kts comment already treats as
+  the place structural Compose-test fixes for `:app` belong. Exists so a fixed `waitUntil` that
+  genuinely cannot be expressed as idling (waiting on a `LaunchedEffect`'s real async result, not on
+  a pending frame) has one named, generous ceiling to raise again later, instead of a scattered
+  literal `5_000` nobody remembers to bump together.
+- **`SettingsContentTest`'s `AC_144` test**: its own `waitUntilTextExists` helper's default
+  (`5_000`) and its two explicit `waitUntil(5_000)` calls (waiting for the field-report consent
+  screen's toggle to render) now use the shared constant. `AC_144` polls for the field-report
+  bundle preview and destination to load (`FieldReportHost`'s own `LaunchedEffect`) before the
+  toggle can render — real async work a fixed 5s ceiling can trip on a loaded machine even though
+  the work itself always finishes; raising the ceiling, not weakening what is asserted, is the
+  correct fix per this file's own working agreement (never loosen an assertion; only what is
+  waited for should change).
+- **`NavSeedTest`'s `searchFiltersOpen` test** asserted `search-filters-sheet` exists immediately
+  after `setContent`, the one case in this file not built on its own `waitUntil...Exists` pattern
+  every other case already uses. Added a `waitUntilTagExists` helper (mirroring the file's existing
+  `waitUntilContentDescriptionExists`/`waitUntilTextExists`) and used it before the assertion.
+
+**Verified.**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.settings.SettingsContentTest"` — green
+  (0 failures), all 8 tests in the class including `AC_144`.
+- `./gradlew :app:smokeTestDebugUnitTest --tests "org.ort.app.ui.navigation.NavSeedTest"` — green
+  (`NavSeedTest` is one of this module's own isolated-JVM classes, `composeIdlePoisoningSmokeTestDebugUnitTest`
+  in `app/build.gradle.kts`; it is excluded from plain `testDebugUnitTest`, so use this task for it).
+- Load rate for `NavSeedTest`, same command with `:pipeline:testDebugUnitTest` racing it in one
+  `--parallel` Gradle invocation: **6/6 clean** after the fix (not reproduced flaky at this load
+  either before or after — the register's report of failure under a full gate implies a higher
+  concurrency than one extra module's tests provide; fixed on inspection per the working agreement's
+  own instruction for `searchFiltersOpen` — it is the one test in the file with no wait at all
+  before its assertion, an unambiguous gap regardless of whether this session's own load reproduced
+  the timeout).
+
+**Left open / not done:** `CaptureStatusContentTest`'s `R_232` NPE
+(`ActivityController.windowFocusChanged`) was not reproduced — 8/8 clean alone via its own
+`smokeTestDebugUnitTest` task, and 6/6 clean racing a full `:pipeline:testDebugUnitTest` in one
+`--parallel` invocation (the same load used for R-1053's own after-figures). Not fixed: no
+discriminating failure to fix against, and the register's own account (NPE inside a Robolectric-
+internal `ActivityController` method, no application frame) suggests a Robolectric-side scenario/
+focus race under heavier concurrency than reproduced here. Every other fixed `waitUntil(` site in
+`app/src/test/**` was surveyed (grep, reported in full in this session's own report) and left
+unchanged — no other file in the survey showed the specific symptom this round was asked to close,
+and this round's own file ownership does not extend to speculative changes across the whole suite.
+
+### 5bb93147 — WPTESTROBUST: R-1053 - every async page-load in SettingsContent.kt defers its state write to a freshly entered Dispatchers.Main.immediate, closing the CalledFromWrongThreadException that was blocking the Release workflow
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsContent.kt` (the dispatcher seam and
+every `LaunchedEffect`/SAF-launcher state write in this file only); `app/src/test/kotlin/org/ort/app/ui/settings/SettingsContentExportAndDebugDumpTest.kt`.
+
+**Requirements/ACs:** R-1053 (register, recurring — CI run 34738522611, a builder's branch, the
+lead's full gate, and Release run 34762090241 on `71636cb0`, which blocked `latest-build`'s
+republish), constitution II (a test must be shown to discriminate; a number without its
+before/after rate and load is not evidence).
+
+**What changed.**
+- **Root cause, proved by instrumentation, not guessed.** `SettingsContentExportAndDebugDumpTest`'s
+  `WPDUMP Save…` test failed intermittently with
+  `android.view.ViewRootImpl$CalledFromWrongThreadException` (`Calling: DefaultDispatcher-worker-N`),
+  stack rooted entirely in `TestMonotonicFrameClock`/`Recomposer` machinery, no application frame.
+  Thread-name prints added at every async load in this file (removed before this commit) showed the
+  state write landing on a `Dispatchers.IO` worker thread on *every* run, pass or fail —
+  `SettingsPolling.root/.storage/.export/.diagnostics`, `LocalSaveBundleBuilder.preview/.write`,
+  `ExportCoordinator.build` and `FieldReportBundleBuilder.preview`/a real upload client's
+  `destination()` (none owned by this file) each hop through a real `Dispatchers.IO` or a Room
+  coroutine adapter with the same shape, and exiting that hop resumed the calling `LaunchedEffect`/
+  `scope.launch` on the worker thread, not this composition's own — a Robolectric/Compose-ui-test
+  interaction (`TestMonotonicFrameClock` processes a pending frame inline, on whatever thread
+  unblocked it) rather than a production bug: on a device the `Recomposer`'s frame clock is always
+  posted through `Choreographer` to the main thread regardless of which thread wrote the state.
+  Whether that misplaced write actually crashed the test (rather than landing harmlessly) depended
+  on finer timing, which is why the failure was intermittent rather than constant.
+- **The fix**: every one of those state writes in `SettingsContent.kt` now happens inside a freshly
+  *entered* `withContext(Dispatchers.Main.immediate)`, never relying on whichever thread the
+  preceding suspend call happened to exit on. *Entering* a dispatcher always genuinely dispatches
+  when the calling thread is not already the target; only *exiting* back to a suspended caller can
+  resume in place, which is the failure mode above. `Dispatchers.Main.immediate` is a true no-op in
+  production — the coroutine is already on the composition's own dispatcher by the time any of
+  these writes would otherwise run, so `.immediate` never actually redispatches there; production
+  behaviour (IO work off the main thread) is unchanged.
+- **A first attempt (kept, but not what closes this) added `LocalSettingsSaveIoDispatcher`**, a
+  `CompositionLocal` seam (default `Dispatchers.IO`) around the two SAF launchers' own `withContext`
+  calls, overridden to `Dispatchers.Unconfined` in the test. Proved insufficient by the same
+  instrumentation — `ExportCoordinator.build`/`LocalSaveBundleBuilder.write`/`.preview` already wrap
+  *themselves* in a real `withContext(Dispatchers.IO)` one call deeper than this seam reaches, so
+  overriding it alone still failed 9/20. Kept for the one real, if harmless, thread hop it does
+  remove from this file's own test runs, and because a future refactor that inlines that I/O here
+  would need exactly this seam; its doc comment in `SettingsContent.kt` states plainly that it does
+  not by itself close R-1053, so a future editor does not repeat the same 9/20 experiment.
+- The two SAF-launcher tests in `SettingsContentExportAndDebugDumpTest` now provide
+  `Dispatchers.Unconfined` via that local and call `composeTestRule.waitForIdle()` after the click —
+  the same idiom already established across this suite (`SettingsExportScreenTest`,
+  `SettingsCaptureScreenTest`, and a dozen more) for letting a launched coroutine settle before the
+  next assertion.
+
+**Verified.**
+- Reproduced on this session's own base commit (`9bb47d90`, before any change here), no load beyond
+  the JVM's own test-class execution: **6 failures in 15 runs, then 1 in 8 more (7/23 ≈ 30%)** of
+  `:app:testDebugUnitTest --tests SettingsContentExportAndDebugDumpTest --rerun`, every failure the
+  identical `CalledFromWrongThreadException` on a `DefaultDispatcher-worker-N` thread.
+- After this change, same command, same machine: **24/25 clean runs alone** (the one remaining
+  failure showed a *different*, secondary symptom — a `SlotTable` `ArrayIndexOutOfBoundsException`
+  racing `ActivityScenario` teardown, only reachable once the primary wrong-thread write this commit
+  targets no longer fires on nearly every run; left open below) — **and 15/15 clean runs racing a
+  full `:pipeline:testDebugUnitTest` in the same `--parallel` Gradle invocation** (the load the
+  coordinator asked for).
+- `./gradlew dependencyRules platformGuards build` twice in a row: reported separately once complete
+  (this entry is filed the moment the fix is proven, per the coordinator's instruction to report as
+  soon as it is proven rather than wait for R-1043 too).
+
+**Left open / not done:** the 1/25 residual above is a *different* failure signature (composition
+disposal racing a still-in-flight coroutine at test teardown, not the wrong-thread write this commit
+closes) — `waitForIdle()` does not track a coroutine parked in real background I/O (the same caveat
+`SearchContentTest.kt`'s own comments already document for `SearchPolling.facetCounts`/`.search`),
+so a coroutine that resumes exactly as `ActivityScenarioRule.after()` begins disposing can still
+collide with it. Believed rare enough (1/25, 0/15 under load) not to block this fix, but not
+eliminated; flagged for whoever next touches this test file. R-1043 (the wait-site work) continues
+on this same branch in a following commit.
+
+---
+
 ## 2026-09-13 (WPRC02 round 3: over-row restack, refusal copy, axis spacing)
 
 ### WPRC02 round 3 — the over row at font scale 2.0, operator-facing refusal copy, honest axis spacing

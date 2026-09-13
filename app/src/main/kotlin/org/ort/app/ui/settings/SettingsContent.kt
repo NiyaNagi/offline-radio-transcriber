@@ -12,14 +12,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.ProvidableCompositionLocal
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -114,8 +117,15 @@ public fun SettingsContent(
     // store it just wrote to, and the root's sub-lines catch up the next time it is shown.
     var storeVersion by remember { mutableStateOf(0) }
     var root by remember { mutableStateOf<SettingsRootViewState?>(null) }
+    // R-1053: same fix as every other async load in this file — `SettingsPolling.root` (unowned
+    // this round) hops onto a real `Dispatchers.IO` internally, so its own exit is deferred to a
+    // freshly *entered* `Dispatchers.Main.immediate` before the state write. See
+    // [LocalSettingsSaveIoDispatcher]'s own doc comment for the full mechanism.
     LaunchedEffect(storeVersion, screen == null) {
-        if (screen == null) root = SettingsPolling.root(context, store)
+        if (screen == null) {
+            val result = SettingsPolling.root(context, store)
+            withContext(Dispatchers.Main.immediate) { root = result }
+        }
     }
 
     val current = screen
@@ -295,6 +305,54 @@ private fun SettingsModeSubScreen(
  * second edit needed here when that lands. */
 private const val SETUP_STEP_RIG_TRANSPORT: String = "RIG_TRANSPORT"
 
+/**
+ * WPTESTROBUST (R-1053): the dispatcher [SettingsExportSubScreen]'s and
+ * [SettingsDiagnosticsSubScreen]'s own SAF-write launchers hop onto via `withContext` for their
+ * real disk I/O — a seam whose production default, [Dispatchers.IO], is byte-for-byte the
+ * dispatcher both launchers hard-coded before this round; nothing about where that I/O runs in a
+ * shipped build changes. The seam exists only so a Robolectric Compose test can override it.
+ *
+ * **This local alone does not close R-1053** — read this before touching either launcher again.
+ * [org.ort.app.export.ExportCoordinator.build] and
+ * [org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder.write]/`.preview` (neither owned by
+ * this file) already wrap *themselves* in a real `withContext(Dispatchers.IO)`, so overriding only
+ * this outer local — confirmed empirically, 9 failures in 20 runs with exactly that change alone —
+ * never touches the one `withContext` boundary that actually races. It is kept anyway, both
+ * because a future refactor that inlines the real I/O here (rather than delegating to those
+ * builders) would then need exactly this seam, and because it does remove one real, if harmless,
+ * thread hop from this file's own test runs.
+ *
+ * **The failure this closes is not a production race.** On a real device the `Recomposer`'s frame
+ * clock is always driven through `Choreographer`, itself always posted to the main thread
+ * regardless of which thread signalled the state change that requested a frame. Under
+ * `androidx.compose.ui.test.junit4.ComposeContentTestRule`'s own `TestMonotonicFrameClock`,
+ * though, a pending frame runs inline, on whatever thread happens to resume the coroutine that
+ * unblocked it — and *exiting* a `withContext(Dispatchers.IO) { ... }` (this file's own, or one
+ * nested inside a builder it calls) can resume that continuation on the `Dispatchers.IO` worker
+ * thread that ran the block, rather than hopping back to the composition's own thread first. A
+ * Compose state write reached immediately afterward then requests its frame from that worker
+ * thread instead — `ViewRootImpl.checkThread` fails the moment that frame touches a real view
+ * (`CalledFromWrongThreadException`, no application frame in the stack; register R-1053).
+ *
+ * **The actual fix is at each state write's own call site, and it is not only the two launchers.**
+ * Instrumenting every async load in this file (thread-name prints at each step, since removed)
+ * showed the *same* exit-race on ordinary page-load `LaunchedEffect`s that never touch a launcher
+ * at all — `SettingsPolling.root`/`.storage`/`.export`/`.diagnostics`, `LocalSaveBundleBuilder.preview`
+ * and `FieldReportBundleBuilder.preview` each hop through a real `Dispatchers.IO` (or a Room
+ * coroutine adapter with the same shape) somewhere inside them, and the bare assignment right
+ * after the suspend call (`state = result`) was landing on that worker thread on *every* run, not
+ * rarely — confirmed prints showed it every single time, pass or fail; only whether that specific
+ * misplaced write happened to coincide with a pending frame determined whether the test actually
+ * crashed. Every such site in this file now defers its state write into a freshly *entered*
+ * `withContext(Dispatchers.Main.immediate)`, never relying on whatever thread the preceding
+ * suspend call happened to exit on. *Entering* a dispatcher always genuinely dispatches when the
+ * calling thread is not already the target — only *exiting* back to a suspended caller can instead
+ * resume in place, which is the one behaviour this local's own override cannot reach two calls
+ * deep (the reason it did not, by itself, close R-1053 — see above).
+ */
+internal val LocalSettingsSaveIoDispatcher: ProvidableCompositionLocal<CoroutineDispatcher> =
+    staticCompositionLocalOf { Dispatchers.IO }
+
 private fun openSetupAtStep(context: Context, stepName: String) {
     val intent = Intent(context, SetupActivity::class.java)
     intent.putExtra(SetupActivity.EXTRA_STEP, stepName)
@@ -377,7 +435,12 @@ private fun SettingsStorageSubScreen(
     onReviewSession: (sessionId: String) -> Unit,
 ) {
     var storageState by remember { mutableStateOf<SettingsStorageViewState?>(null) }
-    LaunchedEffect(storeVersion) { storageState = SettingsPolling.storage(context, store) }
+    // R-1053: same fix, same reason — `SettingsPolling.storage` (unowned this round) hops onto a
+    // real `Dispatchers.IO` internally.
+    LaunchedEffect(storeVersion) {
+        val result = SettingsPolling.storage(context, store)
+        withContext(Dispatchers.Main.immediate) { storageState = result }
+    }
     val state = storageState
     if (state != null) {
         SettingsStorageScreen(
@@ -418,8 +481,15 @@ private fun SettingsStorageSubScreen(
 @Composable
 private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifier: Modifier) {
     val scope = rememberCoroutineScope()
+    val ioDispatcher = LocalSettingsSaveIoDispatcher.current
     var exportState by remember { mutableStateOf<SettingsExportViewState?>(null) }
-    LaunchedEffect(Unit) { exportState = SettingsPolling.export(context) }
+    // R-1053: same fix, same reason — `SettingsPolling.export` (unowned this round) opens a real
+    // `OrtDatabase`, whose own coroutine adapter can hop off this composition's dispatcher the
+    // same way `Dispatchers.IO` does.
+    LaunchedEffect(Unit) {
+        val result = SettingsPolling.export(context)
+        withContext(Dispatchers.Main.immediate) { exportState = result }
+    }
     // Read at launch time (`onSaveFile` below) and consumed once the picker returns a URI — a plain
     // `remember`, not `rememberSaveable`: the same short "still in this composition" lifetime
     // `SettingsDiagnosticsSubScreen`'s own `saveConfirmationLabel` already relies on for its
@@ -432,17 +502,29 @@ private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifi
         val request = pendingExportRequest
         if (uri == null || request == null) return@rememberLauncherForActivityResult
         scope.launch {
-            withContext(Dispatchers.IO) {
+            withContext(ioDispatcher) {
                 val bytes = ExportCoordinator.build(context, request)
                 context.contentResolver.openOutputStream(uri)?.use { out -> out.write(bytes) }
             }
-            // R-1009: named for parity with `SettingsDiagnosticsSubScreen`'s own confirmation —
-            // `SettingsExportScreen` renders no confirmation label of its own today (outside this
-            // round's file-ownership map), but `realFileName` is still called here, on the real
-            // returned URI, so the one real fact this flow produces is computed the same honest way
-            // every sibling SAF save in this file already does — never a toast's wording asserted by
-            // a test, per this file's own working agreement.
-            realFileName(context, uri)
+            // R-1053: forced back onto the composition's own thread, explicitly — never just
+            // whatever thread happened to resume this coroutine after the hop above. See
+            // [LocalSettingsSaveIoDispatcher]'s own doc comment: `ExportCoordinator.build` (not
+            // owned by this file) already wraps itself in a real `withContext(Dispatchers.IO)`,
+            // so [ioDispatcher] above never controls the one thread hop that actually mattered.
+            // `Dispatchers.Main.immediate` is a true no-op in production (this coroutine is
+            // already on the composition's own dispatcher by the time it gets here in a real app,
+            // so `.immediate` never redispatches) — it only does real work in the one place this
+            // race lives, a Robolectric Compose test whose exit from the block above can otherwise
+            // resume on a foreign worker thread.
+            withContext(Dispatchers.Main.immediate) {
+                // R-1009: named for parity with `SettingsDiagnosticsSubScreen`'s own confirmation —
+                // `SettingsExportScreen` renders no confirmation label of its own today (outside
+                // this round's file-ownership map), but `realFileName` is still called here, on the
+                // real returned URI, so the one real fact this flow produces is computed the same
+                // honest way every sibling SAF save in this file already does — never a toast's
+                // wording asserted by a test, per this file's own working agreement.
+                realFileName(context, uri)
+            }
         }
     }
 
@@ -484,13 +566,29 @@ private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifi
 @Composable
 private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, modifier: Modifier) {
     val scope = rememberCoroutineScope()
+    val ioDispatcher = LocalSettingsSaveIoDispatcher.current
     var diagnosticsState by remember { mutableStateOf<SettingsDiagnosticsViewState?>(null) }
-    LaunchedEffect(Unit) { diagnosticsState = SettingsPolling.diagnostics(context) }
+    // R-1053: `SettingsPolling.diagnostics` (unowned this round) hops onto a real `Dispatchers.IO`
+    // internally (`DiagnosticsBundleBuilder.preview`) — confirmed by instrumenting this exact line,
+    // its own exit resumes this `LaunchedEffect` on that IO worker thread, not this composition's
+    // own, under this rule's `TestMonotonicFrameClock` (register R-1053; see
+    // [LocalSettingsSaveIoDispatcher]'s own doc comment for the full mechanism). The state write
+    // below is deferred to a freshly *entered* `Dispatchers.Main.immediate` for the same reason the
+    // `Save` launcher's own writes are.
+    LaunchedEffect(Unit) {
+        val result = SettingsPolling.diagnostics(context)
+        withContext(Dispatchers.Main.immediate) { diagnosticsState = result }
+    }
     var saveConfirmationLabel by remember { mutableStateOf<String?>(null) }
 
     var localSavePreview by remember { mutableStateOf<LocalSavePreview?>(null) }
     var localSaveSelection by remember { mutableStateOf(LocalSaveBundleSpec.defaultSelected) }
-    LaunchedEffect(Unit) { localSavePreview = LocalSaveBundleBuilder.preview(context) }
+    // R-1053: same fix, same reason — [LocalSaveBundleBuilder.preview] (not owned by this file)
+    // also hops onto a real `Dispatchers.IO` internally.
+    LaunchedEffect(Unit) {
+        val result = LocalSaveBundleBuilder.preview(context)
+        withContext(Dispatchers.Main.immediate) { localSavePreview = result }
+    }
 
     val localSaveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip"),
@@ -498,16 +596,30 @@ private fun SettingsDiagnosticsSubScreen(context: Context, onBack: () -> Unit, m
         if (uri == null) return@rememberLauncherForActivityResult
         val selection = localSaveSelection
         scope.launch {
-            withContext(Dispatchers.IO) {
+            withContext(ioDispatcher) {
                 context.contentResolver.openOutputStream(uri)?.use { out ->
                     LocalSaveBundleBuilder.write(context, out, selection)
                 }
             }
-            saveConfirmationLabel = "Saved ${realFileName(context, uri)}"
+            val confirmationLabel = "Saved ${realFileName(context, uri)}"
             // WPDUMP: re-resolve after a save so a category that just gained real data on disk
             // (e.g. a frame captured between opening this screen and tapping Save) shows its real,
             // current size/availability rather than a stale snapshot from first load.
-            localSavePreview = LocalSaveBundleBuilder.preview(context)
+            val refreshedPreview = LocalSaveBundleBuilder.preview(context)
+            // R-1053: both state writes deferred to a freshly *entered* `Dispatchers.Main.immediate`
+            // — see [LocalSettingsSaveIoDispatcher]'s own doc comment for why an *entry* into a
+            // dispatcher is safe here where the *exit* from the `withContext` calls above (and
+            // inside [LocalSaveBundleBuilder.write]/`.preview`, neither owned by this file) is not:
+            // entering always genuinely dispatches when the calling thread is not already the
+            // target, where exiting back to a suspended caller can instead resume in place, on
+            // whichever thread last ran the block, under this rule's own `TestMonotonicFrameClock`.
+            // A true no-op in production — this coroutine is already on the composition's own
+            // dispatcher by the time either state write below would otherwise have run, so
+            // `.immediate` never actually redispatches there.
+            withContext(Dispatchers.Main.immediate) {
+                saveConfirmationLabel = confirmationLabel
+                localSavePreview = refreshedPreview
+            }
         }
     }
 
@@ -605,10 +717,16 @@ private fun FieldReportHost(
     // when that is (a release build, or a debug build with no token in the environment).
     val fieldReportClient: FieldReportUploadClient? = remember { FieldReportUploadClientFactory.create() }
 
+    // R-1053: same fix, same reason — `FieldReportBundleBuilder.preview` (real file I/O) and a real
+    // upload client's own `destination()` call can each hop off this composition's dispatcher.
     LaunchedEffect(fieldReportConsentOpen, fieldReportToggles) {
         if (fieldReportConsentOpen) {
-            fieldReportPreview = FieldReportBundleBuilder.preview(context, fieldReportToggles.toCategorySet())
-            fieldReportDestination = fieldReportClient?.destination()
+            val preview = FieldReportBundleBuilder.preview(context, fieldReportToggles.toCategorySet())
+            val destination = fieldReportClient?.destination()
+            withContext(Dispatchers.Main.immediate) {
+                fieldReportPreview = preview
+                fieldReportDestination = destination
+            }
         }
     }
 
