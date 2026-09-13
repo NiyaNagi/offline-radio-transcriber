@@ -597,6 +597,56 @@ class FailureScreensTest {
         composeTestRule.onNodeWithTag("failure-asset-swap-done").assertIsDisplayed()
     }
 
+    /**
+     * Register R-1057 (polish): a staged VAD used to render under the heading "LEXICON" with a
+     * warning about "the lexicon" — this asserts on the real distinguishing structure (which
+     * heading and which warning body render), not on incidental wording, per [AssetSwapKind].
+     */
+    @Test
+    fun `R_1057 F21 a staged lexicon shows the Lexicon heading and the lexicon warning`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailAssetSwapScreen(
+                    state = AssetSwapViewState(
+                        activeLabel = "2026.08 active",
+                        stagedLabel = "2026.09 staged",
+                        options = listOf(AssetSwapOption("Wait", "the default")),
+                        selectedOption = 0,
+                        kind = AssetSwapKind.LEXICON,
+                        assetLabel = "callsign lexicon",
+                    ),
+                    onSelectOption = {},
+                    onDone = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("LEXICON").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Replacing the lexicon", substring = true).performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `R_1057 F21 a staged model shows the Model heading and names the real asset, not the lexicon`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                FailAssetSwapScreen(
+                    state = AssetSwapViewState(
+                        activeLabel = "not measured",
+                        stagedLabel = "Silero VAD 9e2449e1 · staged 12:00:00",
+                        options = listOf(AssetSwapOption("Wait", "the default")),
+                        selectedOption = 0,
+                        kind = AssetSwapKind.MODEL,
+                        assetLabel = "Silero VAD",
+                    ),
+                    onSelectOption = {},
+                    onDone = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("MODEL").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Replacing Silero VAD", substring = true).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("Replacing the lexicon", substring = true).assertDoesNotExist()
+    }
+
     @Test
     fun `F22_calibration shows the chart and the install action`() {
         composeTestRule.setContent {

@@ -78,6 +78,38 @@ capture session already does; not a new gap this change introduces, and out of t
 to fix (would mean configuring `DiagnosticsLog` app-wide, a bigger change). Device/logcat
 confirmation is combined with R-1060's below, since both need the same no-token build.
 
+### <pending> — WPMODLOG R-1057: the asset-swap board names the real staged asset, not always "the lexicon"
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureViewState.kt` (new `AssetSwapKind`,
+`AssetSwapViewState.kind`/`.assetLabel`), `FailureMapper.kt` (`assetSwapViewState` now computes and
+carries both), `FailAssetSwap.kt` (the F21 board: section heading and warning body keyed to
+`state.kind`). Tests in `FailureMapperTest.kt` and `FailureScreensTest.kt`.
+**Requirements/ACs:** register R-1057 (polish), constitution I.
+**What changed:** after staging a Silero VAD from a file during a live session, F21's board read
+"Installed, not yet active" under the section heading **LEXICON** with a warning about "replacing
+the lexicon" — copy written for a lexicon swap, reused unchanged for every asset kind.
+`AssetSwapViewState` gained `kind: AssetSwapKind` (`LEXICON`/`MODEL`, defaulted to `LEXICON` so
+every pre-existing scroll/layout test of this screen keeps compiling unchanged) and `assetLabel`
+(the real asset's own label, e.g. "Silero VAD"). `FailureMapper.assetSwapViewState` computes both
+from the same `staged.assetId == CALLSIGN_LEXICON_ASSET_ID` check it already used for
+`stagedLabel`. `FailAssetSwapScreen` now renders "LEXICON"/"MODEL" (via the existing `SectionLabel`
+uppercase treatment) and picks between the lexicon's own warning text (unchanged) and a model
+warning naming the real asset and leaning on segmentation being the one decision reprocessing
+cannot undo (CON-SEG-1) — the reasoning register R-1057 itself said holds, "arguably more so", for
+a VAD.
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*"` — green (2 new
+`FailureMapperTest` cases on structure — `kind`/`assetLabel`, not sentences — and 2 new
+`FailureScreensTest` Compose cases asserting the LEXICON/MODEL heading and which warning body node
+exists, never full-sentence matching beyond the distinguishing prefix). Discriminating: reverted
+the heading's `state.kind` branch to the old hardcoded `"Lexicon"`, confirmed the new
+`R_1057 F21 a staged model...` test fails (1 failed, 39 passed) for the right reason, restored,
+confirmed green. `gradlew :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :app:detekt`
+— green.
+**Left open / not done:** the device re-capture constitution VIII requires for a screen change —
+staging a VAD from a file during a live session on `ort_audit_wpmodlog` at 1.0 and 2.0, plus a
+lexicon staging for contrast — is recorded separately in this session's report once captured (see
+this row's own evidence path); not yet captured at the time this entry was written.
+
 ---
 
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
