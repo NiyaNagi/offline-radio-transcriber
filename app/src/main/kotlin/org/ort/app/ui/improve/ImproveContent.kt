@@ -280,15 +280,23 @@ public fun ImproveContent(
  * under detekt's length limit — a plain data/control-flow move, not a behaviour change. See the
  * `LaunchedEffect(Unit)` call site's own comment for what this does and why.
  *
- * **Never crashes this composable over `WorkManager` being unavailable.** `WorkManager.getInstance`
- * throws `IllegalStateException` when nothing has initialized it — never true for a real device or
+ * **Never crashes this composable over `WorkManager` not being initialized in a test harness —
+ * and never over anything else (round 3, coordinator review).** `WorkManager.getInstance` throws
+ * `IllegalStateException("WorkManager is not initialized properly. ...")` when nothing has called
+ * `WorkManager.initialize`/auto-init has been disabled — never true for a real device or
  * production app (auto-initialized), only a test harness that composes `ImproveContent` without
  * `WorkManagerTestInitHelper`. This check runs on *every* composition (not only when the operator
- * starts a run), so treating that condition as fatal would make it the single most fragile line in
- * the whole screen; caught and treated as an honest [ReprocessRunSnapshot.NotRunning] instead — the
- * same state a genuine absence of any tracked work already reports.
+ * starts a run), so treating *that one, named* condition as fatal would make it the single most
+ * fragile line on the whole screen — caught and treated as an honest
+ * [ReprocessRunSnapshot.NotRunning] instead, the same state a genuine absence of any tracked work
+ * already reports. [WORK_MANAGER_NOT_INITIALIZED_MESSAGE] is matched by prefix (WorkManager's own
+ * message, not one this code controls) — never a bare `catch (e: IllegalStateException)`, which
+ * would also silently swallow a real bug in this code or in [ImproveRunner.observeState] itself
+ * (constitution I: a screen must never look fine while genuinely broken). No `DiagnosticsLog` call
+ * here — that class is outside this package's ownership; the narrowed match above is this file's
+ * own record of the one case this catch is for.
  */
-private suspend fun reattachToRunningWork(
+internal suspend fun reattachToRunningWork(
     runner: ImproveRunner,
     isRunningPage: Boolean,
     isRootPage: Boolean,
@@ -298,6 +306,7 @@ private suspend fun reattachToRunningWork(
     val snapshot = try {
         runner.observeState().first()
     } catch (e: IllegalStateException) {
+        if (e.message?.startsWith(WORK_MANAGER_NOT_INITIALIZED_MESSAGE) != true) throw e
         ReprocessRunSnapshot.NotRunning
     }
     when (snapshot) {
@@ -310,6 +319,10 @@ private suspend fun reattachToRunningWork(
         ReprocessRunSnapshot.NotRunning -> Unit
     }
 }
+
+/** The fixed prefix of `WorkManager`'s own message when nothing has initialized it — see
+ * [reattachToRunningWork]'s own kdoc for why this, and only this, is the one case caught there. */
+internal const val WORK_MANAGER_NOT_INITIALIZED_MESSAGE: String = "WorkManager is not initialized properly."
 
 /**
  * [ImprovePage.Running]'s own body, split out of [ImproveContent] purely to keep that function

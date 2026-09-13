@@ -32,6 +32,50 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPREPLIFE round 3: the defensive catch is narrowed to the one named case)
+
+### WPREPLIFE round 3 — R-1067: `reattachToRunningWork`'s catch narrowed to WorkManager's own not-initialized message, discrimination-tested
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImproveContent.kt` (the
+`reattachToRunningWork` catch and its kdoc, the new `WORK_MANAGER_NOT_INITIALIZED_MESSAGE`
+constant, visibility `private` → `internal` so a test can call it directly); new
+`app/src/test/kotlin/org/ort/app/ui/improve/ReattachToRunningWorkTest.kt`.
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution I. Register R-1067, coordinator round 3
+item 3.
+
+**What changed:** round 2's catch around `runner.observeState()` caught *any*
+`IllegalStateException` and folded it to `ReprocessRunSnapshot.NotRunning` — coordinator round 3
+named this a real risk: in production it would show Root as if nothing were running while a
+genuine bug (in this code or in `ImproveRunner.observeState()`/`ReprocessWorker.observeSnapshot`
+itself) was the actual cause, exactly the "screen looks fine while broken" failure constitution I
+exists to prevent. The catch now checks
+`e.message?.startsWith(WORK_MANAGER_NOT_INITIALIZED_MESSAGE)` — the fixed prefix of the one real
+`IllegalStateException` `WorkManager.getInstance` throws when nothing has initialized it (never
+true on a real device, only a Robolectric harness composing `ImproveContent` without
+`WorkManagerTestInitHelper`) — and rethrows anything else. No `DiagnosticsLog` call was added:
+that class is outside this package's ownership per the file-ownership map; a comment on the catch
+records the one case it is for instead, per the coordinator's own stated alternative.
+
+**Verified:**
+- New `ReattachToRunningWorkTest` (3 tests): the named not-initialized message is still caught and
+  treated as `NotRunning`; an unrelated `IllegalStateException` is never swallowed (propagates,
+  asserted both via `@Test(expected = ...)` and by asserting the caught exception's own message);
+  `./gradlew.bat ":app:testDebugUnitTest" --tests "org.ort.app.ui.improve.ReattachToRunningWorkTest"`
+  — 3/3 green.
+- Discrimination check performed and confirmed by hand: catch temporarily reverted to round 2's
+  broad, unguarded form (no message check) — the same test run then failed exactly the two
+  "unrelated exception" tests (`AssertionError: Expected exception: java.lang.IllegalStateException`
+  and the propagated-message assertion), while the named-message test still passed, proving the
+  narrowing is what those two tests actually exercise. Catch restored to the narrowed form; the
+  same 3 tests re-run green.
+
+**Left open / not done:** device evidence (coordinator round 3 item 2), the `origin/main`
+merge (now including WPRC02) and a fresh full local gate are addressed in a following entry, per
+the coordinator's own ordering of round 3's items.
+
+---
+
 ## 2026-09-13 (WPREPLIFE round 2: reattach on any composition, an honest Waiting state, the 10-minute execution limit)
 
 ### WPREPLIFE round 2 — R-1067: Improve reattaches on any composition (not just recreation), a stop-and-reschedule decision with an honest "Waiting to resume" board
