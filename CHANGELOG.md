@@ -32,7 +32,27 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-13 (WPRC02: Recording-Session, R-1059)
+## 2026-09-13 (WPRC02: post-merge coverage regeneration)
+
+### 65de4cb3 — Merge branch 'main' into worktree-agent-a8b1edac4fd72d879
+
+**Scope:** merge only; `CHANGELOG.md` and `results/coverage-matrix.md` conflicted.
+**Requirements/ACs:** none new — brings in main's own work since the prior WPRC02/WPINIT merge
+(`0b12c9e1`): Q23 (squelch fusion decisions, R-1062 round 1) and the WPIMPROVE round that fixed
+R-1056/R-1063/R-1064 and opened R-1067.
+**What changed:** `CHANGELOG.md` conflict resolved by keeping both dated sections (this round's
+own entries first, then main's Q23 entry), per the file's own "merge commits get one entry"
+convention applied to the *content* conflict, not the merge commit itself.
+`results/coverage-matrix.md` (generated) resolved via `git checkout --ours` then regenerated
+fresh against the merged tree, rather than hand-merging a generated file.
+**Verified:** `git grep -n -E "^(<<<<<<<|>>>>>>>)"` — no matches, repo-wide, after the merge
+commit. `gradlew coverageMatrix` — 274 of 485 requirements covered (up from 272 pre-merge; the
+WPIMPROVE round's own new `@Requirement` citations account for the delta), orphan-tag list
+unchanged (`C10`, `IA-3`, `P9`, `RC01`, `RC02`, the `CONSTITUTION *` tags — all pre-existing,
+none new). `gradlew coverageMatrixCheck` — up to date (separate invocation, per AGENTS.md).
+**Left open / not done:** none — this entry covers the merge only; see this round's own report
+for the full WPRC02 gate result run against the merged tree.
+
 
 ### 7cf63ffb — WPRC02: coverage matrix regenerated after RC02
 
