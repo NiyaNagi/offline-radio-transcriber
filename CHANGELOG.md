@@ -32,6 +32,146 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon)
+
+### 4b78e721 — WPLINK: R-1041 the real per-transmission changed set behind a reprocess run's own `changedCount`
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessStatus.kt`,
+`ReprocessRunner.kt`; `pipeline/src/test/kotlin/org/ort/pipeline/reprocess/ReprocessRunnerTest.kt`.
+
+**Requirements/ACs:** none new — a data-layer prerequisite for R-1041's R04 (`Improve-Done`'s
+"Review the N changes" needs the real ids, not just the count).
+
+**What changed:** `ReprocessStatus.Summary` gains `changedTransmissionIds: Set<String>` (default
+empty, every existing caller compiles unchanged) — the exact per-transmission ids behind
+`transcriptsChanged`/`attributionsChanged`, a `Set` so an over whose transcript *and* attribution
+both changed contributes exactly one id, never a fabricated wider set (constitution I). Populated
+in `ReprocessRunner.run`'s own per-item comparison, alongside the existing counts. The function's
+own per-item bookkeeping was pulled into a new `RunTally`/`BeforeState`/`recordOutcome` split
+(detekt's `LongMethod`; a plain data move, no behaviour change to the existing counts).
+
+**Verified:** `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"` —
+all green, including three updated `ReprocessRunnerTest` cases now asserting the real set (a
+single-item run, a missing-audio-file run where the failed item never joins the set, and the
+four-item `R_143` mix proving the no-double-count-on-both-changed case). `:pipeline:detekt` and
+`:pipeline:ktlintCheck` both green.
+
+### 9967fe4e — WPLINK: R-1041 N01's chart bar, D11's affected-overs link, R04's review-changes link, all real now — routed through the existing `LogFilterOrigin`/`openLogFiltered` mechanism
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/ActivityPatternChart.kt` (the tappable
+bar); `app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt` (`sessionStartedAtUtc`,
+`hourFilterWindow`), `LogViewData.kt` (`LogPolling.attributionFrom`'s own R-189-class fix, found
+while proving D11 — see Left open); `app/src/main/kotlin/org/ort/app/ui/screens/NowScreen.kt`,
+`NowContent.kt` (`onOpenHour`), `PropagatedScreen.kt` (`onViewAffectedOvers`),
+`TransmissionDetailContent.kt` (threading it through), `SearchScreen.kt`, `SearchContent.kt` (the
+drawer icon, R-1042); `app/src/main/kotlin/org/ort/app/ui/improve/ImproveScreens.kt`
+(`onReviewChanges`), `ImproveContent.kt` (`onOpenChangedOvers`); matching tests under
+`app/src/test/kotlin/org/ort/app/ui/{components,data,screens,improve}/**`;
+`tools/ui-audit/tour.json` (one new step, appended: `overnight-live/N01-now-live@2x` — the
+populated chart had no font-scale-2.0 capture at all before this).
+
+**Requirements/ACs:** register R-1041, R-1042 (design-conformance findings, not functional-spec
+requirements). Existing filter mechanisms reused, not duplicated: `LogFilterSelection.fromMillis`/
+`toMillis` (N01's hour window) and `.transmissionIds` (D11's affected overs, R04's changed overs)
+already existed — no new field added to the filter model itself.
+
+**What changed:**
+- **N01** (`Main.dc.html`'s chart bar → `L01` filtered to that hour): `ActivityPatternChart` gains
+  `onBarClick: ((Int) -> Unit)?` — real only for a bar whose own `heardCount > 0` (gated inside the
+  component itself, never left to a caller to re-derive; an hour with nothing heard is never a
+  dead tap). Bumps its own row height to 44dp only while tappable (every other caller — ST03's
+  day-of-week grid, the sparkline — passes no callback and is unaffected). `NowViewState.Active`
+  carries the session's own real `sessionStartedAtUtc`; the new top-level `hourFilterWindow(start,
+  index)` turns a tapped bar's index back into the real `[fromMillis, toMillis]` window
+  `ActivityPatternMapper.buildSessionElapsedPattern` folded it from. `NowScreen`/`NowContent` gain
+  `onOpenHour`, defaulted to a no-op.
+- **D11** (`Detail-Propagated.dc.html`'s "View the N affected overs" → `L01` filtered to those
+  overs): `PropagatedScreen` gains `onViewAffectedOvers: (Set<String>) -> Unit`, rendering the link
+  only when `outcome.affected` is non-empty, passing exactly `outcome.affected`'s own transmission
+  ids (never `overCount` alone, which the register's own fixture convention keeps deliberately
+  desynced from `affected.size` for other reasons). Threaded through
+  `TransmissionDetailContent`/`PropagatedDestination`.
+- **R04** (`Improve-Done`'s "Review the N changes" → `L01` filtered to those overs):
+  `ImproveDoneScreen` renders a `SecondaryButton` beside `Done` reading "Review the
+  &lt;Plurals.count&gt;" only when `summary.changedTransmissionIds` is non-empty — never the whole
+  attempted batch, so a run where nothing changed (every item failed or rejected) shows no link at
+  all. `ImproveContent` gains `onOpenChangedOvers`.
+- **Q01 (R-1042)**: `Search`'s own header (drawn by `SearchScreen` itself, per R-200 — the host
+  never renders its generic `ScreenHeader` for `SEARCH`) had no drawer icon at all, so an operator
+  reaching `Search` from its own new drawer row (IA-5) had no way back into the drawer except
+  system back. Added the same `OrtIcons.drawer` icon `ScreenHeader` draws for every other
+  destination, before the back chevron.
+- **Bonus fix, found proving D11 on a real device**: `LogPolling.attributionFrom`
+  (`LogViewData.kt`) duplicated `ReaderPolling`'s attribution derivation, including the identical
+  R-189 bug `CorrectionPolling.currentAttribution` already patches for the detail screen alone —
+  every real correction writes `INFERRED` with a `NULL` confidence (`Attribution.withCorrection`),
+  and the state-based branch required a non-null one for `INFERRED`, silently downgrading a
+  corrected row back to `UNKNOWN` in the **Log** specifically (never the detail screen, which was
+  already patched). A corrected transmission read as its real, corrected callsign in `Detail` and
+  as `UNKNOWN` in `Log` — found only because D11's own device verification opens exactly that Log.
+  Fixed with the identical `entity.corrected`-aware check `CorrectionPolling.currentAttribution`
+  already uses.
+
+**Verified:**
+`.\gradlew.bat :app:testDebugUnitTest` (full, unfiltered) — green.
+`.\gradlew.bat :app:smokeTestDebugUnitTest` (full, unfiltered) — green, including the new
+`ReaderActivityDestinationSmokeTest`/`NowContentTest`/`TransmissionDetailContentTest` cases (see
+the nav-host commit below for the real-`Activity` D11 round trip).
+`.\gradlew.bat :app:detekt :app:ktlintCheck` — green.
+Real-device verification (constitution VIII), AVD `ort_audit_2`, `emulator-5560`: N01
+(`overnight-live` scenario) and Q01 (`search-corpus` scenario) captured via
+`tools\ui-audit\tour.ps1 -Only <id>* -Out <scratch>` at 1.0 and 2.0 — chart height/tap affordance
+and the new drawer icon both render cleanly at both scales, no clipping or overlap, matching
+`Main.dc.html`/`Search.dc.html`. D11 driven live on-device (the `corrected` scenario, a real
+free-text "Not right?" correction, `KJ7ABC` → `KA7DEMO`): the propagated screen's own "View the 1
+affected over" link renders, opens the filtered Log for real, and system back reopens the
+corrected transmission's own detail — screenshots in the builder's own scratch directory (see
+report). R04 could not be captured on-device: its own affordance requires a real transcript or
+attribution change from an actual ASR pass, which needs a bundled model this local,
+no-`HF_TOKEN` install does not have — proven instead by `ReprocessRunnerTest`'s real
+change-detection and `ImproveScreensTest`'s real rendering/gating (both listed above), plus the
+existing `R_350` smoke test's own real `Improve-Done` round trip (missing-model failure path).
+
+**Left open / not done:** R04's own "changes present" visual state is unverified on a device —
+see Verified. N01's own tour step was added only at 1.0/2.0, not `@2x-end` — `overnight-live`'s
+own populated `Now` did not visibly need scrolling in the 1.0/2.0 captures taken, but this was not
+separately confirmed against a scroll-to-end capture.
+
+### 241e01b4 — WPLINK: nav-host wiring for R-1041's three new `LogFilterOrigin` cases (isolated commit — see report)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` only;
+`app/src/test/kotlin/org/ort/app/ui/navigation/ReaderActivityDestinationSmokeTest.kt` (the new D11
+real-`Activity` round trip, which exercises this wiring specifically).
+
+**Requirements/ACs:** register R-1041.
+
+**What changed:** `LogFilterOrigin` gains three cases — `Now` (data object, back to `Now`),
+`Transmission(transmissionId)` (back reopens that transmission's own drill-in at its `Main`
+sub-state, never the momentary `Propagated` one — the same "root, not the exact sub-screen"
+precedent `Frequency`/`Station` already established), `Improve` (data object, back to `Improve
+records`'s own list root) — with matching `LogFilterOriginSaver` encode/decode branches.
+`OrtNavHostBackHandler`'s own restore `when` was pulled into a new `restoreLogFilterOrigin`
+function (detekt's `CyclomaticComplexMethod`; a plain data move). `NavHostCallbacks` gains
+`onOpenHour`/`onViewAffectedOvers`/`onOpenChangedOvers`, each building the matching
+`LogFilterSelection` + origin and switching to `LOG`; wired into `NowContent` (NOW), into
+`TransmissionDetailContent` (the transmission drill-in), and into `ImproveContent`
+(IMPROVE_RECORDS). `SearchDestinationContent` gained an `onDrawer` parameter wired to the existing
+`NavHostCallbacks.onOpenDrawer` (R-1042's own nav-host half).
+
+**Verified:** `.\gradlew.bat :app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"` — full class green (36 cases),
+including the new `R_1041_D11_view_affected_overs_link_opens_Log_filtered_to_that_over` case,
+which seeds a second, never-corrected transmission specifically so "the Log shows only the
+corrected one" is a real discriminator, and proves `LogFilterOriginSaver`'s new `Transmission`
+case survives a real `Activity` `recreate()` (the R-129 crash class) without crashing.
+`.\gradlew.bat :app:testDebugUnitTest`, `:app:smokeTestDebugUnitTest` (full, unfiltered),
+`:app:detekt`, `:app:ktlintCheck` — all green (same runs as the feature commit above, taken after
+this commit).
+
+**Left open / not done:** none for this commit's own scope.
+
+---
+
 ## 2026-09-12 (WPNAV: IA-3 generalises the Log's own frequency-filter mechanism to a station, a curated set of overs and Capture's own Full log, all with a real back restore; IA-5 gives Search a drawer row; IA-6 links a transmission to its attributed station)
 
 ### 7584d1cc — WPNAV: one filter model for the Log (IA-3), Search reachable from anywhere via the drawer (IA-5), a transmission's attributed station one tap away (IA-6)
