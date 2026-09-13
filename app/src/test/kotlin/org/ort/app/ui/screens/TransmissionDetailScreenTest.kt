@@ -37,7 +37,12 @@ import org.robolectric.RobolectricTestRunner
  * P14, `design/canvas/Detail.dc.html` = INFERRED, `Detail-Confirmed.dc.html`). Four states, one
  * layout — see [org.ort.app.ui.data.DetailViewStateMapper]'s class doc for the state → explanation
  * mapping this test exercises.
+ *
+ * `@Suppress("LargeClass")`: this task's own `AudioAbsenceReason` cases pushed this file over
+ * detekt's threshold — the same established pattern `LogScreenTest`/`ModelsScreenTest.kt`/
+ * `DigestPollingTest.kt` already use, rather than an artificial split of one screen's own test file.
  */
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 class TransmissionDetailScreenTest {
 
@@ -63,8 +68,11 @@ class TransmissionDetailScreenTest {
         inspection = inspection,
     )
 
-    private fun state(detail: TransmissionDetailViewState = detail(), btAudioMark: Boolean = false) =
-        DetailViewStateMapper.from(detail, btAudioMark = btAudioMark)
+    private fun state(
+        detail: TransmissionDetailViewState = detail(),
+        btAudioMark: Boolean = false,
+        audioAbsenceReason: org.ort.app.ui.data.AudioAbsenceReason? = null,
+    ) = DetailViewStateMapper.from(detail, btAudioMark = btAudioMark, audioAbsenceReason = audioAbsenceReason)
 
     @Test
     fun `FR_UI_5 the play control asks the player for this transmission's audio`() {
@@ -592,38 +600,106 @@ class TransmissionDetailScreenTest {
         texts.any { Regex("""^\d\.\d\d$""").matches(it.text) }
     }
 
-    // ---- R-193, `Detail-Playback.dc.html`'s no-audio card: never-captured vs deleted-by-retention ----
+    // ---- This task, `Detail-Playback.dc.html`'s no-audio card: the real, structured cause -----
+    // (supersedes R-193's own `everProcessed` heuristic — see `AudioAbsenceReason`'s own kdoc for
+    // why guessing the cause from `attribution.state`/`inspection` was itself the defect).
 
     @Test
-    fun `R_193_a_transmission_that_was_never_processed_reads_as_never_retained`() {
+    fun `audio absence with no reason looked up yet reads as the honest unknown sentence`() {
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
-                    state = state(detail(attribution = Attribution.unknown(), hasAudio = false)),
+                    state = state(detail(hasAudio = false), audioAbsenceReason = null),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("No retained audio for this transmission. The reason is not recorded.")
+            .assertExists()
+        composeTestRule.onNodeWithText("never retained", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
+    }
+
+    // Coordinator review (halt): NeverRetained is never constructed by the real mapper today (see
+    // AudioAbsenceReason's own kdoc) — this only proves the screen still renders it correctly
+    // structurally, for the one future case a genuine explicit record could produce it.
+    @Test
+    fun `AudioAbsenceReason NeverRetained, if ever constructed, renders its own real sentence`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(
+                        detail(attribution = Attribution.unknown(), hasAudio = false),
+                        audioAbsenceReason = org.ort.app.ui.data.AudioAbsenceReason.NeverRetained,
+                    ),
                     player = FakeTransmissionAudioPlayer(),
                 )
             }
         }
 
         composeTestRule.onNodeWithText("Audio was never retained for this over.").assertExists()
-        composeTestRule.onNodeWithText("Audio deleted by retention", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Pruned by the retention budget", substring = true).assertDoesNotExist()
     }
 
     @Test
-    fun `R_193_a_transmission_with_a_real_attribution_reads_as_deleted_by_retention_with_the_lattice_kept_clause`() {
+    fun `AudioAbsenceReason RemovedByOperator names the real date, never the old retention sentence`() {
         composeTestRule.setContent {
             OrtTheme {
                 TransmissionDetailScreen(
-                    state = state(detail(attribution = Attribution.confirmed("W7NPC", 0.95), hasAudio = false)),
+                    state = state(
+                        detail(attribution = Attribution.confirmed("W7NPC", 0.95), hasAudio = false),
+                        audioAbsenceReason = org.ort.app.ui.data.AudioAbsenceReason.RemovedByOperator("8 Aug"),
+                    ),
                     player = FakeTransmissionAudioPlayer(),
                 )
             }
         }
 
         composeTestRule
-            .onNodeWithText("Audio deleted by retention. Transcript, attribution and lattice were kept.")
+            .onNodeWithText("Removed by the operator on 8 Aug. Transcript, attribution and lattice were kept.")
             .assertExists()
+        composeTestRule.onNodeWithText("Audio deleted by retention", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("Audio was never retained", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `AudioAbsenceReason PrunedByRetentionBudget names the real date`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(
+                        detail(attribution = Attribution.confirmed("W7NPC", 0.95), hasAudio = false),
+                        audioAbsenceReason = org.ort.app.ui.data.AudioAbsenceReason.PrunedByRetentionBudget("8 Aug"),
+                    ),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText("Pruned by the retention budget on 8 Aug. Transcript, attribution and lattice were kept.")
+            .assertExists()
+        composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `AudioAbsenceReason Unknown reads as the honest unknown sentence, never a guessed cause`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailScreen(
+                    state = state(
+                        detail(hasAudio = false),
+                        audioAbsenceReason = org.ort.app.ui.data.AudioAbsenceReason.Unknown,
+                    ),
+                    player = FakeTransmissionAudioPlayer(),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("No retained audio for this transmission. The reason is not recorded.")
+            .assertExists()
     }
 
     // ---- R-195 (Fail-Pass) tests moved to `PassFailureDetailScreenTest.kt` — see that file's own doc comment. ----

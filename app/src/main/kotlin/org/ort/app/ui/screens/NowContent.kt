@@ -57,7 +57,14 @@ public fun NowContent(
     // unchanged until it wires the real navigation.
     onOpenHour: (fromMillis: Long, toMillis: Long) -> Unit = { _, _ -> },
 ) {
-    var state by remember { mutableStateOf<NowViewState>(NowViewState.Idle(null, null, null, null, emptyList(), null)) }
+    // Register R-1051 (halt, constitution I/IV): the real "not yet known" seed, never `Idle`
+    // directly — see [NowViewState.Loading]'s own kdoc for why a fabricated "nothing capturing"
+    // claim before the first poll is exactly the bug this replaces. The `LaunchedEffect` below
+    // always runs at least once before this composable's first frame is seen on screen, but a
+    // process restarted mid-capture (this register row's own scenario) can take a full
+    // `POLL_INTERVAL_MILLIS` to resolve a genuinely-active session through `effectiveSessionId` —
+    // this is what renders honestly in that window instead.
+    var state by remember { mutableStateOf<NowViewState>(NowViewState.Loading) }
     var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
     // Bumped after `Start capture` so the next tick fires immediately rather than waiting up to
     // POLL_INTERVAL_MILLIS — a snappier UX only, not what makes the new session show up at all

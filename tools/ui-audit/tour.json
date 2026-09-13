@@ -278,6 +278,9 @@
 
     { "id": "stations-14-nights/RC01-drawer", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS", "drillIn": { "openDrawer": "true" } },
     { "id": "recordings-budget-exceeded/RC01-recordings", "scenario": "recordings-budget-exceeded", "destination": "EARLIER_NIGHTS" },
-    { "id": "recordings-archive-removed/RC01-recordings", "scenario": "recordings-archive-removed", "destination": "EARLIER_NIGHTS" }
+    { "id": "recordings-archive-removed/RC01-recordings", "scenario": "recordings-archive-removed", "destination": "EARLIER_NIGHTS" },
+
+    { "id": "cross-session-review/L01-log-cross-session", "scenario": "cross-session-review", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02,scenario-overnight-tx03,scenario-overnight-tx04" } },
+    { "id": "cross-session-review/L01-log-cross-session@2x", "scenario": "cross-session-review", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02,scenario-overnight-tx03,scenario-overnight-tx04" }, "fontScale": 2.0 }
   ]
 }

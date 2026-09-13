@@ -86,7 +86,12 @@ public fun CaptureStatusContent(
     onOpenFullLog: () -> Unit = {},
 ) {
     var sub by remember { mutableStateOf(initialSubScreen(openLevelMeter, openLiveMonitor)) }
-    var state by remember { mutableStateOf(idleCaptureStatus()) }
+    // Register R-1051 (halt, constitution I/IV): the real "not yet known" seed — before this fix,
+    // this was `idleCaptureStatus()` directly, a real "Not capturing" claim that read false on a
+    // cold start whose session (per `ReaderPolling.effectiveSessionId`, resolved fresh every tick
+    // below) turns out to already be capturing. `loadingCaptureStatus()` is the honest placeholder
+    // the first poll's `state = ...` assignment below replaces.
+    var state by remember { mutableStateOf(loadingCaptureStatus()) }
     var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
     var liveMonitorOvers by remember { mutableStateOf(LiveMonitorOversViewState.EMPTY) }
     var hearingText by remember { mutableStateOf<String?>(null) }
@@ -197,6 +202,16 @@ private fun stopCapture(context: Context) {
     val intent = Intent(context, RealCaptureService::class.java).setAction(RealCaptureService.ACTION_STOP)
     context.startService(intent)
 }
+
+/**
+ * Register R-1051 (halt, constitution I/IV): the real "not yet known" seed — `idleCaptureStatus()`
+ * itself is a genuine, honest claim ("nothing is capturing"), which is exactly why it must not
+ * double as this composable's own pre-first-poll placeholder (see [CaptureStatusViewState.loading]'s
+ * own kdoc). Built from [idleCaptureStatus] purely for a valid, inert set of field values — every
+ * one of them is replaced by the first real poll before [CaptureStatusScreen] ever reads them,
+ * since that screen renders [LoadingState] instead of its normal body while [loading] is `true`.
+ */
+private fun loadingCaptureStatus(): CaptureStatusViewState = idleCaptureStatus().copy(loading = true)
 
 /** The honest idle facts — every process-wide holder read directly, since none of them requires a
  * session id to read (they simply report their own honest defaults when idle). */
