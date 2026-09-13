@@ -452,7 +452,8 @@ class ScenariosTest {
         assertEquals("T1", session?.deviceTier)
     }
 
-    // R-290's own audio-fixture tests moved to `FieldTier1AudioTest.kt` (detekt's `LargeClass`
+    // R-290's own audio-fixture tests moved to `FieldTier1AudioTest.kt`, and the `improve-live-quiet`
+    // case (register R-1061) to `ImproveLiveQuietScenarioTest.kt` (detekt's `LargeClass`
     // finding, once this file's own new additions pushed it past a reasonable size) — the same
     // split `NavRowTest.kt` already established for `RowsTest.kt`, for the same reason: a
     // self-contained cluster, not entangled with the rest of what this file covers.

@@ -32,6 +32,209 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
+
+### WPNAVHOST round 2 — R-1061: reproduced on a real device, the reservation is now the bar's own measured height, and a real scenario proves it
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`liveBarHeight`,
+`NavHostBody`'s new `onLiveBarHeightChanged`), `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
+(new `improve-live-quiet` scenario), and tests. No file outside these plus `tools/ui-audit/`
+touched.
+**Requirements/ACs:** constitution II (a test shown to discriminate; a manual/device gate recorded
+with evidence), constitution VIII; R-1061 (round 1, extended); R-1049 (precedent, not modified).
+**What changed, and why round 1 was not enough (coordinator round 2 review):**
+1. **Round 1's fix was unproven — now reproduced on a real device.** No existing scenario
+   combined a live session, a genuinely too-quiet `LevelStatus` and Improve-eligible tier-1
+   records; a new debug scenario, `improve-live-quiet` (`Scenarios.kt`, `ScenariosTest`'s own
+   `R_1061` case), is `field-tier1`'s own session/transmission/audio-fixture shape plus
+   `level-low`'s own `markCapturing`/quiet `LevelStatus.update` layered on top. Built from
+   origin/main (`745e01b7`) plus only this one new scenario (a separate worktree, the fix code
+   itself untouched) and installed on `ort_audit_navhost`: at rest, font scale 2.0, `Improve all
+   12`'s own row (`bounds=[110,2456][1150,2537]`) is cut to a sliver directly behind the pinned
+   "Quiet" live bar (`bounds=[0,2534][1260,2709]`) — a real `3px` overlap — and a real swipe over
+   the scrollable region leaves those bounds byte-identical (`uiautomator dump`, before and after):
+   genuinely unreachable, not merely below an ordinary fold. The same build with the fix installed
+   shows `Improve all 12` fully clear (`bounds=[110,2375][1150,2530]`, `4px` of real daylight above
+   the bar) at rest, no scroll needed.
+2. **`LIVE_BAR_RESERVE_HEIGHT = 96.dp` was a guess — replaced with the bar's own measured, laid-out
+   height.** `NavHostBody` now reports the real height of its own `live-bar-clearance` box via
+   `onGloballyPositioned` (the identical mechanism `FailureHost`'s own banner height already uses,
+   R-178) through a new `onLiveBarHeightChanged` callback, reset to `0.dp` the instant the bar
+   stops showing; `OrtNavHost` holds that value in `liveBarHeight` and passes it straight through
+   as `FailureHost`'s `reservedBottomHeight` — no destination/drill-in heuristic left to
+   independently drift from what the bar actually renders. `LiveBarHeightReservationTest` proves
+   the reservation *equals* the bar's measured height, at font scale 1.0 and 2.0: a real
+   `FailurePresentation.StorageWarning` banner (`DebugFailureOverride`, the same debug-only seam
+   `FailureHostTest`'s own `R_300` case already uses) with a four-stage timeline long enough to
+   exceed even the *unreserved* cap (confirmed via `failure-banner-scroll-hint`'s own existence,
+   the real "content still hidden" signal, R-883) — solving the cap's own `(viewport -
+   reservedBottomHeight) * 0.55f` formula for `reservedBottomHeight` from the banner's, bar's and
+   root's own measured heights matches the bar's real height within `2dp` at both scales (measured:
+   `45.33dp` at 1.0, `54.48dp` at 2.0 — nowhere near the old `96.dp` guess either way). Confirmed
+   discriminating by temporarily forcing `reservedBottomHeight = 96.dp` back in: both cases then
+   fail by `22-28dp`.
+3. **Done-restore, captured on device with real bundled models.** `field-tier1`, real installed
+   models (`Whisper tiny.en`/`Silero VAD`, already verified on `ort_audit_navhost` from earlier
+   sessions): `Improve all 12` → a real `Running` board (4 of 12, live) → `Done` ("12 transcripts
+   changed · 12 attributions changed · 0 rejected · 0 failed", a real model-driven change, not the
+   model-less honest-failure case round 1's own test used) → `Review the 12 changes` → `Log`
+   filtered to 12 real, "revised" rows → back → `Done` with the identical summary line, at font
+   scale 1.0, and again after switching the device to font scale 2.0 live (no restart) — still the
+   same summary, `rememberSaveable` surviving both the destination round trip and the configuration
+   change together.
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.navigation.LiveBarHeightReservationTest" --tests
+"org.ort.app.ui.navigation.NavHostBannerLiveBarSqueezeTest" --tests
+"org.ort.app.ui.failures.BannerCapViewportHeightTest" --tests
+"org.ort.app.ui.navigation.ImproveDestinationStatePreservationTest" --tests
+"org.ort.app.debug.ScenariosTest"` — all green. `.\gradlew.bat :app:smokeTestDebugUnitTest` —
+176/176 green (no regression from `NavHostBody`'s new parameter). `.\gradlew.bat
+:app:testDebugUnitTest --tests "org.ort.app.ui.digest.*" --tests "org.ort.app.ui.settings.*"
+--tests "org.ort.app.ui.recordings.*" --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.improve.*" --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.screens.*"` — green. Full gate (`dependencyRules platformGuards build`,
+`-p buildSrc test`, `spec_check.py`, `coverageMatrix`/`coverageMatrixCheck`) re-run in full after
+this round's own changes — see this round's own report for durations.
+**Left open / not done:** the Robolectric-level `NavHostBannerLiveBarSqueezeTest` case built on the
+real `improve-live-quiet` scenario still does not fail on a true pre-fix host (`reservedBottomHeight
+= 0.dp`, checked directly) — at rest, Robolectric's own native-mode text layout for this exact
+banner and card renders `Improve all 12`'s own row only `1.53dp` past the live bar's own top before
+any reservation at all (`root=0..843.81dp`, `bar=789.33..843.81dp`, `banner=44.19..491.43dp`,
+`button=742.86..790.86dp`), and `performScrollTo()` clears that trivially — never actually
+"unreachable after scrolling" the way the real device shows. The device capture above (not this
+Robolectric test) is the real evidence for both the defect and the fix, per constitution VIII ("the
+screenshot wins"); the specific measurement that differs is Robolectric's own text layout for this
+banner/card content at 420dpi rendering measurably more compactly than the real device's system
+font shaper does for the identical copy.
+
+---
+
+## 2026-09-13 (WPNAVHOST: R-1061 banner/live-bar squeeze; R-1041 R04 Improve's Done state survives a Log round trip)
+
+### WPNAVHOST round 1 — R-1041 (R04) / R-1055: Improve's Done summary now survives switching away to Log and back
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`NavHostBody`,
+`NavHostDispatch`, `DestinationContent`'s own dispatch) and its tests. No file under
+`ui/improve/**`, `ui/recordings/**` or `SettingsContent.kt` touched.
+**Requirements/ACs:** constitution II (strict TDD, a test shown to discriminate), constitution
+VIII (screen re-verification on a UI-touching diff); R-1041 (R04), R-1055, R-1063 (precedent, not
+modified).
+**What changed:** `DestinationContent`'s own `when(current)` (`NavHostDispatch`'s `else` branch)
+fully disposes whichever destination is not the current one — correct for a plain `remember`, but
+it also discarded `org.ort.app.ui.improve.ImproveContent`'s own `rememberSaveable` `page`
+(R-1063) the instant `current` became `LOG` (`Improve-Done`'s own "Review the N changes" link, or
+any other way of leaving `IMPROVE_RECORDS`), so the operator's own "back" always landed on
+`Improve`'s `Root` list instead of the `Done` summary they had just left. `NavHostBody` now creates
+one `rememberSaveableStateHolder()` (survives a drill-in opening over the current destination too,
+not only a plain destination-to-destination switch — the "across drill-in and back" half of this
+round's brief), and `NavHostDispatch`'s `else` branch wraps `DestinationContent` in that holder's
+`SaveableStateProvider`, keyed `"IMPROVE_RECORDS"`, **for `IMPROVE_RECORDS` only**. Tried keying
+every destination this branch reaches first: it broke `LOG` outright (caught by this round's own
+smoke-test sweep, `R_1041_D11` in `ReaderActivityDestinationSmokeTest`) — `LogContent
+.initialFilter` (like `CaptureStatusContent.openLevelMeter`/`openLiveMonitor`,
+`SettingsContent.initialScreen`, `SessionsContent.initialSessionId`/`openDigest`) is a *fresh-seed*
+contract, read only on that composable's own first composition; a blanket holder hands a
+destination's *previous* internal state straight back on its next visit, which silently kept a
+first, unfiltered `Log` visit's own rows instead of ever reading a second, differently-filtered
+one's `initialFilter`. Scoped to `IMPROVE_RECORDS` alone, none of that risk applies: `Improve` is
+the only destination this branch reaches with genuine internal `rememberSaveable` page state and no
+per-visit seed at all (grepped every sibling — `NOW`/`THREADS`/`STATIONS`/`FREQUENCIES` keep no
+`rememberSaveable` of their own; `EARLIER_NIGHTS`'s own "Digest -> Log -> back" is already handled
+entirely inside `ui/digest/SessionsContent.kt`'s own `SessionsPage.Log`/`returnTo`, never by this
+host switching `current` away from `EARLIER_NIGHTS` at all).
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.navigation.ImproveDestinationStatePreservationTest"` — the new test drives the
+real `ImproveContent`/`RealImproveRunner` to a real, model-less `Done` summary (no `HF_TOKEN`
+model needed, matching constitution II's "no unit test reads a real bundled model"), then the
+exact one-line effect both the real `Review the N changes` click and the real back gesture's
+`restoreLogFilterOrigin` reduce to (`navigator.open(LOG)` then `navigator.open(IMPROVE_RECORDS)`).
+Confirmed discriminating: fails on the pre-fix host (`ComposeTimeoutException` waiting for the
+summary line to reappear — Root's own list shows instead), passes after the fix.
+`.\gradlew.bat :app:smokeTestDebugUnitTest` — all 176 tests green, including the case a
+first (unscoped) version of this fix broke (`R_1041_D11_view_affected_overs_link_...` in
+`ReaderActivityDestinationSmokeTest`) and every other real-content dispatch test
+(`OrtNavHostDestinationDispatchTest`, `FailureHostTest`, `SessionsContentTest`, `NowContentTest`,
+`CaptureStatusContentTest`, `SearchContentTest`, `StationDetailContentTest`, `StationsContentTest`,
+`TransmissionDetailContentTest`, `LevelMeterScreenTest`, `FrequencyScreenTest`,
+`FrequencyDetailContentTest`, `NavSeedTest`, `ReaderAccessibilityTest`, `LogContentBackHandlerTest`,
+`LogAndThreadContentActivityTest`, `SearchContentBackHandlerTest`).
+`.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.digest.*" --tests
+"org.ort.app.ui.settings.*" --tests "org.ort.app.ui.recordings.*" --tests
+"org.ort.app.ui.navigation.*" --tests "org.ort.app.ui.improve.*" --tests
+"org.ort.app.ui.failures.*"` — green.
+**Left open / not done:** the other `LogFilterOrigin` entries were each checked and none needed
+this fix — `Frequency`/`Station`/`Transmission` reopen a drill-in with no `rememberSaveable` of
+their own (confirmed by reading each `*DetailContent.kt`; the "reopens at root, not the exact
+sub-screen" behaviour they each already document is a deliberate, pre-existing design choice, not
+this defect); `Capture`/`Now` land on destinations with no internal saveable state to lose;
+`RecordingSession` (WPRC02) reopens `RecordingSessionContent`, which keeps only plain `remember`s,
+re-polled by session id on every open, so nothing is lost either way; `DG02`
+(`Digest-Item`'s "The N overs") is not a `LogFilterOrigin` case at all — it embeds `LogContent`
+directly inside `ui/digest/SessionsContent.kt`'s own page state, already correct, outside this
+package's row.
+
+### WPNAVHOST round 1 — R-1061: Improve's primary action is now reachable above a live bar even with the too-quiet banner showing at font scale 2.0
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (the new
+`bannerReservedBottomHeight`/`LIVE_BAR_RESERVE_HEIGHT`) and
+`app/src/main/kotlin/org/ort/app/ui/failures/FailureHost.kt` (`FailureHost`'s new
+`reservedBottomHeight` parameter and the extracted `bannerCapViewportHeight`), plus their tests.
+**Requirements/ACs:** constitution VII (accessibility floor, no clipping at maximum font scale),
+constitution VIII; R-1061; R-300/R-883 (precedent, not modified — the 55% banner cap those
+registers tuned).
+**What changed:** `FailureHost`'s own banner cap (`BannerOverlay`'s `heightIn(max = viewportHeight
+* 0.55f)`, R-300/R-883) was tuned against a viewport with no bottom bar in it at all ("55% ...
+leaves the destination's own header, title and at least one real control reachable underneath") —
+a live session's own pinned `TransportBar` is a second, independent claim on that same
+"underneath" region nothing there ever subtracted. On `Improve`'s own `Root` board (no fixed
+action bar of its own — `Improve all N` sits inline near the top of its one scrollable column,
+unlike `Done`/`Running`'s own `ImproveActionBarScaffold`, already proven clear of the banner by
+R-1056) a banner near the cap plus a live bar left `Improve all N` a sliver at the very edge of a
+badly squeezed viewport. `FailureHost` now takes a `reservedBottomHeight: Dp = 0.dp` parameter,
+subtracted from the cap's own viewport basis before `0.55f` is applied
+(`bannerCapViewportHeight`, pulled out to a plain function, directly unit-tested); `OrtNavHost`
+computes it (a new `LIVE_BAR_RESERVE_HEIGHT = 96.dp`, above `TransportBarHostLayoutTest`'s own
+measured 64–76dp ceiling for the real bar) whenever `resolveTransportBarState` says a bar will
+show, mirroring `NavHostBody`'s own `isDrillIn`/`embedsOwnLiveBar` precedence exactly rather than
+re-deriving it a third way. `0.dp` (the default) leaves every existing `FailureHost` caller
+unchanged.
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.failures.BannerCapViewportHeightTest"` — three cases (no reservation is a no-op; a
+live-bar reservation is subtracted before the cap; a reservation taller than the viewport floors
+at zero, never negative), green. `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.navigation.NavHostBannerLiveBarSqueezeTest"` — drives the real `OrtNavHost` at
+`IMPROVE_RECORDS` with a real T1-tier session, a real too-quiet `LevelStatus.State.Measured`
+(`Fail-Level.dc.html`'s own `-34 dBFS`) and a real live `CaptureState`, at
+`w390dp-h844dp-420dpi`/font scale 2.0: `Improve all` scrolls fully above `live-bar-clearance`'s own
+top edge. `.\gradlew.bat :app:smokeTestDebugUnitTest` and the targeted package run above both
+green (no regression to `FailureHostTest`'s own R-300/R-883/R-178/R-164 cases, all of which call
+`FailureHost` with the new parameter defaulted, or to `OrtNavHostDestinationDispatchTest`'s own
+R-957/R-262/R-910/R-911 live-bar-clearance geometry cases).
+**Left open / not done:** this round's own Robolectric reproduction of the squeeze
+(`NavHostBannerLiveBarSqueezeTest`) never actually failed against the pre-fix code — Robolectric's
+own text measurement did not reproduce the real device's tighter layout (the same documented class
+of gap constitution VIII names: "Robolectric's ... text measurement ... differ from a device").
+The fix stands on `bannerCapViewportHeight`'s own discriminating unit test and the reasoning above,
+not on that one Compose-level test failing first. **No existing debug scenario combines all three
+of the register's own reported factors** — a real live session, a genuinely too-quiet
+`LevelStatus` (`level-low` has both but zero transmissions), and Improve-eligible tier-1 records
+(`field-tier1` has the records but is not live and sets no `LevelStatus`) — so the exact three-way
+device repro (`Improve all 12` squeezed under a live bar and a too-quiet banner together) could
+not be captured this round; that is a `Scenarios.kt` fixture gap (`app/src/debug/kotlin/org/ort/
+app/debug/Scenarios.kt`), outside this round's own `ui/navigation`/`ui/failures` file ownership.
+Two new tour steps were added instead (`field-tier1/R01-improve@2x`/`@2x-end`,
+`overnight/R01-improve@2x`/`@2x-end` — the latter scenario's own tier is already fully current, so
+its board renders the empty state, not `Improve all N`), and real-device evidence was captured for
+the *general* mechanism instead: `storage-warn/L01-log-banner@2x` (a real too-quiet-shaped storage
+banner and the host's own real pinned live bar together, at real system `font_scale=2.0`, on
+`LOG`) shows the destination's own last content line (bottom `y=2463`) clearing the live bar's own
+top (`y=2534`) with a real `uiautomator dump` to prove it. The banner's own scroll-internally/
+collapse-chevron behaviour (R-883) is unchanged — the artboards support a *cap*, not a collapse or
+a scroll-away, for this class of squeeze. See this round's own report for every capture path and
+what each one does and does not prove.
+
+---
+
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
 
 ### 8b37f11f — WPRESEED: R-1076 - ActiveScenarioRepublishProvider now republishes only the process-wide, in-memory scenario facets on a debug process restart, never re-seeding `:data` rows or files
