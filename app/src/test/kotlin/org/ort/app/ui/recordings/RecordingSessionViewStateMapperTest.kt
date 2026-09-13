@@ -334,6 +334,40 @@ class RecordingSessionViewStateMapperTest {
         assertNull(withoutPlayhead.coverage.playheadFraction)
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // R-1069 (register, halt): audited alongside DG04's own coverage bar (`SessionCoverageMapper`,
+    // `ui/digest`) for the identical defect — a gap segment quantized to a whole clock-hour bucket
+    // instead of its own real start/duration. This mapper never bucketed by hour at all
+    // ([coverageGap] computes `fractionOf(gap.startedAt, ...)`/`fractionOf(gap.endedAt, ...)`
+    // directly against the session's own real span) — this test is the evidence that the audit
+    // found this one already correct, not a fix.
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1069")
+    fun `R_1069 audit - a gap is placed and sized from its own real start and duration, not a whole hour`() {
+        // The identical relative numbers as DG04's own R-1069 test: a 180-minute session, one
+        // 22-minute gap starting 40 minutes in — expected start fraction 40/180, width 22/180.
+        val span = SessionSpan(startedAtMillis = 0L, endedAtMillis = 180 * 60_000L)
+        val gapStart = 40 * 60_000L
+        val gapEnd = gapStart + 22 * 60_000L
+        val state = RecordingSessionViewStateMapper.map(
+            input(
+                gaps = listOf(gap("G1", startedAt = gapStart, endedAt = gapEnd)),
+                span = span,
+            ),
+        )
+
+        assertEquals(1, state.coverage.gaps.size)
+        val segment = state.coverage.gaps.single()
+        assertEquals(40f / 180f, segment.fractionStart, 0.0005f)
+        assertEquals(62f / 180f, segment.fractionEnd, 0.0005f)
+        assertTrue(
+            "expected the gap to end well short of two-thirds of the bar, got ${segment.fractionEnd}",
+            segment.fractionEnd < 0.4f,
+        )
+    }
+
     @Test
     @Requirement("FR-UI-12")
     fun `a coverage tick is amber only for a real failure, never for any other status`() {

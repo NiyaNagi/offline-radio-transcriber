@@ -53,6 +53,11 @@ private val CHART_HEIGHT = 38.dp
  * the documented, accepted limit of that one dimension, the same "adjacent dense targets" exception
  * a slider or a calendar grid already relies on elsewhere. */
 private val TAPPABLE_CHART_HEIGHT = 44.dp
+
+/** R-1069: a strictly-positive floor for a caller-supplied [ActivityPatternChart]'s `segmentWeights`
+ * — `Modifier.weight` requires a value greater than zero, and a segment can legitimately be a
+ * fraction-of-a-pixel wide (e.g. a gap starting exactly where another ends). */
+private const val MIN_BAR_WEIGHT = 0.0005f
 private val BAR_GAP = 1.5.dp
 private val GRID_CELL = 16.dp
 private val GRID_GAP = 3.dp
@@ -123,6 +128,13 @@ public fun ActivityPatternChart(
     // day-of-week grid and the sparkline use the other composables in this file, not this
     // parameter) renders exactly as before, at [CHART_HEIGHT].
     onBarClick: ((Int) -> Unit)? = null,
+    // R-1069 (register, halt): a caller whose buckets are genuinely different real durations
+    // (`Session.dc.html`'s own elapsed-time segments — see `org.ort.app.ui.digest
+    // .SessionCoverageMapper`) supplies one weight per [pattern] element here, so each bar's own
+    // width is that segment's real fraction of the session's span rather than an equal share.
+    // `null` (every caller before this existed — the hour-of-day/day-of-week grids, which have no
+    // such notion of "real duration") renders exactly as before, every bar sharing the row equally.
+    segmentWeights: List<Float>? = null,
 ) {
     val heardHours = pattern.count { it.state == HourActivityState.HEARD }
     val silentHours = pattern.count { it.state == HourActivityState.SILENT_WHILE_LISTENING }
@@ -139,10 +151,11 @@ public fun ActivityPatternChart(
             horizontalArrangement = Arrangement.spacedBy(BAR_GAP),
         ) {
             pattern.forEachIndexed { index, bucket ->
+                val weight = segmentWeights?.getOrNull(index)?.coerceAtLeast(MIN_BAR_WEIGHT) ?: 1f
                 HourBar(
                     bucket = bucket,
                     maxHeardCount = maxHeardCount,
-                    modifier = Modifier.weight(1f).fillMaxHeight().testTag("activity-bar-$index"),
+                    modifier = Modifier.weight(weight).fillMaxHeight().testTag("activity-bar-$index"),
                     onClick = if (onBarClick != null && bucket.heardCount > 0) {
                         { onBarClick(index) }
                     } else {

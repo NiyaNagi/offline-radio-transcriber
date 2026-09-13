@@ -205,9 +205,18 @@ public fun SessionDetailScreen(
     onOpenLog: () -> Unit,
     onOpenDigest: () -> Unit,
     modifier: Modifier = Modifier,
+    // R-1070 (register, polish): the literal "Earlier nights" this used to hardcode named a
+    // drawer destination `Recordings.dc.html` (RC01) has since replaced (design-intent §9, DG03
+    // row: "Replaces Earlier nights (DG03) as the home for sessions") — every real caller of this
+    // screen today (`SessionsContent`'s own doc comment: reached only via `Settings-Storage`'s
+    // Review link) returns to that world, never to DG03's own superseded list, so "Recordings" is
+    // the honest default. [SessionsContent] overrides this only for the one entry path where back
+    // genuinely still lands on DG03's own (superseded, but real) list screen — a tap on that list's
+    // own row, still titled "Earlier nights" by its own `SessionsScreen` header above.
+    parentLabel: String = "Recordings",
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        DrillInHeader(parentLabel = "Earlier nights", onBack = onBack)
+        DrillInHeader(parentLabel = parentLabel, onBack = onBack)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
             Text(text = state.label, style = OrtType.screenTitle, color = OrtColors.textHigh)
             Text(
@@ -235,6 +244,10 @@ public fun SessionDetailScreen(
                 title = null,
                 summaryLabel = "Session coverage",
                 notListeningLabel = state.notListeningLabel,
+                // R-1069 (register, halt): each segment's own real fraction of the session's span
+                // — never an equal share the way this chart's other callers (hour-of-day/day-of-
+                // week, which have no such notion) still render.
+                segmentWeights = state.coverage.asChartWeights(),
                 // R-844 (register, polish, guide §8): the chart's own mono start/end axis labels —
                 // guide §8 requires one at each end of every activity chart; this call passed
                 // neither, so a session with no not-listening hours at all (a solid green block)

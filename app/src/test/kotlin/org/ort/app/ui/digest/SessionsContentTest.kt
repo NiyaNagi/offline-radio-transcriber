@@ -192,7 +192,7 @@ class SessionsContentTest {
     }
 
     @Test
-    @Requirement("FR-DIG-9")
+    @Requirement("FR-DIG-9", "R-1072")
     fun `IA_3 Digest-Item's The N overs, more than one, opens the Log filtered to that curated set`() {
         // Historical baseline (the identical shape `DigestPollingTest`'s own `FR_DIG_2a` fixture
         // uses) so `T-long`'s 8 overs clear the real, computed "unusually long" threshold rather
@@ -230,8 +230,8 @@ class SessionsContentTest {
         composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Digest"))
         composeTestRule.onNodeWithText("Digest").performClick()
 
-        composeTestRule.waitUntilTextExists("A thread ran 8 over(s)")
-        composeTestRule.onNodeWithText("A thread ran 8 over(s)", substring = true).performClick()
+        composeTestRule.waitUntilTextExists("A thread ran 8 overs")
+        composeTestRule.onNodeWithText("A thread ran 8 overs", substring = true).performClick()
 
         composeTestRule.waitUntilTextExists("The 8 overs")
         composeTestRule.onNodeWithText("The 8 overs").performClick()
@@ -277,6 +277,54 @@ class SessionsContentTest {
         composeTestRule.waitUntilTextExists("Export")
         composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("Export"))
         composeTestRule.onNodeWithText("Export").assertExists()
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // R-1070 (register, polish): the back label names where back actually returns — "Recordings"
+    // (the destination that replaced DG03's own "Earlier nights") for the seeded-review entry path
+    // that is `SessionsContent`'s only real caller today, "Earlier nights" for the one entry path
+    // that genuinely does return to that same, still-real list.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1070")
+    fun `R_1070 opened from the Earlier nights list, back reads Earlier nights - it genuinely returns there`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1"))
+        }
+        CaptureState.capturing("S1")
+
+        composeTestRule.setContent {
+            OrtTheme { SessionsContent(context = context, onDrawer = {}) }
+        }
+
+        composeTestRule.waitUntilTextExists("Tonight")
+        composeTestRule.onNodeWithText("Tonight", substring = true).performClick()
+
+        composeTestRule.waitUntilTextExists("Export")
+        composeTestRule.onNodeWithContentDescription("Back to Earlier nights").assertExists()
+    }
+
+    @Test
+    @Requirement("R-1070")
+    fun `R_1070 opened as the review seed - Settings-Storage's only real path in - back reads Recordings`() {
+        // `SessionsContent`'s own doc comment: `initialSessionId` is how `Settings-Storage`'s
+        // "Next deletion … Review" link opens this — `OrtNavHost`'s `EarlierNightsDestinationContent`
+        // never renders this composable any other way (`RecordingsContent`, RC01, is what the plain
+        // drawer destination shows instead) — so this is the one entry path a real operator hits.
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1"))
+        }
+        CaptureState.capturing("S1")
+
+        composeTestRule.setContent {
+            OrtTheme { SessionsContent(context = context, onDrawer = {}, initialSessionId = "S1") }
+        }
+
+        composeTestRule.waitUntilTextExists("Export")
+        composeTestRule.onNodeWithContentDescription("Back to Recordings").assertExists()
     }
 
     // checklist row E2-G07 (DG05's prose block).

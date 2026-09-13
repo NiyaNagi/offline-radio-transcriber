@@ -3,7 +3,6 @@ package org.ort.app.ui.digest
 import android.content.Context
 import org.ort.app.ui.data.ActivityPatternMapper
 import org.ort.app.ui.data.GapWindow
-import org.ort.app.ui.data.HourActivityBucket
 import org.ort.app.ui.data.NightlyDeparture
 import org.ort.app.ui.data.RoomSessionRouteFactsReader
 import org.ort.app.ui.data.SessionRouteFacts
@@ -35,6 +34,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * R-092 (register, FR-DIG-1..6, FR-RUN-11/12/16): the real read path behind `Sessions`, `Session`,
@@ -120,19 +120,16 @@ public object DigestPolling {
             endedAtUtc = end,
             gaps = gapEntities.map { GapWindow(startedAt = it.startedAt, endedAt = it.endedAt) },
         )
-        // R-449 (register, Reviewer D): `ActivityPatternMapper.buildPattern` folds onto the 24
-        // *hour-of-day* buckets its own doc comment names (correct for `Station`/`Frequencies`'
-        // multi-night patterns, which is what it was written for) — reused here for a *single*
-        // session's own timeline, every hour-of-day this one session never happened to touch (most
-        // of the clock, for a session lasting a few hours) folded to `NOT_LISTENING` by that
-        // function's own honest "never captured at all reads as not-listening" rule, which is
-        // exactly correct for "at 3am, across every night" and exactly wrong for "this session's
-        // own 3-hour span" — the real bug the register's screenshot shows (nearly every bar
-        // hatched for a session that ran continuously). [sessionCoverageBuckets] instead buckets
-        // by *elapsed* hour within this session's own real span — only as many bars as the session
-        // actually ran, each hatched only when a *real*, recorded gap actually covers it, never
-        // because nothing was heard.
-        val coverage = sessionCoverageBuckets(window, transmissions.map { it.startedAtUtc }, SystemClock.wallMillis())
+        // R-1069 (register, halt): [SessionCoverageMapper.buildSegments] places and sizes every
+        // gap segment from its own real start and duration on this session's own elapsed-time axis
+        // — see that object's own kdoc for why the fixed clock-hour buckets this used to read
+        // ([ActivityPatternMapper.buildSessionElapsedPattern], still correct and unchanged for
+        // `Now`'s own live chart) hatched a 22-minute gap across two whole hours of the bar.
+        val coverage = SessionCoverageMapper.buildSegments(
+            window = window,
+            matchingTransmissionTimestamps = transmissions.map { it.startedAtUtc },
+            nowMillis = SystemClock.wallMillis(),
+        )
         val notListeningSeconds = gapEntities.sumOf { ((it.endedAt ?: SystemClock.wallMillis()) - it.startedAt) / 1000 }
         // R-824 (register, halt): the identical fact SessionRowViewState.live already computes for
         // the row list — a live session's own header must say so, never a clean-end/duration claim
@@ -306,41 +303,6 @@ public object DigestPolling {
         }
     }
 
-    /**
-     * R-449 (register, Reviewer D): `Session`'s own coverage chart, bucketed by *elapsed* hour
-     * within [window]'s own real span — see the doc comment at this function's own call site for
-     * why `ActivityPatternMapper.buildPattern`'s hour-*of-day* folding (correct for `Station`/
-     * `Frequencies`, wrong reused here) hatched nearly every bar. Exactly as many buckets as the
-     * session's own real duration spans (never a fixed 24).
-     *
-     * R-540 (register, Reviewer D, tour run 3): the first fix above (only hatching a bucket the
-     * *majority* of whose span a real gap covered, and only when nothing was heard in it at all)
-     * swallowed a real, recorded 22-minute gap entirely — the bucket also had real overs elsewhere
-     * in the same hour, so `heardCount > 0` always won, and 22 minutes never reached the old ≥50%
-     * floor either way. The board's own rule (`design/canvas/Session.dc.html`'s coverage chart,
-     * cf. its own gap list) is simpler and unconditional: **any** real, recorded
-     * [SessionWindow.gaps] overlap inside an hour hatches that hour's bar — real overs elsewhere in
-     * the same hour never hide it. `ActivityPatternChart` (the shared, out-of-ownership renderer)
-     * draws one of exactly three states per bucket, never a sub-bar split proportional to how much
-     * of the hour the gap actually covered — that honest, hour-granularity limit is unchanged, only
-     * which state wins a real conflict.
-     *
-     * R-913 (register, halt): moved to the shared [ActivityPatternMapper.buildSessionElapsedPattern]
-     * — `Now`'s own live chart ([org.ort.app.ui.data.NowViewStateMapper.active]) calls the same
-     * function now, so a live session's chart and this same session's own coverage bar, once it
-     * ends, never disagree about what "listening" means for it. This wrapper stays only so this
-     * file's own call site below reads unchanged.
-     */
-    private fun sessionCoverageBuckets(
-        window: SessionWindow,
-        matchingTransmissionTimestamps: List<Long>,
-        nowMillis: Long,
-    ): List<HourActivityBucket> = ActivityPatternMapper.buildSessionElapsedPattern(
-        window = window,
-        matchingTransmissionTimestamps = matchingTransmissionTimestamps,
-        nowMillis = nowMillis,
-    )
-
     public suspend fun digest(context: Context, sessionId: String): DigestViewState? {
         val db = OrtDatabase.create(context.applicationContext)
         val session = db.sessionDao().getById(sessionId) ?: return null
@@ -454,7 +416,7 @@ public object DigestPolling {
             DigestItemViewState(
                 id = "first-$stationId",
                 headline = "$stationId heard for the first time",
-                subLine = "first time heard · $overs over(s) this session",
+                subLine = "first time heard · ${Plurals.count(overs, "over")} this session",
                 reason = "first time heard",
                 ambiguousTone = false,
                 transmissionIds = everyTransmission.filter { it.sessionId == sessionId }.map { it.id },
@@ -514,11 +476,11 @@ public object DigestPolling {
         return threadsTonight.mapNotNull { (threadId, group) ->
             if (group.size < threshold) return@mapNotNull null
             val participants = group.mapNotNull { it.stationId }.distinct().size
-            val participantsNote = if (participants > 0) " with $participants participant(s)" else ""
+            val participantsNote = if (participants > 0) " with ${Plurals.count(participants, "participant")}" else ""
             DigestItemViewState(
                 id = "thread-$threadId",
-                headline = "A thread ran ${group.size} over(s)$participantsNote",
-                subLine = "unusually long · usual is %.0f over(s)".format(Locale.ROOT, averageLength),
+                headline = "A thread ran ${Plurals.count(group.size, "over")}$participantsNote",
+                subLine = "unusually long · usual is ${Plurals.count(averageLength.roundToInt(), "over")}",
                 reason = "unusually long thread",
                 ambiguousTone = false,
                 transmissionIds = group.map { it.id },
@@ -571,7 +533,7 @@ public object DigestPolling {
         if (ambiguous.isEmpty()) return null
         return DigestItemViewState(
             id = "ambiguous",
-            headline = "${ambiguous.size} over(s) could not be attributed with confidence",
+            headline = "${Plurals.count(ambiguous.size, "over")} could not be attributed with confidence",
             subLine = "ambiguous attribution this session",
             reason = "high ambiguous rate",
             ambiguousTone = true,
@@ -583,7 +545,7 @@ public object DigestPolling {
         val unknown = transmissions.count { it.attributionState == AttributionState.UNKNOWN }
         if (unknown == 0) return null
         return DigestNotKnownItemViewState(
-            headline = "$unknown over(s) from unidentified voices",
+            headline = "${Plurals.count(unknown, "over")} from unidentified voices",
             subLine = "no callsign heard, no voice matched — they stay findable",
         )
     }

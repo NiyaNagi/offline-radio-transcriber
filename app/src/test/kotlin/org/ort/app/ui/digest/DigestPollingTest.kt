@@ -158,8 +158,8 @@ class DigestPollingTest {
     @Test
     @Requirement("R-449")
     fun `R_449 a continuously run session with no real gap at all is never hatched not-listening`(): Unit = runTest {
-        // A 3-hour session, one over per hour, no recorded gap anywhere — every bucket genuinely
-        // covered, none of them ever hatched.
+        // A 3-hour session, one over per hour, no recorded gap anywhere — the whole span is
+        // genuinely covered, so it is one single HEARD segment, never hatched.
         db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3 * 3_600_000L))
         db.transmissionDao().insert(transmission("TX1", "S1", startedAtUtc = 100_000L))
         db.transmissionDao().insert(transmission("TX2", "S1", startedAtUtc = 3_700_000L))
@@ -171,59 +171,73 @@ class DigestPollingTest {
         // hatched nearly every one of the 24 fixed buckets NOT_LISTENING, for a session that ran
         // continuously — this session's own real span is 3 hours, never 24, and none of them were
         // genuinely un-listened.
-        assert(detail.coverage.size == 3) {
-            "expected exactly 3 elapsed-hour buckets, got ${detail.coverage.size}"
+        assert(detail.coverage.size == 1) {
+            "expected one segment spanning the whole real span, got ${detail.coverage.size}: ${detail.coverage}"
         }
-        assert(detail.coverage.all { it.state == HourActivityState.HEARD }) {
-            "every bucket here had a real over land in it and no gap at all, expected all HEARD, got " +
-                "${detail.coverage.map { it.state }}"
+        assert(detail.coverage.single().state == HourActivityState.HEARD) {
+            "the whole span had real overs and no gap at all, expected HEARD, got ${detail.coverage.single().state}"
         }
     }
 
     @Test
-    @Requirement("R-540")
-    fun `R_540 a real recorded gap hatches its own hour, one span, even with real overs elsewhere in it`(): Unit =
-        runTest {
-            // R-540 (register, Reviewer D, tour run 3): the real bug — a 3 h session, real overs in
-            // every hour (so every bucket previously read solid HEARD, hiding the gap entirely), plus
-            // one real, recorded 22-minute gap inside the first hour. The board hatches every real gap
-            // inside its hour unconditionally — real overs elsewhere in that same hour never hide it.
-            db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3 * 3_600_000L))
-            db.transmissionDao().insert(transmission("TX1", "S1", startedAtUtc = 100_000L))
-            db.transmissionDao().insert(transmission("TX2", "S1", startedAtUtc = 3_700_000L))
-            db.transmissionDao().insert(transmission("TX3", "S1", startedAtUtc = 7_300_000L))
-            val gapMillis = 22 * 60_000L
-            db.captureGapDao().insert(
-                CaptureGapEntity(
-                    id = "G1",
-                    sessionId = "S1",
-                    startedAt = 1_500_000L,
-                    endedAt = 1_500_000L + gapMillis,
-                    cause = CaptureGapCause.ROUTE_CHANGE,
-                    recoveredAutomatically = true,
-                ),
-            )
+    @Requirement("R-1069")
+    fun `R_1069 a real recorded gap is placed and sized from its own real start and duration, never a whole hour`():
+        Unit = runTest {
+        // R-1069 (register, halt): the exact register repro — a 3 h session, real overs in every
+        // hour (so the old whole-hour-bucket code read solid HEARD in every bucket except the one a
+        // gap touched), plus one real, recorded 22-minute gap 25 minutes in. The fix places the
+        // hatched segment at the gap's own real fraction of the session's span, never the whole
+        // hour it happens to fall inside.
+        val sessionEnd = 3 * 3_600_000L
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = sessionEnd))
+        db.transmissionDao().insert(transmission("TX1", "S1", startedAtUtc = 100_000L))
+        db.transmissionDao().insert(transmission("TX2", "S1", startedAtUtc = 3_700_000L))
+        db.transmissionDao().insert(transmission("TX3", "S1", startedAtUtc = 7_300_000L))
+        val gapStart = 1_500_000L
+        val gapMillis = 22 * 60_000L
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "G1",
+                sessionId = "S1",
+                startedAt = gapStart,
+                endedAt = gapStart + gapMillis,
+                cause = CaptureGapCause.ROUTE_CHANGE,
+                recoveredAutomatically = true,
+            ),
+        )
 
-            val detail = DigestPolling.sessionDetail(context, "S1")!!
+        val detail = DigestPolling.sessionDetail(context, "S1")!!
 
-            assert(detail.coverage.size == 3) {
-                "expected exactly 3 elapsed-hour buckets, got ${detail.coverage.size}"
-            }
-            // One hatched span, at the right fraction: the gap falls entirely inside elapsed hour 0
-            // (index 0 of 3) — that bucket alone reads NOT_LISTENING, the other two stay HEARD.
-            val states = detail.coverage.map { it.state }
-            val expected = listOf(HourActivityState.NOT_LISTENING, HourActivityState.HEARD, HourActivityState.HEARD)
-            assert(states == expected) {
-                "expected one hatched span at bucket 0 of 3 (where the real gap falls), got $states"
-            }
+        assert(detail.coverage.size == 3) {
+            "expected listening, gap, listening — got ${detail.coverage.size}: ${detail.coverage}"
         }
+        val states = detail.coverage.map { it.state }
+        val expected = listOf(HourActivityState.HEARD, HourActivityState.NOT_LISTENING, HourActivityState.HEARD)
+        assert(states == expected) { "expected $expected, got $states" }
+        val gapSegment = detail.coverage[1]
+        val expectedStart = gapStart.toFloat() / sessionEnd
+        val expectedEnd = (gapStart + gapMillis).toFloat() / sessionEnd
+        val tolerance = 0.0005f
+        assert(kotlin.math.abs(gapSegment.fractionStart - expectedStart) < tolerance) {
+            "expected gap start fraction ~$expectedStart, got ${gapSegment.fractionStart}"
+        }
+        assert(kotlin.math.abs(gapSegment.fractionEnd - expectedEnd) < tolerance) {
+            "expected gap end fraction ~$expectedEnd, got ${gapSegment.fractionEnd}"
+        }
+        // The old bug's own shape, disproved directly: the hatched region must not extend across
+        // the whole first two elapsed hours (fraction 0 to 2/3), the register's own capture.
+        assert(gapSegment.fractionEnd < 0.4f) {
+            "expected the gap to end well short of two-thirds of the bar, got fractionEnd=${gapSegment.fractionEnd}"
+        }
+    }
 
     @Test
-    @Requirement("R-449")
-    fun `R_449 any real recorded gap overlap, however small, hatches its own hour`(): Unit = runTest {
+    @Requirement("R-1069")
+    fun `R_1069 a small gap hatches only its own real span, not the whole hour around it`(): Unit = runTest {
+        // Old (R-449 register bug, since retired): a 1-minute gap inside a 1-hour session used to
+        // hatch the *entire* hour-wide bucket NOT_LISTENING. The fix hatches only the gap's own
+        // 1-in-60 real span, leaving the rest of the hour a real (if silent) listening segment.
         db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
-        // No over at all this hour, and a real gap covering only 1 of the 60 minutes — still a real,
-        // recorded gap, so R-540's own unconditional rule still hatches it honestly.
         db.captureGapDao().insert(
             CaptureGapEntity(
                 id = "G1",
@@ -237,9 +251,18 @@ class DigestPollingTest {
 
         val detail = DigestPolling.sessionDetail(context, "S1")!!
 
-        assert(detail.coverage.size == 1)
-        assert(detail.coverage.single().state == HourActivityState.NOT_LISTENING) {
-            "expected the one bucket, overlapping a real gap at all, to hatch, got ${detail.coverage.single().state}"
+        assert(detail.coverage.size == 2) {
+            "expected the gap segment plus the rest of the hour as its own listening segment, got " +
+                "${detail.coverage.size}: ${detail.coverage}"
+        }
+        assert(detail.coverage[0].state == HourActivityState.NOT_LISTENING)
+        val tolerance = 0.0005f
+        assert(kotlin.math.abs(detail.coverage[0].fractionEnd - (60_000f / 3_600_000f)) < tolerance) {
+            "expected the gap to end at 1/60 of the bar, got fractionEnd=${detail.coverage[0].fractionEnd}"
+        }
+        assert(detail.coverage[1].state == HourActivityState.SILENT_WHILE_LISTENING) {
+            "expected the rest of the hour to read as a real, silent listening segment, got " +
+                detail.coverage[1].state
         }
     }
 
@@ -928,5 +951,82 @@ class DigestPollingTest {
         val digest = DigestPolling.digest(context, "S1")!!
 
         assert(digest.prose == null)
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // R-1072 (register, polish): digest counts are plural by count, never the literal "(s)" the
+    // register's own capture showed (`8 over(s) this session`, `1 over(s) could not be attributed`,
+    // `2 over(s) from unidentified voices`).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1072")
+    fun `R_1072 a single ambiguous over reads singular, more than one reads plural`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", state = AttributionState.AMBIGUOUS))
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val item = digest.items.single { it.id == "ambiguous" }
+        assert(item.headline == "1 over could not be attributed with confidence") { "got '${item.headline}'" }
+    }
+
+    @Test
+    @Requirement("R-1072")
+    fun `R_1072 two or more ambiguous overs read plural, never the literal (s)`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", state = AttributionState.AMBIGUOUS))
+        db.transmissionDao().insert(
+            transmission("TX2", "S1", startedAtUtc = 1_000L, state = AttributionState.AMBIGUOUS),
+        )
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val item = digest.items.single { it.id == "ambiguous" }
+        assert(item.headline == "2 overs could not be attributed with confidence") { "got '${item.headline}'" }
+        assert(!item.headline.contains("(s)")) { "got '${item.headline}'" }
+    }
+
+    @Test
+    @Requirement("R-1072")
+    fun `R_1072 unidentified-voice overs read plural by their real count, never the literal (s)`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", state = AttributionState.UNKNOWN))
+        db.transmissionDao().insert(
+            transmission("TX2", "S1", startedAtUtc = 1_000L, state = AttributionState.UNKNOWN),
+        )
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val item = digest.notKnown.single { it.headline.contains("unidentified voices") }
+        assert(item.headline == "2 overs from unidentified voices") { "got '${item.headline}'" }
+        assert(!item.headline.contains("(s)")) { "got '${item.headline}'" }
+    }
+
+    @Test
+    @Requirement("R-1072")
+    fun `R_1072 a station first heard with exactly one over this session reads singular`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", stationId = "W7NEW"))
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val item = digest.items.single { it.id == "first-W7NEW" }
+        assert(item.subLine == "first time heard · 1 over this session") { "got '${item.subLine}'" }
+    }
+
+    @Test
+    @Requirement("R-1072")
+    fun `R_1072 a station first heard with several overs this session reads plural, never the literal (s)`():
+        Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", stationId = "W7NEW"))
+        db.transmissionDao().insert(transmission("TX2", "S1", startedAtUtc = 1_000L, stationId = "W7NEW"))
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val item = digest.items.single { it.id == "first-W7NEW" }
+        assert(item.subLine == "first time heard · 2 overs this session") { "got '${item.subLine}'" }
+        assert(!item.subLine.contains("(s)")) { "got '${item.subLine}'" }
     }
 }
