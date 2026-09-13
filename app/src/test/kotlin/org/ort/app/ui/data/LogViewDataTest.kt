@@ -672,4 +672,41 @@ class LogViewDataTest {
         )
         assertEquals(true, chips.first { it.id == LogQuickFilterId.All }.selected)
     }
+
+    // -------------------------------------------------------------------------------------------
+    // Register R-1055 (spec): the applied-filter statement's own count is the real, found count —
+    // never the size of the requested id set.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_1055 curatedFoundCount overrides the requested set size when supplied`() {
+        val selection = LogFilterSelection(transmissionIds = setOf("TX1", "TX2", "TX3"))
+        assertEquals(
+            "1 over",
+            LogItemsMapper.appliedFilterLabel(selection, LogQuickFilterId.All, curatedFoundCount = 1),
+        )
+    }
+
+    @Test
+    fun `R_1055 a null curatedFoundCount falls back to the requested set size`() {
+        val selection = LogFilterSelection(transmissionIds = setOf("TX1", "TX2"))
+        assertEquals(
+            "2 overs",
+            LogItemsMapper.appliedFilterLabel(selection, LogQuickFilterId.All, curatedFoundCount = null),
+        )
+    }
+
+    @Test
+    fun `R_1055 curatedEmptyStateFor a requested transmissionIds set names the real requested count`() {
+        val state = LogItemsMapper.curatedEmptyStateFor(requestedCount = 3, stationId = null)
+        assertEquals("None of the requested overs could be found.", state.message)
+        assertEquals("3 requested; none exist in this log.", state.subMessage)
+    }
+
+    @Test
+    fun `R_1055 curatedEmptyStateFor a station names the real callsign, never Listening since`() {
+        val state = LogItemsMapper.curatedEmptyStateFor(requestedCount = null, stationId = "WA7HJR")
+        assertEquals("No overs from WA7HJR.", state.message)
+        assertEquals(false, state.subMessage.orEmpty().contains("Listening since"))
+    }
 }

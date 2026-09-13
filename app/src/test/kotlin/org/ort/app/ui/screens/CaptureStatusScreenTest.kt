@@ -293,4 +293,29 @@ class CaptureStatusScreenTest {
 
         composeTestRule.onNodeWithTag("capture-status-stop").assertDoesNotExist()
     }
+
+    // -----------------------------------------------------------------------------------------
+    // Register R-1051 (halt, constitution I/IV): the loading state renders distinctly, and never
+    // alongside the normal body (a stale "Not capturing" title beside a loading body would itself
+    // be the same conflation this fix removes).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 loading renders the loading marker, never the status body`() {
+        val loading = baseState.copy(loading = true)
+        composeTestRule.setContent { OrtTheme { CaptureStatusScreen(state = loading) } }
+
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertExists()
+        composeTestRule.onNodeWithTag("capture-status-title").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("capture-status-input").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 a real state never renders the loading marker`() {
+        composeTestRule.setContent { OrtTheme { CaptureStatusScreen(state = baseState) } }
+
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertDoesNotExist()
+    }
 }

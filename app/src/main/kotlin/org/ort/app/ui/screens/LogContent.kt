@@ -140,11 +140,21 @@ public fun LogContent(
     initialFilter: LogFilterSelection? = null,
     initialSheetOpen: Boolean = false,
 ) {
-    // R-247: `sessionId == null` (no session has ever started) never polls below, so this initial
-    // value is the screen's actual, final state for that case — a real, fully-drawn empty Log
-    // (headline, sentence, quick-filter chips), not the blank body a `null` placeholder left
-    // behind. Once a session exists the first poll below replaces it immediately.
-    var screenState by remember(sessionId) { mutableStateOf(LogPolling.noSessionState()) }
+    // R-247: `sessionId == null` (no session has ever started) never polls below, so
+    // `LogPolling.noSessionState()` is the screen's actual, final state for that case — a real,
+    // fully-drawn empty Log (headline, sentence, quick-filter chips), not the blank body a `null`
+    // placeholder left behind.
+    //
+    // Register R-1051 (halt, constitution I/IV): a non-null `sessionId` means a session is already
+    // known to exist — possibly one holding overs from before this composable's own cold start —
+    // so its initial value must never itself be an empty-state claim. Before this fix it was
+    // `noSessionState()` regardless, which is exactly how a real device's cold start after the OS
+    // killed the app mid-capture read "No overs yet" for up to one poll interval while a live
+    // session held dozens of overs (the register's own bisect). `LogPolling.loadingState()` is the
+    // honest "not yet known" value the first poll below replaces on its very next tick.
+    var screenState by remember(sessionId) {
+        mutableStateOf(if (sessionId != null) LogPolling.loadingState() else LogPolling.noSessionState())
+    }
     var quickFilter by rememberSaveable(stateSaver = LogQuickFilterIdSaver) {
         mutableStateOf<LogQuickFilterId>(
             initialFilter?.frequencyHz?.let { LogQuickFilterId.Frequency(it) } ?: LogQuickFilterId.All,

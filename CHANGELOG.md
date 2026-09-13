@@ -178,7 +178,540 @@ transmissions should someday get a second, band-aware Segmenter instead of being
 one segment. Register R-1062 and the `results/ui-audit/register.md` row are the lead's to update
 (out of this session's file ownership).
 
+## 2026-09-13 (spec: Q23 opened - squelch fusion on a dual-band radio, and rigs that only poll)
+
+### spec · Q23: two design choices squelch fusion made that the spec never did
+
+**Scope:** `spec/open-questions.md` (Q23 in the status table and as a full entry, seven open), `results/ui-audit/register.md`
+(R-1062 round 1). Lead-owned documents only; no product code.
+
+**Requirements/ACs:** none new. Q23 (opened). Bears on FR-SEG-5, FR-SEG-9, CON-SEG-1, FR-RUN-17 and register R-1062.
+
+**What changed:** building FR-SEG-5 (WPSQUELCH, not yet merged) had to decide how one mixed audio stream from the
+dual-band TH-D75A is segmented when each band reports its own squelch - it chose a union, which merges overlapping
+transmissions on different bands - and which rigs qualify for fusion at all - push, or polls within 250 ms. Both are
+product decisions with irreversible consequences for segmentation, so they are recorded as Q23 with a recommendation
+rather than left inside the code. R-1062 records round 1: the fusion rule is sound, but a rig lost while squelch is
+closed would leave every later over in the session captured as audio and never turned into a transmission; round 2 is
+building the loss and staleness fallback.
+
+**Verified:** `python tools/spec-check/spec_check.py`, run before this commit.
+
+**Left open / not done:** Q23 itself; R-1062's round 2.
+
+## 2026-09-13 (WPINIT round 2, coordinator review before merge: `NeverRetained` was itself an unrecorded guess — replaced with `Unknown`; fresh, single-AVD device evidence for Parts A/B/C and R-1055)
+
+### cf5a327d — WPINIT: R-1055 device evidence — a dedicated debug scenario proves the cross-session filter fix on a real device, on this builder's own named AVD
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/CrossSessionReviewScenario.kt` (new),
+`Scenarios.kt` (registers it); `tools/ui-audit/tour.json` (two new steps, appended at the end,
+per the coordinator's own instruction).
+
+**Requirements/ACs:** R-1055 (device evidence for the cross-session curated-filter fix already
+committed at `706d1a74`).
+
+**What changed:** the coordinator's review found the R-1055 fix (`706d1a74`) had no device
+evidence, and asked for a seeded reproduction — a live, over-less session while an earlier session
+holds the filtered overs — captured on this builder's own named AVD rather than a shared one.
+Added `CrossSessionReviewScenario`, built from two already-tested primitives rather than a third
+parallel one: `OvernightScenario.overnight` seeds the real ~40-over `scenario-overnight` session
+unchanged (so `logFilterTransmissionIds` can name its own real ids, the same ones
+`overnight/L01-log-filtered-overs` already uses), and a second, live, genuinely-empty session (the
+same shape `Scenarios.firstSession` already establishes for `first-session`) is seeded under this
+scenario's own id, so `Scenarios.LoadResult.primarySessionId` — the id `LogContent` receives as
+"the" session — names the *live* one, never the earlier session the curated filter actually
+targets. Two tour steps appended at the very end of `tour.json` (`cross-session-review/
+L01-log-cross-session` at 1.0 and 2.0) open the Log with `logFilterTransmissionIds` set to three of
+`scenario-overnight`'s real transmission ids, exactly the way Improve's "Review changes" and D11
+do.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.ScenariosTest"
+--tests "org.ort.app.debug.tour.TourSpecTest" --tests "org.ort.app.debug.tour.TourStepsTest"` —
+all green (`TourSpecTest`'s `R_TOUR_DRILL_IN_KEYS`/`R_TOUR_SCENARIO_NAMES`/`R_TOUR_UNIQUE_IDS`
+confirm the new steps and scenario name resolve and don't collide).
+
+Device (`ort_audit_wpinit`, port 5570, this builder's own AVD created with
+`tools\ui-audit\create-avd.ps1`, real database, never shared with another package's session):
+`tools\ui-audit\install.ps1 -Port 5570 -Clear` then `tools\ui-audit\tour.ps1 -Port 5570 -Only
+"cross-session-review/*"` — both steps captured clean. At both scales the Log reads "Filtered to 3
+overs" with a visible "Clear", and shows exactly 3 rows: K7LWH ("roger that, good copy on the
+repeater..."), KE7QRS/KE7QRF ("kilo echo seven quebec romeo sierra, portable"), and an unknown
+station ("...any station on frequency, this is") — the same three overs
+`logFilterTransmissionIds` names, all timestamped 02:12–02:14 (the earlier `scenario-overnight`
+session), while the header's own live indicator reads "5:00" / green dot for the *current*,
+different, over-less live session — proving the found rows are the earlier session's, not the
+live one's, and the found count in "Filtered to 3 overs" is real, not the stale requested-count
+`149ef954`'s own report already fixed. Screenshots:
+`wpinit-evidence\r1055-log-cross-session-1x.png`, `...-2x.png`. Emulator shut down after
+(`adb emu kill`).
+
+**Left open / not done:** none for this scenario/tour addition; see the fix's own entry
+(`706d1a74`) for what R-1055 itself left open (the `OrtNavHost` back-navigation sub-state issue,
+reported to WPREC, not fixed here).
+
+### 97f6bfff — WPINIT: coordinator review — `NeverRetained` was never backed by an explicit record; it now reads `Unknown`
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt`;
+`app/src/test/kotlin/org/ort/app/ui/data/AudioAbsenceReasonMapperTest.kt`,
+`CorrectionPollingAudioAbsenceTest.kt`; `app/src/test/kotlin/org/ort/app/ui/screens/
+TransmissionDetailScreenTest.kt`, `TransmissionDetailContentTest.kt`.
+
+**Requirements/ACs:** constitution I (never state an unrecorded cause). No register/spec id —
+raised directly by the coordinator's own review of the prior WPINIT commit (`2ed58ba7`).
+
+**What changed:** the coordinator asked for the exact `file:line` this mapper's `NeverRetained`
+case was derived from. There isn't one. `AudioAbsenceReasonMapper.from`'s fallback branch (the
+one case reached when a session row exists, `overAudioRemovedAtMillis` is null, and audio is
+absent) previously returned `AudioAbsenceReason.NeverRetained` — but that is inferred purely from
+"the file is missing and no removal was recorded", never from an explicit field. Every
+transmission row in this schema is created only after its audio already exists on disk
+(`TransmissionState.CAPTURED`'s own doc comment: "Audio on disk, queued, no passes run. Entered on
+VAD close."), and `TransmissionDetailContentTest`'s own R-242 case proves a rejected segment still
+retains its audio — so there is no code path today, and no schema field, that ever means "this
+over's audio was deliberately never kept". Audio pruned by an older build, a lost file, or any
+future unmodelled cause would render the identical, now-disproven sentence. Fixed: the fallback
+now returns `AudioAbsenceReason.Unknown` — "No retained audio for this transmission. The reason is
+not recorded." `PrunedByRetentionBudget` is unaffected (still real-record-backed, still
+unreachable against today's data — see `2ed58ba7`'s own entry). `NeverRetained` itself is left in
+the sealed type, now documented as unconstructed by this mapper against any input today, kept only
+for a genuine future explicit record (e.g. a rejected-too-short state that by design keeps no
+audio, if one is ever added) rather than deleted and re-added later.
+
+**Verified:** discriminating — reverted the fallback to `NeverRetained`, re-ran
+`AudioAbsenceReasonMapperTest` and `CorrectionPollingAudioAbsenceTest`: both renamed tests failed
+for the right reason (`expected:<Unknown> but was:<NeverRetained>`); restored, green again.
+`.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.AudioAbsenceReasonMapperTest"
+--tests "org.ort.app.ui.data.CorrectionPollingAudioAbsenceTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` and `:app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.screens.TransmissionDetailContentTest"` — all green (7 + 4-updated
+`AudioAbsenceReasonMapperTest` cases including a new `NeverRetained is never constructed by this
+mapper against any input` sweep over real input combinations). `ktlintCheck`/`detekt` clean.
+
+**Left open / not done:** no device screenshot of the "session row missing entirely" `Unknown`
+sub-case exists from this dedicated AVD (`ort_audit_wpinit`) — see the R-1055/evidence commit's
+own entry below for why, and `CorrectionPollingAudioAbsenceTest`'s `a session id with no matching
+row at all reads as Unknown` for the real-`OrtDatabase`-backed proof of that exact path instead.
+
+### b4a7c949 — WPINIT: R-1051 — a cold-start screen renders loading, never a false empty claim, until its first real query returns
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Feedback.kt`;
+`app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt`, `NowViewState.kt`,
+`CaptureStatusViewState.kt`; `app/src/main/kotlin/org/ort/app/ui/screens/LogContent.kt`,
+`LogScreen.kt`, `NowContent.kt`, `NowScreen.kt`, `CaptureStatusContent.kt`,
+`CaptureStatusScreen.kt`, `LiveMonitorScreen.kt`; tests under
+`app/src/test/kotlin/org/ort/app/ui/screens/` and `.../ui/data/LogPollingTest.kt`.
+
+**Requirements/ACs:** register R-1051 (halt), constitution I, IV.
+
+**What changed:** the register's own bisect found the real defect: Log's initial
+`remember(sessionId) { mutableStateOf(LogPolling.noSessionState()) }`, Now's initial
+`mutableStateOf(NowViewState.Idle(...))` and Capture status's initial
+`mutableStateOf(idleCaptureStatus())` were each a real, honest *empty* claim doing double duty as
+the screen's own pre-first-poll placeholder — so a cold start (the OS killing the app mid-capture,
+then restarting it) rendered "No overs yet"/"Not capturing" for up to one poll interval even while
+the session already held dozens of overs. Added a genuine third state, structurally distinct from
+both empty and real data: `LogScreenViewState.loading`/`LogPolling.loadingState()`,
+`NowViewState.Loading` (a new sealed case), and `CaptureStatusViewState.loading`/a private
+`loadingCaptureStatus()` seed in `CaptureStatusContent.kt`. Each screen (`LogScreen`, `NowScreen`,
+`CaptureStatusScreen`, and `LiveMonitorScreen` — the same `CaptureStatusViewState` its own sibling
+renders) now checks its own `loading` flag first, ahead of every other branch, and renders the new
+shared `LoadingState` composable (`Feedback.kt`, guide §6.8's missing third treatment: "only when a
+real fetch is in flight, and only where the content will land") instead. `LoadingState` carries a
+real Compose `testTag` (`LOADING_STATE_TEST_TAG = "loading-state"`) rather than relying on its own
+rendered copy — see the R-1022 commit below for why. Search's own `result == null` (Initial state,
+not conflated with a real empty `SearchResult`) and the live monitor's overs section (gated by the
+same `status.loading`) were checked and found not to share this defect; `SessionsContent`/
+`DigestContent` were not touched (WPREC is rewriting both into Recordings) — left for after that
+merge, per this prompt's own scope.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.LogScreenTest"
+--tests "org.ort.app.ui.screens.NowScreenTest" --tests "org.ort.app.ui.screens.CaptureStatusScreenTest"
+--tests "org.ort.app.ui.data.LogPollingTest"` and `:app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.screens.NowContentTest" --tests "org.ort.app.ui.screens.CaptureStatusContentTest"`
+(the isolated JVM these two `*ContentTest` classes require) — all green. Each of the three
+Content-level fixes (`LogContent`, `NowContent`, `CaptureStatusContent`) shown failing first by
+temporarily reverting its own seed back to the pre-fix value and re-running its own
+`R_1051 first frame is loading...` test with `composeTestRule.mainClock.autoAdvance = false`
+(freezes recomposition before the session-tied poll can run): each failed with
+`AssertionError: ... could not find any node ... TestTag = 'loading-state'` — the loading marker
+genuinely absent — then passed again once the fix was restored. Full gate:
+`.\gradlew.bat dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) —
+BUILD SUCCESSFUL in 16m51s, 1109 tasks, zero failures; `-p buildSrc test`; `python
+tools\spec-check\spec_check.py` — all 8 checks PASS; `:app:ktlintCheck :app:detekt` (repo-wide) —
+green. Device (`ort_audit_cf07`/port 5564, `wm size 1260x2772`, `wm density 420`,
+`install.ps1 -Clear`): three genuinely cold runs each (`am force-stop` + on-device
+`rm -rf files/tour` before every run — see the R-1022 commit's own note on why the extra
+`rm -rf` was needed) of `overnight-live/N01-now-live` and `overnight/L01-log` — all six captures
+show the real, populated screen (43 overs · 9 stations, "Live"; a fully-rowed Log), never "No overs
+yet"/"Not capturing". Emulator shut down after (`adb emu kill`).
+
+**Left open / not done:** `SessionsContent`/`DigestContent` carry the identical shape and are left
+for WPREC's own Recordings rewrite to close, per this prompt's explicit scope boundary.
+
+### 07228ab2 — WPINIT: R-1022 — the tour's own readiness check gates on a structural marker, never rendered text
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourAccessibilityScroll.kt`;
+`app/src/test/kotlin/org/ort/app/debug/tour/TourAccessibilityScrollSnapshotTest.kt`.
+
+**Requirements/ACs:** register R-1022 (halt), constitution II.
+
+**What changed:** `TourAccessibilityScroll.snapshot`'s own `hasPlaceholder` used to be a
+case-insensitive substring match against the literal word "loading" in any rendered
+`text`/`contentDescription` — the actual mechanism behind R-1051 (see the commit above): a false
+empty state's real copy ("No overs yet.", "Not capturing") never contains that word, so the tour
+proceeded and captured it immediately instead of waiting for the real poll. Replaced with a
+structural check: `TourAccessibilityTap.hasNodeWithTestTag(rootView, LOADING_STATE_TEST_TAG)` — the
+same `testTagsAsResourceId` accessibility bridge `TourAccessibilityTap` already established for
+tapping the live bar by its stable tag rather than its rendered label (R-1021). `snapshot` still
+collects every node's own text (used for the settle comparison's other half — two readings agreeing
+on content), it simply no longer searches that text for a keyword. Every loading state R-1051 added
+carries the marker automatically (`LoadingState`'s own `testTag`); `SessionsContent`/`DigestContent`
+do not yet (WPREC's own rewrite lands it later) — until then a screen of theirs that is still
+mid-load and says nothing containing "loading" is captured exactly as promptly as everything else,
+which narrows what this check can catch, never widens it into a new false-negative.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.debug.tour.TourAccessibilityScrollSnapshotTest" --tests
+"org.ort.app.debug.tour.TourAccessibilityTapTest"` — green (12 tests). Shown failing first: reverted
+`hasPlaceholder` to the old substring check and re-ran the same class —
+"a screen whose real copy contains the word loading is never treated as a placeholder" failed
+(`expected:<false> but was:<true>`) and "the real LoadingState is detected as a placeholder by its
+structural marker" failed the other way (`expected:<true> but was:<false>`) — the exact two
+directions of the old defect this replaces; both passed again once the fix was restored. Device: the
+same `overnight-live/N01-now-live` / `overnight/L01-log` cold-run captures the R-1051 commit
+describes are this fix's own on-device proof too — Part A and Part B only work together (a genuine
+loading value the tour's own old text check would have skipped past regardless). Discovered and
+worked around a pre-existing, unrelated race in `tools\ui-audit\tour.ps1`'s own manifest poll while
+proving this on device: a fresh `am start` does not delete the *previous* run's on-device
+`files/tour/manifest.json` until the new `TourRunner.run()` reaches its own `deleteRecursively()`
+call a few seconds later, so polling immediately after `am start` can read a still-`"done":true`
+manifest left over from the *previous* step and return its (stale) result. Every cold run in this
+session's own device verification first ran `adb shell run-as org.ort.app sh -c 'rm -rf files/tour'`
+between `am force-stop` and the next `tour.ps1` invocation to close that window; `tour.ps1` itself
+was not touched (outside this package's ownership) — left as a finding for whoever owns it next.
+Full gate, ktlint/detekt, spec-check: see the R-1051 commit above (one combined verification pass
+covered both).
+
+**Left open / not done:** the `tour.ps1` manifest-poll race named above; `SessionsContent`/
+`DigestContent` do not carry the marker yet, per the R-1051 commit's own note.
+
+### 2ed58ba7 — WPINIT: the detail screen's "No retained audio" card names the real, structured cause and its date, never a guessed one
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt`, `CorrectionPolling.kt`;
+`app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailContent.kt`,
+`TransmissionDetailScreen.kt`; `app/src/test/kotlin/org/ort/app/ui/data/DetailViewStateMapperTest.kt`
+(new cases), `AudioAbsenceReasonMapperTest.kt` (new), `CorrectionPollingAudioAbsenceTest.kt` (new);
+`app/src/test/kotlin/org/ort/app/ui/screens/TransmissionDetailScreenTest.kt`,
+`TransmissionDetailContentTest.kt`; `results/coverage-matrix.md`.
+
+**Requirements/ACs:** constitution I, III (none of this prompt's own — no register/spec id was
+assigned; cited by the prompt's own text instead).
+
+**What changed:** `TransmissionDetailScreen.kt`'s `NoAudioNotice` used to *guess* the cause of a
+missing over's own audio from `attribution.state`/`inspection` (`everProcessed`) — an inference,
+not a fact, that rendered the identical "Audio deleted by retention" sentence for a genuine
+operator deletion and for a segment that plainly never had audio, and never carried a date despite
+the artboard's own "on 8 Aug" example. Replaced with a real, structured
+`AudioAbsenceReason` (`DetailViewState.kt`): `RemovedByOperator(dateLabel)` (mirrors
+`SessionEntity.overAudioRemovedAtMillis`, the one real signal
+`SessionAudioDeletionService` writes for RC02's own Delete action, against the exact
+`audio/<sessionId>/` directory `TransmissionDetail.hasAudio` checks), `NeverRetained` (the honest
+default — no removal was ever recorded), and `Unknown` (the owning session's own row could not be
+read at all — never silently folded into `NeverRetained`, which is itself a claim). A fourth case,
+`PrunedByRetentionBudget`, is modelled for a future automatic over-audio retention mechanism and is
+**deliberately never constructed against today's real data**: `OverAudioBudgetState`'s own doc
+comment states plainly that reaching the over-audio budget "only ever warns" (D40, register
+R-1037 forbid deleting over audio by any automatic means) and `ArchivePruner`'s own doc comment
+confirms its automatic pruning "never touches `audio/<sessionId>`" — `SessionEntity
+.archiveRemovedAtMillis` governs a wholly separate directory (the continuous re-segmentation
+archive) this screen's own playback never reads, so it is never consulted here; wiring it in would
+have been exactly the guess constitution I forbids. `CorrectionPolling.audioAbsenceReason` is the
+one real `:data` read this needs (only when `!hasAudio`); `TransmissionDetailContent.pollDetail`
+threads it through `DetailViewStateMapper.from`'s new `audioAbsenceReason` parameter into
+`DetailViewState`, and `NoAudioNotice` now renders it directly: "Removed by the operator on
+<date>...", "Audio was never retained for this over.", or "No retained audio for this transmission.
+The reason is not recorded." for `Unknown`.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.data.AudioAbsenceReasonMapperTest" --tests
+"org.ort.app.ui.data.CorrectionPollingAudioAbsenceTest" --tests
+"org.ort.app.ui.data.DetailViewStateMapperTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` and `:app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.screens.TransmissionDetailContentTest"` — all green. Discriminating proof of the
+one subtle rule (never read `archiveRemovedAtMillis`): temporarily wired
+`session?.archiveRemovedAtMillis` into `audioAbsenceReason`'s own `prunedByRetentionBudgetAtMillis`
+parameter and re-ran `CorrectionPollingAudioAbsenceTest` — "an archived-and-pruned session with no
+operator removal reads as NeverRetained" failed
+(`expected:<NeverRetained> but was:<PrunedByRetentionBudget(dateLabel=1 Aug)>`), the exact
+fabrication this design exists to prevent; reverted, passing again. Full gate, ktlint/detekt,
+spec-check: see the R-1051 commit above. `coverageMatrix`/`coverageMatrixCheck` (separate
+invocations) both green (271 of 483 requirements covered; `results/coverage-matrix.md` regenerated
+and committed with this change).
+
+Device (`ort_audit_cf07`/port 5564, real database, root adb — `ReaderActivity` is not exported, so
+a manually-edited `session` row's own facts were viewed through it directly by intent extras
+(`session_id`/`destination`) rather than through the tour, which unconditionally reseeds and would
+have overwritten the edit before it could render): captured all three practically-seedable causes
+against the real on-device `ort.db` for the "overnight" scenario's own W7NPC transmission —
+`overAudioRemovedAtMillis` set to a real epoch millis for 2026-08-08 plus its own `audio/
+scenario-overnight/` directory deleted → "Removed by the operator on 8 Aug. Transcript, attribution
+and lattice were kept."; the same with `overAudioRemovedAtMillis` cleared back to `NULL` → "Audio
+was never retained for this over."; the owning `session` row deleted outright (transmission rows
+untouched — no cascade) → "No retained audio for this transmission. The reason is not recorded."
+`PrunedByRetentionBudget` was not captured on device — confirmed unseedable by design (no scenario,
+and no real code path in this build, ever sets a value that would produce it; see "What changed"
+above). App data cleared and the emulator shut down after (`pm clear`, `adb emu kill`).
+
+**Left open / not done:** `PrunedByRetentionBudget` has no device evidence and cannot get any until
+a real automatic over-audio retention mechanism exists (none does today, by design — D40/R-1037);
+the type and mapper are ready for one without a second migration. Discovered, while chasing this on
+device, that `MainActivity` crashes (`RealCaptureService.runCaptureFlow`) when launched against a
+scenario-seeded session on this emulator — unrelated to this change (real capture trying to open
+real hardware this AVD does not have against fixture-only data) and not investigated further; flagged
+separately rather than fixed here (outside this prompt's own scope).
+
+### 706d1a74 — WPINIT: R-1055 — a curated Log filter (Improve's "Review changes", D11, DG02) reaches across every session, never just the live one
+
+**Scope:** `data/src/main/kotlin/org/ort/data/dao/TransmissionDao.kt`;
+`app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt`;
+`data/src/test/kotlin/org/ort/data/dao/TransmissionDaoTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/data/LogPollingTest.kt`, `LogViewDataTest.kt`.
+
+**Requirements/ACs:** register R-1055 (spec), constitution I.
+
+**What changed:** a validator's own field report against `ba3a66da`: Improve's "Review changes"
+opened the Log reading "Filtered to 12 overs" with "Clear" beside it, and directly beneath it "No
+overs yet. Listening since 07:19." — the screen claimed twelve overs and showed none.
+`LogPolling.screenState` scoped every read to the *live* capture session (`sessionId`), including a
+`LogFilterSelection.transmissionIds`/`.stationId` curated request — but the normal overnight shape
+is capture running in a different, live session while the operator reviews an earlier, already-
+ended night's overs, so a request naming that earlier night's own transmission ids found none of
+them against the live session's own (possibly over-less) rows. Fixed at the source: added
+`TransmissionDao.listByIds`/`.listByStationId` (cross-session queries, `:data`), and
+`LogPolling.screenState` (split into a new private `resolveSource` helper to stay under detekt's
+`LongMethod` limit) now reads through them whenever `transmissionIds`/`stationId` narrows the
+selection, falling back to the live session's own `listBySession` only when neither is set. A
+curated, cross-session list gets no gap timeline interleaved and no Bluetooth-audio footnote
+(`routeFacts`/`gaps` both honestly absent rather than borrowed from whichever session is live right
+now — see `LogSource`'s own kdoc). `LogItemsMapper.appliedFilterLabel` gained a `curatedFoundCount`
+parameter: the statement's own "N overs" is now the real, found row count, never
+`transmissionIds.size` — the second half of the same defect (the validator's own report showed
+"12" while zero rows actually rendered). A curated request that finds nothing at all now renders
+the new `LogItemsMapper.curatedEmptyStateFor` — "None of the requested overs could be found." (or,
+for a station, "No overs from `<callsign>`.") — never the live-session "No overs yet. Listening
+since..." wording, which would misrepresent "the requested overs are not here" as "nothing has
+happened yet tonight." The pre-existing R-1051 loading state (commit above) already covers "while
+this cross-session query is in flight" — `LogContent`'s own initial `LogPolling.loadingState()`
+seed needed no further change.
+
+**Not fixed here (stopped and reported, per this task's own instruction):** back-navigation from a
+curated Log to the *exact* screen state it was opened from. `OrtNavHost.kt`'s own
+`restoreLogFilterOrigin(LogFilterOrigin.Improve, ...)` already restores the Improve *destination*
+(`ReaderDestination.IMPROVE_RECORDS`) but not the "Done summary" sub-state Improve was actually
+showing when "Review changes" was tapped — that composable's own doc comment already names this
+same gap ("why not the exact `Done` sub-state"). Fixing it needs `OrtNavHost.kt`'s own navigation
+state machine, which this task's own ownership map excludes (WPREC is editing it).
+
+**Verified:** `.\gradlew.bat :data:testDebugUnitTest --tests "org.ort.data.dao.TransmissionDaoTest"`
+and `:app:testDebugUnitTest --tests "org.ort.app.ui.data.LogPollingTest" --tests
+"org.ort.app.ui.data.LogViewDataTest" --tests "org.ort.app.ui.screens.LogScreenTest"` — all green
+(10, 31, 52 and existing `LogScreenTest` cases respectively); `:app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.screens.LogContentBackHandlerTest" --tests
+"org.ort.app.ui.screens.LogAndThreadContentActivityTest"` (the isolated JVM these need) unaffected.
+Shown failing first: temporarily reverted `resolveSource`'s own `entities` lookup back to a bare
+`db.transmissionDao().listBySession(sessionId)` and re-ran the five new `LogPollingTest` `R_1055`
+cases — three failed for the right reason (`expected:<[EARLIER-1, EARLIER-2]> but was:<[]>` and
+equivalent for the station/missing-id cases — the exact validator-reported shape, zero rows found);
+the two that do not depend on cross-session lookup (the honest-empty-message and no-gaps cases)
+still passed, as expected; all five passed again once the fix was restored. Full gate
+(`dependencyRules platformGuards build`, real `HF_TOKEN`, no escape hatch) — BUILD SUCCESSFUL in
+18m48s, 1109 tasks, zero failures (the four `SQLException ... rolled back afterward regardless`
+log lines in the run are pre-existing tests deliberately exercising constraint-violation rollback,
+not failures). `-p buildSrc test`, `ktlintCheck detekt` (repo-wide), `python
+tools\spec-check\spec_check.py` — all green. `coverageMatrix`/`coverageMatrixCheck` (separate
+invocations) — up to date, no content change (this task introduced no new `FR-`/`AC-` id).
+
+**Left open / not done:** the back-navigation sub-state gap named above (needs `OrtNavHost.kt`).
+No on-device capture for this commit: reproducing the validator's exact shape (a live, over-less
+session plus a separate earlier session holding the filtered overs, reached through Improve's own
+"Review changes") needs either a debug scenario fixture that seeds both at once (none does today,
+and debug scenario fixtures are WPMODEL's ownership, off-limits here) or driving the real Improve
+UI by hand on-device, which was not attempted given this is a query-scoping fix with no rendering/
+layout change of its own — `LogScreen`'s own pixels are unchanged, already proven on device for the
+R-1051 commit above; the real, multi-session Room-database tests listed under "Verified" are this
+fix's own discriminating proof instead.
+
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
+
+### WPIMPROVE — fixed while device-verifying R-1056: Improve's root stopped claiming improved overs still "can get better" (R-1064, FR-REP-2/9, constitution I)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImprovePolling.kt` and its test only.
+
+**Requirements/ACs:** R-1064 (register — "Improve root counts overs already improved"; cited as
+"R-1063" in this fix's own first commit, corrected once the lead's own filing landed with the two
+Improve findings' ids swapped from this session's initial guess), FR-REP-2, FR-REP-8, FR-REP-9,
+constitution I.
+
+**What changed:** `ImprovePolling.root()` grouped sessions by `SessionEntity.deviceTier` and then
+counted **every** transmission in a qualifying session as a candidate — real at the moment of
+capture, but permanent, since a session's own `deviceTier` never changes. After a real Improve run
+left all twelve of a session's transmissions with `isReprocessCandidate = false` in the on-device
+database (confirmed directly via `sqlite3` on-device while verifying R-1056), the root screen still
+read "12 overs can get better" — a false statement once a real reprocessing engine existed to make
+it checkable, not a harmless stub. Read `isReprocessCandidate` itself is not the fix: nothing in
+production ever sets it `true` (grepped `:pipeline`/`:app`; FR-TIER-4's own marking is not wired to
+it), and `spec/technical-design.md` §3.4 describes it as a cache of a fingerprint-staleness
+computation that also is not built. What the real engine does stamp on every completed or rejected
+outcome — live capture included — is `TransmissionEntity.processedTier` (FR-REP-2: "every stored
+result SHALL record ... tier that produced it, so staleness is computable"), and `:data` already
+exposes `TransmissionDao.idsBelowProcessedTier(belowTiers)` for exactly "which records still need
+improving" — `ReprocessRunner.kt`'s own doc comment names this precise gap by name as "WP11d's
+read-path change to make". `root()` now intersects each qualifying session's transmissions against
+that real, current set; a session with none left in it contributes no group at all, and a fully
+brought-current selection now shows the honest empty state (`totalOverCount == 0`) instead of a
+stale count.
+
+**Verified:**
+- `ImprovePollingTest`: two new cases, both against a real Room DB — `R_1064 a completed run leaves
+  the root showing zero remaining candidates` (both overs stamped `processedTier = T3` by
+  `setProcessedTier`, current tier T3 → `totalOverCount == 0`, `groups.isEmpty()`) and
+  `R_1064 a mixed set counts only the overs not yet brought current` (one over stamped current, one
+  at its own capture tier, one never processed at all → exactly the two real outstanding ids, never
+  the stamped one). **Discrimination performed and reverted**: reverting `ImprovePolling.kt` alone
+  (temporary local commit, undone with `git reset --soft` before this commit) fails both — "expected
+  no remaining candidates, got 2" and the mixed case's own assertion — restored, both pass again; the
+  four pre-existing `ImprovePollingTest`/`ImproveScreensTest`/`RealImproveRunnerTest` cases are
+  unaffected (their own fixtures never stamp `processedTier`, so `processedTier IS NULL` still
+  qualifies them, matching the old behaviour for exactly the cases that exercised it).
+- `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — green (all cases in this
+  package, this fix's own new ones included).
+- `gradlew ktlintCheck detekt` — green.
+
+**Left open / not done:** the on-device confirmation that motivated this (a real `field-tier1` run,
+`sqlite3` query showing `isReprocessCandidate = 0` for all twelve rows while the root still read
+"12 overs can get better") is reported separately alongside this session's R-1056 device evidence,
+not duplicated here.
+
+### WPIMPROVE — fixed while device-verifying R-1056: Improve's navigation now survives a configuration change (R-1063, FR-REP-9/11, constitution I)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImproveContent.kt` and a new test file only.
+
+**Requirements/ACs:** R-1063 (register — "Improve flow state across Activity recreation"; this
+fix's own first commit guessed "R-1062", which the very next main merge landed as WPSEGPROV's own,
+unrelated squelch-fusion finding — corrected once the lead's own filing arrived with both Improve
+ids the opposite way round from this session's initial guess), FR-REP-9, FR-REP-11, constitution I.
+
+**What changed:** `ImproveContent`'s own `page` (`ImprovePage` — `Root`/`Select`/`Running`/`Done`)
+lived in a plain `remember`, so any configuration change `ReaderActivity` does not declare in its
+manifest (font scale, rotation — it declares none) recreated the Activity and silently dropped
+`Select`/`Running`/`Done` back to `Root`; mid-run, that told the operator, in effect, that nothing
+was happening. Fixed with a `rememberSaveable` + hand-written `Saver` (`ImprovePageSaver`), the same
+pattern this codebase already uses for every other file-private sealed navigation type —
+`OrtNavHost.kt`'s own `LogFilterOriginSaver`, `SessionsContent.kt`'s own `SessionsPageSaver` — one
+flat, delimiter-joined `String` (never a nested `Saver` call for the `Done` case's own
+`ReprocessStatus.Summary`), an unrecognised/truncated restored value falling back to `Root` rather
+than crashing, matching both precedents' own contract. **Disclosed, not hidden:** the underlying
+reprocess run itself does not survive — `RealImproveRunner`'s own doc comment already states
+cooperative cancellation stops `ReprocessRunner` the moment its collecting coroutine does, which is
+exactly what happens to the `LaunchedEffect` driving it when the old Activity is destroyed — so a
+restored `Running` shows the real board with a freshly restarted run's own real progress, never a
+seamless continuation of wherever the interrupted run had reached. Resuming a genuinely in-flight
+run across recreation would need the run to live somewhere longer-lived than a composition (a
+foreground service, `WorkManager`) — a `:pipeline`/architecture change outside this file's own
+ownership, not attempted here.
+
+**Verified:**
+- New `ImproveContentActivityTest` (Robolectric, a real `ReaderActivity` — not a bare
+  `ComponentActivity` with test-injected content, which cannot re-attach a composition on
+  `recreate()` at all, confirmed directly by trying it first and getting "No compose hierarchies
+  found in the app" instead of this fix's own assertions): `R_1063 Running survives a real Activity
+  recreation, not bounced back to Root` (the engine's own capture-priority yield, FR-REP-6,
+  `CaptureState.capturing(...)` + `ShedStatus.update(level = 3, ...)`, armed between reaching
+  `Improve-Select` and tapping Start, freezes a real run at its first item deterministically —
+  never a race against a real, fast, model-less run — so the board's own "waiting — capture is
+  busy" line is provably still there, real, after `recreate()`) and `R_1063 Done survives a real
+  Activity recreation, keeping its real summary` (a real run against a real, model-less `filesDir`
+  completes to Done; its own real "N overs no longer marked as reprocessing candidates" line
+  survives `recreate()` unchanged). **Discrimination performed and reverted**: reverting
+  `ImproveContent.kt` alone (temporary local commit, undone with `git reset --soft` before this
+  commit) fails both with `ComposeTimeoutException: Condition still not satisfied after 15000 ms` —
+  the expected line never reappears because the restored page is `Root` ("This phone can do more
+  than...") — restored, both pass again.
+- `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — green.
+- `gradlew ktlintCheck detekt` — green.
+
+**Left open / not done:** true engine-level resume (continuing an interrupted run's own progress,
+rather than restarting it) is out of scope for this file's own ownership — see "what changed" above
+for exactly what would be needed and why it was not attempted. Device evidence (font scale changed
+in place while genuinely on `Done`, with the real banner) is reported separately alongside this
+session's R-1056 evidence.
+
+### WPIMPROVE — R-1056 fixed: Improve's Running/Done boards no longer overrun their action bar at font scale 2.0, and the per-record note no longer contradicts Review the changes
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/**` (`ImproveScreens.kt`, new
+`ImproveActionBarScaffold.kt`) and their tests only.
+
+**Requirements/ACs:** R-1056 (register, halt-class), design-guide §10.1 (system insets), constitution
+VIII (a screen is not fixed until captured again and compared to its artboard).
+
+**What changed:**
+- **New `ImproveActionBarScaffold`** (`ui/improve/ImproveActionBarScaffold.kt`): the same
+  `SubcomposeLayout` two-slot shape as `ui/failures/FailureActionBarScaffold.kt` and
+  `SetupScaffold.kt` (bar measured first with `safeAreaBottomPadding()` folded into its own
+  height; the scrollable body measured second with a hard `maxHeight` of `screenHeight − barHeight`
+  — never bottom padding inside the scroll region, which R-292 already found lets real content
+  render behind a pinned bar at rest). `internal` to this package.
+- **`ImproveRunningScreen`** and **`ImproveDoneScreen`** now render through that scaffold instead
+  of a `Column(Modifier.weight(1f)) {}` spacer, which could not stop the body overrunning the
+  button row at font scale 2.0 (the register's own device evidence: the button row's bounds ending
+  at the literal screen height, no bottom inset, sharing a top edge with the body text). Both
+  action bars carry a `testTag` (`improve-running-action-bar`, `improve-done-action-bar`) for the
+  new host-level tests below. No visual change intended at font scale 1.0.
+- **The stale "per-record detail" line** (`perRecordDetailNote`): used to read *"no per-record
+  before/after view exists yet"* even directly above "Review the N changes" once R-1041 wired that
+  control to a real per-record view (the Log, filtered to those overs). Now states where that view
+  is when the link exists, and keeps the original honest claim when it does not (nothing revised,
+  or no summary at all).
+- **`ImproveDoneScreen`** split into `ImproveDoneBody`/`ImproveDoneActionBar` purely to stay under
+  detekt's `LongMethod` limit once the scaffold wiring was added.
+- Nothing else in the Improve flow changed — `ImproveScreen` (list/empty) and `ImproveSelectScreen`
+  were left as-is: neither has a fixed action bar riding on unconstrained content (the list's
+  button lives inside its own scrollable card; Select's existing `weight(1f)` sibling pattern,
+  R-151, was not reported broken and is outside this register row).
+
+**Verified:**
+- `ImproveScreensTest` (Robolectric, component-level): added `R_1056 the per-record note stops
+  claiming no view exists once Review the changes is offered` (asserts the stale substring is gone
+  once Review is shown) and `R_1056 the per-record note keeps its honest claim when there is
+  nothing to review` (asserts the original sentence still renders when there is nothing to
+  review) — neither asserts the corrected sentence's own wording, per this row's own instruction.
+- **New `ImproveScreensHostLayoutTest`** (Robolectric, `@GraphicsMode(NATIVE)`, real
+  `ImproveDoneScreen`/`ImproveRunningScreen` composed inside a `Scaffold` with a real
+  `org.ort.app.ui.failures.FailLevelBanner` ("too quiet") sharing the screen, matching
+  `TransportBarHostLayoutTest`'s established shape for this class of finding rather than a
+  component-only test — R-1049's own lesson, restated verbatim in this register row): 7 tests at
+  `w390dp-h844dp-420dpi` and `w480dp-h844dp-420dpi`, font scale 1.0 and 2.0, asserting the action
+  bar is displayed and every real body line can be scrolled to a position that clears it.
+  **Discrimination performed and reverted** (strict TDD): with `ImproveScreens.kt` reverted to its
+  pre-fix content (via a temporary local commit, undone with `git reset --soft` before this
+  commit), all 7 host-layout tests fail — `AssertionError: The component is not displayed!` on the
+  action bar's own `testTag`, i.e. the unfixed board's button row is not on screen at all, matching
+  the register's "clipped at the bottom edge" finding. Restored, all 7 pass again.
+  Robolectric's own `WindowInsets.navigationBars` (read via `windowInsetsPadding`, exactly what
+  `safeAreaBottomPadding()` calls) reads zero under this harness regardless of the code
+  (`FailureActionBarScaffold.kt`'s own doc comment, confirmed again empirically here via
+  `Scaffold`'s own — real, but width-bucket-dependent — `contentWindowInsets`), so the exact
+  navigation-bar inset itself is not asserted by these tests; that evidence is the device capture
+  below (constitution VIII: "the screenshot wins").
+- `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — 24 tests, all green
+  (`ImproveScreensTest`, `ImproveScreensHostLayoutTest`, `ImprovePollingTest`, `RealImproveRunnerTest`).
+- `gradlew ktlintCheck detekt` — green repo-wide after fixing one `LongMethod` (`ImproveDoneScreen`)
+  and one `function-signature` (collapsed `ImproveDoneActionBar`'s short parameter list to one line).
+
+**Left open / not done:** device capture and its exact pixel bounds are reported separately by this
+builder (base hash, evidence paths, gate results) rather than duplicated here; the full local gate
+(`dependencyRules platformGuards build`, `-p buildSrc test`, `spec_check.py`, `coverageMatrix` /
+`coverageMatrixCheck`) is likewise reported there, run once for the whole change.
 
 ### 64c1bc56 — WPREC: fix ktlintDebugSourceSetCheck violations in the two new recordings scenarios
 

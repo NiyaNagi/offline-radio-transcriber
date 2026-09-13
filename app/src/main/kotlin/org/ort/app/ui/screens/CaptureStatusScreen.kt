@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.LiveBar
 import org.ort.app.ui.components.LiveBarViewState
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.CaptureStateTone
@@ -80,28 +81,35 @@ public fun CaptureStatusScreen(
                     bottom = OrtSpacing.lg + liveBarClearance,
                 ),
         ) {
-            CaptureStatusTitleRow(state = state, onStopRequested = { confirmingStop = true })
+            // Register R-1051 (halt): the real "not yet known" value — checked ahead of every
+            // section, never alongside them (a stale, honest-looking `Not capturing` title beside a
+            // loading body would be its own conflation).
+            if (state.loading) {
+                LoadingState(message = "Loading capture status…")
+            } else {
+                CaptureStatusTitleRow(state = state, onStopRequested = { confirmingStop = true })
 
-            SectionHeader(label = "Audio", modifier = Modifier.padding(top = OrtSpacing.lg))
-            KeyValueRowWithDot("Input", state.input, "capture-status-input")
-            KeyValueRowWithDot(
-                "Level",
-                state.level,
-                "capture-status-level",
-                onClick = onOpenLevel,
-                onClickDescription = "Open level meter",
-            )
-            KeyValueRowWithDot("Radio", state.radio, "capture-status-radio")
+                SectionHeader(label = "Audio", modifier = Modifier.padding(top = OrtSpacing.lg))
+                KeyValueRowWithDot("Input", state.input, "capture-status-input")
+                KeyValueRowWithDot(
+                    "Level",
+                    state.level,
+                    "capture-status-level",
+                    onClick = onOpenLevel,
+                    onClickDescription = "Open level meter",
+                )
+                KeyValueRowWithDot("Radio", state.radio, "capture-status-radio")
 
-            SectionHeader(label = "Processing", modifier = Modifier.padding(top = OrtSpacing.lg))
-            KeyValueRowWithDot("Overs", state.overs, "capture-status-overs")
-            KeyValueRowWithDot("Backlog", state.backlog, "capture-status-backlog")
-            KeyValueRowWithDot("Tier", state.tier, "capture-status-tier")
-            KeyValueRowWithDot("Thermal", state.thermal, "capture-status-thermal")
+                SectionHeader(label = "Processing", modifier = Modifier.padding(top = OrtSpacing.lg))
+                KeyValueRowWithDot("Overs", state.overs, "capture-status-overs")
+                KeyValueRowWithDot("Backlog", state.backlog, "capture-status-backlog")
+                KeyValueRowWithDot("Tier", state.tier, "capture-status-tier")
+                KeyValueRowWithDot("Thermal", state.thermal, "capture-status-thermal")
 
-            SectionHeader(label = "Device", modifier = Modifier.padding(top = OrtSpacing.lg))
-            KeyValueRowWithDot("Storage", state.storage, "capture-status-storage")
-            KeyValueRowWithDot("Battery", state.battery, "capture-status-battery")
+                SectionHeader(label = "Device", modifier = Modifier.padding(top = OrtSpacing.lg))
+                KeyValueRowWithDot("Storage", state.storage, "capture-status-storage")
+                KeyValueRowWithDot("Battery", state.battery, "capture-status-battery")
+            }
         }
 
         if (liveBar != null) {

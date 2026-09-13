@@ -266,4 +266,56 @@ class ImproveScreensTest {
 
         composeTestRule.onNodeWithText("Review", substring = true).assertDoesNotExist()
     }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1056(b): the "per-record detail" note must not claim no per-record view exists once
+    // "Review the N changes" opens exactly that view — never asserting the corrected sentence's own
+    // wording (that is the register's own instruction), only that the stale, now-false claim is gone.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1056")
+    fun `R_1056 the per-record note stops claiming no view exists once Review the changes is offered`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveDoneScreen(
+                    state = ImproveDoneViewState(
+                        headline = "Field, Thu 3 Sep",
+                        clearedCount = 12,
+                        summary = ReprocessStatus.Summary(
+                            total = 12,
+                            transcriptsChanged = 12,
+                            attributionsChanged = 12,
+                            changedTransmissionIds = (1..12).map { "TX$it" }.toSet(),
+                        ),
+                    ),
+                    onDone = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Review the 12 changes").assertExists()
+        composeTestRule.onNodeWithText("no per-record before/after view exists yet", substring = true)
+            .assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1056")
+    fun `R_1056 the per-record note keeps its honest claim when there is nothing to review`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveDoneScreen(
+                    state = ImproveDoneViewState(
+                        headline = "Field, Thu 3 Sep",
+                        clearedCount = 3,
+                        summary = ReprocessStatus.Summary(total = 3, rejected = 3),
+                    ),
+                    onDone = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Review", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("no per-record before/after view exists yet", substring = true).assertExists()
+    }
 }
