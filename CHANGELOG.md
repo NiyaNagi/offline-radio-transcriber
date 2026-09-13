@@ -97,12 +97,15 @@ untouched), `app/src/main/kotlin/org/ort/app/ui/improve/` (`ImproveRunner.kt`, `
 - Full local gate after merging `origin/main` (WPMODLOG, WPSQUELCH, WPDIGINIT): see the session
   report for the exact green run and durations.
 
-**Out-of-package fix, flagged (mechanical, same shape as round 1's identical fix):**
-`OrtNavHostDestinationDispatchTest.kt` (`ui/navigation`) broke on the full gate after merging
-`origin/main` — round 2's own reattachment check runs on *every* composition of `ImproveContent`,
-not only when a run is started, so simply dispatching to `IMPROVE_RECORDS` (no tap at all) now
-reaches `WorkManager.getInstance(...)` through `RealImproveRunner.observeState`. Added the same one
-`@Before` this repository's other Worker-touching Robolectric tests already carry.
+**Out-of-package fixes, flagged (mechanical, same shape as round 1's identical fix):** round 2's own
+reattachment check runs on *every* composition of `ImproveContent`, not only when a run is started
+— a strictly wider trigger than round 1's (which only fired on an explicit `run()`/`cancel()` call).
+Two more Robolectric test files that compose a real `OrtNavHost`/`ImproveContent` broke on the full
+gate after merging `origin/main` for exactly that reason, needing the same one `@Before`
+(`WorkManagerTestInitHelper.initializeTestWorkManager`) this repository's other Worker-touching
+Robolectric tests already carry:
+- `OrtNavHostDestinationDispatchTest.kt` (`ui/navigation`).
+- `TourStepsTest.kt` (`app/debug/tour`) — the canonical screenshot-tour driver.
 
 **Left open / not done:**
 - The stop-then-resume test simulates the system's stop via cancelling the coroutine `doWork()` is

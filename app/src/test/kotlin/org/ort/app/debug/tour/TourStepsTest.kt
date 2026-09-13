@@ -10,9 +10,13 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -72,6 +76,21 @@ class TourStepsTest {
     val composeTestRule = createComposeRule()
 
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+
+    /**
+     * register R-1067 round 2 (out-of-package, minimal, mechanical fix -- flagged in that
+     * register row's own builder report): composing `IMPROVE_RECORDS` through the real
+     * `OrtNavHost` this tour drives now reaches `org.ort.app.ui.improve.ImproveContent`'s own
+     * top-level reattachment check on every composition (not only when a run is started), which
+     * calls `WorkManager.getInstance(context)` through `RealImproveRunner.observeState`. Not
+     * auto-initialized under Robolectric -- the same one-line setup this repository's other
+     * Worker-touching Robolectric tests already carry.
+     */
+    @Before
+    fun initWorkManager() {
+        val config = Configuration.Builder().setExecutor(SynchronousExecutor()).build()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+    }
 
     @After
     fun resetProcessWideState() {
