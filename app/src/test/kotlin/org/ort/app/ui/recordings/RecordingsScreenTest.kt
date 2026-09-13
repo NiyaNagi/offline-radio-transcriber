@@ -141,6 +141,27 @@ class RecordingsScreenTest {
     }
 
     @Test
+    @Requirement("R-1059")
+    fun `R_1059 the over-audio bar's own fill reads the warning state when exceeded, never the default`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RecordingsScreen(
+                    state = stateWith(overAudioExceeded = true),
+                    onDrawer = {},
+                    onSelectFilter = {},
+                    onOpenSession = {},
+                    onOpenOverAudioBudget = {},
+                    onTurnOffArchive = {},
+                )
+            }
+        }
+        // The over-audio row's own bar reads the warn fill; reverting R-1059's production fix makes
+        // this fail (the bar would fall back to the default `accent/green` fill, this tag never
+        // rendering) while every other assertion in this class still passes for the wrong reason.
+        composeTestRule.onNodeWithTag("progress-bar-fill-warn", useUnmergedTree = true).assertExists()
+    }
+
+    @Test
     @Requirement("RC01")
     fun `tapping a session row hands the real session id up through the callback`() {
         var opened: String? = null

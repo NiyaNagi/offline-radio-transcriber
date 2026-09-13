@@ -497,9 +497,15 @@ public fun Badge(text: String, kind: BadgeKind, modifier: Modifier = Modifier) {
 // ---------------------------------------------------------------------------------------------
 
 /** guide §6.12: a 4px `line/default` track with an `accent/green` fill — never indeterminate. If
- * the length is unknown, the caller shows what is known ("27 of 64") beside this, not a spinner. */
+ * the length is unknown, the caller shows what is known ("27 of 64") beside this, not a spinner.
+ *
+ * R-1059 (register: RC01's over-audio card read "1.1 GB of 1 GB" with "Over budget · never
+ * deleted without you" in amber, but the bar itself stayed full green): [fillColor] lets a caller
+ * whose progress figure is itself a warning state — over budget, not merely "full" — draw the fill
+ * in the design tokens' own warning colour instead. Defaults to `accent/green`, so every existing
+ * caller (`ImproveScreens.kt`, `Drawer.kt`'s storage footer) renders exactly as before. */
 @Composable
-public fun ProgressBar(progress: Float, modifier: Modifier = Modifier) {
+public fun ProgressBar(progress: Float, modifier: Modifier = Modifier, fillColor: Color = OrtColors.accentGreen) {
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -507,11 +513,13 @@ public fun ProgressBar(progress: Float, modifier: Modifier = Modifier) {
             .background(OrtColors.lineDefault, RoundedCornerShape(2.dp))
             .semantics { contentDescription = "${(progress.coerceIn(0f, 1f) * 100).toInt()} percent" },
     ) {
+        val fillTag = if (fillColor == OrtColors.accentAmber) "progress-bar-fill-warn" else "progress-bar-fill-normal"
         Box(
             modifier = Modifier
                 .fillMaxHeight()
                 .fillMaxWidth(progress.coerceIn(0f, 1f))
-                .background(OrtColors.accentGreen, RoundedCornerShape(2.dp)),
+                .background(fillColor, RoundedCornerShape(2.dp))
+                .testTag(fillTag),
         )
     }
 }

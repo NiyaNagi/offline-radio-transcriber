@@ -272,6 +272,253 @@ for main code; `:app`'s test source set needed `work-testing` to run a test `Wor
 
 ---
 
+## 2026-09-13 (WPRC02 round 3: over-row restack, refusal copy, axis spacing)
+
+### WPRC02 round 3 — the over row at font scale 2.0, operator-facing refusal copy, honest axis spacing
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionScreen.kt`,
+`RecordingSessionViewStateMapper.kt`, and their tests. No file outside `ui/recordings/**`
+touched.
+**Requirements/ACs:** constitution I, II, VIII; R-1027, R-373 (precedent, not modified).
+**What changed:** three defects the coordinator's own round-2 device evidence found, each with
+its own discriminating test:
+1. **Over rows collapsed at font scale 2.0.** The fixed play-control, time and Label columns
+   together left the weighted content column under a third of the row's own real width
+   (`round2\tour\overnight\RC02-recording-session@2x-end.png`: a transcript wrapping one or two
+   words per line, a facts line breaking at every `·`, an INFERRED confidence chip cut to a
+   sliver). `RecordingSessionOverRow` now checks `LocalDensity.current.fontScale` against the
+   same `1.5f` ceiling `LiveMonitorScreen.kt`'s own `LARGE_FONT_SCALE_THRESHOLD` (R-1027) and
+   `ui/components/Rows.kt`'s own `LogRow` (R-373) already use (both file-local constants, not
+   shared): below it, `RecordingSessionOverRowCompact` keeps the one-line shape unchanged; at or
+   above it, `RecordingSessionOverRowStacked` moves play/time/Label to their own top row (Label
+   stays reachable, never buried) and renders the transcript/attribution/facts content at the
+   row's own full width beneath it.
+2. **Refusal copy.** `exportRefusalMessage`'s `NothingToExport` branch rendered `:pipeline`'s own
+   diagnostic sentence verbatim (a session id, lowercase, built for a log line —
+   `export_empty_1x.png`). Replaced with a fixed operator sentence ("Nothing to export — no audio
+   from this session is on the phone."), keyed on the sealed type alone — `reason.reason` is no
+   longer read at all, so the copy cannot drift with whatever `:pipeline` logs next.
+3. **Axis spacing.** `rc02_overnight_1x.png` read "05 07 08 10 12" — uneven-looking gaps between
+   hour labels for five instants that were always evenly spaced in real time; the defect was
+   `axisLabels` truncating every instant down to its own hour, which reads as unevenly-spaced
+   labels the moment an instant does not land exactly on the hour. Each tick now shows its real
+   minute unless it truly lands on the hour (`axisLabelFor`) — never a silent round-down.
+**Verified:** each defect above had its own test written first and confirmed to fail for the
+right reason before the fix (production code reverted, test run alone, restored) —
+`RecordingSessionScreenLayoutTest`'s new `an over row restacks so its content column holds at
+least 60 percent of the row at 390dp font scale 2_0`/`...480dp font scale 2_0` (content column
+measured 110–114dp of a ~349dp row — 31–33% — before the fix); `RecordingSessionScreenTest`'s
+`the nothing-to-export message is keyed to the refusal type, never the diagnostic sentence inside
+it`; `RecordingSessionViewStateMapperTest`'s `a multi-hour session's axis shows a bare hour only
+when a tick truly lands on it` (updated from round 2's own `..., no minutes needed` — that
+expectation encoded the very defect this round fixes) and `a multi-hour session starting off the
+hour shows five genuinely evenly-spaced minute labels` (05:12–12:04, the coordinator's own cited
+span). `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.recordings.*"` — all green (75
+pre-existing plus new this round). `gradlew :app:ktlintCheck :app:detekt` — green.
+**Left open / not done:** none for this round's own three items — item 4 from round 2
+(`DrillInHeader`'s touch target) remains routed, not fixed, confirmed correct to stop on.
+
+## 2026-09-13 (WPRC02 round 2: five coordinator-review defects on RC02)
+
+### WPRC02 round 2 — byte sizes, export refusal, coverage axis, loading placeholder
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionViewData.kt`,
+`RecordingSessionViewStateMapper.kt`, `RecordingSessionPolling.kt`, `RecordingSessionScreen.kt`,
+their tests, and `tools/ui-audit/tour.json` (one step's `waitMillis`). No file outside
+`ui/recordings/**` touched.
+**Requirements/ACs:** constitution I, II, VI; FR-STO-3, FR-STO-3b, D40, P9; R-1022.
+**What changed:** five defects the coordinator's own device-evidence review found, each fixed with
+its own discriminating test:
+1. **Byte sizes read as nothing.** RC02's Delete tile/sheet and Export sheet all called
+   `Long.toGigabyteLabel()` (RC01's own always-GB budget-card convention), rounding every one of
+   RC02's real, small per-session sizes to a fabricated "0.0 GB" (`screen_delete.png`,
+   `rc02_overnight.png`). `recordingSessionByteLabel(bytes: Long)` — RC02's own adaptive B/KB/MB/GB
+   copy of `SettingsPolling`'s own `formatDiagnosticsSize` decimal convention (that function is
+   `private` to a package this build unit does not own) — replaces every call site. The Delete
+   sheet also now names "Over audio" and "Raw archive" separately, each its own real size from
+   `SessionAudioDeletionService.preview`'s own already-separate fields (`RecordingSessionDeleteState
+   .Preview` gained `overAudioBytes`/`overAudioAlreadyRemoved`/`archiveBytes`/`archiveState`), a
+   half already gone or an archive never kept honestly omitted rather than a fabricated zero line.
+2. **Export nothing-to-export dropped.** `SessionAudioExport.canExport` refuses only against two
+   *marked* facts (over audio removed, archive state) — a session neither flag forbids can still
+   have zero real files on disk (`recordings-budget-exceeded`'s own shape: real DB byte accounting,
+   no real file ever written), which `export_2x_b.png` showed as "0 files · 0.0 GB" with Save still
+   enabled. `RecordingSessionPolling.exportPreview` now refuses locally
+   (`SessionAudioExportRefusal.NothingToExport`, this layer's own honest reason) whenever the real
+   `preview.files` list is empty, regardless of what `canExport` said — `:pipeline` is unchanged.
+3. **Coverage axis.** `axisLabels` formatted every tick "HH" only — five evenly-spaced points
+   inside a session under an hour long round to the same hour ("10 10 10 10 10" on the live
+   session, `delete_refusal.png`), and the mismatched `03 05 07 09 10`/`03 05 06 08 10` readings
+   across two `overnight` captures trace to that debug scenario's own `SystemClock.wallMillis()`-
+   relative fixture timestamps (`OvernightScenario.kt`, outside `ui/recordings/**` — a different
+   real session each scenario load, not a mapper defect). Fixed the one defect inside this
+   package: spans under 3 hours now format "HH:mm", producing five genuinely distinct ticks; longer
+   spans are unchanged (already distinct by construction).
+4. **`Back to Recordings` touch target (155×97px, ~37dp, three separate on-device dumps) is
+   `DrillInHeader` in `app/src/main/kotlin/org/ort/app/ui/components/Rows.kt` — shared by 29+ other
+   screens outside `ui/recordings/**` (Station Detail, Settings sub-screens, Digest, Failures,
+   Improve, …). Not fixed here per the ownership map; reported to the coordinator instead.**
+5. **Tour step `overnight/RC02-recording-session@2x-end` captured unscrolled.** Root cause: RC02's
+   `state == null` loading row rendered its own `RECORDING_SESSION_LOADING_TEST_TAG` only, never
+   the shared `org.ort.app.ui.components.LOADING_STATE_TEST_TAG` `TourAccessibilityScroll`'s own
+   placeholder detection (R-1022) reads — `ScreenshotTourActivity`'s `scroll: "end"` step runs
+   *before* `awaitStableSemantics`, so it found nothing to scroll during the brief loading window
+   and was never retried once the real 42 rows landed a moment later. Fixed by rendering the shared
+   `LoadingState` composable (RC02's own outer tag preserved, so this screen's existing tests did
+   not need to change what they assert on) and adding `"waitMillis": 2000` to the one step that
+   scrolls, the same value this file already uses for every other async-load-sensitive step
+   (`search-corpus/Q03-*`, `field-tier1/T03-*`) — both belt-and-suspenders, since the shared tag
+   alone does not reorder the scroll call. No change to shared `ScreenshotTourActivity.kt`/
+   `TourAccessibilityScroll.kt`.
+**Verified:** each defect above had its own test written first and confirmed to fail for the right
+reason before the fix (production code reverted, test run alone, restored) —
+`RecordingSessionViewStateMapperTest`'s `a real, non-zero byte count never reads as a fabricated
+0-point-0 GB`, `a short session's axis carries five distinct, evenly-spaced minute-precision
+labels`, `a multi-hour session's axis carries five distinct hour labels, no minutes needed`, `the
+same session's span always maps to the same axis labels`; `RecordingSessionPollingTest`'s
+`exportPreview refuses a session whose real files are empty, even when canExport would allow it`,
+`deletePreview names over audio and raw archive separately, honestly omitting a half never kept`;
+`RecordingSessionScreenTest`'s `the delete sheet names over audio and raw archive separately, each
+its own real size`, `the delete sheet omits the over-audio line once that half is already gone`,
+its own `each typed export refusal renders its own honest state` extended to assert Save's own
+shared confirm tag `assertDoesNotExist()`, and `a null state renders the loading tag, never the
+overs list` extended to assert the shared `LOADING_STATE_TEST_TAG` too. `gradlew :app:testDebugUnitTest
+--tests "org.ort.app.ui.recordings.*"` — all green (66 pre-existing plus 9 new this round).
+`gradlew :app:ktlintCheck :app:detekt` — green.
+**Left open / not done:** item 4 above (routed, not fixed — outside this package's ownership
+map). Round-2 device recapture (font scale 1.0/2.0/2.0-end on the real `overnight` session, the
+Delete/Export sheets on both `overnight` and `recordings-budget-exceeded`, the live session's
+coverage axis) reported separately with this round's own evidence paths.
+
+## 2026-09-13 (WPRC02: post-merge coverage regeneration)
+
+### 65de4cb3 — Merge branch 'main' into worktree-agent-a8b1edac4fd72d879
+
+**Scope:** merge only; `CHANGELOG.md` and `results/coverage-matrix.md` conflicted.
+**Requirements/ACs:** none new — brings in main's own work since the prior WPRC02/WPINIT merge
+(`0b12c9e1`): Q23 (squelch fusion decisions, R-1062 round 1) and the WPIMPROVE round that fixed
+R-1056/R-1063/R-1064 and opened R-1067.
+**What changed:** `CHANGELOG.md` conflict resolved by keeping both dated sections (this round's
+own entries first, then main's Q23 entry), per the file's own "merge commits get one entry"
+convention applied to the *content* conflict, not the merge commit itself.
+`results/coverage-matrix.md` (generated) resolved via `git checkout --ours` then regenerated
+fresh against the merged tree, rather than hand-merging a generated file.
+**Verified:** `git grep -n -E "^(<<<<<<<|>>>>>>>)"` — no matches, repo-wide, after the merge
+commit. `gradlew coverageMatrix` — 274 of 485 requirements covered (up from 272 pre-merge; the
+WPIMPROVE round's own new `@Requirement` citations account for the delta), orphan-tag list
+unchanged (`C10`, `IA-3`, `P9`, `RC01`, `RC02`, the `CONSTITUTION *` tags — all pre-existing,
+none new). `gradlew coverageMatrixCheck` — up to date (separate invocation, per AGENTS.md).
+**Left open / not done:** none — this entry covers the merge only; see this round's own report
+for the full WPRC02 gate result run against the merged tree.
+
+
+### 7cf63ffb — WPRC02: coverage matrix regenerated after RC02
+
+**Scope:** `results/coverage-matrix.md` (generated file) only.
+**Requirements/ACs:** none new.
+**What changed:** regenerated after `da88bafe` (RC02) and `da9acd2d` (OrtNavHost wiring) landed.
+**Verified:** `gradlew coverageMatrix` — 272 of 485 requirements covered, no new orphan-requirement
+names beyond this session's own known `RC01`/`RC02`/`C10`/`IA-3`/`P9`/constitution-tag entries (the
+same class of `@Requirement` citation `RecordingsViewStateMapperTest` already uses for RC01).
+`gradlew coverageMatrixCheck` — green (separate invocation, per AGENTS.md).
+
+### da9acd2d — WPRC02: OrtNavHost wiring to open RC02 from RC01
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`,
+`app/src/main/kotlin/org/ort/app/ui/navigation/NavSeed.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/TourIds.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/TourSpec.kt`, `tools/ui-audit/tour.json`. No product
+file outside this list touched, per the prompt's own "in its own commit" instruction.
+**Requirements/ACs:** RC02 (design-intent), IA-3 (the Log-filter-origin generalisation), R-1055
+(dependency recorded, not fixed here — see the RC02 commit `da88bafe`'s own note).
+**What changed:** `NavHostNavState` gains `openRecordingSessionId` (mirrors `openStationId`'s own
+shape exactly — a drill-in-shaped id, reset by `closeDrillIns()`, included in the system-back
+`isDrillInOpen` check). `LogFilterOrigin` gains a `RecordingSession(sessionId)` case so RC02's own
+"Log" link (`openLogFiltered` with a `transmissionIds` filter of this session's real over ids, per
+IA-3's own generalisation) returns to the same session on back. `EarlierNightsDestinationContent`
+now checks `recordingSessionId` first, then `reviewSessionId` (DG04, unchanged), then falls back to
+`RecordingsContent` (RC01) — a `RecordingSessionRouting` bundle (detekt `LongParameterList`) carries
+the RC02-specific callbacks and the single hoisted `TransmissionAudioPlayer` through, threaded from
+`NavHostDispatch`'s own `audioPlayer` parameter (`TransmissionDetailContent` already receives the
+identical instance — RC02 never constructs a second player). `NavSeed.pendingRecordingSessionId`
+and the tour's own `recordingSession` drillIn key (`TourIds.resolveSeed`, mirroring `reviewSession`'s
+"self" shortcut) let the screenshot tour reach RC02 directly; four steps appended to the end of
+`tools/ui-audit/tour.json` (`overnight/RC02-recording-session` at 1.0/2.0/2.0-end,
+`gap-call/RC02-recording-session-gap`).
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests
+"org.ort.app.ui.navigation.NavSeedTest"` — green, including `TourSpecTest.R_TOUR_DRILL_IN_KEYS`
+(the new `recordingSession` key resolves) and `TourStepsTest.R_TOUR_STEPS` (all four new RC02 tour
+steps land on the `EARLIER_NIGHTS` destination they claim, real navigation, no fake). `gradlew
+:app:ktlintCheck :app:detekt` (main, test and debug source sets) — green. `gradlew
+:app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — green.
+**Left open / not done:** the tour cannot yet seed RC02's own delete/export/label sheets (they are
+interaction-only, the same class of gap `tour.json`'s own header comment already documents for
+D08-D11/R02-R04) — a real device tap is the only way to capture them, per this round's own report.
+
+### da88bafe — WPRC02: Recording-Session (RC02) — every over and gap in order, play, delete, export, label
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionViewData.kt`,
+`RecordingSessionViewStateMapper.kt`, `RecordingSessionPolling.kt`, `RecordingSessionScreen.kt`,
+`RecordingSessionContent.kt` (all new), plus `app/src/main/kotlin/org/ort/app/ui/components/OrtIcons.kt`
+(one new `trash` icon, traced from the artboard's own SVG path — RC02's Delete action needed one and
+none existed) and their tests (`RecordingSessionViewStateMapperTest.kt`, `RecordingSessionScreenTest.kt`,
+`RecordingSessionScreenLayoutTest.kt`, `RecordingSessionPollingTest.kt`, all new).
+**Requirements/ACs:** FR-OBS-4, FR-UI-5, FR-RUN-12, FR-STO-3, FR-STO-3b, FR-STO-3e, D40, P9, IA-6,
+constitution I/II/III/IV/VI (cited per-test via `@Requirement`), RC02 (design-intent row).
+**What changed:** `Recording-Session.dc.html`'s own screen, built against `design/design-intent.md`
+row RC02 and `design-guide.md`'s tokens. `RecordingSessionViewStateMapper` is the pure decision (no
+database) turning a session's real transmissions/gaps/labels into the coverage strip (real ticks —
+amber only for a real `FAILED` status — a real hatch per `CaptureGapEntity`, and a playhead real only
+when the transport controller's own loaded transmission belongs to this session; the artboard's own
+"listened X of Y" line is an accepted, recorded deviation — no such signal exists anywhere in this
+schema, and constitution I forbids inventing one) and the row list (`RESOLVED`/`PROCESSING`/
+`REJECTED`/`FAILED` — a closed status enum, not independent booleans, so an impossible combination
+cannot be represented at all). `RecordingSessionPolling` is the real read/write path: session state
+from `recordingSessionSummaries` plus this session's own transmission/transcript/catalog/gap/work-
+queue DAOs; Delete/Export/Label are never reimplemented — `SessionAudioDeletionService`,
+`SessionAudioExport` and `TransmissionLabelRepository` are consumed exactly as they already exist
+(a previous builder's stale-base report that `SessionAudioExport` was a stub is wrong — confirmed
+real by reading it and by this round's own passing integration tests against it), and Retry reuses
+`CorrectionPolling.retryFailedPass` verbatim, the identical mechanism `TransmissionDetailContent`'s
+own `onRetryPass` already uses. `RecordingSessionScreen` renders the coverage card, the action row
+(Play all / Export / Label / Delete, with the real "frees N GB" caption *before* any tap, per the
+artboard's own two-line split — a discriminating layout test proves the two never collide), the over/
+gap rows (play control state driven by the single hoisted `TransportPlaybackController`, never a
+second player — C10), and three sheets (Delete confirm, Export preview/progress, Label) each
+rendering every typed refusal as its own honest state (constitution II). `RecordingSessionContent`
+is the stateful entry point: polls on session/reload-key/loaded-transmission change, writes through
+the Storage Access Framework for Export (`ActivityResultContracts.CreateDocument`, the write on
+`Dispatchers.IO` inside `SessionAudioExport.write`, real progress reported back through `onProgress`)
+exactly as `SettingsExportSubScreen` already does. R-1059 (register): RC01's own over-audio progress
+bar stayed full green past 100% of budget — `ProgressBar` gains an optional `fillColor` parameter
+(defaults to `accent/green`, every existing caller unaffected) and `RecordingsScreen`'s own
+over-audio row now passes `accent/amber` when `exceeded` is real, matching the sub-line already
+beside it.
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.recordings.*"` — all 66
+tests in the package green (13 `RecordingSessionViewStateMapperTest`, 16 `RecordingSessionScreenTest`,
+4 `RecordingSessionScreenLayoutTest`, 11 `RecordingSessionPollingTest` against a real Robolectric
+`OrtDatabase` and the real `context.filesDir` — delete/export/label/retry each exercised against the
+actual pipeline services, not a fake — plus the pre-existing 3 `RecordingsContentTest`, 8
+`RecordingsScreenTest` and 11 `RecordingsViewStateMapperTest` for RC01, all still green). The layout
+suite's 4 cases (`w390dp-h844dp-420dpi`/`w480dp-h844dp-420dpi`, `@GraphicsMode(NATIVE)`) prove the
+transport bar stays a bounded strip with RC02's own content visible above it while playing. The
+R-1059 fix was shown to discriminate: production change reverted, the two new tests —
+`ControlsTest.R_1059`, `RecordingsScreenTest`'s own `R_1059` — fail for the right reason (`assertExists`
+on `progress-bar-fill-warn` finds nothing); restored, both pass again. `gradlew :app:testDebugUnitTest
+--tests "org.ort.app.ui.recordings.*" --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.components.ControlsTest"` — all 206 tests green, no regression in the
+drawer/transport-bar/RC01 suites this change sits beside. `gradlew
+:app:ktlintCheck :app:detekt` — green. `gradlew dependencyRules platformGuards` — green (no new
+module edges; `:app` still depends only on `:core, :data, :lexicon, :llm-api, :net, :pipeline,
+:rig`). `python tools/spec-check/spec_check.py` — OK.
+**Left open / not done:** device capture (constitution VIII) is reported separately — see this
+round's own report for the emulator session's evidence paths, pixel descriptions and uiautomator
+dump bounds, and for the R-1055 dependency (a Log opened from RC02 via `transmissionIds` shows "No
+overs yet" for a non-live session, WPINIT's fix, not this round's). The artboard's top `Label` tile
+has no stated destination of its own (unlike every sibling action) — recorded as an interpretation
+gap in `RecordingSessionScreen`'s own doc comment, resolved here as a shortcut to the first real
+over's label sheet, never a fabricated session-wide action.
+
 ## 2026-09-13 (WPDIGINIT Part A: R-1022/R-1051 closed for every remaining screen)
 
 ### f6474626 — WPDIGINIT Part A: R-1022/R-1051 - Sessions, Digest, Recordings' shared tag, Stations, Frequencies, Threads and the transmission detail's own loading frames now use the shared, tagged LoadingState
