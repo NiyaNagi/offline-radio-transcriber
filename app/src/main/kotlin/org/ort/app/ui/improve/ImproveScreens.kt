@@ -277,7 +277,13 @@ private const val VOICE_MATCH_TIER = 2
 private const val PASS_C_TIER = 3
 
 /** `Improve-Running.dc.html`: progress, pausable, capture unaffected. No fabricated per-item diff
- * (see [ImproveRunner]'s kdoc for why) — the honest content is the count and the honesty note. */
+ * (see [ImproveRunner]'s kdoc for why) — the honest content is the count and the honesty note.
+ *
+ * R-1056 (register): the body now scrolls inside [ImproveActionBarScaffold] above a fixed action
+ * bar that reserves its own navigation-bar inset, instead of a `Column(Modifier.weight(1f)) {}`
+ * spacer that could not stop the body overrunning the bar at font scale 2.0 — see that scaffold's
+ * own doc comment for the full account.
+ */
 @Composable
 public fun ImproveRunningScreen(
     state: ImproveRunningViewState,
@@ -285,56 +291,76 @@ public fun ImproveRunningScreen(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize().padding(horizontal = OrtSpacing.lg)) {
-        Text(
-            text = if (state.paused || state.autoPausedReason != null) "Paused" else "Improving",
-            style = OrtType.screenTitle,
-            color = OrtColors.textHigh,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
-        Text(
-            text = "${state.headline} · ${state.doneCount} of ${state.totalCount}",
-            style = OrtType.subtitle,
-            color = OrtColors.textDim,
-            modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
-        )
-        ProgressBar(progress = if (state.totalCount == 0) 0f else state.doneCount.toFloat() / state.totalCount)
-
-        // FR-REP-6 (WP11d addendum, round 5): the engine's own capture-priority yield
-        // (`ReprocessStatus.State.Paused`) is a distinct, real reason from the operator's own
-        // Pause toggle — shown honestly rather than left indistinguishable from a stalled run.
-        state.autoPausedReason?.let { reason ->
+    ImproveActionBarScaffold(
+        modifier = modifier,
+        content = {
             Text(
-                text = reason,
+                text = if (state.paused || state.autoPausedReason != null) "Paused" else "Improving",
+                style = OrtType.screenTitle,
+                color = OrtColors.textHigh,
+                modifier = Modifier.padding(start = OrtSpacing.lg, end = OrtSpacing.lg, top = OrtSpacing.sm),
+            )
+            Text(
+                text = "${state.headline} · ${state.doneCount} of ${state.totalCount}",
+                style = OrtType.subtitle,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(
+                    start = OrtSpacing.lg,
+                    end = OrtSpacing.lg,
+                    top = OrtSpacing.xs,
+                    bottom = OrtSpacing.sm,
+                ),
+            )
+            ProgressBar(
+                progress = if (state.totalCount == 0) 0f else state.doneCount.toFloat() / state.totalCount,
+                modifier = Modifier.padding(horizontal = OrtSpacing.lg),
+            )
+
+            // FR-REP-6 (WP11d addendum, round 5): the engine's own capture-priority yield
+            // (`ReprocessStatus.State.Paused`) is a distinct, real reason from the operator's own
+            // Pause toggle — shown honestly rather than left indistinguishable from a stalled run.
+            state.autoPausedReason?.let { reason ->
+                Text(
+                    text = reason,
+                    style = OrtType.cardBody,
+                    color = OrtColors.accentAmber,
+                    modifier = Modifier.padding(start = OrtSpacing.lg, end = OrtSpacing.lg, top = OrtSpacing.sm),
+                )
+            }
+
+            Text(
+                text = "Live capture is unaffected — it always has priority. Pausing keeps what is done. " +
+                    "Cancelling keeps what is done too — nothing is rolled back.",
                 style = OrtType.cardBody,
-                color = OrtColors.accentAmber,
-                modifier = Modifier.padding(top = OrtSpacing.sm),
+                color = OrtColors.textBody,
+                modifier = Modifier.padding(
+                    start = OrtSpacing.lg,
+                    end = OrtSpacing.lg,
+                    top = OrtSpacing.md,
+                    bottom = OrtSpacing.md,
+                ),
             )
-        }
-
-        Text(
-            text = "Live capture is unaffected — it always has priority. Pausing keeps what is done. " +
-                "Cancelling keeps what is done too — nothing is rolled back.",
-            style = OrtType.cardBody,
-            color = OrtColors.textBody,
-            modifier = Modifier.padding(top = OrtSpacing.md),
-        )
-
-        Column(modifier = Modifier.weight(1f)) {}
-
-        Column(modifier = Modifier.fillMaxWidth().padding(bottom = OrtSpacing.lg)) {
-            SecondaryButton(
-                text = if (state.paused) "Resume" else "Pause",
-                onClick = onPause,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            TextAction(
-                text = "Cancel",
-                onClick = onCancel,
-                modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.xs),
-            )
-        }
-    }
+        },
+        actionBar = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md)
+                    .testTag("improve-running-action-bar"),
+            ) {
+                SecondaryButton(
+                    text = if (state.paused) "Resume" else "Pause",
+                    onClick = onPause,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextAction(
+                    text = "Cancel",
+                    onClick = onCancel,
+                    modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.xs),
+                )
+            }
+        },
+    )
 }
 
 /**
@@ -348,6 +374,15 @@ public fun ImproveRunningScreen(
  * already does (`initialScreen`, `OrtNavHost.kt`'s own wiring, outside this package's reach; see
  * [org.ort.app.ui.improve.ImproveContent]'s own `onOpenModels` doc comment). Defaults to a no-op so
  * every existing caller keeps compiling unchanged.
+ *
+ * R-1056 (register): the body now scrolls inside [ImproveActionBarScaffold] above a fixed action
+ * bar that reserves its own navigation-bar inset, instead of a `Column(Modifier.weight(1f)) {}`
+ * spacer that could not stop the body overrunning the bar at font scale 2.0 (evidence: the button
+ * row's own bounds ending at the literal screen height, no bottom inset, sharing a top edge with
+ * body text drawn through it) — see that scaffold's own doc comment for the full account. The
+ * "per-record detail" line also no longer contradicts the "Review the N changes" control that now
+ * sits right below it: when there is something real to review, the line says where it goes instead
+ * of claiming no such view exists (see [perRecordDetailNote]).
  */
 @Composable
 public fun ImproveDoneScreen(
@@ -362,84 +397,148 @@ public fun ImproveDoneScreen(
     // wires the real navigation.
     onReviewChanges: (Set<String>) -> Unit = {},
 ) {
-    Column(modifier = modifier.fillMaxSize().padding(horizontal = OrtSpacing.lg)) {
+    val summary = state.summary
+    val changedIds = summary?.changedTransmissionIds.orEmpty()
+    ImproveActionBarScaffold(
+        modifier = modifier,
+        content = {
+            ImproveDoneBody(state = state, summary = summary, changedIds = changedIds, onInstallModel = onInstallModel)
+        },
+        actionBar = {
+            ImproveDoneActionBar(changedIds = changedIds, onDone = onDone, onReviewChanges = onReviewChanges)
+        },
+    )
+}
+
+/** [ImproveDoneScreen]'s own scrollable body, split out purely to keep that function under
+ * detekt's `LongMethod` limit (R-1056 added the scaffold wiring on top of an already-long
+ * function). No behaviour of its own beyond what [ImproveDoneScreen] documents. */
+@Composable
+private fun ImproveDoneBody(
+    state: ImproveDoneViewState,
+    summary: ReprocessStatus.Summary?,
+    changedIds: Set<String>,
+    onInstallModel: () -> Unit,
+) {
+    Text(
+        text = "Done",
+        style = OrtType.screenTitle,
+        color = OrtColors.textHigh,
+        modifier = Modifier.padding(start = OrtSpacing.lg, end = OrtSpacing.lg, top = OrtSpacing.sm),
+    )
+    Text(
+        text = state.headline,
+        style = OrtType.subtitle,
+        color = OrtColors.textDim,
+        modifier = Modifier.padding(
+            start = OrtSpacing.lg,
+            end = OrtSpacing.lg,
+            top = OrtSpacing.xs,
+            bottom = OrtSpacing.sm,
+        ),
+    )
+    Text(
+        text = "${state.clearedCount} overs no longer marked as reprocessing candidates",
+        style = OrtType.control,
+        color = OrtColors.textBody,
+        modifier = Modifier.padding(horizontal = OrtSpacing.lg),
+    )
+    if (summary != null) {
         Text(
-            text = "Done",
-            style = OrtType.screenTitle,
-            color = OrtColors.textHigh,
-            modifier = Modifier.padding(top = OrtSpacing.sm),
-        )
-        Text(
-            text = state.headline,
-            style = OrtType.subtitle,
-            color = OrtColors.textDim,
-            modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
-        )
-        Text(
-            text = "${state.clearedCount} overs no longer marked as reprocessing candidates",
+            text = "${summary.transcriptsChanged} transcripts changed · " +
+                "${summary.attributionsChanged} attributions changed · " +
+                "${summary.rejected} rejected · ${summary.failed} failed",
             style = OrtType.control,
             color = OrtColors.textBody,
+            modifier = Modifier.padding(start = OrtSpacing.lg, end = OrtSpacing.lg, top = OrtSpacing.xs),
         )
-        val summary = state.summary
-        if (summary != null) {
-            Text(
-                text = "${summary.transcriptsChanged} transcripts changed · " +
-                    "${summary.attributionsChanged} attributions changed · " +
-                    "${summary.rejected} rejected · ${summary.failed} failed",
-                style = OrtType.control,
-                color = OrtColors.textBody,
-                modifier = Modifier.padding(top = OrtSpacing.xs),
-            )
-            // R-350 (register, round 10 System validator): `summary.failed` used to be the whole
-            // story — a real count with no real reason beside it, even though
-            // `ReprocessStatus.Summary.failureReasons` (real, per-item, WP11d/WP11c's own R-290
-            // work) has carried the *why* since round 6. `failureReasons` is deduplicated, not
-            // per-reason-counted (`ReprocessStatus.Summary`'s own doc comment: "distinct messages
-            // only") — so a single distinct reason can honestly be labelled with the real total
-            // failed count (every failure shares it), but more than one distinct reason cannot be
-            // split into per-reason counts without inventing a breakdown this build never measured.
-            if (summary.failed > 0 && summary.failureReasons.isNotEmpty()) {
-                FailureReasonLine(summary = summary, onInstallModel = onInstallModel)
-            }
-            Text(
-                text = "Per-record detail is not shown — no per-record before/after view exists yet.",
-                style = OrtType.cardBody,
-                color = OrtColors.textFaint,
-                modifier = Modifier.padding(top = OrtSpacing.sm),
-            )
-        } else {
-            Text(
-                text = "Nothing is deleted (P9): every current record was kept as-is. No content was " +
-                    "rewritten — see this package's report for what a real reprocessing pass still needs.",
-                style = OrtType.cardBody,
-                color = OrtColors.textFaint,
-                modifier = Modifier.padding(top = OrtSpacing.sm),
+        // R-350 (register, round 10 System validator): `summary.failed` used to be the whole
+        // story — a real count with no real reason beside it, even though
+        // `ReprocessStatus.Summary.failureReasons` (real, per-item, WP11d/WP11c's own R-290
+        // work) has carried the *why* since round 6. `failureReasons` is deduplicated, not
+        // per-reason-counted (`ReprocessStatus.Summary`'s own doc comment: "distinct messages
+        // only") — so a single distinct reason can honestly be labelled with the real total
+        // failed count (every failure shares it), but more than one distinct reason cannot be
+        // split into per-reason counts without inventing a breakdown this build never measured.
+        if (summary.failed > 0 && summary.failureReasons.isNotEmpty()) {
+            FailureReasonLine(
+                summary = summary,
+                onInstallModel = onInstallModel,
+                modifier = Modifier.padding(horizontal = OrtSpacing.lg),
             )
         }
-        Column(modifier = Modifier.weight(1f)) {}
-        // R-1041: never a dead tap — a run with nothing revised (every over rejected/failed, or no
-        // summary at all — `FakeImproveRunner`'s own run) shows no link at all, only `Done`.
-        val changedIds = summary?.changedTransmissionIds.orEmpty()
-        if (changedIds.isNotEmpty()) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = OrtSpacing.lg),
-                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
-            ) {
-                SecondaryButton(
-                    text = "Review the " + Plurals.count(changedIds.size, "change"),
-                    onClick = { onReviewChanges(changedIds) },
-                    modifier = Modifier.weight(1f).testTag("improve-done-review-changes"),
-                )
-                PrimaryButton(text = "Done", onClick = onDone, modifier = Modifier.weight(1f))
-            }
-        } else {
-            PrimaryButton(
-                text = "Done",
-                onClick = onDone,
-                modifier = Modifier.fillMaxWidth().padding(bottom = OrtSpacing.lg),
-            )
-        }
+        Text(
+            text = perRecordDetailNote(hasReviewLink = changedIds.isNotEmpty()),
+            style = OrtType.cardBody,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(
+                start = OrtSpacing.lg,
+                end = OrtSpacing.lg,
+                top = OrtSpacing.sm,
+                bottom = OrtSpacing.md,
+            ),
+        )
+    } else {
+        Text(
+            text = "Nothing is deleted (P9): every current record was kept as-is. No content was " +
+                "rewritten — see this package's report for what a real reprocessing pass still needs.",
+            style = OrtType.cardBody,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(
+                start = OrtSpacing.lg,
+                end = OrtSpacing.lg,
+                top = OrtSpacing.sm,
+                bottom = OrtSpacing.md,
+            ),
+        )
     }
+}
+
+/** [ImproveDoneScreen]'s own fixed action row, split out for the same reason as [ImproveDoneBody].
+ * R-1041: never a dead tap — a run with nothing revised (every over rejected/failed, or no summary
+ * at all — `FakeImproveRunner`'s own run) shows no link at all, only `Done`. */
+@Composable
+private fun ImproveDoneActionBar(changedIds: Set<String>, onDone: () -> Unit, onReviewChanges: (Set<String>) -> Unit) {
+    if (changedIds.isNotEmpty()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md)
+                .testTag("improve-done-action-bar"),
+            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+        ) {
+            SecondaryButton(
+                text = "Review the " + Plurals.count(changedIds.size, "change"),
+                onClick = { onReviewChanges(changedIds) },
+                modifier = Modifier.weight(1f).testTag("improve-done-review-changes"),
+            )
+            PrimaryButton(text = "Done", onClick = onDone, modifier = Modifier.weight(1f))
+        }
+    } else {
+        PrimaryButton(
+            text = "Done",
+            onClick = onDone,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md)
+                .testTag("improve-done-action-bar"),
+        )
+    }
+}
+
+/**
+ * R-1056 (register): the "per-record detail" honesty note used to read *"no per-record before/
+ * after view exists yet"* unconditionally — including directly above the *"Review the N changes"*
+ * control once R-1041 wired it to a real per-record view (the Log, filtered to exactly those
+ * overs). That left the screen contradicting its own control in the same breath. The claim itself
+ * is still true whenever no such link exists (nothing was revised, or there is no summary at all);
+ * it only stops being true once a real per-record view is one tap away, so this states where that
+ * view is rather than repeating a claim [hasReviewLink] has just made false.
+ */
+private fun perRecordDetailNote(hasReviewLink: Boolean): String = if (hasReviewLink) {
+    "Per-record detail is not shown here — Review the changes opens them in the Log."
+} else {
+    "Per-record detail is not shown — no per-record before/after view exists yet."
 }
 
 /** R-350 (register): "<N> failed — <reason>", real throughout — split out of [ImproveDoneScreen]
