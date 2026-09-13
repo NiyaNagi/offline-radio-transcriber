@@ -134,7 +134,13 @@ class TourStepsTest {
      * label [expectedForDestination] already checks for that destination's own root. `null` when
      * [drillIn] names none of the kinds this class knows how to check. */
     private fun expectedForDrillIn(drillIn: Map<String, String>): Expected? = when {
-        drillIn["captureLevelMeter"] == "true" -> Expected.Tag("level-meter-chart")
+        // N08/WPCAP (design-intent `Capture.dc.html`): the level meter is no longer a separate
+        // sub-screen `openLevelMeter` drills into — it is always inline on the merged Capture
+        // surface, via `LiveMonitorLevelCard`'s own chart (`LiveMonitorScreen.kt`), the exact same
+        // component N07's own live monitor already used this tag for. `openLevelMeter` itself is
+        // now an inert, compat-only parameter (see `CaptureStatusContent`'s own kdoc) — landing on
+        // `CAPTURE` at all already shows this chart whenever a real `LevelStatus` reading exists.
+        drillIn["captureLevelMeter"] == "true" -> Expected.Tag("live-monitor-level-chart")
         // R-261: an open sheet blocks the tree behind it (confirmed by `TourStepsTest` itself, run
         // once and read - the query field genuinely disappears while `search-filters-sheet` shows),
         // so these two check the sheet's own content, never the destination root underneath it.
@@ -204,7 +210,12 @@ class TourStepsTest {
         "THREADS" -> Expected.Text("Threads")
         "STATIONS" -> Expected.Text("Stations")
         "FREQUENCIES" -> Expected.Text("Frequencies")
-        "CAPTURE" -> Expected.Tag("capture-status-title")
+        // N08/WPCAP: `CaptureStatusContent` now always renders the merged `CaptureScreen`
+        // (design-intent `Capture.dc.html`), which supersedes N04/N06/N07 as separate
+        // destinations/sub-screens — its own title row carries `capture-title`, not the old N04
+        // `CaptureStatusScreen`'s `capture-status-title` (that composable itself is untouched and
+        // still carries its own tag; it is simply no longer reachable from this destination).
+        "CAPTURE" -> Expected.Tag("capture-title")
         "IMPROVE_RECORDS" -> Expected.Text("Improve records")
         // WPREC (design-intent row RC01): a plain reach (no drillIn) now lands on
         // `RecordingsContent` (`Recordings.dc.html`), not the old `SessionsContent` list root — a
