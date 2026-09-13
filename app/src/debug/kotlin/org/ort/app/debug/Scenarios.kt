@@ -236,6 +236,11 @@ public object Scenarios {
         // over in each of the seven states that screen renders — see `overnightLiveMonitor`'s own
         // doc comment.
         "overnight-live-monitor",
+        // Register R-1055 (spec, coordinator device-evidence ask): a live, over-less session
+        // running while an earlier, already-ended session holds the overs a curated
+        // `logFilterTransmissionIds` filter names — see [CrossSessionReviewScenario]'s own doc
+        // comment.
+        "cross-session-review",
     )
 
     public suspend fun load(context: Context, name: String): LoadResult {
@@ -330,6 +335,7 @@ public object Scenarios {
             "llm-disabled" -> llmDisabled(context, db)
             "tier0-llm-stored" -> tier0LlmStored(context)
             "overnight-live-monitor" -> overnightLiveMonitor(context, db)
+            "cross-session-review" -> CrossSessionReviewScenario.load(context, db)
             else -> error("unreachable — guarded by the require() above")
         }
     }

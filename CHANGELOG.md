@@ -34,6 +34,54 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPINIT round 2, coordinator review before merge: `NeverRetained` was itself an unrecorded guess — replaced with `Unknown`; fresh, single-AVD device evidence for Parts A/B/C and R-1055)
 
+### WPINIT: R-1055 device evidence — a dedicated debug scenario proves the cross-session filter fix on a real device, on this builder's own named AVD
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/CrossSessionReviewScenario.kt` (new),
+`Scenarios.kt` (registers it); `tools/ui-audit/tour.json` (two new steps, appended at the end,
+per the coordinator's own instruction).
+
+**Requirements/ACs:** R-1055 (device evidence for the cross-session curated-filter fix already
+committed at `706d1a74`).
+
+**What changed:** the coordinator's review found the R-1055 fix (`706d1a74`) had no device
+evidence, and asked for a seeded reproduction — a live, over-less session while an earlier session
+holds the filtered overs — captured on this builder's own named AVD rather than a shared one.
+Added `CrossSessionReviewScenario`, built from two already-tested primitives rather than a third
+parallel one: `OvernightScenario.overnight` seeds the real ~40-over `scenario-overnight` session
+unchanged (so `logFilterTransmissionIds` can name its own real ids, the same ones
+`overnight/L01-log-filtered-overs` already uses), and a second, live, genuinely-empty session (the
+same shape `Scenarios.firstSession` already establishes for `first-session`) is seeded under this
+scenario's own id, so `Scenarios.LoadResult.primarySessionId` — the id `LogContent` receives as
+"the" session — names the *live* one, never the earlier session the curated filter actually
+targets. Two tour steps appended at the very end of `tour.json` (`cross-session-review/
+L01-log-cross-session` at 1.0 and 2.0) open the Log with `logFilterTransmissionIds` set to three of
+`scenario-overnight`'s real transmission ids, exactly the way Improve's "Review changes" and D11
+do.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.ScenariosTest"
+--tests "org.ort.app.debug.tour.TourSpecTest" --tests "org.ort.app.debug.tour.TourStepsTest"` —
+all green (`TourSpecTest`'s `R_TOUR_DRILL_IN_KEYS`/`R_TOUR_SCENARIO_NAMES`/`R_TOUR_UNIQUE_IDS`
+confirm the new steps and scenario name resolve and don't collide).
+
+Device (`ort_audit_wpinit`, port 5570, this builder's own AVD created with
+`tools\ui-audit\create-avd.ps1`, real database, never shared with another package's session):
+`tools\ui-audit\install.ps1 -Port 5570 -Clear` then `tools\ui-audit\tour.ps1 -Port 5570 -Only
+"cross-session-review/*"` — both steps captured clean. At both scales the Log reads "Filtered to 3
+overs" with a visible "Clear", and shows exactly 3 rows: K7LWH ("roger that, good copy on the
+repeater..."), KE7QRS/KE7QRF ("kilo echo seven quebec romeo sierra, portable"), and an unknown
+station ("...any station on frequency, this is") — the same three overs
+`logFilterTransmissionIds` names, all timestamped 02:12–02:14 (the earlier `scenario-overnight`
+session), while the header's own live indicator reads "5:00" / green dot for the *current*,
+different, over-less live session — proving the found rows are the earlier session's, not the
+live one's, and the found count in "Filtered to 3 overs" is real, not the stale requested-count
+`149ef954`'s own report already fixed. Screenshots:
+`wpinit-evidence\r1055-log-cross-session-1x.png`, `...-2x.png`. Emulator shut down after
+(`adb emu kill`).
+
+**Left open / not done:** none for this scenario/tour addition; see the fix's own entry
+(`706d1a74`) for what R-1055 itself left open (the `OrtNavHost` back-navigation sub-state issue,
+reported to WPREC, not fixed here).
+
 ### 97f6bfff — WPINIT: coordinator review — `NeverRetained` was never backed by an explicit record; it now reads `Unknown`
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt`;
