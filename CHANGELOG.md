@@ -32,6 +32,94 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPREPLIFE round 3: device evidence on real bundled models, merge, full gate)
+
+### WPREPLIFE round 3 — R-1067: device evidence for reattach/kill/finish-while-away on real bundled models, merged origin/main (WPRC02), full gate green
+
+**Scope:** device evidence only (`wpreplife-evidence\round2\`); `CHANGELOG.md`;
+`results/coverage-matrix.md` (regenerated, no content change). No product code in this entry — see
+the narrowed-catch entry above for that.
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution VIII, AGENTS.md item 7. Register R-1067,
+coordinator round 3 items 1 and 2.
+
+**What changed — device recovery, then captures, both under coordinator round 3's explicit
+instructions:**
+
+1. **Device recovery.** Confirmed `ort_audit_replife` (port 5566) was this builder's own AVD via
+   `Get-CimInstance Win32_Process -Filter "Name like 'qemu-system%'"` before touching anything.
+   Found and killed two of this builder's own stale `adb` clients left over from round 2's
+   instability (`pm clear`/`install`, both `-s emulator-5566`, both naming this worktree's own APK
+   path) — never `adb kill-server` (three other builders' emulators were attached to the same adb
+   server). The emulator's own shell was unresponsive to a trivial `getprop` even after that, so
+   this builder's own qemu process (and only that one, verified by AVD name in its command line)
+   was killed and rebooted via `tools\ui-audit\boot.ps1 -Avd ort_audit_replife -Port 5566` (which
+   itself launches with `-no-snapshot`); booted clean, `sys.boot_completed=1`.
+2. **Captures**, under `wpreplife-evidence\round2\`, operator geometry (`wm size 1260x2772`,
+   density 420), a real `HF_TOKEN` build (`fetchBundledAssets: 5/5 assets verified`, no
+   `-PortAllowMissingBundledAssets` escape hatch), the `field-tier1` debug scenario (12 real,
+   decodable FLAC overs at tier 1):
+   - **(a)** `a1-running-1x.png`/`a2-running-2x.png`/`a3-running-return.png` — a real run frozen via
+     the operator Pause control (`ReprocessPauseControl.paused`) at a genuine, still-climbing count
+     ("Paused, All groups · 3 of 12"): captured at font scale 1.0, captured again unchanged after
+     switching to font scale 2.0 (an Activity recreation), then captured a third time unchanged
+     after leaving to Log and returning (a plain composition dispose/recompose, no Activity
+     recreation) — the exact two persistence paths rounds 1 and 2 built.
+   - **(b)** `b-after-kill.png` — `adb shell am kill org.ort.app` alone did **not** kill the
+     process (it was foreground; `ps` still showed it live), so `am force-stop org.ort.app` was
+     used instead (noted here per the coordinator's own instruction) and confirmed the process was
+     gone. Reopening Improve showed **Running** with a real, honestly-climbing count picked up from
+     the checkpoint — not restarted from zero, not duplicated — because the killed process reset
+     the in-JVM `ReprocessPauseControl` flag to unpaused, so WorkManager's own retry of the
+     interrupted attempt simply raced on from where the checkpoint left off.
+   - **(c)** `c-finished-while-away.png` — let the same run finish while on Log, returned to Root:
+     "A run finished while you were away — 12 of 12 overs processed."
+   - **(d)** `d-workmanager-db-state.txt`, `d-jobscheduler-during-a.txt`, `d-jobscheduler-final.txt`
+     — the real WorkManager Room DB (`no_backup/androidx.work.workdb`, not the empty
+     `databases/androidx.work.workdb` — WorkManager keeps its live DB out of the backup-eligible
+     path) queried via `adb shell run-as org.ort.app sqlite3` across (a)/(b)/(c): the
+     `reprocess-run` unique work name maps to the **same** `WorkSpec` id
+     (`19dc2248-16cc-4bf2-afe1-9b528005a7a0`) through RUNNING (a), the force-stop and WorkManager's
+     own restart (b), and SUCCEEDED (c) — never a second, duplicate id. A second, unrelated
+     `WorkSpec` row (`40eaec60...`, ENQUEUED throughout) is a separate periodic job, not this one.
+
+**A genuine finding surfaced while capturing (a)-3, reported rather than fixed (out of this
+round's named scope):** `ReprocessWorker.doWork()` only calls `setProgress` inside its
+per-item `collect` block (`ReprocessWorker.kt`), so if the run is paused before its very first item
+completes, WorkManager's own progress `Data` never carries a real total. `RunningPage` in
+`ImproveContent.kt` seeds `total` from `current.transmissionIds.size` (correct while the same
+composition that started the run is still alive) but a *fresh* reattach (`onReattachRunning`
+builds `ImprovePage.Running` with `transmissionIds = emptyList()`) has only that WorkManager
+snapshot to fall back on — so a reattach that lands before the worker's first `setProgress` shows
+an honest but confusing "Improving · 0 of 0" rather than the real total. Reproduced directly
+(paused immediately after starting, then left to Log and back) before redoing the capture with the
+run paused after item 3 instead, which is what (a) above shows. Not fixed here: it is not part of
+round 3's named "narrow the defensive catch" item, and the display is honest (it reflects real,
+if incomplete, WorkManager data — constitution I) rather than fabricated, just confusing. Left for
+the coordinator to route.
+
+**Then, per the coordinator's own instruction:**
+- Merged `origin/main` (now including WPRC02 rounds 2/3 and the WPDIGINIT/WPSQUELCH/WPMODLOG/WPINIT
+  history already in main): one conflict, in `CHANGELOG.md` (both sides' entries kept, this
+  branch's own round-3 entries first); `results/coverage-matrix.md` merged automatically.
+- Full local gate re-run from the merged tip: `./gradlew.bat dependencyRules platformGuards build`
+  — `BUILD SUCCESSFUL in 20m 23s`, 1109 actionable tasks, no failing tests anywhere in the log
+  (checked explicitly for `SettingsContentExportAndDebugDumpTest`/`CalledFromWrongThreadException`
+  — register R-1053, now routed to WPTESTROBUST and marked "recurring, blocking" as of today — it
+  did **not** appear in this run). `./gradlew.bat -p buildSrc test` green. `python
+  tools/spec-check/spec_check.py` — all 8 checks PASS. `./gradlew.bat coverageMatrix` then
+  `coverageMatrixCheck` as separate invocations — 275/485 requirements covered, matrix already
+  up to date (no diff to commit). `cd corpus && python -m pytest -q` — all green (one skip).
+
+**Left open / not done:**
+- The "0 of 0 on an immediate reattach" finding above (device-confirmed, not fixed this round).
+- Device evidence is screenshots/text under `wpreplife-evidence\round2\`, not yet reviewed by the
+  coordinator/lead against the artboards — per constitution VIII this diff is not "done" until
+  that review closes it.
+- Not pushed, per the coordinator's own instruction for this round.
+
+---
+
 ## 2026-09-13 (WPREPLIFE round 3: the defensive catch is narrowed to the one named case)
 
 ### WPREPLIFE round 3 — R-1067: `reattachToRunningWork`'s catch narrowed to WorkManager's own not-initialized message, discrimination-tested
