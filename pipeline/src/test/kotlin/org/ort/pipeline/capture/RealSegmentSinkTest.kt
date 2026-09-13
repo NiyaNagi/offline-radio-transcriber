@@ -427,45 +427,44 @@ public class RealSegmentSinkTest {
      */
     @Test
     @Requirement("AC-161", "AC-70")
-    public fun `a MAX_DURATION forced segment logs its real close reason to capture log`(): Unit =
-        runBlocking {
-            DiagnosticsLog.configure(filesDir, TestClock())
-            val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
-            val sampleClock = SampleClock(
-                anchorMonotonicNanos = clock.monotonicNanos(),
-                anchorWallMillis = clock.wallMillis(),
-                anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
-                sampleRate = FrameSpec.SAMPLE_RATE,
-            )
-            val queue = WorkQueue(db, clock)
-            val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, SegmentConfig()) {}
+    public fun `a MAX_DURATION forced segment logs its real close reason to capture log`(): Unit = runBlocking {
+        DiagnosticsLog.configure(filesDir, TestClock())
+        val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+        val sampleClock = SampleClock(
+            anchorMonotonicNanos = clock.monotonicNanos(),
+            anchorWallMillis = clock.wallMillis(),
+            anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        val queue = WorkQueue(db, clock)
+        val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, SegmentConfig()) {}
 
-            val endSample = FrameSpec.SAMPLE_RATE.toLong() * 60 // the maximum-segment cap itself
-            val writer = sink.open(SegmentId(0), 0L)
-            writer.append(FloatArray(1_000) { 0.2f })
-            writer.close(
-                SegmentRecord(
-                    id = SegmentId(0),
-                    startSample = 0L,
-                    endSample = endSample,
-                    vadStartSample = 0L,
-                    vadEndSample = endSample,
-                    sampleCount = endSample,
-                    outcome = SegmentOutcome.SPEECH,
-                    forcedSplit = true,
-                    closeReason = SegmentCloseReason.MAX_DURATION,
-                    vadFrameCount = 1_875,
-                    vadSpeechFrameCount = 1_875,
-                ),
-            )
-            DiagnosticsLog.flush()
+        val endSample = FrameSpec.SAMPLE_RATE.toLong() * 60 // the maximum-segment cap itself
+        val writer = sink.open(SegmentId(0), 0L)
+        writer.append(FloatArray(1_000) { 0.2f })
+        writer.close(
+            SegmentRecord(
+                id = SegmentId(0),
+                startSample = 0L,
+                endSample = endSample,
+                vadStartSample = 0L,
+                vadEndSample = endSample,
+                sampleCount = endSample,
+                outcome = SegmentOutcome.SPEECH,
+                forcedSplit = true,
+                closeReason = SegmentCloseReason.MAX_DURATION,
+                vadFrameCount = 1_875,
+                vadSpeechFrameCount = 1_875,
+            ),
+        )
+        DiagnosticsLog.flush()
 
-            val lines = captureLogLines()
-            assertEquals(1, lines.size)
-            val line = lines.single()
-            assertEquals("SPEECH", field(line, "outcome"))
-            assertEquals("MAX_DURATION", field(line, "closeReason"))
-            assertEquals(60_000L.toString(), field(line, "durationMs"))
-            assertEquals("1875", field(line, "vadFrameCount"))
-        }
+        val lines = captureLogLines()
+        assertEquals(1, lines.size)
+        val line = lines.single()
+        assertEquals("SPEECH", field(line, "outcome"))
+        assertEquals("MAX_DURATION", field(line, "closeReason"))
+        assertEquals(60_000L.toString(), field(line, "durationMs"))
+        assertEquals("1875", field(line, "vadFrameCount"))
+    }
 }
