@@ -186,10 +186,10 @@ public object BundledAssetInstaller {
         if (isAlreadyVerified(destination, marker, entry)) {
             rejectionFile(destination).delete() // R-934: a part that verifies is no longer "rejected"
             // R-1052: an app installed before this fix has a `.sha256` marker but no `.size`
-            // sidecar yet — ModelFileVerifier.verify (the check every native-code loader now runs
-            // first) requires both, so backfill it here rather than leaving every upgraded,
-            // perfectly-good install reading as unverifiable forever.
-            writeSizeMarker(destination, entry.sizeBytes)
+            // sidecar yet — ModelFileVerifier.verify's cheap fast path wants both, so backfill it
+            // here rather than leaving every upgraded, perfectly-good install paying the (still
+            // correct, but avoidable) one-time re-hash ModelFileVerifier falls back to otherwise.
+            ModelFileVerifier.recordVerifiedInstall(destination, entry.sha256, entry.sizeBytes)
             return BundledAssetState.Installed(entry.id, destination)
         }
 
@@ -222,8 +222,10 @@ public object BundledAssetInstaller {
                     part.copyTo(destination, overwrite = true)
                     part.delete()
                 }
-                marker.writeText(entry.sha256)
-                writeSizeMarker(destination, entry.sizeBytes) // R-1052 — see ModelFileVerifier's own KDoc
+                // R-1052: the one shared rule for what "verified" means — see ModelFileVerifier's
+                // own KDoc. `marker` (this file's own `.sha256` handle, used by `isAlreadyVerified`
+                // above) points at the exact same file `recordVerifiedInstall` writes.
+                ModelFileVerifier.recordVerifiedInstall(destination, entry.sha256, entry.sizeBytes)
                 rejectionFile(destination).delete() // R-934: this launch's copy verified — clear any prior rejection
                 BundledAssetState.Installed(entry.id, destination)
             }
@@ -241,13 +243,10 @@ public object BundledAssetInstaller {
         return marker.isFile && marker.readText() == entry.sha256
     }
 
-    private fun markerFile(destination: File): File = File(destination.parentFile, destination.name + ".sha256")
-
-    /** R-1052: [ModelFileVerifier.sizeMarkerFile]'s writer — see that class's own KDoc for why the
-     * expected size is a separate sidecar from [markerFile] rather than folded into its text. */
-    private fun writeSizeMarker(destination: File, sizeBytes: Long) {
-        ModelFileVerifier.sizeMarkerFile(destination).writeText(sizeBytes.toString())
-    }
+    /** R-1052: the same naming rule [ModelFileVerifier.sha256MarkerFile] defines — delegated,
+     * not duplicated, so there is exactly one place that decides what "the sha256 marker for this
+     * destination" means. */
+    private fun markerFile(destination: File): File = ModelFileVerifier.sha256MarkerFile(destination)
 
     /** R-934: the same directory as [markerFile] — "the same place the markers live". */
     private fun rejectionFile(destination: File): File = File(destination.parentFile, destination.name + ".rejected")

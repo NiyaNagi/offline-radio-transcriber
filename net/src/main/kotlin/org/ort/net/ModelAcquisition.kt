@@ -1,6 +1,7 @@
 package org.ort.net
 
 import org.ort.core.Outcome
+import org.ort.core.assets.ModelFileVerifier
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -17,6 +18,14 @@ import java.io.IOException
  * later call is idempotent. One deliberate divergence: on a checksum mismatch this class deletes
  * the `.part` file rather than keeping it, because resuming a *corrupt* partial cannot fix it —
  * FR-AST-2 requires that nothing half-written survive for a later run to mistake for progress.
+ *
+ * Register R-1052 follow-up: both [fetch] and [sideload] record a verified install through
+ * [ModelFileVerifier.recordVerifiedInstall] — the same sidecar rule
+ * `org.ort.app.assets.BundledAssetInstaller` writes, so a model downloaded or side-loaded here
+ * passes [ModelFileVerifier.verify] exactly like a bundled one, rather than every native-code
+ * loader refusing a real operator's own install. [markerFile] (this class's own idempotency
+ * check in [cachedIfVerified], unrelated to that loader-side verification) delegates to
+ * [ModelFileVerifier.sha256MarkerFile] for the identical reason: one naming rule, not three.
  */
 public class ModelAcquisition(private val client: HttpRangeClient) {
 
@@ -62,23 +71,28 @@ public class ModelAcquisition(private val client: HttpRangeClient) {
 
     /**
      * Verifies a user-supplied file against [spec]'s checksum and, only on a match, copies it
-     * into place (FR-ASR-8). Never makes a network call. A mismatch leaves whatever was
-     * previously at [spec]'s destination untouched (FR-AST-2).
+     * into place (FR-ASR-8). Never makes a network call. A mismatch — or an interrupted read of
+     * [source] — leaves whatever was previously at [spec]'s destination untouched (FR-AST-2):
+     * register R-1052's own coordinator follow-up asked this to be as atomic as [fetch] already
+     * is, since an interrupted side-load in a release build is exactly R-1052's own
+     * partial-file-at-the-final-path shape. [source] is copied to a `.part` file first, hashed
+     * there (never the original [source], so what is verified is exactly what will be installed),
+     * and only renamed into place on a match — the identical `.part`-then-`renameTo` sequence
+     * [verifyAndInstall] uses, [part]'s copy-fallback included.
      */
     public fun sideload(source: File, spec: ModelFetchSpec, capability: NetCapability): Outcome<AcquiredModel> {
         requireCapability(capability)
 
-        val got = sha256Of(source)
-        if (got != spec.checksum.value) {
-            return Outcome.Err(
-                "checksum mismatch for side-loaded file $source: expected ${spec.checksum.value}, got $got",
-            )
+        spec.destination.parentFile?.mkdirs()
+        val part = partFile(spec.destination)
+        try {
+            source.copyTo(part, overwrite = true)
+        } catch (e: IOException) {
+            part.delete()
+            return Outcome.Err("could not read side-loaded file $source: ${e.message}", e)
         }
 
-        spec.destination.parentFile?.mkdirs()
-        source.copyTo(spec.destination, overwrite = true)
-        markerFile(spec.destination).writeText(spec.checksum.value)
-        return Outcome.Ok(AcquiredModel(spec.destination, spec.checksum, fromCache = false))
+        return verifyAndInstall(part, spec, sourceDescription = "side-loaded file $source")
     }
 
     @Suppress("UNUSED_PARAMETER")
@@ -95,18 +109,25 @@ public class ModelAcquisition(private val client: HttpRangeClient) {
         return AcquiredModel(spec.destination, spec.checksum, fromCache = true)
     }
 
-    private fun verifyAndInstall(part: File, spec: ModelFetchSpec): Outcome<AcquiredModel> {
+    private fun verifyAndInstall(
+        part: File,
+        spec: ModelFetchSpec,
+        sourceDescription: String = spec.url,
+    ): Outcome<AcquiredModel> {
         val got = sha256Of(part)
         if (got != spec.checksum.value) {
             part.delete()
-            return Outcome.Err("checksum mismatch for ${spec.url}: expected ${spec.checksum.value}, got $got")
+            return Outcome.Err("checksum mismatch for $sourceDescription: expected ${spec.checksum.value}, got $got")
         }
 
         if (!part.renameTo(spec.destination)) {
             part.copyTo(spec.destination, overwrite = true)
             part.delete()
         }
-        markerFile(spec.destination).writeText(spec.checksum.value)
+        // R-1052: the one shared rule for what "verified" means (ModelFileVerifier's own KDoc) —
+        // sizeBytes is the real, just-installed file's own length, not spec's declared one, so it
+        // is exact even if a spec is ever constructed without it.
+        ModelFileVerifier.recordVerifiedInstall(spec.destination, spec.checksum.value, spec.destination.length())
         return Outcome.Ok(AcquiredModel(spec.destination, spec.checksum, fromCache = false))
     }
 
@@ -121,5 +142,5 @@ public class ModelAcquisition(private val client: HttpRangeClient) {
 
     private fun partFile(destination: File) = File(destination.parentFile, destination.name + ".part")
 
-    private fun markerFile(destination: File) = File(destination.parentFile, destination.name + ".sha256")
+    private fun markerFile(destination: File): File = ModelFileVerifier.sha256MarkerFile(destination)
 }

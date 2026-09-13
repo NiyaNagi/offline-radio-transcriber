@@ -32,6 +32,135 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPMODEL round 2: R-1052's own fix regressed real installs — every downloaded or side-loaded model would have read Failed; fixed with one shared sidecar rule across bundled/download/sideload, an upgrade path for a sha256-only record, and an atomic sideload)
+
+### (pending) — WPMODEL round 2: R-1052 fix's own regression closed — ModelAcquisition.fetch/sideload now write the same verified-install sidecars ModelFileVerifier reads, sideload is atomic, and a sha256-only upgrade install still loads
+
+**Scope:** `:core` (`assets/ModelFileVerifier.kt` — new `recordVerifiedInstall`, upgrade-path
+verify), `:net` (`ModelAcquisition.kt` — atomic `sideload`, shared sidecar writes), `:app`
+(`assets/BundledAssetInstaller.kt` — calls the shared helper instead of writing markers itself),
+and their tests. No UI package touched.
+
+**Requirements/ACs:** R-1052 (register — halt, round 2), FR-ASR-8, FR-AST-2, FR-AST-3 (a
+side-loaded/downloaded model verifies and installs exactly as strictly as a bundled one),
+constitution I, constitution VII.
+
+**What changed:**
+- **The regression, as the coordinator found it (file:line):** round 1's `ModelFileVerifier`
+  required both `<name>.sha256` and `<name>.size`. `BundledAssetInstaller` wrote both;
+  `ModelAcquisition.fetch` (`ModelAcquisition.kt:109` in round 1) and `.sideload`
+  (`ModelAcquisition.kt:80`) wrote only `.sha256` — the real Settings > Models "Download" and
+  "Install from a file" paths (`ModelsViewData.kt:757`/`787`, called by `ModelsController.download`/
+  `.sideload` at `ModelsViewData.kt:775`/`796`). Every model an operator ever downloaded or
+  side-loaded would read `Failed` and never load — a regression, not a fix. Separately,
+  `ModelAcquisition.sideload` copied straight onto the final path (`source.copyTo(spec.destination,
+  overwrite = true)`, `ModelAcquisition.kt:79`) — an interrupted side-load in a release build is
+  exactly R-1052's own partial-file-at-the-final-path shape, on a path the round 1 fix never reached.
+- **`ModelFileVerifier.recordVerifiedInstall(destination, sha256, sizeBytes)`** (new, `:core`) — the
+  one place a verified install (bundled, downloaded, or side-loaded) records what it just verified,
+  writing both sidecars. `BundledAssetInstaller.installOne` and `ModelAcquisition.verifyAndInstall`
+  both call it now instead of writing `<name>.sha256`/`<name>.size` by hand; `markerFile()` in both
+  classes now delegates to `ModelFileVerifier.sha256MarkerFile` rather than duplicating the naming
+  rule a third time.
+- **Upgrade decision — the verifier now accepts `.sha256` alone.** `.size` is a fast-path
+  optimization, not a requirement: `ModelFileVerifier.verify` checks `.size` first when present
+  (free, no hashing), but when only `.sha256` exists it hashes the file directly and, on a match,
+  backfills `.size` (and the cache stamp) so every later call takes the cheap path. **Chosen over
+  requiring `.size`** because a model a real operator already downloaded or side-loaded before this
+  fix existed is real, verified, user-authorized input — refusing it is the opposite of what R-1052
+  is about — and the one-time hash cost lands once, on the first capture-session start after an
+  upgrade, ever, per asset. Chosen over silently trusting a bare `.sha256` on size alone because
+  that reopens exactly the class of bug R-1052 exists to close: `ScenarioFixtures`'s own stub
+  deliberately carries the *real* sha256 text, so a hash-only check (never a size-only one) is what
+  still catches it — proven by the retained `R_1052 a 64-byte debug stub with no size marker still
+  fails, on the hash` test.
+- **`ModelAcquisition.sideload`** now copies `source` to a `.part` file first, hashes the `.part`
+  (never the original `source`, so what is verified is exactly what will be installed), and only
+  `renameTo`s it into place on a match — the identical `.part`-then-`renameTo` sequence (with
+  `fetch`'s own copy-fallback) `verifyAndInstall` already used, now shared by both callers via a new
+  `sourceDescription` parameter (so error text still says "side-loaded file X" vs "checksum mismatch
+  for <url>"). An interrupted read of `source` (an `IOException` mid-copy) deletes the `.part` and
+  returns `Outcome.Err` — the destination is never touched until a full, verified copy exists to
+  rename. FR-AST-2's existing guarantee (a mismatch leaves whatever was previously at the
+  destination untouched) is preserved and, per the coordinator's brief, is now stronger: the
+  destination is untouched for an interrupted read too, not only a checksum mismatch.
+
+**Verified:**
+- Strict TDD, each discriminating: `ModelFileVerifierTest`'s 3 new cases (`recordVerifiedInstall
+  writes both sidecars...`, `an upgrade install with only the sha256 marker still verifies...`, `...
+  but wrong content still fails`) — compile failure without `recordVerifiedInstall`, then green;
+  `an upgrade install...` fails against the strict round-1 verifier (missing-`.size` ⇒ instant
+  `Failed`), passes after. `ModelAcquisitionFetchTest`/`ModelAcquisitionSideloadTest`'s 4 new
+  `R_1052` cases: the two "passes ModelFileVerifier" cases already pass once the verifier itself
+  accepts a sha256-only record (proving that fix alone closes the reported regression); `an
+  interrupted sideload (an unreadable source) leaves nothing at the final path` fails on today's
+  code with an uncaught `FileNotFoundException` from `sha256Of(source)` (`ModelAcquisition.kt:71`,
+  round 1) — confirmed by running it before the `sideload` rewrite — and passes after, catching the
+  `IOException` and returning `Outcome.Err` instead.
+- `.\gradlew.bat :core:test` — 14/14 `ModelFileVerifierTest` cases green (3 new), full suite green.
+- `.\gradlew.bat :net:testDebugUnitTest` — full suite green, including the 4 new `R_1052` cases and
+  every pre-existing `ModelAcquisitionFetchTest`/`ModelAcquisitionSideloadTest` case unaffected
+  (FR-AST-2's "a mismatch leaves the previous version active" still holds — verified by the
+  pre-existing test, unchanged, still green against the rewritten `sideload`).
+- `.\gradlew.bat :app:testDebugUnitTest` and `:pipeline:testDebugUnitTest` — full suites green,
+  confirming `BundledAssetInstaller`'s switch to the shared helper changed no observable behaviour.
+- **The VAD-unavailable question (asked in the coordinator's first brief, answered here):**
+  `RealCaptureService.buildSegmenter` (`pipeline/src/main/kotlin/org/ort/pipeline/capture/
+  RealCaptureService.kt:674-684`) — on `VadProvisionResult.Unavailable`, records
+  `VadAvailability.stub(reason)` and substitutes `EnergyVadModel()` (a plain RMS-energy threshold,
+  `RealCaptureService.kt:1560-1571`), wrapped in the same `SileroVad` hysteresis logic and fed to
+  the same `Segmenter` — **capture is never gated on VAD availability; it degrades, it does not
+  stop, and no over is silently dropped.** No FR-RUN/FR-CAP requirement names VAD degraded-mode
+  disclosure specifically (grepped both; nothing found) — the closest are constitution I
+  (uncertainty is content) and NFR-1b (a weaker device may know less, must not be more wrong),
+  neither of which currently mandates a *prominent* disclosure. Today the only operator-facing
+  surface is a passive diagnostic line — `CaptureStatusViewState.kt:508-510`'s tier-facts row reads
+  "energy VAD (not Silero)" — visible on the Capture screen, not a dedicated failure banner the way
+  a missing ASR model gets one (`NowViewStateMapperTest`'s "the failed missing-model block appears
+  only when ASR is unavailable"). This asymmetry (ASR-unavailable gets a prominent banner;
+  VAD-unavailable gets a buried diagnostic line) is a UI-visibility question, not a capture-halting
+  bug — **not fixed here**, per the coordinator's own instruction; routing back.
+- **Device evidence** (emulator-5564, the same `ort_audit_wpmodel` AVD, real bundled assets,
+  `HF_TOKEN` set; shut down afterward):
+  - **What repaired the earlier same-size corruption, found:** nothing did — round 1's report was
+    wrong. Re-run with temporary instrumentation directly inside `BundledAssetInstaller.installOne`
+    (added, exercised, then fully reverted — the diff carries none of it): on a fresh, real install
+    the VAD entry showed `isAlreadyVerified=false` and copied fresh; after overwriting
+    `silero_vad.onnx` with 643,854 zero bytes (same size as the manifest's declared `entrySize`,
+    confirmed by `sha256sum`/`stat` immediately before relaunch) and a clean `force-stop` + relaunch,
+    the log read `destLen=643854 entrySize=643854 markerText=<the real hash> entrySha=<the same real
+    hash> isAlreadyVerified=true` — `BundledAssetInstaller` correctly, and by design, does **not**
+    re-hash on its own fast path (its own KDoc says exactly this: "a fast, honest floor, not a
+    replacement" for the real digest check). The file stayed corrupt (confirmed: same inode, same
+    hash, unchanged `Modify` time) — no self-heal exists. Round 1's "the installer repaired it
+    within ~3 s" conclusion was a mistake in that session's own test sequencing, not a real
+    mechanism; there is nothing to fix or explain further.
+  - **A genuinely unavailable model, reached on device:** with `silero_vad.onnx` corrupted this way
+    and the process fresh (`force-stop` then `am start`), the `overnight` scenario was seeded
+    (`scenario.ps1 -Name overnight`) to reach the real `MainActivity` → `RealCaptureService` path.
+    `ScenarioFixtures.installModelFixture` found the corrupted file already unverified (per this
+    package's own round-1 fix) and replaced it with its 64-byte placeholder, which `RealVadProvider`
+    also refused (the round-1 unit tests already prove this in isolation; this is the same fact
+    reached live). **No crash**: `ps -A` showed the process alive; no `SIGABRT`/`Ort::Exception`/
+    tombstone anywhere in logcat; `RealCaptureService` genuinely started (`ActivityManager:
+    Background started FGS ... RealCaptureService`). Navigated to the real Capture screen (drawer →
+    Capture, since `ReaderActivity` is not exported and cannot be launched directly by `am start`)
+    and screenshotted it: **"Capturing" (green dot), "Since 06:25 · 1:11 · alive, heartbeat 11s
+    ago"**, and under **Tier: "3 of 3 — whisper-tiny-en-int8@1 · energy VAD (not Silero)"** — the
+    exact honest degraded-state line named above, reached live, with capture continuing.
+
+**Left open / not done:**
+- The VAD-unavailable UI-visibility asymmetry (a buried diagnostic line vs. ASR's dedicated banner)
+  is named above and left for the coordinator to route — it is a design/UI question, not this
+  package's fix.
+- No register row edited — filing/closing R-1052 is the lead's own job (constitution: only the
+  session lead edits the register).
+- `MediaPipeLlmEngine.load()`'s own `catch (e: Exception)` gap and
+  `ScenarioFixtures.uninstallEveryModelFixture`'s unconditional delete (both noted in round 1) are
+  unchanged by this round — still outside this package's ownership / outside the reported defect.
+
+---
+
 ## 2026-09-12 (WPMODEL: R-1052 halt closed — a model file is verified against its own install record before it ever reaches sherpa-onnx/MediaPipe JNI, and a debug scenario can no longer overwrite a verified real model with a stub)
 
 ### 477a5fc1 — WPMODEL: R-1052 halt fixed — SIGABRT on first launch, native code loading an unverified model file

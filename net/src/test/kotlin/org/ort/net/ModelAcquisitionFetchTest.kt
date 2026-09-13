@@ -5,6 +5,8 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.core.Outcome
+import org.ort.core.assets.ModelFileVerifier
+import org.ort.core.assets.ModelVerification
 import org.ort.net.fake.FakeHttpRangeClient
 import org.ort.testing.Requirement
 import java.io.File
@@ -111,5 +113,45 @@ class ModelAcquisitionFetchTest {
 
         assertTrue(second.value.fromCache, "a second fetch of an already-verified model must be idempotent")
         assertEquals(requestsAfterFirst, client.requests.size, "idempotent fetch must make no HTTP call at all")
+    }
+
+    // ---- Coordinator follow-up, register R-1052: ModelFileVerifier requires a `.size` sidecar
+    // this class never wrote, so it refused every model a real operator downloaded -- the
+    // regression this section's own tests pin shut. -----------------------------------------
+
+    @Test
+    @Requirement("R-1052")
+    fun `R_1052 a fully downloaded model passes ModelFileVerifier, not just this class's own cache check`() {
+        val dest = Files.createTempDirectory("net-fetch").resolve("model.onnx").toFile()
+        val acquisition = ModelAcquisition(FakeHttpRangeClient(body))
+
+        val result = acquisition.fetch(
+            ModelFetchSpec("https://example.invalid/model.onnx", dest, goodChecksum),
+            NetCapability.UserInitiated,
+        )
+
+        assertTrue(result is Outcome.Ok, "expected Ok, got $result")
+        assertEquals(
+            ModelVerification.Verified,
+            ModelFileVerifier.verify(dest),
+            "a model this class just verified and installed must itself pass the loader's own check",
+        )
+    }
+
+    @Test
+    @Requirement("R-1052")
+    fun `R_1052 an upgrade install with only the sha256 marker ModelAcquisition used to write still loads`() {
+        // Exactly what a pre-fix ModelAcquisition.fetch/sideload left behind: the `.sha256` marker
+        // alone, no `.size` sidecar -- a real operator's already-downloaded model must not regress
+        // into "no verified-install record" once ModelFileVerifier starts gating native loads.
+        val dest = Files.createTempDirectory("net-fetch-upgrade").resolve("model.onnx").toFile()
+        dest.writeBytes(body)
+        ModelFileVerifier.sha256MarkerFile(dest).writeText(goodChecksum.value)
+        assertFalse(ModelFileVerifier.sizeMarkerFile(dest).isFile, "precondition: no size sidecar yet")
+
+        val result = ModelFileVerifier.verify(dest)
+
+        assertEquals(ModelVerification.Verified, result)
+        assertTrue(ModelFileVerifier.sizeMarkerFile(dest).isFile, "must be backfilled for the next call")
     }
 }

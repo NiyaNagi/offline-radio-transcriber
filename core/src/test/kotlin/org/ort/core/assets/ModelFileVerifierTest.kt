@@ -35,14 +35,62 @@ class ModelFileVerifierTest {
     }
 
     @Test
-    fun `a 64-byte debug stub with no size marker fails without hashing`(@TempDir tmp: File) {
+    fun `a 64-byte debug stub with no size marker still fails, on the hash`(@TempDir tmp: File) {
         val destination = File(tmp, "model.onnx").apply { writeBytes(ByteArray(64)) }
-        // R-1052's exact shape: ScenarioFixtures writes the real sha256 text as its marker (so a
-        // hash-only check would be fooled) but never a size marker.
+        // R-1052's exact shape: ScenarioFixtures writes the real sha256 text as its marker (the
+        // real model's hash, never the stub's) but no size marker at all. The coordinator's
+        // regression fix (a downloaded/side-loaded model has only `.sha256` too, see
+        // `an upgrade install with only the sha256 marker...` below) means a missing size marker
+        // is no longer instant-fail-without-hashing -- it falls back to hashing the actual bytes,
+        // which is exactly what still catches this stub: its real hash can never equal the
+        // genuine model's hash the marker records.
         ModelFileVerifier.sha256MarkerFile(destination).writeText("deadbeef")
 
         val result = ModelFileVerifier.verify(destination)
         assertTrue(result is ModelVerification.Failed, "expected Failed, got $result")
+    }
+
+    @Test
+    fun `an upgrade install with only the sha256 marker still verifies, hashing once`(@TempDir tmp: File) {
+        val bytes = "a real model, installed by an older build".toByteArray()
+        val destination = File(tmp, "model.onnx").apply { writeBytes(bytes) }
+        // Exactly what ModelAcquisition.fetch/sideload wrote before the coordinator's fix: only
+        // the sha256 marker, no `.size` sidecar at all -- must not regress into "no verified-install
+        // record" for every model a real operator downloaded or side-loaded.
+        ModelFileVerifier.sha256MarkerFile(destination).writeText(sha256(bytes))
+        assertTrue(!ModelFileVerifier.sizeMarkerFile(destination).isFile, "precondition: no size sidecar yet")
+
+        val result = ModelFileVerifier.verify(destination)
+
+        assertEquals(ModelVerification.Verified, result)
+        assertTrue(
+            ModelFileVerifier.sizeMarkerFile(destination).isFile,
+            "the size sidecar must be backfilled so a later call takes the cheap path",
+        )
+        assertEquals(bytes.size.toLong(), ModelFileVerifier.sizeMarkerFile(destination).readText().trim().toLong())
+    }
+
+    @Test
+    fun `an upgrade install with only the sha256 marker but wrong content still fails`(@TempDir tmp: File) {
+        val destination = File(tmp, "model.onnx").apply { writeBytes(ByteArray(64)) }
+        ModelFileVerifier.sha256MarkerFile(destination).writeText(sha256("the real model bytes".toByteArray()))
+
+        val result = ModelFileVerifier.verify(destination)
+
+        assertTrue(result is ModelVerification.Failed)
+        assertTrue(!ModelFileVerifier.sizeMarkerFile(destination).isFile, "a failed hash must not backfill a size")
+    }
+
+    @Test
+    fun `recordVerifiedInstall writes both sidecars and the file then verifies`(@TempDir tmp: File) {
+        val bytes = "a real model".toByteArray()
+        val destination = File(tmp, "model.onnx").apply { writeBytes(bytes) }
+
+        ModelFileVerifier.recordVerifiedInstall(destination, sha256(bytes), bytes.size.toLong())
+
+        assertEquals(sha256(bytes), ModelFileVerifier.sha256MarkerFile(destination).readText())
+        assertEquals(bytes.size.toLong(), ModelFileVerifier.sizeMarkerFile(destination).readText().toLong())
+        assertEquals(ModelVerification.Verified, ModelFileVerifier.verify(destination))
     }
 
     @Test

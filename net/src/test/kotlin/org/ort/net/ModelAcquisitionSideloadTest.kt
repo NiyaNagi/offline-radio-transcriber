@@ -5,8 +5,11 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.core.Outcome
+import org.ort.core.assets.ModelFileVerifier
+import org.ort.core.assets.ModelVerification
 import org.ort.net.fake.FakeHttpRangeClient
 import org.ort.testing.Requirement
+import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
 
@@ -86,6 +89,53 @@ class ModelAcquisitionSideloadTest {
             previousBytes.toList(),
             dest.readBytes().toList(),
             "FR-AST-2: a failed verification leaves the previous version active",
+        )
+    }
+
+    // ---- Coordinator follow-up, register R-1052: ModelFileVerifier requires a `.size` sidecar
+    // this class never wrote, so it refused every model a real operator downloaded or
+    // side-loaded -- the regression this section's own tests pin shut. --------------------------
+
+    @Test
+    @Requirement("R-1052")
+    fun `R_1052 a successfully side-loaded model passes ModelFileVerifier, not just this class's own cache check`() {
+        val source = Files.createTempFile("net-sideload-src", ".onnx").toFile()
+        source.writeBytes(body)
+        val dest = Files.createTempDirectory("net-sideload-dest").resolve("model.onnx").toFile()
+        val acquisition = ModelAcquisition(FakeHttpRangeClient(ByteArray(0)))
+
+        val result = acquisition.sideload(
+            source,
+            ModelFetchSpec("unused://not-fetched", dest, goodChecksum),
+            NetCapability.UserInitiated,
+        )
+
+        assertTrue(result is Outcome.Ok, "expected Ok, got $result")
+        assertEquals(
+            ModelVerification.Verified,
+            ModelFileVerifier.verify(dest),
+            "a model this class just verified and installed must itself pass the loader's own check",
+        )
+    }
+
+    @Test
+    @Requirement("R-1052")
+    fun `R_1052 an interrupted sideload (an unreadable source) leaves nothing at the final path`() {
+        val missingSource = File(Files.createTempDirectory("net-sideload-missing-src").toFile(), "gone.onnx")
+        val dest = Files.createTempDirectory("net-sideload-dest").resolve("model.onnx").toFile()
+        val acquisition = ModelAcquisition(FakeHttpRangeClient(ByteArray(0)))
+
+        val result = acquisition.sideload(
+            missingSource,
+            ModelFetchSpec("unused://not-fetched", dest, goodChecksum),
+            NetCapability.UserInitiated,
+        )
+
+        assertTrue(result is Outcome.Err, "expected Err, got $result")
+        assertFalse(dest.exists(), "an interrupted sideload must never leave a partial file at the final path")
+        assertFalse(
+            File(dest.parentFile, dest.name + ".part").exists(),
+            "no leftover partial file either -- it cannot be mistaken for progress",
         )
     }
 }
