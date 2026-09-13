@@ -138,13 +138,19 @@ class OrtNavHostDestinationDispatchTest {
         composeTestRule.waitUntilTextExists("Settings")
     }
 
+    // WPREC (design-intent row RC01): an ordinary reach (the drawer row) now dispatches to
+    // `RecordingsContent` (`Recordings.dc.html`) — `ReaderDestination.kt`'s own doc comment for why
+    // the enum constant stays `EARLIER_NIGHTS` while its label and default content changed. The old
+    // `SessionsContent` is still reachable on this same destination, but only when
+    // `NavSeed.pendingReviewSessionId` seeds it (`Settings-Storage`'s "Review" link) — covered by
+    // `SettingsStorageReviewLinkTest`/`R_911`'s own case below, not this one.
     @Test
-    fun `EARLIER_NIGHTS dispatches to WP10's real SessionsContent`() {
+    fun `EARLIER_NIGHTS dispatches to the real RecordingsContent for an ordinary reach`() {
         composeTestRule.setContent { OrtTheme { OrtNavHost(sessionId = null) } }
 
         composeTestRule.openDrawerRow("EARLIER_NIGHTS")
 
-        composeTestRule.waitUntilTextExists("Earlier nights")
+        composeTestRule.waitUntilTextExists("Recordings")
     }
 
     /**

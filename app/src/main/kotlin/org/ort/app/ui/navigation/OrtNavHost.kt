@@ -734,6 +734,21 @@ private fun drawerOnSelect(
 /** Builds [NavHostBody]'s [NavHostCallbacks] — split out of [OrtNavHost] purely to keep that
  * function under detekt's `LongMethod` limit, the same reason [NavHostBody]/[DestinationContent]
  * were themselves split out before this round. */
+/** The repeated shape behind every "filter the Log and switch to it" callback below — pulled out
+ * once so each call site is the one line that differs (its own [filter]/[origin]), the same
+ * "extract the duplication" reason this file's own [ImproveRecordsContent] etc. already exist for,
+ * and (WPREC) what keeps [navHostCallbacks] itself under detekt's `LongMethod` limit now that it
+ * has six of these. */
+private fun openLogAndNavigate(
+    navState: NavHostNavState,
+    currentState: MutableState<ReaderDestination>,
+    filter: LogFilterSelection,
+    origin: LogFilterOrigin,
+) {
+    navState.openLogFiltered(filter, origin)
+    currentState.value = ReaderDestination.LOG
+}
+
 private fun navHostCallbacks(
     navigator: ReaderNavigator,
     scope: CoroutineScope,
@@ -762,10 +777,7 @@ private fun navHostCallbacks(
         // plain, unfiltered `Log`, now through the one filter model so back reopens `Capture` on
         // its own live monitor instead of discarding that context entirely (register: N07 used to
         // be the one link of the seven with no origin to restore at all).
-        onOpenLog = {
-            navState.openLogFiltered(LogFilterSelection(), LogFilterOrigin.Capture)
-            currentState.value = ReaderDestination.LOG
-        },
+        onOpenLog = { openLogAndNavigate(navState, currentState, LogFilterSelection(), LogFilterOrigin.Capture) },
         onOpenTransmission = { id ->
             navState.onOpenDrillIn(currentState.value) { navState.openTransmissionId.value = id }
         },
@@ -778,8 +790,8 @@ private fun navHostCallbacks(
         // [NavHostNavState.openLogFiltered] clears the live station drill-in first, [stationId]
         // itself is saved as the origin so back reopens the same station.
         onOpenStationOvers = { stationId ->
-            navState.openLogFiltered(LogFilterSelection(stationId = stationId), LogFilterOrigin.Station(stationId))
-            currentState.value = ReaderDestination.LOG
+            val filter = LogFilterSelection(stationId = stationId)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Station(stationId))
         },
         // IA-6 (information-architecture review, approved — WPNAV): a transmission's own
         // attributed station, one tap away — mirrors [onOpenActivationThread] below's own shape
@@ -802,6 +814,8 @@ private fun navHostCallbacks(
         // "Install a model" lands directly on `Assets` instead of the root the operator used to
         // have to tap through themselves.
         onOpenModels = { navigator.openSettings(SettingsScreenId.ASSETS) },
+        // WPREC: `Recordings.dc.html`'s storage card — `NavHostCallbacks.onOpenSettingsStorage`'s own doc comment.
+        onOpenSettingsStorage = { navigator.openSettings(SettingsScreenId.STORAGE) },
         // Round 6, register R-132: `SettingsContent`'s own `onOpenLevelMeter` (its doc comment:
         // "the host is expected to wire it the same way it wires every other cross-package
         // drill-in") — `Settings-Capture`'s `Meter` action switches to `Capture` and asks
@@ -817,11 +831,9 @@ private fun navHostCallbacks(
         // frequency drill-in this fires from in every real call (this only ever fires from inside
         // `FrequencyDetailContent`, which only composes while `openFrequencyHz` already holds it).
         onOpenOvers = { hz, window ->
-            navState.openLogFiltered(
-                LogFilterSelection(frequencyHz = hz, fromMillis = window.startMillis, toMillis = window.endMillis),
-                LogFilterOrigin.Frequency(hz),
-            )
-            currentState.value = ReaderDestination.LOG
+            val filter =
+                LogFilterSelection(frequencyHz = hz, fromMillis = window.startMillis, toMillis = window.endMillis)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Frequency(hz))
         },
         // Round 11, register R-133: `Settings-Storage`'s "Next deletion … Review" link
         // (`SettingsContent.onReviewSession`, WP10's `948fe55`) — see
@@ -848,28 +860,22 @@ private fun navHostCallbacks(
         // chart bar, real now — filters to the tapped bar's own real `[fromMillis, toMillis]` hour
         // window (`NowScreen`'s own `hourFilterWindow`), origin `Now` so back returns there.
         onOpenHour = { fromMillis, toMillis ->
-            navState.openLogFiltered(
-                LogFilterSelection(fromMillis = fromMillis, toMillis = toMillis),
-                LogFilterOrigin.Now,
-            )
-            currentState.value = ReaderDestination.LOG
+            val filter = LogFilterSelection(fromMillis = fromMillis, toMillis = toMillis)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Now)
         },
         // R-1041 (D11, register R-1041): `Detail-Propagated.dc.html`'s own "View the N affected
         // overs" — filters to exactly the real affected transmission ids (never a fabricated or
         // wider set), origin `Transmission` so back reopens the same transmission's own drill-in.
         onViewAffectedOvers = { transmissionId, overIds ->
-            navState.openLogFiltered(
-                LogFilterSelection(transmissionIds = overIds),
-                LogFilterOrigin.Transmission(transmissionId),
-            )
-            currentState.value = ReaderDestination.LOG
+            val filter = LogFilterSelection(transmissionIds = overIds)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Transmission(transmissionId))
         },
         // R-1041 (R04, register R-1041): `Improve-Done`'s own "Review the N changes" — filters to
         // exactly the real, revised over ids (`ReprocessStatus.Summary.changedTransmissionIds`,
         // never the whole attempted batch), origin `Improve` so back reopens `Improve records`.
         onOpenChangedOvers = { overIds ->
-            navState.openLogFiltered(LogFilterSelection(transmissionIds = overIds), LogFilterOrigin.Improve)
-            currentState.value = ReaderDestination.LOG
+            val filter = LogFilterSelection(transmissionIds = overIds)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Improve)
         },
     )
 }
@@ -987,6 +993,9 @@ private data class NavHostCallbacks(
     val onOpenThread: (String) -> Unit,
     val onOpenStations: () -> Unit,
     val onOpenModels: () -> Unit,
+    // WPREC: `Recordings.dc.html`'s own storage card — `Settings-Storage` (CF03), the same
+    // `navigator.openSettings` shape `onOpenModels` above already uses.
+    val onOpenSettingsStorage: () -> Unit,
     val onOpenLevelMeter: () -> Unit,
     val onOpenOvers: (Long, TimeWindow) -> Unit,
     // Round 11, register R-133: see `navHostCallbacks`'s own construction site.
@@ -1575,35 +1584,65 @@ private fun DestinationContent(
                 onReviewSession = callbacks.onReviewSession,
             )
 
-        // Round 5 (R-092/R-107): `onOpenTransmission` is real now — WP10 merged it (confirmed by
-        // reading `ui/digest/SessionsContent.kt` before wiring this). `onOpenDrillIn` (this file's
-        // `OrtNavHost`, where `callbacks.onOpenTransmission` is built) records `openedFrom = current`
-        // at the moment the tap fires, which is `EARLIER_NIGHTS` for every tap this dispatch can
-        // ever produce — so the transmission drill-in's `backLabel` reads `ReaderDestination
-        // .EARLIER_NIGHTS.label`, "Earlier nights", with no extra state needed here.
-        // Round 11, register R-133: `initialSessionId` is real now — WP10 merged it (`e390c60`,
-        // confirmed by reading `ui/digest/SessionsContent.kt` before wiring this) — seeds the
-        // `Review` link's own session detail; `null` (every ordinary way of reaching this
-        // destination) is that composable's own existing default, its own list root.
-        ReaderDestination.EARLIER_NIGHTS ->
-            org.ort.app.ui.digest.SessionsContent(
-                context = context,
-                onDrawer = onOpenDrawer,
-                modifier = content,
-                onOpenTransmission = onOpenTransmission,
-                initialSessionId = reviewSessionId,
-                // R-840: real now — WP10 merged `SessionsContent.openDigest` (confirmed by reading
-                // `ui/digest/SessionsContent.kt` before wiring this) — lands `Earlier nights` on
-                // that session's own `Digest` (DG01/DG05) instead of its `Session` (DG04) detail,
-                // seeded via `NavSeed.reviewSessionView = DIGEST`.
-                openDigest = reviewSessionView == ReviewSessionView.DIGEST,
-            )
+        // WPREC (design-intent row RC01): `EARLIER_NIGHTS` now means `Recordings.dc.html` (RC01)
+        // for an ordinary reach — see `ReaderDestination.kt`'s own doc comment, and
+        // [EarlierNightsDestinationContent]'s for the review-link split. Extracted purely to keep
+        // this function under detekt's `LongMethod` limit — the same reason [ImproveRecordsContent]
+        // below already is.
+        ReaderDestination.EARLIER_NIGHTS -> EarlierNightsDestinationContent(
+            context = context,
+            onOpenDrawer = onOpenDrawer,
+            modifier = content,
+            onOpenTransmission = onOpenTransmission,
+            reviewSessionId = reviewSessionId,
+            reviewSessionView = reviewSessionView,
+            onOpenSettingsStorage = callbacks.onOpenSettingsStorage,
+        )
 
         // Round 12, R-350: `onOpenModels` real now (WP10's `94c946c`) — same callback as `Now`'s
         // above. Call itself extracted to [ImproveRecordsContent] purely to keep this function
         // under detekt's `LongMethod` limit.
         ReaderDestination.IMPROVE_RECORDS ->
             ImproveRecordsContent(context, onOpenDrawer, content, callbacks.onOpenModels, callbacks.onOpenChangedOvers)
+    }
+}
+
+/**
+ * [DestinationContent]'s `EARLIER_NIGHTS` branch. [reviewSessionId] is non-null *only* when
+ * `Settings-Storage`'s "Next deletion … Review" link seeded it (`NavHostNavState
+ * .openReviewSession`) — the one path that still needs the old `SessionsContent` (DG04's `Session`
+ * review, or its own `Digest` — DG01/DG05 — per [reviewSessionView]); every ordinary reach (the
+ * drawer row) has `reviewSessionId == null` and lands on `Recordings.dc.html` (RC01) instead — see
+ * `ReaderDestination.kt`'s own doc comment for why the enum constant itself was not renamed.
+ * `RecordingsContent.onOpenSession` has nothing to open yet — `Recording-Session.dc.html` (RC02)
+ * is a separate build unit (see this session's own report for the stop point).
+ */
+@Composable
+private fun EarlierNightsDestinationContent(
+    context: android.content.Context,
+    onOpenDrawer: () -> Unit,
+    modifier: Modifier,
+    onOpenTransmission: (String) -> Unit,
+    reviewSessionId: String?,
+    reviewSessionView: ReviewSessionView,
+    onOpenSettingsStorage: () -> Unit,
+) {
+    if (reviewSessionId != null) {
+        org.ort.app.ui.digest.SessionsContent(
+            context = context,
+            onDrawer = onOpenDrawer,
+            modifier = modifier,
+            onOpenTransmission = onOpenTransmission,
+            initialSessionId = reviewSessionId,
+            openDigest = reviewSessionView == ReviewSessionView.DIGEST,
+        )
+    } else {
+        org.ort.app.ui.recordings.RecordingsContent(
+            context = context,
+            onDrawer = onOpenDrawer,
+            modifier = modifier,
+            onOpenOverAudioBudget = onOpenSettingsStorage,
+        )
     }
 }
 
