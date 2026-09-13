@@ -20,6 +20,10 @@ public object TextExportWriter {
             ?: "frequency not reported"
         val who = "${cells.callsignCell} (${cells.stateTag}${
             if (cells.confidenceCell.isNotEmpty()) ", ${cells.confidenceCell}" else ""
+        }${
+            // Register R-1039: only ExportAttribution.UnresolvedCallsign ever carries a note — the
+            // one case where the state is real but this line cannot name a callsign.
+            if (cells.noteCell.isNotEmpty()) ", ${cells.noteCell}" else ""
         })"
         val transcript = record.transcriptText?.let { " — $it" } ?: ""
         return "$time · $freq · $who$transcript"
