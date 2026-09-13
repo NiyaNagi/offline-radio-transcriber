@@ -452,7 +452,8 @@ class ScenariosTest {
         assertEquals("T1", session?.deviceTier)
     }
 
-    // R-290's own audio-fixture tests moved to `FieldTier1AudioTest.kt` (detekt's `LargeClass`
+    // R-290's own audio-fixture tests moved to `FieldTier1AudioTest.kt`, and the `improve-live-quiet`
+    // case (register R-1061) to `ImproveLiveQuietScenarioTest.kt` (detekt's `LargeClass`
     // finding, once this file's own new additions pushed it past a reasonable size) — the same
     // split `NavRowTest.kt` already established for `RowsTest.kt`, for the same reason: a
     // self-contained cluster, not entangled with the rest of what this file covers.
@@ -886,5 +887,9 @@ class ScenariosTest {
     // DebugFailureOverride — moved verbatim into FailureOverrideScenariosTest.kt (detekt's
     // LargeClass finding, this file's own size after the R-285 tests above; the same fix
     // RowsTest.kt's own NavRowTest.kt split already establishes as house style).
+    //
+    // R-1071 (register, WPDETAILRES): the resolver-output-consistency sweep across every declared
+    // scenario lives in ResolverOutputScenariosTest.kt instead — this file's own size after adding
+    // it tripped the same LargeClass finding, so it moved out the same way, verbatim.
     // -----------------------------------------------------------------------------------------
 }

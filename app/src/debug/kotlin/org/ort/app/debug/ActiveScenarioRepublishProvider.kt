@@ -4,7 +4,6 @@ import android.content.ContentProvider
 import android.content.ContentValues
 import android.database.Cursor
 import android.net.Uri
-import kotlinx.coroutines.runBlocking
 
 /**
  * R-873 (register, validator V10): a debug process start (a `force-stop` + relaunch a validator or
@@ -27,18 +26,18 @@ import kotlinx.coroutines.runBlocking
  * providers use for the same reason (library code that cannot insert itself into an app's own
  * `Application.onCreate()`).
  *
- * Re-publishing is nothing more than calling [Scenarios.load] again with whichever name
- * [ActiveScenarioMarker] last recorded: `load`'s own `clearPriorScenarioData` + upsert writes are
- * already idempotent by construction (every tour/validator session this round reloads scenarios
- * repeatedly without a reinstall in between), so doing it once more at process start is safe and
- * produces exactly the same holders a fresh load would.
- *
- * [runBlocking] on the main thread inside [onCreate] is a deliberate, debug-only trade-off: this
- * provider's whole reason to exist is making the *next* screen a validator or the tour opens render
- * correctly, immediately, so the re-seed must be complete before that happens, not merely started —
- * a fire-and-forget coroutine would race the very next `Activity.onCreate()` this restart is for.
- * The one-time cost (the same single scenario load a real one already takes, well under a second in
- * every scenario this round measured) is the honest price of correctness here, not an oversight.
+ * **R-1076 (register, validator V10 follow-up)**: re-publishing used to mean calling
+ * [Scenarios.load] again — but `load`'s own `clearPriorScenarioData` + every scenario builder's own
+ * `:data`/file/`SharedPreferences` writes are *seeding*, not republishing: calling it a second time
+ * at a debug process restart deleted and re-inserted every row a previous incarnation of this same
+ * process (or the operator, or a validator) had already changed since the first load, silently
+ * discarding it — although this class's own kdoc claimed all along that only in-memory facets were
+ * being republished. [Scenarios.republish] is the real fix: it re-applies exactly the process-wide,
+ * in-memory holders [Scenarios.load] itself sets (see that function's own kdoc for the full
+ * catalogue) and nothing else — never a database write, a file write, or a `SharedPreferences` edit.
+ * It needs no `Context` at all, unlike `load`, because every one of those holders is a plain,
+ * context-free singleton — the strongest available proof that nothing here can reach `:data` or a
+ * file by accident.
  */
 public class ActiveScenarioRepublishProvider : ContentProvider() {
     override fun onCreate(): Boolean {
@@ -49,7 +48,7 @@ public class ActiveScenarioRepublishProvider : ContentProvider() {
         // silently doing nothing is the honest response; the marker only ever names something real
         // to begin with because [Scenarios.load] itself validates it before ever writing one.
         if (activeScenarioName !in Scenarios.NAMES) return true
-        runBlocking { Scenarios.load(appContext, activeScenarioName) }
+        Scenarios.republish(activeScenarioName)
         return true
     }
 

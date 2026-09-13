@@ -20,12 +20,16 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -298,6 +302,17 @@ public fun OrtNavHost(
 
     OrtNavHostBackHandler(current, navigator, navState, drawerState, scope)
 
+    // Register R-1061 (round 2): the host's own pinned live/transport bar's real, laid-out height
+    // — never a guessed constant (round 1's own `LIVE_BAR_RESERVE_HEIGHT = 96.dp` was exactly that
+    // guess, replaced this round after the coordinator's own review named it one) — reported by
+    // [NavHostBody] itself via `onLiveBarHeightChanged` the moment the bar's own `Box` is measured
+    // (the same `onGloballyPositioned` mechanism [org.ort.app.ui.failures.FailureHost] already uses
+    // for the banner's own height, R-178), and reset to `0.dp` the instant the bar stops showing —
+    // see [NavHostBody]'s own doc comment on exactly where. Zero on the very first frame before
+    // anything has been measured, matching the same one-frame lag `contentTopPadding` itself
+    // already has for the banner.
+    var liveBarHeight by remember { mutableStateOf(0.dp) }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -327,6 +342,8 @@ public fun OrtNavHost(
             FailureHost(
                 sessionId = sessionId,
                 actions = failureActions,
+                // Register R-1061: see this file's own `liveBarHeight` doc comment.
+                reservedBottomHeight = liveBarHeight,
                 // R-1003 (halt): `padding` already reflects this `Scaffold`'s own default
                 // `contentWindowInsets` (`WindowInsets.systemBars` — confirmed by decompiling
                 // `ScaffoldDefaults`/`SystemBarsDefaultInsets_androidKt` for this row; this
@@ -344,6 +361,7 @@ public fun OrtNavHost(
                     layout = NavHostLayout(
                         modifier = Modifier.fillMaxSize().safeAreaBottomPadding(),
                         contentTopPadding = contentTopPadding,
+                        onLiveBarHeightChanged = { liveBarHeight = it },
                     ),
                     ids = NavHostIds(
                         current,
@@ -965,8 +983,14 @@ private fun searchHostState(
  * comment for why that does not double-reserve against the `Scaffold`'s own padding above it) and,
  * register R-178, the banner-height top padding [org.ort.app.ui.failures.FailureHost] reports —
  * bundled, same reason as [NavHostIds]/[NavHostCallbacks], so [NavHostBody] stays under detekt's
- * `LongParameterList` rather than growing a parameter for the R-178 addition. */
-private data class NavHostLayout(val modifier: Modifier, val contentTopPadding: Dp = 0.dp)
+ * `LongParameterList` rather than growing a parameter for the R-178 addition. Register R-1061
+ * (round 2): [onLiveBarHeightChanged] joins this bundle for the identical reason — [OrtNavHost]'s
+ * own `liveBarHeight` doc comment has the full account of what this reports and why. */
+private data class NavHostLayout(
+    val modifier: Modifier,
+    val contentTopPadding: Dp = 0.dp,
+    val onLiveBarHeightChanged: (Dp) -> Unit = {},
+)
 
 /** The "land here fresh, not at the root" seeds three different destinations each take, bundled
  * purely to keep [NavHostIds] and [DestinationContent] under detekt's `LongParameterList` — the
@@ -1181,6 +1205,16 @@ private fun NavHostBody(
     transportPlayback: TransportPlaybackController,
     search: SearchHostState,
 ) {
+    // Register R-1061 (round 2): `layout.onLiveBarHeightChanged` — see [OrtNavHost]'s own
+    // `liveBarHeight` doc comment. This is *not* R-262's own reverted mechanism (this function's
+    // next doc comment paragraph). That one fed a measured height back into *this same column's
+    // own* content-box padding, a genuine second reservation on top of what `Column`'s own weight
+    // distribution already gives for free (R-957's fix). This is a different consumer entirely:
+    // [org.ort.app.ui.failures.FailureHost], a composable *above* this one in the tree, which has
+    // no other way to know how tall the bar *will* be before it decides how much room its own
+    // banner may claim — nothing here changes how this column itself lays out the bar against the
+    // content box below it.
+    val onLiveBarHeightChanged = layout.onLiveBarHeightChanged
     // Register R-262 (accessibility validator), superseded by R-957 (root cause, WPI's host
     // comparison on 5558/5556): R-262 added an explicit `padding(bottom = liveBarHeight)` to the
     // content box below, real-measuring [LiveBar]'s own height via `onGloballyPositioned` the same
@@ -1212,6 +1246,21 @@ private fun NavHostBody(
     LaunchedEffect(recorderDestination) {
         FieldReportRecorder.onDestinationChanged(recorderDestination)
     }
+    // Register R-1041 (R04) / R-1055: [DestinationContent]'s own `when(current)` (`NavHostDispatch`,
+    // below) fully disposes whichever destination is not the current one — correct for a plain
+    // `remember`, but it also throws away any `rememberSaveable` state a destination's own content
+    // keeps (`org.ort.app.ui.improve.ImproveContent`'s own `page`, R-1063), because that state's
+    // *value* has nowhere to live once its owning composable leaves the tree entirely; a real
+    // Activity recreation is a different mechanism (the `SaveableStateRegistry` bundle survives
+    // that one on its own) and untouched by this. `rememberSaveableStateHolder()`, created once
+    // here — a level `NavHostDispatch`'s own `when` (below) does *not* dispose when a drill-in
+    // opens over the current destination, so a destination's own saved state also survives that,
+    // not only an ordinary destination-to-destination switch (this is what "across drill-in and
+    // back" in this round's own brief means) — remembers every keyed subtree's `rememberSaveable`
+    // values across being dropped from composition and given back the moment the same key (this
+    // file's own [DestinationContent] call site below keys by [ReaderDestination.name]) is composed
+    // again, exactly the "switch tabs, keep each tab's own state" use its own package doc names.
+    val destinationStateHolder = rememberSaveableStateHolder()
     Column(modifier = layout.modifier) {
         val isDrillIn = listOf(ids.transmissionId, ids.stationId, ids.frequencyHz, ids.threadId).any { it != null }
         // ui-conformance WP3 round 4 (R-129 smoke coverage found this, real at the time): this host
@@ -1275,7 +1324,7 @@ private fun NavHostBody(
         // extra clearance that comment explains.
         val clearance = bannerClearance(!isDrillIn && !isSearch && !isSettings, layout.contentTopPadding)
         Box(modifier = Modifier.weight(1f).padding(top = clearance)) {
-            NavHostDispatch(ids, callbacks, sessionId, context, transportPlayback, search)
+            NavHostDispatch(ids, callbacks, sessionId, context, transportPlayback, search, destinationStateHolder)
         }
 
         // C10 (`design/canvas/Transport-Bar.dc.html`): replaces the plain pinned [LiveBar] this
@@ -1290,14 +1339,33 @@ private fun NavHostBody(
             embedsOwnLiveBar = embedsOwnLiveBar,
             openTransmissionId = ids.transmissionId,
         )
+        // Register R-1061 (round 2): the bar's real height must reach [onLiveBarHeightChanged] as
+        // `0.dp` the instant it stops showing — a stale non-zero value here would leave
+        // `FailureHost`'s own banner cap permanently shrunk for a bar that is no longer pinned.
+        // Keyed on `transportState` itself (not just whether it is `Hidden`) so this fires again on
+        // every transition into `Hidden`, from whichever state preceded it.
+        LaunchedEffect(transportState) {
+            if (transportState == TransportBarViewState.Hidden) onLiveBarHeightChanged(0.dp)
+        }
         if (transportState != TransportBarViewState.Hidden) {
+            val density = LocalDensity.current
             // Wrapped, not passed as a `modifier` (the same reasoning this block's own prior form
             // had for `LiveBar`) — a plain `Column` sibling below the weighted content box above;
             // Compose's own layout already gives that box exactly the remaining height, no
-            // measured-height state needed (R-957). `testTag` (register R-262): a stable node for a
-            // test to read this wrapper's own `boundsInRoot`, independent of the bar's own
-            // runtime-varying label/callsign text.
-            Box(modifier = Modifier.testTag("live-bar-clearance")) {
+            // measured-height state needed for *this column's own* layout (R-957). `testTag`
+            // (register R-262): a stable node for a test to read this wrapper's own `boundsInRoot`,
+            // independent of the bar's own runtime-varying label/callsign text. `onGloballyPositioned`
+            // (register R-1061, round 2): the *real*, laid-out height of this exact box, reported
+            // upward via [onLiveBarHeightChanged] — see this function's own parameter doc comment
+            // for why this is a different consumer than the one R-957 already removed the mechanism
+            // for.
+            Box(
+                modifier = Modifier
+                    .testTag("live-bar-clearance")
+                    .onGloballyPositioned { coordinates ->
+                        onLiveBarHeightChanged(with(density) { coordinates.size.height.toDp() })
+                    },
+            ) {
                 TransportBar(
                     state = transportState,
                     actions = TransportBarActions(
@@ -1339,6 +1407,11 @@ private fun NavHostDispatch(
     context: android.content.Context,
     audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
     search: SearchHostState,
+    // Register R-1041 (R04) / R-1055: see [NavHostBody]'s own `destinationStateHolder` doc comment
+    // — threaded through this `when`'s drill-in branches untouched (a drill-in id always wins over
+    // [NavHostIds.current] here, so those branches never even reach the `else` below), used only by
+    // the `else` branch's own [DestinationContent] call.
+    destinationStateHolder: SaveableStateHolder,
 ) {
     val scope = rememberCoroutineScope()
     when {
@@ -1412,19 +1485,57 @@ private fun NavHostDispatch(
             backLabel = ids.openedFrom.label,
         )
 
-        else -> DestinationContent(
-            current = ids.current,
-            initialState = ids.contentInitialState,
-            sessionId = sessionId,
-            context = context,
-            search = search,
-            callbacks = callbacks,
-            // WPRC02: threaded to `EarlierNightsDestinationContent` -> `RecordingSessionContent`
-            // (its own doc comment) — the identical `audioPlayer` this branch already hands
-            // `TransmissionDetailContent` above, never a second player instance.
-            player = audioPlayer,
-            modifier = Modifier.fillMaxSize(),
-        )
+        else -> {
+            val destinationContent: @Composable () -> Unit = {
+                DestinationContent(
+                    current = ids.current,
+                    initialState = ids.contentInitialState,
+                    sessionId = sessionId,
+                    context = context,
+                    search = search,
+                    callbacks = callbacks,
+                    // WPRC02: threaded to `EarlierNightsDestinationContent` ->
+                    // `RecordingSessionContent` (its own doc comment) — the identical `audioPlayer`
+                    // this branch already hands `TransmissionDetailContent` above, never a second
+                    // player instance.
+                    player = audioPlayer,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            // Register R-1041 (R04) / R-1055: `IMPROVE_RECORDS` only — see [NavHostBody]'s own
+            // `destinationStateHolder` doc comment for the mechanism, and this doc comment for why
+            // it is scoped this narrowly rather than wrapping every destination this `else` branch
+            // reaches. Tried wrapping all of them first, keyed by `ids.current.name`: it broke
+            // `LOG` outright (`ReaderActivityDestinationSmokeTest`'s own `R_1041_D11` case, caught
+            // by this round's own smoke run) — `LogContent.initialFilter` (like `CaptureStatusContent
+            // .openLevelMeter`/`openLiveMonitor`, `SettingsContent.initialScreen`,
+            // `SessionsContent.initialSessionId`/`openDigest`) is a *fresh-seed* contract, read only
+            // on that composable's own first composition, exactly the way `NavHostNavState`'s own
+            // seed fields document it ("a later change to this parameter after first composition
+            // has no effect"). A blanket holder keeps a destination's *previous* internal state
+            // alive under its own name and hands it straight back on the next visit, which is
+            // correct for `Improve` (no per-visit seed at all — `page`'s only two lifetimes are "a
+            // real Activity recreation", already R-1063's own guarantee, and "this round's own plain
+            // destination switch") and wrong for every seeded one: a second, differently-filtered
+            // `Log` reached this way silently kept the *first* visit's own unfiltered rows instead
+            // of ever reading the new `initialFilter` — the discriminating failure was a stale
+            // `N0OTHR` row a fresh Log filter should have excluded, still present after `View the N
+            // affected overs` -> `Log` -> back -> reopen. Not needed for any other destination
+            // either way: `NOW`/`THREADS`/`STATIONS`/`FREQUENCIES` keep no internal `rememberSaveable`
+            // of their own at all (grepped before writing this), and `EARLIER_NIGHTS`'s own
+            // `SessionsContent.page` never needs this — its own "Digest -> Log -> back" case is
+            // handled entirely *inside* that package (`ui/digest/SessionsContent.kt`'s own
+            // `SessionsPage.Log`/`returnTo`), never by this host switching `current` away from
+            // `EARLIER_NIGHTS` at all.
+            if (ids.current == ReaderDestination.IMPROVE_RECORDS) {
+                destinationStateHolder.SaveableStateProvider(
+                    key = ReaderDestination.IMPROVE_RECORDS.name,
+                    content = destinationContent,
+                )
+            } else {
+                destinationContent()
+            }
+        }
     }
 }
 

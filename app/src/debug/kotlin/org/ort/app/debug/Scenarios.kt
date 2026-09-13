@@ -179,6 +179,11 @@ public object Scenarios {
         "stations-14-nights",
         "frequency-change",
         "field-tier1",
+        // Register R-1061 (coordinator round 2): the one real combination the existing catalogue
+        // never provided — see [improveLiveQuiet]'s own doc comment for exactly why `field-tier1`
+        // (records, not live, no `LevelStatus`) and `level-low` (live, quiet, zero transmissions)
+        // could not stand in for it.
+        "improve-live-quiet",
         "search-corpus",
         "search-unavailable",
         "backlog",
@@ -298,6 +303,7 @@ public object Scenarios {
                 StationsFixtures.stations14Nights(db).also { seedConfiguredDeviceState(context) }
             "frequency-change" -> FrequencyChangeFixtures.frequencyChange(db)
             "field-tier1" -> fieldTier1(context, db)
+            "improve-live-quiet" -> improveLiveQuiet(context, db)
             "search-corpus" -> searchCorpus(db)
             "search-unavailable" -> searchUnavailable(db)
             "backlog" -> backlog(context, db)
@@ -351,6 +357,186 @@ public object Scenarios {
             "overnight-live-monitor" -> overnightLiveMonitor(context, db)
             "cross-session-review" -> CrossSessionReviewScenario.load(context, db)
             else -> error("unreachable — guarded by the require() above")
+        }
+    }
+
+    /**
+     * R-1076 (register, validator V10): [ActiveScenarioRepublishProvider]'s own entry point at a
+     * debug process start — republishes exactly the process-wide, in-memory facets [load] itself
+     * sets ([resetProcessWideFacets]'s own defaults, plus whichever singleton calls the named
+     * scenario's own builder additionally makes), and nothing else. Deliberately **not** [load]
+     * itself with a flag: this never calls [clearPriorScenarioData], never opens a write
+     * transaction, never touches a `SharedPreferences` file, and never touches a file on disk — a
+     * scenario already loaded once in an *earlier* incarnation of this same debug process, so its
+     * own `:data` rows, its heartbeat file, its `SetupStore`/`CaptureConfigurationStore`/
+     * `SettingsStore` preferences and any model/audio file it wrote already correctly survived the
+     * restart on their own (that is what "on disk" means); re-seeding them here would silently
+     * discard anything the operator or a validator did to that data since the first load — the
+     * exact bug this function exists to not repeat. [resetProcessWideFacets] itself is always safe
+     * to call first (idle/absent/not-yet-measured are the only defaults it ever writes), so this
+     * never needs to distinguish "this name resets facet X" from "this name overrides it further" —
+     * [republishFacets] below only ever needs to state the *override*.
+     *
+     * A scenario whose builder sets no facet beyond [resetProcessWideFacets]'s own defaults (most
+     * setup-flow and ended-session scenarios — see [republishFacets]'s own `else` branch) republishes
+     * as a pure no-op beyond that reset, which is correct: nothing further needs restating because
+     * nothing further was ever process-wide to begin with (their whole state already lives in
+     * `SharedPreferences`/`:data`, both already intact).
+     */
+    public fun republish(name: String) {
+        require(name in NAMES) { "unknown scenario '$name' — known scenarios: $NAMES" }
+        resetProcessWideFacets()
+        republishFacets(name)
+    }
+
+    /**
+     * R-1076: every named scenario's own process-wide facet(s) beyond [resetProcessWideFacets]'s
+     * defaults, found by reading every call this file (and [OvernightScenario]/
+     * [CrossSessionReviewScenario]) makes into `org.ort.pipeline.capture.*`'s process-wide holders
+     * and the `Debug*Override` seams — the same catalogue [load]'s own scenario builders establish,
+     * called here through the small `republish*Facets` function each of those builders now exposes
+     * (or, where a builder's only facet is [ScenarioFixtures.markCapturing], through
+     * [ScenarioFixtures.republishCapturing] directly with that scenario's own deterministic session
+     * id) so the two call sites can never silently drift apart.
+     *
+     * **`lexicon-corrupt` is a known, reported gap, not an oversight.** Its one facet
+     * ([org.ort.app.ui.data.DebugLexiconImportOverride]) is the *return value* of running the real
+     * production validator ([LexiconCorruptScenario.run]) against a staged asset file — replaying
+     * it safely on every debug restart would mean either re-running that whole validator (which
+     * would also re-insert its own "previous version" [org.ort.data.entity.LexiconVersionEntity]
+     * row a second time, a primary-key conflict this function must never risk) or duplicating the
+     * validator's own logic here. Left unrepublished: a validator that force-stops mid-`Assets`
+     * screenshot on this one scenario sees the screen fall back to its own honest no-override
+     * state, not a wrong one — reported here rather than worked around.
+     */
+    private fun republishFacets(name: String) {
+        when (name) {
+            "first-session" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("first-session"))
+                republishFirstSessionFacets()
+            }
+            "overnight" -> republishConfiguredDeviceStateFacets()
+            "overnight-live" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("overnight-live"))
+                republishConfiguredDeviceStateFacets()
+            }
+            "gap-call" -> ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("gap-call"))
+            "stations-14-nights" -> republishConfiguredDeviceStateFacets()
+            "cross-session-review" ->
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("cross-session-review"))
+            "backlog" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("backlog"))
+                republishBacklogFacets()
+            }
+            "model-missing" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("model-missing"))
+                republishModelMissingFacets()
+            }
+            "storage-warn" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("storage-warn"))
+                republishStorageWarnFacets()
+            }
+            "storage-fine" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("storage-fine"))
+                republishStorageFineFacets()
+            }
+            "thermal" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("thermal"))
+                republishThermalFacets()
+            }
+            "rig-lost" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("rig-lost"))
+                republishRigLostFacets()
+            }
+            "rig-reconnected" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("rig-reconnected"))
+                republishRigReconnectedFacets()
+            }
+            "level-low" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("level-low"))
+                republishLevelLowFacets()
+            }
+            "level-clip" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("level-clip"))
+                republishLevelClipFacets()
+            }
+            "input-verified" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("input-verified"))
+                republishInputVerifiedFacets()
+            }
+            "improve-live-quiet" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("improve-live-quiet"))
+                republishImproveLiveQuietFacets()
+            }
+            "input-mismatch" -> republishInputMismatchFacets()
+            "setup-verified" -> republishSetupVerifiedFacets()
+            "setup-level" -> republishSetupLevelFacets()
+            "clock-dst" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("clock-dst"))
+                republishClockDstFacets()
+            }
+            "usb-permission" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("usb-permission"))
+                republishUsbPermissionFacets()
+            }
+            "interrupted-pass" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("interrupted-pass"))
+                republishInterruptedPassFacets()
+            }
+            "reconcile" -> republishReconcileFacets()
+            "migration-failed" -> republishMigrationFailedFacets()
+            "asset-swap" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("asset-swap"))
+                republishAssetSwapFacets()
+            }
+            "calibration" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("calibration"))
+                republishCalibrationFacets()
+            }
+            "setup-rig-bluetooth" -> republishSetupRigBluetoothFacets()
+            "setup-rig-bluetooth-connecting" -> republishSetupRigBluetoothConnectingFacets()
+            "setup-rig-bluetooth-identified" -> republishSetupRigBluetoothIdentifiedFacets()
+            "setup-rig-bluetooth-dropped" -> republishSetupRigBluetoothDroppedFacets()
+            "setup-rig-bluetooth-identify-timed-out" -> republishSetupRigBluetoothIdentifyTimedOutFacets()
+            "setup-rig-bluetooth-verify-timed-out" -> republishSetupRigBluetoothVerifyTimedOutFacets()
+            "mode-local-mic" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("mode-local-mic"))
+                republishModeLocalMicFacets()
+            }
+            "mode-usb" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("mode-usb"))
+                republishModeUsbFacets()
+            }
+            "mode-bluetooth" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("mode-bluetooth"))
+                republishModeBluetoothFacets()
+            }
+            "bt-audio-dropped" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("bt-audio-dropped"))
+                republishBtAudioDroppedFacets(SystemClock.wallMillis() - 45_000L)
+            }
+            "rig-bt-connected" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("rig-bt-connected"))
+                republishRigBtConnectedFacets()
+            }
+            "rig-bt-lost" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("rig-bt-lost"))
+                republishRigBtLostFacets()
+            }
+            "mode-change-pending" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("mode-change-pending"))
+                republishModeChangePendingFacets()
+            }
+            "tier0-llm-stored" -> republishTier0LlmStoredFacets()
+            "overnight-live-monitor" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("overnight-live-monitor"))
+                republishOvernightLiveMonitorFacets()
+            }
+            "search-unavailable" -> DebugSearchOverride.forceNextTextSearchUnavailable()
+            // Every other name (pure setup-flow `SharedPreferences` states, ended sessions with no
+            // live facet, `lexicon-corrupt` — see this function's own kdoc) sets nothing beyond
+            // [resetProcessWideFacets]'s own defaults, already applied by [republish] above.
+            else -> Unit
         }
     }
 
@@ -636,6 +822,14 @@ public object Scenarios {
         // `NowViewStateMapper.active` only ever says that when `RigStatus.state` is actually
         // `Connected` (`ReaderPolling.activeNowViewState`'s own `listeningOnLabel`), so a scenario
         // that never sets it renders an honestly-blank subtitle instead, not this artboard's text.
+        republishFirstSessionFacets()
+        return LoadResult(0, 1, id)
+    }
+
+    /** R-1076: [firstSession]'s own process-wide facets, split out so
+     * [ActiveScenarioRepublishProvider] can republish them alone (never re-seeding the session row
+     * or the heartbeat file — see [republishFacets]'s own kdoc). */
+    private fun republishFirstSessionFacets() {
         RigStatus.connected(
             descriptor = "TH-D75A",
             bands = listOf(
@@ -643,7 +837,6 @@ public object Scenarios {
                 RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
             ),
         )
-        return LoadResult(0, 1, id)
     }
 
     /**
@@ -941,6 +1134,10 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row (see
+        // ScenarioFixtures.seedConfirmedResolverOutput's own doc comment) — Detail-Why must not
+        // contradict this over's own header.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "W7NPC", 0.95, createdAt = startedAt + 1_000L)
         // Deliberately no ScenarioFixtures.writeAudioFixture(...) call — hasAudio must read false.
         return LoadResult(1, 1, sessionId)
     }
@@ -983,6 +1180,12 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071 (this scenario's own repro capture, D06-audio-removed.png): a real
+        // CONFIRMED-with-confidence over always has a resolver row (see
+        // ScenarioFixtures.seedConfirmedResolverOutput's own doc comment) — before this fix,
+        // Detail-Why's own "No resolver output recorded" contradicted this over's own header
+        // sentence ("Heard in this over. Resolved from the phonetics at 0.95.").
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "W7NPC", 0.95, createdAt = startedAt + 1_000L)
         // Deliberately no ScenarioFixtures.writeAudioFixture(...) call — hasAudio must read false,
         // the same as `no-audio` above; the difference this scenario proves is the session's own
         // real removal timestamp, not the audio file's presence.
@@ -1009,6 +1212,8 @@ public object Scenarios {
         )
         db.transmissionDao().insert(tx)
         ScenarioFixtures.writeAudioFixture(context, tx)
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "W7NPC", 0.9, createdAt = startedAt + 1_000L)
         db.transcriptDao().supersede(
             ScenarioFixtures.transcript(
                 id = "$txId-t1",
@@ -1101,6 +1306,80 @@ public object Scenarios {
     }
 
     /**
+     * `improve-live-quiet` — register R-1061 (coordinator round 2): the combination the register's
+     * own reported evidence actually needs and no existing scenario provides. [fieldTier1] has
+     * `Improve all 12`'s own real, tier-1 records but is not live and sets no [LevelStatus] at all;
+     * [levelLow] is live and genuinely too-quiet (`Fail-Level.dc.html`'s own `-34 dBFS`) but seeds
+     * zero transmissions, so `Improve records` reads its own honest empty state on it, never
+     * `Improve all N`. This scenario is [fieldTier1]'s own session/transmission/audio-fixture shape
+     * (identical tier, over count and callsigns, so `Improve all 12` is the real, unfiltered board
+     * from a genuine tier-1 session, not a fabricated count) plus [levelLow]'s own two real
+     * additions layered on top: [ScenarioFixtures.markCapturing] (a genuinely live session, the
+     * host's own pinned bar) and a [LevelStatus.State.Measured] quiet enough to cross
+     * `FailureMapper.QUIET_PEAK_THRESHOLD_DBFS` (the real `Fail-Level.dc.html` banner, not a
+     * synthesized stand-in). Order matters: `markCapturing` last, the same reasoning
+     * [levelLow]'s own body already documents for its own `LevelStatus.update` call — a fresh
+     * heartbeat written after every insert above, not before.
+     */
+    private suspend fun improveLiveQuiet(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("improve-live-quiet")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 3_600_000L,
+                endedAt = null,
+                deviceTier = org.ort.core.Tier.T1.name,
+            ),
+        )
+        val baseStartedAt = SystemClock.wallMillis() - 400_000L
+        repeat(FIELD_TIER1_OVER_COUNT) { i ->
+            val txId = "$sessionId-tx${i + 1}"
+            val startedAt = baseStartedAt + i * 20_000L
+            val tx = ScenarioFixtures.transmission(
+                id = txId,
+                sessionId = sessionId,
+                startedAtUtc = startedAt,
+                samplePosition = (i + 1).toLong(),
+                frequencyHz = 146_960_000L,
+                attributionState = AttributionState.INFERRED,
+                stationId = ScenarioFixtures.CALLSIGNS[i % ScenarioFixtures.CALLSIGNS.size],
+                attributionConfidence = 0.68,
+            )
+            db.transmissionDao().insert(tx)
+            ScenarioFixtures.writeAudioFixture(context, tx)
+            db.transcriptDao().insert(
+                ScenarioFixtures.transcript(
+                    id = "$txId-t1",
+                    transmissionId = txId,
+                    text = "roger that, good copy on the repeater this morning",
+                    isCurrent = true,
+                    createdAt = startedAt + 1_000L,
+                ),
+            )
+        }
+        republishImproveLiveQuietFacets()
+        ScenarioFixtures.markCapturing(context, sessionId)
+        return LoadResult(FIELD_TIER1_OVER_COUNT, 1, sessionId)
+    }
+
+    /** R-1076: [improveLiveQuiet]'s own process-wide facet, split out — see [republishFacets]'s
+     * own kdoc. */
+    private fun republishImproveLiveQuietFacets() {
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -34f,
+                rmsDbfs = -40f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = emptyList(),
+        )
+    }
+
+    /**
      * `search-corpus` — enough transcripts containing "park activation" for ~14 hits across 3
      * nights.
      *
@@ -1178,6 +1457,8 @@ public object Scenarios {
                         createdAt = startedAt + 1_000L,
                     ),
                 )
+                // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+                ScenarioFixtures.seedConfirmedResolverOutput(db, txId, callsign, 0.9, createdAt = startedAt + 1_000L)
                 transmissionCount++
             }
         }
@@ -1230,8 +1511,13 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 40 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
-        ShedStatus.update(level = 3, backlog = 112)
+        republishBacklogFacets()
         return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [backlog]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishBacklogFacets() {
+        ShedStatus.update(level = 3, backlog = 112)
     }
 
     /**
@@ -1246,7 +1532,7 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 20 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
-        AsrAvailability.unavailable("no ASR model installed — see Settings › Models")
+        republishModelMissingFacets()
         // R-440 (register): "model-missing keeps nothing installed" — real files on disk, outside
         // this file's own DB-row clearing, so a prior overnight/overnight-live/stations-14-nights
         // load's own seeded models must be removed here explicitly.
@@ -1266,6 +1552,11 @@ public object Scenarios {
         return LoadResult(1, 1, sessionId)
     }
 
+    /** R-1076: [modelMissing]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishModelMissingFacets() {
+        AsrAvailability.unavailable("no ASR model installed — see Settings › Models")
+    }
+
     /**
      * `storage-warn` — F6/FR-STO-3, register R-105. **Replaces this scenario's earlier misuse of
      * F6's exhaustion failure string** (`CaptureState.failed(...)`) — capture is genuinely still
@@ -1280,6 +1571,12 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 90 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishStorageWarnFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [storageWarn]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishStorageWarnFacets() {
         StorageForecast.set(
             StorageForecast.State.ThreeNightsLeft(
                 freeBytes = 6L * 1024 * 1024 * 1024, // ~6 GB free
@@ -1287,7 +1584,6 @@ public object Scenarios {
                 nightsLeft = 2.4,
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -1305,6 +1601,12 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 95 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishStorageFineFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [storageFine]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishStorageFineFacets() {
         StorageForecast.set(
             StorageForecast.State.Fine(
                 freeBytes = 40L * 1024 * 1024 * 1024, // ~40 GB free, well clear of the warning stage
@@ -1312,7 +1614,6 @@ public object Scenarios {
                 nightsLeft = 9.0,
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -1428,6 +1729,12 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 70 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishThermalFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [thermal]'s own process-wide facets, split out — see [republishFacets]'s own kdoc. */
+    private fun republishThermalFacets() {
         ShedStatus.update(level = 3, backlog = 112)
         // R-177: a real, fixed "minutes ago" transition moment -- not "now" -- so the banner's
         // "dropped to tier N at HH:MM:SS" reads the same real clock time on every poll instead of
@@ -1437,7 +1744,6 @@ public object Scenarios {
             realTimeFactor = 0.9,
             sinceMillis = SystemClock.wallMillis() - 12 * 60_000L,
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -1453,6 +1759,12 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 5 * 3_600_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishRigLostFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [rigLost]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishRigLostFacets() {
         val lastKnown = RigStatus.State.Connected(
             descriptor = "TH-D75A",
             bands = listOf(
@@ -1461,7 +1773,6 @@ public object Scenarios {
             ),
         )
         RigStatus.stale(lastKnown, sinceMillis = SystemClock.wallMillis() - 30 * 60_000L)
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -1482,6 +1793,12 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 5 * 3_600_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishRigReconnectedFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [rigReconnected]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishRigReconnectedFacets() {
         RigStatus.connected(
             descriptor = "TH-D75A",
             bands = listOf(
@@ -1489,7 +1806,6 @@ public object Scenarios {
                 RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -1503,18 +1819,7 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 90 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
-        // R-462 (register, Reviewer A round 2): `Level-Meter.dc.html`'s own subtitle is "USB Audio
-        // Device · last 60 s" — `CaptureStatusContent.levelInputLabel` already prepends the real
-        // device name when `InputStatus` carries one (confirmed by reading it before this fix);
-        // this scenario never seeded one, so the subtitle honestly read only "last 60 s".
-        InputStatus.opened(
-            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
-            nativeRateHz = 48_000,
-            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
-            routeVerified = true,
-            routedDeviceMatches = true,
-            openedAtMillis = SystemClock.wallMillis(),
-        )
+        republishLevelLowFacets()
         // R-804 (halt): CF02/CF11 read CaptureConfigurationStore.current(), not InputStatus — a USB
         // session with nothing written here left them reading the store's own honest DEFAULT
         // (LOCAL_MICROPHONE), inconsistent with the USB descriptor just published above.
@@ -1524,21 +1829,6 @@ public object Scenarios {
             context,
             CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
         )
-        LevelStatus.update(
-            LevelStatus.State.Measured(
-                peakDbfs = -38f,
-                rmsDbfs = -44f,
-                noiseFloorDbfs = -60f,
-                clipped = false,
-                clipCountLastSecond = 0,
-                sampleRateHz = 48_000,
-                updatedAtMillis = SystemClock.wallMillis(),
-            ),
-            peakHistoryDbfs = List(60) { -40f + (it % 5) },
-        )
-        // R-419: `LevelStatus.clippedSamplesThisSession` (WP11c's own follow-up) — quiet audio
-        // genuinely never clips, so this stays honestly zero.
-        LevelStatus.recordClippedSamplesThisSession(0L)
         // R-419: `ReaderPolling.weakestOverLabel` reads this session's own transmissions' real
         // `signalStrength` (the weakest one) — this scenario used to seed none at all, so
         // `Level-Meter.dc.html`'s own "Weakest over resolved tonight" row was honestly absent, not
@@ -1566,7 +1856,41 @@ public object Scenarios {
                 createdAt = SystemClock.wallMillis() - 5 * 60_000L + 500L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(
+            db,
+            txId,
+            "W7NPC",
+            0.7,
+            createdAt = SystemClock.wallMillis() - 5 * 60_000L + 500L,
+        )
         return LoadResult(1, 1, sessionId)
+    }
+
+    /** R-1076: [levelLow]'s own process-wide facets, split out — see [republishFacets]'s own kdoc.
+     * R-462's real device name, R-419's honest zero-clip count — both unchanged from seeding. */
+    private fun republishLevelLowFacets() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -38f,
+                rmsDbfs = -44f,
+                noiseFloorDbfs = -60f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = List(60) { -40f + (it % 5) },
+        )
+        LevelStatus.recordClippedSamplesThisSession(0L)
     }
 
     /**
@@ -1579,6 +1903,18 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 20 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishLevelClipFacets()
+        // R-804 (halt): see `levelLow`'s own identical comment — the force-current variant, since
+        // `markCapturing` above already flipped `CaptureState.isCapturing`.
+        forceCurrentCaptureConfiguration(
+            context,
+            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [levelClip]'s own process-wide facets, split out — see [republishFacets]'s own kdoc. */
+    private fun republishLevelClipFacets() {
         // R-462: same real device name `level-low` now seeds, for the same subtitle reason.
         InputStatus.opened(
             descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
@@ -1587,12 +1923,6 @@ public object Scenarios {
             routeVerified = true,
             routedDeviceMatches = true,
             openedAtMillis = SystemClock.wallMillis(),
-        )
-        // R-804 (halt): see `levelLow`'s own identical comment — the force-current variant, since
-        // `markCapturing` above already flipped `CaptureState.isCapturing`.
-        forceCurrentCaptureConfiguration(
-            context,
-            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
         )
         LevelStatus.update(
             LevelStatus.State.Measured(
@@ -1606,11 +1936,9 @@ public object Scenarios {
             ),
             peakHistoryDbfs = List(60) { if (it % 4 == 0) 0f else -8f },
         )
-        // R-419: `LevelStatus.clippedSamplesThisSession` (WP11c's own follow-up) — a real,
-        // plausible running total for a 20-minute session that has been clipping at 12/s,
-        // distinctly larger than `clipCountLastSecond` so a test can tell them apart.
+        // R-419: a real, plausible running total for a 20-minute session that has been clipping at
+        // 12/s, distinctly larger than `clipCountLastSecond` so a test can tell them apart.
         LevelStatus.recordClippedSamplesThisSession(340L)
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -1624,6 +1952,18 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 10 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishInputVerifiedFacets()
+        // R-804 (halt): see `levelLow`'s own identical comment — the force-current variant, since
+        // `markCapturing` above already flipped `CaptureState.isCapturing`.
+        forceCurrentCaptureConfiguration(
+            context,
+            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [inputVerified]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishInputVerifiedFacets() {
         InputStatus.opened(
             descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
             nativeRateHz = 48_000,
@@ -1632,13 +1972,6 @@ public object Scenarios {
             routedDeviceMatches = true,
             openedAtMillis = SystemClock.wallMillis(),
         )
-        // R-804 (halt): see `levelLow`'s own identical comment — the force-current variant, since
-        // `markCapturing` above already flipped `CaptureState.isCapturing`.
-        forceCurrentCaptureConfiguration(
-            context,
-            CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
-        )
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -1654,11 +1987,16 @@ public object Scenarios {
         db.sessionDao().insert(
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 5 * 60_000L, endedAt = null),
         )
+        republishInputMismatchFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [inputMismatch]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishInputMismatchFacets() {
         InputStatus.mismatch(
             expected = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
             actual = AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone"),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -1718,6 +2056,12 @@ public object Scenarios {
         // `VerifyScreen.kt`/`DebugRouteCheckOverride.kt` once they actually landed on this branch
         // shows S05 reads `RouteCheckState.InProgress.levelBars` instead, a genuinely different
         // holder; the `LevelStatus.update` call this replaced never did anything this board reads.
+        republishSetupVerifiedFacets()
+        return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [setupVerified]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishSetupVerifiedFacets() {
         DebugRouteCheckOverride.show(
             RouteCheckState.InProgress(
                 passed = setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
@@ -1728,7 +2072,6 @@ public object Scenarios {
                 noiseFloorDbfs = -58.0,
             ),
         )
-        return LoadResult(0, 0, null)
     }
 
     /**
@@ -1780,6 +2123,12 @@ public object Scenarios {
         // proportional envelope (`levelBarRects`) — a shape no real signal ever draws. Replaced with
         // [speechShapedPeakHistoryDbfs]'s genuine rise-and-fall between the noise floor and a real
         // peak, the same envelope [setupVerified]'s own S05 listen now seeds too.
+        republishSetupLevelFacets()
+        return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [setupLevel]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishSetupLevelFacets() {
         LevelStatus.update(
             LevelStatus.State.Measured(
                 peakDbfs = -14f,
@@ -1792,7 +2141,6 @@ public object Scenarios {
             ),
             peakHistoryDbfs = speechShapedPeakHistoryDbfs(),
         )
-        return LoadResult(0, 0, null)
     }
 
     /**
@@ -2011,14 +2359,7 @@ public object Scenarios {
         // resampler `verifiedInputStore` already records, opened for real — matching exactly what
         // `SetupActivity` itself writes once S04/S05 complete (see `input-verified`'s own
         // identical values, this file's established precedent).
-        InputStatus.opened(
-            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
-            nativeRateHz = 48_000,
-            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
-            routeVerified = true,
-            routedDeviceMatches = true,
-            openedAtMillis = SystemClock.wallMillis(),
-        )
+        republishConfiguredDeviceStateFacets()
         // R-494: CF06 (`SettingsRigScreen.kt`, WP10's own file) already renders "No rig module is
         // connected" / "No radio support in this build yet..." (R-444) for any non-Connected
         // `RigStatus` — `RigStatus.Absent` (this object's own honest default, left untouched here)
@@ -2027,6 +2368,19 @@ public object Scenarios {
         // the "no rig, 145.230 MHz by hand" configuration that state describes — CF06's existing
         // copy is already the honest, correct rendering for it, confirmed by `R_494`'s own test
         // below rather than assumed.
+    }
+
+    /** R-1076: [seedConfiguredDeviceState]'s own process-wide facet, split out — see
+     * [republishFacets]'s own kdoc. Used by `overnight`/`overnight-live`/`stations-14-nights`. */
+    private fun republishConfiguredDeviceStateFacets() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
     }
 
     private fun verifiedInputStore(context: Context): SharedPreferencesSetupStore {
@@ -2069,6 +2423,12 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 8 * 3_600_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishClockDstFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [clockDst]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishClockDstFacets() {
         DebugFailureOverride.show(
             FailurePresentation.Clock(
                 ClockViewState(
@@ -2086,7 +2446,6 @@ public object Scenarios {
                 ),
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /** `usb-permission` — F16, `Fail-Usb.dc.html`. */
@@ -2096,12 +2455,17 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 3 * 3_600_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishUsbPermissionFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [usbPermission]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishUsbPermissionFacets() {
         DebugFailureOverride.show(
             FailurePresentation.Usb(
                 UsbViewState(detachedAtLabel = "03:44", reattachedAtLabel = "03:47", staleOversCount = 4),
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /** `interrupted-pass` — F17, `Fail-Interrupted.dc.html`. */
@@ -2111,6 +2475,12 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 10 * 60_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishInterruptedPassFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [interruptedPass]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishInterruptedPassFacets() {
         DebugFailureOverride.show(
             FailurePresentation.Interrupted(
                 InterruptedViewState(
@@ -2125,7 +2495,6 @@ public object Scenarios {
                 ),
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /** `reconcile` — F19, `Fail-Reconcile.dc.html`. */
@@ -2134,6 +2503,12 @@ public object Scenarios {
         db.sessionDao().insert(
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 8 * 3_600_000L, endedAt = null),
         )
+        republishReconcileFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [reconcile]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishReconcileFacets() {
         DebugFailureOverride.show(
             FailurePresentation.Reconcile(
                 ReconcileViewState(
@@ -2164,7 +2539,6 @@ public object Scenarios {
                 ),
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /** `migration-failed` — F20, `Fail-Migration.dc.html`. */
@@ -2173,6 +2547,12 @@ public object Scenarios {
         db.sessionDao().insert(
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 60_000L, endedAt = null),
         )
+        republishMigrationFailedFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [migrationFailed]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishMigrationFailedFacets() {
         DebugFailureOverride.show(
             FailurePresentation.Migration(
                 MigrationViewState(
@@ -2199,7 +2579,6 @@ public object Scenarios {
                 ),
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /** `asset-swap` — F21, `Fail-Asset-Swap.dc.html`. */
@@ -2209,6 +2588,12 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 3_600_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishAssetSwapFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [assetSwap]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishAssetSwapFacets() {
         DebugFailureOverride.show(
             FailurePresentation.AssetSwap(
                 AssetSwapViewState(
@@ -2231,7 +2616,6 @@ public object Scenarios {
                 ),
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /** `calibration` — F22, `Fail-Calibration.dc.html`. */
@@ -2241,6 +2625,12 @@ public object Scenarios {
             ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 3_600_000L, endedAt = null),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        republishCalibrationFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [calibration]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishCalibrationFacets() {
         DebugFailureOverride.show(
             FailurePresentation.Calibration(
                 CalibrationViewState(
@@ -2254,7 +2644,6 @@ public object Scenarios {
                 ),
             ),
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     // ---------------------------------------------------------------------------------------
@@ -2400,6 +2789,13 @@ public object Scenarios {
      */
     private fun setupRigBluetooth(context: Context): LoadResult {
         seedRigBluetoothLinkStore(context)
+        republishSetupRigBluetoothFacets()
+        return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [setupRigBluetooth]'s own process-wide facet, split out — see [republishFacets]'s
+     * own kdoc. */
+    private fun republishSetupRigBluetoothFacets() {
         DebugRigLinkPortOverride.show(
             InMemoryRigLinkPort(
                 devices = listOf(
@@ -2408,7 +2804,6 @@ public object Scenarios {
                 ),
             ).apply { useDefaultBehaviour(BLUETOOTH_RIG_ADDRESS) },
         )
-        return LoadResult(0, 0, null)
     }
 
     /** The `SetupStore` state every `setup-rig-bluetooth*` scenario shares — only the
@@ -2436,12 +2831,18 @@ public object Scenarios {
      * [InMemoryRigLinkPort.hang] never emits past [org.ort.app.ui.setup.RigLinkState.Opening]. */
     private fun setupRigBluetoothConnecting(context: Context): LoadResult {
         seedRigBluetoothLinkStore(context)
+        republishSetupRigBluetoothConnectingFacets()
+        return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [setupRigBluetoothConnecting]'s own process-wide facet, split out — see
+     * [republishFacets]'s own kdoc. */
+    private fun republishSetupRigBluetoothConnectingFacets() {
         DebugRigLinkPortOverride.show(
             InMemoryRigLinkPort(
                 devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
             ).apply { hang(BLUETOOTH_RIG_ADDRESS) },
         )
-        return LoadResult(0, 0, null)
     }
 
     /** `setup-rig-bluetooth-identified` — the checklist's own second row done, third not yet:
@@ -2449,24 +2850,36 @@ public object Scenarios {
      * why [useDefaultBehaviour] cannot be captured at this intermediate state at all). */
     private fun setupRigBluetoothIdentified(context: Context): LoadResult {
         seedRigBluetoothLinkStore(context)
+        republishSetupRigBluetoothIdentifiedFacets()
+        return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [setupRigBluetoothIdentified]'s own process-wide facet, split out — see
+     * [republishFacets]'s own kdoc. */
+    private fun republishSetupRigBluetoothIdentifiedFacets() {
         DebugRigLinkPortOverride.show(
             InMemoryRigLinkPort(
                 devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
             ).apply { hangAfterIdentify(BLUETOOTH_RIG_ADDRESS) },
         )
-        return LoadResult(0, 0, null)
     }
 
     /** `setup-rig-bluetooth-dropped` — E2-E11/FR-RIG-15's own dropped-link banner:
      * [InMemoryRigLinkPort.dropAfterOpen] opens then reports [org.ort.app.ui.setup.RigLinkState.Lost]. */
     private fun setupRigBluetoothDropped(context: Context): LoadResult {
         seedRigBluetoothLinkStore(context)
+        republishSetupRigBluetoothDroppedFacets()
+        return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [setupRigBluetoothDropped]'s own process-wide facet, split out — see
+     * [republishFacets]'s own kdoc. */
+    private fun republishSetupRigBluetoothDroppedFacets() {
         DebugRigLinkPortOverride.show(
             InMemoryRigLinkPort(
                 devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
             ).apply { dropAfterOpen(BLUETOOTH_RIG_ADDRESS) },
         )
-        return LoadResult(0, 0, null)
     }
 
     /** `setup-rig-bluetooth-identify-timed-out` — R-1013: the link opened but the descriptor's
@@ -2478,12 +2891,18 @@ public object Scenarios {
      * checklist that never reaches `Verified`. */
     private fun setupRigBluetoothIdentifyTimedOut(context: Context): LoadResult {
         seedRigBluetoothLinkStore(context)
+        republishSetupRigBluetoothIdentifyTimedOutFacets()
+        return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [setupRigBluetoothIdentifyTimedOut]'s own process-wide facet, split out — see
+     * [republishFacets]'s own kdoc. */
+    private fun republishSetupRigBluetoothIdentifyTimedOutFacets() {
         DebugRigLinkPortOverride.show(
             InMemoryRigLinkPort(
                 devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
             ).apply { identifyTimesOut(BLUETOOTH_RIG_ADDRESS, timeoutMillis = 6_000L) },
         )
-        return LoadResult(0, 0, null)
     }
 
     /** `setup-rig-bluetooth-verify-timed-out` — R-1014: the rig genuinely identified but two
@@ -2493,6 +2912,13 @@ public object Scenarios {
      * proceed from without ever reaching `Verified`. */
     private fun setupRigBluetoothVerifyTimedOut(context: Context): LoadResult {
         seedRigBluetoothLinkStore(context)
+        republishSetupRigBluetoothVerifyTimedOutFacets()
+        return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [setupRigBluetoothVerifyTimedOut]'s own process-wide facet, split out — see
+     * [republishFacets]'s own kdoc. */
+    private fun republishSetupRigBluetoothVerifyTimedOutFacets() {
         DebugRigLinkPortOverride.show(
             InMemoryRigLinkPort(
                 devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
@@ -2505,7 +2931,6 @@ public object Scenarios {
                 )
             },
         )
-        return LoadResult(0, 0, null)
     }
 
     /**
@@ -2545,14 +2970,7 @@ public object Scenarios {
             CaptureConfiguration(mode = CaptureMode.LOCAL_MICROPHONE, selectedInputId = "mic-0"),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
-        InputStatus.opened(
-            descriptor = AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone"),
-            nativeRateHz = 48_000,
-            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
-            routeVerified = true,
-            routedDeviceMatches = true,
-            openedAtMillis = SystemClock.wallMillis(),
-        )
+        republishModeLocalMicFacets()
         val txId = "$sessionId-tx1"
         val startedAt = SystemClock.wallMillis() - 5 * 60_000L
         db.transmissionDao().insert(
@@ -2592,11 +3010,25 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "W7NPC", 0.9, createdAt = startedAt + 1_000L)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
         store.captureMode = CaptureMode.LOCAL_MICROPHONE
         store.notificationsSkipped = true
         return LoadResult(1, 1, sessionId)
+    }
+
+    /** R-1076: [modeLocalMic]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishModeLocalMicFacets() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("mic-0", AudioDeviceKind.BUILT_IN_MIC, "Built-in microphone"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
     }
 
     /** `mode-usb` — FR-CAP-13, AC-129: a live session over USB, `RigStatus.Connected` naming the
@@ -2628,23 +3060,7 @@ public object Scenarios {
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
-        InputStatus.opened(
-            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
-            nativeRateHz = 48_000,
-            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
-            routeVerified = true,
-            routedDeviceMatches = true,
-            openedAtMillis = SystemClock.wallMillis(),
-        )
-        RigStatus.connected(
-            descriptor = "Kenwood TH-D75A",
-            bands = listOf(
-                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
-                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
-            ),
-            transportKind = RigModuleTransportKind.USB_SERIAL,
-            descriptorId = BundledDescriptors.kenwoodThD75a().id,
-        )
+        republishModeUsbFacets()
         val txId = "$sessionId-tx1"
         val startedAt = SystemClock.wallMillis() - 5 * 60_000L
         db.transmissionDao().insert(
@@ -2668,11 +3084,34 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "K7LWH", 0.92, createdAt = startedAt + 1_000L)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
         store.captureMode = CaptureMode.USB_RADIO
         store.notificationsSkipped = true
         return LoadResult(1, 1, sessionId)
+    }
+
+    /** R-1076: [modeUsb]'s own process-wide facets, split out — see [republishFacets]'s own kdoc. */
+    private fun republishModeUsbFacets() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
+            nativeRateHz = 48_000,
+            resamplerId = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+            transportKind = RigModuleTransportKind.USB_SERIAL,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
     }
 
     /** `mode-bluetooth` — D34/FR-CAP-11/13: a live session over Bluetooth audio (SCO, mSBC) *and*
@@ -2711,28 +3150,7 @@ public object Scenarios {
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
-        InputStatus.opened(
-            descriptor = AudioDeviceDescriptor(
-                "bt-1",
-                AudioDeviceKind.BLUETOOTH,
-                "Bluetooth headset",
-                bluetoothProfile = BluetoothAudioProfile.HFP_MSBC,
-            ),
-            nativeRateHz = 16_000,
-            resamplerId = "identity/16000",
-            routeVerified = true,
-            routedDeviceMatches = true,
-            openedAtMillis = SystemClock.wallMillis(),
-        )
-        RigStatus.connected(
-            descriptor = "Kenwood TH-D75A",
-            bands = listOf(
-                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = false),
-                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = true),
-            ),
-            transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
-            descriptorId = BundledDescriptors.kenwoodThD75a().id,
-        )
+        republishModeBluetoothFacets()
         val txId = "$sessionId-tx1"
         val startedAt = SystemClock.wallMillis() - 5 * 60_000L
         db.transmissionDao().insert(
@@ -2756,11 +3174,39 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "WA7HJR", 0.88, createdAt = startedAt + 1_000L)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.notificationsSkipped = true
         return LoadResult(1, 1, sessionId)
+    }
+
+    /** R-1076: [modeBluetooth]'s own process-wide facets, split out — see [republishFacets]'s own kdoc. */
+    private fun republishModeBluetoothFacets() {
+        InputStatus.opened(
+            descriptor = AudioDeviceDescriptor(
+                "bt-1",
+                AudioDeviceKind.BLUETOOTH,
+                "Bluetooth headset",
+                bluetoothProfile = BluetoothAudioProfile.HFP_MSBC,
+            ),
+            nativeRateHz = 16_000,
+            resamplerId = "identity/16000",
+            routeVerified = true,
+            routedDeviceMatches = true,
+            openedAtMillis = SystemClock.wallMillis(),
+        )
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = false),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = true),
+            ),
+            transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+        )
     }
 
     /** `bt-audio-session` — FR-CAP-13: an *ended* session captured over Bluetooth audio, two overs,
@@ -2807,6 +3253,14 @@ public object Scenarios {
                 createdAt = start + 5 * 60_000L + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(
+            db,
+            tx1,
+            "WA7HJR",
+            0.9,
+            createdAt = start + 5 * 60_000L + 1_000L,
+        )
         db.transmissionDao().insert(
             ScenarioFixtures.transmission(
                 id = tx2,
@@ -2827,6 +3281,14 @@ public object Scenarios {
                 isCurrent = true,
                 createdAt = start + 8 * 60_000L + 1_000L,
             ),
+        )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(
+            db,
+            tx2,
+            "KJ7ABC",
+            0.87,
+            createdAt = start + 8 * 60_000L + 1_000L,
         )
         return LoadResult(2, 1, sessionId)
     }
@@ -2866,6 +3328,26 @@ public object Scenarios {
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
+        val lostSinceMillis = SystemClock.wallMillis() - 45_000L
+        republishBtAudioDroppedFacets(lostSinceMillis)
+        db.captureGapDao().insert(
+            CaptureGapEntity(
+                id = "$sessionId-gap-bt-audio",
+                sessionId = sessionId,
+                startedAt = lostSinceMillis,
+                endedAt = null,
+                cause = CaptureGapCause.BLUETOOTH_AUDIO_LOST,
+                recoveredAutomatically = false,
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [btAudioDropped]'s own process-wide facets, split out — see [republishFacets]'s own
+     * kdoc. [lostSinceMillis] is recomputed by the caller (`now - 45s`) both at first load and at
+     * republish — a small, honest drift in "how long ago" across a real restart, the same kind of
+     * drift the heartbeat/gap timestamps below it already accept rather than freezing artificially. */
+    private fun republishBtAudioDroppedFacets(lostSinceMillis: Long) {
         val descriptor = AudioDeviceDescriptor(
             "bt-1",
             AudioDeviceKind.BLUETOOTH,
@@ -2880,7 +3362,6 @@ public object Scenarios {
             routedDeviceMatches = true,
             openedAtMillis = SystemClock.wallMillis() - 40 * 60_000L,
         )
-        val lostSinceMillis = SystemClock.wallMillis() - 45_000L
         // R-832 (halt): the reconnect-ladder position, so F23's own ladder sentence ("retry 3 of 8,
         // next attempt in 20s") has real numbers to render, not the honest-but-blank "not computed"
         // state InputStatus.Lost's own defaulted-null fields would otherwise leave it in.
@@ -2898,17 +3379,6 @@ public object Scenarios {
             transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
             descriptorId = BundledDescriptors.kenwoodThD75a().id,
         )
-        db.captureGapDao().insert(
-            CaptureGapEntity(
-                id = "$sessionId-gap-bt-audio",
-                sessionId = sessionId,
-                startedAt = lostSinceMillis,
-                endedAt = null,
-                cause = CaptureGapCause.BLUETOOTH_AUDIO_LOST,
-                recoveredAutomatically = false,
-            ),
-        )
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -2938,22 +3408,7 @@ public object Scenarios {
             ),
         )
         ScenarioFixtures.markCapturing(context, sessionId)
-        RigStatus.connected(
-            descriptor = "Kenwood TH-D75A",
-            bands = listOf(
-                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
-                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
-            ),
-            transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
-            descriptorId = BundledDescriptors.kenwoodThD75a().id,
-            // R-1019 (register): both bands above genuinely report every capability the TH-D75A's
-            // own bundled descriptor declares (FREQUENCY, SQUELCH_STATE, SUB_BAND) — this scenario's
-            // whole narrative is the fully-verified happy path S11/S12's own tour steps capture
-            // (`rig-bt-connected/S11-radio-verified`, `S12-ready-bt`), so it states that explicitly
-            // now that a bare RigStatus.connected(...) would otherwise default to
-            // RigVerification.Unknown and silently drop S12's own "verified" status text.
-            verification = RigVerification.Full,
-        )
+        republishRigBtConnectedFacets()
         val store = freshSetupStore(context)
         store.welcomeSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
@@ -2972,6 +3427,24 @@ public object Scenarios {
         store.rigBluetoothVerified = true
         store.setupComplete = false
         return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [rigBtConnected]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishRigBtConnectedFacets() {
+        RigStatus.connected(
+            descriptor = "Kenwood TH-D75A",
+            bands = listOf(
+                RigStatus.BandState(band = "A", frequencyHz = 145_230_000L, mode = "FM", squelchOpen = true),
+                RigStatus.BandState(band = "B", frequencyHz = 146_960_000L, mode = "FM", squelchOpen = false),
+            ),
+            transportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+            descriptorId = BundledDescriptors.kenwoodThD75a().id,
+            // R-1019 (register): both bands above genuinely report every capability the TH-D75A's
+            // own bundled descriptor declares (FREQUENCY, SQUELCH_STATE, SUB_BAND) — this scenario's
+            // whole narrative is the fully-verified happy path S11/S12's own tour steps capture, so
+            // it states that explicitly rather than defaulting to RigVerification.Unknown.
+            verification = RigVerification.Full,
+        )
     }
 
     /** `rig-bt-lost` — F9, FR-RIG-15: [RigStatus.State.Stale] whose own `lastKnown` names the
@@ -3002,6 +3475,12 @@ public object Scenarios {
         // stays open and `LevelStatus` stays real throughout this drop — only `RigStatus` goes
         // stale — the same "audio is fine" shape `LiveBarPollingTest.R_836`'s own rig-only-drop
         // test already proves the live bar renders correctly, given a real reading to show.
+        republishRigBtLostFacets()
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [rigBtLost]'s own process-wide facets, split out — see [republishFacets]'s own kdoc. */
+    private fun republishRigBtLostFacets() {
         InputStatus.opened(
             descriptor = AudioDeviceDescriptor("wired-1", AudioDeviceKind.WIRED_HEADSET, "Wired headset"),
             nativeRateHz = 48_000,
@@ -3040,7 +3519,6 @@ public object Scenarios {
             ofTotal = RECONNECT_LADDER_OF_TOTAL,
             nextRetryInMillis = RECONNECT_LADDER_NEXT_RETRY_MILLIS,
         )
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -3082,6 +3560,24 @@ public object Scenarios {
         // leaving them at their default idle state (as this scenario did before this fix) rendered the
         // *current* USB session as if nothing were open at all, only the pending Bluetooth change
         // showing anything real.
+        republishModeChangePendingFacets()
+        configStore.update(
+            CaptureConfiguration(
+                mode = CaptureMode.BLUETOOTH_RADIO,
+                selectedInputId = "wired-1",
+                rigId = BundledDescriptors.kenwoodThD75a().id,
+                rigTransportKind = RigModuleTransportKind.BLUETOOTH_SPP,
+                rigParams = mapOf(
+                    DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS to BLUETOOTH_RIG_ADDRESS,
+                ),
+            ),
+        )
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /** R-1076: [modeChangePending]'s own process-wide facets, split out — see [republishFacets]'s
+     * own kdoc. */
+    private fun republishModeChangePendingFacets() {
         InputStatus.opened(
             descriptor = AudioDeviceDescriptor("usb-1", AudioDeviceKind.USB_DEVICE, "USB Audio Device"),
             nativeRateHz = 48_000,
@@ -3099,18 +3595,6 @@ public object Scenarios {
             transportKind = RigModuleTransportKind.USB_SERIAL,
             descriptorId = BundledDescriptors.kenwoodThD75a().id,
         )
-        configStore.update(
-            CaptureConfiguration(
-                mode = CaptureMode.BLUETOOTH_RADIO,
-                selectedInputId = "wired-1",
-                rigId = BundledDescriptors.kenwoodThD75a().id,
-                rigTransportKind = RigModuleTransportKind.BLUETOOTH_SPP,
-                rigParams = mapOf(
-                    DefaultRigTransportFactory.ParamKeys.BLUETOOTH_ADDRESS to BLUETOOTH_RIG_ADDRESS,
-                ),
-            ),
-        )
-        return LoadResult(0, 1, sessionId)
     }
 
     /**
@@ -3277,8 +3761,13 @@ public object Scenarios {
         // real build's genuine truncation is this call's whole purpose (see installModelFixture's
         // own kdoc), not a live model any capture session could load.
         ScenarioFixtures.installModelFixture(context, ModelId.LLM_GEMMA3_1B, skipIfAlreadyVerified = false)
-        ShedStatus.update(level = 1, backlog = 0)
+        republishTier0LlmStoredFacets()
         return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [tier0LlmStored]'s own process-wide facet, split out — see [republishFacets]'s own kdoc. */
+    private fun republishTier0LlmStoredFacets() {
+        ShedStatus.update(level = 1, backlog = 0)
     }
 
     /**
@@ -3320,6 +3809,8 @@ public object Scenarios {
                 createdAt = otherStart + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, other1, "KJ7ABC", 0.9, createdAt = otherStart + 1_000L)
         db.transmissionDao().insert(
             ScenarioFixtures.transmission(
                 id = other2,
@@ -3341,6 +3832,14 @@ public object Scenarios {
                 isCurrent = true,
                 createdAt = otherStart + 60_000L + 1_000L,
             ),
+        )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(
+            db,
+            other2,
+            "N7XYZ",
+            0.86,
+            createdAt = otherStart + 60_000L + 1_000L,
         )
         db.catalogDao().insert(
             ThreadEntity(
@@ -3452,20 +3951,7 @@ public object Scenarios {
 
         // R-1024: the running level envelope N07's card draws — see [liveMonitorLevelHistoryDbfs]'s
         // own doc comment for why this is not simply [speechShapedPeakHistoryDbfs] reused as-is.
-        // R-1024: the running level envelope N07's card draws — see [liveMonitorLevelHistoryDbfs]'s
-        // own doc comment for why this is not simply [speechShapedPeakHistoryDbfs] reused as-is.
-        LevelStatus.update(
-            LevelStatus.State.Measured(
-                peakDbfs = -14f,
-                rmsDbfs = -20f,
-                noiseFloorDbfs = -58f,
-                clipped = false,
-                clipCountLastSecond = 0,
-                sampleRateHz = 48_000,
-                updatedAtMillis = SystemClock.wallMillis(),
-            ),
-            peakHistoryDbfs = liveMonitorLevelHistoryDbfs(),
-        )
+        republishOvernightLiveMonitorFacets()
 
         // 1. Transcribing.
         val txTranscribing = "$sessionId-transcribing"
@@ -3543,6 +4029,8 @@ public object Scenarios {
                 createdAt = tConfirmed + 500L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txConfirmed, "W7NPC", 0.95, createdAt = tConfirmed + 500L)
 
         // 5. Inferred -- links back to the confirmed over above.
         val txInferred = "$sessionId-inferred"
@@ -3628,5 +4116,22 @@ public object Scenarios {
         ScenarioFixtures.markCapturing(context, sessionId, samplePosition = 7L)
         val txCount = db.transmissionDao().listBySession(sessionId).size
         return LoadResult(transmissionCount = txCount, sessionCount = 1, primarySessionId = sessionId)
+    }
+
+    /** R-1076: [overnightLiveMonitor]'s own process-wide facet, split out — see [republishFacets]'s
+     * own kdoc. */
+    private fun republishOvernightLiveMonitorFacets() {
+        LevelStatus.update(
+            LevelStatus.State.Measured(
+                peakDbfs = -14f,
+                rmsDbfs = -20f,
+                noiseFloorDbfs = -58f,
+                clipped = false,
+                clipCountLastSecond = 0,
+                sampleRateHz = 48_000,
+                updatedAtMillis = SystemClock.wallMillis(),
+            ),
+            peakHistoryDbfs = liveMonitorLevelHistoryDbfs(),
+        )
     }
 }

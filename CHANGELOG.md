@@ -32,6 +32,311 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
+
+### WPNAVHOST round 2 — R-1061: reproduced on a real device, the reservation is now the bar's own measured height, and a real scenario proves it
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`liveBarHeight`,
+`NavHostBody`'s new `onLiveBarHeightChanged`), `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
+(new `improve-live-quiet` scenario), and tests. No file outside these plus `tools/ui-audit/`
+touched.
+**Requirements/ACs:** constitution II (a test shown to discriminate; a manual/device gate recorded
+with evidence), constitution VIII; R-1061 (round 1, extended); R-1049 (precedent, not modified).
+**What changed, and why round 1 was not enough (coordinator round 2 review):**
+1. **Round 1's fix was unproven — now reproduced on a real device.** No existing scenario
+   combined a live session, a genuinely too-quiet `LevelStatus` and Improve-eligible tier-1
+   records; a new debug scenario, `improve-live-quiet` (`Scenarios.kt`, `ScenariosTest`'s own
+   `R_1061` case), is `field-tier1`'s own session/transmission/audio-fixture shape plus
+   `level-low`'s own `markCapturing`/quiet `LevelStatus.update` layered on top. Built from
+   origin/main (`745e01b7`) plus only this one new scenario (a separate worktree, the fix code
+   itself untouched) and installed on `ort_audit_navhost`: at rest, font scale 2.0, `Improve all
+   12`'s own row (`bounds=[110,2456][1150,2537]`) is cut to a sliver directly behind the pinned
+   "Quiet" live bar (`bounds=[0,2534][1260,2709]`) — a real `3px` overlap — and a real swipe over
+   the scrollable region leaves those bounds byte-identical (`uiautomator dump`, before and after):
+   genuinely unreachable, not merely below an ordinary fold. The same build with the fix installed
+   shows `Improve all 12` fully clear (`bounds=[110,2375][1150,2530]`, `4px` of real daylight above
+   the bar) at rest, no scroll needed.
+2. **`LIVE_BAR_RESERVE_HEIGHT = 96.dp` was a guess — replaced with the bar's own measured, laid-out
+   height.** `NavHostBody` now reports the real height of its own `live-bar-clearance` box via
+   `onGloballyPositioned` (the identical mechanism `FailureHost`'s own banner height already uses,
+   R-178) through a new `onLiveBarHeightChanged` callback, reset to `0.dp` the instant the bar
+   stops showing; `OrtNavHost` holds that value in `liveBarHeight` and passes it straight through
+   as `FailureHost`'s `reservedBottomHeight` — no destination/drill-in heuristic left to
+   independently drift from what the bar actually renders. `LiveBarHeightReservationTest` proves
+   the reservation *equals* the bar's measured height, at font scale 1.0 and 2.0: a real
+   `FailurePresentation.StorageWarning` banner (`DebugFailureOverride`, the same debug-only seam
+   `FailureHostTest`'s own `R_300` case already uses) with a four-stage timeline long enough to
+   exceed even the *unreserved* cap (confirmed via `failure-banner-scroll-hint`'s own existence,
+   the real "content still hidden" signal, R-883) — solving the cap's own `(viewport -
+   reservedBottomHeight) * 0.55f` formula for `reservedBottomHeight` from the banner's, bar's and
+   root's own measured heights matches the bar's real height within `2dp` at both scales (measured:
+   `45.33dp` at 1.0, `54.48dp` at 2.0 — nowhere near the old `96.dp` guess either way). Confirmed
+   discriminating by temporarily forcing `reservedBottomHeight = 96.dp` back in: both cases then
+   fail by `22-28dp`.
+3. **Done-restore, captured on device with real bundled models.** `field-tier1`, real installed
+   models (`Whisper tiny.en`/`Silero VAD`, already verified on `ort_audit_navhost` from earlier
+   sessions): `Improve all 12` → a real `Running` board (4 of 12, live) → `Done` ("12 transcripts
+   changed · 12 attributions changed · 0 rejected · 0 failed", a real model-driven change, not the
+   model-less honest-failure case round 1's own test used) → `Review the 12 changes` → `Log`
+   filtered to 12 real, "revised" rows → back → `Done` with the identical summary line, at font
+   scale 1.0, and again after switching the device to font scale 2.0 live (no restart) — still the
+   same summary, `rememberSaveable` surviving both the destination round trip and the configuration
+   change together.
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.navigation.LiveBarHeightReservationTest" --tests
+"org.ort.app.ui.navigation.NavHostBannerLiveBarSqueezeTest" --tests
+"org.ort.app.ui.failures.BannerCapViewportHeightTest" --tests
+"org.ort.app.ui.navigation.ImproveDestinationStatePreservationTest" --tests
+"org.ort.app.debug.ScenariosTest"` — all green. `.\gradlew.bat :app:smokeTestDebugUnitTest` —
+176/176 green (no regression from `NavHostBody`'s new parameter). `.\gradlew.bat
+:app:testDebugUnitTest --tests "org.ort.app.ui.digest.*" --tests "org.ort.app.ui.settings.*"
+--tests "org.ort.app.ui.recordings.*" --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.improve.*" --tests "org.ort.app.ui.failures.*" --tests
+"org.ort.app.ui.screens.*"` — green. Full gate (`dependencyRules platformGuards build`,
+`-p buildSrc test`, `spec_check.py`, `coverageMatrix`/`coverageMatrixCheck`) re-run in full after
+this round's own changes — see this round's own report for durations.
+**Left open / not done:** the Robolectric-level `NavHostBannerLiveBarSqueezeTest` case built on the
+real `improve-live-quiet` scenario still does not fail on a true pre-fix host (`reservedBottomHeight
+= 0.dp`, checked directly) — at rest, Robolectric's own native-mode text layout for this exact
+banner and card renders `Improve all 12`'s own row only `1.53dp` past the live bar's own top before
+any reservation at all (`root=0..843.81dp`, `bar=789.33..843.81dp`, `banner=44.19..491.43dp`,
+`button=742.86..790.86dp`), and `performScrollTo()` clears that trivially — never actually
+"unreachable after scrolling" the way the real device shows. The device capture above (not this
+Robolectric test) is the real evidence for both the defect and the fix, per constitution VIII ("the
+screenshot wins"); the specific measurement that differs is Robolectric's own text layout for this
+banner/card content at 420dpi rendering measurably more compactly than the real device's system
+font shaper does for the identical copy.
+
+---
+
+## 2026-09-13 (WPNAVHOST: R-1061 banner/live-bar squeeze; R-1041 R04 Improve's Done state survives a Log round trip)
+
+### WPNAVHOST round 1 — R-1041 (R04) / R-1055: Improve's Done summary now survives switching away to Log and back
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`NavHostBody`,
+`NavHostDispatch`, `DestinationContent`'s own dispatch) and its tests. No file under
+`ui/improve/**`, `ui/recordings/**` or `SettingsContent.kt` touched.
+**Requirements/ACs:** constitution II (strict TDD, a test shown to discriminate), constitution
+VIII (screen re-verification on a UI-touching diff); R-1041 (R04), R-1055, R-1063 (precedent, not
+modified).
+**What changed:** `DestinationContent`'s own `when(current)` (`NavHostDispatch`'s `else` branch)
+fully disposes whichever destination is not the current one — correct for a plain `remember`, but
+it also discarded `org.ort.app.ui.improve.ImproveContent`'s own `rememberSaveable` `page`
+(R-1063) the instant `current` became `LOG` (`Improve-Done`'s own "Review the N changes" link, or
+any other way of leaving `IMPROVE_RECORDS`), so the operator's own "back" always landed on
+`Improve`'s `Root` list instead of the `Done` summary they had just left. `NavHostBody` now creates
+one `rememberSaveableStateHolder()` (survives a drill-in opening over the current destination too,
+not only a plain destination-to-destination switch — the "across drill-in and back" half of this
+round's brief), and `NavHostDispatch`'s `else` branch wraps `DestinationContent` in that holder's
+`SaveableStateProvider`, keyed `"IMPROVE_RECORDS"`, **for `IMPROVE_RECORDS` only**. Tried keying
+every destination this branch reaches first: it broke `LOG` outright (caught by this round's own
+smoke-test sweep, `R_1041_D11` in `ReaderActivityDestinationSmokeTest`) — `LogContent
+.initialFilter` (like `CaptureStatusContent.openLevelMeter`/`openLiveMonitor`,
+`SettingsContent.initialScreen`, `SessionsContent.initialSessionId`/`openDigest`) is a *fresh-seed*
+contract, read only on that composable's own first composition; a blanket holder hands a
+destination's *previous* internal state straight back on its next visit, which silently kept a
+first, unfiltered `Log` visit's own rows instead of ever reading a second, differently-filtered
+one's `initialFilter`. Scoped to `IMPROVE_RECORDS` alone, none of that risk applies: `Improve` is
+the only destination this branch reaches with genuine internal `rememberSaveable` page state and no
+per-visit seed at all (grepped every sibling — `NOW`/`THREADS`/`STATIONS`/`FREQUENCIES` keep no
+`rememberSaveable` of their own; `EARLIER_NIGHTS`'s own "Digest -> Log -> back" is already handled
+entirely inside `ui/digest/SessionsContent.kt`'s own `SessionsPage.Log`/`returnTo`, never by this
+host switching `current` away from `EARLIER_NIGHTS` at all).
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.navigation.ImproveDestinationStatePreservationTest"` — the new test drives the
+real `ImproveContent`/`RealImproveRunner` to a real, model-less `Done` summary (no `HF_TOKEN`
+model needed, matching constitution II's "no unit test reads a real bundled model"), then the
+exact one-line effect both the real `Review the N changes` click and the real back gesture's
+`restoreLogFilterOrigin` reduce to (`navigator.open(LOG)` then `navigator.open(IMPROVE_RECORDS)`).
+Confirmed discriminating: fails on the pre-fix host (`ComposeTimeoutException` waiting for the
+summary line to reappear — Root's own list shows instead), passes after the fix.
+`.\gradlew.bat :app:smokeTestDebugUnitTest` — all 176 tests green, including the case a
+first (unscoped) version of this fix broke (`R_1041_D11_view_affected_overs_link_...` in
+`ReaderActivityDestinationSmokeTest`) and every other real-content dispatch test
+(`OrtNavHostDestinationDispatchTest`, `FailureHostTest`, `SessionsContentTest`, `NowContentTest`,
+`CaptureStatusContentTest`, `SearchContentTest`, `StationDetailContentTest`, `StationsContentTest`,
+`TransmissionDetailContentTest`, `LevelMeterScreenTest`, `FrequencyScreenTest`,
+`FrequencyDetailContentTest`, `NavSeedTest`, `ReaderAccessibilityTest`, `LogContentBackHandlerTest`,
+`LogAndThreadContentActivityTest`, `SearchContentBackHandlerTest`).
+`.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.digest.*" --tests
+"org.ort.app.ui.settings.*" --tests "org.ort.app.ui.recordings.*" --tests
+"org.ort.app.ui.navigation.*" --tests "org.ort.app.ui.improve.*" --tests
+"org.ort.app.ui.failures.*"` — green.
+**Left open / not done:** the other `LogFilterOrigin` entries were each checked and none needed
+this fix — `Frequency`/`Station`/`Transmission` reopen a drill-in with no `rememberSaveable` of
+their own (confirmed by reading each `*DetailContent.kt`; the "reopens at root, not the exact
+sub-screen" behaviour they each already document is a deliberate, pre-existing design choice, not
+this defect); `Capture`/`Now` land on destinations with no internal saveable state to lose;
+`RecordingSession` (WPRC02) reopens `RecordingSessionContent`, which keeps only plain `remember`s,
+re-polled by session id on every open, so nothing is lost either way; `DG02`
+(`Digest-Item`'s "The N overs") is not a `LogFilterOrigin` case at all — it embeds `LogContent`
+directly inside `ui/digest/SessionsContent.kt`'s own page state, already correct, outside this
+package's row.
+
+### WPNAVHOST round 1 — R-1061: Improve's primary action is now reachable above a live bar even with the too-quiet banner showing at font scale 2.0
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (the new
+`bannerReservedBottomHeight`/`LIVE_BAR_RESERVE_HEIGHT`) and
+`app/src/main/kotlin/org/ort/app/ui/failures/FailureHost.kt` (`FailureHost`'s new
+`reservedBottomHeight` parameter and the extracted `bannerCapViewportHeight`), plus their tests.
+**Requirements/ACs:** constitution VII (accessibility floor, no clipping at maximum font scale),
+constitution VIII; R-1061; R-300/R-883 (precedent, not modified — the 55% banner cap those
+registers tuned).
+**What changed:** `FailureHost`'s own banner cap (`BannerOverlay`'s `heightIn(max = viewportHeight
+* 0.55f)`, R-300/R-883) was tuned against a viewport with no bottom bar in it at all ("55% ...
+leaves the destination's own header, title and at least one real control reachable underneath") —
+a live session's own pinned `TransportBar` is a second, independent claim on that same
+"underneath" region nothing there ever subtracted. On `Improve`'s own `Root` board (no fixed
+action bar of its own — `Improve all N` sits inline near the top of its one scrollable column,
+unlike `Done`/`Running`'s own `ImproveActionBarScaffold`, already proven clear of the banner by
+R-1056) a banner near the cap plus a live bar left `Improve all N` a sliver at the very edge of a
+badly squeezed viewport. `FailureHost` now takes a `reservedBottomHeight: Dp = 0.dp` parameter,
+subtracted from the cap's own viewport basis before `0.55f` is applied
+(`bannerCapViewportHeight`, pulled out to a plain function, directly unit-tested); `OrtNavHost`
+computes it (a new `LIVE_BAR_RESERVE_HEIGHT = 96.dp`, above `TransportBarHostLayoutTest`'s own
+measured 64–76dp ceiling for the real bar) whenever `resolveTransportBarState` says a bar will
+show, mirroring `NavHostBody`'s own `isDrillIn`/`embedsOwnLiveBar` precedence exactly rather than
+re-deriving it a third way. `0.dp` (the default) leaves every existing `FailureHost` caller
+unchanged.
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.failures.BannerCapViewportHeightTest"` — three cases (no reservation is a no-op; a
+live-bar reservation is subtracted before the cap; a reservation taller than the viewport floors
+at zero, never negative), green. `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.navigation.NavHostBannerLiveBarSqueezeTest"` — drives the real `OrtNavHost` at
+`IMPROVE_RECORDS` with a real T1-tier session, a real too-quiet `LevelStatus.State.Measured`
+(`Fail-Level.dc.html`'s own `-34 dBFS`) and a real live `CaptureState`, at
+`w390dp-h844dp-420dpi`/font scale 2.0: `Improve all` scrolls fully above `live-bar-clearance`'s own
+top edge. `.\gradlew.bat :app:smokeTestDebugUnitTest` and the targeted package run above both
+green (no regression to `FailureHostTest`'s own R-300/R-883/R-178/R-164 cases, all of which call
+`FailureHost` with the new parameter defaulted, or to `OrtNavHostDestinationDispatchTest`'s own
+R-957/R-262/R-910/R-911 live-bar-clearance geometry cases).
+**Left open / not done:** this round's own Robolectric reproduction of the squeeze
+(`NavHostBannerLiveBarSqueezeTest`) never actually failed against the pre-fix code — Robolectric's
+own text measurement did not reproduce the real device's tighter layout (the same documented class
+of gap constitution VIII names: "Robolectric's ... text measurement ... differ from a device").
+The fix stands on `bannerCapViewportHeight`'s own discriminating unit test and the reasoning above,
+not on that one Compose-level test failing first. **No existing debug scenario combines all three
+of the register's own reported factors** — a real live session, a genuinely too-quiet
+`LevelStatus` (`level-low` has both but zero transmissions), and Improve-eligible tier-1 records
+(`field-tier1` has the records but is not live and sets no `LevelStatus`) — so the exact three-way
+device repro (`Improve all 12` squeezed under a live bar and a too-quiet banner together) could
+not be captured this round; that is a `Scenarios.kt` fixture gap (`app/src/debug/kotlin/org/ort/
+app/debug/Scenarios.kt`), outside this round's own `ui/navigation`/`ui/failures` file ownership.
+Two new tour steps were added instead (`field-tier1/R01-improve@2x`/`@2x-end`,
+`overnight/R01-improve@2x`/`@2x-end` — the latter scenario's own tier is already fully current, so
+its board renders the empty state, not `Improve all N`), and real-device evidence was captured for
+the *general* mechanism instead: `storage-warn/L01-log-banner@2x` (a real too-quiet-shaped storage
+banner and the host's own real pinned live bar together, at real system `font_scale=2.0`, on
+`LOG`) shows the destination's own last content line (bottom `y=2463`) clearing the live bar's own
+top (`y=2534`) with a real `uiautomator dump` to prove it. The banner's own scroll-internally/
+collapse-chevron behaviour (R-883) is unchanged — the artboards support a *cap*, not a collapse or
+a scroll-away, for this class of squeeze. See this round's own report for every capture path and
+what each one does and does not prove.
+
+---
+
+## 2026-09-13 (WPDETAILRES: R-1071 - the debug scenario suite now seeds resolver output alongside every CONFIRMED attribution it writes, plus a regression invariant)
+
+### 49d4bbfc — WPDETAILRES: R-1071 - every debug scenario that seeds a CONFIRMED attribution with a confidence now seeds the resolver row (lattice + selected candidate) production always writes alongside it, and a new ResolverOutputScenariosTest proves the invariant for every declared scenario
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/ScenarioFixtures.kt` (new
+`seedConfirmedResolverOutput` helper), `Scenarios.kt`, `OvernightScenario.kt`,
+`StationsFixtures.kt`, `FrequencyChangeFixtures.kt` (every CONFIRMED-with-confidence call site);
+`app/src/test/kotlin/org/ort/app/debug/ResolverOutputScenariosTest.kt` (new file — see "What
+changed" for why it is not in `ScenariosTest.kt` itself).
+
+**Requirements/ACs:** R-1071 (register), constitution I ("never fabricate", "an attribution
+without its confidence state is a bug ... at the data layer"), constitution VI (no unbacked
+claim).
+
+**What changed.**
+- **Step 1 investigation (file:line).** The Detail header's per-state explanation sentence is
+  built by `DetailViewStateMapper.bodyFor` in
+  `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt:401-414` — the CONFIRMED branch
+  unconditionally renders `"Heard in this over. Resolved from the phonetics at %.2f."` from
+  `attribution.confidence` alone, with no check of whether any resolver output was actually
+  recorded. "Why this callsign" is built by `DetailViewStateMapper.whyFor`
+  (`DetailViewState.kt:583-619`), which reads `TransmissionDetail.inspection`
+  (`InspectionViewState`, populated by `ReaderPolling`/`CorrectionPolling.inspectionWithSlots`
+  from `:data`'s `phonetic_lattice`/`callsign_candidate` tables) and renders the "No resolver
+  output recorded for this transmission yet." line in
+  `app/src/main/kotlin/org/ort/app/ui/screens/DetailWhyScreen.kt:60-68` exactly when that
+  inspection is empty. The two surfaces read independent facts (`attribution.confidence` on the
+  `transmission` row vs. the presence of `phonetic_lattice`/`callsign_candidate` rows), so nothing
+  in the mapper enforces they agree.
+  Real capture cannot desync them: `CallsignResolver.resolve`
+  (`pipeline/src/main/kotlin/org/ort/pipeline/passb/CallsignResolver.kt:29-44`) only ever returns
+  `Attribution.confirmed(...)` from `ranked.firstOrNull()`, i.e. only when the same call already
+  produced a non-empty ranked candidate list, and `PassB.resolveFromText`
+  (`pipeline/src/main/kotlin/org/ort/pipeline/passb/PassB.kt:142-154`) only calls
+  `resolver.resolve` after building a non-empty lattice and a non-empty candidate list — CONFIRMED
+  is structurally impossible without both. `DataPassBResultSink.record`
+  (`pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt:63-105`) then persists
+  `updateAttribution` and `persistLattice`/`persistCandidates` in the *same* write transaction, for
+  every `PassBOutcome.Accepted` outcome. So a real CONFIRMED-with-confidence transmission always
+  carries a resolver row — this is scenario-only, per the prompt's own branching.
+  The actual gap: nearly every debug scenario builder set `attributionState = CONFIRMED` with a
+  real `attributionConfidence` and never called a resolver-seeding path at all — the specific
+  reported repro (`audio-removed-by-operator`) plus its near-identical sibling `no-audio`, plus
+  (found by sweeping every `AttributionState.CONFIRMED` site in `app/src/debug/kotlin/org/ort/app/debug/**`)
+  `revisions`, `search-corpus`, `level-low`, `mode-local-mic`, `mode-usb`, `mode-bluetooth`,
+  `bt-audio-session`, `llm-enabled-prose`/`llm-disabled`, `overnight-live-monitor`,
+  `OvernightScenario`'s own first-heard-station/revised/QSO-thread/filler/confirmed-longest overs,
+  `stations-14-nights`'s whole 14-night loop and `frequency-change`'s whole two-loop body all
+  shared the identical gap. `recordings-budget-exceeded`/`recordings-archive-removed` set CONFIRMED
+  with no `attributionConfidence` at all (stays honestly `null`) and are correctly excluded.
+- **The fix.** `ScenarioFixtures.seedConfirmedResolverOutput(db, transmissionId, callsign,
+  confidence, createdAt)` — a new helper wrapping the pre-existing `ScenarioFixtures.lattice`/
+  `.candidate` builders into one `PhoneticLatticeEntity` + one `selected = true`
+  `CallsignCandidateEntity`, `score` on the same un-clamped `totalScore` scale this fixture suite
+  already used (`OvernightScenario`'s own tx1: confidence 0.94, score 9.4). Every CONFIRMED-with-
+  confidence call site named above now calls it immediately after inserting the transmission (or,
+  inside a mixed CONFIRMED/INFERRED loop, only on the CONFIRMED branch).
+- **New `ResolverOutputScenariosTest`'s `R_1071 every CONFIRMED attribution with a confidence
+  carries a selected resolver candidate`** loads every name in `Scenarios.NAMES`, and for every
+  transmission row across every session with `attributionState == CONFIRMED &&
+  attributionConfidence != null`, asserts `catalogDao().candidatesFor(id).any { it.selected }`.
+  INFERRED is deliberately excluded (documented in the test's own kdoc): `CallsignResolver`'s own
+  kdoc says INFERRED is never reachable from the resolver at all, and `bodyFor`'s INFERRED branch
+  never claims a phonetic resolution either ("Matched by voice ..."/"The operator corrected this")
+  — a real INFERRED-with-confidence row legitimately carries no resolver row of its own. This test
+  was written directly in `ScenariosTest.kt` first, then moved into its own new file
+  (`ResolverOutputScenariosTest.kt`, `@Before`/`@After` duplicated rather than shared) once it
+  tripped detekt's `LargeClass` finding on that class — the same split `RowsTest.kt`'s own
+  `NavRowTest.kt`/this package's own `FailureOverrideScenariosTest.kt` already establish as house
+  style, confirmed by re-running `ktlintCheck detekt` clean afterward.
+- No production code changed — `DetailViewStateMapper`/`DetailWhyScreen` are untouched, per the
+  prompt's own scenario-only branch.
+
+**Verified.**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.*" --tests "org.ort.app.debug.*"` —
+  BUILD SUCCESSFUL (180 actionable tasks, 78 executed), including the new
+  `ScenariosTest > R_1071 every CONFIRMED attribution with a confidence carries a selected
+  resolver candidate` (PASSED, before the move into `ResolverOutputScenariosTest.kt`) and every
+  pre-existing test in both packages (`WpiScenariosTest`, `TourIdsTest` — including
+  `R_TOUR_IDS_TRANSMISSION_CONFIRMED_LONGEST`, which reads the `overnight-live` fixture this
+  change also touched — `OvernightScenario`/`StationsFixtures`/`FrequencyChangeFixtures`-backed
+  tests, `DetailViewStateMapperTest`, `TransmissionDetailScreenTest` unaffected). Re-run after the
+  file split, same command, same result — `ResolverOutputScenariosTest`'s own test PASSED in its
+  new home.
+- `./gradlew ktlintCheck detekt` — failed once on `app:detekt`'s `LargeClass` finding against
+  `ScenariosTest.kt` (the test added directly there first); green after moving it into
+  `ResolverOutputScenariosTest.kt`.
+- No emulator run: the tour was not re-captured because no screen composable, view state, or
+  mapper changed — only debug-scenario fixture data. Per the working agreement's own trigger list
+  (`ui/**`, `res/**`, `design/**`, a debug scenario *or tour step*, `*Content`/`*Screen`/
+  `*ViewState`/`*ViewData`/`*Mapper`), a debug *scenario* file is named explicitly, so the prompt's
+  own narrower ask ("only if a screen changes") governs here: seeding an extra DB row a screen
+  already knew how to render (the "Why" section already renders real resolver output correctly —
+  see `overnight`'s own tx1/tx2/tx3) is a data-only fix with no rendering change, so
+  `audio-removed-by-operator`'s own D06 capture was not retaken; the lead should re-run the
+  `audio-removed-by-operator` scenario capture as the closing evidence for this register row before
+  filing it closed.
+
+**Left open / not done:** `LexiconCorruptScenario.kt` and `CrossSessionReviewScenario.kt` were
+checked and never set `AttributionState.CONFIRMED` at all — no change needed there. No production
+(`:pipeline`, `:app` main-source) code was touched, since Step 1's investigation established the
+defect is scenario-only.
 ## 2026-09-13 (WPFETCHRETRY: R-1075 - bounded retry with backoff for both asset-download tasks)
 
 ### 2f2fe262 — WPFETCHRETRY: R-1075 - FetchSherpaNativeTask and FetchBundledAssetsTask retry transient download failures through one shared RetryingDownload helper instead of failing on the first HTTP 500/429 or I/O error
@@ -646,6 +951,131 @@ for main code; `:app`'s test source set needed `work-testing` to run a test `Wor
 ---
 
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
+
+### 499dd873 — WPRESEED: R-1076 follow-up - merged WPDETAILRES's resolver-output seeding (R-1071) into the same branch as the WPNAVHOST merge above and this round's own R-1076 fix
+
+**Scope:** `CHANGELOG.md` only (a merge conflict resolution, keeping both sides' entries); no code
+conflict.
+
+**Requirements/ACs:** none new — R-1071 lands exactly as WPDETAILRES's own entry above describes;
+R-1076/R-1061 are unaffected.
+
+**What changed:** merged `worktree-agent-a268fe901c2c4bbc7` (WPDETAILRES, R-1071's
+`ScenarioFixtures.seedConfirmedResolverOutput` calls across `Scenarios.kt`/`OvernightScenario.kt`/
+`StationsFixtures.kt`/`FrequencyChangeFixtures.kt`, plus `ResolverOutputScenariosTest`) into this
+branch, after the WPNAVHOST merge above. `Scenarios.kt` itself merged with no conflict — every
+`seedConfirmedResolverOutput(db, ...)` call WPDETAILRES adds sits immediately after an existing
+`db.transcriptDao().insert(...)` call in a scenario builder's own seeding path, never inside a
+`republish<Scenario>Facets()` function (those take no `db` parameter at all, so a DB write could not
+land there even by accident) — confirmed by reading every call site after the merge, not assumed.
+Only `CHANGELOG.md` conflicted (both branches inserted a new `## 2026-09-13 (...)` section at the
+same point); resolved by keeping both sections in sequence, ahead of the pre-existing
+`WPTESTROBUST` one.
+
+**Verified:** `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.*"` — green,
+`BUILD SUCCESSFUL` (180 actionable tasks), including `ResolverOutputScenariosTest`'s own `R_1071`
+case and this fix's own `R_1076` case together. `./gradlew ktlintCheck detekt` (every module) —
+green, `BUILD SUCCESSFUL`.
+
+**Left open / not done:** none new.
+
+### 96742166 — WPRESEED: R-1076 follow-up - merged WPNAVHOST's `improve-live-quiet` scenario (R-1061) and extracted its own `LevelStatus`/`CaptureState` facets into `republishImproveLiveQuietFacets()`
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (the one extraction, on top of the
+merge). Everything else this merge brings in is WPNAVHOST's own row, not touched further.
+
+**Requirements/ACs:** R-1076 (this scenario's own facets must survive a debug restart too, the same
+as every other facet-bearing scenario), R-1061 (the scenario itself, unchanged).
+
+**What changed:** merged `worktree-agent-aae495e19b25868a3` (WPNAVHOST round 2, R-1061's
+`improve-live-quiet` scenario plus its own live-bar/banner work) with no conflicts. `improveLiveQuiet`'s
+own `LevelStatus.update(...)` call (a live, genuinely-too-quiet reading) was extracted into
+`republishImproveLiveQuietFacets()`, called from the builder unchanged and wired into
+`republishFacets`'s `when` alongside `ScenarioFixtures.republishCapturing` for its `CaptureState`
+half — the same split every other facet-bearing scenario already has, so a debug restart mid
+`improve-live-quiet` republishes its own facets too, not just the ~35 scenarios this fix's first
+pass covered.
+
+**Verified:** `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.*"` — green,
+`BUILD SUCCESSFUL` (180 actionable tasks, 8 executed / 172 up-to-date), including the merged-in
+`ImproveLiveQuietScenarioTest` and this fix's own `R_1076` test. `./gradlew ktlintCheck detekt`
+(every module) — green, `BUILD SUCCESSFUL`.
+
+**Left open / not done:** none new — see the R-1076 entry below for what this whole change leaves
+open.
+
+### 8b37f11f — WPRESEED: R-1076 - ActiveScenarioRepublishProvider now republishes only the process-wide, in-memory scenario facets on a debug process restart, never re-seeding `:data` rows or files
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, `ScenarioFixtures.kt`,
+`ActiveScenarioRepublishProvider.kt` (no change to their own file rows besides this); `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`.
+
+**Requirements/ACs:** R-1076 (register, debug-only), R-873 (the provider this replaces — its own
+kdoc claimed only in-memory facets were being republished, but its actual call re-seeded
+everything).
+
+**What changed.**
+- **Root cause, confirmed by reading, not guessed**: [`ActiveScenarioRepublishProvider.onCreate()`]
+  called `Scenarios.load(appContext, activeScenarioName)` again on every debug process start while a
+  scenario marker was set. `load` begins with `clearPriorScenarioData` (deletes every `scenario-`
+  prefixed row) and every scenario builder's own `:data`/heartbeat-file/`SharedPreferences` writes —
+  none of that is "republishing an in-memory facet", it is a second full seed. A validator or
+  operator's own change to that data since the first load (a correction, a session edit) was
+  silently discarded on the very next debug relaunch.
+- **`Scenarios.republish(name)`** (new, `public`, takes no `Context` at all): the real fix. Resets
+  every process-wide facet (`resetProcessWideFacets`, unchanged) then republishes exactly the
+  facet(s) the named scenario's own builder additionally sets, through a new `republishFacets`
+  dispatcher. Every scenario whose builder sets an extra process-wide singleton beyond the reset
+  defaults (`RigStatus`, `InputStatus`, `LevelStatus`, `ThermalStatus`, `ShedStatus`,
+  `StorageForecast`, `AsrAvailability`, `CaptureState`, `DebugFailureOverride`,
+  `DebugRigLinkPortOverride`, `DebugRouteCheckOverride`, `DebugSearchOverride` — roughly 35 of the
+  ~80 named scenarios) now exposes a small `republish<Scenario>Facets()` function, **extracted
+  (moved, never duplicated) out of the builder itself**, called from both the original builder (first
+  load, unchanged behaviour) and the new dispatcher (republish) — the two call sites cannot drift
+  apart because there is only one copy of the code. `Scenarios.load` itself is untouched: still
+  seeds on first load exactly as before.
+- **`ScenarioFixtures.republishCapturing(sessionId)`** (new): the in-memory half of `markCapturing`
+  alone — `CaptureState.capturing(sessionId)` with no heartbeat write, since the heartbeat file
+  already survives a process restart on its own (that is its entire purpose) and rewriting it on
+  every republish would falsify "how long ago" for no reason.
+- **`ActiveScenarioRepublishProvider.onCreate()`** now calls `Scenarios.republish(activeScenarioName)`
+  — no `Context`, no `runBlocking`, no suspend function at all, since every facet setter it touches is
+  a plain synchronous singleton call.
+- **Known, reported gap, not an oversight**: `lexicon-corrupt`'s one facet
+  (`org.ort.app.ui.data.DebugLexiconImportOverride`) is the *return value* of running the real
+  production lexicon validator against a staged asset file. Replaying it safely on every restart
+  would mean either re-running the whole validator (which would re-insert its own "previous version"
+  `LexiconVersionEntity` row a second time — a primary-key conflict) or duplicating the validator's
+  own logic here; neither is acceptable, so this one scenario republishes as a no-op beyond the
+  reset, documented in `republishFacets`'s own kdoc.
+
+**Verified.**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.*"` — green, `BUILD SUCCESSFUL`
+  (180 actionable tasks, 78 executed / 102 from cache). Includes the new discriminating test,
+  `WpiScenariosTest :: R_1076_a debug process restart republishes facets without re-seeding data`
+  (loads `rig-lost`, writes a real `overAudioRemovedAtMillis` via `setOverAudioRemoved` — a real
+  write path, not a raw duplicate `@Insert`, which `OnConflictStrategy.ABORT` would reject — resets
+  every process-wide holder to simulate the OS tearing the process down, drives
+  `ActiveScenarioRepublishProvider` the Robolectric way (`Robolectric.buildContentProvider(...).create()`,
+  the provider's real entry point), then asserts the row survived untouched **and** `RigStatus` came
+  back `Stale`); shown failing against the pre-fix `onCreate()` (`Scenarios.load` again) by
+  inspection — `clearPriorScenarioData` runs unconditionally at the top of `load`, so the corrected
+  row would have been deleted and rewritten back to the fixture's own unmodified value, failing the
+  test's own post-restart assertion. R-873's own two existing tests in the same class
+  (`R_873_a debug process restart re-publishes...`/`R_873_the republish provider is a no-op...`)
+  stay green unchanged, and every other test in the `org.ort.app.debug` package (`ScenariosTest`'s own
+  `R_110` five-times-thirty-scenario stress loop, `TourStepsTest`, `TourParityTest`, all of
+  `WpiScenariosTest`'s ~35 facet-bearing-scenario assertions) is green too — the extraction changed
+  no observable behaviour of a first `load`.
+- `./gradlew :app:smokeTestDebugUnitTest` — green, `BUILD SUCCESSFUL` (180 actionable tasks, 2
+  executed / 178 up-to-date; this module's own isolated-JVM Compose classes, unaffected by this
+  change).
+- `./gradlew ktlintCheck detekt` (every module) — green, `BUILD SUCCESSFUL` (173 actionable tasks,
+  163 executed / 10 up-to-date).
+
+**Left open / not done:** `lexicon-corrupt`'s own `DebugLexiconImportOverride` facet is not
+republished (see above — a deliberate, documented gap, not a fix left half-done). Not run: the full
+gate (`dependencyRules platformGuards build`), CI, or the Release workflow — this package's own
+scoped checks only, per this round's own brief; the lead's own merge gate covers the rest.
 
 ### 3e7cbf5f — WPTESTROBUST: R-1043 - NavSeedTest's searchFiltersOpen now waits for the tag instead of asserting immediately, and SettingsContentTest's fixed waitUntil(5_000) calls use a shared, generous timeout constant
 

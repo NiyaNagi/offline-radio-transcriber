@@ -101,7 +101,11 @@
     { "id": "overnight-live-monitor/N07-live-monitor@2x-end", "scenario": "overnight-live-monitor", "destination": "CAPTURE", "drillIn": { "tapLiveBar": "true" }, "fontScale": 2.0, "scroll": "end" },
 
     { "id": "field-tier1/R01-improve", "scenario": "field-tier1", "destination": "IMPROVE_RECORDS" },
+    { "id": "field-tier1/R01-improve@2x", "scenario": "field-tier1", "destination": "IMPROVE_RECORDS", "fontScale": 2.0 },
+    { "id": "field-tier1/R01-improve@2x-end", "scenario": "field-tier1", "destination": "IMPROVE_RECORDS", "fontScale": 2.0, "scroll": "end" },
     { "id": "overnight/R01-improve", "scenario": "overnight", "destination": "IMPROVE_RECORDS" },
+    { "id": "overnight/R01-improve@2x", "scenario": "overnight", "destination": "IMPROVE_RECORDS", "fontScale": 2.0 },
+    { "id": "overnight/R01-improve@2x-end", "scenario": "overnight", "destination": "IMPROVE_RECORDS", "fontScale": 2.0, "scroll": "end" },
 
     { "id": "overnight/CF01-settings", "scenario": "overnight", "destination": "SETTINGS" },
     { "id": "overnight/CF02-settings-capture", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" } },
