@@ -14,6 +14,7 @@ import org.junit.runner.RunWith
 import org.ort.core.PassId
 import org.ort.core.SampleClock
 import org.ort.core.TransmissionState
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.pipeline.PipelineTestFixtures
@@ -466,5 +467,260 @@ public class RealSegmentSinkTest {
         assertEquals("MAX_DURATION", field(line, "closeReason"))
         assertEquals(60_000L.toString(), field(line, "durationMs"))
         assertEquals("1875", field(line, "vadFrameCount"))
+    }
+
+    /**
+     * FR-SEG-10, AC-162 (register R-1054): with the real Silero detector running this session, the
+     * persisted row must name it -- [org.ort.data.entity.TransmissionEntity.vadDetector] is a plain
+     * constructor value on [RealSegmentSink] (set once by `RealCaptureService.resolveVad`, not
+     * re-derived here), so this proves the sink actually wires it through to the row rather than
+     * silently defaulting to [VadDetectorKind.UNKNOWN]. The row also reads as conforming to
+     * FR-SEG-1, and the version string this session happened to know is carried unchanged.
+     */
+    @Test
+    @Requirement("FR-SEG-10", "AC-162")
+    public fun `FR_SEG_10 with Silero running this session, the persisted row names it and conforms`(): Unit =
+        runBlocking {
+            val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+            val sampleClock = SampleClock(
+                anchorMonotonicNanos = clock.monotonicNanos(),
+                anchorWallMillis = clock.wallMillis(),
+                anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+                sampleRate = FrameSpec.SAMPLE_RATE,
+            )
+            val queue = WorkQueue(db, clock)
+            val sink = RealSegmentSink(
+                filesDir,
+                sessionId,
+                db,
+                queue,
+                sampleClock,
+                SegmentConfig(),
+                vadDetector = VadDetectorKind.SILERO,
+                vadDetectorVersion = "silero-v5",
+            ) {}
+
+            val endSample = FrameSpec.SAMPLE_RATE.toLong()
+            val writer = sink.open(SegmentId(0), 0L)
+            writer.append(FloatArray(endSample.toInt()) { 0.1f })
+            writer.close(
+                SegmentRecord(
+                    id = SegmentId(0),
+                    startSample = 0L,
+                    endSample = endSample,
+                    vadStartSample = 0L,
+                    vadEndSample = endSample,
+                    sampleCount = endSample,
+                    outcome = SegmentOutcome.SPEECH,
+                    closeReason = SegmentCloseReason.SILENCE,
+                    vadFrameCount = 31,
+                    vadSpeechFrameCount = 31,
+                ),
+            )
+
+            val persisted = db.transmissionDao().getById("$sessionId-0")
+            assertNotNull(persisted)
+            assertEquals(VadDetectorKind.SILERO, persisted!!.vadDetector)
+            assertEquals("silero-v5", persisted.vadDetectorVersion)
+            assertTrue("Silero is one of the two detectors FR-SEG-1 names", persisted.conformsToFrSeg1())
+        }
+
+    /**
+     * The discriminating other half: with the RMS-energy fallback running this session (no Silero
+     * model available), the persisted row must name **that** detector, never [VadDetectorKind.SILERO]
+     * by a stale default, and must read as **not** conforming to FR-SEG-1 -- exactly AC-162's second
+     * driven case (segmentation is the one decision reprocessing cannot undo, CON-SEG-1, so a
+     * boundary cut by an unnamed or wrongly-named detector is the provenance hole FR-SEG-10 exists
+     * to close). Capture still proceeds and the row is still persisted -- constitution IV holds.
+     */
+    @Test
+    @Requirement("FR-SEG-10", "AC-162")
+    public fun `FR_SEG_10 with the energy fallback, the row names it and does not conform`(): Unit = runBlocking {
+        val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+        val sampleClock = SampleClock(
+            anchorMonotonicNanos = clock.monotonicNanos(),
+            anchorWallMillis = clock.wallMillis(),
+            anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        val queue = WorkQueue(db, clock)
+        val sink = RealSegmentSink(
+            filesDir,
+            sessionId,
+            db,
+            queue,
+            sampleClock,
+            SegmentConfig(),
+            vadDetector = VadDetectorKind.ENERGY,
+        ) {}
+
+        val endSample = FrameSpec.SAMPLE_RATE.toLong()
+        val writer = sink.open(SegmentId(0), 0L)
+        writer.append(FloatArray(endSample.toInt()) { 0.1f })
+        writer.close(
+            SegmentRecord(
+                id = SegmentId(0),
+                startSample = 0L,
+                endSample = endSample,
+                vadStartSample = 0L,
+                vadEndSample = endSample,
+                sampleCount = endSample,
+                outcome = SegmentOutcome.SPEECH,
+                closeReason = SegmentCloseReason.SILENCE,
+                vadFrameCount = 31,
+                vadSpeechFrameCount = 31,
+            ),
+        )
+
+        val persisted = db.transmissionDao().getById("$sessionId-0")
+        assertNotNull(persisted)
+        assertEquals(VadDetectorKind.ENERGY, persisted!!.vadDetector)
+        assertFalse(
+            "the energy fallback is never one of the detectors FR-SEG-1 names",
+            persisted.conformsToFrSeg1(),
+        )
+        assertEquals(TransmissionState.CAPTURED, persisted.processingState) // capture still proceeded
+    }
+
+    /** A too-short (rejected) segment gets the same treatment as an accepted one -- FR-SEG-10 makes
+     * no exception for a rejected row, matching constitution III's "nothing is deleted quietly". */
+    @Test
+    @Requirement("FR-SEG-10", "AC-162")
+    public fun `FR_SEG_10 a rejected segment still names its real detector`(): Unit = runBlocking {
+        val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+        val sampleClock = SampleClock(
+            anchorMonotonicNanos = clock.monotonicNanos(),
+            anchorWallMillis = clock.wallMillis(),
+            anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        val queue = WorkQueue(db, clock)
+        val sink = RealSegmentSink(
+            filesDir,
+            sessionId,
+            db,
+            queue,
+            sampleClock,
+            SegmentConfig(),
+            vadDetector = VadDetectorKind.ENERGY,
+        ) {}
+
+        val endSample = FrameSpec.SAMPLE_RATE / 10L
+        val writer = sink.open(SegmentId(0), 0L)
+        writer.append(FloatArray(endSample.toInt()) { 0.1f })
+        writer.close(
+            SegmentRecord(
+                id = SegmentId(0),
+                startSample = 0L,
+                endSample = endSample,
+                vadStartSample = 0L,
+                vadEndSample = endSample,
+                sampleCount = endSample,
+                outcome = SegmentOutcome.REJECTED_TOO_SHORT,
+                closeReason = SegmentCloseReason.SILENCE,
+                vadFrameCount = 3,
+                vadSpeechFrameCount = 3,
+            ),
+        )
+
+        val persisted = db.transmissionDao().getById("$sessionId-0")
+        assertNotNull(persisted)
+        assertEquals(TransmissionState.REJECTED, persisted!!.processingState)
+        assertEquals(VadDetectorKind.ENERGY, persisted.vadDetector)
+        assertFalse(persisted.conformsToFrSeg1())
+    }
+
+    /** A sink built with no explicit [VadDetectorKind] (every pre-existing call site in this file)
+     * must default to [VadDetectorKind.UNKNOWN], never a fabricated [VadDetectorKind.SILERO] --
+     * constitution I. */
+    @Test
+    @Requirement("FR-SEG-10")
+    public fun `FR_SEG_10 a sink built with no explicit detector persists the honest UNKNOWN default`(): Unit =
+        runBlocking {
+            val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+            val sampleClock = SampleClock(
+                anchorMonotonicNanos = clock.monotonicNanos(),
+                anchorWallMillis = clock.wallMillis(),
+                anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+                sampleRate = FrameSpec.SAMPLE_RATE,
+            )
+            val queue = WorkQueue(db, clock)
+            val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, SegmentConfig()) {}
+
+            val endSample = FrameSpec.SAMPLE_RATE.toLong()
+            val writer = sink.open(SegmentId(0), 0L)
+            writer.append(FloatArray(endSample.toInt()) { 0.1f })
+            writer.close(
+                SegmentRecord(
+                    id = SegmentId(0),
+                    startSample = 0L,
+                    endSample = endSample,
+                    vadStartSample = 0L,
+                    vadEndSample = endSample,
+                    sampleCount = endSample,
+                    outcome = SegmentOutcome.SPEECH,
+                    closeReason = SegmentCloseReason.SILENCE,
+                    vadFrameCount = 31,
+                    vadSpeechFrameCount = 31,
+                ),
+            )
+
+            val persisted = db.transmissionDao().getById("$sessionId-0")
+            assertNotNull(persisted)
+            assertEquals(VadDetectorKind.UNKNOWN, persisted!!.vadDetector)
+            assertFalse(persisted.conformsToFrSeg1())
+        }
+
+    /**
+     * FR-SEG-10's `vad_stats` half: the detector identity and the fusion flag must land in the
+     * `capture.log` line itself, not only the database row -- the two carriers FR-SEG-10 names
+     * explicitly.
+     */
+    @Test
+    @Requirement("FR-SEG-10", "AC-162")
+    public fun `FR_SEG_10 the vad_stats line carries the real detector and fusion flag`(): Unit = runBlocking {
+        DiagnosticsLog.configure(filesDir, TestClock())
+        val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+        val sampleClock = SampleClock(
+            anchorMonotonicNanos = clock.monotonicNanos(),
+            anchorWallMillis = clock.wallMillis(),
+            anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        val queue = WorkQueue(db, clock)
+        val sink = RealSegmentSink(
+            filesDir,
+            sessionId,
+            db,
+            queue,
+            sampleClock,
+            SegmentConfig(),
+            vadDetector = VadDetectorKind.SILERO,
+        ) {}
+
+        val endSample = FrameSpec.SAMPLE_RATE.toLong()
+        val writer = sink.open(SegmentId(0), 0L)
+        writer.append(FloatArray(endSample.toInt()) { 0.1f })
+        writer.close(
+            SegmentRecord(
+                id = SegmentId(0),
+                startSample = 0L,
+                endSample = endSample,
+                vadStartSample = 0L,
+                vadEndSample = endSample,
+                sampleCount = endSample,
+                outcome = SegmentOutcome.SPEECH,
+                closeReason = SegmentCloseReason.SILENCE,
+                vadFrameCount = 31,
+                vadSpeechFrameCount = 31,
+            ),
+        )
+        DiagnosticsLog.flush()
+
+        val lines = captureLogLines()
+        assertEquals(1, lines.size)
+        val line = lines.single()
+        assertEquals("SILERO", field(line, "vadDetector"))
+        assertEquals("false", field(line, "rigSquelchFusionApplied"))
     }
 }

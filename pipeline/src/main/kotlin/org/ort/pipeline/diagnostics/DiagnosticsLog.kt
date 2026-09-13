@@ -12,6 +12,7 @@ import org.ort.core.Clock
 import org.ort.core.PassId
 import org.ort.core.SystemClock
 import org.ort.core.Tier
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.entity.TerminationReason
 import org.ort.segment.SegmentCloseReason
 import org.ort.segment.SegmentOutcome
@@ -240,10 +241,16 @@ public object DiagnosticsLog {
      * free-text reason field exists to carry it. [peakDbfs], [meanDbfs] and
      * [noiseFloorDbfsAtOnset] are `null` — logged as the literal `NONE`, never `0.0` — exactly when
      * the caller genuinely could not measure them (constitution I: never zero-filled).
+     *
+     * [vadDetector] and [rigSquelchFusionApplied] are FR-SEG-10's (register R-1054, AC-162)
+     * per-transmission provenance — which detector actually cut this segment's boundaries, and
+     * whether rig squelch fusion (FR-SEG-5) applied. Both are required, not defaulted: the one real
+     * caller ([org.ort.pipeline.capture.RealSegmentSink.close]) always has a real answer for both,
+     * so there is no honest default to fall back to here.
      */
     @Suppress("LongParameterList") // every parameter is an independent, real VAD-statistic field
     // (matches DiagnosticsLog's own no-free-text-parameter discipline above) — grouping them into
-    // a data class would only move the same nine facts one level down, not reduce them.
+    // a data class would only move the same eleven facts one level down, not reduce them.
     public fun logVadStats(
         transmissionId: String,
         outcome: SegmentOutcome,
@@ -254,6 +261,8 @@ public object DiagnosticsLog {
         peakDbfs: Float?,
         meanDbfs: Float?,
         noiseFloorDbfsAtOnset: Float?,
+        vadDetector: VadDetectorKind,
+        rigSquelchFusionApplied: Boolean,
     ) {
         enqueue(
             Category.CAPTURE,
@@ -269,6 +278,8 @@ public object DiagnosticsLog {
                 "peakDbfs" to (peakDbfs?.toString() ?: "NONE"),
                 "meanDbfs" to (meanDbfs?.toString() ?: "NONE"),
                 "noiseFloorDbfsAtOnset" to (noiseFloorDbfsAtOnset?.toString() ?: "NONE"),
+                "vadDetector" to vadDetector.name,
+                "rigSquelchFusionApplied" to rigSquelchFusionApplied.toString(),
             ),
         )
     }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -20,6 +21,8 @@ import org.ort.core.AssetRef
 import org.ort.core.PassId
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
+import org.ort.core.assets.ModelFileVerifier
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
 import org.ort.data.entity.CaptureGapCause
@@ -33,6 +36,7 @@ import org.ort.testing.Requirement
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * Build-plan P12's claim that `PassDrainRunner`/`PassB`/`RealSherpaDecoder` are "constructed and
@@ -61,6 +65,18 @@ import java.io.File
 public class RealCaptureServiceTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
+
+    private val originalVadNativeLoader = RealVadProvider.nativeLoader
+
+    /** FR-SEG-10/AC-162: [RealVadProvider.nativeLoader] is a shared, static seam (the same one
+     * [RealVadProviderTest] resets) -- any test that fakes Silero into being "available" must
+     * restore it, or a later test in this or another class could silently inherit the fake.
+     * [VadAvailability] is reset for the identical reason -- it too is a shared, static holder. */
+    @After
+    public fun restoreVadNativeLoader() {
+        RealVadProvider.nativeLoader = originalVadNativeLoader
+        VadAvailability.reset()
+    }
 
     private fun loudBlock(n: Int = 1_600): ShortArray = ShortArray(n) { 6_000 }
     private fun silentBlock(n: Int = 1_600): ShortArray = ShortArray(n) { 0 }
@@ -139,6 +155,157 @@ public class RealCaptureServiceTest {
             assertFalse(
                 "a deliberate stop must mark the session's heartbeat clean (AC-5)",
                 heartbeatStore.hadUncleanEnd(),
+            )
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    /**
+     * AC-162, first driven case (register R-1054, FR-SEG-10): with the FR-SEG-1 detector
+     * unavailable (no Silero model installed -- the default in this test environment, never faked),
+     * the session still captures (constitution IV) and the transmission it produces records the
+     * detector that actually cut it -- the RMS-energy fallback, marked as **not** conforming to
+     * FR-SEG-1 -- on both the transmission row and the session row itself, through the real
+     * [RealCaptureService.startCapture] composition, not a hand-built [RealSegmentSink].
+     */
+    @Test
+    @Requirement("AC-162", "FR-SEG-10")
+    public fun `AC_162 with Silero unavailable, the session and its over both record the energy fallback`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+        repeat(12) { fakeIo.enqueueFrames(silentBlock()) }
+
+        val engine = FakeAsrEngine(
+            FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "test transmission received")),
+        )
+        val sessionId = "TEST-SESSION-162-ENERGY"
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Available(engine, AssetRef("fake-asr-model", "1"), "test-fake") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            val transmissionId = "$sessionId-0"
+            waitUntil(20_000) {
+                runBlocking { db.transmissionDao().getById(transmissionId) } != null
+            }
+            val transmission = runBlocking { db.transmissionDao().getById(transmissionId) }!!
+            assertEquals(
+                "no Silero model is installed in this test environment -- the fallback must be named",
+                VadDetectorKind.ENERGY,
+                transmission.vadDetector,
+            )
+            assertFalse(
+                "the energy fallback must never be presented as conforming to FR-SEG-1",
+                transmission.conformsToFrSeg1(),
+            )
+
+            val session = runBlocking { db.sessionDao().getById(sessionId) }!!
+            assertEquals(
+                "the session row must name the same detector as its own transmissions",
+                VadDetectorKind.ENERGY,
+                session.vadDetector,
+            )
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    /**
+     * AC-162, second driven case: with the FR-SEG-1 detector available -- faked through the same
+     * [RealVadProvider.nativeLoader]/[ModelFileVerifier] seam register R-1052's own
+     * `RealVadProviderTest` uses, **never a real bundled model** -- the same fields on the same real
+     * service composition name Silero instead, and read as conforming. Driving both this test and
+     * the one above against the identical [RealCaptureService] composition is what AC-162 itself
+     * asks for ("verified by driving capture both ways").
+     */
+    @Test
+    @Requirement("AC-162", "FR-SEG-10")
+    public fun `AC_162 with Silero available, the session and its over both record it and conform`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+        repeat(12) { fakeIo.enqueueFrames(silentBlock()) }
+
+        val engine = FakeAsrEngine(
+            FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "test transmission received")),
+        )
+        val sessionId = "TEST-SESSION-162-SILERO"
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Available(engine, AssetRef("fake-asr-model", "1"), "test-fake") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        // Register R-1052's seam: a verified-install record (never a real model's bytes) at the
+        // exact path RealVadProvider.provide(filesDir) checks, plus a fake nativeLoader standing in
+        // for RealSileroVad's native constructor -- the seam RealVadProviderTest itself uses to
+        // prove "a genuinely verified model reaches the native loader", reused here so the real
+        // RealCaptureService composition resolves VadProvisionResult.Available without ever loading
+        // a native library.
+        val modelFile = SileroVadLocator.modelFile(service.filesDir)
+        modelFile.parentFile?.mkdirs()
+        val bytes = "not a real model -- R-1052/AC-162 test seam only".toByteArray()
+        modelFile.writeBytes(bytes)
+        val sha256 = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+        ModelFileVerifier.sizeMarkerFile(modelFile).writeText(bytes.size.toString())
+        ModelFileVerifier.sha256MarkerFile(modelFile).writeText(sha256)
+        // A real speech-probability function, not a constant -- a fixed 1f would never let the
+        // segmenter observe silence, so the segment this test waits for would never close. Same
+        // RMS-threshold shape as EnergyVadModel, wired through the fake nativeLoader instead of a
+        // real Silero binding, so loudBlock()/silentBlock() drive it exactly like the real one.
+        val fakeSpeechProbability: (FloatArray) -> Float = { frame ->
+            var sumSquares = 0.0
+            for (s in frame) sumSquares += s.toDouble() * s.toDouble()
+            val rms = kotlin.math.sqrt(sumSquares / frame.size)
+            if (rms > 0.01) 1f else 0f
+        }
+        RealVadProvider.nativeLoader = { _ -> fakeSpeechProbability to {} }
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            val transmissionId = "$sessionId-0"
+            waitUntil(20_000) {
+                runBlocking { db.transmissionDao().getById(transmissionId) } != null
+            }
+            val transmission = runBlocking { db.transmissionDao().getById(transmissionId) }!!
+            assertEquals(
+                "the verified, resolvable model must be named, never left at the ENERGY default",
+                VadDetectorKind.SILERO,
+                transmission.vadDetector,
+            )
+            assertTrue(
+                "Silero is one of the two detectors FR-SEG-1 names",
+                transmission.conformsToFrSeg1(),
+            )
+
+            val session = runBlocking { db.sessionDao().getById(sessionId) }!!
+            assertEquals(
+                "the session row must name the same detector as its own transmissions",
+                VadDetectorKind.SILERO,
+                session.vadDetector,
             )
         } finally {
             controller.destroy()

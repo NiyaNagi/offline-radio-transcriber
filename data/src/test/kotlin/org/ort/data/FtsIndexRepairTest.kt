@@ -73,10 +73,16 @@ public class FtsIndexRepairTest {
         context.deleteDatabase(dbName)
         try {
             val fixture = helper.createDatabase(dbName, OrtDatabase.SCHEMA_VERSION)
+            // WPSEGPROV (schema v14, FR-SEG-10): session.vadDetector and transmission.vadDetector/
+            // .rigSquelchFusionApplied are NOT NULL with no SQL-level DEFAULT in Room's generated
+            // CREATE TABLE (Kotlin default values apply only to Kotlin construction, never to raw
+            // SQL) -- this fixture always builds at OrtDatabase.SCHEMA_VERSION, so every NOT NULL
+            // column head currently carries must be listed explicitly here, the same discipline
+            // this file's own rigStateChangedMidTransmission value already followed.
             fixture.execSQL(
                 "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
-                    "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
-                    "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, ${OrtDatabase.SCHEMA_VERSION}, 0, 0)",
+                    "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, vadDetector) VALUES " +
+                    "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, ${OrtDatabase.SCHEMA_VERSION}, 0, 0, 'UNKNOWN')",
             )
             fixture.execSQL(
                 "INSERT INTO transmission (id, sessionId, threadId, startedAtUtc, endedAtUtc, durationMs, " +
@@ -84,9 +90,10 @@ public class FtsIndexRepairTest {
                     "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
                     "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
                     "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
-                    "isReprocessCandidate, rigStateChangedMidTransmission) VALUES ('TX1', 'S1', NULL, 0, 1000, " +
+                    "isReprocessCandidate, rigStateChangedMidTransmission, vadDetector, " +
+                    "rigSquelchFusionApplied) VALUES ('TX1', 'S1', NULL, 0, 1000, " +
                     "1000, 'flac/16k/mono', 200, 200, NULL, 'measured', NULL, NULL, NULL, NULL, 'UNKNOWN', NULL, " +
-                    "NULL, NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, 0)",
+                    "NULL, NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, 0, 'UNKNOWN', 0)",
             )
             fixture.execSQL(
                 "INSERT INTO transcript (id, transmissionId, pass, text, modelId, modelVersion, quantization, " +
