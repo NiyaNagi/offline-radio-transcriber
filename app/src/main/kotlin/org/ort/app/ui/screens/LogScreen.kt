@@ -49,9 +49,9 @@ public fun LogScreen(
     onFilterClick: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenThread: (String) -> Unit = {},
-    // R-1047 (register): dismisses [LogScreenViewState.appliedFilterLabel]'s own chip, resetting
-    // to the plain, unfiltered `All` view — never called when that label is `null` (no chip to
-    // dismiss). Defaulted to a no-op so every existing caller keeps compiling unchanged.
+    // R-1047 (register): clears [LogScreenViewState.appliedFilterLabel]'s own statement line,
+    // resetting to the plain, unfiltered `All` view — never called when that label is `null` (no
+    // statement to clear). Defaulted to a no-op so every existing caller keeps compiling unchanged.
     onClearAppliedFilter: () -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -69,18 +69,37 @@ public fun LogScreen(
             state.quickFilters.forEach { chip ->
                 FilterChip(label = chip.label, selected = chip.selected, onClick = { onQuickFilterSelect(chip.id) })
             }
-            // R-1047: rendered in the same scrollable chip row (never a new row below it, so this
-            // can never collide with the chip row or the first log row) — the same dismissable-
-            // chip shape `SearchScreen.kt`'s own applied-filter chips already use, since no
-            // `Log`-filtered-state artboard exists to follow instead.
-            state.appliedFilterLabel?.let { label ->
-                FilterChip(
-                    label = label,
-                    selected = true,
-                    onClick = onFilterClick,
-                    onDismiss = onClearAppliedFilter,
-                    modifier = Modifier.testTag("log-applied-filter-chip"),
+        }
+
+        // R-1047 (register, sent back): a dedicated, full-width line between the chip row and the
+        // column heads — never *inside* the scrollable `FilterChipRow` above, which is exactly what
+        // the register's own device capture (`overnight/L01-log-filtered-overs.png`) found: a chip
+        // appended after five real quick chips clips off the visible edge at both 390dp and 480dp,
+        // so the "visible, specific statement" this row exists to give the operator was only
+        // reachable by a horizontal scroll nobody has a reason to make (constitution I). No `Log`
+        // filtered-state artboard exists in `design/canvas` to follow instead (checked directly:
+        // `Log.dc.html`/`Log-Filter.dc.html`/`Log-Partial.dc.html`/`Log-Rejected.dc.html`/
+        // `Log-Empty.dc.html` are the whole set, none of them a filtered-*result* state) — this
+        // reuses the established full-width-line-below-the-chip-row shape immediately below
+        // ([state.rejectedExplanation]'s own identical position, for the dedicated Rejected view),
+        // rather than inventing a second, competing pattern for the same "one more fact about what
+        // this Log shows" job. `fillMaxWidth`, never sized to its own content, so it can never be
+        // itself scrolled out of a viewport the way a chip-row member can.
+        state.appliedFilterLabel?.let { label ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.xs)
+                    .testTag("log-applied-filter-statement"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Filtered to $label",
+                    style = OrtType.cardBody,
+                    color = OrtColors.textDim,
+                    modifier = Modifier.weight(1f),
                 )
+                TextAction(text = "Clear", onClick = onClearAppliedFilter)
             }
         }
 

@@ -10,9 +10,12 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.filterToOne
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onChildren
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -722,12 +725,14 @@ class LogScreenTest {
     }
 
     // -------------------------------------------------------------------------------------------
-    // R-1047 (register): a visible, specific statement of the real applied filter.
+    // R-1047 (register, sent back once): a visible, specific statement of the real applied filter
+    // — on its own line between the chip row and the column heads (never inside the scrollable
+    // chip row itself, which is what the register's own device capture found clipped off-screen).
     // -------------------------------------------------------------------------------------------
 
     @Test
     @Requirement("R-1047")
-    fun `R_1047 the applied-filter chip renders its own real label and All reads unselected`() {
+    fun `R_1047 the applied-filter statement renders its own real label and All reads unselected`() {
         composeTestRule.setContent {
             OrtTheme {
                 LogScreen(
@@ -743,15 +748,14 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("log-applied-filter-chip").assertExists()
+        composeTestRule.onNodeWithTag("log-applied-filter-statement").assertExists()
         composeTestRule.onNodeWithText("1 over", substring = true).assertExists()
-        composeTestRule.onNodeWithTag("log-applied-filter-chip").assertIsSelected()
         composeTestRule.onNodeWithContentDescription("All").assertIsNotSelected()
     }
 
     @Test
     @Requirement("R-1047")
-    fun `R_1047 no applied-filter chip renders when the label is null`() {
+    fun `R_1047 no applied-filter statement renders when the label is null`() {
         composeTestRule.setContent {
             OrtTheme {
                 LogScreen(
@@ -763,12 +767,12 @@ class LogScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("log-applied-filter-chip").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("log-applied-filter-statement").assertDoesNotExist()
     }
 
     @Test
     @Requirement("R-1047")
-    fun `R_1047 dismissing the applied-filter chip invokes onClearAppliedFilter`() {
+    fun `R_1047 the Clear control on the applied-filter statement invokes onClearAppliedFilter`() {
         var cleared = false
         composeTestRule.setContent {
             OrtTheme {
@@ -786,51 +790,63 @@ class LogScreenTest {
             }
         }
 
-        // R-380/R-381/R-543: the dismiss icon is only reachable on the unmerged tree in Robolectric
-        // (`SearchScreenTest`'s own identical note on `FilterChip`'s shared implementation).
-        composeTestRule
-            .onNodeWithContentDescription("Remove WA7HJR filter", useUnmergedTree = true)
-            .performClick()
+        composeTestRule.onNodeWithTag("log-applied-filter-statement").onChildren()
+            .filterToOne(hasText("Clear")).performClick()
 
-        assert(cleared) { "expected dismissing the applied-filter chip to invoke onClearAppliedFilter" }
+        assert(cleared) { "expected the Clear control to invoke onClearAppliedFilter" }
     }
 
     /**
-     * R-1047 (register verification): the applied-filter chip is rendered *inside* the same
-     * scrollable [org.ort.app.ui.components.FilterChipRow] the quick chips already use — never a
-     * new row below it — so it structurally cannot push the chip row's own height into the column
-     * header/first log row underneath it. Proved directly, at the tour AVD's own width and 480dp,
-     * both font scales, rather than assumed from the layout shape alone.
+     * Register R-1047 (halt, sent back once already): an earlier version of this test only ever
+     * proved the applied-filter node does not *overlap* the first log row while rendering it as the
+     * last member of the scrollable `FilterChipRow` — it said nothing about whether that node was
+     * actually *visible* without scrolling, and passed against a fixture with too few quick chips
+     * to reproduce the real overflow. The real device capture the lead viewed
+     * (`overnight/L01-log-filtered-overs.png`) showed exactly that gap: the chip rendered as the
+     * sixth item after five real quick chips, clipped off the right edge at both `390dp` and
+     * `480dp` — a node that "exists" and "does not collide" while sitting entirely outside the
+     * visible viewport, undiscoverable without a scroll gesture nobody has a reason to make. Fixed
+     * by moving the statement onto its own full-width line between the chip row and the column
+     * heads (`LogScreen.kt`'s own doc comment on that line has the full design rationale); this
+     * test proves the fix directly — the node's own right edge must lie at or inside the screen's
+     * own width, and its bottom must clear the first log row — never merely `exists()` or
+     * `assertIsSelected()`, which the register's own words named as "how this slipped through".
      */
     @Test
     @Requirement("R-1047")
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `R_1047 at 390dp font scale 1_0 the applied-filter chip never collides with the first log row`() {
-        assertAppliedFilterChipNeverCollides(widthDp = 390, fontScale = 1f)
+    fun `R_1047 at 390dp font scale 1_0 the applied-filter statement is visible without scrolling`() {
+        assertAppliedFilterStatementVisibleWithoutScrolling(widthDp = 390, fontScale = 1f)
     }
 
     @Test
     @Requirement("R-1047")
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `R_1047 at 390dp font scale 2_0 the applied-filter chip never collides with the first log row`() {
-        assertAppliedFilterChipNeverCollides(widthDp = 390, fontScale = 2f)
+    fun `R_1047 at 390dp font scale 2_0 the applied-filter statement is visible without scrolling`() {
+        assertAppliedFilterStatementVisibleWithoutScrolling(widthDp = 390, fontScale = 2f)
     }
 
     @Test
     @Requirement("R-1047")
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `R_1047 at 480dp font scale 1_0 the applied-filter chip never collides with the first log row`() {
-        assertAppliedFilterChipNeverCollides(widthDp = 480, fontScale = 1f)
+    fun `R_1047 at 480dp font scale 1_0 the applied-filter statement is visible without scrolling`() {
+        assertAppliedFilterStatementVisibleWithoutScrolling(widthDp = 480, fontScale = 1f)
     }
 
     @Test
     @Requirement("R-1047")
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `R_1047 at 480dp font scale 2_0 the applied-filter chip never collides with the first log row`() {
-        assertAppliedFilterChipNeverCollides(widthDp = 480, fontScale = 2f)
+    fun `R_1047 at 480dp font scale 2_0 the applied-filter statement is visible without scrolling`() {
+        assertAppliedFilterStatementVisibleWithoutScrolling(widthDp = 480, fontScale = 2f)
     }
 
-    private fun assertAppliedFilterChipNeverCollides(widthDp: Int, fontScale: Float) {
+    /**
+     * The full R-1047 visibility contract in one place: the applied-filter statement node's own
+     * bounds must lie *entirely within* the visible viewport width (never merely exist somewhere in
+     * the composition) **and** sit above the first log row — both real bounds checks, at both audit
+     * widths and both font scales, matching exactly what the register's own sent-back row asked for.
+     */
+    private fun assertAppliedFilterStatementVisibleWithoutScrolling(widthDp: Int, fontScale: Float) {
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
                 Box(modifier = Modifier.width(widthDp.dp)) {
@@ -838,12 +854,32 @@ class LogScreenTest {
                         LogScreen(
                             state = screenState(
                                 listOf(LogListItem.Row(rowState("TX1", "roger that, good copy"))),
+                                // Register R-1047 (sent back): the real device capture that found
+                                // this gap had five real quick chips (All/145.230/146.960/Named/
+                                // Rejected · 1) ahead of the applied-filter node — an earlier,
+                                // two-chip version of this fixture never actually overflowed the
+                                // row at either audit width, which is exactly why the old chip-row
+                                // placement's own test passed on the broken `dc5358cc` placement
+                                // (the register's own "how this slipped through"). Five chips here,
+                                // matching the real capture, so this test would have reproduced the
+                                // real defect had the statement still lived inside the chip row.
                                 quickFilters = listOf(
                                     LogQuickFilterChipViewState(LogQuickFilterId.All, "All", false),
-                                    LogQuickFilterChipViewState(LogQuickFilterId.Rejected, "Rejected", false),
+                                    LogQuickFilterChipViewState(
+                                        LogQuickFilterId.Frequency(145_230_000L),
+                                        "145.230",
+                                        false,
+                                    ),
+                                    LogQuickFilterChipViewState(
+                                        LogQuickFilterId.Frequency(146_960_000L),
+                                        "146.960",
+                                        false,
+                                    ),
+                                    LogQuickFilterChipViewState(LogQuickFilterId.Named, "Named", false),
+                                    LogQuickFilterChipViewState(LogQuickFilterId.Rejected, "Rejected · 1", false),
                                 ),
                                 // The longest real statement this mapper produces — an hour window
-                                // — to stress the chip's own width/wrap at font scale 2_0 too.
+                                // — to stress wrapping at font scale 2_0 too.
                                 appliedFilterLabel = "23:00 – 00:00",
                             ),
                             onOpen = {},
@@ -855,15 +891,26 @@ class LogScreenTest {
             }
         }
 
-        val chipBottom = composeTestRule.onNodeWithTag("log-applied-filter-chip").getUnclippedBoundsInRoot().bottom
+        val bounds = composeTestRule.onNodeWithTag("log-applied-filter-statement").getUnclippedBoundsInRoot()
         val firstRowTop = composeTestRule
             .onNodeWithText("roger that, good copy", substring = true)
             .getUnclippedBoundsInRoot()
             .top
         assertTrue(
-            "expected the applied-filter chip's own bottom ($chipBottom) to clear the first log row's " +
-                "own top ($firstRowTop) at ${widthDp}dp, font scale $fontScale — got an overlap",
-            chipBottom <= firstRowTop,
+            "expected the applied-filter statement's own left edge (${bounds.left}) to be within the " +
+                "${widthDp}dp viewport at font scale $fontScale, never scrolled left of it",
+            bounds.left >= 0.dp,
+        )
+        assertTrue(
+            "expected the applied-filter statement's own right edge (${bounds.right}) to lie at or inside " +
+                "the ${widthDp}dp viewport's own width at font scale $fontScale — a node clipped off the " +
+                "visible edge is not a visible statement (register R-1047, sent back)",
+            bounds.right <= widthDp.dp,
+        )
+        assertTrue(
+            "expected the applied-filter statement's own bottom (${bounds.bottom}) to clear the first log " +
+                "row's own top ($firstRowTop) at ${widthDp}dp, font scale $fontScale",
+            bounds.bottom <= firstRowTop,
         )
     }
 }

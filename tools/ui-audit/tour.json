@@ -264,6 +264,8 @@
 
     { "id": "overnight/L01-log-filtered-overs", "scenario": "overnight", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02" } },
 
-    { "id": "corrected/D02-inferred-corrected", "scenario": "corrected", "destination": "LOG", "drillIn": { "transmission": "inferred" } }
+    { "id": "corrected/D02-inferred-corrected", "scenario": "corrected", "destination": "LOG", "drillIn": { "transmission": "inferred" } },
+
+    { "id": "overnight/L01-log-filtered-overs@2x", "scenario": "overnight", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02" }, "fontScale": 2.0 }
   ]
 }
