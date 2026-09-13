@@ -90,7 +90,7 @@ yet"/"Not capturing". Emulator shut down after (`adb emu kill`).
 **Left open / not done:** `SessionsContent`/`DigestContent` carry the identical shape and are left
 for WPREC's own Recordings rewrite to close, per this prompt's explicit scope boundary.
 
-### pending — WPINIT: R-1022 — the tour's own readiness check gates on a structural marker, never rendered text
+### 07228ab2 — WPINIT: R-1022 — the tour's own readiness check gates on a structural marker, never rendered text
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourAccessibilityScroll.kt`;
 `app/src/test/kotlin/org/ort/app/debug/tour/TourAccessibilityScrollSnapshotTest.kt`.
