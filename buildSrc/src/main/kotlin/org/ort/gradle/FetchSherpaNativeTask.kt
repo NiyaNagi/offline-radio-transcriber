@@ -10,8 +10,6 @@ import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URI
 import java.security.MessageDigest
 
 /**
@@ -125,9 +123,10 @@ object SherpaNativeFetcher {
         cacheDir: File,
         outDir: File,
         onInfo: (String) -> Unit = {},
+        sleeper: (Long) -> Unit = Thread::sleep,
     ): List<ResolvedLibrary> {
         outDir.mkdirs()
-        val archiveFile = cachedArchive(archiveUrl, cacheDir, onInfo)
+        val archiveFile = cachedArchive(archiveUrl, cacheDir, onInfo, sleeper)
         val remaining = libraries.associateBy { it.archivePath }.toMutableMap()
         val resolved = mutableListOf<ResolvedLibrary>()
 
@@ -169,11 +168,16 @@ object SherpaNativeFetcher {
         return resolved
     }
 
-    private fun cachedArchive(archiveUrl: String, cacheDir: File, onInfo: (String) -> Unit): File {
+    private fun cachedArchive(
+        archiveUrl: String,
+        cacheDir: File,
+        onInfo: (String) -> Unit,
+        sleeper: (Long) -> Unit,
+    ): File {
         cacheDir.mkdirs()
         val cachedFile = File(cacheDir, fileNameFromUrl(archiveUrl))
         if (!cachedFile.isFile) {
-            downloadTo(archiveUrl, cachedFile)
+            downloadTo(archiveUrl, cachedFile, onInfo, sleeper)
             onInfo("fetchSherpaNativeLibraries: downloaded $archiveUrl to ${cachedFile.path}")
         }
         return cachedFile
@@ -184,29 +188,22 @@ object SherpaNativeFetcher {
     private fun sha256Of(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    private fun downloadTo(url: String, dest: File) {
-        dest.parentFile?.mkdirs()
-        try {
-            val connection = URI(url).toURL().openConnection()
-            if (connection is HttpURLConnection) {
-                connection.instanceFollowRedirects = true
-                connection.connectTimeout = CONNECT_TIMEOUT_MS
-                connection.readTimeout = READ_TIMEOUT_MS
-                val code = connection.responseCode
-                if (code !in HTTP_OK_RANGE) {
-                    throw GradleException("fetchSherpaNativeLibraries: download failed for $url — HTTP $code")
-                }
-            }
-            connection.getInputStream().use { input -> dest.outputStream().use { output -> input.copyTo(output) } }
-        } catch (e: java.io.IOException) {
-            dest.delete()
-            throw GradleException("fetchSherpaNativeLibraries: download failed for $url — ${e.message}", e)
-        }
+    /** R-1075: bounded retry with backoff on a transient failure — see [RetryingDownload]'s own
+     * KDoc for the policy and why. */
+    private fun downloadTo(url: String, dest: File, onInfo: (String) -> Unit, sleeper: (Long) -> Unit) {
+        RetryingDownload.download(
+            url = url,
+            dest = dest,
+            taskLabel = "fetchSherpaNativeLibraries",
+            sleeper = sleeper,
+            onRetry = { attempt, reason, waitMs ->
+                onInfo(
+                    "fetchSherpaNativeLibraries: attempt $attempt of ${RetryingDownload.MAX_ATTEMPTS} for $url " +
+                        "failed ($reason) — retrying in ${waitMs}ms.",
+                )
+            },
+        )
     }
-
-    private const val CONNECT_TIMEOUT_MS = 30_000
-    private const val READ_TIMEOUT_MS = 180_000
-    private val HTTP_OK_RANGE = 200..299
 }
 
 /**

@@ -32,6 +32,102 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPFETCHRETRY: R-1075 - bounded retry with backoff for both asset-download tasks)
+
+### 2f2fe262 — WPFETCHRETRY: R-1075 - FetchSherpaNativeTask and FetchBundledAssetsTask retry transient download failures through one shared RetryingDownload helper instead of failing on the first HTTP 500/429 or I/O error
+
+**Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/RetryingDownload.kt` (new);
+`buildSrc/src/main/kotlin/org/ort/gradle/FetchSherpaNativeTask.kt`;
+`buildSrc/src/main/kotlin/org/ort/gradle/FetchBundledAssetsTask.kt`;
+`buildSrc/src/test/kotlin/org/ort/gradle/RetryingDownloadTest.kt` (new);
+`buildSrc/src/test/kotlin/org/ort/gradle/FetchSherpaNativeTaskTest.kt`;
+`buildSrc/src/test/kotlin/org/ort/gradle/FetchBundledAssetsTaskTest.kt`.
+
+**Requirements/ACs:** register R-1075 (process — CI run `34769228303` on `745e01b7` failed 17s in
+on `fetchSherpaNativeLibraries: download failed for
+https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-v1.13.7-android.tar.bz2
+— HTTP 500`, with no retry and no backoff, while the Release workflow on the identical commit
+fetched the same asset fine — a single transient server error turned a green commit red);
+Constitution I (a wrong asset is never quietly retried into acceptance — extended here to "a
+checksum/size mismatch, or a request that will never succeed, is never retried either").
+
+**What changed.**
+- **`RetryingDownload`** (new, `buildSrc`'s own `org.ort.gradle` package): the one retry/backoff
+  policy both fetch tasks now share, previously two independent single-attempt `downloadTo`
+  functions.
+  - **4 attempts total** (1 initial + 3 retries), **backoff 2s / 5s / 15s** between them: short
+    first retry (most 500s are one bad edge node recovering immediately), growing to ride out a
+    longer blip, capped so all 4 attempts finish in well under a minute even in the worst case. A
+    `Retry-After` response header overrides the scheduled backoff when present and reasonable (a
+    non-negative integer number of seconds, capped at 120s, so a misconfigured or hostile server
+    cannot stall the build for an hour).
+  - **Retried:** HTTP 5xx, HTTP 429, and any `IOException` from connecting or reading (timeouts,
+    resets, premature EOF). **Never retried:** any other 4xx (401/403/404/…) — fails loudly on the
+    first occurrence, same message as before. The helper never sees a checksum/sha256 or size
+    mismatch at all — that check still runs one layer up, on the completed download, in each
+    fetcher, so it structurally cannot be retried by this loop.
+  - **Atomic by construction.** Every attempt writes to a sibling `<name>.part` file, deleted
+    before each attempt and again on any failure; the final destination is only ever written once,
+    by copying the completed `.part` file over it after full success. A partial file from a failed
+    attempt is never left at, or reused from, the final path (new `RetryingDownloadTest` cases
+    assert no `.part` file survives either a success or an exhausted-retries failure).
+  - **Every retry is logged at lifecycle level** (via each task's existing `onInfo` callback) with
+    the URL/entry id, the 1-based attempt number, the failure reason (HTTP status or exception
+    class name — never a response body or header value), and the wait; the final,
+    attempts-exhausted message lists every attempt's reason. The token (`HF_TOKEN`, sent as an
+    `Authorization: Bearer …` header on `FetchBundledAssetsTask`'s gated entries) is passed via a
+    `requestProperties` map that is only ever *written* to the connection, never read back for
+    logging — a dedicated test captures every `onInfo`/`onWarn` line across a retried, gated
+    download and asserts none contain the token or the word `Authorization`.
+- **`FetchSherpaNativeTask`/`SherpaNativeFetcher`** and **`FetchBundledAssetsTask`/
+  `BundledAssetFetcher`**: both `downloadTo` functions now delegate to `RetryingDownload.download`
+  instead of a raw `HttpURLConnection` call; `fetchAll` on both gained an optional `sleeper: (Long)
+  -> Unit = Thread::sleep` parameter (production code never overrides it — only tests inject a
+  no-op/capturing sleeper so retry tests run instantly rather than waiting the real 2s/5s/15s).
+  Task `@InputFile`/`@OutputDirectory`/`@Internal` annotations, the manifest parsing, the
+  trust-on-first-fetch pinning, the `HF_TOKEN`/gated-entry handling, and the archive-cache-once
+  behaviour are all unchanged — only the download call itself gained retries.
+- **Tests** (all against a local `com.sun.net.httpserver.HttpServer` or a `file://` source, never
+  the real network, per this package's existing discipline): `RetryingDownloadTest` covers the
+  policy directly (first-attempt success leaves no `.part` file; 500-then-200 succeeds after
+  exactly one retry using the 2s backoff step; four consecutive 503s exhaust retries and the
+  message names all four `HTTP 503` reasons; a 404/401/403 fails on attempt 1 with no retry and no
+  `after N attempts` wording; a connection reset then 200 succeeds; a `Retry-After: 1` header
+  overrides the default 2s backoff; an unreasonable `Retry-After: 999999` is ignored; a `file://`
+  source still works). `FetchSherpaNativeTaskTest` and `FetchBundledAssetsTaskTest` each gained the
+  same 500-then-200/four-503s/404-no-retry/checksum-mismatch-no-retry cases at the fetcher level
+  (the level that actually owns checksum verification and, for the bundled-assets task, the
+  gated-download token), plus the token-never-logged case.
+
+**Verified:**
+- `./gradlew -p buildSrc test` — `RetryingDownloadTest` (9 tests), `FetchSherpaNativeTaskTest` (13,
+  up from 8), `FetchBundledAssetsTaskTest` (16, up from 12), plus `CoverageMatrixTest`,
+  `ModuleGraphTest`, `PlatformGuardsTest` unchanged — all green, full run (`--rerun-tasks`) in 24s.
+- **Discrimination**, per constitution II: before `SherpaNativeFetcher`/`BundledAssetFetcher` were
+  wired to `RetryingDownload`, the two new "500 then 200 succeeds" and the
+  "connection-reset-then-200 succeeds" tests failed for the right reason — a compile error on the
+  not-yet-added `sleeper` parameter, then (once that parameter alone was added with the old
+  single-attempt `downloadTo` body still in place) a `GradleException` on the first 500/reset,
+  never reaching the second, successful response. Restoring the `RetryingDownload`-backed
+  `downloadTo` made every case pass.
+- Existing caching/up-to-date behaviour confirmed unchanged: `FetchSherpaNativeTaskTest`'s
+  pre-existing "the archive is downloaded exactly once even though it is fetched twice" case still
+  passes untouched (still asserts exactly 1 request across two `fetchAll` calls sharing a cache
+  dir); neither task's `@InputFile`/`@OutputDirectory`/`@Internal` property declarations were
+  touched, so Gradle's own up-to-date/caching decision for the *tasks* (as opposed to the fetch
+  logic they wrap) is unaffected by construction — confirmed by `./gradlew dependencyRules
+  platformGuards build` (real run; see that command's own gate result for whether
+  `fetchSherpaNativeLibraries`/`fetchBundledAssets` were UP-TO-DATE or executed this run).
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch): see gate
+  result below.
+- `python tools/spec-check/spec_check.py`: see gate result below.
+- `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (separate invocations): see gate
+  result below.
+
+**Left open / not done:** the CI run this fixes (`34769228303`) is not re-run here — that only
+happens once this change reaches `main` and pushes trigger CI and the Release workflow again;
+closing R-1075 on evidence means watching those hosted runs on the actual push, not this local
+gate.
 ## 2026-09-13 (WPSESSCOV round 3: TourStepsTest's own accidental-drawer-match, reproduced by R-1070)
 
 ### WPSESSCOV round 3 — TourStepsTest's `reviewSession` marker collided with the drawer's own relabelled row, exactly as its own history warns
