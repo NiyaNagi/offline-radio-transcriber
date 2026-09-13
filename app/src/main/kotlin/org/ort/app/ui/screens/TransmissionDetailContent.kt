@@ -98,6 +98,11 @@ public fun TransmissionDetailContent(
     onOpenStation: (String) -> Unit = {},
     backLabel: String = "Log",
     initialRevisionsOpen: Boolean = false,
+    // R-1041 (D11, `LogFilterOrigin.Transmission`): `Detail-Propagated.dc.html`'s own "View the N
+    // affected overs" — needs the Log, which this package cannot reach on its own (the nav host
+    // owns `LogFilterOrigin`/`openLogFiltered`). Defaulted to a no-op so every existing caller
+    // keeps compiling unchanged until the nav host wires the real navigation.
+    onViewAffectedOvers: (Set<String>) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var detail by remember(transmissionId) { mutableStateOf<TransmissionDetail?>(null) }
@@ -110,6 +115,7 @@ public fun TransmissionDetailContent(
     }
     var unknownContext by remember(transmissionId) { mutableStateOf<UnknownTriedContextViewState?>(null) }
     var btAudioMark by remember(transmissionId) { mutableStateOf(false) }
+    var correctionTyped by remember(transmissionId) { mutableStateOf<Boolean?>(null) }
     var destination by remember(transmissionId) {
         mutableStateOf<DetailDestination>(
             if (initialRevisionsOpen) DetailDestination.Revisions else DetailDestination.Main,
@@ -129,6 +135,7 @@ public fun TransmissionDetailContent(
         ambiguousEvidence = polled.ambiguousEvidence
         unknownContext = polled.unknownContext
         btAudioMark = polled.btAudioMark
+        correctionTyped = polled.correctionTyped
     }
     LaunchedEffect(transmissionId) { refresh() }
 
@@ -150,6 +157,7 @@ public fun TransmissionDetailContent(
         ambiguousEvidence = ambiguousEvidence,
         unknownContext = unknownContext,
         btAudioMark = btAudioMark,
+        correctionTyped = correctionTyped,
     )
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
@@ -169,6 +177,7 @@ public fun TransmissionDetailContent(
         dest = dest,
         onDestinationChange = { destination = it },
         refresh = ::refresh,
+        onViewAffectedOvers = onViewAffectedOvers,
         modifier = modifier,
     )
 }
@@ -197,6 +206,7 @@ private fun DetailDestinationContent(
     dest: DetailDestination,
     onDestinationChange: (DetailDestination) -> Unit,
     refresh: suspend () -> Unit,
+    onViewAffectedOvers: (Set<String>) -> Unit,
     modifier: Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -243,6 +253,7 @@ private fun DetailDestinationContent(
                 onDestinationChange = onDestinationChange,
                 refresh = refresh,
                 backLabel = backLabel,
+                onViewAffectedOvers = onViewAffectedOvers,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -440,6 +451,7 @@ private fun PropagatedDestination(
     onDestinationChange: (DetailDestination) -> Unit,
     refresh: suspend () -> Unit,
     backLabel: String,
+    onViewAffectedOvers: (Set<String>) -> Unit,
     modifier: Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -461,6 +473,7 @@ private fun PropagatedDestination(
                 }
             },
             onDone = onBack,
+            onViewAffectedOvers = onViewAffectedOvers,
             modifier = Modifier.weight(1f),
         )
     }
@@ -480,6 +493,10 @@ private data class DetailPollResult(
      * seam, the same one the Log's own row mark uses. `false` when [detail] is `null` or the
      * session predates FR-CAP-13's v7 columns. */
     val btAudioMark: Boolean = false,
+    /** Register R-1046: [CorrectionPolling.correctionTyped]'s own real fact, looked up only when
+     * [detail]'s polled attribution is genuinely INFERRED-and-corrected — the same state-specific
+     * gating [ambiguousEvidence]/[unknownContext] already use, never a read this poll does not need. */
+    val correctionTyped: Boolean? = null,
 )
 
 /**
@@ -501,7 +518,10 @@ private data class DetailPollResult(
  * polled attribution is genuinely AMBIGUOUS, never on every poll. R-721: real "what was tried"
  * voice-match/thread-context facts for the UNKNOWN state alone — [CorrectionPolling.unknownTriedContext]
  * only runs when the polled attribution is genuinely UNKNOWN, the same gating [passFailure]/
- * [ambiguousEvidence] already use for their own state-specific reads.
+ * [ambiguousEvidence] already use for their own state-specific reads. Register R-1046 (halt):
+ * [CorrectionPolling.correctionTyped] tells a typed, unverified correction apart from a genuine
+ * voice match for the INFERRED explanation's own fallback sentence — only looked up when the
+ * polled attribution is genuinely INFERRED-and-corrected, the same per-state gating as above.
  */
 private suspend fun pollDetail(context: Context, transmissionId: String): DetailPollResult {
     var fetched = ReaderPolling.transmissionDetail(context, transmissionId)
@@ -533,6 +553,15 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
     } else {
         null
     }
+    // Register R-1046: only a genuinely INFERRED-and-corrected row needs this second read — the
+    // same per-state gating [ambiguousEvidence]/[unknownContext] above already use.
+    val correctionTyped = if (
+        fetched?.attribution?.state == AttributionState.INFERRED && fetched.attribution.corrected
+    ) {
+        CorrectionPolling.correctionTyped(context, transmissionId)
+    } else {
+        null
+    }
     // E2-G04 (D01-D04, FR-CAP-13): the same WPF seam N04/DG04/the Log's row mark read.
     val btAudioMark = fetched?.sessionId
         ?.let { RoomSessionRouteFactsReader(context).forSession(it) }
@@ -547,6 +576,7 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
         ambiguousEvidence,
         unknownContext,
         btAudioMark,
+        correctionTyped,
     )
 }
 

@@ -30,6 +30,7 @@ private const val POLL_INTERVAL_MILLIS = 2_000L
  * the reader is already open (R-171) — is picked up on the very next tick, never stuck on
  * whichever session was live (or not) when this composable first ran.
  */
+@Suppress("LongParameterList") // every parameter is an independent, optional navigation callback.
 @Composable
 public fun NowContent(
     context: Context,
@@ -51,6 +52,10 @@ public fun NowContent(
     // Defaulted so every existing caller (`OrtNavHost.kt`, out of this package's row) keeps
     // compiling unchanged until it wires the real navigation.
     onOpenCaptureMode: () -> Unit = {},
+    // R-1041 (N01, `LogFilterOrigin.Now`): `Main.dc.html`'s chart bar's own tap target. Defaulted
+    // so every existing caller (`OrtNavHost.kt`, out of this package's row) keeps compiling
+    // unchanged until it wires the real navigation.
+    onOpenHour: (fromMillis: Long, toMillis: Long) -> Unit = { _, _ -> },
 ) {
     var state by remember { mutableStateOf<NowViewState>(NowViewState.Idle(null, null, null, null, emptyList(), null)) }
     var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
@@ -101,5 +106,6 @@ public fun NowContent(
         onOpenStations = onOpenStations,
         onOpenModels = onOpenModels,
         onOpenCaptureMode = onOpenCaptureMode,
+        onOpenHour = onOpenHour,
     )
 }

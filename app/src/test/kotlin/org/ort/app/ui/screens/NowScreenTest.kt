@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -439,6 +440,53 @@ class NowScreenTest {
                 "own report of the last body line sitting flush against the live bar",
             liveBarTop - stationBottom >= minimumExpectedGap,
         )
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // R-1041 (N01): the chart bar's own tap, once the session's own real start is known.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 tapping a real bar with heardCount invokes onOpenHour with the real hour window`() {
+        var openedFrom: Long? = null
+        var openedTo: Long? = null
+        val state = activeState(overCount = 1).copy(
+            activityPattern = listOf(
+                org.ort.app.ui.data.HourActivityBucket(0, org.ort.app.ui.data.HourActivityState.HEARD, 1),
+            ),
+            sessionStartedAtUtc = 1_000L,
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                NowScreen(
+                    state = state,
+                    onOpenHour = { from, to ->
+                        openedFrom = from
+                        openedTo = to
+                    },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("activity-bar-0").performClick()
+
+        assert(openedFrom == 1_000L) { "expected the real session start, got $openedFrom" }
+        assert(openedTo == 1_000L + 3_600_000L - 1) { "expected the real hour's own inclusive end, got $openedTo" }
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 no sessionStartedAtUtc means the chart's own bar carries no click action at all`() {
+        val state = activeState(overCount = 1).copy(
+            activityPattern = listOf(
+                org.ort.app.ui.data.HourActivityBucket(0, org.ort.app.ui.data.HourActivityState.HEARD, 1),
+            ),
+            sessionStartedAtUtc = null,
+        )
+        composeTestRule.setContent { OrtTheme { NowScreen(state = state, onOpenHour = { _, _ -> }) } }
+
+        composeTestRule.onNodeWithTag("activity-bar-0", useUnmergedTree = true).assertHasNoClickAction()
     }
 
     @Test

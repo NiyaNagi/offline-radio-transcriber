@@ -199,4 +199,71 @@ class ImproveScreensTest {
         composeTestRule.onNodeWithText("Install").assertDoesNotExist()
         assert(!installTapped)
     }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1041 (R04, `LogFilterOrigin.Improve`): "Review the N changes" opens the Log filtered to
+    // exactly the real, revised overs — never the whole attempted batch.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 review changes opens the Log filtered to the real changed transmission ids`() {
+        var opened: Set<String>? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveDoneScreen(
+                    state = ImproveDoneViewState(
+                        headline = "Field, Thu 3 Sep",
+                        clearedCount = 3,
+                        summary = ReprocessStatus.Summary(
+                            total = 3,
+                            transcriptsChanged = 2,
+                            attributionsChanged = 1,
+                            changedTransmissionIds = setOf("TX1", "TX2"),
+                        ),
+                    ),
+                    onDone = {},
+                    onReviewChanges = { opened = it },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Review the 2 changes").assertExists()
+        composeTestRule.onNodeWithText("Review the 2 changes").performClick()
+        assert(opened == setOf("TX1", "TX2")) { "expected the real changed ids, got $opened" }
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 nothing changed means no review link at all - never a dead tap`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveDoneScreen(
+                    state = ImproveDoneViewState(
+                        headline = "Field, Thu 3 Sep",
+                        clearedCount = 3,
+                        summary = ReprocessStatus.Summary(total = 3, rejected = 3),
+                    ),
+                    onDone = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Review", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 no summary at all means no review link either`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveDoneScreen(
+                    state = ImproveDoneViewState(headline = "Field, Thu 3 Sep", clearedCount = 1, summary = null),
+                    onDone = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Review", substring = true).assertDoesNotExist()
+    }
 }

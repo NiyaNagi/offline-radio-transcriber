@@ -89,6 +89,31 @@ class SearchContentTest {
         composeTestRule.onNodeWithTag("search-recent-row-0").assertExists()
     }
 
+    /**
+     * R-1042 (IA-5, register): the drawer icon this package's own `SearchScreen` now draws reaches
+     * all the way out through `SearchContent`'s own `onDrawer` — proved through this composable,
+     * not just `SearchScreen` in isolation, so the whole wiring is what is discriminated here.
+     */
+    @Test
+    fun `R_1042 the drawer icon reaches SearchContent's own onDrawer`() {
+        var opened = false
+        composeTestRule.setContent {
+            OrtTheme {
+                SearchContent(
+                    input = SearchFilterInput(),
+                    result = null,
+                    onInputChange = {},
+                    onSearch = {},
+                    onOpen = {},
+                    onDrawer = { opened = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("search-drawer-icon").performClick()
+        assert(opened) { "expected the drawer icon to reach SearchContent's own onDrawer" }
+    }
+
     @Test
     fun `the Filters chip opens the sheet and the scrim closes it, entirely inside SearchContent`() {
         composeTestRule.setContent {

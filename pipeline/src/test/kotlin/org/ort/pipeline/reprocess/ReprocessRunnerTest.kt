@@ -200,6 +200,10 @@ class ReprocessRunnerTest {
 
         val summary = (ReprocessStatus.state as ReprocessStatus.State.Done).summary
         assertEquals(1, summary.transcriptsChanged)
+        // R-1041 (R04, `LogFilterOrigin.Improve`): the real, per-transmission set behind
+        // `changedCount` — not just its aggregate size — so a "Review the changes" link can filter
+        // the Log to exactly the overs this run actually revised, never the whole attempted batch.
+        assertEquals(setOf(txId), summary.changedTransmissionIds)
     }
 
     @Test
@@ -249,6 +253,11 @@ class ReprocessRunnerTest {
             db.transcriptDao().getCurrent(missingAudioId)?.text,
         )
         assertEquals("new transcript text", db.transcriptDao().getCurrent(okId)?.text)
+        assertEquals(
+            "a failed item never joins the changed set, even though it was attempted",
+            setOf(okId),
+            summary.changedTransmissionIds,
+        )
     }
 
     /**
@@ -441,6 +450,9 @@ class ReprocessRunnerTest {
         assertEquals("only TX-CHANGE's attribution was actually free to change", 1, summary.attributionsChanged)
         assertEquals(1, summary.rejected)
         assertEquals(1, summary.correctedCount)
+        // R-1041: a Set, not a count — TX-CHANGE changed both its transcript and its attribution
+        // but appears exactly once, never doubled; TX-SAME and TX-REJECT never appear at all.
+        assertEquals(setOf("TX-CHANGE", "TX-CORRECTED"), summary.changedTransmissionIds)
 
         // The structural guard this class relies on, not re-implements: a corrected transmission's
         // attribution never moves, even though its transcript legitimately can.

@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextDecoration
@@ -46,6 +47,12 @@ public fun PropagatedScreen(
     onBackToOver: () -> Unit,
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
+    // R-1041 (D11, `LogFilterOrigin.Transmission`): `Detail-Propagated.dc.html`'s own "View the N
+    // affected overs" — opens the Log filtered to exactly [outcome.affected]'s own transmission
+    // ids, real throughout (never a fabricated set — `outcome.overCount == outcome.affected.size`
+    // always, `CorrectionPolling.applyCorrection`'s own construction). Defaulted to a no-op so
+    // every existing caller keeps compiling unchanged until the nav host wires the real navigation.
+    onViewAffectedOvers: (Set<String>) -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
@@ -94,6 +101,20 @@ public fun PropagatedScreen(
                     onClick = onUndoAll,
                     modifier = Modifier.padding(top = OrtSpacing.sm).semantics { contentDescription = "Undo all" },
                 )
+                // R-1041 (D11): never a dead tap — an outcome with nothing affected (never real on
+                // this screen, `applyCorrection` always affects the over it was applied to, but
+                // never assumed) shows no link at all rather than one that opens an empty Log.
+                if (outcome.affected.isNotEmpty()) {
+                    TextAction(
+                        text = "View the ${outcome.overCount} affected over" +
+                            if (outcome.overCount == 1) "" else "s",
+                        onClick = { onViewAffectedOvers(outcome.affected.map { it.transmissionId }.toSet()) },
+                        // `TextAction`'s own `clearAndSetSemantics { contentDescription = text }`
+                        // (`ui/components/Controls.kt`) already makes the button's own label its
+                        // accessible name — no separate `contentDescription` needed here.
+                        modifier = Modifier.padding(top = OrtSpacing.xs).testTag("propagated-view-affected-overs"),
+                    )
+                }
             }
             Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
                 SectionHeader(label = "The ${pluralize(outcome.overCount, "over")}, as they read now")
