@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPRC02: Recording-Session, R-1059)
 
-### (pending) — WPRC02: coverage matrix regenerated after RC02
+### 7cf63ffb — WPRC02: coverage matrix regenerated after RC02
 
 **Scope:** `results/coverage-matrix.md` (generated file) only.
 **Requirements/ACs:** none new.
