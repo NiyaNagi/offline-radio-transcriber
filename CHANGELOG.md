@@ -32,6 +32,35 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPSESSCOV round 3: TourStepsTest's own accidental-drawer-match, reproduced by R-1070)
+
+### WPSESSCOV round 3 — TourStepsTest's `reviewSession` marker collided with the drawer's own relabelled row, exactly as its own history warns
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt` only (found while running
+the full, non-cached gate the session lead asked for; fixed under the same "assertions encoding
+R-1070's own defect are part of this fix" ruling already extended to the two nav tests above).
+**Requirements/ACs:** R-1070 (register).
+**What changed:** `expectedForDrillIn`'s `reviewSession` case asserted `Expected.Text("Earlier
+nights")`, which R-1070 turned into a fresh instance of a failure mode this exact file's own kdoc
+already documents happening once before with that very string: `ModalNavigationDrawer`'s drawer
+content is *always* composed (visible or not), so a plain substring-text check can match the
+drawer's own row instead of the destination screen it exists to verify. `ReaderDestination
+.EARLIER_NIGHTS.drawerLabel` now reads "Recordings" (RC01 absorbs the old "Earlier nights" row) —
+the same word R-1070 gave `SessionDetailScreen`'s own back label — so simply swapping the expected
+string to `"Recordings"` reproduces the identical accidental match: confirmed directly, that
+version of the check still passed with `SessionDetailScreen` temporarily hardcoded back to
+"Earlier nights". Changed to `Expected.Text("COVERAGE")` instead — `SessionDetailScreen`'s own
+real, unconditional section header (`SectionHeader` upper-cases every label it is given,
+confirmed by reading `Rows.kt`), unique to this screen and never composed by the drawer.
+**Verified:** the fixed check passes on real code; reverting `SectionHeader`'s own label to a
+throwaway string (a stand-in for "navigation lands on the wrong screen") failed it; restored,
+green. `gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourStepsTest"` and
+`gradlew :app:ktlintTestSourceSetCheck` (forced with `--rerun-tasks`) — both green.
+**Left open / not done:** the pre-existing, unrelated `"EARLIER_NIGHTS" -> Expected.Text
+("Recordings")` case (a plain reach, no drillIn, landing on RC01) may have the identical
+accidental-drawer-match property today (RC01's own real header also reads "Recordings") — not
+touched, since it predates this session's own diff and was already passing before R-1070; noted
+here rather than silently left for someone else to rediscover.
 ## 2026-09-13 (WPREPLIFE round 4: device evidence for the durability fix, merge, full gate)
 
 ### WPREPLIFE round 4 — R-1067: device evidence for the checkpoint/DB durability fix and the real-group reattach, merged origin/main (R-1053/R-1043 now fixed), full gate green
@@ -655,6 +684,219 @@ on this same branch in a following commit.
 ## 2026-09-13 (WPRC02 round 3: over-row restack, refusal copy, axis spacing)
 
 ### WPRC02 round 3 — the over row at font scale 2.0, operator-facing refusal copy, honest axis spacing
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionScreen.kt`,
+`RecordingSessionViewStateMapper.kt`, and their tests. No file outside `ui/recordings/**`
+touched.
+**Requirements/ACs:** constitution I, II, VIII; R-1027, R-373 (precedent, not modified).
+**What changed:** three defects the coordinator's own round-2 device evidence found, each with
+its own discriminating test:
+1. **Over rows collapsed at font scale 2.0.** The fixed play-control, time and Label columns
+   together left the weighted content column under a third of the row's own real width
+   (`round2\tour\overnight\RC02-recording-session@2x-end.png`: a transcript wrapping one or two
+   words per line, a facts line breaking at every `·`, an INFERRED confidence chip cut to a
+   sliver). `RecordingSessionOverRow` now checks `LocalDensity.current.fontScale` against the
+   same `1.5f` ceiling `LiveMonitorScreen.kt`'s own `LARGE_FONT_SCALE_THRESHOLD` (R-1027) and
+   `ui/components/Rows.kt`'s own `LogRow` (R-373) already use (both file-local constants, not
+   shared): below it, `RecordingSessionOverRowCompact` keeps the one-line shape unchanged; at or
+   above it, `RecordingSessionOverRowStacked` moves play/time/Label to their own top row (Label
+   stays reachable, never buried) and renders the transcript/attribution/facts content at the
+   row's own full width beneath it.
+2. **Refusal copy.** `exportRefusalMessage`'s `NothingToExport` branch rendered `:pipeline`'s own
+   diagnostic sentence verbatim (a session id, lowercase, built for a log line —
+   `export_empty_1x.png`). Replaced with a fixed operator sentence ("Nothing to export — no audio
+   from this session is on the phone."), keyed on the sealed type alone — `reason.reason` is no
+   longer read at all, so the copy cannot drift with whatever `:pipeline` logs next.
+3. **Axis spacing.** `rc02_overnight_1x.png` read "05 07 08 10 12" — uneven-looking gaps between
+   hour labels for five instants that were always evenly spaced in real time; the defect was
+   `axisLabels` truncating every instant down to its own hour, which reads as unevenly-spaced
+   labels the moment an instant does not land exactly on the hour. Each tick now shows its real
+   minute unless it truly lands on the hour (`axisLabelFor`) — never a silent round-down.
+**Verified:** each defect above had its own test written first and confirmed to fail for the
+right reason before the fix (production code reverted, test run alone, restored) —
+`RecordingSessionScreenLayoutTest`'s new `an over row restacks so its content column holds at
+least 60 percent of the row at 390dp font scale 2_0`/`...480dp font scale 2_0` (content column
+measured 110–114dp of a ~349dp row — 31–33% — before the fix); `RecordingSessionScreenTest`'s
+`the nothing-to-export message is keyed to the refusal type, never the diagnostic sentence inside
+it`; `RecordingSessionViewStateMapperTest`'s `a multi-hour session's axis shows a bare hour only
+when a tick truly lands on it` (updated from round 2's own `..., no minutes needed` — that
+expectation encoded the very defect this round fixes) and `a multi-hour session starting off the
+hour shows five genuinely evenly-spaced minute labels` (05:12–12:04, the coordinator's own cited
+span). `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.recordings.*"` — all green (75
+pre-existing plus new this round). `gradlew :app:ktlintCheck :app:detekt` — green.
+**Left open / not done:** none for this round's own three items — item 4 from round 2
+(`DrillInHeader`'s touch target) remains routed, not fixed, confirmed correct to stop on.
+
+---
+
+## 2026-09-13 (WPSESSCOV round 2: nav tests updated for R-1070's corrected label, busierThanUsual pluralized)
+
+### WPSESSCOV round 2 — the two nav-layer tests that encoded R-1070's own defect now assert the fix, plus one more R-1072 (s) site
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/navigation/{NavSeedTest.kt, ReaderActivityDestinationSmokeTest.kt}`
+(ownership extended to these two assertions only, by the session lead, since they encoded R-1070's
+own defect as expected behaviour and updating them is part of that fix, not a different package's
+own concern) and `app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt` /
+`DigestPollingTest.kt` (already owned).
+**Requirements/ACs:** R-1070, R-1072 (register).
+**What changed:**
+1. `NavSeedTest.kt:261` (`pendingReviewSessionId lands on the reviewed session detail directly`)
+   and `ReaderActivityDestinationSmokeTest.kt:887`
+   (`R_133_settings_storage_review_link_opens_the_session_and_back_returns_to_settings_storage`)
+   both asserted `"Back to Earlier nights"` for the seeded-review path — the exact defect the
+   previous WPSESSCOV commit (`ac652016`) fixed to read `"Back to Recordings"` instead. Both now
+   assert the corrected label. No other assertion in either file touched.
+2. **R-1072, one more site**, found while re-reading `DigestPolling.kt`: `busierThanUsualItems`'s
+   subLine used a literal `"$tonightCount overs against a usual %.0f"` — always "overs", even for a
+   real tonight count of exactly 1 (reachable: `NightlyDeparture.isBusierThanUsual` only requires
+   tonight's count to clear twice a small enough usual average, which a real, sparse history can
+   produce at 1). Replaced with `Plurals.count(tonightCount, "over")`, matching every other site
+   R-1072 already fixed.
+**Verified:** discrimination shown for both: (a) reverted `SessionDetailScreen`'s `parentLabel`
+default to ignore its own parameter (the R-1070 defect, reintroduced) — both `NavSeedTest` and
+`ReaderActivityDestinationSmokeTest`'s own updated assertions failed; restored, both green.
+(b) reverted `busierThanUsualItems`'s pluralization — the new
+`R_1072 a frequency busier than usual with exactly one over tonight reads singular, never 1 overs`
+test failed (`"1 overs against a usual 0"`, the exact old shape); restored, green. (The sibling
+plural-count case does not discriminate on its own — 3 is plural either way — which is why the
+singular case was added.) `gradlew :app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.navigation.NavSeedTest" --tests
+"org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"` and `gradlew :app:testDebugUnitTest
+--tests "org.ort.app.ui.digest.DigestPollingTest"` — both green. `gradlew
+:app:ktlintTestSourceSetCheck :app:ktlintMainSourceSetCheck` — green (two wrapped-signature style
+fixes needed on the new busier-than-usual tests, the same class WPSESSCOV's own prior follow-up
+commit already fixed once).
+**Left open / not done:** none for this round.
+
+---
+
+## 2026-09-13 (WPSESSCOV follow-up: ktlint line-wrap fix)
+
+### WPSESSCOV follow-up — ktlint line-wrap style on the two new R-1069/R-1072 test functions
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/digest/DigestPollingTest.kt` only.
+**Requirements/ACs:** none new — a style fix to the previous commit's own new tests.
+**What changed:** the previous commit's two new wrapped-signature test functions
+(`R_1069 a real gap is placed and sized from its own start and duration, never a whole hour` and
+the `R_1072` first-heard-plural case) broke `ktlintTestSourceSetCheck` two ways in sequence
+(caught by running the full gate, not by `:app:testDebugUnitTest` alone, which does not run
+ktlint): first "Newline expected before expression body" (the `Unit =` split across the wrong
+line), then — once the R-1069 name was shortened to fit — "First line of body expression fits on
+same line as function signature" (ktlint wanted it on one line after all, once it fit under 120
+columns). Fixed by matching this file's own established wrapped-signature style exactly
+(`fun ...(): Unit =` / next line `runTest {`, body indented one level deeper) for the case that
+still needs to wrap, and collapsing to one line for the case that now fits.
+**Verified:** `gradlew :app:ktlintTestSourceSetCheck` — green (was failing). `gradlew
+:app:testDebugUnitTest --tests "org.ort.app.ui.digest.DigestPollingTest"` — still green,
+unchanged behaviour (a formatting-only fix; no assertion touched).
+**Left open / not done:** none.
+
+---
+
+## 2026-09-13 (WPSESSCOV: DG04 coverage bar, session-review back label, digest plural counts)
+
+### WPSESSCOV — R-1069 (halt): DG04's coverage bar places every gap from its real start/duration, never a whole hour; R-1070: the back label names where back actually returns; R-1072: digest counts are plural by count
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/digest/**` (new `SessionCoverageMapper.kt`,
+`DigestViewData.kt`, `DigestPolling.kt`, `SessionsContent.kt`, `SessionsScreens.kt`) and
+`app/src/main/kotlin/org/ort/app/ui/components/ActivityPatternChart.kt` (the coverage-strip
+composable `ui/digest` shares with `Now`/`Station`/`Frequencies`, extended not rewired — see
+below). Their tests, `RecordingSessionViewStateMapperTest.kt` (an audit-only addition, no
+production change), `results/coverage-matrix.md` regenerated. No file outside this set touched;
+`ui/screens/NowContent.kt`, `ui/data/NowViewState.kt` and `ui/components/Rows.kt`/`Controls.kt`
+were read for the audit below but not edited.
+**Requirements/ACs:** constitution I, VIII; R-1069, R-1070, R-1072 (register).
+**What changed:**
+1. **R-1069 (halt).** `DigestPolling.sessionDetail`'s coverage bar bucketed a session's own real
+   span into fixed one-hour buckets (`ActivityPatternMapper.buildSessionElapsedPattern`) and
+   hatched a *whole* bucket the instant any real gap touched it — a real 22-minute gap 40 minutes
+   into a 3-hour session hatched two of three hour-wide bars (fraction 0 to 2/3), reading as "deaf
+   for two hours" when the app was actually deaf for 22 minutes. New `SessionCoverageMapper
+   .buildSegments` (pure function, `ui/digest`, directly unit-tested) instead cuts the session's
+   span only at its own real gap boundaries: a gap produces one segment positioned and sized from
+   its own real `[startedAt, endedAt)`, never quantized to an hour. `ActivityPatternChart` gained
+   an optional `segmentWeights: List<Float>?` parameter — `null` (every existing caller: `Now`'s
+   live chart, `Station-Pattern`, `Frequencies`) renders exactly as before, equal-width bars;
+   `SessionDetailScreen` is the one caller that now passes each segment's own real fraction of the
+   session's span as its bar's weight, via `List<SessionCoverageSegment>.asChartWeights()`.
+   `SessionDetailViewState.coverage` changed type from `List<HourActivityBucket>` to
+   `List<SessionCoverageSegment>` accordingly.
+   - **Audited the other two coverage strips named in the register row.** RC02's own
+     `RecordingSessionViewStateMapper.coverageGap` already computes `fractionOf(gap.startedAt,
+     ...)`/`fractionOf(gap.endedAt, ...)` directly against the session's real span — checked
+     correct, not touched; added `RecordingSessionViewStateMapperTest`'s own `R_1069 audit -
+     ...` test (the same relative numbers as DG04's own case) since no existing test asserted
+     this. `Now`'s live chart (`NowViewStateMapper.active` → `ActivityPatternChart`) still calls
+     the unmodified `buildSessionElapsedPattern` and was found to carry the **same class of
+     defect** (a short gap can still hatch the whole hour-of-day bucket it falls in) — left
+     unfixed here on purpose: `Now`'s hour buckets are load-bearing for R-1041's own tap-to-filter
+     targets (`hourFilterWindow` assumes whole-hour boundaries), and the files that would need to
+     change (`ui/screens/NowContent.kt`, `ui/data/NowViewState.kt`) are outside this package's
+     file grant. Flagged for a separate session/package.
+2. **R-1070 (polish).** `SessionDetailScreen`'s back link was hardcoded to `"Earlier nights"` —
+   DG03's own drawer destination, replaced by RC01 `Recordings` (design-intent §9's own DG03 row).
+   `SessionDetailScreen` gained a `parentLabel: String = "Recordings"` parameter; `SessionsContent`
+   now tracks, per `SessionsPage.Detail`, whether it was reached by a real tap on its own internal
+   `List` (`openedFromList`, threaded through the existing Bundle-safe `SessionsPageSaver`) — only
+   that one case (which genuinely does return to `List`, still titled "Earlier nights") overrides
+   the default; `SessionsContent`'s only real caller today (`OrtNavHost`'s
+   `EarlierNightsDestinationContent`, confirmed by reading it: `SessionsContent` is rendered only
+   when `reviewSessionId != null`, i.e. only via `Settings-Storage`'s Review link) takes the
+   "Recordings" default. `Digest`/`Log` are not, in the current navigation graph, ever an entry
+   path *into* `Detail` (only forward destinations from it) — the parameter exists for that case
+   should one ever be added, per the register row's own "or the Digest/Log it was opened from".
+3. **R-1072 (polish).** Six `"N thing(s)"` literals in `DigestPolling.kt` replaced with the
+   existing `org.ort.app.ui.improve.Plurals.count` helper (found by searching first, already used
+   by this package's own `Sessions`/`Session` screens): `firstHeardItems`'s "N over(s) this
+   session", `longThreadItems`'s "N over(s)"/"N participant(s)"/"usual is N over(s)" (the average
+   rounded once via `roundToInt()` before pluralizing, matching its own pre-existing `%.0f`
+   display rounding), `ambiguousItem`'s "N over(s) could not be attributed", and
+   `unidentifiedVoicesItem`'s "N over(s) from unidentified voices". Grepped the rest of the
+   repository for other `(s)` in user-facing strings: every other hit is either a doc comment, or
+   in a file this package does not own (`RecordingsScreen.kt`'s own sub-line already calls
+   `Plurals.count` — its doc comment's `(s)` is prose, not rendered text) — none left to fix here.
+**Verified:** every fix's test written first and confirmed to fail for the right reason (a real
+revert-and-restore, not merely "it currently fails") before the production code:
+`SessionCoverageMapperTest` (new, 7 cases: a single gap's exact start/width fraction, multiple
+gaps, a gap at the very start, a gap running to the session's end, an open (never-recovered) gap,
+a no-gap session, and `asChartWeights`) — reverting the gap-clipping to snap to whole-hour
+boundaries (the old defect, reintroduced temporarily) failed 5 of 7 with the exact shape the
+register described, restored to green; `DigestPollingTest`'s `R_1069 a real recorded gap is
+placed and sized from its own real start and duration...` and `...a small gap hatches only its
+own real span...` (both fail on the reverted mapper); `SessionsScreensTest`'s new `R_1069 the
+coverage bar's own bars are sized from each segment's real fraction...` — a Robolectric bounds
+test on the real `SessionDetailScreen` composable at `w390dp-h844dp-420dpi`,
+`@GraphicsMode(NATIVE)`, asserting each bar's measured width against its segment's own real
+fraction of the content width (within Compose's own few-px weight-rounding slop, an order of
+magnitude tighter than the ~200px the old equal-third-share code would have produced for this
+case); `R_1070`'s two tests in `SessionsScreensTest`/two in `SessionsContentTest` (default label
+vs. an explicit override; opened from the list vs. the seeded review path) — reverting
+`SessionDetailScreen` to ignore its own `parentLabel` parameter failed the default-label test;
+`R_1072`'s five new cases in `DigestPollingTest` plus `SessionsContentTest`'s updated
+`IA_3 Digest-Item's The N overs...` (now asserts `"A thread ran 8 overs"`, not `"...8 over(s)"`).
+`gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.digest.*" --tests
+"org.ort.app.ui.recordings.*" --tests "org.ort.app.ui.components.ActivityPatternChartTest"` and
+`gradlew :app:smokeTestDebugUnitTest --tests "org.ort.app.ui.digest.SessionsContentTest"` — all
+green. `gradlew -p buildSrc test` — green. `python tools/spec-check/spec_check.py` — OK.
+`gradlew coverageMatrix` then `coverageMatrixCheck` — R-1069/R-1070/R-1072 now covered (R-540
+retired: its own test encoded the exact whole-hour-hatch behaviour this fix removes).
+**Visual verification (constitution VIII):** own AVD `ort_audit_sesscov` (port 5572, never an AVD
+another session owns), operator geometry (`wm size 1260x2772`, `wm density 420`). Tour captures
+into this session's own scratch evidence directory (never `results/ui-audit/` — only a full
+canonical tour replaces that): `stations-14-nights/DG04-session-review(@2x)` — a real 03:07-06:07
+session, one 22-minute gap at 03:47, now shows the coverage bar hatched for roughly the middle
+~12% of its width starting ~22% in (matching 40/180 and 22/180), green for the rest, and the back
+link reads **Recordings** at both scales, never clipped or overlapping at 2.0;
+`overnight/RC02-recording-session(@2x, @2x-end)` and `gap-call/RC02-recording-session-gap` —
+RC02's own coverage strip unaffected (as expected, not touched), ticks and gap positioned by real
+fraction at every scale, list scrolls cleanly to its end at 2.0; `llm-disabled/DG01-digest` — "8
+overs this session", "1 over could not be attributed with confidence", "2 overs from unidentified
+voices", each genuinely pluralized by its own real count.
+**Left open / not done:** `Now`'s own live chart carries the identical whole-hour-bucket coverage
+defect (see item 1's own audit note above) — out of this package's file grant, flagged rather than
+fixed. R-1070's `Digest`/`Log`-as-origin case has no real entry path to exercise today (noted, not
+faked with a synthetic one). R-1073 (`DrillInHeader`'s own 37dp touch target) is a different
+package's own finding, untouched here.
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionScreen.kt`,
 `RecordingSessionViewStateMapper.kt`, and their tests. No file outside `ui/recordings/**`

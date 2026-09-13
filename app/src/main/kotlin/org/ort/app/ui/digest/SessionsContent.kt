@@ -21,7 +21,18 @@ import org.ort.app.ui.theme.OrtSpacing
 
 private sealed interface SessionsPage {
     data object List : SessionsPage
-    data class Detail(val sessionId: String) : SessionsPage
+
+    /**
+     * R-1070 (register, polish): [openedFromList] is `true` exactly when this page was reached by
+     * a real tap on a row in [List] — in that one case, back genuinely returns to that same list
+     * (still titled "Earlier nights" by its own [SessionsScreen] header), so that is the honest
+     * back label. `false` (every other constructor call — the seeded root [SessionsContent] starts
+     * on when opened via `Settings-Storage`'s Review link, [SessionsContent]'s only real caller
+     * today) leaves the label to [SessionDetailScreen]'s own default ("Recordings" — see that
+     * composable's own doc comment for why), since back there resolves to [List] only as this
+     * package's own internal state, never a place the operator actually navigated through.
+     */
+    data class Detail(val sessionId: String, val openedFromList: Boolean = false) : SessionsPage
     data class Digest(val sessionId: String) : SessionsPage
     data class DigestItem(val sessionId: String, val item: DigestItemViewState) : SessionsPage
 
@@ -72,7 +83,11 @@ private val SessionsPageSaver: Saver<SessionsPage, String> = Saver(
     save = { page ->
         when (page) {
             SessionsPage.List -> "list"
-            is SessionsPage.Detail -> listOf("detail", page.sessionId).joinToString(PAGE_FIELD_SEPARATOR)
+            is SessionsPage.Detail -> listOf(
+                "detail",
+                page.sessionId,
+                if (page.openedFromList) "1" else "0",
+            ).joinToString(PAGE_FIELD_SEPARATOR)
             is SessionsPage.Digest -> listOf("digest", page.sessionId).joinToString(PAGE_FIELD_SEPARATOR)
             is SessionsPage.DigestItem -> listOf(
                 "digest_item",
@@ -113,7 +128,7 @@ private val SessionsPageSaver: Saver<SessionsPage, String> = Saver(
     restore = { saved ->
         val parts = saved.split(PAGE_FIELD_SEPARATOR)
         when (parts[0]) {
-            "detail" -> SessionsPage.Detail(parts[1])
+            "detail" -> SessionsPage.Detail(parts[1], openedFromList = parts.getOrNull(2) == "1")
             "digest" -> SessionsPage.Digest(parts[1])
             "digest_item" -> SessionsPage.DigestItem(
                 sessionId = parts[1],
@@ -216,7 +231,10 @@ public fun SessionsContent(
                 SessionsScreen(
                     state = state,
                     onDrawer = onDrawer,
-                    onOpen = { id -> page = SessionsPage.Detail(id) },
+                    // R-1070: a real tap on this list's own row — back from the detail it opens
+                    // must return to this same list, so it is the one case that overrides
+                    // [SessionDetailScreen]'s own "Recordings" default.
+                    onOpen = { id -> page = SessionsPage.Detail(id, openedFromList = true) },
                     modifier = modifier,
                 )
             } else {
@@ -235,6 +253,12 @@ public fun SessionsContent(
                     onOpenLog = { page = SessionsPage.Log(current.sessionId, state.label) },
                     onOpenDigest = { page = SessionsPage.Digest(current.sessionId) },
                     modifier = modifier,
+                    // R-1070: back genuinely returns to `List` (still titled "Earlier nights")
+                    // only when this Detail was actually reached by tapping a row in it; every
+                    // other caller — in practice, `SessionsContent`'s own only real caller today,
+                    // `Settings-Storage`'s Review link seeding [initialSessionId] — takes
+                    // [SessionDetailScreen]'s own honest default instead.
+                    parentLabel = if (current.openedFromList) "Earlier nights" else "Recordings",
                 )
             } else {
                 Loading(modifier)

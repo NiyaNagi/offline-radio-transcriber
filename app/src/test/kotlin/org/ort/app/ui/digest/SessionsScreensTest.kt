@@ -6,20 +6,26 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.components.drawHatchRegion
+import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * R-250 (register, round 6 System validator pass 2, halt): the gap-row hatch used to compute its
@@ -244,5 +250,113 @@ class SessionsScreensTest {
 
         composeTestRule.onNodeWithText("22:50").assertExists()
         composeTestRule.onNodeWithText("05:58").assertExists()
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // R-1069 (register, halt, constitution I): the coverage bar's own bars are sized from each
+    // segment's real fraction of the session's span, never an equal share — a Robolectric bounds
+    // test on the real composable, per AGENTS.md item 7 / constitution VIII, at the tour's own
+    // width with native graphics.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1069")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1069 the coverage bar's own bars are sized from each segment's real fraction, not an equal share`() {
+        // A 180-minute session: 100 min HEARD, a 22-minute gap, 58 min HEARD — the same shape as
+        // the register's own repro, scaled to make every segment's expected width unmistakably
+        // different from an equal one-third share (60/180 each), which is what the pre-fix
+        // whole-hour-bucket code would have rendered instead.
+        val state = detailState(modeLabel = "m", inputLabel = "i", rigLinkLabel = "r").copy(
+            coverage = listOf(
+                SessionCoverageSegment(0f, 100f / 180f, HourActivityState.HEARD, heardCount = 1),
+                SessionCoverageSegment(100f / 180f, 122f / 180f, HourActivityState.NOT_LISTENING, heardCount = 0),
+                SessionCoverageSegment(122f / 180f, 1f, HourActivityState.HEARD, heardCount = 1),
+            ),
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { SessionDetailScreen(state = state, onBack = {}, onOpenLog = {}, onOpenDigest = {}) }
+        }
+
+        val bar0 = composeTestRule.onNodeWithTag("activity-bar-0", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val bar1 = composeTestRule.onNodeWithTag("activity-bar-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val bar2 = composeTestRule.onNodeWithTag("activity-bar-2", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val (width0Px, width1Px, width2Px) = with(composeTestRule.density) {
+            Triple((bar0.right - bar0.left).toPx(), (bar1.right - bar1.left).toPx(), (bar2.right - bar2.left).toPx())
+        }
+        val barGapPx = with(composeTestRule.density) { 1.5.dp.toPx() }
+        val totalContentPx = width0Px + width1Px + width2Px + 2 * barGapPx
+
+        // Within a pixel of each segment's own real fraction of the content width (never the old
+        // equal one-third share this would otherwise have produced).
+        assertBarWidthMatchesFraction(width1Px, totalContentPx, 22f / 180f, "bar 1 (the gap)")
+        assertBarWidthMatchesFraction(width0Px, totalContentPx, 100f / 180f, "bar 0")
+        assertBarWidthMatchesFraction(width2Px, totalContentPx, 58f / 180f, "bar 2")
+        // The old bug's own shape, disproved directly: the gap bar must be narrower than either
+        // listening bar, never one-third of the row the way three equal hour buckets would render.
+        assertTrue(
+            "expected the gap bar ($width1Px px) to be narrower than bar 0 ($width0Px px) — an " +
+                "equal-width bucket would make them the same",
+            width1Px < width0Px,
+        )
+    }
+
+    private fun assertBarWidthMatchesFraction(
+        actualPx: Float,
+        totalContentPx: Float,
+        expectedFraction: Float,
+        label: String,
+    ) {
+        val expectedPx = totalContentPx * expectedFraction
+        // Compose's own `Modifier.weight` distributes an integer pixel budget across weighted
+        // children (floor-per-item, remainder to the last), so a few px of slop from that rounding
+        // alone is expected — this floor is still an order of magnitude tighter than the ~200px
+        // (well over half the whole bar) the pre-fix equal-third-share code would have been off by
+        // for this exact case, which is the discrimination this test exists to prove.
+        val tolerancePx = 6f
+        assertTrue(
+            "expected $label's own width (~$expectedPx px) to be within $tolerancePx px of its real " +
+                "fraction $expectedFraction of the content width ($totalContentPx px), got $actualPx px",
+            kotlin.math.abs(actualPx - expectedPx) <= tolerancePx,
+        )
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // R-1070 (register, polish): the back label names where back actually returns.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1070")
+    fun `R_1070 the default back label reads Recordings, the destination that replaced Earlier nights`() {
+        val state = detailState(modeLabel = "m", inputLabel = "i", rigLinkLabel = "r")
+
+        composeTestRule.setContent {
+            OrtTheme { SessionDetailScreen(state = state, onBack = {}, onOpenLog = {}, onOpenDigest = {}) }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Back to Recordings").assertExists()
+        composeTestRule.onNodeWithText("Earlier nights").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1070")
+    fun `R_1070 a caller can name the real origin the back label should read instead`() {
+        val state = detailState(modeLabel = "m", inputLabel = "i", rigLinkLabel = "r")
+
+        composeTestRule.setContent {
+            OrtTheme {
+                SessionDetailScreen(
+                    state = state,
+                    onBack = {},
+                    onOpenLog = {},
+                    onOpenDigest = {},
+                    parentLabel = "Earlier nights",
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Back to Earlier nights").assertExists()
     }
 }

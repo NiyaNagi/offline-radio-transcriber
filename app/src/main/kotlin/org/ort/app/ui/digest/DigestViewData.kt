@@ -1,7 +1,5 @@
 package org.ort.app.ui.digest
 
-import org.ort.app.ui.data.HourActivityBucket
-
 /**
  * R-092 (register, FR-DIG-1..6, FR-RUN-12, FR-RUN-16): view-states for `Sessions`, `Session`,
  * `Digest`, `Digest-Item`. Every fact comes from [DigestPolling] reading real DAOs and process-wide
@@ -39,7 +37,9 @@ public data class SessionDetailViewState(
     val timeRangeLabel: String,
     val durationLabel: String,
     val uncleanEndLabel: String?,
-    val coverage: List<HourActivityBucket>,
+    /** R-1069 (register, halt): real elapsed-time segments — see [SessionCoverageMapper] — never
+     * the fixed clock-hour buckets [org.ort.app.ui.data.HourActivityBucket] used before this fix. */
+    val coverage: List<SessionCoverageSegment>,
     val notListeningLabel: String?,
     val gaps: List<SessionGapRowViewState>,
     val overCount: Int,
