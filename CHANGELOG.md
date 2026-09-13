@@ -32,6 +32,101 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPREPLIFE: R-1067 - the reprocess run now lives in a WorkManager job, not the Improve screen)
+
+### WPREPLIFE — R-1067: reprocess run survives Activity recreation via `ReprocessWorker`, `Improve-Running` observes rather than owns it
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/` (new: `ReprocessWorker.kt`, `ReprocessRunState.kt`,
+`ReprocessPauseControl.kt`; `ReprocessRunner.kt` itself untouched), `app/src/main/kotlin/org/ort/app/ui/improve/`
+(`ImproveRunner.kt`, `RealImproveRunner.kt`, `ImproveContent.kt`), their tests, plus one out-of-package,
+mechanical fix (`ReaderActivityDestinationSmokeTest.kt`, flagged below) and one test-only dependency
+(`app/build.gradle.kts`).
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11 (interruptible and resumable; a failed/interrupted run never leaves a
+record worse than before). Register R-1067 (closes the gap R-1063 disclosed while fixing itself).
+
+**What changed:** `ReprocessRunner` (`FR-REP-9`: "the user SHALL be able to reprocess candidates ... in bulk, with
+progress"; `FR-REP-11`: "interruptible and resumable ... SHALL never leave a record in a worse state") ran inside
+`Improve-Running`'s own `LaunchedEffect` — its coroutine was cancelled the instant the Activity was destroyed
+(rotation, font scale, dark mode, or ColorOS killing the Activity in the background), silently restarting the run
+from zero on recreation. `ReprocessWorker`, a real `androidx.work.CoroutineWorker` (the same shape
+`ProseDigestRunner` already established in this package), now runs it instead:
+- **Unique work** (`ExistingWorkPolicy.KEEP`), no constraints — deliberately unlike `ProseDigestRunner`'s
+  charging+idle gate: this is FR-REP-5's own "on-device reprocess **action**," an operator-invoked "now," not a
+  passive background schedule. A second tap of "Improve all"/"Start" never starts a duplicate run.
+- **`ReprocessRunState`**: a durable per-work-id checkpoint (a flat file under `filesDir`, never a `:data` table)
+  recording which transmission ids a worker attempt has not yet finished — a worker attempt WorkManager restarts
+  after process death resumes exactly that remainder, reporting honest *cumulative* progress against the run's
+  real original total, and never re-hands an already-done id back to `ReprocessRunner`. Cleared only on a
+  non-cancelled finish or an explicit operator cancel — never on a stop this class did not choose, so an
+  interrupted attempt's checkpoint survives for the next one.
+- **`ReprocessPauseControl`**: the operator's own Pause/Resume, now a process-wide signal `ReprocessWorker` folds
+  into `ReprocessRunner.isCaptureBusy` alongside the engine's own capture-priority auto-pause — the pre-existing
+  "stall the collector" mechanism stopped meaning anything once the run stopped living inside the screen.
+- `ImproveRunner` is no longer a `fun interface`: `run` now only starts (idempotently) and observes; `cancel` is
+  the one explicit, operator-only stop (`FakeImproveRunner.cancel` is a documented no-op — it has no persistent
+  run to stop). `RealImproveRunner` calls only `ReprocessWorker.start/observe/cancel`, all plain `:pipeline` types
+  — no `androidx.work.*` import anywhere in `:app` main code, so no main-source `app/build.gradle.kts` change was
+  needed.
+
+**Out-of-package fix, flagged:** `ReaderActivityDestinationSmokeTest.kt` (`ui/navigation`, not this package's
+ownership) broke because it now reaches `RealImproveRunner`'s real `WorkManager.getInstance(...)` call without
+initializing a test `WorkManager` under Robolectric (`IllegalStateException: WorkManager is not initialized
+properly`) — the identical setup every other Robolectric test touching a real Worker in this repo already carries
+(`ProseDigestRunnerTest`, `RealImproveRunnerTest`, `ImproveContentActivityTest`). Added the same one `@Before`
+there, mechanically, nothing else in that file touched. `app/build.gradle.kts` gained one `testImplementation
+(libs.androidx.work.testing)` line for the same reason (`:pipeline` already depends on `androidx.work.runtime.ktx`
+for main code; `:app`'s test source set needed `work-testing` to run a test `WorkManager` at all).
+
+**Verified:**
+- `./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"` — 24 tests green, including new
+  `ReprocessRunStateTest` (5) and `ReprocessWorkerTest` (4: unique-work dedup, resumed-worker-never-reprocesses-a-
+  done-id, operator-cancel-cancels, checkpoint-cleared-on-cancel).
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — 30 tests green, including the new
+  `ImproveContentActivityTest` case `R_1067 a real Activity recreation does not cancel the reprocess run -- same
+  WorkInfo id, still running` (a real `ReaderActivity`, real recreate(), asserts the identical `WorkInfo` id before
+  and after).
+- Every new/changed assertion shown to fail for the right reason before the fix and pass after (reverted and
+  restored in place, not left reverted): the `b` (`ExistingWorkPolicy.KEEP` → `APPEND_OR_REPLACE`), `c`
+  (checkpoint honored → ignored) and `d` (`cancelUniqueWork` present → removed) `ReprocessWorkerTest` cases, and
+  the `ImproveContentActivityTest` `R_1067` case (`RealImproveRunner` reverted to construct `ReprocessRunner`
+  directly, as before this change).
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — green, `12m 22s`. One
+  transient failure on an earlier run of the same command,
+  `SettingsContentTest > AC_144 a category toggled on and cancelled is off again the next time the consent screen
+  opens`, `ComposeTimeoutException` at a fixed 5000 ms `waitUntil` — the exact symptom register R-1043 already
+  documents as a load-sensitive flake (unrelated file, unrelated package); reran alone (green) and reran the
+  whole gate (green) to confirm.
+- `./gradlew -p buildSrc test`, `python tools/spec-check/spec_check.py`, `./gradlew coverageMatrix` (274/485,
+  unchanged) then `./gradlew coverageMatrixCheck` (separate invocation, up to date) — all green.
+- Real device: `ort_audit_replife` (own AVD, port 5566, Pixel 6/API 34/x86_64), real bundled-model install (real
+  `HF_TOKEN`), scenario `field-tier1`. Real `ReprocessWorker` executions confirmed in logcat
+  (`WM-WorkerWrapper: Worker result SUCCESS ... tags={ org.ort.pipeline.reprocess.ReprocessWorker }`); a real
+  12-over reprocess reached Done (`12 transcripts changed · 12 attributions changed · 0 rejected · 0 failed`) at
+  font scale 1.0 and 2.0. Evidence under this session's own scratch directory (see the session report — not
+  committed to `results/ui-audit/`, which register R-1067's builder does not own).
+
+**Left open / not done:**
+- **Real-device "font scale changed mid-run" capture not obtained.** `whisper-tiny-en-int8` over this scenario's
+  short fixture audio completes a 12-item run in well under one second on this hardware — faster than any manual
+  or scripted `adb` interaction could interject a font-scale change between start and finish (confirmed twice).
+  The Robolectric-level equivalent (`ImproveContentActivityTest`'s `R_1067` case, using the exact capture-priority
+  freeze technique `R_1063`'s own precedent already established) is the rigorous, repeatable proof of the same
+  claim — same `WorkInfo` id, still `RUNNING`, across a real `recreate()` — and is the evidence this entry treats
+  as load-bearing for that requirement.
+- **Leaving Improve for another drawer destination and returning does not restore `Done` (or `Running`)** — it
+  shows Root's own honest empty state once the real work is finished (`Nothing can get better right now`, true
+  given the real data). `ImprovePage`'s `rememberSaveable` state (R-1063) protects against Activity recreation,
+  not against `OrtNavHost` disposing and recomposing `ImproveContent` on a destination switch — a `ui/navigation`
+  question (`OrtNavHost.kt`, WPRC02's ownership, outside this row) orthogonal to R-1067: the real background run
+  is never affected either way (it is not owned by any composition), only which sub-screen is shown on return.
+  Flagged, not fixed here.
+- Operator Pause reuses the engine's existing capture-priority yield rather than a new WorkManager-native pause
+  primitive (none exists) — not itself required by FR-REP, decided to keep the pre-existing UI control honest
+  now that its old mechanism (stalling the screen's own collector) no longer means anything.
+
+---
+
 ## 2026-09-13 (spec: Q23 opened - squelch fusion on a dual-band radio, and rigs that only poll)
 
 ### spec · Q23: two design choices squelch fusion made that the spec never did

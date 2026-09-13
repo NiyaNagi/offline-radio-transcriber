@@ -9,16 +9,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.ui.theme.OrtSpacing
+import org.ort.pipeline.reprocess.ReprocessPauseControl
 import org.ort.pipeline.reprocess.ReprocessStatus
 
 private sealed interface ImprovePage {
@@ -49,16 +50,14 @@ private sealed interface ImprovePage {
  * produces. An unrecognised or truncated restored value falls back to [ImprovePage.Root], never a
  * crash — the same "restore never crashes" contract [LogFilterOriginSaver] documents.
  *
- * **What does not survive, disclosed rather than hidden:** [RealImproveRunner]'s own kdoc already
- * states the run is cooperatively cancelled the moment its collecting coroutine stops — which is
- * exactly what happens to the `LaunchedEffect` driving it when the old Activity is destroyed. So a
- * restored [ImprovePage.Running] shows the *board*, correctly, but [RunningPage]'s own fresh
- * `LaunchedEffect` starts a new run over the same [ImprovePage.Running.transmissionIds] from its
- * own zero — real progress for *that* run, never fabricated, but not a seamless continuation of
- * whatever fraction the interrupted run had reached. Resuming a genuinely in-flight run across a
- * process-surviving recreation would need the run itself to live somewhere longer-lived than a
- * composition (a foreground service, `WorkManager`, or similar) — a `:pipeline`/architecture change
- * outside this package's own file ownership, not attempted here.
+ * **register R-1067 (fixed): the run itself now survives too.** The gap this class's own kdoc used
+ * to describe here — a restored [ImprovePage.Running] showing the board correctly but
+ * [RunningPage]'s fresh `LaunchedEffect` silently restarting the run from zero, because it lived
+ * only inside the collecting coroutine a recreation cancels — is closed: the real run now lives in
+ * `org.ort.pipeline.reprocess.ReprocessWorker`, a `WorkManager` job outliving this composition
+ * entirely. [RunningPage]'s `LaunchedEffect` only *observes* it ([RealImproveRunner.run] is
+ * idempotent to start), so a restored [ImprovePage.Running] re-attaches to the same run, same id,
+ * same real progress — see [ImproveRunner]'s and `ReprocessWorker`'s own kdoc for the rest.
  */
 private const val IMPROVE_PAGE_FIELD_SEPARATOR = ""
 
@@ -188,6 +187,9 @@ public fun ImproveContent(
                     state = state,
                     onDrawer = onDrawer,
                     onImproveAll = {
+                        // R-1067: a fresh run starting -- the operator's own Pause from a
+                        // *previous* run must never bleed into this one.
+                        ReprocessPauseControl.reset()
                         page = ImprovePage.Running(state.allTransmissionIds, "All groups")
                     },
                     onOpenGroup = { group -> page = ImprovePage.Select(group) },
@@ -206,7 +208,11 @@ public fun ImproveContent(
                 ImproveSelectScreen(
                     state = state,
                     onBack = { page = ImprovePage.Root },
-                    onStart = { page = ImprovePage.Running(current.group.transmissionIds, current.group.headline) },
+                    onStart = {
+                        // R-1067: see the identical reset in onImproveAll above.
+                        ReprocessPauseControl.reset()
+                        page = ImprovePage.Running(current.group.transmissionIds, current.group.headline)
+                    },
                     modifier = modifier,
                 )
             } else {
@@ -253,29 +259,30 @@ private fun RunningPage(
     onDone: (headline: String, doneCount: Int, summary: ReprocessStatus.Summary?) -> Unit,
 ) {
     var done by remember(current.transmissionIds) { mutableStateOf(0) }
-    var paused by remember(current.transmissionIds) { mutableStateOf(false) }
+    // R-1067: seeded from the process-wide control, not a hardcoded `false` -- a real Activity
+    // recreation must show the operator's own pause exactly as they left it, never silently
+    // resume (the same "don't discard operator intent" standard R-1063 already set for the page).
+    var paused by remember(current.transmissionIds) { mutableStateOf(ReprocessPauseControl.paused) }
     var autoPausedReason by remember(current.transmissionIds) { mutableStateOf<String?>(null) }
-    var job by remember(current.transmissionIds) { mutableStateOf<Job?>(null) }
     val total = current.transmissionIds.size
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(current.transmissionIds) {
-        job = launch {
-            // A cold flow's `emit` suspends until this block returns, so pausing here genuinely
-            // pauses the run, not just this screen's display.
-            runner.run(current.transmissionIds).collect { progress ->
-                while (paused) delay(120L)
-                done = progress.done
-            }
-            val summary = (ReprocessStatus.state as? ReprocessStatus.State.Done)?.summary
-            onDone(current.headline, done, summary)
-        }
+        // R-1067: this collector only *observes* the real run (`ReprocessWorker`, outliving this
+        // composition) -- it never stalls or owns it. `runner.run(...)` itself is idempotent: a
+        // fresh LaunchedEffect after recreation re-attaches to the same run rather than starting
+        // a second one.
+        runner.run(current.transmissionIds).collect { progress -> done = progress.done }
+        val summary = (ReprocessStatus.state as? ReprocessStatus.State.Done)?.summary
+        onDone(current.headline, done, summary)
     }
-    // FR-REP-6: the engine's own capture-priority yield, read separately from the collector above
-    // so it updates even while that coroutine is itself parked in the `while (paused) delay(...)`
-    // loop above — see ImproveViewData.kt's own doc comment.
+    // FR-REP-6: the engine's own capture-priority auto-pause, told apart from the operator's own
+    // Pause (both publish `ReprocessStatus.State.Paused` -- see `ReprocessPauseControl`'s own
+    // kdoc) by simply checking whether *this* screen is the one that asked for it.
     LaunchedEffect(current.transmissionIds) {
         while (true) {
-            autoPausedReason = if (ReprocessStatus.state is ReprocessStatus.State.Paused) {
+            val engineIsPausing = ReprocessStatus.state is ReprocessStatus.State.Paused
+            autoPausedReason = if (engineIsPausing && !ReprocessPauseControl.paused) {
                 "waiting — capture is busy"
             } else {
                 null
@@ -292,9 +299,16 @@ private fun RunningPage(
             paused = paused,
             autoPausedReason = autoPausedReason,
         ),
-        onPause = { paused = !paused },
+        onPause = {
+            paused = !paused
+            // R-1067: the real signal that reaches the worker -- see its own kdoc for why a local
+            // toggle alone (the pre-R-1067 mechanism) no longer pauses anything real.
+            ReprocessPauseControl.paused = paused
+        },
         onCancel = {
-            job?.cancel()
+            // R-1067d: the operator's own explicit stop -- the only thing that actually cancels
+            // the real run now; navigating away or a recreation must not (see ImproveRunner.cancel).
+            coroutineScope.launch { runner.cancel() }
             onDone(current.headline, done, null)
         },
         modifier = modifier,
