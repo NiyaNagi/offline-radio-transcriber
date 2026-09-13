@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPUI: C10 the transport bar, replacing the plain live bar host-wide, and its own reversal of R-1006's stop-on-leave — the bar, not the screen, now owns playback)
 
-### PENDING_HASH — WPUI: R-1049 halt fixed — the playback bar was a full-height panel, not a bottom strip
+### 48d5687d — WPUI: R-1049 halt fixed — the playback bar was a full-height panel, not a bottom strip
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/components/TransportBar.kt` (the fix), plus one new
 Robolectric test file `app/src/test/kotlin/org/ort/app/ui/navigation/TransportBarHostLayoutTest.kt`.
