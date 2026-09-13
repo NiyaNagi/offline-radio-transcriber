@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -40,7 +41,10 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.ort.app.export.ExportCoordinator
@@ -493,18 +497,104 @@ private fun formatExportSize(bytes: Long): String {
  * real capture showed a two-fact row needed to stack rather than share one line. */
 private const val LARGE_FONT_SCALE_THRESHOLD = 1.5f
 
-/** R-1050 (register, lead capture `overnight/CF07-settings-export@2x-end.png`): the visible
- * filename is never shortened past this many characters (ellipsis and extension included). A first
- * attempt at 26 (long enough to keep the scope word — `ort-export-tonight-….adi`) still overflowed
- * once the size suffix (` · 8 KB`) was appended on the same line, at the real device capture this
- * round's own recapture caught — `PrimaryButton`'s/`ExportSaveFileButtonContent`'s own
- * `overflow = TextOverflow.Ellipsis` backstop then silently ate the size instead, exactly the
- * "extension and size visible" guarantee this round exists to keep. 12 — `ort-export-….<ext>`,
- * dropping the scope word too, not only the timestamp — leaves real, verified room for the size
- * suffix alongside it (see [middleEllipsizeFileName]'s own kdoc for why a fragment of the timestamp
- * specifically is worse than dropping it whole; the scope word has no such honesty concern, it is
- * simply not load-bearing enough to keep at this width). */
-internal const val MAX_VISIBLE_FILE_NAME_LENGTH = 12
+/**
+ * R-1050 (register, round 2 — the round 1 fix was sent back): the artboard's button *names the
+ * export* — `Save file · <filename> · <size>` — so the operator knows what will be written before
+ * they commit (R-1045(b)'s whole purpose). Round 1 used a fixed character budget
+ * (`MAX_VISIBLE_FILE_NAME_LENGTH`, first 26, then 12) that had no idea how much of the button's own
+ * real width was actually available at the device's own real font metrics: 26 let the appended size
+ * overflow past the button (silently eaten by the `TextOverflow.Ellipsis` backstop); 12 threw away
+ * the scope word *and* the timestamp — the two facts that say *which* export this is — while using
+ * only about half the button's own measured width. [SaveFileLabelPlan] fixes this by *measuring*
+ * real candidate strings against the real available width with a real
+ * [androidx.compose.ui.text.TextMeasurer] and the button's own real [TextStyle] — never a character
+ * count standing in for a pixel width. `internal`, not `private` — `SettingsExportScreenGeometryTest`'s
+ * own tests call [planSaveFileLabel] directly with an explicit, known `availableWidthPx`, the most
+ * precise way to prove its decision ladder for each width scenario the register cares about,
+ * independent of what any particular Robolectric layout pass happens to measure for a given nominal
+ * dp width (Robolectric's own font/layout metrics do not reliably match a real device's — this
+ * package's own R-260/R-552 precedent already states this, and this round's own real-device
+ * recapture confirms it again: several nominal widths this file first tried rendering at measured
+ * as fitting the *entire* name and size on Robolectric alone, never even reaching the ladder's
+ * shorter rungs, while the real device needed them). */
+internal data class SaveFileLabelPlan(val filenameLine: String, val sizeLine: String?)
+
+/**
+ * For each of [filenameCandidates]' rungs, from most to least informative: try it plus the size on
+ * one line; if that does not fit, try it alone (the size gets its own third line rather than the
+ * name being cut to make room for it — "put the size on its own third line rather than cutting the
+ * name further", the register's own instruction) — and only move to the next, shorter rung once
+ * even the candidate alone does not fit. The first that measures within [availableWidthPx] at
+ * [style] wins — [textMeasurer] measures with unbounded constraints, so the width returned is a
+ * candidate's own real, natural, single-line width, never an estimate. The ladder's own last rung
+ * (`ort-export-….<ext>`, extension always kept) is short enough to fit any real supported device
+ * width in practice (device-verified — the round that found the previous rung insufficient here is
+ * this round's own CHANGELOG entry), so the loop always returns from inside itself; there is no
+ * separate "nothing fit" branch to fall through to.
+ */
+internal fun planSaveFileLabel(
+    fileName: String,
+    sizeBytes: Long?,
+    availableWidthPx: Int,
+    style: TextStyle,
+    textMeasurer: TextMeasurer,
+): SaveFileLabelPlan {
+    fun widthOf(text: String): Int = textMeasurer.measure(text = text, style = style).size.width
+    val sizeSuffix = sizeBytes?.let { " · ${formatExportSize(it)}" }
+    val candidates = filenameCandidates(fileName)
+    for (candidate in candidates) {
+        if (sizeSuffix != null && widthOf(candidate + sizeSuffix) <= availableWidthPx) {
+            return SaveFileLabelPlan(candidate + sizeSuffix, null)
+        }
+        if (widthOf(candidate) <= availableWidthPx) {
+            return SaveFileLabelPlan(candidate, sizeSuffix)
+        }
+    }
+    // Narrower than any real supported device width (device-verified for the ladder's own
+    // shortest rung) — the narrowest candidate is still shown in full, never a silently dropped
+    // identity; `softWrap = false` plus the caller's own `overflow = TextOverflow.Ellipsis` is the
+    // last-resort backstop for a width this build does not actually support.
+    return SaveFileLabelPlan(candidates.last(), sizeSuffix)
+}
+
+/**
+ * R-1050 (register): the real name's own shape from [ExportCoordinator.suggestedFileName] is
+ * `ort-export-<scope>-<yyyyMMdd>-<HHmmss>.<ext>` — five hyphen-delimited stem tokens, the last two
+ * always all-digit (the timestamp). A *ladder* of candidates beyond the name itself, each one
+ * dropping a little more, in the order the register asked for: first the scope word (the token(s)
+ * between the fixed `ort-export-` prefix and the timestamp) — "prefer keeping the timestamp over
+ * the scope word when something must go" — then, only if even that does not fit, the timestamp's
+ * own trailing token(s) one at a time (the time-of-day before the date, since the date alone still
+ * says which night this is), never the extension, which every candidate keeps. Round 2's own first
+ * attempt stopped after the one "drop the scope word" candidate and let a plain `Text`-level
+ * `overflow = TextOverflow.Ellipsis` backstop cut whatever was still too wide — the real device
+ * recapture verifying *that* fix found it cutting into the timestamp and the extension both, on a
+ * screen narrow enough that even the scope-less candidate did not fit; this ladder exists so the
+ * measured choice in [planSaveFileLabel] never needs that backstop to actually fire in practice, and
+ * the extension survives even in that narrow case. Every cut is always a real hyphen already in
+ * [fileName], never mid-digit-run. If [fileName] does not match the expected shape (a future naming
+ * change, a test fixture with no scope token at all), the real name is the only candidate — never a
+ * guess at a structure that is not actually there. Internal, not private —
+ * `SettingsExportScreenGeometryTest`'s own tests assert this pure function directly, the most
+ * precise way to prove "never a hyphen-delimited token's own middle" for every input shape this
+ * function must handle, not only the one real shape a render-level test happens to exercise.
+ */
+internal fun filenameCandidates(fileName: String): List<String> {
+    val dot = fileName.lastIndexOf('.')
+    val extension = if (dot >= 0) fileName.substring(dot) else ""
+    val stem = if (dot >= 0) fileName.substring(0, dot) else fileName
+    val tokens = stem.split('-')
+    val timestampStart = tokens.indexOfFirst { it.isNotEmpty() && it.all(Char::isDigit) }
+    if (timestampStart < 3 || timestampStart > tokens.size - 2) return listOf(fileName)
+    val prefix = tokens.subList(0, 2).joinToString("-")
+    val timestampTokens = tokens.subList(timestampStart, tokens.size)
+    val ladder = (timestampTokens.size downTo 0).map { keep ->
+        val kept = timestampTokens.take(keep)
+        val middle = if (kept.isEmpty()) "…" else "…-" + kept.joinToString("-")
+        "$prefix-$middle$extension"
+    }
+    return (listOf(fileName) + ladder).distinct()
+}
 
 /**
  * R-1050 (register): the R-1045(b) shape — [org.ort.app.ui.components.PrimaryButton] wrapping the
@@ -514,14 +604,13 @@ internal const val MAX_VISIBLE_FILE_NAME_LENGTH = 12
  * not a hypothetical), reading as a corrupted name rather than a wrapped sentence. This composable
  * replaces that direct `PrimaryButton` call, reusing its exact visual style, and delegates the
  * visible content to [ExportSaveFileButtonContent] (below [LARGE_FONT_SCALE_THRESHOLD]: the same
- * single-line label as before; at or above it: `"Save file"` on its own line, the filename on a
- * second, *never-wrapping* line of its own — [middleEllipsizeFileName] shortens it up front, before
- * layout ever sees it, so there is no line-break for a word-wrap to land inside). The content is
- * split into its own composable purely so a test can render it directly: this button's own
- * `clearAndSetSemantics` (below — the R-380/R-543 accessible-name fix this file's own sibling
- * buttons all carry, see `PrimaryButton`'s own doc comment for why it cannot be dropped) genuinely
- * prunes every descendant from the semantics tree on a real device (R-543's own finding), so no
- * semantics-based query from inside a test could ever reach a tagged node beneath it otherwise.
+ * single-line label as before; at or above it: [planSaveFileLabel]'s measured two- or three-line
+ * shape). The content is split into its own composable purely so a test can render it directly:
+ * this button's own `clearAndSetSemantics` (below — the R-380/R-543 accessible-name fix this file's
+ * own sibling buttons all carry, see `PrimaryButton`'s own doc comment for why it cannot be dropped)
+ * genuinely prunes every descendant from the semantics tree on a real device (R-543's own finding),
+ * so no semantics-based query from inside a test could ever reach a tagged node beneath it
+ * otherwise.
  */
 @Composable
 private fun ExportSaveFileButton(
@@ -563,7 +652,7 @@ private fun ExportSaveFileButton(
 
 /**
  * [ExportSaveFileButton]'s own visible content, split out — see that composable's own doc comment
- * for why: `internal`, not `private`, purely so `SettingsExportScreenTest`'s own `R_1050` cases can
+ * for why: `internal`, not `private`, purely so `SettingsExportScreenGeometryTest`'s own tests can
  * render it directly, inside an equivalent test host, and reach its tagged nodes at all.
  *
  * R-1050(b): a fixed `Modifier.padding(vertical = OrtSpacing.md)` around the content, *inside* the
@@ -573,7 +662,14 @@ private fun ExportSaveFileButton(
  * slack on either side; the lead's own capture showed the *result* of that (first line flush
  * against the top edge, more room below the last line) rather than its cause, but either way the
  * fix is the same: reserve real, equal space top and bottom, unconditionally, so the button's own
- * padding survives however tall the label grows.
+ * padding survives however tall the label grows — one line, two, or [planSaveFileLabel]'s own
+ * third.
+ *
+ * R-1050 round 2: [BoxWithConstraints] gives the real available width for the filename/size lines
+ * (this button's own real horizontal padding already subtracted, since this composable sits inside
+ * [ExportSaveFileButton]'s already-padded `Box`) in px, converted with the real [LocalDensity] —
+ * the same real pixels [rememberTextMeasurer]'s `TextMeasurer` measures candidate strings against
+ * in [planSaveFileLabel]. Never a character count guessing at what a pixel width allows.
  */
 @Composable
 internal fun ExportSaveFileButtonContent(
@@ -593,22 +689,38 @@ internal fun ExportSaveFileButtonContent(
         contentAlignment = Alignment.Center,
     ) {
         if (fileName != null && fontScale >= LARGE_FONT_SCALE_THRESHOLD) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    text = "Save file",
-                    style = style,
-                    color = color,
-                    modifier = Modifier.testTag("export-save-file-line1"),
-                )
-                Text(
-                    text = middleEllipsizeFileName(fileName, MAX_VISIBLE_FILE_NAME_LENGTH) +
-                        (sizeBytes?.let { " · ${formatExportSize(it)}" } ?: ""),
-                    style = style,
-                    color = color,
-                    softWrap = false,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.testTag("export-save-file-line2"),
-                )
+            BoxWithConstraints {
+                val density = LocalDensity.current
+                val availableWidthPx = with(density) { maxWidth.roundToPx() }
+                val textMeasurer = rememberTextMeasurer()
+                val plan = remember(fileName, sizeBytes, availableWidthPx, style) {
+                    planSaveFileLabel(fileName, sizeBytes, availableWidthPx, style, textMeasurer)
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "Save file",
+                        style = style,
+                        color = color,
+                        modifier = Modifier.testTag("export-save-file-line1"),
+                    )
+                    Text(
+                        text = plan.filenameLine,
+                        style = style,
+                        color = color,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("export-save-file-line2"),
+                    )
+                    plan.sizeLine?.let {
+                        Text(
+                            text = it,
+                            style = style,
+                            color = color,
+                            softWrap = false,
+                            modifier = Modifier.testTag("export-save-file-line3"),
+                        )
+                    }
+                }
             }
         } else {
             Text(
@@ -619,35 +731,6 @@ internal fun ExportSaveFileButtonContent(
             )
         }
     }
-}
-
-/**
- * R-1050 (register): the lead's own finding was a *line-wrap* landing inside the timestamp
- * (`ort-export-tonight-202609` / `13-022935.adi`) — this never wraps at all (its caller sets
- * `softWrap = false`), so the fragment this produces can only ever come from *this* function's own
- * choice, on a single line, never from where Compose's own text layout happened to break. Rather
- * than a generic "keep N chars, drop the middle" — which for this exact name shape would still cut
- * through the timestamp's own digit run, exactly the defect being fixed — the cut point is always a
- * hyphen already present in [fileName] (never mid-token): `ExportCoordinator.suggestedFileName`'s
- * own shape is `ort-export-<scope>-<yyyyMMdd-HHmmss>.<ext>`, so backing up to the last hyphen within
- * budget keeps the meaningful `ort-export-<scope>-` prefix whole and drops the entire timestamp —
- * never a fragment of it — replacing it with one ellipsis character before the (always-kept)
- * extension. [fileName] itself is never altered — the real, full name is what `Save file` actually
- * writes and what the system's own document picker shows (R-1050's own register text). Internal,
- * not private — `SettingsExportScreenTest`'s own `R_1050` cases assert this pure function
- * directly, the most precise way to prove "never a hyphen-delimited token's own middle" (a
- * render-level test can only observe the rendered *result*, not every possible input shape this
- * function must handle correctly).
- */
-internal fun middleEllipsizeFileName(fileName: String, maxVisibleLength: Int): String {
-    if (fileName.length <= maxVisibleLength) return fileName
-    val dot = fileName.lastIndexOf('.')
-    val extension = if (dot >= 0) fileName.substring(dot) else ""
-    val stem = if (dot >= 0) fileName.substring(0, dot) else fileName
-    val prefixBudget = (maxVisibleLength - extension.length - 1).coerceAtLeast(1)
-    val truncatedStem = stem.take(prefixBudget)
-    val cutAt = truncatedStem.lastIndexOf('-').let { if (it > 0) it + 1 else truncatedStem.length }
-    return stem.take(cutAt) + "…" + extension
 }
 
 /**

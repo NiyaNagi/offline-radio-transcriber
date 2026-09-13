@@ -32,6 +32,145 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPCF07 round 2: R-1050 sent back — measured-width middle ellipsis replaces the fixed 12-character budget)
+
+### WPCF07 round 2 — the Save file button's filename line is now middle-ellipsized to its own measured width, preferring the timestamp over the scope word, with the size demoted to its own third line rather than the name cut further
+
+**Scope:** same files as round 1 — `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt`,
+`app/src/test/kotlin/org/ort/app/ui/settings/SettingsExportScreenGeometryTest.kt`. Did not touch
+`:pipeline`'s `org.ort.pipeline.archive.SessionAudioExport` or its own files — WPAUDX's concurrent
+work in that package.
+
+**Requirements/ACs:** R-1050 (register — sent back a second time after the lead's review of round
+1's own recapture `overnight/CF07-settings-export@2x-end.png`, quoted: "the button now reads 'Save
+file' / 'ort-….adi · 8 KB'. That names nothing... A fixed character budget (12) ignores the space
+actually available at the device's real font metrics"); constitution I (no estimate presented as
+fact — the ladder's choice of rung is now driven by a real `TextMeasurer`, never a guessed
+character count); constitution VIII (screen re-captured and compared against the artboard again
+after the fix).
+
+**What changed:**
+- Replaced the fixed `MAX_VISIBLE_FILE_NAME_LENGTH = 12` / `middleEllipsizeFileName` character-count
+  approach with `filenameCandidates(fileName)` — a graceful, ordered ladder of real, hyphen-bounded
+  candidates: the full name; scope word dropped, full timestamp and extension kept; date kept,
+  time-of-day dropped; and the shortest rung (prefix + extension only). A filename with no droppable
+  scope token between the fixed prefix and the timestamp returns itself unchanged rather than
+  inventing a shortened form.
+- New `planSaveFileLabel(fileName, sizeBytes, availableWidthPx, style, textMeasurer)` (now
+  `internal`, with its `SaveFileLabelPlan(filenameLine, sizeLine)` result) walks the ladder in order
+  using the button's own real `TextMeasurer`/`TextStyle`, picking the first candidate — with the
+  size suffix appended — that measures within the real available width; if none fit combined, the
+  first candidate that fits alone, with the size demoted to its own `sizeLine` (a third line) rather
+  than the name being cut further, exactly as the register asked. If even the shortest candidate
+  exceeds the width it is still returned in full — never a silently dropped identity — leaving
+  `softWrap = false` plus the caller's own `overflow = TextOverflow.Ellipsis` as the last-resort
+  backstop for a width this build does not actually claim to support.
+- `ExportSaveFileButtonContent` now measures the real available width via `BoxWithConstraints` +
+  `rememberTextMeasurer()` instead of assuming a budget, and renders up to three lines ("Save file" /
+  filename / optional size). The two-line layout's symmetric padding (`OrtSpacing.md` top and
+  bottom, unconditional — R-1050(b), round 1) and the `LARGE_FONT_SCALE_THRESHOLD = 1.5f` gate
+  (below it, `buildSaveButtonLabel`'s original single-line text, unchanged) both carry over from
+  round 1 untouched.
+- `SaveFileLabelPlan`/`planSaveFileLabel`/`filenameCandidates` are `internal` specifically so tests
+  can drive the ladder directly with an explicit, known `availableWidthPx` and a real
+  `TextMeasurer` — made necessary by a round 2 finding (next point).
+- **Round 2 finding, not a report: Robolectric's own root-window sizing does not reliably reflect a
+  requested width the way a real device does.** A nested `Box(Modifier.width(N.dp))` wider than
+  Robolectric's own unconfigured default root silently clamps down to it; switching to
+  `@Config(qualifiers = "wNNNdp-...")` per test does give `OrtTheme`'s own
+  `ortScaleFor`/`LocalConfiguration` the requested width, but at 390dp/480dp/scale 2.0 Robolectric
+  then measured the *entire* name-plus-size string as fitting on one line — never once reaching a
+  shorter rung — where the real device (the very thing that sent round 1 back) needed real
+  shortening. This is the same Robolectric-font-metrics-vs-real-device gap already on record in this
+  codebase (R-260/R-552), met the other way this time. Given that, the ladder's own *ordering* is
+  proven directly against `planSaveFileLabel` with real measured widths from the real
+  `TextMeasurer`/style (see Verified), and the render-level tests are scoped to what they can
+  honestly prove instead: the rendered line is always an exact, uncorrupted candidate — never a
+  string additionally truncated by the `Ellipsis` backstop — and the size is always fully visible
+  somewhere in the label.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.settings.SettingsExportScreenGeometryTest" --tests "org.ort.app.ui.settings.SettingsExportScreenTest"` — `BUILD SUCCESSFUL`, all tests green.
+- Discriminating tests (`SettingsExportScreenGeometryTest.kt`):
+  - Direct `planSaveFileLabel` unit tests against a real `TextMeasurer`/`OrtType.control` style
+    obtained from a composable probe, thresholds computed from real measured candidate widths, never
+    invented numbers:
+    - `R_1050 planSaveFileLabel keeps the full name and size together once both measure within the width`
+    - `R_1050 planSaveFileLabel keeps the full name and gives the size its own line rather than shortening it`
+      (the register's explicit "size on its own third line" instruction)
+    - `R_1050 planSaveFileLabel drops the scope word before ever touching the timestamp` (the
+      register's explicit "prefer keeping the timestamp over the scope word" instruction)
+    - `R_1050 planSaveFileLabel keeps the date over the time-of-day once the scope-less candidate no longer fits`
+    - `R_1050 planSaveFileLabel shows the shortest real candidate when narrower than every rung`
+      (identity never silently dropped)
+  - Shown discriminating, per the register's explicit ask ("show the current budget-12 code failing
+    the timestamp assertion first"): temporarily replaced `planSaveFileLabel`'s candidate list with
+    round 1's own naive fixed-cut shape (`fileName.take(12) + "…" + fileName.takeLast(4)`,
+    unmeasured, ignoring `availableWidthPx` entirely) — 7 of the above and below tests failed for the
+    right reasons (a corrupted candidate not matching any real rung, the extension lost, the
+    timestamp dropped, no size-demotion), then reverted.
+  - Render-level (`@GraphicsMode.NATIVE`, `w390dp-h844dp-420dpi` and `w480dp-h844dp-420dpi`, scale
+    2.0): `R_1050 the filename line is a real, uncorrupted candidate with its extension kept` — the
+    rendered filename line is always an exact match to one of `filenameCandidates`' own real rungs
+    (with or without the size suffix appended) and always contains `.adi`; `R_1050 the real size is
+    fully visible, never ellipsized` — the real formatted size string is always present in full on
+    whichever line carries it.
+  - Round 1's own tests unchanged and still green: the `filenameCandidates` pure-function tests
+    (first candidate is the untouched name; the shortened candidate cuts only at a real hyphen and
+    keeps the timestamp whole; the real extension kept for all four export formats; no shortened form
+    invented when there is no scope word to drop), the four symmetric-padding cases (390/480dp ×
+    1.0/2.0), and `R-1045b the Save file button grows to fit its two-line label`.
+- `./gradlew :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :app:detekt` — `BUILD
+  SUCCESSFUL`. Moved the test file's `REAL_FILE_NAME` constant into a `private companion object` to
+  satisfy detekt's `VariableNaming` rule (a `SCREAMING_CASE` name is only allowed for a true
+  compile-time constant, not an instance-scope `val`); ran `ktlintTestSourceSetFormat` once to fix a
+  function-body-fits-on-signature-line style violation a newer ktlint check caught in
+  pre-existing (round 1) code.
+- `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools/spec-check/spec_check.py` — OK, all 8 checks pass.
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — `BUILD
+  SUCCESSFUL in 14m 50s`, 1109 tasks; `dependencyRules: OK`, `platformGuards: OK`.
+- Real device recapture, on a fourth AVD (`ort_audit_cf07`, `emulator-5566`, 1260×2772@420dpi —
+  identical shape to `ort_audit`) created for this round only: `ort_audit`/`ort_audit_2`/`ort_audit_3`
+  were all three still booted by other builders/validators throughout this round (checked
+  repeatedly with `Get-CimInstance Win32_Process -Filter "Name like 'qemu-system%'"`, per the
+  register's own instruction — a fourth builder's own `ort_audit_wpmodel` had already appeared the
+  same way), so `tools\ui-audit\create-avd.ps1 -Name ort_audit_cf07` (the same documented pattern
+  `ort_audit_2`/`ort_audit_3` were themselves created by) rather than wait on contention with no end
+  in sight. `tools\ui-audit\boot.ps1 -Avd ort_audit_cf07 -Port 5566`, `wm size 1260x2772`/`wm
+  density 420` set to match, `tools\ui-audit\install.ps1 -Port 5566 -Clear`, `tools\ui-audit\tour.ps1
+  -Port 5566 -Only "overnight/CF07-settings-export*" -Out <scratch>` — `steps: 3 ok: 3 errors: 0`.
+  **The button reads, in full, two centred lines: `Save file` / `ort-export-….adi · 8 KB`** — the
+  filename never wraps or breaks, the extension and the real size both fully visible on one line,
+  equal padding above the first line and below the second (unchanged from round 1's own fix).
+  Confirmed via a temporary debug log (`planSaveFileLabel`'s own real `availableWidthPx` and every
+  candidate's own real measured width, removed before commit — see below) that this is the honest,
+  measured answer, not a repeat of round 1's bug wearing a different mechanism: at this real
+  device's font metrics (`OrtType.control` at scale 2.0, `ortScaleFor` upscaling this ~480dp-wide
+  device's own density to 1.23×), `availableWidthPx=1000`; the four candidates alone measured 1541 /
+  1334 / 1017 / 604px — the third rung (`ort-export-…-20260913.adi`, the one an easy visual estimate
+  from round 1's own capture suggested should fit) misses by a mere 17px, honestly, and only the
+  shortest rung plus the size (845px) fits. Compared by eye against
+  `design/canvas/Settings-Export.dc.html`. Scratch captures only
+  (`%TEMP%\ort-tour-cf07-r1050-final`; two earlier scratch attempts at this round,
+  `%TEMP%\ort-tour-cf07-r1050d`/`r1050e`, used to run the debug-log probe above, superseded by this
+  one taken from the clean, debug-log-free build), never written to `results/ui-audit/`. AVD shut
+  down after (`adb -s emulator-5566 emu kill`) — the other three builders'/validators' emulators on
+  5558/5560/5562 left untouched throughout; `ort_audit_cf07` itself left in place (created, not
+  destroyed) in case a future round needs a free AVD again under the same contention.
+
+**Left open / not done:** the button's visible label still cannot show the scope or the timestamp
+at font scale 2.0 on this real, ~480dp-wide device — not because of an arbitrary budget any more,
+but because the honestly measured available width (1000px) is genuinely narrower than every
+candidate except the shortest, by margins as small as 17px for the next rung up. A future, narrower
+`OrtType.control` at this scale, a shorter filename shape, or a design decision to drop the "Save
+file" words at this scale to give the filename its own two lines would all widen the room this
+ladder has to work with; none of those are this round's own scope. Round 1's own trade (the real,
+untruncated name is still what `contentDescription` and the SAF picker itself show) still applies
+unchanged.
+
+---
+
 ## 2026-09-12 (WPCF07 follow-up: R-1050 — the Save file label's filename gets its own never-wrapping line and the button keeps symmetric padding as it grows)
 
 ### WPCF07 follow-up — `Settings-Export.dc.html` polish from the lead's own review of the merged R-1044/R-1045 capture: the filename no longer breaks inside its own timestamp, and the two-line label sits with equal padding top and bottom

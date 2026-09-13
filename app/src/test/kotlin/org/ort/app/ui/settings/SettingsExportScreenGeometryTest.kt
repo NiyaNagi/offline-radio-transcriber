@@ -3,20 +3,26 @@ package org.ort.app.ui.settings
 import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.text.TextMeasurer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
@@ -249,135 +255,278 @@ class SettingsExportScreenGeometryTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // R-1050 (register, lead capture `overnight/CF07-settings-export@2x-end.png`): at font scale
-    // 2.0 the filename broke mid-token inside its own timestamp
-    // (`ort-export-tonight-202609` / `13-022935.adi · 8 KB`), and the two-line label's first line
-    // sat flush against the button's top edge while the last line had more room below — the button
-    // grew to fit the text without keeping its own vertical padding. `middleEllipsizeFileName`'s own
-    // pure-function tests assert the string transform directly (never wraps, never a fragment of
-    // the timestamp); `ExportSaveFileButtonContent`'s own render tests assert bounds, not prose.
+    // R-1050 round 2 (register — round 1, a fixed character budget, was sent back): the round 1
+    // fix kept `Save file` inside the button and never mid-token, but at a 12-character budget the
+    // label named nothing — no scope, no timestamp — while using only about half the button's own
+    // real width. `filenameCandidates`'s own pure-function tests assert the string transform
+    // directly; `ExportSaveFileButtonContent`'s own render tests assert bounds and real text
+    // content, never prose.
     // -----------------------------------------------------------------------------------------
 
-    @Test
-    fun `R_1050 middleEllipsizeFileName returns the name unchanged when it already fits the budget`() {
-        val name = "ort-export-all-20260913-022935.json"
-        assertEquals(name, middleEllipsizeFileName(name, maxVisibleLength = name.length))
+    private companion object {
+        private const val REAL_FILE_NAME = "ort-export-tonight-20260913-022935.adi"
     }
 
     @Test
-    fun `R_1050 middleEllipsizeFileName cuts only at a real hyphen, never mid-digit-run, for ADIF`() {
-        val name = "ort-export-tonight-20260913-022935.adi"
-        val result = middleEllipsizeFileName(name, maxVisibleLength = 26)
-        val keptPrefix = result.substringBefore("…")
-        assertTrue(
-            "expected the kept prefix to be a real, hyphen-terminated prefix of the original name " +
-                "(or empty), got '$keptPrefix' from '$result'",
-            keptPrefix.isEmpty() || (name.startsWith(keptPrefix) && keptPrefix.endsWith("-")),
-        )
-        assertTrue("expected the real extension kept verbatim, got '$result'", result.endsWith(".adi"))
-        val droppedSpan = result.removePrefix(keptPrefix).removePrefix("…").removeSuffix(".adi")
-        assertFalse(
-            "expected the timestamp dropped whole rather than a partial fragment of it left " +
-                "showing, got '$result' (dropped span '$droppedSpan')",
-            droppedSpan.any { it.isDigit() },
+    fun `R_1050 filenameCandidates' first candidate is always the real, untouched name`() {
+        assertEquals(REAL_FILE_NAME, filenameCandidates(REAL_FILE_NAME).first())
+    }
+
+    @Test
+    fun `R_1050 filenameCandidates' shortened candidate cuts only at a real hyphen, keeps the timestamp whole`() {
+        val shortened = filenameCandidates(REAL_FILE_NAME)[1]
+        assertEquals(
+            "expected the scope word replaced by one ellipsis, the timestamp and extension kept " +
+                "whole, got '$shortened'",
+            "ort-export-…-20260913-022935.adi",
+            shortened,
         )
     }
 
     @Test
-    fun `R_1050 middleEllipsizeFileName keeps the real extension for every export format`() {
+    fun `R_1050 filenameCandidates keeps the real extension and full timestamp for every export format`() {
         for (ext in listOf("adi", "csv", "json", "txt")) {
             val name = "ort-export-everything-20260913-022935.$ext"
-            val result = middleEllipsizeFileName(name, maxVisibleLength = 26)
-            assertTrue("format $ext: expected '.$ext' kept verbatim, got '$result'", result.endsWith(".$ext"))
+            val shortened = filenameCandidates(name)[1]
+            assertTrue("format $ext: expected '.$ext' kept verbatim, got '$shortened'", shortened.endsWith(".$ext"))
+            assertTrue(
+                "format $ext: expected the timestamp's own digits kept whole, got '$shortened'",
+                shortened.contains("20260913") && shortened.contains("022935"),
+            )
         }
     }
 
     @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `R_1050 the filename plus size line renders as one line, never wrapping mid-token, at font scale 2_0`() {
+    fun `R_1050 filenameCandidates never invents a shortened form when there is no scope word to drop`() {
+        // No token between the fixed prefix and the timestamp — nothing is actually droppable, so
+        // inventing an ellipsis here would claim information was omitted when none was.
+        val name = "ort-export-20260913-022935.adi"
+        assertEquals(listOf(name), filenameCandidates(name))
+    }
+
+    /** Reads a tagged `Text` node's own real semantics text (not a substring match) — used below to
+     * prove the rendered filename line is *exactly* one of [filenameCandidates]' own real rungs
+     * (optionally with the size suffix appended), never a string Compose's own
+     * `overflow = TextOverflow.Ellipsis` backstop additionally truncated (round 2's own real-device
+     * finding: even the one "drop the scope word" rung this round started with did not always fit
+     * the real available width, and the backstop then cut into the timestamp *and* the extension
+     * both — see the ladder [filenameCandidates] now builds, and this file's own CHANGELOG entry). */
+    private fun renderedText(tag: String): String = composeTestRule.onNodeWithTag(tag).fetchSemanticsNode()
+        .config[SemanticsProperties.Text].joinToString(separator = "") { it.text }
+
+    /**
+     * R-1050 round 2 (register): renders [ExportSaveFileButtonContent] with the button's own real
+     * horizontal padding reproduced around it (`ExportSaveFileButton`'s own outer `Box` already
+     * subtracts that padding before this composable ever sees the width). The *root* width comes
+     * from the caller's own `@Config(qualifiers = "wNNNdp-...")`, never a nested
+     * `Box(Modifier.width(N.dp))` alone: `OrtTheme` wraps content in a `Surface(fillMaxSize())`
+     * bounded by the real Robolectric root, and — a round 2 finding, not a report — a nested Box
+     * requesting a width *wider* than that root is silently clamped down to it, so several of this
+     * file's own first-draft "480dp"/"600dp" tests were silently measuring Robolectric's own
+     * unconfigured default root width instead (its own real behaviour still held; the *label* did
+     * not match what was actually rendered — a `@Config` per real width is the only way `OrtTheme`'s
+     * own [org.ort.app.ui.theme.ortScaleFor] and this composable's own [BoxWithConstraints] see the
+     * width a test claims to give them).
+     */
+    private fun setContentAtRootWidth(fontScale: Float, sizeBytes: Long = 184_000L) {
         composeTestRule.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
                 OrtTheme {
-                    Box(modifier = Modifier.width(260.dp)) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
                         ExportSaveFileButtonContent(
-                            fileName = "ort-export-tonight-20260913-022935.adi",
-                            sizeBytes = 8_000L,
+                            fileName = REAL_FILE_NAME,
+                            sizeBytes = sizeBytes,
                             color = OrtColors.accentOnGreen,
                         )
                     }
                 }
             }
         }
-        // `export-save-file-line1` ("Save file") is short enough it can never itself wrap — its own
-        // real rendered height at this font scale is the one-line reference; reverting
-        // `softWrap = false`/`middleEllipsizeFileName` on line 2 would let a plain `Text` wrap this
-        // long a string across several lines at this narrow a width, multiplying its height.
-        val line1Bounds = composeTestRule.onNodeWithTag("export-save-file-line1").getUnclippedBoundsInRoot()
-        val line2Bounds = composeTestRule.onNodeWithTag("export-save-file-line2").getUnclippedBoundsInRoot()
-        val line1Height = (line1Bounds.bottom - line1Bounds.top).value
-        val line2Height = (line2Bounds.bottom - line2Bounds.top).value
+    }
+
+    /**
+     * Asserting an exact match against one of [filenameCandidates]' own rungs (with or without the
+     * size suffix) is deliberately chosen over asserting specific digits are present: real
+     * measurement at these two real widths turns out to need the ladder's shorter rungs even for
+     * this one real filename (`OrtType.control` at 2x plus the button's own padding leaves less
+     * room than the round 1 discussion assumed) — proven honestly, not asserted away, by the
+     * wide-width test below, which confirms the *preference* (timestamp over scope word) does hold
+     * once there is genuinely enough room. What must never happen regardless of which rung is
+     * chosen: the extension lost, or the text corrupted into something that is not a real,
+     * intentional candidate — both would fail this exact-match check.
+     */
+    private fun assertFilenameLineIsARealCandidateNeverCorrupted() {
+        setContentAtRootWidth(fontScale = 2f)
+        val line2Text = renderedText("export-save-file-line2")
+        val candidates = filenameCandidates(REAL_FILE_NAME)
         assertTrue(
-            "expected the filename+size line to render at roughly one line's height " +
-                "(line1=${line1Height}dp); got ${line2Height}dp, consistent with wrapping onto more than one line",
-            line2Height <= line1Height * 1.5f,
+            "expected the filename line to exactly match one real candidate, with or without " +
+                "' · 184 KB' appended — never a string further truncated by the overflow backstop " +
+                "— got '$line2Text', real candidates were $candidates",
+            candidates.any { line2Text == it || line2Text == "$it · 184 KB" },
+        )
+        assertTrue("expected the real extension kept verbatim, got '$line2Text'", line2Text.contains(".adi"))
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1050 the filename line is a real, uncorrupted candidate with its extension kept at 390dp scale 2_0`() {
+        assertFilenameLineIsARealCandidateNeverCorrupted()
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w480dp-h844dp-420dpi")
+    fun `R_1050 the filename line is a real, uncorrupted candidate with its extension kept at 480dp scale 2_0`() {
+        assertFilenameLineIsARealCandidateNeverCorrupted()
+    }
+
+    /**
+     * R-1050 round 2 (register): [planSaveFileLabel]'s own decision ladder, tested directly against
+     * an explicit, known `availableWidthPx` rather than through a real layout pass — Robolectric's
+     * own font/layout metrics do not reliably match a real device's (this package's own R-260/R-552
+     * precedent; this round's own real-device recapture confirms it again the other way too: this
+     * file's first attempt at rendering through real layout at 390dp/480dp/600dp measured the
+     * *entire* name-plus-size fitting on Robolectric alone, never once reaching a shorter rung, while
+     * the real device needed one). [measureCandidateWidths] gets the ladder's own real, measured
+     * pixel widths from a real [androidx.compose.ui.text.TextMeasurer] and the button's own real
+     * style — the same measurer [planSaveFileLabel] itself uses — so the thresholds below are real
+     * numbers for this real filename and style, never invented ones.
+     */
+    private fun measureCandidateWidths(fontScale: Float = 2f): Pair<TextMeasurer, TextStyle> {
+        lateinit var measurer: TextMeasurer
+        lateinit var style: TextStyle
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                OrtTheme {
+                    measurer = rememberTextMeasurer()
+                    style = OrtType.control.copy(fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+        return measurer to style
+    }
+
+    private fun widthOf(measurer: TextMeasurer, style: TextStyle, text: String): Int =
+        measurer.measure(text = text, style = style).size.width
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1050 planSaveFileLabel keeps the full name and size together once both measure within the width`() {
+        val (measurer, style) = measureCandidateWidths()
+        val fullName = filenameCandidates(REAL_FILE_NAME).first()
+        val ampleWidth = widthOf(measurer, style, "$fullName · 184 KB") + 10
+        val plan = planSaveFileLabel(REAL_FILE_NAME, 184_000L, ampleWidth, style, measurer)
+        assertEquals("$fullName · 184 KB", plan.filenameLine)
+        assertEquals(null, plan.sizeLine)
+    }
+
+    /**
+     * "Put the size on its own third line rather than cutting the name further" (the register's own
+     * instruction): a width that fits the full name alone but not the full name plus the size
+     * together must keep the full name — including the scope word — never drop to a shorter rung
+     * just to make the size fit alongside it.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1050 planSaveFileLabel keeps the full name and gives the size its own line rather than shortening it`() {
+        val (measurer, style) = measureCandidateWidths()
+        val fullName = filenameCandidates(REAL_FILE_NAME).first()
+        val fullNameWidth = widthOf(measurer, style, fullName)
+        val combinedWidth = widthOf(measurer, style, "$fullName · 184 KB")
+        val width = (fullNameWidth + combinedWidth) / 2 // fits the name alone, not name-plus-size
+        val plan = planSaveFileLabel(REAL_FILE_NAME, 184_000L, width, style, measurer)
+        assertEquals(fullName, plan.filenameLine)
+        assertEquals(" · 184 KB", plan.sizeLine)
+    }
+
+    /**
+     * "Prefer keeping the timestamp over the scope word when something must go": once the width
+     * cannot fit the full name at all, the next rung — scope word dropped, full timestamp and
+     * extension kept — must win, never a shorter rung and never a corrupted string.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1050 planSaveFileLabel drops the scope word before ever touching the timestamp`() {
+        val (measurer, style) = measureCandidateWidths()
+        val candidates = filenameCandidates(REAL_FILE_NAME)
+        val keepFullTimestamp = candidates[1]
+        val fullName = candidates.first()
+        val width = (widthOf(measurer, style, keepFullTimestamp) + widthOf(measurer, style, fullName)) / 2
+        val plan = planSaveFileLabel(REAL_FILE_NAME, 184_000L, width, style, measurer)
+        assertEquals(keepFullTimestamp, plan.filenameLine)
+        assertEquals(" · 184 KB", plan.sizeLine)
+        assertFalse("expected the scope word gone, got '${plan.filenameLine}'", plan.filenameLine.contains("tonight"))
+        assertTrue(
+            "expected the full timestamp kept, got '${plan.filenameLine}'",
+            plan.filenameLine.contains("20260913-022935"),
         )
     }
 
     /**
-     * R-1050 follow-up (found on the real device recapture verifying this very fix, not by
-     * inspection): the first `MAX_VISIBLE_FILE_NAME_LENGTH` (26) rendered one line as required, but
-     * `export-save-file-line2`'s own `overflow = TextOverflow.Ellipsis` backstop silently ate the
-     * size suffix once the filename-plus-size string still did not fit the button's real width —
-     * "one line" alone (the test above) does not prove *nothing was clipped off the end* of that
-     * line. This compares the real, constrained line's rendered width against the *same* string
-     * rendered with no width limit at all (its true, natural width) — if they match, the whole
-     * string genuinely fit and the backstop never fired; if the constrained one is narrower, some
-     * of it — the size, always the tail of this line — was cut.
-     *
-     * Honest limitation (constitution VIII: a passing test is not evidence on its own): Robolectric
-     * cannot reliably reproduce real device font metrics (this package's own `R_260`/`R_552`
-     * precedent already states this), so this test did *not* itself fail against the pre-fix
-     * `MAX_VISIBLE_FILE_NAME_LENGTH = 26` — the real device recapture that found the defect, and
-     * confirmed this fix, is the actual evidence for the exact budget chosen; this test's own job is
-     * narrower and still real: proving the *mechanism* (comparing a constrained render against its
-     * own natural width) would catch a regression wherever Robolectric's metrics do reflect it.
+     * Once even the scope-less candidate does not fit, the ladder degrades further (the date kept,
+     * the time-of-day dropped) rather than falling straight to the shortest rung — still never the
+     * extension, and still never a fragment of whichever timestamp token survives.
      */
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `R_1050 the filename plus size line never clips the size at font scale 2_0`() {
-        val fileName = "ort-export-tonight-20260913-022935.adi"
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
-                OrtTheme {
-                    Box(modifier = Modifier.width(390.dp)) {
-                        ExportSaveFileButtonContent(
-                            fileName = fileName,
-                            sizeBytes = 184_000L,
-                            color = OrtColors.accentOnGreen,
-                        )
-                    }
-                    // The exact same combined string `ExportSaveFileButtonContent`'s own line 2
-                    // renders, but unconstrained (a very wide box) — its real, untruncated width.
-                    Box(modifier = Modifier.width(2000.dp)) {
-                        Text(
-                            text = middleEllipsizeFileName(fileName, MAX_VISIBLE_FILE_NAME_LENGTH) + " · 184 KB",
-                            style = OrtType.control.copy(fontWeight = FontWeight.Medium),
-                            softWrap = false,
-                            modifier = Modifier.testTag("line2-natural-reference"),
-                        )
-                    }
-                }
-            }
-        }
-        val line2Bounds = composeTestRule.onNodeWithTag("export-save-file-line2").getUnclippedBoundsInRoot()
-        val naturalBounds = composeTestRule.onNodeWithTag("line2-natural-reference").getUnclippedBoundsInRoot()
-        val line2Width = (line2Bounds.right - line2Bounds.left).value
-        val naturalWidth = (naturalBounds.right - naturalBounds.left).value
-        assertTrue(
-            "expected the filename+size line to render at its own real, natural width (never " +
-                "clipped) — natural=${naturalWidth}dp, rendered=${line2Width}dp",
-            line2Width >= naturalWidth - 2f,
+    fun `R_1050 planSaveFileLabel keeps the date over the time-of-day once the scope-less candidate no longer fits`() {
+        val (measurer, style) = measureCandidateWidths()
+        val candidates = filenameCandidates(REAL_FILE_NAME)
+        val keepFullTimestamp = candidates[1]
+        val keepDateOnly = candidates[2]
+        val width = (widthOf(measurer, style, keepDateOnly) + widthOf(measurer, style, keepFullTimestamp)) / 2
+        val plan = planSaveFileLabel(REAL_FILE_NAME, 184_000L, width, style, measurer)
+        assertEquals(keepDateOnly, plan.filenameLine)
+        assertTrue("expected the date kept, got '${plan.filenameLine}'", plan.filenameLine.contains("20260913"))
+        assertFalse(
+            "expected the time-of-day dropped, got '${plan.filenameLine}'",
+            plan.filenameLine.contains("022935"),
         )
+        assertTrue("expected the real extension kept, got '${plan.filenameLine}'", plan.filenameLine.contains(".adi"))
+    }
+
+    /**
+     * Narrower than every real rung: the shortest candidate (extension always kept) is still shown
+     * in full, never a silently dropped identity.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1050 planSaveFileLabel shows the shortest real candidate when narrower than every rung`() {
+        val (measurer, style) = measureCandidateWidths()
+        val plan = planSaveFileLabel(REAL_FILE_NAME, 184_000L, availableWidthPx = 1, style, measurer)
+        assertEquals(filenameCandidates(REAL_FILE_NAME).last(), plan.filenameLine)
+        assertTrue(plan.filenameLine.endsWith(".adi"))
+    }
+
+    /**
+     * R-1050 round 2: the real, formatted size string must appear in full somewhere in the label —
+     * on line 2 beside the filename if both measured within the available width, otherwise on its
+     * own line 3 ("put the size on its own third line rather than cutting the name further", the
+     * register's own instruction) — never silently dropped or ellipsis-truncated by the
+     * `overflow = TextOverflow.Ellipsis` backstop the way round 1's own 26-character budget let
+     * happen on the real device.
+     */
+    private fun assertSizeFullyVisible() {
+        setContentAtRootWidth(fontScale = 2f)
+        val hasLine3 = composeTestRule.onAllNodesWithTag("export-save-file-line3").fetchSemanticsNodes().isNotEmpty()
+        val sizeLineTag = if (hasLine3) "export-save-file-line3" else "export-save-file-line2"
+        composeTestRule.onNodeWithTag(sizeLineTag).assertTextContains("184 KB", substring = true)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1050 the real size is fully visible, never ellipsized, at 390dp scale 2_0`() {
+        assertSizeFullyVisible()
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w480dp-h844dp-420dpi")
+    fun `R_1050 the real size is fully visible, never ellipsized, at 480dp scale 2_0`() {
+        assertSizeFullyVisible()
     }
 
     /**
@@ -387,37 +536,46 @@ class SettingsExportScreenGeometryTest {
      * (the R-380/R-543 accessible-name fix) genuinely prunes every descendant from the semantics
      * tree on a real device, so a query from inside a test could never reach a tagged node inside
      * the real button directly (this file's own `ExportSaveFileButton` doc comment has the finding).
+     * The label may now be one, two or three lines ([planSaveFileLabel]'s own measured choice) — the
+     * *last* real line, whichever tag it is, is what the bottom inset is measured against. The root
+     * width comes from the caller's own `@Config` — see [setContentAtRootWidth]'s own doc comment
+     * for why a nested `Box(Modifier.width(N.dp))` alone cannot be trusted for a width wider than
+     * Robolectric's own unconfigured default root.
      */
-    private fun assertSymmetricButtonPadding(widthDp: Int, fontScale: Float) {
+    private fun assertSymmetricButtonPadding(fontScale: Float) {
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
                 OrtTheme {
-                    Box(modifier = Modifier.width(widthDp.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .requiredHeightIn(min = 48.dp)
-                                .testTag("button-host"),
-                            // Matches `ExportSaveFileButton`'s own real outer Box exactly —
-                            // without this, a short (1.0-scale) content block that does not reach
-                            // the 48dp floor would sit top-aligned in this test-only host instead
-                            // of centred like the real button, producing a false asymmetry this
-                            // harness itself introduced rather than one the fix left behind.
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            ExportSaveFileButtonContent(
-                                fileName = "ort-export-tonight-20260913-022935.adi",
-                                sizeBytes = 8_000L,
-                                color = OrtColors.accentOnGreen,
-                            )
-                        }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .requiredHeightIn(min = 48.dp)
+                            .padding(horizontal = 20.dp)
+                            .testTag("button-host"),
+                        // Matches `ExportSaveFileButton`'s own real outer Box exactly — without
+                        // this, a short (1.0-scale) content block that does not reach the 48dp
+                        // floor would sit top-aligned in this test-only host instead of centred
+                        // like the real button, producing a false asymmetry this harness itself
+                        // introduced rather than one the fix left behind.
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        ExportSaveFileButtonContent(
+                            fileName = REAL_FILE_NAME,
+                            sizeBytes = 184_000L,
+                            color = OrtColors.accentOnGreen,
+                        )
                     }
                 }
             }
         }
         val hostBounds = composeTestRule.onNodeWithTag("button-host").getUnclippedBoundsInRoot()
         val firstLineBounds = composeTestRule.onNodeWithTag("export-save-file-line1").getUnclippedBoundsInRoot()
-        val lastLineTag = if (fontScale >= 1.5f) "export-save-file-line2" else "export-save-file-line1"
+        val hasLine3 = composeTestRule.onAllNodesWithTag("export-save-file-line3").fetchSemanticsNodes().isNotEmpty()
+        val lastLineTag = when {
+            fontScale < 1.5f -> "export-save-file-line1"
+            hasLine3 -> "export-save-file-line3"
+            else -> "export-save-file-line2"
+        }
         val lastLineBounds = composeTestRule.onNodeWithTag(lastLineTag).getUnclippedBoundsInRoot()
 
         val topInset = (firstLineBounds.top - hostBounds.top).value
@@ -428,17 +586,17 @@ class SettingsExportScreenGeometryTest {
 
         assertTrue(
             "expected the top inset to be at least the button's own padding ($minExpectedInset dp), " +
-                "got ${topInset}dp at ${widthDp}dp/fontScale=$fontScale (host=$hostBounds first=$firstLineBounds)",
+                "got ${topInset}dp at fontScale=$fontScale (host=$hostBounds first=$firstLineBounds)",
             topInset >= minExpectedInset,
         )
         assertTrue(
             "expected the bottom inset to be at least the button's own padding ($minExpectedInset dp), " +
-                "got ${bottomInset}dp at ${widthDp}dp/fontScale=$fontScale (host=$hostBounds last=$lastLineBounds)",
+                "got ${bottomInset}dp at fontScale=$fontScale (host=$hostBounds last=$lastLineBounds)",
             bottomInset >= minExpectedInset,
         )
         assertTrue(
             "expected the top and bottom insets to be equal within 2dp, got top=${topInset}dp " +
-                "bottom=${bottomInset}dp at ${widthDp}dp/fontScale=$fontScale",
+                "bottom=${bottomInset}dp at fontScale=$fontScale",
             abs(topInset - bottomInset) <= 2f,
         )
     }
@@ -447,25 +605,27 @@ class SettingsExportScreenGeometryTest {
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     @Config(qualifiers = "w390dp-h844dp-420dpi")
     fun `R_1050 the label's top and bottom insets are equal and at least the button's padding at 390dp scale 1_0`() {
-        assertSymmetricButtonPadding(widthDp = 390, fontScale = 1f)
+        assertSymmetricButtonPadding(fontScale = 1f)
     }
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     @Config(qualifiers = "w390dp-h844dp-420dpi")
     fun `R_1050 the label's top and bottom insets are equal and at least the button's padding at 390dp scale 2_0`() {
-        assertSymmetricButtonPadding(widthDp = 390, fontScale = 2f)
+        assertSymmetricButtonPadding(fontScale = 2f)
     }
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w480dp-h844dp-420dpi")
     fun `R_1050 the label's top and bottom insets are equal and at least the button's padding at 480dp scale 1_0`() {
-        assertSymmetricButtonPadding(widthDp = 480, fontScale = 1f)
+        assertSymmetricButtonPadding(fontScale = 1f)
     }
 
     @Test
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w480dp-h844dp-420dpi")
     fun `R_1050 the label's top and bottom insets are equal and at least the button's padding at 480dp scale 2_0`() {
-        assertSymmetricButtonPadding(widthDp = 480, fontScale = 2f)
+        assertSymmetricButtonPadding(fontScale = 2f)
     }
 }
