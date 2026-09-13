@@ -104,6 +104,47 @@ class TourIdsTest {
         )
     }
 
+    /**
+     * WPUI follow-up (R-1006's on-device proof): `confirmed` picks the *first* CONFIRMED
+     * transmission by `samplePosition` — `overnight-live`'s own tx1, real audio at the
+     * `ScenarioFixtures.transmission()` 4.2s default — too short to still be playing by the time a
+     * drillIn step that navigates away and captures again actually reaches its own `drawToBitmap()`
+     * (this session's own device evidence: the plain `confirmed` step's 1.0 capture showed Live, not
+     * Playback, while its @2x sibling of the identical step happened to still catch Playing — a
+     * timing race, not a real fix). `confirmed-longest` must resolve to a *different*, longer-lived
+     * row instead. Discrimination: temporarily changed [TourIds.resolveLongestConfirmedTransmissionId]
+     * to reuse [TourIds.resolveTransmissionId]'s plain `confirmed` lookup (first-by-`samplePosition`,
+     * ignoring `durationMs`), watched this fail (`resolved == tx1Id`), reverted.
+     */
+    @Test
+    fun `R_TOUR_IDS_TRANSMISSION_CONFIRMED_LONGEST resolves to the CONFIRMED row with the greatest duration`() =
+        runTest {
+            val result = Scenarios.load(context, "overnight-live")
+            val sessionId = requireNotNull(result.primarySessionId)
+            val db = OrtDatabase.create(context)
+            val tx1Id = requireNotNull(
+                TourIds.resolveSeed(context, sessionId, mapOf("transmission" to "confirmed"))?.openTransmissionId,
+            )
+
+            val seed = TourIds.resolveSeed(context, sessionId, mapOf("transmission" to "confirmed-longest"))
+
+            val resolvedId = requireNotNull(seed?.openTransmissionId) { "no id resolved for 'confirmed-longest'" }
+            val resolvedRow = requireNotNull(db.transmissionDao().getById(resolvedId))
+            val everyConfirmedDuration = db.transmissionDao().listBySession(sessionId)
+                .filter { it.attributionState == AttributionState.CONFIRMED }
+                .map { it.durationMs }
+            assertEquals(AttributionState.CONFIRMED, resolvedRow.attributionState)
+            assertEquals(
+                "expected the longest CONFIRMED duration, got ${resolvedRow.durationMs} of $everyConfirmedDuration",
+                everyConfirmedDuration.max(),
+                resolvedRow.durationMs,
+            )
+            assertTrue(
+                "expected 'confirmed-longest' ($resolvedId) to differ from plain 'confirmed' ($tx1Id)",
+                resolvedId != tx1Id,
+            )
+        }
+
     @Test
     fun `R_TOUR_IDS_STATION_CALLSIGN a callsign resolves to that station's real database id`() = runTest {
         Scenarios.load(context, "stations-14-nights")
