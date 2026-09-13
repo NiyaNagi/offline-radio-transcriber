@@ -449,6 +449,62 @@ class LogPollingTest {
         assertEquals("4 s", item.durationLabel) // the fixture's default 4_200ms transmission duration.
     }
 
+    /**
+     * R-1041 (D11, register): found while proving `LogFilterOrigin.Transmission`'s own real
+     * round trip against a real corrected over — [LogPolling]'s own `attributionFrom` duplicates
+     * `ReaderPolling`'s attribution derivation (this file's own doc comment: "deliberately
+     * independent"), including the identical R-189 bug `CorrectionPolling.currentAttribution`
+     * (`ui/data/CorrectionPolling.kt`) already patches for the detail screen alone: every real
+     * correction (`Attribution.withCorrection`, `:core`) writes `INFERRED` with a `NULL`
+     * confidence (there is no calibrated number for "a human said so"), and the state-based
+     * branch below requires a non-null one for INFERRED, silently downgrading a corrected row
+     * back to `Attribution.unknown()` — discarding its real, just-written `stationId` — the
+     * moment it reaches the Log, not just the moment it reaches Undo. `entity.corrected` is the
+     * same real, structural signal `CorrectionPolling.currentAttribution` already keys off.
+     */
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 a corrected transmission shows its real callsign in the Log, never UNKNOWN`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.transmissionDao().insert(
+            TransmissionEntity(
+                id = "TX1",
+                sessionId = "S1",
+                threadId = null,
+                startedAtUtc = 0L,
+                endedAtUtc = 1_000L,
+                durationMs = 4_200L,
+                audioFormat = "flac/16k/mono",
+                preRollMs = 200,
+                postRollMs = 200,
+                frequencyHz = 146_960_000L,
+                frequencyProvenance = "measured",
+                mode = null,
+                signalStrength = 7.0,
+                channelName = null,
+                voiceprintId = null,
+                attributionState = AttributionState.INFERRED,
+                stationId = "KA7LWH",
+                attributionConfidence = null,
+                attributionSourceTransmissionId = null,
+                processingState = TransmissionState.COMPLETE,
+                rejectionReason = null,
+                samplePosition = 1L,
+                monotonicStartNanos = 0L,
+                utcOffsetMinutes = 0,
+                calibrationId = null,
+                executionProvider = null,
+                corrected = true,
+            ),
+        )
+
+        val state = LogPolling.screenState(context, "S1", LogFilterSelection(), LogQuickFilterId.All)
+
+        val row = (state.items.single() as LogListItem.Row).state
+        assertEquals(AttributionState.INFERRED, row.attribution?.state)
+        assertEquals("KA7LWH", row.attribution?.stationId)
+    }
+
     private fun session(id: String, startedAt: Long = 0L, captureMode: String? = null, audioRouteKind: String? = null) =
         SessionEntity(
             id = id,

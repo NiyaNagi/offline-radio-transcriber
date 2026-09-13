@@ -895,9 +895,24 @@ public object LogPolling {
         )
     }
 
-    /** Duplicated from `ReaderPolling` deliberately (see file doc comment) — that function is private there. */
+    /**
+     * Duplicated from `ReaderPolling` deliberately (see file doc comment) — that function is
+     * private there.
+     *
+     * R-1041 (D11, register): [entity.corrected] is checked first, the same real, structural
+     * signal [org.ort.app.ui.data.CorrectionPolling.currentAttribution] already keys off for the
+     * detail screen (that function's own R-189 doc comment) — every real correction
+     * ([org.ort.core.Attribution.withCorrection]) writes `INFERRED` with a `NULL` confidence
+     * (there is no calibrated number for "a human said so"), which the state-based branch below
+     * would otherwise downgrade to [Attribution.unknown], discarding the real, just-written
+     * `stationId` the moment a corrected row reached the Log — not just Undo, and not just the
+     * detail screen this bug was first found on.
+     */
     private fun attributionFrom(entity: TransmissionEntity): Attribution {
         val stationId = entity.stationId
+        if (entity.corrected && stationId != null) {
+            return Attribution.unknown().withCorrection(stationId)
+        }
         val confidence = entity.attributionConfidence
         return when (entity.attributionState) {
             AttributionState.CONFIRMED ->

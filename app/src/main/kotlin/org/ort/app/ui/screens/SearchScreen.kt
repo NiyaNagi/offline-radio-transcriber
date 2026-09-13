@@ -112,6 +112,9 @@ public fun SearchScreen(
     // every other destination gets — see [SearchHeaderRow]. No-op by default; see
     // [org.ort.app.ui.screens.SearchContent]'s own doc comment on this same parameter.
     onBack: () -> Unit = {},
+    // R-1042 (IA-5, register): reopens the drawer — see [SearchHeaderRow]'s own doc comment. No-op
+    // by default so every existing caller keeps compiling unchanged until the nav host wires it.
+    onDrawer: () -> Unit = {},
 ) {
     val queryFocusRequester = remember { FocusRequester() }
     // R-200: focused, keyboard up, on entry to the *untouched* initial screen only — never on
@@ -146,6 +149,7 @@ public fun SearchScreen(
                 onSearch = onSearch,
                 onBack = onBack,
                 focusRequester = queryFocusRequester,
+                onDrawer = onDrawer,
             )
             QuickFilterChipsRow(
                 input = input,
@@ -202,6 +206,10 @@ private fun SearchHeaderRow(
     onSearch: () -> Unit,
     onBack: () -> Unit,
     focusRequester: FocusRequester,
+    // R-1042 (IA-5, register): `Search` is now reachable from the drawer directly (not only from
+    // another destination's search icon), so `onBack`'s "return to wherever this was opened from"
+    // is no longer the only way to reopen the drawer — see this composable's own doc comment.
+    onDrawer: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier
@@ -211,6 +219,20 @@ private fun SearchHeaderRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
+        // R-1042: the same drawer icon `ui/components/Rows.kt`'s `ScreenHeader` draws for every
+        // other destination — `Search` draws its own header at all (R-200's own doc comment: a
+        // back chevron plus the inline field, not the generic `ScreenHeader`), so it must draw
+        // this itself too, or the operator who reached `Search` from the drawer row has no way
+        // back into it except system back.
+        Icon(
+            imageVector = OrtIcons.drawer,
+            contentDescription = "Open navigation",
+            tint = OrtColors.textIcon,
+            modifier = Modifier
+                .size(21.dp)
+                .clickable(role = Role.Button, onClickLabel = "Open navigation", onClick = onDrawer)
+                .testTag("search-drawer-icon"),
+        )
         // R-200: `Search.dc.html`'s own header is a back chevron directly beside the inline
         // field, not the generic drawer/search icon row every other destination's `ScreenHeader`
         // draws — WP3's host still renders that generic header above this content today (it does

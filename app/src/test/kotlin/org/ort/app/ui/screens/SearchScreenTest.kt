@@ -85,6 +85,7 @@ class SearchScreenTest {
         onOpenFilters: () -> Unit = {},
         onDismissFilters: () -> Unit = {},
         onBack: () -> Unit = {},
+        onDrawer: () -> Unit = {},
     ) {
         composeTestRule.setContent {
             OrtTheme {
@@ -102,6 +103,7 @@ class SearchScreenTest {
                     onSearch = onSearch,
                     onOpen = onOpen,
                     onBack = onBack,
+                    onDrawer = onDrawer,
                 )
             }
         }
@@ -206,6 +208,22 @@ class SearchScreenTest {
         composeTestRule.onNodeWithTag("search-back-chevron").performClick()
 
         assert(backed) { "expected the back chevron to invoke onBack" }
+    }
+
+    /**
+     * R-1042 (IA-5, register): `Search` is now a drawer row, reachable from anywhere — before this,
+     * its own header drew no drawer icon at all, so the only way back into the drawer from here was
+     * system back, which does not reopen the drawer, it leaves `Search` entirely.
+     */
+    @Test
+    fun `R_1042 the drawer icon exists and invokes onDrawer`() {
+        var opened = false
+        screen(onDrawer = { opened = true })
+
+        composeTestRule.onNodeWithTag("search-drawer-icon").assertExists()
+        composeTestRule.onNodeWithTag("search-drawer-icon").performClick()
+
+        assert(opened) { "expected the drawer icon to invoke onDrawer" }
     }
 
     // --- R-202/R-203: the filter sheet's live counts and heard-frequency chips flow through ---
