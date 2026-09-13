@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPDIGINIT: R-1066 the no-audio cause line no longer repeats the box's own title)
 
-### <pending> — WPDIGINIT Part B: R-1066 - the transmission detail's audio-absence cause line states only the cause
+### 75a7b52a — WPDIGINIT Part B: R-1066 - the transmission detail's audio-absence cause line states only the cause
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt` (`NoAudioNotice`);
 `app/src/test/kotlin/org/ort/app/ui/screens/TransmissionDetailScreenTest.kt`.
