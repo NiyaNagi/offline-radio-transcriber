@@ -34,6 +34,76 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPSQUELCH: FR-SEG-5 rig squelch fusion, register R-1062)
 
+### 025ec8b0 — WPSQUELCH round 3: the squelch staleness bound must survive a poll descriptor's own rhythm
+
+**Scope:** `:pipeline` (`RigSupervisor`) and `:rig` (`FakeRigTransport`, the rig fake), plus their
+tests. No UI, no `DiagnosticsLog`, no spec files, no register.
+**Requirements/ACs:** FR-SEG-5 (M), FR-RUN-17, CON-SEG-1, constitution IV; register R-1062 (round
+3 — round 2, `7cd7c13c`, was not merged: the coordinator found its staleness watchdog would split
+real overs on the real TH-D75A).
+**What changed:** `squelchStalenessBoundMillis` checked `descriptor.unsolicited` before
+`descriptor.poll`, so **any** push-capable descriptor — including the real
+`kenwood-thd75a.json`, which declares `unsolicited` *and* a 2000 ms `poll` fallback — got a flat
+2000 ms bound. `DescriptorRigModule`'s poll loop writes a whole cycle's commands back-to-back
+then sleeps the *entire* interval before the next cycle, so the natural gap between one cycle's
+last reply and the next cycle's first reply is genuinely close to the poll interval itself, plus
+real reply latency — round 2's flat 2000 ms watchdog was firing on this ordinary rhythm,
+cutting a live, uninterrupted over into pieces a couple of seconds long. Segmentation cannot be
+reprocessed (CON-SEG-1), so this was strictly worse than the silent-loss defect round 2 fixed.
+Fixed:
+- `restartSquelchStaleWatchdog` now runs **only when the descriptor actually polls**
+  (`activeDescriptor?.poll?.intervalMs`), regardless of whether it is also push-capable. A
+  push-only descriptor with no poll fallback gets **no staleness watchdog at all** — there is no
+  natural heartbeat to judge silence against (a quiet radio genuinely sends nothing, by design);
+  loss for it still comes from the transport-lost and disconnect paths, unchanged. No heartbeat
+  command was added for push-only descriptors — this comment says so explicitly rather than
+  silently assuming one exists.
+- `squelchStalenessBoundMillis(pollIntervalMs) = pollIntervalMs × 2`. Justified against the real
+  TH-D75A descriptor's own poll loop (4 writes/cycle, back-to-back) and a modelled realistic link
+  (≥40 ms base reply latency, occasional ~300 ms jitter — Bluetooth SPP's own worst case): the
+  worst-case real gap between watchdog restarts is `pollIntervalMs + 300 ms` (2300 ms for the
+  TH-D75A's 2000 ms interval — already above round 2's flat 2000 ms bound, which is exactly the
+  defect). ×2 gives 4000 ms, 1700 ms (74%) of headroom above that worst case.
+- `declareStaleFromSilence` (the pre-existing generic link-silence backstop, 5–10 s) now applies
+  the identical poll-only gate before emitting a squelch loss — it was silently reintroducing the
+  push-only false-loss defect at its own, much looser timescale.
+- `FakeRigTransport` gains `replyLatencyMillis`/`replyJitterMillis` (both default `0`, so every
+  pre-existing caller's exact synchronous behaviour is unchanged) and `scope`/`random` constructor
+  parameters, so a test can script a realistic delayed-and-jittered reply under virtual time — no
+  prior mechanism for this existed anywhere in the repo.
+**Verified:** `RigSupervisorSquelchTest` (12 cases, `:pipeline`) — two new cases drive the **real**
+bundled `kenwood-thd75a.json` descriptor through `DescriptorRigModule`/`RigSupervisor` with
+realistic reply latency (40 ms flat, and 40 ms + up to 300 ms jitter via a seeded `Random`) and
+assert band 0 stays one uninterrupted open transmission across 30 s of virtual time, zero losses;
+a third proves a push-only descriptor gets no loss over 30 s of genuine silence; a fourth replaces
+round 2's now-invalid push-only staleness test with one proving a genuinely dead **polled** link
+(one reading, then permanent silence, mirroring the existing `R_1015` fixture pattern) still
+reverts to VAD-only within its own derived bound. Discrimination (constitution II): reverted
+`restartSquelchStaleWatchdog` to round 2's actual flat-bound logic — the flat-latency TH-D75A case
+failed with **29 events instead of 1** (repeated false loss/reopen cycles, precisely the
+coordinator's own "pieces a couple of seconds long" description), and the push-only case failed
+too. Restored, reran, both green. Separately reverted `declareStaleFromSilence`'s poll-only guard
+alone — the push-only case failed again (its own 10 s generic backstop reintroducing the same
+defect via a second path). Restored; all 12 cases green. `gradlew :rig:test :segment:test
+:pipeline:testDebugUnitTest` — full modules, green. `gradlew dependencyRules platformGuards build`
+— **green, 20m 42s, real `HF_TOKEN`, no escape hatch** (1109 tasks). `gradlew -p buildSrc test` —
+green. `python tools/spec-check/spec_check.py` — OK. `gradlew ktlintCheck detekt` (whole repo) —
+green (one `MaxLineLength` in the new test file's own helper, fixed). `gradlew coverageMatrix`
+then `coverageMatrixCheck` (separate invocations) — green. `git merge origin/main` — origin had
+moved to `5ee189d6` (WPINIT round 2, WPIMPROVE, and a lead-authored spec entry opening Q23 on
+exactly the two design questions round 1's report raised); merged with both `CHANGELOG.md` and
+`results/coverage-matrix.md` conflicts resolved (the latter by regenerating), no markers left
+(`git grep -n -E "^(<<<<<<<|>>>>>>>)"` — no matches).
+**Left open / not done:** not pushed, per the coordinator's explicit instruction — this branch is
+ahead of `origin/main` by these WPSQUELCH commits plus the merge. The hardware check for R-1062
+now also needs: hold a 20 s over on each band and confirm it renders as one transmission, not
+several (this round's own failure mode, on the real radio rather than the modelled latency). Q23
+(opened by the lead against round 1, `spec/open-questions.md`) is still open — this round changes
+nothing about the two design choices it names (the union rule, the eligibility cutoff). The 2000
+ms push-only floor round 2 introduced no longer exists at all (push-only now has no watchdog);
+confirming that push-only silence genuinely never needs one against the real hardware (rather
+than just the modelled 30 s window here) is part of the same hardware check.
+
 ### 7cd7c13c — WPSQUELCH follow-up: FR-SEG-5 squelch authority can be lost, revert to VAD-only honestly
 
 **Scope:** `:segment` (`Segmenter`, `Squelch.kt`, `SegmentSink.kt`) and `:pipeline`
