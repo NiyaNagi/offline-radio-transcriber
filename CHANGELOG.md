@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPEXP2: R-1039 — the export Save-file path no longer throws on real data; R-1040 — Settings-Export gets its own font-scale 2.0 tour steps)
 
-### (pending — recorded in a follow-up commit) — WPEXP2: R-1039 a CONFIRMED/INFERRED transmission whose station carries no catalog callsign exports honestly instead of throwing; R-1040 adds the CF07 `@2x`/`@2x-end` tour steps
+### 4aec9531 — WPEXP2: R-1039 a CONFIRMED/INFERRED transmission whose station carries no catalog callsign exports honestly instead of throwing; R-1040 adds the CF07 `@2x`/`@2x-end` tour steps
 
 **Scope:** `app/src/main/kotlin/org/ort/app/export/ExportCoordinator.kt`;
 `pipeline/src/main/kotlin/org/ort/pipeline/export/ExportAttribution.kt`,
