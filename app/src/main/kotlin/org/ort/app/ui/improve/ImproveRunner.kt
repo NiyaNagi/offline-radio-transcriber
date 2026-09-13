@@ -4,7 +4,9 @@ import android.content.Context
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import org.ort.data.OrtDatabase
+import org.ort.pipeline.reprocess.ReprocessRunSnapshot
 
 /**
  * R-091 (FR-REP-5/6/9/11): the reprocess-driving seam `Improve-Running` polls. [FakeImproveRunner]
@@ -48,6 +50,17 @@ public interface ImproveRunner {
      * `ImproveContent.kt`'s own `RunningPage` calls this only from its Cancel action.
      */
     public suspend fun cancel()
+
+    /**
+     * Round 2 (coordinator item 1): the real run's own state, observed **without** starting one —
+     * unlike [run], which both starts (idempotently) and observes. `ImproveContent.kt`'s top level
+     * reads this once on every (re)composition — not only across an Activity recreation, but a
+     * plain drawer-away-and-back — to reattach to a run already `Waiting`/`Running`, or to learn one
+     * finished while this screen was gone, without inventing a fabricated summary either way (see
+     * `org.ort.pipeline.reprocess.ReprocessRunSnapshot`'s own kdoc). [FakeImproveRunner] never backs
+     * a persistent run, so it always reports [ReprocessRunSnapshot.NotRunning].
+     */
+    public fun observeState(): Flow<ReprocessRunSnapshot>
 }
 
 public data class ImproveRunProgress(val done: Int, val total: Int)
@@ -85,4 +98,8 @@ public class FakeImproveRunner(
         // Intentionally empty: this fake's own `Flow` already stops the moment its collector does
         // (a cold flow, no persistent backing) — nothing further to tear down.
     }
+
+    /** Always [ReprocessRunSnapshot.NotRunning] — see this class's own kdoc and
+     * [ImproveRunner.observeState]'s. */
+    override fun observeState(): Flow<ReprocessRunSnapshot> = flowOf(ReprocessRunSnapshot.NotRunning)
 }

@@ -3,6 +3,7 @@ package org.ort.app.ui.improve
 import android.content.Context
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import org.ort.pipeline.reprocess.ReprocessRunSnapshot
 import org.ort.pipeline.reprocess.ReprocessWorker
 
 /**
@@ -37,4 +38,7 @@ public class RealImproveRunner(private val context: Context) : ImproveRunner {
     override suspend fun cancel() {
         ReprocessWorker.cancel(context.applicationContext)
     }
+
+    override fun observeState(): Flow<ReprocessRunSnapshot> =
+        ReprocessWorker.observeSnapshot(context.applicationContext)
 }

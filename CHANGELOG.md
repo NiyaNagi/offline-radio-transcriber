@@ -32,6 +32,87 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPREPLIFE round 2: reattach on any composition, an honest Waiting state, the 10-minute execution limit)
+
+### WPREPLIFE round 2 — R-1067: Improve reattaches on any composition (not just recreation), a stop-and-reschedule decision with an honest "Waiting to resume" board
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessWorker.kt` (new
+`ReprocessRunSnapshot`, `observeSnapshot`, `KEY_FINISHED_AT_MILLIS`; `ReprocessRunner` itself still
+untouched), `app/src/main/kotlin/org/ort/app/ui/improve/` (`ImproveRunner.kt`, `RealImproveRunner
+.kt`, `ImproveContent.kt`, `ImproveScreens.kt`, `ImproveViewData.kt`), their tests (new
+`ImproveContentReattachTest.kt`).
+
+**Requirements/ACs:** FR-REP-9, FR-REP-11; constitution I. Register R-1067, coordinator round 2.
+
+**What changed — three items the coordinator's round-2 review named:**
+
+1. **Returning to Improve now shows the running job, not Root.** Round 1's fix (R-1063's
+   `rememberSaveable`) protects `ImprovePage` across an Activity *recreation* only — it does not
+   survive `OrtNavHost` disposing and recomposing `ImproveContent` on a plain drawer switch away and
+   back, which round 1 had wrongly left as an "OrtNavHost problem." `ImproveContent` now reads
+   `ImproveRunner.observeState()` (new — `org.ort.pipeline.reprocess.ReprocessWorker.observeSnapshot`)
+   once on every (re)composition: a run `Waiting` or `Running` forces `page` onto `Running`
+   regardless of what was last remembered; a run that `Finished` while the screen was gone surfaces
+   as a plain, real line on Root ("A run finished while you were away — N of M overs processed"),
+   built only from `WorkInfo.outputData` (`KEY_DONE`/`KEY_TOTAL`/the new `KEY_FINISHED_AT_MILLIS`,
+   a real timestamp `ReprocessWorker` stamps itself) — never the richer per-category
+   `ReprocessStatus.Summary`, which is process-memory only and cannot be honestly reconstructed once
+   nobody was watching when the run ended.
+2. **WorkManager's ~10-minute execution limit — decision: stop-and-reschedule, not a foreground
+   service.** Justified in `ReprocessWorker`'s own kdoc: the checkpoint already makes a stop-and-
+   resume cycle exactly as correct as an uninterrupted run (FR-REP-11's bar is met either way);
+   ColorOS is documented to kill even foreground services under aggressive battery states, so a
+   foreground service would reduce risk, not eliminate the need to handle a stop honestly; and the
+   permission/notification/channel work belongs to `:app`, not this round. The honest cost —
+   `ReprocessRunSnapshot.Waiting` (new: `WorkInfo.State.ENQUEUED` with real, already-recorded
+   progress) — is what keeps `Improve-Running` from lying about it: "Waiting to resume, N of M
+   done," never fake live progress and never a premature Done (`ImproveRunningViewState
+   .waitingToResume`, rendered in `ImproveScreens.kt`).
+3. **Real-device evidence for a run that takes real time** — see "Verified" below.
+
+**Verified:**
+- `./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"` — 29 tests green.
+  New: four `ReprocessRunSnapshot` mapping tests (`Waiting`/`Running`/`Finished`/`NotRunning`, each
+  built from a manufactured real `WorkInfo`) and a full stop-then-resume cycle test
+  (`R_1067_round2 a worker stopped mid-run leaves its checkpoint intact for a fresh attempt to
+  finish`) — frozen via the operator-pause signal before item 1, the real coroutine `doWork()` is
+  suspended inside is cancelled at a real in-flight suspension point (the same signal a
+  `CoroutineWorker`'s `onStopped()` delivers), proving the checkpoint survives untouched and a fresh
+  attempt finishes everything. Run 5× in a row clean after fixing an initial timing race (waiting
+  on a `work_queue_item` row's mere existence, a lease, not a finished outcome).
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — 33 tests green. New:
+  `ImproveContentReattachTest` (`ImproveContent` itself — no Activity — disposed via a plain
+  Compose `if (show)` toggle and recomposed; asserts the identical `WorkInfo` id, proven to fail
+  (`ComposeTimeoutException`) with the reattachment effect reverted, confirming `rememberSaveable`
+  alone does **not** survive a bare composition removal the way it does a real Activity recreation)
+  and two `ImproveScreensTest` cases for the `waitingToResume` board text and the Root finished-run
+  line.
+- Every new/changed assertion shown to fail for the right reason before the fix and pass after,
+  reverted and restored in place: the `ENQUEUED → Waiting` mapping (temporarily mapped to
+  `NotRunning`), the reattachment `LaunchedEffect` (temporarily removed), the stop-then-resume
+  checkpoint assertion (temporarily let the checkpoint remain untouched by the buggy path).
+- On-device evidence: own AVD `ort_audit_replife`, real bundled `HF_TOKEN` build — see the session
+  report for capture paths and literal descriptions; not duplicated here per this file's own
+  "verified" convention (commands and pass/fail counts, not image inventories).
+- Full local gate after merging `origin/main` (WPMODLOG, WPSQUELCH, WPDIGINIT): see the session
+  report for the exact green run and durations.
+
+**Left open / not done:**
+- The stop-then-resume test simulates the system's stop via cancelling the coroutine `doWork()` is
+  suspended in, not `WorkManagerTestInitHelper`'s `TestDriver` — `TestDriver`'s public surface
+  (`setAllConstraintsMet`/`setPeriodDelayMet`) does not expose a way to simulate an execution-time-
+  limit stop at all (that boundary is the platform's own JobScheduler); cancelling the coroutine is
+  the documented, faithful substitute (identical to what a `CoroutineWorker`'s own `onStopped()`
+  does), not a shortcut around a harder but possible test.
+- No foreground-service notification was built — see decision (2) above; this trades resume
+  promptness for one round's scope, never correctness (the checkpoint holds either way).
+- `Improve-Done`'s own richer per-category summary is still process-memory only; a run that
+  finishes while the screen is gone is reported plainly (item counts, not a category breakdown) —
+  intentional, not a gap (constitution I: no fabricated diff), but worth naming as a real UX
+  limitation of the current design.
+
+---
+
 ## 2026-09-13 (WPREPLIFE: R-1067 - the reprocess run now lives in a WorkManager job, not the Improve screen)
 
 ### WPREPLIFE — R-1067: reprocess run survives Activity recreation via `ReprocessWorker`, `Improve-Running` observes rather than owns it

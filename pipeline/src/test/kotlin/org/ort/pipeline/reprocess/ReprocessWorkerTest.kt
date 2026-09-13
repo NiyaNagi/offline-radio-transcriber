@@ -9,6 +9,9 @@ import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.WorkManagerTestInitHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -186,5 +189,146 @@ class ReprocessWorkerTest {
             ReprocessWorker.cancel(context)
 
             assertTrue(ReprocessRunState(context.filesDir, id.toString()).remaining().isEmpty())
+        }
+
+    // ---------------------------------------------------------------------------------------
+    // Round 2, coordinator item 1/2: an honest board while ENQUEUED (waiting to resume) or
+    // finished while nobody was watching -- a pure mapping, tested without a live WorkManager
+    // attempt at all (no public API forces progress Data onto a real WorkInfo outside a running
+    // worker; a manufactured WorkInfo is the direct, deterministic way to test this mapping).
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_1067_round2 a manufactured ENQUEUED WorkInfo with real progress maps to Waiting, never Running or Done`() {
+        val info = WorkInfo(
+            UUID.randomUUID(),
+            WorkInfo.State.ENQUEUED,
+            emptySet(),
+            Data.EMPTY,
+            progressDataFor(done = 5, total = 12),
+            2,
+            0,
+        )
+
+        val snapshot = info.toReprocessRunSnapshot()
+
+        assertEquals(ReprocessRunSnapshot.Waiting(done = 5, total = 12), snapshot)
+    }
+
+    @Test
+    fun `R_1067_round2 a RUNNING WorkInfo maps to Running with the real current id`() {
+        val info = WorkInfo(
+            UUID.randomUUID(),
+            WorkInfo.State.RUNNING,
+            emptySet(),
+            Data.EMPTY,
+            progressDataFor(done = 3, total = 12, currentId = "TX4"),
+            1,
+            0,
+        )
+
+        val snapshot = info.toReprocessRunSnapshot()
+
+        assertEquals(ReprocessRunSnapshot.Running(done = 3, total = 12, currentId = "TX4"), snapshot)
+    }
+
+    @Test
+    fun `R_1067_round2 a SUCCEEDED WorkInfo maps to Finished from its real output data, never a fabricated summary`() {
+        val info = WorkInfo(
+            UUID.randomUUID(),
+            WorkInfo.State.SUCCEEDED,
+            emptySet(),
+            progressDataFor(done = 12, total = 12, finishedAtMillis = 999L),
+            Data.EMPTY,
+            1,
+            0,
+        )
+
+        val snapshot = info.toReprocessRunSnapshot()
+
+        assertEquals(ReprocessRunSnapshot.Finished(done = 12, total = 12, finishedAtMillis = 999L), snapshot)
+    }
+
+    @Test
+    fun `R_1067_round2 no WorkInfo at all maps to NotRunning`() {
+        assertEquals(ReprocessRunSnapshot.NotRunning, emptyList<WorkInfo>().toReprocessRunSnapshot())
+    }
+
+    private fun progressDataFor(
+        done: Int,
+        total: Int,
+        currentId: String? = null,
+        finishedAtMillis: Long? = null,
+    ): Data = Data.Builder()
+        .putInt(ReprocessWorker.KEY_DONE, done)
+        .putInt(ReprocessWorker.KEY_TOTAL, total)
+        .putString(ReprocessWorker.KEY_CURRENT_ID, currentId)
+        .apply { if (finishedAtMillis != null) putLong(ReprocessWorker.KEY_FINISHED_AT_MILLIS, finishedAtMillis) }
+        .build()
+
+    // ---------------------------------------------------------------------------------------
+    // Round 2, coordinator item 2: WorkManager's execution-time limit. A real OS-triggered stop
+    // is not something WorkManagerTestInitHelper/TestDriver can simulate -- TestDriver's public
+    // surface is `setAllConstraintsMet`/`setPeriodDelayMet` only; an execution-time-limit stop is
+    // enforced by the platform's own JobScheduler, never exposed for simulation. Cancelling the
+    // coroutine `doWork()` is suspended inside, at a real in-flight suspension point, is the
+    // identical signal reaching this worker either way (`onStopped()` on a `CoroutineWorker`
+    // cancels that same coroutine) -- proven end to end: stopped mid-run, checkpoint retained, a
+    // fresh attempt finishes only the real remainder.
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_1067_round2 a worker stopped mid-run leaves its checkpoint intact for a fresh attempt to finish`() =
+        runBlocking {
+            seed("TX1")
+            seed("TX2")
+            seed("TX3")
+            val workId = UUID.randomUUID()
+            val checkpoint = ReprocessRunState(context.filesDir, workId.toString())
+            // Frozen via the operator-pause signal *before* `doWork()` ever starts item 1 (the
+            // engine's own capture-priority yield loop, `ReprocessRunner.awaitCaptureNotBusy`) --
+            // a real, if short, wall-clock window this test can reliably interrupt inside, unlike
+            // waiting on real per-item progress: with no ASR model installed, these three items'
+            // real (Errored -> terminal FAILED) outcomes can resolve in single-digit milliseconds,
+            // faster than any polling loop can reliably catch mid-flight.
+            ReprocessPauseControl.paused = true
+            try {
+                val worker = TestListenableWorkerBuilder<ReprocessWorker>(context)
+                    .setId(workId)
+                    .setInputData(inputDataFor(listOf("TX1", "TX2", "TX3")))
+                    .build()
+
+                val firstAttempt = async(Dispatchers.Default) { worker.doWork() }
+                delay(200) // a real margin for the coroutine to actually reach the frozen wait loop
+                // Simulates the system stopping this attempt (WorkManager's own `onStopped()` ->
+                // for a `CoroutineWorker`, cancelling its coroutine -- the exact same signal
+                // reaching `doWork()` either way): cancel the coroutine at its real, in-flight
+                // suspension point.
+                firstAttempt.cancel()
+                val stoppedOutcome = runCatching { firstAttempt.await() }
+
+                assertTrue("a system-triggered stop must never resolve as a normal Result", stoppedOutcome.isFailure)
+                assertEquals(
+                    "nothing was ever marked done (frozen before item 1) -- the checkpoint must " +
+                        "still hold the real, untouched original list, never cleared by a stop " +
+                        "this class did not choose",
+                    listOf("TX1", "TX2", "TX3"),
+                    checkpoint.remaining(),
+                )
+            } finally {
+                ReprocessPauseControl.paused = false // lift the freeze for the resumed attempt below
+            }
+
+            val secondAttempt = TestListenableWorkerBuilder<ReprocessWorker>(context)
+                .setId(workId)
+                .setInputData(inputDataFor(listOf("TX1", "TX2", "TX3")))
+                .build()
+            val finalResult = secondAttempt.doWork()
+
+            assertTrue(finalResult is ListenableWorker.Result.Success)
+            val output = (finalResult as ListenableWorker.Result.Success).outputData
+            assertEquals(3, output.getInt(ReprocessWorker.KEY_DONE, -1))
+            assertEquals(3, output.getInt(ReprocessWorker.KEY_TOTAL, -1))
+            assertTrue(checkpoint.remaining().isEmpty())
         }
 }

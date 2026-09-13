@@ -76,6 +76,19 @@ public fun ImproveScreen(
                 modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.md),
             )
 
+            // register R-1067 round 2: a real run finished by WorkManager while nobody was on this
+            // screen to see Improve-Done — see ImproveRootViewState.justFinished's own doc comment
+            // for why this is a plain real count, never the richer per-category Done summary.
+            state.justFinished?.let { finished ->
+                Text(
+                    text = "A run finished while you were away — ${finished.doneCount} of " +
+                        "${finished.totalCount} overs processed.",
+                    style = OrtType.cardBody,
+                    color = OrtColors.textBody,
+                    modifier = Modifier.padding(bottom = OrtSpacing.md),
+                )
+            }
+
             if (state.totalOverCount == 0) {
                 EmptyState(
                     message = "Nothing can get better right now.",
@@ -295,7 +308,11 @@ public fun ImproveRunningScreen(
         modifier = modifier,
         content = {
             Text(
-                text = if (state.paused || state.autoPausedReason != null) "Paused" else "Improving",
+                text = when {
+                    state.waitingToResume -> "Waiting to resume"
+                    state.paused || state.autoPausedReason != null -> "Paused"
+                    else -> "Improving"
+                },
                 style = OrtType.screenTitle,
                 color = OrtColors.textHigh,
                 modifier = Modifier.padding(start = OrtSpacing.lg, end = OrtSpacing.lg, top = OrtSpacing.sm),

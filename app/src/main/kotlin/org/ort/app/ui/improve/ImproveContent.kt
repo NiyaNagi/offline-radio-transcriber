@@ -16,10 +16,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.pipeline.reprocess.ReprocessPauseControl
+import org.ort.pipeline.reprocess.ReprocessRunSnapshot
 import org.ort.pipeline.reprocess.ReprocessStatus
 
 private sealed interface ImprovePage {
@@ -176,20 +179,46 @@ public fun ImproveContent(
     var page by rememberSaveable(stateSaver = ImprovePageSaver) { mutableStateOf<ImprovePage>(ImprovePage.Root) }
     var root by remember { mutableStateOf<ImproveRootViewState?>(null) }
     var refreshToken by remember { mutableStateOf(0) }
+    var justFinished by remember { mutableStateOf<JustFinishedRun?>(null) }
+    // R-1067 round 2: cancel() is launched here, not inside RunningPage's own composition, so it
+    // survives the very state flip (Running -> Done) that disposes RunningPage the instant the
+    // operator's own Cancel tap fires -- a scope scoped to RunningPage itself would have raced its
+    // own disposal and could drop the cancel before ReprocessWorker.cancel's real WorkManager call
+    // ever ran.
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(refreshToken) { root = ImprovePolling.root(context) }
+
+    // R-1067 round 2 (coordinator item 1, constitution I): reattach to a real run whenever this
+    // composition (re)appears -- not only across an Activity recreation (R-1063/R-1067 already
+    // cover that), but a plain drawer-away-and-back, which disposes and recomposes this whole
+    // composable. A run already Waiting or Running must show Running with its own real progress,
+    // never Root's candidate count or the honest-but-now-false "Nothing can get better right now"
+    // (the real work already claimed those candidates). A run that finished while this screen was
+    // gone is never turned into a fabricated Done summary -- see JustFinishedRun's own doc comment.
+    LaunchedEffect(Unit) {
+        reattachToRunningWork(
+            runner = runner,
+            isRunningPage = page is ImprovePage.Running,
+            isRootPage = page is ImprovePage.Root,
+            onReattachRunning = { page = ImprovePage.Running(transmissionIds = emptyList(), headline = "Improving") },
+            onJustFinished = { finished -> justFinished = finished },
+        )
+    }
 
     when (val current = page) {
         is ImprovePage.Root -> {
             val state = root
             if (state != null) {
                 ImproveScreen(
-                    state = state,
+                    state = state.copy(justFinished = justFinished),
                     onDrawer = onDrawer,
                     onImproveAll = {
                         // R-1067: a fresh run starting -- the operator's own Pause from a
-                        // *previous* run must never bleed into this one.
+                        // *previous* run must never bleed into this one, and a note about a
+                        // previous run finishing must not linger under a new one.
                         ReprocessPauseControl.reset()
+                        justFinished = null
                         page = ImprovePage.Running(state.allTransmissionIds, "All groups")
                     },
                     onOpenGroup = { group -> page = ImprovePage.Select(group) },
@@ -211,6 +240,7 @@ public fun ImproveContent(
                     onStart = {
                         // R-1067: see the identical reset in onImproveAll above.
                         ReprocessPauseControl.reset()
+                        justFinished = null
                         page = ImprovePage.Running(current.group.transmissionIds, current.group.headline)
                     },
                     modifier = modifier,
@@ -224,6 +254,7 @@ public fun ImproveContent(
             current = current,
             runner = runner,
             modifier = modifier,
+            coroutineScope = coroutineScope,
             onDone = { headline, done, summary ->
                 refreshToken++
                 page = ImprovePage.Done(headline, done, summary)
@@ -245,6 +276,29 @@ public fun ImproveContent(
 }
 
 /**
+ * [ImproveContent]'s own top-level reattachment check, split out purely to keep that function
+ * under detekt's length limit — a plain data/control-flow move, not a behaviour change. See the
+ * `LaunchedEffect(Unit)` call site's own comment for what this does and why.
+ */
+private suspend fun reattachToRunningWork(
+    runner: ImproveRunner,
+    isRunningPage: Boolean,
+    isRootPage: Boolean,
+    onReattachRunning: () -> Unit,
+    onJustFinished: (JustFinishedRun) -> Unit,
+) {
+    when (val snapshot = runner.observeState().first()) {
+        is ReprocessRunSnapshot.Waiting, is ReprocessRunSnapshot.Running -> {
+            if (!isRunningPage) onReattachRunning()
+        }
+        is ReprocessRunSnapshot.Finished -> {
+            if (isRootPage) onJustFinished(JustFinishedRun(doneCount = snapshot.done, totalCount = snapshot.total))
+        }
+        ReprocessRunSnapshot.NotRunning -> Unit
+    }
+}
+
+/**
  * [ImprovePage.Running]'s own body, split out of [ImproveContent] purely to keep that function
  * under detekt's length limit. [onDone] takes `(headline, doneCount, summary)` rather than
  * building an [ImprovePage.Done] itself — that type is `private` to the caller's file scope, and
@@ -256,25 +310,53 @@ private fun RunningPage(
     current: ImprovePage.Running,
     runner: ImproveRunner,
     modifier: Modifier,
+    coroutineScope: CoroutineScope,
     onDone: (headline: String, doneCount: Int, summary: ReprocessStatus.Summary?) -> Unit,
 ) {
     var done by remember(current.transmissionIds) { mutableStateOf(0) }
+    var total by remember(current.transmissionIds) { mutableStateOf(current.transmissionIds.size) }
+    // R-1067 round 2 (coordinator item 2b): honestly `WorkInfo.State.ENQUEUED` -- a fresh start not
+    // yet picked up, or a stopped attempt WorkManager itself requeued for retry (WorkManager's
+    // 10-minute execution limit; see ReprocessWorker's own kdoc for the stop-and-reschedule
+    // decision) -- never shown as live progress or Done while true.
+    var waitingToResume by remember(current.transmissionIds) { mutableStateOf(false) }
     // R-1067: seeded from the process-wide control, not a hardcoded `false` -- a real Activity
     // recreation must show the operator's own pause exactly as they left it, never silently
     // resume (the same "don't discard operator intent" standard R-1063 already set for the page).
     var paused by remember(current.transmissionIds) { mutableStateOf(ReprocessPauseControl.paused) }
     var autoPausedReason by remember(current.transmissionIds) { mutableStateOf<String?>(null) }
-    val total = current.transmissionIds.size
-    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(current.transmissionIds) {
-        // R-1067: this collector only *observes* the real run (`ReprocessWorker`, outliving this
-        // composition) -- it never stalls or owns it. `runner.run(...)` itself is idempotent: a
-        // fresh LaunchedEffect after recreation re-attaches to the same run rather than starting
-        // a second one.
-        runner.run(current.transmissionIds).collect { progress -> done = progress.done }
-        val summary = (ReprocessStatus.state as? ReprocessStatus.State.Done)?.summary
-        onDone(current.headline, done, summary)
+        // Starts (idempotently -- ExistingWorkPolicy.KEEP no-ops onto an already-active run) only
+        // when this page actually knows which ids to start with; a reattached run (empty ids --
+        // this composition did not start it, see ImproveContent's own top-level LaunchedEffect)
+        // must only ever observe, never start a degenerate empty-id run.
+        if (current.transmissionIds.isNotEmpty()) {
+            runner.run(current.transmissionIds)
+        }
+        // R-1067 round 2: the single source of truth for display either way -- `Waiting` included,
+        // which a plain `ImproveRunProgress` (done/total only) cannot express. Never stalls or owns
+        // the real run (`ReprocessWorker`, outliving this composition); a fresh `LaunchedEffect`
+        // after recreation or reattachment simply receives WorkManager's own latest state.
+        runner.observeState().collect { snapshot ->
+            when (snapshot) {
+                is ReprocessRunSnapshot.Waiting -> {
+                    waitingToResume = true
+                    done = snapshot.done
+                    if (snapshot.total > 0) total = snapshot.total
+                }
+                is ReprocessRunSnapshot.Running -> {
+                    waitingToResume = false
+                    done = snapshot.done
+                    if (snapshot.total > 0) total = snapshot.total
+                }
+                is ReprocessRunSnapshot.Finished -> {
+                    val summary = (ReprocessStatus.state as? ReprocessStatus.State.Done)?.summary
+                    onDone(current.headline, snapshot.done, summary)
+                }
+                ReprocessRunSnapshot.NotRunning -> Unit
+            }
+        }
     }
     // FR-REP-6: the engine's own capture-priority auto-pause, told apart from the operator's own
     // Pause (both publish `ReprocessStatus.State.Paused` -- see `ReprocessPauseControl`'s own
@@ -298,6 +380,7 @@ private fun RunningPage(
             totalCount = total,
             paused = paused,
             autoPausedReason = autoPausedReason,
+            waitingToResume = waitingToResume,
         ),
         onPause = {
             paused = !paused
@@ -308,6 +391,10 @@ private fun RunningPage(
         onCancel = {
             // R-1067d: the operator's own explicit stop -- the only thing that actually cancels
             // the real run now; navigating away or a recreation must not (see ImproveRunner.cancel).
+            // Launched on ImproveContent's own longer-lived scope (passed in), not one scoped to
+            // this composable -- RunningPage is disposed the instant onDone below flips the page
+            // away from Running, which would otherwise race and could cancel this coroutine before
+            // ReprocessWorker.cancel's real WorkManager call ever ran.
             coroutineScope.launch { runner.cancel() }
             onDone(current.headline, done, null)
         },

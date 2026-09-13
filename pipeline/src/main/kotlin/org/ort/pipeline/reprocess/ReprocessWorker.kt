@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.transformWhile
 import org.ort.core.PassId
@@ -48,16 +49,44 @@ import org.ort.pipeline.capture.ShedStatus
  *
  * **Operator cancel only, never a lifecycle accident.** Cancelling the coroutine
  * [ReprocessRunner.run]'s `Flow` collection is running in — [WorkManager]'s own reaction to
- * [cancel], to the app being force-stopped, or to the process dying outright — leaves this attempt's
- * checkpoint exactly where it was: the `finally`-free `catch (e: CancellationException) { throw e }`
- * below never clears it, so [WorkManager]'s own automatic retry of interrupted work resumes rather
- * than silently drops progress ([d] in the register row is the operator's own deliberate stop,
- * handled by [cancel] itself explicitly discarding the checkpoint — see its own kdoc for why that
- * case, and only that case, must not resume).
+ * [cancel], to the app being force-stopped, to the process dying outright, or to the system
+ * stopping this attempt for exceeding its execution limit (see the decision below) — leaves this
+ * attempt's checkpoint exactly where it was: [doWork] has deliberately no `try`/`catch` around the
+ * collection loop, so the `CancellationException` propagates uncaught, skipping
+ * `checkpoint.clear()` entirely, and [WorkManager]'s own automatic retry of interrupted work
+ * resumes rather than silently drops progress ([d] in the register row is the operator's own
+ * deliberate stop, handled by [cancel] itself explicitly discarding the checkpoint — see its own
+ * kdoc for why that case, and only that case, must not resume).
  *
  * **Never reads as done when it is not (constitution I).** [Result.success] is returned only once
  * [ReprocessRunState.remaining] is empty — a `Data` reporting `done == total` is a fact about this
  * exact call, never asserted while a real remainder still exists.
+ *
+ * **Round 2 (coordinator item 2a) — decision: stop-and-reschedule, not a foreground service.**
+ * WorkManager stops a plain background `CoroutineWorker` after roughly ten minutes of execution; a
+ * night of real overs through Whisper can easily run longer. The alternative — `setForeground` with
+ * a persistent notification, `FOREGROUND_SERVICE_DATA_SYNC` (API 34) — is not built here, on
+ * purpose:
+ * 1. **Correctness does not depend on it.** [ReprocessRunState] already makes a stop-and-resume
+ *    cycle exactly as safe as an uninterrupted run — no double-processing (`c` in the register
+ *    row), no data lost, honest cumulative progress either way. A foreground service would only
+ *    change *how promptly* a stopped attempt resumes, never *whether* the eventual result is
+ *    correct — FR-REP-11's own bar ("never leave a record in a worse state") is met regardless.
+ * 2. **ColorOS is documented to kill even foreground services under aggressive battery states**
+ *    (AGENTS.md: "liveness is proven by heartbeat, never by `isIgnoringBatteryOptimizations()`") —
+ *    a foreground service reduces the *chance* of a mid-run stop, it does not eliminate the need to
+ *    handle one honestly, so the checkpoint and the [ReprocessRunSnapshot.Waiting] board state
+ *    below are required either way; a foreground service would be additive risk-reduction on top
+ *    of a mechanism that already has to exist.
+ * 3. **A persistent notification is a real, permanent UI surface** (channel, icon, cancel action)
+ *    that belongs to `:app`, not `:pipeline`, and is a feature in its own right — manifest
+ *    permissions, `platformGuards`, and a notification design are all out of one round's scope for
+ *    a decision that does not change correctness.
+ *
+ * The honest cost of this choice: on ColorOS, a stopped attempt's resume can be deferred
+ * arbitrarily by the OS's own background-execution throttling. [ReprocessRunSnapshot.Waiting] (see
+ * that type's own kdoc) is what keeps the board from lying about it in the meantime — "waiting to
+ * resume, N of M done," never fake live progress and never a premature Done.
  */
 public class ReprocessWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -75,7 +104,7 @@ public class ReprocessWorker(context: Context, params: WorkerParameters) : Corou
 
         if (remaining.isEmpty()) {
             checkpoint.clear()
-            return Result.success(progressData(originalTotal, originalTotal, null))
+            return Result.success(finishedData(originalTotal, originalTotal))
         }
 
         // R-1067: deliberately no try/catch around this block. If the collecting coroutine is
@@ -103,7 +132,7 @@ public class ReprocessWorker(context: Context, params: WorkerParameters) : Corou
         }
 
         checkpoint.clear()
-        return Result.success(progressData(originalTotal, originalTotal, null))
+        return Result.success(finishedData(originalTotal, originalTotal))
     }
 
     public companion object {
@@ -114,10 +143,24 @@ public class ReprocessWorker(context: Context, params: WorkerParameters) : Corou
         public const val KEY_TOTAL: String = "total"
         public const val KEY_CURRENT_ID: String = "current_id"
 
+        /** Round 2 (coordinator item 1): a real, self-stamped completion time, `System
+         * .currentTimeMillis()` at the moment [doWork] actually finished — never fabricated, and
+         * the only honest way `Improve`'s root can say "a run finished ... and how many overs it
+         * did" for a run nobody was watching when it ended (its own [ReprocessStatus.Summary] is
+         * process-memory only and does not survive a process death the way this `Data`, carried in
+         * [WorkInfo.outputData], does). */
+        public const val KEY_FINISHED_AT_MILLIS: String = "finished_at_millis"
+
         private fun progressData(done: Int, total: Int, currentId: String?): Data = Data.Builder()
             .putInt(KEY_DONE, done)
             .putInt(KEY_TOTAL, total)
             .putString(KEY_CURRENT_ID, currentId)
+            .build()
+
+        private fun finishedData(done: Int, total: Int): Data = Data.Builder()
+            .putInt(KEY_DONE, done)
+            .putInt(KEY_TOTAL, total)
+            .putLong(KEY_FINISHED_AT_MILLIS, System.currentTimeMillis())
             .build()
 
         /**
@@ -169,6 +212,18 @@ public class ReprocessWorker(context: Context, params: WorkerParameters) : Corou
         }
 
         /**
+         * Round 2 (coordinator items 1 and 2b): the richer state `Improve` needs to tell a
+         * genuinely running attempt apart from one merely `ENQUEUED` (WorkManager's own state for
+         * "not currently executing" — a fresh start about to be picked up, *or* a stopped attempt
+         * requeued for retry, indistinguishable from `WorkInfo.State` alone) from a finished one
+         * nobody was watching end. See [ReprocessRunSnapshot]'s own kdoc for what each case means
+         * to the board.
+         */
+        public fun observeSnapshot(context: Context): Flow<ReprocessRunSnapshot> =
+            WorkManager.getInstance(context).getWorkInfosForUniqueWorkFlow(UNIQUE_WORK_NAME)
+                .map { infos -> infos.toReprocessRunSnapshot() }
+
+        /**
          * The operator's own explicit stop — register R-1067 (d). Discards this run's checkpoint
          * first (reading the real [WorkInfo] id(s) currently enqueued under [UNIQUE_WORK_NAME],
          * never guessing one), so a cancelled run can never be mistaken for one WorkManager should
@@ -188,4 +243,63 @@ public class ReprocessWorker(context: Context, params: WorkerParameters) : Corou
             workManager.cancelUniqueWork(UNIQUE_WORK_NAME)
         }
     }
+}
+
+/**
+ * Round 2 (coordinator items 1, 2b): the honest, richer shape `Improve`'s own board needs —
+ * `WorkInfo.State` alone conflates "just started, not yet picked up" with "a stopped attempt
+ * WorkManager has requeued for retry" (both are [WorkInfo.State.ENQUEUED]), and neither the screen
+ * nor the operator can tell those apart from the raw state name. [Waiting] names that ambiguity
+ * honestly rather than showing fake live progress or a premature [Finished] — see
+ * `ImproveRunningViewState.waitingToResume`'s own doc comment for how the board renders it.
+ *
+ * [Finished] is built only from [ReprocessWorker.KEY_DONE]/[KEY_TOTAL]/[KEY_FINISHED_AT_MILLIS] —
+ * real facts [ReprocessWorker] itself stamped into [WorkInfo.outputData] — never the richer
+ * [ReprocessStatus.Summary] (transcripts/attributions changed, rejected, failed), which is
+ * process-memory only and cannot be honestly reconstructed once nobody was watching when the run
+ * ended (constitution I: a plain, real count beats a fabricated diff).
+ */
+public sealed interface ReprocessRunSnapshot {
+    /** No unique-name work exists, or the last one ended in [WorkInfo.State.FAILED]/
+     * [WorkInfo.State.CANCELLED] — nothing for `Improve`'s root to reattach to. */
+    public data object NotRunning : ReprocessRunSnapshot
+
+    /** [WorkInfo.State.ENQUEUED] with real, already-recorded progress — a fresh start not yet
+     * picked up (`done == 0`), or a stopped attempt requeued for retry (`done` reflects whatever
+     * the checkpoint already finished). Either way, honestly not currently executing. */
+    public data class Waiting(public val done: Int, public val total: Int) : ReprocessRunSnapshot
+
+    /** [WorkInfo.State.RUNNING] — genuinely executing right now. */
+    public data class Running(public val done: Int, public val total: Int, public val currentId: String?) :
+        ReprocessRunSnapshot
+
+    /** [WorkInfo.State.SUCCEEDED] — the real, final counts this attempt reported, and the real
+     * wall-clock moment [ReprocessWorker] itself stamped them, never guessed. */
+    public data class Finished(public val done: Int, public val total: Int, public val finishedAtMillis: Long?) :
+        ReprocessRunSnapshot
+}
+
+internal fun WorkInfo.toReprocessRunSnapshot(): ReprocessRunSnapshot = when (state) {
+    WorkInfo.State.ENQUEUED -> ReprocessRunSnapshot.Waiting(
+        done = progress.getInt(ReprocessWorker.KEY_DONE, 0),
+        total = progress.getInt(ReprocessWorker.KEY_TOTAL, 0),
+    )
+    WorkInfo.State.RUNNING -> ReprocessRunSnapshot.Running(
+        done = progress.getInt(ReprocessWorker.KEY_DONE, 0),
+        total = progress.getInt(ReprocessWorker.KEY_TOTAL, 0),
+        currentId = progress.getString(ReprocessWorker.KEY_CURRENT_ID),
+    )
+    WorkInfo.State.SUCCEEDED -> ReprocessRunSnapshot.Finished(
+        done = outputData.getInt(ReprocessWorker.KEY_DONE, 0),
+        total = outputData.getInt(ReprocessWorker.KEY_TOTAL, 0),
+        finishedAtMillis = outputData.getLong(ReprocessWorker.KEY_FINISHED_AT_MILLIS, -1L).takeIf { it >= 0 },
+    )
+    WorkInfo.State.FAILED, WorkInfo.State.CANCELLED, WorkInfo.State.BLOCKED -> ReprocessRunSnapshot.NotRunning
+}
+
+/** Same "most relevant entry" convention [ReprocessWorker.observe] already uses: the one still
+ * live, or else the most recent, or [ReprocessRunSnapshot.NotRunning] if nothing is tracked at all. */
+internal fun List<WorkInfo>.toReprocessRunSnapshot(): ReprocessRunSnapshot {
+    val info = firstOrNull { !it.state.isFinished } ?: lastOrNull() ?: return ReprocessRunSnapshot.NotRunning
+    return info.toReprocessRunSnapshot()
 }
