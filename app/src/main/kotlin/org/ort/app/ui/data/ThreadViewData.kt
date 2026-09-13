@@ -103,6 +103,19 @@ public data class FrequencyMeanwhileEntry(
  * groups that do exist, with a count of what remains ungrouped alongside them.
  */
 public sealed interface ThreadListViewState {
+    /**
+     * Register R-1022/R-1051 (halt, constitution I/IV): [org.ort.app.ui.screens.ThreadContent]'s
+     * own real initial value — never [Empty] directly. Before this fix that composable's
+     * `remember { mutableStateOf(...) }` seeded with [Empty], which is a real, honest "nothing
+     * captured yet" *claim* (also [ThreadListMapper.listState]'s genuine return for
+     * `details.isEmpty()`), not a placeholder — a cold start could render "No overs yet." for up to
+     * one [org.ort.app.ui.screens.ThreadContent] poll interval even while a session genuinely held
+     * threads, the same class of defect [org.ort.app.ui.data.NowViewState.Loading]'s own kdoc
+     * describes for Now. This is the honest "not yet known" value that first poll replaces; it is
+     * never itself constructed by [ThreadListMapper], only ever a composable's own seed.
+     */
+    public data object Loading : ThreadListViewState
+
     public data object Empty : ThreadListViewState
 
     /**

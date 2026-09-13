@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -19,11 +18,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.launch
 import org.ort.app.ui.audio.TransmissionAudioPlayer
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.clearedWhileOverlaid
 import org.ort.app.ui.data.AudioAbsenceReason
 import org.ort.app.ui.data.CorrectionPolling
@@ -144,10 +142,11 @@ public fun TransmissionDetailContent(
 
     val current = detail
     if (current == null) {
-        Text(
-            text = "Loading…",
-            modifier = modifier.padding(OrtSpacing.lg).semantics { contentDescription = "Loading transmission detail" },
-        )
+        // Register R-1022 (WPDIGINIT): the shared, tagged `LoadingState` — this branch was already
+        // correctly gated on `detail == null` (never a false empty claim, the R-1051-class defect),
+        // but its own local, untagged "Loading…" `Text` was invisible to
+        // `org.ort.app.debug.tour.TourAccessibilityScroll.snapshot`'s structural readiness check.
+        LoadingState(message = "Loading…", modifier = modifier.padding(OrtSpacing.lg))
         return
     }
     val viewState = DetailViewStateMapper.from(
@@ -362,7 +361,14 @@ private fun RevisionsDestination(
 ) {
     val scope = rememberCoroutineScope()
     var versions by remember(transmissionId) { mutableStateOf(emptyList<TranscriptVersionViewState>()) }
-    LaunchedEffect(transmissionId, dest) { versions = CorrectionPolling.revisions(context, transmissionId) }
+    // Register R-1022/R-1051 (halt, constitution I/IV): `true` until the first real
+    // `CorrectionPolling.revisions` read lands — see `DetailRevisionsScreen`'s own `loading`
+    // parameter kdoc.
+    var loading by remember(transmissionId) { mutableStateOf(true) }
+    LaunchedEffect(transmissionId, dest) {
+        versions = CorrectionPolling.revisions(context, transmissionId)
+        loading = false
+    }
     DetailRevisionsScreen(
         parentLabel = parentLabel,
         versions = versions,
@@ -375,6 +381,7 @@ private fun RevisionsDestination(
         },
         onBack = onBack,
         modifier = modifier,
+        loading = loading,
     )
 }
 

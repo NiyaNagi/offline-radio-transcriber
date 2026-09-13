@@ -2,7 +2,6 @@ package org.ort.app.ui.screens
 
 import android.content.Context
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -10,8 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.data.FrequencyChangeViewState
 import org.ort.app.ui.data.FrequencyDetailView
 import org.ort.app.ui.data.FrequencyDetailViewState
@@ -101,12 +99,11 @@ public fun FrequencyDetailContent(
     }
 }
 
+// Register R-1022 (WPDIGINIT, constitution I/IV): the shared, tagged `LoadingState` — both call
+// sites above are already correctly gated (`detail`/`change` nullable, never the R-1051-class
+// defect), but this local, untagged "Loading…" `Text` was invisible to
+// `org.ort.app.debug.tour.TourAccessibilityScroll.snapshot`'s structural readiness check.
 @Composable
 private fun LoadingLine(modifier: Modifier) {
-    Text(
-        text = "Loading…",
-        modifier = modifier
-            .padding(OrtSpacing.lg)
-            .semantics { contentDescription = "Loading frequency detail" },
-    )
+    LoadingState(message = "Loading…", modifier = modifier.padding(OrtSpacing.lg))
 }

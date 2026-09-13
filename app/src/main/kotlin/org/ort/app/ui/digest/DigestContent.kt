@@ -1,9 +1,7 @@
 package org.ort.app.ui.digest
 
 import android.content.Context
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -11,8 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.theme.OrtSpacing
 
 /**
@@ -51,8 +48,11 @@ public fun DigestContent(
             modifier = modifier,
         )
     } else {
-        Column(modifier = modifier.padding(OrtSpacing.lg)) {
-            Text(text = "Loading…", modifier = Modifier.semantics { contentDescription = "Loading digest" })
-        }
+        // Register R-1022/R-1051 (halt, constitution I/IV): the shared, tagged [LoadingState] —
+        // before this fix this was a local, untagged "Loading…" `Text`, invisible to
+        // [org.ort.app.debug.tour.TourAccessibilityScroll.snapshot]'s structural readiness check
+        // (which scans for [org.ort.app.ui.components.LOADING_STATE_TEST_TAG]). `state == null`
+        // already keeps this distinct from a real empty digest — this only adds the marker.
+        LoadingState(message = "Loading…", modifier = modifier.padding(horizontal = OrtSpacing.lg))
     }
 }

@@ -170,6 +170,11 @@ public object Scenarios {
         "pass-failed",
         "corrected",
         "no-audio",
+        // WPDIGINIT (R-1066 device evidence): the *other* honest `AudioAbsenceReason` case
+        // `no-audio` cannot produce — a session whose over audio actually was removed by the
+        // operator, so `Detail-Playback.dc.html`'s cause line names a real date instead of "the
+        // reason is not recorded".
+        "audio-removed-by-operator",
         "revisions",
         "stations-14-nights",
         "frequency-change",
@@ -287,6 +292,7 @@ public object Scenarios {
             "pass-failed" -> passFailed(context, db)
             "corrected" -> corrected(db)
             "no-audio" -> noAudio(db)
+            "audio-removed-by-operator" -> audioRemovedByOperator(db)
             "revisions" -> revisions(context, db)
             "stations-14-nights" ->
                 StationsFixtures.stations14Nights(db).also { seedConfiguredDeviceState(context) }
@@ -936,6 +942,50 @@ public object Scenarios {
             ),
         )
         // Deliberately no ScenarioFixtures.writeAudioFixture(...) call — hasAudio must read false.
+        return LoadResult(1, 1, sessionId)
+    }
+
+    /**
+     * `audio-removed-by-operator` — WPDIGINIT (R-1066 device evidence): the session's own
+     * `overAudioRemovedAtMillis` is set, so [org.ort.app.ui.data.AudioAbsenceReasonMapper] reads
+     * [org.ort.app.ui.data.AudioAbsenceReason.RemovedByOperator], not [org.ort.app.ui.data
+     * .AudioAbsenceReason.Unknown] — the *other* real cause `no-audio` above cannot produce, since
+     * that scenario's session never records a removal at all.
+     */
+    private suspend fun audioRemovedByOperator(db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("audio-removed-by-operator")
+        val removedAt = java.time.LocalDate.of(2026, 8, 8)
+            .atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        db.sessionDao().insert(
+            ScenarioFixtures.session(sessionId, startedAt = SystemClock.wallMillis() - 3_600_000L, endedAt = null)
+                .copy(overAudioRemovedAtMillis = removedAt),
+        )
+        val txId = "$sessionId-tx1"
+        val startedAt = SystemClock.wallMillis() - 500_000L
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txId,
+                sessionId = sessionId,
+                startedAtUtc = startedAt,
+                samplePosition = 1L,
+                frequencyHz = 145_230_000L,
+                attributionState = AttributionState.CONFIRMED,
+                stationId = "W7NPC",
+                attributionConfidence = 0.95,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txId-t1",
+                transmissionId = txId,
+                text = "this is whiskey seven november papa charlie, monitoring",
+                isCurrent = true,
+                createdAt = startedAt + 1_000L,
+            ),
+        )
+        // Deliberately no ScenarioFixtures.writeAudioFixture(...) call — hasAudio must read false,
+        // the same as `no-audio` above; the difference this scenario proves is the session's own
+        // real removal timestamp, not the audio file's presence.
         return LoadResult(1, 1, sessionId)
     }
 

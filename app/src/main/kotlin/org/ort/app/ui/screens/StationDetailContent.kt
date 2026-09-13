@@ -2,7 +2,6 @@ package org.ort.app.ui.screens
 
 import android.content.Context
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -11,10 +10,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.data.StationDetailViewState
 import org.ort.app.ui.data.StationIdentityViewState
 import org.ort.app.ui.data.StationPatternViewState
@@ -250,12 +248,11 @@ private fun SplitSubScreen(
     )
 }
 
+// Register R-1022 (WPDIGINIT, constitution I/IV): the shared, tagged `LoadingState` — every call
+// site above was already correctly gated (this file's own class/field doc comments explain each
+// one), never the R-1051-class defect, but this local, untagged "Loading…" `Text` was invisible to
+// `org.ort.app.debug.tour.TourAccessibilityScroll.snapshot`'s structural readiness check.
 @Composable
 private fun LoadingLine(modifier: Modifier) {
-    Text(
-        text = "Loading…",
-        modifier = modifier
-            .padding(OrtSpacing.lg)
-            .semantics { contentDescription = "Loading station detail" },
-    )
+    LoadingState(message = "Loading…", modifier = modifier.padding(OrtSpacing.lg))
 }

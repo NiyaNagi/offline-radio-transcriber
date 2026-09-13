@@ -286,6 +286,8 @@
     { "id": "gap-call/RC02-recording-session-gap", "scenario": "gap-call", "destination": "EARLIER_NIGHTS", "drillIn": { "recordingSession": "self" } },
 
     { "id": "cross-session-review/L01-log-cross-session", "scenario": "cross-session-review", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02,scenario-overnight-tx03,scenario-overnight-tx04" } },
-    { "id": "cross-session-review/L01-log-cross-session@2x", "scenario": "cross-session-review", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02,scenario-overnight-tx03,scenario-overnight-tx04" }, "fontScale": 2.0 }
+    { "id": "cross-session-review/L01-log-cross-session@2x", "scenario": "cross-session-review", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02,scenario-overnight-tx03,scenario-overnight-tx04" }, "fontScale": 2.0 },
+
+    { "id": "audio-removed-by-operator/D06-audio-removed", "scenario": "audio-removed-by-operator", "destination": "LOG", "drillIn": { "transmission": "confirmed" } }
   ]
 }

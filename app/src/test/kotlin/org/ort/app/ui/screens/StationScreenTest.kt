@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performScrollToNode
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
 import org.ort.app.ui.data.ActivityPatternMapper
 import org.ort.app.ui.data.StationDetailViewState
 import org.ort.app.ui.data.StationListBadge
@@ -38,6 +39,21 @@ class StationScreenTest {
         }
 
         composeTestRule.onNodeWithContentDescription("No stations heard yet").assertExists()
+    }
+
+    // Register R-1022/R-1051 (halt, constitution I/IV): an empty list *while still loading* must
+    // never be mistaken for the real "no stations heard" fact above — see [StationsListState
+    // .loading]'s own kdoc.
+    @Test
+    fun `R_1022 loading true renders the shared loading state, never the empty-state text`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                StationsListScreen(state = StationsListState(stations = emptyList(), loading = true), onOpen = {})
+            }
+        }
+
+        composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertExists()
+        composeTestRule.onNodeWithContentDescription("No stations heard yet").assertDoesNotExist()
     }
 
     @Test
