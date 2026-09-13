@@ -32,6 +32,78 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPSQUELCH: FR-SEG-5 rig squelch fusion, register R-1062)
+
+### 71ec04ec — WPSQUELCH: FR-SEG-5 rig squelch fusion — segment boundaries from squelch, VAD decides speech inside
+
+**Scope:** `:segment` (`Segmenter`, `SegmentSink`, new `Squelch.kt`) and `:pipeline`
+(`RigSupervisor`, `RealCaptureService.buildSegmenter`/`RealSegmentSink`, new
+`SquelchSampleBridge.kt`), plus their tests. No UI, no `DiagnosticsLog`/`DebugDumpBuilder`
+(WPMODLOG's territory), no spec files, no register — per this session's ownership.
+**Requirements/ACs:** FR-SEG-5 (M), FR-SEG-6, FR-SEG-7, FR-SEG-8, FR-SEG-10, FR-RIG-3, FR-RIG-6,
+FR-RUN-1, FR-RUN-16, FR-RUN-17, D23; register R-1062 (closed by this commit, pending the
+operator's hardware check below).
+**What changed:** FR-SEG-5 — "rig squelch is authoritative for boundaries, VAD is authoritative
+for whether there is speech inside them" — was specified but never built anywhere in `:pipeline`
+or `:segment` (R-1062: the only squelch reader was frequency attribution). This builds it:
+- `Segmenter` takes an optional `org.ort.segment.SquelchGate` (new file `Squelch.kt`). Once the
+  first squelch transition is known, squelch open starts a segment (with the usual pre-roll) and
+  squelch close ends it (with the usual post-roll), regardless of what VAD says about the same
+  frame; VAD's only remaining job inside that interval is tallying whether any frame was speech.
+  An interval with none is the new `SegmentOutcome.REJECTED_NO_SPEECH` — retained and logged
+  exactly like `REJECTED_TOO_SHORT`, never dropped (constitution III). New
+  `SegmentCloseReason.SQUELCH_CLOSE`. Before the first transition arrives, or with no
+  `SquelchGate` at all, the segmenter is byte-for-byte the pre-fusion VAD-only path — this is how
+  "no squelch capability" and "rig state is late" both degrade honestly.
+- `SegmentRecord.rigSquelchFusionApplied` (moved off a session-wide constant, onto the record
+  itself) is `true` only when **both** edges of that segment were squelch-decided. A forced
+  `MAX_DURATION` split or an `END_OF_STREAM` cut is therefore honestly `false` — which is also
+  how "a rig drops mid-over" closes correctly with no new mechanism at all: with no more
+  transitions arriving, the interval simply runs until FR-SEG-3's existing stuck-carrier safety
+  net force-splits it.
+- `RigSupervisor.observeSquelchUnion()` exposes the union of every band's squelch state — D23's
+  finding that one `Segmenter` processes one already-mixed audio stream, so only "some band is
+  open" is an honest boundary signal (flagged in the method's own kdoc as an open question:
+  genuinely overlapping different-band transmissions fuse into one segment under this rule).
+  `RigSupervisor.squelchFusionEligible()` gates it on FR-RUN-17's ≤250 ms correlation bound: a
+  push (`unsolicited`) descriptor always qualifies (receipt timestamp ≈ transition instant); a
+  poll-only descriptor qualifies only if its own interval is inside the bound.
+- `SquelchSampleBridge.pushSquelchTransition` is the one place a rig's monotonic receipt
+  timestamp becomes a sample position, via `SampleClock.samplePositionAtMonotonic` — already
+  FR-RUN-17's own stated mechanism — clamped to the session anchor rather than throwing on a
+  pre-anchor reading.
+- `RealCaptureService` builds one `SquelchGate` per session, bridges `RigSupervisor`'s squelch
+  union through the function above on its own coroutine (never touching the audio frame path —
+  `SquelchGate.push`/`drainBefore` are plain, non-suspending queue operations), and wires it into
+  `buildSegmenter`'s `Segmenter`. `RealSegmentSink` now reads `rigSquelchFusionApplied` off each
+  closed `SegmentRecord` instead of a constructor-time constant.
+**Verified:** `gradlew :segment:test` — 30/30 green including 9 new `SquelchFusionTest` cases.
+`gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.rig.*" --tests
+"org.ort.pipeline.capture.*"` — green, including 6 new `RigSupervisorSquelchTest` and 2 new
+`SquelchSampleBridgeTest` cases, and every pre-existing `RealSegmentSinkTest`/`RealCaptureServiceTest`
+case unchanged. Discrimination (constitution II): reverted the squelch-drain in
+`Segmenter.handleFrame` — 5 of 9 `SquelchFusionTest` cases failed for the right reason (VAD-only
+fallback dominated); reverted `RigSupervisor.emitSquelchUnionIfChanged` — both D23 union tests
+failed (nothing ever emitted). Both restored and reconfirmed green. `gradlew dependencyRules
+platformGuards` — green (real `HF_TOKEN`, no escape hatch). `gradlew -p buildSrc test` — green.
+`python tools/spec-check/spec_check.py` — OK. `gradlew ktlintCheck detekt` (whole repo) — green.
+`gradlew coverageMatrix` then `coverageMatrixCheck` (separate invocations) — green; FR-SEG-5 now
+reads covered by 13 test methods across `SquelchFusionTest`, `RigSupervisorSquelchTest` and
+`SquelchSampleBridgeTest` (was previously uncovered).
+**Left open / not done:** the full `gradlew build` gate (bundling every model asset) was not run
+in this session — only the module-scoped test/lint/detekt/coverage commands above; CI and the
+Release workflow are the next real proof of the whole-repo gate on the pushed commit. Closing
+evidence for R-1062 needs the operator's real TH-D75A (hardware protocol,
+`results/e2e-audit/`) — capture with the radio connected reporting squelch (`BY` push-enabled via
+`AI 1`), confirm `rigSquelchFusionApplied = true` on transmissions whose audio and vad_stats line
+show a real squelch-gated over, confirm `REJECTED_NO_SPEECH` appears for a key-up with no speech,
+and confirm capture is undisturbed if the rig is unplugged mid-session. Two spec-level questions
+raised rather than resolved: (1) whether a poll-only rig should ever be allowed fusion at a
+faster-than-250ms cadence exception, and (2) whether genuinely overlapping different-band
+transmissions should someday get a second, band-aware Segmenter instead of being unioned into
+one segment. Register R-1062 and the `results/ui-audit/register.md` row are the lead's to update
+(out of this session's file ownership).
+
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
 
 ### 64c1bc56 — WPREC: fix ktlintDebugSourceSetCheck violations in the two new recordings scenarios
