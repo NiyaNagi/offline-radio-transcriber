@@ -329,6 +329,21 @@ instructions.
 test`) is the lead's to run on merge, per this follow-up's own instruction — only the scoped test
 targets, `coverageMatrix`/`coverageMatrixCheck` and `spec_check.py` were run here.
 
+**Style fix (same day, after this commit landed on `main` at `c47f7905`):** the lead's gate caught
+one `ktlintTestSourceSetCheck` violation this follow-up introduced —
+`RealSegmentSinkTest.kt:430:99`, "First line of body expression fits on same line as function
+signature" (the new `a MAX_DURATION forced segment logs its real close reason to capture log`
+test's `Unit =` / `runBlocking {` split, which fits on one line under the 120-char limit, unlike
+the file's other, longer-named tests that keep the split for that reason). Joined the two lines
+and reindented the body from 12 to 8 spaces (the file's own convention for a same-line
+`Unit = runBlocking {`, e.g. `a closed segment carries real timestamps derived from its sample
+position` a few tests above) — no assertion changed. Re-ran
+`./gradlew :pipeline:ktlintCheck :segment:ktlintCheck :app:ktlintCheck :pipeline:detekt
+:segment:detekt :app:detekt --continue` (all six, test source sets included): `BUILD SUCCESSFUL`,
+no other violation from this commit. Re-ran all three changed test classes
+(`SegmentVadStatisticsTest`, `RealSegmentSinkTest`, `DebugDumpBuilderTest`): all green, unchanged
+assertions.
+
 ## 2026-09-12 (spec: Q20 closed by D41 - per-transmission VAD statistics specified, after WPVAD built them)
 
 ### spec · D41: FR-OBS-1 amended to say exactly what a vad_stats line records; AC-161; Q20 closed
