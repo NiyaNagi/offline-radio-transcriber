@@ -32,7 +32,49 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor))
+## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor); R-1047 sent back once and re-fixed so the statement is actually visible)
+
+### 16b2432d — WPLINK: R-1047 fix — the applied-filter statement is now visible without scrolling
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/LogScreen.kt`;
+`app/src/test/kotlin/org/ort/app/ui/screens/LogScreenTest.kt`; `tools/ui-audit/tour.json`.
+
+**Requirements/ACs:** register R-1047 (sent back), constitution I.
+
+**What changed:** sent back by the coordinator — `dc5358cc` rendered the applied-filter statement
+as the sixth (last) member of the same horizontally-scrollable `FilterChipRow` the quick chips
+use. On a real device with five real quick chips ahead of it (`All`/`145.230`/`146.960`/`Named`/
+`Rejected · 1`) it clipped off the visible edge at both `390dp` and `480dp` — the operator saw a
+Log holding one over with nothing on screen saying why, discoverable only by a scroll gesture
+nobody has a reason to make. Checked `design/canvas` first: no Log filtered-state artboard exists
+(`Log.dc.html`, `Log-Filter.dc.html` — the filter sheet, not a filtered-result state —
+`Log-Partial.dc.html`, `Log-Rejected.dc.html`, `Log-Empty.dc.html` are the whole set). Fixed by
+moving the statement onto its own full-width line between the chip row and the column heads,
+reusing the position and shape `state.rejectedExplanation` already established immediately below
+it for the dedicated Rejected view, rather than inventing a second pattern for the same job. Reads
+"Filtered to `<label>`" with a `Clear` `TextAction` beside it (44dp floor, reused component);
+`fillMaxWidth` so it can never itself be scrolled out of a viewport the way a chip-row member can.
+The guard that no quick chip reads selected while the statement is present is unchanged
+(`LogViewData.kt` was not touched this round). Node tag renamed
+`log-applied-filter-chip` → `log-applied-filter-statement`; its dismiss affordance changed from a
+`FilterChip`'s dismiss icon to the visible `Clear` text.
+
+**Verified:** replaced the old "never collides" checks (which used a two-chip test fixture that
+never reproduced the real overflow — the register's own "how this slipped through") with four
+`R_1047` "is visible without scrolling" cases at `w390dp`/`w480dp` × font scale 1.0/2.0, using the
+real five-quick-chip fixture from the device capture, asserting the statement node's own
+left/right edges lie within the viewport width and its bottom clears the first log row — never
+merely `assertExists()`/`assertIsSelected()`. Shown failing first against the old chip-row
+placement (all four failed on the right-edge assertion, confirming the reproduction); passing
+again after the fix. `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.screens.LogScreenTest"`, `:app:testDebugUnitTest` (full app module, 10m04s),
+`:app:ktlintCheck :app:detekt` — all green. Device re-capture on `ort_audit_2`/port 5560
+(`tools\ui-audit\tour.ps1 -Only "overnight/L01-log-filtered-overs*"`): `steps: 2  ok: 2  errors: 0`
+— at 1.0 and a new `@2x` step (appended at the end of `tour.json`) the Log filtered to one over now
+reads "Filtered to 1 over" with "Clear" beside it, directly beneath the chip row and above the
+column heads, fully on screen at both scales.
+
+**Left open / not done:** none for this commit's own scope.
 
 ### 165cbc4c — WPLINK: R-1047 verification — the tour can now seed an hour-window or curated-overs Log filter
 
