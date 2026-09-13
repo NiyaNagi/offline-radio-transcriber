@@ -43,6 +43,31 @@ class ProseDigestRunnerTest {
         assertEquals(ListenableWorker.Result.success(), result)
     }
 
+    /**
+     * Register R-1052 (halt): the same "a Kotlin catch cannot stop a native abort" shape as
+     * `RealVadProvider`/`RealAsrEngineProvider` exists here too — `MediaPipeLlmEngine.load()`
+     * wraps `LlmInference.createFromOptions` in `catch (e: Exception)`, which does not catch an
+     * `Error` (a `LinkageError`/`UnsatisfiedLinkError` under Robolectric, or a native abort on a
+     * real device) at all. [ProseDigestRunner] must never even construct that engine for a file
+     * that fails [org.ort.core.assets.ModelFileVerifier.verify] — proven here by a stub file with
+     * no verified-install record reaching `Result.failure()` rather than attempting to load.
+     */
+    @Test
+    fun `R_1052 doWork refuses an unverified installed model rather than loading it`() = runTest {
+        val modelFile = LlmModelLocator.locate(context.filesDir)
+            ?: run {
+                val dir = LlmModelLocator.modelsDir(context.filesDir)
+                dir.mkdirs()
+                java.io.File(dir, "${LlmModelLocator.MODEL_ID}.task")
+            }
+        modelFile.writeBytes(ByteArray(64)) // R-1052's exact shape: a debug stub, no markers at all
+        val worker = TestListenableWorkerBuilder<ProseDigestRunner>(context).build()
+
+        val result = worker.doWork()
+
+        assertEquals(ListenableWorker.Result.failure(), result)
+    }
+
     @Test
     fun `schedule enqueues the unique work chain`() {
         ProseDigestRunner.schedule(context)

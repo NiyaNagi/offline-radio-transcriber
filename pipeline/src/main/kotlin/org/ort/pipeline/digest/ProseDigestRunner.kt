@@ -7,6 +7,8 @@ import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import org.ort.core.assets.ModelFileVerifier
+import org.ort.core.assets.ModelVerification
 import org.ort.data.OrtDatabase
 import org.ort.llm.mediapipe.MediaPipeLlmEngine
 import java.time.Duration
@@ -49,6 +51,13 @@ public class ProseDigestRunner(context: Context, params: WorkerParameters) : Cor
         try {
             val filesDir = applicationContext.filesDir
             val modelFile = LlmModelLocator.locate(filesDir) ?: return Result.success()
+            // R-1052 (halt): never hand a path to MediaPipeLlmEngine (whose own native load is
+            // wrapped only in `catch (e: Exception)`, which cannot stop a native abort any more
+            // than RealVadProvider's/RealAsrEngineProvider's Kotlin catches could) without first
+            // checking the file against its verified-install record.
+            if (ModelFileVerifier.verify(modelFile) is ModelVerification.Failed) {
+                return Result.failure()
+            }
 
             val db = OrtDatabase.create(applicationContext)
             val store = RoomProseSummaryStore(db)

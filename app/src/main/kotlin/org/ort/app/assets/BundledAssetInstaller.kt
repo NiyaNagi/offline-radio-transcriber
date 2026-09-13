@@ -2,6 +2,7 @@ package org.ort.app.assets
 
 import android.content.Context
 import org.ort.core.SystemClock
+import org.ort.core.assets.ModelFileVerifier
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -184,6 +185,11 @@ public object BundledAssetInstaller {
         // below does — this is a fast, honest floor, not a replacement for that.
         if (isAlreadyVerified(destination, marker, entry)) {
             rejectionFile(destination).delete() // R-934: a part that verifies is no longer "rejected"
+            // R-1052: an app installed before this fix has a `.sha256` marker but no `.size`
+            // sidecar yet — ModelFileVerifier.verify (the check every native-code loader now runs
+            // first) requires both, so backfill it here rather than leaving every upgraded,
+            // perfectly-good install reading as unverifiable forever.
+            writeSizeMarker(destination, entry.sizeBytes)
             return BundledAssetState.Installed(entry.id, destination)
         }
 
@@ -217,6 +223,7 @@ public object BundledAssetInstaller {
                     part.delete()
                 }
                 marker.writeText(entry.sha256)
+                writeSizeMarker(destination, entry.sizeBytes) // R-1052 — see ModelFileVerifier's own KDoc
                 rejectionFile(destination).delete() // R-934: this launch's copy verified — clear any prior rejection
                 BundledAssetState.Installed(entry.id, destination)
             }
@@ -235,6 +242,12 @@ public object BundledAssetInstaller {
     }
 
     private fun markerFile(destination: File): File = File(destination.parentFile, destination.name + ".sha256")
+
+    /** R-1052: [ModelFileVerifier.sizeMarkerFile]'s writer — see that class's own KDoc for why the
+     * expected size is a separate sidecar from [markerFile] rather than folded into its text. */
+    private fun writeSizeMarker(destination: File, sizeBytes: Long) {
+        ModelFileVerifier.sizeMarkerFile(destination).writeText(sizeBytes.toString())
+    }
 
     /** R-934: the same directory as [markerFile] — "the same place the markers live". */
     private fun rejectionFile(destination: File): File = File(destination.parentFile, destination.name + ".rejected")
