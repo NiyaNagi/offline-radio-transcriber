@@ -78,4 +78,18 @@ public data class SessionEntity(
      * (P9). `null` while [archiveState] is `null` or `"KEPT"`.
      */
     val archiveRemovedAtMillis: Long? = null,
+    /**
+     * WPDATA (schema v13, FR-STO-3e, D40, P9): the wall-clock moment the operator deleted this
+     * session's **over audio** (`audio/<sessionId>/`) through `Recording-Session.dc.html`'s
+     * (RC02) Delete action — `null` while the over audio has never been deleted. Unlike
+     * [archiveState], over audio has no `"KEPT"`-equivalent state column: FR-STO-3e forbids any
+     * *automatic* deletion of over audio ("there is no setting that turns pruning on for gated
+     * over audio"), so the only event this column can ever record is one explicit operator
+     * action — there is nothing analogous to [ArchivePruner][org.ort.pipeline.archive.ArchivePruner]
+     * running unattended that a `"KEPT"` sibling state would need to distinguish from. `null` on
+     * every pre-v13 row and every row whose over audio has never been touched by this action
+     * (constitution I: never fabricate a removal that did not happen). See
+     * [org.ort.pipeline.archive.SessionAudioDeletionService], the only writer.
+     */
+    val overAudioRemovedAtMillis: Long? = null,
 )
