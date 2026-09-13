@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPDIGINIT Part A: R-1022/R-1051 closed for every remaining screen)
 
-### <pending> — WPDIGINIT Part A: R-1022/R-1051 - Sessions, Digest, Recordings' shared tag, Stations, Frequencies, Threads and the transmission detail's own loading frames now use the shared, tagged LoadingState
+### f6474626 — WPDIGINIT Part A: R-1022/R-1051 - Sessions, Digest, Recordings' shared tag, Stations, Frequencies, Threads and the transmission detail's own loading frames now use the shared, tagged LoadingState
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/digest/{SessionsContent,DigestContent}.kt`;
 `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingsScreen.kt` (the loading row's tag only —
