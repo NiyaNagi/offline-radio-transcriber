@@ -272,7 +272,16 @@ public fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier
 
 /** guide §6.7: `halt/fill`/`halt/on-fill` — the one destructive button style in the product. R-380:
  * see [PrimaryButton]'s own doc comment — the identical fix. R-510-class: see [TextAction]'s own
- * doc comment — the identical fix. */
+ * doc comment — the identical fix.
+ *
+ * R-1078 (register, WPPOLISH): this padded horizontally only (`padding(horizontal = 18.dp)`) — the
+ * same defect class R-1065 already fixed on [PrimaryButton]/[SecondaryButton] above
+ * (`requiredHeightIn(min = 44.dp)` only ever raises a floor; it adds no padding once real wrapped
+ * content already exceeds it), left unfixed on this one remaining button style, so a wrapped
+ * label's own last line touched the border. The fix mirrors R-1065 exactly: a real, vertical inset
+ * (`vertical = OrtSpacing.sm`) alongside the existing horizontal one, so a wrapped label keeps
+ * clearance above and below regardless of how many lines it takes, while a single-line label —
+ * already well within the 44dp floor — is unaffected. */
 @Composable
 public fun DestructiveButton(
     text: String,
@@ -285,7 +294,7 @@ public fun DestructiveButton(
             .requiredHeightIn(min = 44.dp)
             .background(OrtColors.haltFill, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 18.dp)
+            .padding(horizontal = 18.dp, vertical = OrtSpacing.sm)
             .clearAndSetSemantics {
                 contentDescription = text
                 // R-380 correction (WP2, gate-blocking) — see [TextAction]'s own doc comment.

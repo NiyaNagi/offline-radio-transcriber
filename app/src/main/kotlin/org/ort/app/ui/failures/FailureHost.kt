@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -339,6 +340,19 @@ private val BANNER_SCROLL_HINT_HEIGHT: Dp = 18.dp
  * scroll away — see [BANNER_SCROLL_HINT_HEIGHT]. `onHeightMeasured` reports its own capped size
  * plus that clearance, so `contentTopPadding` downstream always leaves real daylight, never just
  * an exact touch.
+ *
+ * Register R-1077 (WPPOLISH, font scale 2.0): the scroll box and the scroll-hint chevron below
+ * used to be two `Box`-overlaid children of this same capped box — the scroll box (no `align`,
+ * taking the box's own full measured size) and the hint `Row` (`Alignment.BottomCenter`) — which
+ * let each position independently while the `Box` itself sized to the larger of the two, so the
+ * hint's own pill always painted directly over whatever text the scrolled content happened to
+ * still be showing at that same bottom edge (`Fail-Level`'s own "... the peaks sit in the green
+ * band." — the chevron landed mid-word, reported as "in the gree[chevron]and."). They are now
+ * `Column` siblings instead: the hint's own (unweighted) natural height is measured first and
+ * reserved out of this box's capped total, and the scroll box gets only what remains
+ * (`weight(1f, fill = false)`, so it still shrinks to its own content when that content is
+ * shorter than the cap, exactly as before whenever no hint shows at all) — the two can no longer
+ * share the same vertical span, whatever the wrapped text's own last visible line happens to be.
  */
 @Composable
 private fun BoxScope.BannerOverlay(
@@ -369,41 +383,47 @@ private fun BoxScope.BannerOverlay(
             }
             .testTag("failure-banner-overlay"),
     ) {
-        // R-883: `verticalScroll` moved one level in, off the measured/capped box itself, so a
-        // second, small sibling (the scroll hint) can sit `Alignment.BottomCenter` within the same
-        // capped rectangle without itself scrolling away — a modifier chain has exactly one node's
-        // worth of children, and both this scroll box and the hint need to be that box's own
-        // direct children to share its bottom edge.
+        // R-1077: the scroll box and the scroll hint are `Column` siblings, not two `Box`-overlaid
+        // children sharing the same rectangle — see this function's own kdoc for exactly why that
+        // used to paint the hint directly over the scrolled content's own last visible line.
         val scrollState = rememberScrollState()
-        Box(
-            modifier = Modifier
-                .verticalScroll(scrollState)
-                .padding(OrtSpacing.lg)
-                // R-883: the scroll semantics (and its `ScrollBy` action) live on this node now,
-                // one level in from `failure-banner-overlay` itself — see this function's own
-                // kdoc for why `verticalScroll` moved off the measured/capped box.
-                .testTag("failure-banner-scroll-content"),
-        ) {
-            content()
-        }
-        if (scrollState.canScrollForward) {
-            Row(
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 6.dp)
-                    .background(OrtColors.bannerAmberBorder, RoundedCornerShape(50))
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                    .semantics(mergeDescendants = true) {
-                        contentDescription = "More of this message below — scroll to read the rest."
-                    }
-                    .testTag("failure-banner-scroll-hint"),
+                    // R-1077: the hint `Row` below (unweighted, measured first by `Column`) claims
+                    // its own natural height out of this box's capped total before this weighted
+                    // sibling gets the rest — `fill = false` so this still shrinks to its own
+                    // content, exactly as before, whenever that content is shorter than what
+                    // remains (i.e. whenever the hint is not even showing).
+                    .weight(1f, fill = false)
+                    .verticalScroll(scrollState)
+                    .padding(OrtSpacing.lg)
+                    // R-883: the scroll semantics (and its `ScrollBy` action) live on this node now,
+                    // one level in from `failure-banner-overlay` itself — see this function's own
+                    // kdoc for why `verticalScroll` moved off the measured/capped box.
+                    .testTag("failure-banner-scroll-content"),
             ) {
-                Icon(
-                    imageVector = OrtIcons.chevron,
-                    contentDescription = null,
-                    tint = OrtColors.accentAmber,
-                    modifier = Modifier.size(BANNER_SCROLL_HINT_HEIGHT).rotate(ROTATE_CHEVRON_TO_POINT_DOWN),
-                )
+                content()
+            }
+            if (scrollState.canScrollForward) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterHorizontally)
+                        .padding(bottom = 6.dp)
+                        .background(OrtColors.bannerAmberBorder, RoundedCornerShape(50))
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = "More of this message below — scroll to read the rest."
+                        }
+                        .testTag("failure-banner-scroll-hint"),
+                ) {
+                    Icon(
+                        imageVector = OrtIcons.chevron,
+                        contentDescription = null,
+                        tint = OrtColors.accentAmber,
+                        modifier = Modifier.size(BANNER_SCROLL_HINT_HEIGHT).rotate(ROTATE_CHEVRON_TO_POINT_DOWN),
+                    )
+                }
             }
         }
     }
