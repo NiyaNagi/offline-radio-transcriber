@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPINIT: R-1051 gives Log/Now/Capture status/Live monitor a real loading state distinct from empty, R-1022 replaces the tour's own text-matched placeholder check with a structural marker, and the transmission detail screen names the real, structured cause of a missing over's own audio instead of guessing one)
 
-### pending — WPINIT: R-1051 — a cold-start screen renders loading, never a false empty claim, until its first real query returns
+### b4a7c949 — WPINIT: R-1051 — a cold-start screen renders loading, never a false empty claim, until its first real query returns
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Feedback.kt`;
 `app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt`, `NowViewState.kt`,
