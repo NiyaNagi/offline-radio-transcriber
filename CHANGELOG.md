@@ -34,11 +34,14 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
 
-### WPIMPROVE — fixed while device-verifying R-1056: Improve's root stopped claiming improved overs still "can get better" (R-1063, FR-REP-2/9, constitution I)
+### WPIMPROVE — fixed while device-verifying R-1056: Improve's root stopped claiming improved overs still "can get better" (R-1064, FR-REP-2/9, constitution I)
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImprovePolling.kt` and its test only.
 
-**Requirements/ACs:** R-1063 (register), FR-REP-2, FR-REP-8, FR-REP-9, constitution I.
+**Requirements/ACs:** R-1064 (register — "Improve root counts overs already improved"; cited as
+"R-1063" in this fix's own first commit, corrected once the lead's own filing landed with the two
+Improve findings' ids swapped from this session's initial guess), FR-REP-2, FR-REP-8, FR-REP-9,
+constitution I.
 
 **What changed:** `ImprovePolling.root()` grouped sessions by `SessionEntity.deviceTier` and then
 counted **every** transmission in a qualifying session as a candidate — real at the moment of
@@ -60,10 +63,10 @@ brought-current selection now shows the honest empty state (`totalOverCount == 0
 stale count.
 
 **Verified:**
-- `ImprovePollingTest`: two new cases, both against a real Room DB — `R_1063 a completed run leaves
+- `ImprovePollingTest`: two new cases, both against a real Room DB — `R_1064 a completed run leaves
   the root showing zero remaining candidates` (both overs stamped `processedTier = T3` by
   `setProcessedTier`, current tier T3 → `totalOverCount == 0`, `groups.isEmpty()`) and
-  `R_1063 a mixed set counts only the overs not yet brought current` (one over stamped current, one
+  `R_1064 a mixed set counts only the overs not yet brought current` (one over stamped current, one
   at its own capture tier, one never processed at all → exactly the two real outstanding ids, never
   the stamped one). **Discrimination performed and reverted**: reverting `ImprovePolling.kt` alone
   (temporary local commit, undone with `git reset --soft` before this commit) fails both — "expected
@@ -80,14 +83,14 @@ stale count.
 "12 overs can get better") is reported separately alongside this session's R-1056 device evidence,
 not duplicated here.
 
-### WPIMPROVE — fixed while device-verifying R-1056: Improve's navigation now survives a configuration change (R-1064, FR-REP-9/11, constitution I)
+### WPIMPROVE — fixed while device-verifying R-1056: Improve's navigation now survives a configuration change (R-1063, FR-REP-9/11, constitution I)
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImproveContent.kt` and a new test file only.
 
-**Requirements/ACs:** R-1064 (register — corrected from an initially-used "R-1062" once the merge
-that landed WPSEGPROV's own, unrelated R-1062 row ("FR-SEG-5 squelch fusion was never built") made
-that collide; R-1063 above was already claimed by this session's own other fix, so R-1064 is the
-next free id — the lead's own filing may still rename either), FR-REP-9, FR-REP-11, constitution I.
+**Requirements/ACs:** R-1063 (register — "Improve flow state across Activity recreation"; this
+fix's own first commit guessed "R-1062", which the very next main merge landed as WPSEGPROV's own,
+unrelated squelch-fusion finding — corrected once the lead's own filing arrived with both Improve
+ids the opposite way round from this session's initial guess), FR-REP-9, FR-REP-11, constitution I.
 
 **What changed:** `ImproveContent`'s own `page` (`ImprovePage` — `Root`/`Select`/`Running`/`Done`)
 lived in a plain `remember`, so any configuration change `ReaderActivity` does not declare in its
@@ -112,12 +115,12 @@ ownership, not attempted here.
 - New `ImproveContentActivityTest` (Robolectric, a real `ReaderActivity` — not a bare
   `ComponentActivity` with test-injected content, which cannot re-attach a composition on
   `recreate()` at all, confirmed directly by trying it first and getting "No compose hierarchies
-  found in the app" instead of this fix's own assertions): `R_1064 Running survives a real Activity
+  found in the app" instead of this fix's own assertions): `R_1063 Running survives a real Activity
   recreation, not bounced back to Root` (the engine's own capture-priority yield, FR-REP-6,
   `CaptureState.capturing(...)` + `ShedStatus.update(level = 3, ...)`, armed between reaching
   `Improve-Select` and tapping Start, freezes a real run at its first item deterministically —
   never a race against a real, fast, model-less run — so the board's own "waiting — capture is
-  busy" line is provably still there, real, after `recreate()`) and `R_1064 Done survives a real
+  busy" line is provably still there, real, after `recreate()`) and `R_1063 Done survives a real
   Activity recreation, keeping its real summary` (a real run against a real, model-less `filesDir`
   completes to Done; its own real "N overs no longer marked as reprocessing candidates" line
   survives `recreate()` unchanged). **Discrimination performed and reverted**: reverting

@@ -14,7 +14,7 @@ import org.ort.pipeline.capture.ThermalStatus
  * `RealCaptureService.runCaptureFlow`, which writes `null` for every full-capability session), so
  * a session qualifying by tier is real, never a guess — but a session fact alone cannot say
  * whether any *particular* transmission in it still needs improving (see [root]'s own doc comment
- * for the per-transmission half of that, R-1063).
+ * for the per-transmission half of that, R-1064).
  *
  * No reprocess/"Pass B/C" scheduling mechanism exists anywhere in `:pipeline` (no `WorkManager`,
  * no `CoroutineWorker`; grepped the whole tree before writing this) — [ImproveRunner]/
@@ -26,7 +26,7 @@ public object ImprovePolling {
     private const val MAX_TIER_ORDINAL: Int = 3
 
     /**
-     * Register R-1063 (coordinator round, WPIMPROVE, FR-REP-2/FR-REP-9): [root] used to count and
+     * Register R-1064 (coordinator round, WPIMPROVE, FR-REP-2/FR-REP-9): [root] used to count and
      * list *every* transmission in a session whose [org.ort.data.entity.SessionEntity.deviceTier]
      * is below the current tier — real at the moment of capture, but permanent, since a session's
      * own `deviceTier` never changes. After a completed Improve run left all twelve of a session's

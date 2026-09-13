@@ -169,7 +169,7 @@ class ImproveContentActivityTest {
      * mid-flight before it races to `Done` on its own.
      */
     @Test
-    fun `R_1064 Running survives a real Activity recreation, not bounced back to Root`() {
+    fun `R_1063 Running survives a real Activity recreation, not bounced back to Root`() {
         seedTierSession("s-running", "s-running-tx")
 
         runImproveActivity { rule ->
@@ -204,7 +204,7 @@ class ImproveContentActivityTest {
     }
 
     @Test
-    fun `R_1064 Done survives a real Activity recreation, keeping its real summary`() {
+    fun `R_1063 Done survives a real Activity recreation, keeping its real summary`() {
         seedTierSession("s-done", "s-done-tx")
 
         runImproveActivity { rule ->

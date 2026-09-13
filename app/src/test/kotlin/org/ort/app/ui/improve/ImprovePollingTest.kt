@@ -110,7 +110,7 @@ class ImprovePollingTest {
     }
 
     // -------------------------------------------------------------------------------------------
-    // R-1063 (coordinator round, WPIMPROVE, FR-REP-2/9): a session's own `deviceTier` never
+    // R-1064 (coordinator round, WPIMPROVE, FR-REP-2/9): a session's own `deviceTier` never
     // changes, so it alone cannot say whether any particular over in it still needs improving --
     // only `TransmissionEntity.processedTier` (stamped by the real engine on every completed or
     // rejected outcome, live capture included per its own doc comment) can. These two discriminate
@@ -119,7 +119,7 @@ class ImprovePollingTest {
     // -------------------------------------------------------------------------------------------
 
     @Test
-    fun `R_1063 a completed run leaves the root showing zero remaining candidates`(): Unit = runTest {
+    fun `R_1064 a completed run leaves the root showing zero remaining candidates`(): Unit = runTest {
         ShedStatus.update(level = 0, backlog = 0) // current tier = T3 (MAX)
         db.sessionDao().insert(session("S1", tier = "T1"))
         db.transmissionDao().insert(transmission("TX1", "S1"))
@@ -136,7 +136,7 @@ class ImprovePollingTest {
     }
 
     @Test
-    fun `R_1063 a mixed set counts only the overs not yet brought current`(): Unit = runTest {
+    fun `R_1064 a mixed set counts only the overs not yet brought current`(): Unit = runTest {
         ShedStatus.update(level = 0, backlog = 0) // current tier = T3 (MAX)
         db.sessionDao().insert(session("S1", tier = "T1"))
         db.transmissionDao().insert(transmission("TX1", "S1"))
