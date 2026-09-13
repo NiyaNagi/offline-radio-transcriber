@@ -32,6 +32,27 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (spec: Q23 opened - squelch fusion on a dual-band radio, and rigs that only poll)
+
+### spec · Q23: two design choices squelch fusion made that the spec never did
+
+**Scope:** `spec/open-questions.md` (Q23 in the status table and as a full entry, seven open), `results/ui-audit/register.md`
+(R-1062 round 1). Lead-owned documents only; no product code.
+
+**Requirements/ACs:** none new. Q23 (opened). Bears on FR-SEG-5, FR-SEG-9, CON-SEG-1, FR-RUN-17 and register R-1062.
+
+**What changed:** building FR-SEG-5 (WPSQUELCH, not yet merged) had to decide how one mixed audio stream from the
+dual-band TH-D75A is segmented when each band reports its own squelch - it chose a union, which merges overlapping
+transmissions on different bands - and which rigs qualify for fusion at all - push, or polls within 250 ms. Both are
+product decisions with irreversible consequences for segmentation, so they are recorded as Q23 with a recommendation
+rather than left inside the code. R-1062 records round 1: the fusion rule is sound, but a rig lost while squelch is
+closed would leave every later over in the session captured as audio and never turned into a transmission; round 2 is
+building the loss and staleness fallback.
+
+**Verified:** `python tools/spec-check/spec_check.py`, run before this commit.
+
+**Left open / not done:** Q23 itself; R-1062's round 2.
+
 ## 2026-09-13 (WPINIT round 2, coordinator review before merge: `NeverRetained` was itself an unrecorded guess — replaced with `Unknown`; fresh, single-AVD device evidence for Parts A/B/C and R-1055)
 
 ### cf5a327d — WPINIT: R-1055 device evidence — a dedicated debug scenario proves the cross-session filter fix on a real device, on this builder's own named AVD
