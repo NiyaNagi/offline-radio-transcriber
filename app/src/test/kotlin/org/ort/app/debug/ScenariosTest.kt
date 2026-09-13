@@ -797,6 +797,69 @@ class ScenariosTest {
         assertNull(store.radioChoice)
     }
 
+    /**
+     * `recordings-budget-exceeded` (D40/AC-160, coordinator round): proves the scenario drives
+     * RC01's own real read path — [measureStorageAccounting] against the real sparse file on disk,
+     * then [overAudioBudgetState] against the real `SettingsStore.audioBudgetGb` this scenario
+     * wrote — genuinely over budget, not a fabricated flag. Discriminates against the scenario
+     * never having written the file or the budget at all: with either missing, `exceeded` is
+     * false and this assertion fails.
+     */
+    @Test
+    @Requirement("D40", "AC-160")
+    fun `recordings-budget-exceeded reports a real, measured over-audio budget as genuinely exceeded`() = runTest {
+        Scenarios.load(context, "recordings-budget-exceeded")
+
+        val settings = org.ort.app.ui.settings.SharedPreferencesSettingsStore(
+            context.getSharedPreferences(
+                org.ort.app.ui.settings.SharedPreferencesSettingsStore.PREFS_NAME,
+                android.content.Context.MODE_PRIVATE,
+            ),
+        )
+        assertEquals(1, settings.audioBudgetGb)
+
+        val accounting = org.ort.pipeline.capture.measureStorageAccounting(context.filesDir, emptyList())
+        assertTrue(
+            "expected the real sparse file's logical size to exceed a 1 GB budget",
+            accounting.audioBytes > 1_000_000_000L,
+        )
+        val budget = org.ort.pipeline.capture.overAudioBudgetState(accounting.audioBytes, settings.audioBudgetGb)
+        assertTrue("expected the real measured usage to be over the real budget", budget.exceeded)
+    }
+
+    /**
+     * `recordings-archive-removed` (P9/D39, coordinator round): proves the scenario's two sessions
+     * carry two distinct removal facts — one raw-archive removal (the automatic pruner's own write
+     * path), one over-audio removal (the operator's own) — through [recordingSessionSummaries],
+     * RC01's real read path, never conflated into the same field or the same date. Discriminates
+     * against either `setArchiveRemoved`/`setOverAudioRemoved` call being dropped: either summary
+     * would then report `NONE`/`null` where a real removal is expected.
+     */
+    @Test
+    @Requirement("P9", "D39")
+    fun `recordings-archive-removed carries two distinct removal facts, never conflated`() = runTest {
+        val result = Scenarios.load(context, "recordings-archive-removed")
+        assertEquals(2, result.sessionCount)
+
+        val summaries = org.ort.pipeline.archive.recordingSessionSummaries(db)
+        val archived = summaries.single { it.sessionId.endsWith("-archive") }
+        val overAudio = summaries.single { it.sessionId.endsWith("-over-audio") }
+
+        assertEquals(org.ort.pipeline.archive.ArchiveState.REMOVED, archived.archiveState)
+        assertNotNull("the archived session's own removal date", archived.archiveRemovedAtMillis)
+        assertNull("the archived session must not also carry an over-audio removal", archived.overAudioRemovedAtMillis)
+
+        assertNull(
+            "the over-audio session must not carry a fabricated archive removal",
+            overAudio.archiveRemovedAtMillis,
+        )
+        assertNotNull("the over-audio session's own removal date", overAudio.overAudioRemovedAtMillis)
+        assertTrue(
+            "expected the two removal dates to be genuinely different, not a coincidental match",
+            archived.archiveRemovedAtMillis != overAudio.overAudioRemovedAtMillis,
+        )
+    }
+
     // -----------------------------------------------------------------------------------------
     // WP11b (register R-100): the seven ids with no runtime signal today, driven through
     // DebugFailureOverride — moved verbatim into FailureOverrideScenariosTest.kt (detekt's

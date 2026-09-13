@@ -90,7 +90,10 @@ import java.util.concurrent.Executors
  * `exportSchema = true` writes to `:data/schemas/`, which [migrationCallback] and future
  * [Migration]s are tested against forward to head (FR-AST-5 → AC-53). v13 (WPDATA, FR-STO-3e,
  * FR-OBS-4, D40) adds [SessionEntity.overAudioRemovedAtMillis] and the `transmission_label` table
- * for [TransmissionLabelEntity] — see each one's own doc comment.
+ * for [TransmissionLabelEntity] — see each one's own doc comment. v14 (WPSEGPROV, FR-SEG-10,
+ * register R-1054, AC-162) adds `session.vadDetector`/`.vadDetectorVersion` and
+ * `transmission.vadDetector`/`.vadDetectorVersion`/`.rigSquelchFusionApplied` — see
+ * [SessionEntity.vadDetector] and [TransmissionEntity.vadDetector]'s own doc comments.
  */
 @Database(
     entities = [
@@ -143,7 +146,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun transmissionLabelDao(): TransmissionLabelDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 13
+        public const val SCHEMA_VERSION: Int = 14
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -490,6 +493,36 @@ public abstract class OrtDatabase : RoomDatabase() {
         )
 
         /**
+         * v13 → v14 (WPSEGPROV, FR-SEG-10, register R-1054, AC-162): adds
+         * `session.vadDetector`/`.vadDetectorVersion` and
+         * `transmission.vadDetector`/`.vadDetectorVersion`/`.rigSquelchFusionApplied` — see
+         * [SessionEntity.vadDetector] and [org.ort.data.entity.TransmissionEntity.vadDetector]'s own
+         * doc comments. No existing table or column is touched or dropped; every v13 row survives
+         * untouched, both new `vadDetector` columns defaulting to `'UNKNOWN'` (an honest "not
+         * recorded", never a fabricated `'SILERO'`) and `rigSquelchFusionApplied` to `0` (`false`) —
+         * a non-nullable `TEXT`/`Boolean` `ADD COLUMN` needs an explicit `DEFAULT` clause, the same
+         * reasoning [MIGRATION_8_9]'s own doc comment states (FR-AST-5/6 → AC-53), verified by
+         * `MigrationTest`.
+         */
+        public val MIGRATION_13_14: Migration = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_13_14_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_13_14_STATEMENTS.forEach(connection::execSQL)
+            }
+        }
+
+        private val MIGRATION_13_14_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `session` ADD COLUMN `vadDetector` TEXT NOT NULL DEFAULT 'UNKNOWN'",
+            "ALTER TABLE `session` ADD COLUMN `vadDetectorVersion` TEXT",
+            "ALTER TABLE `transmission` ADD COLUMN `vadDetector` TEXT NOT NULL DEFAULT 'UNKNOWN'",
+            "ALTER TABLE `transmission` ADD COLUMN `vadDetectorVersion` TEXT",
+            "ALTER TABLE `transmission` ADD COLUMN `rigSquelchFusionApplied` INTEGER NOT NULL DEFAULT 0",
+        )
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> = arrayOf(
@@ -505,6 +538,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             MIGRATION_10_11,
             MIGRATION_11_12,
             MIGRATION_12_13,
+            MIGRATION_13_14,
         )
 
         private suspend fun PooledConnection.exec(sql: String) {

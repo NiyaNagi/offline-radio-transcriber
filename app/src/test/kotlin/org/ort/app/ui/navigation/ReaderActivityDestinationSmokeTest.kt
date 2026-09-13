@@ -948,8 +948,12 @@ class ReaderActivityDestinationSmokeTest {
                 "expected no host drawer icon over the seeded Digest's own chevron header, found $drawerIcons"
             }
         }
+        // WPREC (design-intent row RC01): an ordinary, unseeded reach now lands on
+        // `RecordingsContent` (`Recordings.dc.html`), not the old plain `Sessions` list — it draws
+        // its own `ScreenHeader` too (`RecordingsScreen.kt`), so the "exactly one drawer icon" half
+        // of this proof still holds; only the expected title text changed.
         runReaderActivity(ReaderDestination.EARLIER_NIGHTS) { rule ->
-            rule.waitUntilTextExists("Earlier nights")
+            rule.waitUntilTextExists("Recordings")
             rule.assertExactlyOneContentDescription("Open navigation")
         }
     }

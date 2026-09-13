@@ -374,7 +374,460 @@ layout change of its own — `LogScreen`'s own pixels are unchanged, already pro
 R-1051 commit above; the real, multi-session Room-database tests listed under "Verified" are this
 fix's own discriminating proof instead.
 
+## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
+
+### 64c1bc56 — WPREC: fix ktlintDebugSourceSetCheck violations in the two new recordings scenarios
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` only.
+**Requirements/ACs:** none new — formatting only, caught by the full gate's own
+`ktlintDebugSourceSetCheck` (the `app/src/debug` source set, which this session's earlier
+`ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck` runs never covered).
+**What changed:** three long lines in `recordingsBudgetExceeded`/`recordingsArchiveRemoved`
+(argument-list-wrapping, max-line-length) wrapped onto multiple lines; behaviour unchanged.
+**Verified:** `gradlew :app:ktlintDebugSourceSetCheck :app:detekt` — green. `gradlew
+:app:testDebugUnitTest --tests "org.ort.app.debug.ScenariosTest"` — green, unchanged behaviour.
+
+### 0b5471d5 — coverage matrix: regenerated after the WPREC merge of origin/main
+
+**Scope:** `results/coverage-matrix.md` (generated file) only.
+**Requirements/ACs:** none new.
+**What changed:** regenerated after merging `origin/main` (`849be96d`) into this branch.
+**Verified:** `gradlew coverageMatrix` — 272 of 483 requirements covered, no new orphans beyond
+this session's own known `RC01`/`P9`/constitution-tag entries. `gradlew coverageMatrixCheck` —
+green.
+
+### 6afd32ea — Merge origin/main into WPREC (WPMODEL round 2's ModelFileVerifier/sidecar fix, register updates)
+
+**Scope:** merge only — `CHANGELOG.md` conflict resolved keeping both sides (marker lines
+removed, both dated sections kept); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
+auto-merged clean; everything else (`ModelFileVerifier.kt`, `ModelAcquisition.kt`,
+`BundledAssetInstaller.kt`, `RealVadProvider.kt`, `ProseDigestRunner.kt`,
+`AsrEngineProvisioning.kt`, `results/ui-audit/register.md`, `results/coverage-matrix.md`) came in
+from `origin/main` unmodified by this branch.
+**Requirements/ACs:** none new to this branch — carries in main's own WPMODEL round 2
+(R-1052/R-1054) fix.
+**What changed:** brought `origin/main` (`849be96d`) into this branch so the final gate and
+report run against current `main`, per the coordinator's explicit "merge main again if it moved"
+instruction.
+**Verified:** `git grep -n -E "^(<<<<<<<|>>>>>>>)"` — no matches (conflict markers fully resolved).
+Full test/gate results reported separately in this round's own report.
+**Left open / not done:** none for the merge itself; note that `origin/main`'s own
+`ModelFileVerifier`/sidecar work independently addresses the same class of crash this round's own
+report flags for `RealCaptureService`'s VAD load on a fixture-asset local build — not verified
+against this branch's own interactive-navigation crash finding, left to the already-pending
+`task_eefe705c` background task.
+
+### 4110dcdc — WPREC: RC01's own tour steps — the drawer's Recordings row and the two new scenario states
+
+**Scope:** `tools/ui-audit/tour.json` only (append-only, per this session's ownership).
+**Requirements/ACs:** constitution VIII (screens captured and compared to artboards).
+**What changed:** three new steps appended after RC01's existing `stations-14-nights` steps:
+`stations-14-nights/RC01-drawer` (`openDrawer` drillIn, same shape as `overnight/N00-drawer`,
+proves the drawer's "Recordings" row), `recordings-budget-exceeded/RC01-recordings` and
+`recordings-archive-removed/RC01-recordings` (RC01's own two constitution-bearing states,
+D40/AC-160 and P9/D39, seeded by the previous commit's two new debug scenarios).
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourSpecTest"` —
+12/12 green (unique ids, real scenario/destination names). `gradlew :app:testDebugUnitTest
+--tests "org.ort.app.debug.tour.TourStepsTest"` — green, every step (including the three new
+ones) lands on its expected marker. A real capture run
+(`tools\ui-audit\tour.ps1 -Port 5566 -Only "..."`) on `ort_audit_wpmodel` produced all three new
+PNGs plus the pre-existing RC01 1.0/@2x/@2x-end steps; every image was viewed and described in
+pixel terms (see this round's own report).
+**Left open / not done:** interactive (non-tour) navigation on a local fixture-asset debug build
+crashes the whole process (`RealCaptureService`'s VAD load throws an uncaught native exception on
+the placeholder model) — unrelated to RC01, flagged separately rather than fixed here; the
+uiautomator dumps for this round were taken by racing a dump against the tour activity's own
+brief real-Compose-tree window instead (see this round's own report for the technique and bounds).
+
+## 2026-09-12 (WPREC: RC01 Recordings, replacing Earlier nights as the home for sessions)
+
+### 4fe89e81 — WPREC: two debug scenarios for RC01's constitution-bearing states, with discriminating tests
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (two new scenario names,
+additive), `app/src/test/kotlin/org/ort/app/debug/ScenariosTest.kt` (two new tests).
+**Requirements/ACs:** D40, AC-160 (over-audio budget genuinely exceeded), P9, D39 (a raw archive
+removal and an operator over-audio removal, never conflated) — constitution VIII (these are RC01's
+own two constitution-bearing states and must be captured for real, not only unit-tested).
+**What changed:** `recordings-budget-exceeded` writes a real ~1.1 GB sparse file (
+`RandomAccessFile.setLength`, no real disk block allocation) under `audio/<sessionId>/` and sets
+`SettingsStore.audioBudgetGb = 1`, so RC01's real read path (`measureStorageAccounting` then
+`overAudioBudgetState`) reports a genuinely exceeded budget rather than a fabricated flag.
+`recordings-archive-removed` seeds two sessions: one whose raw archive was kept then pruned
+(`setArchiveKept`/`setArchiveRemoved`, the same write path `ArchivePruner`'s automatic pruning
+uses), one whose over-audio the operator removed instead (`setOverAudioRemoved`), on a different
+real date, so the two badges `RecordingsViewStateMapperTest` already proves are never conflated
+at the mapper level are now backed by a real, capturable scenario.
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.ScenariosTest"` — 41/41
+green, including both new tests and the existing `R_110 every declared scenario name loads
+without throwing` sweep. Both new tests written first against the already-implemented scenario
+code (this session's own established discrimination convention, since the scenario functions
+were written together with the debug seeding work) and each individually confirmed to fail for
+the right reason: `recordings-budget-exceeded`'s test fails with `expected:<1> but was:<null>`
+when the `audioBudgetGb` write is removed; `recordings-archive-removed`'s test fails when
+`setArchiveRemoved` is removed. `gradlew :app:ktlintTestSourceSetCheck :app:detekt` — green (one
+`MaxLineLength` finding on the new test file fixed before this entry).
+**Left open / not done:** the actual tour capture of these two states (constitution VIII) is a
+separate, still-pending step — this commit only lands the seeding and its own test coverage.
+
+### 22f460d0 — WPREC: RC01's row sub-line widens to "N overs · N stations · N gaps", per the artboard
+
+**Scope:** `:pipeline`'s `RecordingSessionSummary`/`recordingSessionSummaries` (additive: two new
+fields, no existing field changed or removed) and its test; `app/src/main/kotlin/org/ort/app/ui/
+recordings/{RecordingsViewData,RecordingsViewStateMapper,RecordingsScreen}.kt` and their tests.
+Coordinator round: extended this session's ownership into `:pipeline` for exactly this.
+
+**Requirements/ACs:** design-intent row RC01, FR-RUN-12 (a gap is data), constitution I (a real,
+distinct fact is never collapsed into a repeat of another).
+
+**What changed:**
+- `RecordingSessionSummary` gains `stationCount`/`gapCount`, computed the same way
+  `DigestPolling.sessions` already computes the identical facts for `Sessions.dc.html`:
+  `stationCount` is the distinct, non-null `stationId` count across the session's transmissions
+  (never merely the over count); `gapCount` is the session's own real
+  `CaptureGapDao.listBySession` row count. Both are additive — every existing field and every
+  existing caller keeps compiling and behaving unchanged.
+- RC01's row sub-line now reads "N overs · N stations[ · N gap(s)]" (the gap clause omitted, not
+  shown as "0 gaps", when a session genuinely had none — matching the artboard's own two examples,
+  "41 overs · 9 stations · 1 gap" against "33 overs · 7 stations"), replacing the over-count-alone
+  line this package's own RC01 commit had already disclosed as a known gap.
+
+**Verified:** `.\gradlew.bat :pipeline:testDebugUnitTest --tests
+"org.ort.pipeline.archive.RecordingSessionSummariesTest"` — 4/4 green, including the new
+`station and gap counts are real, distinct facts, never derived from the over count` case (written
+first; confirmed to fail to compile before the fields existed). `.\gradlew.bat
+:app:testDebugUnitTest --tests "org.ort.app.ui.recordings.*"` — 20/20 green, including the new
+`the row carries the real station and gap counts, distinct from the over count` mapper case.
+`:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck`/`detekt` and the `:pipeline` equivalents
+all green (two `LongParameterList` test-helper bundles added; one real `LongMethod` fix to
+`OrtNavHost.kt`'s own `navHostCallbacks`, unrelated to this change but tipped over the limit by
+this session's earlier one-line addition combined with `main`'s own WPLINK growth — six duplicated
+"filter the Log and switch to it" callback bodies factored into one `openLogAndNavigate` helper,
+behaviour-preserving).
+
+**Left open / not done:** none for this commit's own scope.
+
+### 3d1d8839 — WPREC: correction — the TourStepsTest digest-prose timeout was mine, not pre-existing; merge main
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt`, `tools/ui-audit/tour.json`
+(rename only), a merge of `origin/main` (`c966c6f2`) resolving `CHANGELOG.md`,
+`results/coverage-matrix.md` and `tools/ui-audit/tour.json`.
+
+**Requirements/ACs:** design-intent row RC01, IA-1, constitution II (a claim must be checked, not
+assumed), constitution VIII.
+
+**What changed — a correction, stated plainly:**
+- **The previous commit's "pre-existing, environmental" diagnosis for `TourStepsTest`'s
+  `llm-enabled-prose/DG05-digest-prose(@2x)`/`llm-disabled/DG01-digest` timeout was wrong.** It was
+  reached by comparing against this session's own stale local base (`90a87d75`, missing the WPAUDX
+  merge), not real `origin/main`. Proven by running the test three times on this branch and three
+  times on a clean temporary worktree of `origin/main` (`c966c6f2`): **this branch failed 3/3,
+  `origin/main` passed 3/3** — conclusive, not environmental.
+- **Root cause, found by reading the two real screens the failing steps actually reach**:
+  `expectedForDrillIn`'s `reviewSession` case asserted `Expected.Text("Earlier nights")`
+  unconditionally, for both `reviewSessionView` values — but `DigestScreens.kt`'s `DigestScreen`
+  (DG01/DG05) draws `DrillInHeader(parentLabel = "Session", ...)`, never "Earlier nights" at all;
+  only `SessionDetailScreen` (DG04) does. The assertion passed on every build before this session's
+  own `Drawer.kt` change only by accident: `ModalNavigationDrawer`'s `drawerContent` is *always*
+  composed, and the drawer's own `EARLIER_NIGHTS` row used to render that same literal text — an
+  off-screen coincidental match, never the Digest screen the case exists to check. Once
+  `ReaderDestination.EARLIER_NIGHTS.drawerLabel` became "Recordings" (RC01 absorbing that row), the
+  accidental match was gone and the assertion's own long-standing imprecision was exposed.
+- **Fix**: `expectedForDrillIn` now checks `drillIn["reviewSessionView"] == "DIGEST"` first,
+  expecting "Session" (`DigestScreen`'s own real header); the plain `reviewSession` case (default
+  `SESSION` view) still expects "Earlier nights" (`SessionDetailScreen`'s own real header,
+  unchanged). Both routes were always reachable and correct in product code — this fixes the test's
+  own marker, not `OrtNavHost.kt`.
+- Renamed the three bare-`EARLIER_NIGHTS`, no-`drillIn` steps this content now genuinely is —
+  `stations-14-nights/DG03-sessions` → `.../RC01-recordings`, `field-tier1/DG03-sessions` →
+  `.../RC01-recordings`, `gap-call/DG03-sessions` → `.../RC01-recordings` — and removed this
+  session's own duplicate 1.0-scale `stations-14-nights/RC01-recordings` step added previously
+  (the renamed line already covers it); its `@2x`/`@2x-end` siblings stay.
+- Merged `origin/main` (`c966c6f2`, bringing in WPLINK/WPARC/WPNAV/WPAUDX work, including the real
+  `SessionAudioExport.canExport/preview/write` this session's own report previously called a
+  discrepancy against a stale base — dropped, corrected by the merge itself). `CHANGELOG.md`
+  resolved by keeping both sides' entries; `tools/ui-audit/tour.json` resolved by keeping both
+  sides' new steps (no id collisions); `results/coverage-matrix.md` regenerated fresh rather than
+  hand-merged (a generated file). `OrtNavHost.kt` and one test file auto-merged cleanly, no manual
+  resolution needed. Verified no conflict markers remain: `git grep -n -E "^(<<<<<<<|>>>>>>>)"` —
+  no matches, repo-wide.
+
+**Verified:** the six-run comparison above (`.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.debug.tour.TourStepsTest" --rerun`, three times per branch). Post-fix:
+`TourStepsTest` green, confirmed on three further reruns (5/5 total since the fix, 0 failures).
+`.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*" --tests
+"org.ort.app.ui.navigation.OrtNavHostDestinationDispatchTest" --tests
+"org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest" --tests
+"org.ort.app.ui.navigation.DrawerContentTest"` green. `:app:compileDebugKotlin`/
+`compileDebugUnitTestKotlin` green after the merge.
+
+**Left open / not done:** none for this commit's own scope — see the next commits for the
+capture pass and the widened `RecordingSessionSummary`.
+
+### 3430f07b — WPREC: RC01's tour steps, and the regenerated coverage matrix
+
+**Scope:** `tools/ui-audit/tour.json` (append-only, per this session's own ownership map),
+`results/coverage-matrix.md` (regenerated, not hand-edited).
+
+**Requirements/ACs:** design-intent row RC01, constitution VIII.
+
+**What changed:**
+- Three new steps, appended at the end of `tour.json` (never edited an existing line — the
+  ownership map for this session is explicitly append-only there): `stations-14-nights/RC01-
+  recordings` at 1.0 and 2.0 font scale, plus a `@2x-end` scrolled variant, all against the
+  `stations-14-nights` scenario's real 14-session data (the richest existing multi-month fixture).
+- `results/coverage-matrix.md` regenerated (`./gradlew coverageMatrix`) to pick up every new
+  `@Requirement`-tagged test this session's two prior commits added; `coverageMatrixCheck` passes
+  against it.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourSpecTest"`
+— all 12 structural checks on `tour.json` still pass. `.\gradlew.bat coverageMatrix` then
+`.\gradlew.bat coverageMatrixCheck` (separate invocations, as required) both green.
+
+**Left open / not done:**
+- **No capture was taken for these new steps.** All three canonical AVDs
+  (`ort_audit`/`ort_audit_2`/`ort_audit_3`, ports 5558/5560/5562) were already running, occupied by
+  concurrent builders/validators, at every point this session reached the capture step — see this
+  session's own report for the full account. The steps are ready; whoever next has a free AVD
+  should run `tools\ui-audit\tour.ps1 -Port <p> -Only "stations-14-nights/RC01-recordings*"`.
+- **No scenario exists yet for RC01's over-audio-exceeded or archive-removed-with-date states.**
+  `storage-warn` sets `StorageForecast` directly, a different mechanism than the
+  `SettingsStore.audioBudgetGb`/`StorageAccounting.audioBytes` pair RC01's own over-audio card
+  reads, and no existing scenario ever sets a session's `overAudioRemovedAtMillis`/
+  `archiveRemovedAtMillis` at all. Building a new scenario (with its own test coverage, per
+  constitution II) was out of this session's remaining scope — reported, not skipped silently; the
+  brief's own "including a removed-archive row and the budget warning state" capture requirement is
+  therefore only partially met (`RecordingsViewStateMapperTest`/`RecordingsScreenTest` cover both
+  states at the unit/Robolectric level; no on-device capture of either exists).
+- **Three pre-existing steps now capture different content than their own names claim**:
+  `stations-14-nights/DG03-sessions`, `field-tier1/DG03-sessions` and `gap-call/DG03-sessions`
+  (lines 77-79) name a bare `EARLIER_NIGHTS` destination with no `drillIn` — under the previous
+  commit's redesign, that is now RC01 (`RecordingsContent`), not the old DG03 `Sessions` list. Not
+  renamed here: they sit outside the append-only end of the file this session owns, and renaming an
+  existing line is a judgement call for whoever owns `tour.json` at large. Flagged for the lead.
+
+### 9e0500bc — WPREC: wire Recordings into the drawer and OrtNavHost, isolated from the RC01 commit
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/{ReaderDestination,Drawer,OrtNavHost}.kt`
+and the tests that assert on their exact behaviour
+(`app/src/test/kotlin/org/ort/app/ui/navigation/{DrawerContentTest,OrtNavHostDestinationDispatchTest,
+ReaderActivityDestinationSmokeTest}.kt`, `app/src/test/kotlin/org/ort/app/debug/tour/
+TourStepsTest.kt`). Deliberately its own commit, isolated from RC01's own — per this session's
+brief, so a later merge conflict here stays small.
+
+**Requirements/ACs:** design-intent row RC01, IA-1 ("Replaces Earlier nights (DG03) as the home for
+sessions"), FR-STO-3.
+
+**What changed:**
+- **`ReaderDestination.EARLIER_NIGHTS` is repurposed, not replaced.** No new enum value: an
+  ordinary reach (the drawer row) now dispatches to `RecordingsContent` (RC01); `Settings-Storage`'s
+  "Next deletion … Review" link still seeds the old `SessionsContent` (DG04's `Session` review, or
+  its own `Digest` — DG01/DG05) on this exact same destination, via the pre-existing
+  `NavSeed.pendingReviewSessionId`/`reviewSessionView` seam — `OrtNavHost.kt`'s new
+  `EarlierNightsDestinationContent` picks between the two on exactly that one fact
+  (`reviewSessionId != null`). This keeps DG04 and the Digest reachable, per this session's brief,
+  with no new navigation state and no change to `SessionsContent`/`SessionsScreens.kt` at all.
+- **A new `drawerLabel` property, separate from `label`.** `EARLIER_NIGHTS.drawerLabel = "Recordings"`
+  is what the drawer row now shows (`Drawer.kt`'s `DrawerRow`/`drawerRowDescription`); `label` stays
+  "Earlier nights" — the string every drill-in's own "Back to `<label>`" header reads
+  (`ids.openedFrom.label` throughout `OrtNavHost.kt`), including one opened from the *old*
+  `SessionsContent` path, which is still genuinely "Earlier nights" in exactly the sense those
+  headers already mean. Deliberately not renamed the enum constant nor reused the one `label`
+  property for both facts — see `ReaderDestination.kt`'s own doc comment for why, and this
+  session's own report for the regression that using one property for both would have caused a
+  false trail on (a fragile, pre-existing `TourStepsTest` timing case, root-caused and reported
+  separately, below).
+- `NavHostCallbacks.onOpenSettingsStorage` (new field): `Recordings.dc.html`'s storage card opens
+  `Settings-Storage` (CF03), the same `navigator.openSettings(...)` shape `onOpenModels` already
+  uses — the one genuine cross-package hop this host wires for RC01; the archive on/off toggle is
+  entirely internal to the `recordings` package (RC01's own commit).
+- `RecorderEvent.kt`'s `RecorderDestination` enum is untouched (no `RECORDINGS` case was needed —
+  `EARLIER_NIGHTS` already covers this destination for FR-OBS-6's own vocabulary, since the enum
+  constant was not renamed).
+
+**Found and fixed in the same change, reported in full:**
+- **`TourStepsTest.checkStep`'s `catch (timeout: Exception)` never once caught a step-level
+  timeout.** `androidx.compose.ui.test.ComposeTimeoutException` does not extend `Exception` — every
+  prior step whose marker genuinely never appeared crashed that whole test hard (an uncaught
+  exception, zero "wrong-screen captures" diagnostic) instead of being collected as one clean,
+  readable assertion failure the way every other wrong-screen case already is. Changed to
+  `catch (timeout: Throwable)`. This is a real, independent bug fix, not narrowly caused by this
+  change — confirmed by reproducing it against pristine, unmodified `main` with only this one-line
+  fix applied (see "Left open" below for what it then reveals).
+- Every other real test this destination touches was checked and updated to the new split
+  (`drawerLabel` vs `label`): `DrawerContentTest`'s own row-label list, `TourStepsTest`'s
+  `EARLIER_NIGHTS` destination-root marker (now "Recordings"; its own `reviewSession` drillIn case
+  was already, correctly, checking "Earlier nights" and needed no change),
+  `OrtNavHostDestinationDispatchTest`'s `EARLIER_NIGHTS dispatches to...` case, and
+  `ReaderActivityDestinationSmokeTest`'s `R_930` case's plain-reach half. Every "Back to Earlier
+  nights" assertion elsewhere in the suite (failure banners' own back headers, the Review-link
+  case, `R_840`'s Digest-vs-Session distinction) was individually read and confirmed unaffected —
+  each reads either `SessionsScreens.kt`'s own hardcoded `DrillInHeader(parentLabel = "Earlier
+  nights", ...)` string (untouched) or `.label` itself (untouched).
+
+**Verified:** `.\gradlew.bat :app:compileDebugKotlin :app:compileDebugUnitTestKotlin` green.
+`.\gradlew.bat :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :app:detekt` all green.
+`.\gradlew.bat :app:testDebugUnitTest` (the full `:app` suite, 2209 tests) — 2208 passing, 1 known
+failure (below). `.\gradlew.bat dependencyRules platformGuards` green.
+
+**Left open / not done:**
+- **`TourStepsTest`'s `llm-enabled-prose/DG05-digest-prose`/`@2x` and `llm-disabled/DG01-digest`
+  steps time out (10s) on this machine, independent of this change.** Root-caused by isolating one
+  file at a time: with only the `catch (timeout: Throwable)` fix applied (no other edit in this
+  commit), the identical three steps fail against pristine `main` too — this class's own doc
+  comment already documents an `OutOfMemoryError` CI regression in this exact area, and this
+  session observed 22 concurrently-running `java` (Gradle daemon) processes accumulated on the
+  build machine by the time this was diagnosed. Reported, not papered over: the `Throwable` fix
+  makes a real future wrong-screen failure here legible; whether the digest-prose steps' own timeout
+  is a genuine performance regression in `DigestPolling.digest` (unbounded on `Dispatchers.IO`,
+  unlike this package's own `RecordingsPolling`) or purely local machine contention is not settled
+  here and needs a clean-machine (or CI) run to confirm either way.
+- RC02 (`Recording-Session.dc.html`) is not built — `RecordingsContent.onOpenSession` has nothing
+  to open to yet, by design (see this session's own report).
+- No emulator capture of RC01 exists yet — this commit is what makes it reachable at all; the
+  capture pass follows in this session's own report.
+
+### b385b7b9 — WPREC: RC01 Recordings — the session list, both storage budget cards, and the filter chips
+
+**Scope:** new package `app/src/main/kotlin/org/ort/app/ui/recordings/**` (`RecordingsViewData.kt`,
+`RecordingsViewStateMapper.kt`, `RecordingsPolling.kt`, `RecordingsScreen.kt`,
+`RecordingsContent.kt`) and its tests under `app/src/test/kotlin/org/ort/app/ui/recordings/**`.
+Deliberately **does not** touch `ReaderDestination.kt`, `Drawer.kt` or `OrtNavHost.kt` — that
+wiring is its own isolated commit, per this session's brief, so the later merge stays small.
+
+**Requirements/ACs:** FR-STO-3, FR-STO-3d, FR-STO-3e, FR-STO-3f, D39, D40, P9, FR-OBS-4,
+AC-156..160, register R-1036, R-1037, R-1051 (design-intent row RC01).
+
+**What changed:**
+- `RecordingsViewStateMapper.map` is the pure decision behind the screen: every session row
+  (newest first), both budget cards, and the four filter chips — built entirely from
+  `org.ort.pipeline.archive.recordingSessionSummaries`, `org.ort.pipeline.capture
+  .measureStorageAccounting`/`overAudioBudgetState`, and the shared `SharedPreferencesSettingsStore`
+  archive settings (`archiveEnabled`/`archiveBudgetGb`) and `ArchiveWriteRateForecast.state` — no
+  existing measurement, budget or forecast mechanism was rebuilt.
+- **Badges are a closed, priority-ordered set**: `capturing` beats a failure count, which beats a
+  labelled count (matches the artboard's own example rows exactly); the raw-archive
+  kept/removed-with-date badge and the operator's own over-audio-removed-with-date badge are two
+  independent, never-conflated facts (`RecordingBadgeKind.ARCHIVE_REMOVED` vs
+  `.OVER_AUDIO_REMOVED`), each carrying its own real date from `archiveRemovedAtMillis`/
+  `overAudioRemovedAtMillis` — never a single collapsed "removed" badge that would hide which
+  policy did it.
+- **The over-audio card never shows an estimate as a fact**: `exceeded`/the used-of-budget fraction
+  come straight from `overAudioBudgetState`, recomputed every poll (AC-157/AC-160 — the warning
+  text changes with no separate tap needed once exceeded). The archive card's monthly-rate line is
+  explicitly suffixed "(estimated)" before any real measurement exists and "(measured)" once
+  `ArchiveWriteRateForecast.state` has one — never presented as the other (constitution VI).
+- **R-1051 (initial state is not empty state)**: `RecordingsScreen(state = null, ...)` renders a
+  distinct loading row (`RECORDINGS_LOADING_TEST_TAG`) — the "No recordings match this filter."
+  empty state only ever renders once a real (possibly empty) view-state has actually arrived.
+- Chip counts (`Has failures N`/`Labelled N`/`Archive removed N`) are computed against every
+  session regardless of which chip is currently selected, so selecting one chip never changes a
+  sibling's own count.
+- `RecordingsContent` is the stateful entry point a future host wires the `RECORDINGS`/
+  `EARLIER_NIGHTS` destination to — it polls on composition, on filter change, and after the
+  archive on/off toggle. `onOpenSession`/`onOpenOverAudioBudget` are plain callbacks (default
+  no-ops, for a caller with nothing wired yet); turning the archive on/off is **not** an external
+  callback — `RecordingsPolling.setArchiveEnabled` writes straight through the same shared
+  preferences file `:pipeline`'s own `ArchiveSettingsStore` reads, entirely inside this package.
+- **Not built in this commit**: `Recording-Session.dc.html` (RC02) — `onOpenSession` has nothing to
+  open to yet, by design (see this session's own report for the stop point). The whole-card
+  `clickable` around both budget rows (`Storage card -> CF03`) merges its own descendants for
+  accessibility, by Compose's own by-design behaviour — confirmed real, not a defect, by comparing
+  the merged vs. unmerged semantics tree (`RecordingsScreenTest`'s own `useUnmergedTree` cases).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.recordings.*"` — 20
+tests passing (10 pure `RecordingsViewStateMapperTest` cases, no database/Android context; 7
+Robolectric `RecordingsScreenTest` cases, including a font-scale-2.0 render and a merged/unmerged
+accessibility-tree case; 3 `RecordingsContentTest` cases against a real, non-`inMemory` `OrtDatabase`
+and real `SharedPreferences`). `.\gradlew.bat :app:ktlintMainSourceSetCheck
+:app:ktlintTestSourceSetCheck :app:detekt` all green. `python tools/spec-check/spec_check.py` — all
+8 checks pass, unaffected. Discrimination shown by hand for the badge-priority rule (reverted the
+`failed`/`labelled` `when` order, watched `a failed count beats a labelled count...` fail for the
+right reason, restored it). `:app:compileDebugKotlin` green.
+
+**Left open / not done:**
+- No emulator capture of this screen exists yet — it is not reachable from any destination until
+  the isolated `OrtNavHost`/`Drawer`/`ReaderDestination` commit lands; the tour cannot reach an
+  unrouted screen. Captures happen against that commit.
+- No Robolectric layout/bounds test rendering RC01 inside `OrtNavHost`'s own real `Scaffold`
+  (constitution VIII's own "render the real host" requirement) — that test needs the nav-host
+  wiring to exist first; it is written against the isolated wiring commit instead of duplicated
+  here against a component composed alone.
+- `RecordingSessionSummary` (`:pipeline`, not owned by this package) carries no station or gap
+  count — RC01's own row sub-line is therefore "N overs" only, not the artboard's illustrative
+  "N overs · N stations · N gaps"; widening the summary is a `:pipeline` change, reported rather
+  than duplicated here as a second query.
+- The nested `Turn off` control inside the whole-card `clickable` region is exercised in the
+  Robolectric suite (`performClick` reaches it correctly, and does not also fire the card's own
+  `onOpenOverAudioBudget`) but not yet confirmed with a real `uiautomator` touch-target dump — filed
+  for the capture pass alongside RC02's.
+
 ## 2026-09-13 (spec: FR-SEG-10 and Q22 - the VAD that cut a segment is recorded, and whether capture may continue without the specified one is asked)
+
+### WPSEGPROV · FR-SEG-10, AC-162: every session and transmission now records which VAD detector cut it
+
+**Scope:** `:core` (new `org.ort.core.capture.VadDetectorKind` enum and its `conformsToFrSeg1` derived property),
+`:data` (`SessionEntity`/`TransmissionEntity` new columns, schema v13 -> v14 migration and schema JSON,
+`MigrationTest`, `FtsIndexRepairTest`), `:pipeline` (`RealCaptureService.resolveVad`/`buildSegmenter`/
+`RealSegmentSink`, `DiagnosticsLog.logVadStats`, and their tests), `:app` (`DebugDumpBuilder`'s session/over/
+`vad_stats` lines, `DebugDumpBuilderTest`), `results/coverage-matrix.md` (regenerated).
+
+**Requirements/ACs:** FR-SEG-10 (built), AC-162 (built and driven both ways). Bears on FR-SEG-1, FR-SEG-5, FR-SEG-7,
+FR-SEG-9, CON-SEG-1, FR-OBS-1, D41, constitution I and VI; register R-1052, R-1054 (the provenance half; disclosure
+and whether capture may continue on the fallback stay Q22, the product owner's).
+
+**What changed:** R-1054 established that `RealCaptureService.buildSegmenter` silently substitutes an RMS-energy VAD
+when Silero is unavailable, with only one diagnostic tier-facts line as evidence — no session, transmission,
+`vad_stats` line or debug dump ever named the detector that actually cut a boundary, a provenance hole CON-SEG-1
+exists to prevent. Checked first, per the prompt's instruction, rather than assumed: `VadAvailability` is a global,
+session-scoped `object` that already distinguishes real Silero from the stub, but it is a diagnostics-only holder with
+no persistence and no per-transmission granularity; `SessionEntity`/`TransmissionEntity` (schema v13) had no field for
+it at all; `RealCaptureService.buildSegmenter` resolved the VAD *after* the session row was already inserted, so
+recording it on the session required moving that resolution earlier, not just adding a column. A mid-session
+availability change is architecturally impossible today — `buildSegmenter` runs exactly once per session, building one
+fixed `Segmenter` for that session's whole lifetime — so a genuine change (e.g. the installer copying the model in
+between two launches) can only ever surface as a *new* session naming a different detector, never two different
+detectors inside one session's own transmissions; this is stated in `resolveVad`'s kdoc rather than guessed at.
+
+Built: a closed `VadDetectorKind` enum (`UNKNOWN`, `SILERO`, `TEN_VAD`, `ENERGY`) in `:core` (the only module both
+`:data` and `:pipeline` share), with a `conformsToFrSeg1` extension so UI/export never re-derive the FR-SEG-1
+conformance rule a second way. Schema v14 adds `session.vadDetector`/`.vadDetectorVersion` and
+`transmission.vadDetector`/`.vadDetectorVersion`/`.rigSquelchFusionApplied` — the two `vadDetector` columns are
+`NOT NULL DEFAULT 'UNKNOWN'` (Room's fresh-install CREATE TABLE carries the same `NOT NULL` with no SQL default, so
+`FtsIndexRepairTest`'s raw-SQL fixture needed the new columns added explicitly — a real, if minor, consequence of the
+additive migration, not a defect). `RealCaptureService.resolveVad` now runs once, before the session insert, and its
+`ResolvedVad` (detector, version, the real `VadModel`) is threaded into both the `SessionEntity` and
+`RealSegmentSink`, so a session and its own transmissions can never disagree. `TransmissionEntity.conformsToFrSeg1()`
+is the one data-layer answer to "does this boundary conform to FR-SEG-1". Rig squelch fusion (FR-SEG-5) is not built
+anywhere in `:pipeline` (confirmed by search — no code reads squelch state to gate a boundary), so
+`rigSquelchFusionApplied` is wired as an honest, always-`false` constant at the one call site that will need to carry
+the real decision once FR-SEG-5 exists — never a guess. `DiagnosticsLog.logVadStats` and `DebugDumpBuilder`'s
+`session`/`over`/`vad_stats` lines all carry the new fields; a pre-WPSEGPROV `capture.log` line with neither field
+still parses, reading them as `null` rather than throwing or guessing.
+
+**Verified:** `./gradlew :core:test :data:test :pipeline:test :app:test` (all green; the one real defect this
+change surfaced, `FtsIndexRepairTest`'s raw-SQL fixture missing the new `NOT NULL` columns, is fixed in this commit);
+`./gradlew dependencyRules platformGuards build` full gate, green (`BUILD SUCCESSFUL`); `./gradlew -p buildSrc test`;
+`python tools/spec-check/spec_check.py`; `./gradlew :core:ktlintCheck :core:detekt :data:ktlintCheck :data:detekt
+:pipeline:ktlintCheck :pipeline:detekt :app:ktlintCheck :app:detekt`; `./gradlew coverageMatrix` then
+`coverageMatrixCheck` — AC-162 and FR-SEG-10 both read covered, citing `MigrationTest`, `RealCaptureServiceTest`
+(driving capture both ways, Silero available and unavailable, through the real service composition — Silero faked
+only via register R-1052's own `RealVadProvider.nativeLoader`/`ModelFileVerifier` seam, never a real model),
+`RealSegmentSinkTest`, `DiagnosticsLogTest` and `DebugDumpBuilderTest`. Discriminating, revert-and-restore proven:
+(1) hardcoding `RealSegmentSink`'s persisted `vadDetector` to `UNKNOWN` failed the five tests that assert a real
+identity (`expected:<ENERGY/SILERO> but was:<UNKNOWN>`) while leaving every other test (including the "no explicit
+detector defaults to UNKNOWN" case) green; (2) changing `MIGRATION_13_14`'s session default to `'SILERO'` failed
+both the new migration test and the widened all-fixtures sweep (`must default to the honest UNKNOWN, never a
+fabricated SILERO`); (3) hardcoding `conformsToFrSeg1` to `false` failed `VadDetectorKindTest`'s conformance case
+(`expected:<true> but was:<false>`). All three reverts restored before this commit.
+
+**Left open / not done:** Q22 itself (whether capture may continue on the fallback at all, and how loud the
+disclosure should be) is the product owner's, not decided here — this package only records and exposes the truth
+under either answer. No detector version string is available from any real source yet (neither the Silero binding
+nor the energy stand-in reports one), so `vadDetectorVersion` is always `null` today — the column exists, honestly
+empty, for whenever a real version becomes knowable. No UI surfaces any of this; that is explicitly out of scope
+until Q22 resolves. `WPREC`'s `recordingSessionSummaries` widening was not touched — this session's `SessionDao`
+change is additive only (two new nullable-or-defaulted columns), so it should not conflict, but its own query shapes
+were not inspected beyond confirming they live in `:pipeline`, not `:data`.
 
 ### spec · FR-SEG-10, AC-162, Q22: a missing VAD model silently switched capture to an unspecified detector
 
