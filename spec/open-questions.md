@@ -44,10 +44,10 @@ three hardware verifications (VID/PID, command terminator, whether `AI` pushes `
 [`../docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md). **Q12 is settled by
 rule**: a reference-tier lever that does not measure on the eval fold is deleted, not disabled.
 
-**Six remain.** Two concern the same hour of audio; two more were opened by the field-report
+**Seven remain.** Two concern the same hour of audio; two more were opened by the field-report
 channel (D37, D38) and concern where it uploads to and how long what it uploads is kept; one more
 was opened when operator training labels were built, and one more when a missing VAD model turned out
-to switch capture to an unspecified detector. Q20, opened by an audit of what `capture.log`
+to switch capture to an unspecified detector, and one more when squelch fusion was built. Q20, opened by an audit of what `capture.log`
 actually contained against what FR-OBS-1 promised, is closed by D41:
 
 | # | Question | Why it is still open |
@@ -58,6 +58,7 @@ actually contained against what FR-OBS-1 promised, is closed by D41:
 | **Q19** | Uploaded bundle retention | Nothing yet says how long a field report survives at the destination, or who is responsible for deleting it |
 | **Q21** | May training labels leave the device? | Labels carry a third party's true callsign and a free-text note; the operator wants them for training, which may mean off-device. Excluded from every outbound path until decided |
 | **Q22** | Capture with the specified VAD unavailable | FR-SEG-1 and FR-SEG-7 cannot hold alongside constitution IV when the VAD model is missing; the code silently continues on an energy VAD. Recommended: continue, disclosed without a tap and recorded, and re-segment from the archive when possible |
+| **Q23** | Squelch fusion on the dual-band TH-D75A, and poll-only rigs | Overlapping transmissions on two bands are merged into one segment by a union rule; a rig without squelch push qualifies only if it polls within 250 ms. Neither was specified |
 
 Everything else that could be decided on paper has been decided. **Q14 stays closed**: the
 product owner did not reopen the question, they reversed the answer — see D39 below.
@@ -565,6 +566,34 @@ voiceprint is exactly the kind of thing FR-CON-5's guarantee exists for elsewher
 at minimum, whether an uploaded bundle is deleted once the defect it documents is closed, and
 whether that deletion is manual or scheduled. Until decided, treat every uploaded bundle as
 retained indefinitely at the destination.
+
+---
+
+### Q23 — How should squelch fusion treat two bands, and rigs that only poll? · owner: product
+
+**Question.** FR-SEG-5 makes rig squelch authoritative for segment boundaries. Building it (register
+R-1062) forced two choices the spec never made.
+
+1. **Two bands, one audio stream.** The TH-D75A receives on two bands at once and mixes them into one
+   audio stream, while squelch is reported per band. The build segments that one stream with a **union**
+   rule: open while either band is open. Two genuinely distinct transmissions that overlap on different
+   bands therefore become one segment. Keeping them apart would need band-aware segmentation of a mixed
+   stream - effectively a second segmenter - which the architecture does not have. Because segmentation
+   cannot be reprocessed (CON-SEG-1), whichever rule ships is baked into every overlapping over.
+2. **Poll-only rigs.** A rig qualifies for fusion only if it pushes squelch changes, or polls within
+   FR-RUN-17's 250 ms bound. A slower poll-only rig keeps VAD-only boundaries, because a late squelch edge
+   could clip the start of a callsign. Whether a slower rig should still get fusion with a wider pre-roll
+   was not decided.
+
+**Why it matters.** Overlap on two busy bands is ordinary on a dual-band radio during a net, and a merged
+segment carries two stations' audio into one transcript and one attribution attempt.
+
+**Recommendation.** (1) Keep the union rule for now, but mark such segments as band-overlapped at the data
+layer so they are findable and re-segmentable from the continuous archive (FR-SEG-9) if per-band
+segmentation is ever built; measure how often it happens on real nights before investing in a second
+segmenter. (2) Keep the 250 ms rule: the cost of a clipped callsign is unrecoverable, and the cost of VAD-only
+boundaries is what every rig without squelch already has. Until decided, the build stays as it is and no
+requirement should assume per-band segments.
 
 ---
 
