@@ -86,6 +86,12 @@ public data class NavSeed(
     // opens (`SessionsContent.openDigest`, WP10's own small addition to accept this seed — confirmed
     // by reading `ui/digest/SessionsContent.kt` before wiring this).
     val reviewSessionView: ReviewSessionView? = null,
+    // WPRC02 (screenshot-tour gap: RC02, `Recording-Session.dc.html`, had no seed at all — the
+    // tour could reach RC01 but never the session drill-in beneath it). Mirrors
+    // [pendingReviewSessionId]'s own shape exactly (a session id, `EARLIER_NIGHTS`) — the two are
+    // deliberately separate fields, not a shared one, because they land on two different sub-
+    // screens of the same destination (`EarlierNightsDestinationContent`'s own doc comment).
+    val pendingRecordingSessionId: String? = null,
 ) {
     /**
      * The [ReaderDestination] this seed's own state is actually read under. The four drill-in ids
@@ -106,6 +112,7 @@ public data class NavSeed(
         logSheetOpen == true -> ReaderDestination.LOG
         openCaptureLevelMeter == true -> ReaderDestination.CAPTURE
         pendingReviewSessionId != null -> ReaderDestination.EARLIER_NIGHTS
+        pendingRecordingSessionId != null -> ReaderDestination.EARLIER_NIGHTS
         settingsScreen != null -> ReaderDestination.SETTINGS
         searchQuery != null || searchSubmit == true || searchFiltersOpen == true -> ReaderDestination.SEARCH
         else -> null
@@ -141,6 +148,7 @@ public data class NavSeed(
         pendingLogFilter?.toMillis?.let { intent.putExtra(EXTRA_LOG_FILTER_TO_MILLIS, it) }
         openCaptureLevelMeter?.let { intent.putExtra(EXTRA_OPEN_CAPTURE_LEVEL_METER, it) }
         pendingReviewSessionId?.let { intent.putExtra(EXTRA_PENDING_REVIEW_SESSION_ID, it) }
+        pendingRecordingSessionId?.let { intent.putExtra(EXTRA_PENDING_RECORDING_SESSION_ID, it) }
         frequencyInitialView?.let { intent.putExtra(EXTRA_FREQUENCY_INITIAL_VIEW, it.name) }
         putRemainingExtras(intent)
     }
@@ -175,6 +183,9 @@ public data class NavSeed(
         public const val EXTRA_LOG_FILTER_TO_MILLIS: String = "nav_log_filter_to_millis"
         public const val EXTRA_OPEN_CAPTURE_LEVEL_METER: String = "nav_open_capture_level_meter"
         public const val EXTRA_PENDING_REVIEW_SESSION_ID: String = "nav_pending_review_session_id"
+
+        // WPRC02 — see [pendingRecordingSessionId]'s own doc comment.
+        public const val EXTRA_PENDING_RECORDING_SESSION_ID: String = "nav_pending_recording_session_id"
         public const val EXTRA_FREQUENCY_INITIAL_VIEW: String = "nav_frequency_initial_view"
         public const val EXTRA_OPEN_STATION_SUB_SCREEN: String = "nav_open_station_sub_screen"
 
@@ -234,6 +245,7 @@ public data class NavSeed(
                 pendingLogFilter = pendingLogFilter,
                 openCaptureLevelMeter = intent.getBooleanExtraOrNull(EXTRA_OPEN_CAPTURE_LEVEL_METER),
                 pendingReviewSessionId = intent.getStringExtra(EXTRA_PENDING_REVIEW_SESSION_ID),
+                pendingRecordingSessionId = intent.getStringExtra(EXTRA_PENDING_RECORDING_SESSION_ID),
                 frequencyInitialView = intent.getStringExtra(EXTRA_FREQUENCY_INITIAL_VIEW)
                     ?.let { name -> FrequencyDetailView.entries.firstOrNull { it.name == name } },
                 openStationSubScreen = intent.getStringExtra(EXTRA_OPEN_STATION_SUB_SCREEN)

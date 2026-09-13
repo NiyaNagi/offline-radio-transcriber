@@ -170,6 +170,11 @@ private sealed interface LogFilterOrigin {
     // its own list root, the same "root, not the exact sub-screen" precedent as [Transmission]
     // (`ui/improve`'s own `ImprovePage.Done` is that package's private, unexported state).
     data object Improve : LogFilterOrigin
+
+    // WPRC02 (RC02, `Recording-Session.dc.html`): the session's own "Log" link — back reopens that
+    // one session's own drill-in, the same "root of the thing this came from" precedent every other
+    // case here already follows.
+    data class RecordingSession(val sessionId: String) : LogFilterOrigin
 }
 
 /**
@@ -189,6 +194,7 @@ private val LogFilterOriginSaver: Saver<LogFilterOrigin, String> = Saver(
             is LogFilterOrigin.Frequency -> "Frequency:${origin.frequencyHz}"
             is LogFilterOrigin.Station -> "Station:${origin.stationId}"
             is LogFilterOrigin.Transmission -> "Transmission:${origin.transmissionId}"
+            is LogFilterOrigin.RecordingSession -> "RecordingSession:${origin.sessionId}"
         }
     },
     restore = { encoded ->
@@ -203,6 +209,8 @@ private val LogFilterOriginSaver: Saver<LogFilterOrigin, String> = Saver(
             encoded.startsWith("Station:") -> LogFilterOrigin.Station(encoded.removePrefix("Station:"))
             encoded.startsWith("Transmission:") ->
                 LogFilterOrigin.Transmission(encoded.removePrefix("Transmission:"))
+            encoded.startsWith("RecordingSession:") ->
+                LogFilterOrigin.RecordingSession(encoded.removePrefix("RecordingSession:"))
             else -> LogFilterOrigin.None // an unrecognised saved value never crashes restore.
         }
     },
@@ -352,6 +360,7 @@ public fun OrtNavHost(
                             navState.pendingReviewSessionId.value,
                             seed?.logSheetOpen ?: false,
                             navState.reviewSessionView.value,
+                            navState.openRecordingSessionId.value,
                         ),
                         navState.frequencyInitialView.value,
                         navState.openStationSubScreen.value,
@@ -413,7 +422,8 @@ private fun OrtNavHostBackHandler(
     val isDrillInOpen = navState.openTransmissionId.value != null ||
         navState.openStationId.value != null ||
         navState.openFrequencyHz.value != null ||
-        navState.openThreadId.value != null
+        navState.openThreadId.value != null ||
+        navState.openRecordingSessionId.value != null
     // IA-3 (generalises round 9/10's own register R-276): `Log` reached via [NavHostNavState
     // .openLogFiltered] — a drill-in-shaped pop in every way that matters here, kept as its own
     // named condition only because it is not one of the four ids [isDrillInOpen] already checks.
@@ -476,6 +486,14 @@ private fun restoreLogFilterOrigin(origin: LogFilterOrigin, navigator: ReaderNav
         // R-1041 (R04): reopens `Improve records` at its own list root — see
         // [LogFilterOrigin.Improve]'s own doc comment for why not the exact `Done` sub-state.
         LogFilterOrigin.Improve -> navigator.currentState.value = ReaderDestination.IMPROVE_RECORDS
+        // WPRC02: reopens the one session's own drill-in — `EARLIER_NIGHTS` is where RC02 lives
+        // (RC01 is that destination's own ordinary root; see `EarlierNightsDestinationContent`'s
+        // own doc comment for why the constant itself was not renamed).
+        is LogFilterOrigin.RecordingSession -> {
+            navState.openedFrom.value = ReaderDestination.LOG
+            navigator.currentState.value = ReaderDestination.EARLIER_NIGHTS
+            navState.openRecordingSessionId.value = origin.sessionId
+        }
         LogFilterOrigin.None -> Unit
     }
 }
@@ -547,12 +565,22 @@ private data class NavHostNavState(
     // [pendingReviewSessionId], the same companion relationship [frequencyInitialView] already has
     // to [openFrequencyHz]; `rememberSaveable`, the same reasoning [frequencyInitialView] rests on.
     val reviewSessionView: MutableState<ReviewSessionView>,
+    // WPRC02 (`Recording-Session.dc.html`, RC02): the session id a real tap on an RC01 row, or a
+    // restored [LogFilterOrigin.RecordingSession], opened — mirrors [openStationId]'s own shape
+    // exactly; RC02 is dispatched from inside `EarlierNightsDestinationContent`, not this file's
+    // own four-id `NavHostDispatch` `when`, because it only ever applies while `current ==
+    // ReaderDestination.EARLIER_NIGHTS` already holds (the same reason [pendingReviewSessionId]
+    // is read there and not in that `when` either).
+    val openRecordingSessionId: MutableState<String?>,
 ) {
     fun closeDrillIns() {
         openTransmissionId.value = null
         openStationId.value = null
         openFrequencyHz.value = null
         openThreadId.value = null
+        // WPRC02: same reasoning as every other drill-in id here — an ordinary way of reaching
+        // `Earlier nights` (the drawer row) must not resurrect a previously-opened session.
+        openRecordingSessionId.value = null
         // Reset here too, not only where it is set true: this runs on every ordinary way of
         // reaching `Capture` (the drawer row, the live bar's own tap target) and must not leave a
         // stale `true` from an earlier `Settings-Capture` "Meter" tap open the meter again.
@@ -687,6 +715,11 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
     val pendingReviewSessionId = rememberSaveable { mutableStateOf(seed?.pendingReviewSessionId) }
     // R-840 — see [NavHostNavState.reviewSessionView]'s own doc comment.
     val reviewSessionView = rememberSaveable { mutableStateOf(seed?.reviewSessionView ?: ReviewSessionView.SESSION) }
+    // WPRC02 — see [NavHostNavState.openRecordingSessionId]'s own doc comment. `rememberSaveable`,
+    // the same reasoning [openStationId] above already rests on: a real id, plain-`String`-saveable.
+    // Seeded from [NavSeed.pendingRecordingSessionId] exactly once, on first composition — the
+    // same "seed once" contract every other drill-in id here already has.
+    val openRecordingSessionId = rememberSaveable { mutableStateOf(seed?.pendingRecordingSessionId) }
     return NavHostNavState(
         openedFrom,
         searchOpenedFrom,
@@ -704,6 +737,7 @@ private fun rememberNavHostNavState(seed: NavSeed?): NavHostNavState {
         openStationSubScreen,
         pendingReviewSessionId,
         reviewSessionView,
+        openRecordingSessionId,
     )
 }
 
@@ -877,6 +911,21 @@ private fun navHostCallbacks(
             val filter = LogFilterSelection(transmissionIds = overIds)
             openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Improve)
         },
+        // WPRC02 (RC01's row tap, `Recordings.dc.html` -> RC02): a drill-in id in every way that
+        // matters here (`NavHostNavState.openRecordingSessionId`'s own doc comment), so this uses
+        // the identical `onOpenDrillIn` shape `onOpenStation`/`onOpenTransmission` above already do.
+        onOpenRecordingSession = { sessionId ->
+            navState.onOpenDrillIn(currentState.value) { navState.openRecordingSessionId.value = sessionId }
+        },
+        // WPRC02: RC02's own "Log" link — filters to exactly this session's own real over ids
+        // (`LogFilterSelection` carries no session-scoped filter — see
+        // `RecordingSessionContent.onOpenLog`'s own doc comment for the R-1055 dependency this
+        // shares with `onViewAffectedOvers`/`onOpenChangedOvers` above), origin `RecordingSession`
+        // so back reopens this same session.
+        onOpenRecordingSessionLog = { sessionId, overIds ->
+            val filter = LogFilterSelection(transmissionIds = overIds)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.RecordingSession(sessionId))
+        },
     )
 }
 
@@ -941,6 +990,8 @@ private data class DestinationInitialState(
     val logInitialSheetOpen: Boolean,
     // R-840 — see `NavHostNavState.reviewSessionView`'s own doc comment.
     val reviewSessionView: ReviewSessionView,
+    // WPRC02 — see `NavHostNavState.openRecordingSessionId`'s own doc comment.
+    val recordingSessionId: String?,
 )
 
 /** [NavHostBody]'s destination/drill-in identity, bundled to keep that composable's own parameter count down. */
@@ -1015,6 +1066,13 @@ private data class NavHostCallbacks(
     // R-1041 (R04): `Improve-Done`'s "Review the N changes" — see `navHostCallbacks`'s own
     // construction site.
     val onOpenChangedOvers: (Set<String>) -> Unit,
+    // WPRC02: `Recordings.dc.html`'s own "Session -> RC02" (RC01's row tap) — see
+    // `navHostCallbacks`'s own construction site.
+    val onOpenRecordingSession: (String) -> Unit,
+    // WPRC02: `Recording-Session.dc.html`'s own "Log" link — see `navHostCallbacks`'s own
+    // construction site and `RecordingSessionContent.onOpenLog`'s own doc comment for the R-1055
+    // dependency this filter shape carries.
+    val onOpenRecordingSessionLog: (sessionId: String, overIds: Set<String>) -> Unit,
 )
 
 /**
@@ -1361,6 +1419,10 @@ private fun NavHostDispatch(
             context = context,
             search = search,
             callbacks = callbacks,
+            // WPRC02: threaded to `EarlierNightsDestinationContent` -> `RecordingSessionContent`
+            // (its own doc comment) — the identical `audioPlayer` this branch already hands
+            // `TransmissionDetailContent` above, never a second player instance.
+            player = audioPlayer,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -1480,6 +1542,8 @@ private fun DestinationContent(
     context: android.content.Context,
     search: SearchHostState,
     callbacks: NavHostCallbacks,
+    // WPRC02: threaded to RC02, the identical single hoisted player instance.
+    player: org.ort.app.ui.audio.TransmissionAudioPlayer,
     modifier: Modifier,
 ) {
     val settingsInitialScreen = initialState.settingsInitialScreen
@@ -1561,28 +1625,11 @@ private fun DestinationContent(
             onOpenFullLog = callbacks.onOpenLog,
         )
 
-        // ui-conformance-plan WP10 (register R-090/R-091/R-092/R-107): all three dispatch to
-        // WP10's own real content composables now that they are on this branch. Round 5
-        // (R-090/R-139/F6/F9): `initialScreen` is real now — `navigator.openSettings` writes
-        // `settingsInitialScreen`, read fresh here every time `SETTINGS` becomes `current`. Round
-        // 7: `onSearch` is real now — `SettingsRootScreen` draws its own header (see `NavHostBody`'s
-        // own header-skip comment for why this host draws none of its own for `SETTINGS`).
+        // ui-conformance-plan WP10: dispatches to WP10's own real `SettingsContent` — see
+        // [SettingsBranch]'s own doc comment for `initialScreen`/`onSearch`/`onReviewSession`.
+        // Extracted purely to keep this function under detekt's `LongMethod` limit.
         ReaderDestination.SETTINGS ->
-            org.ort.app.ui.settings.SettingsContent(
-                context = context,
-                onDrawer = onOpenDrawer,
-                modifier = content,
-                initialScreen = settingsInitialScreen,
-                // Round 6, register R-132: real now — see `NavHostCallbacks.onOpenLevelMeter`'s
-                // own comment above.
-                onOpenLevelMeter = callbacks.onOpenLevelMeter,
-                onSearch = callbacks.onSearchDestination,
-                // Round 11, register R-133: real now — WP10 merged
-                // `SettingsContent.onReviewSession` (confirmed by reading `ui/settings/
-                // SettingsContent.kt` before wiring this) — see `NavHostCallbacks.onReviewSession`'s
-                // own comment above.
-                onReviewSession = callbacks.onReviewSession,
-            )
+            SettingsBranch(context, onOpenDrawer, content, settingsInitialScreen, callbacks)
 
         // WPREC (design-intent row RC01): `EARLIER_NIGHTS` now means `Recordings.dc.html` (RC01)
         // for an ordinary reach — see `ReaderDestination.kt`'s own doc comment, and
@@ -1597,6 +1644,8 @@ private fun DestinationContent(
             reviewSessionId = reviewSessionId,
             reviewSessionView = reviewSessionView,
             onOpenSettingsStorage = callbacks.onOpenSettingsStorage,
+            recordingSession =
+            recordingSessionRouting(initialState.recordingSessionId, player, onOpenStation, callbacks),
         )
 
         // Round 12, R-350: `onOpenModels` real now (WP10's `94c946c`) — same callback as `Now`'s
@@ -1608,14 +1657,43 @@ private fun DestinationContent(
 }
 
 /**
- * [DestinationContent]'s `EARLIER_NIGHTS` branch. [reviewSessionId] is non-null *only* when
- * `Settings-Storage`'s "Next deletion … Review" link seeded it (`NavHostNavState
- * .openReviewSession`) — the one path that still needs the old `SessionsContent` (DG04's `Session`
- * review, or its own `Digest` — DG01/DG05 — per [reviewSessionView]); every ordinary reach (the
- * drawer row) has `reviewSessionId == null` and lands on `Recordings.dc.html` (RC01) instead — see
- * `ReaderDestination.kt`'s own doc comment for why the enum constant itself was not renamed.
- * `RecordingsContent.onOpenSession` has nothing to open yet — `Recording-Session.dc.html` (RC02)
- * is a separate build unit (see this session's own report for the stop point).
+ * [DestinationContent]'s `SETTINGS` branch, split out purely to keep that function under detekt's
+ * `LongMethod` limit — the same reason [ImproveRecordsContent]/[EarlierNightsDestinationContent]
+ * already are. Round 5 (R-090/R-139/F6/F9): [settingsInitialScreen] is real — `navigator
+ * .openSettings` writes it, read fresh every time `SETTINGS` becomes current. Round 7:
+ * `onSearch` is real — `SettingsRootScreen` draws its own header. Round 11, register R-133:
+ * `onReviewSession` is real — WP10's own `SettingsContent.onReviewSession`.
+ */
+@Composable
+private fun SettingsBranch(
+    context: android.content.Context,
+    onOpenDrawer: () -> Unit,
+    modifier: Modifier,
+    settingsInitialScreen: SettingsScreenId?,
+    callbacks: NavHostCallbacks,
+) {
+    org.ort.app.ui.settings.SettingsContent(
+        context = context,
+        onDrawer = onOpenDrawer,
+        modifier = modifier,
+        initialScreen = settingsInitialScreen,
+        onOpenLevelMeter = callbacks.onOpenLevelMeter,
+        onSearch = callbacks.onSearchDestination,
+        onReviewSession = callbacks.onReviewSession,
+    )
+}
+
+/**
+ * [DestinationContent]'s `EARLIER_NIGHTS` branch, in the order it is actually checked:
+ * [recordingSessionId] (WPRC02, `Recording-Session.dc.html` — RC01's own row tap, or a restored
+ * [LogFilterOrigin.RecordingSession]) first, then [reviewSessionId] (non-null *only* when
+ * `Settings-Storage`'s "Next deletion … Review" link seeded it via `NavHostNavState
+ * .openReviewSession` — the one path that still needs the old `SessionsContent`, DG04's `Session`
+ * review or its own `Digest` — DG01/DG05 — per [reviewSessionView]), else `Recordings.dc.html`
+ * (RC01) — see `ReaderDestination.kt`'s own doc comment for why the enum constant itself was not
+ * renamed. The two ids are never both non-null in practice ([org.ort.app.ui.navigation
+ * .NavHostNavState.closeDrillIns] clears both before either is set), but [recordingSessionId] is
+ * checked first regardless, the same defensive ordering this file's own drill-in `when` blocks use.
  */
 @Composable
 private fun EarlierNightsDestinationContent(
@@ -1626,9 +1704,20 @@ private fun EarlierNightsDestinationContent(
     reviewSessionId: String?,
     reviewSessionView: ReviewSessionView,
     onOpenSettingsStorage: () -> Unit,
+    recordingSession: RecordingSessionRouting,
 ) {
-    if (reviewSessionId != null) {
-        org.ort.app.ui.digest.SessionsContent(
+    when {
+        recordingSession.sessionId != null -> org.ort.app.ui.recordings.RecordingSessionContent(
+            context = context,
+            sessionId = recordingSession.sessionId,
+            player = recordingSession.player,
+            onBack = recordingSession.onClose,
+            onOpenTransmission = onOpenTransmission,
+            onOpenStation = recordingSession.onOpenStation,
+            onOpenLog = recordingSession.onOpenLog,
+            modifier = modifier,
+        )
+        reviewSessionId != null -> org.ort.app.ui.digest.SessionsContent(
             context = context,
             onDrawer = onOpenDrawer,
             modifier = modifier,
@@ -1636,15 +1725,47 @@ private fun EarlierNightsDestinationContent(
             initialSessionId = reviewSessionId,
             openDigest = reviewSessionView == ReviewSessionView.DIGEST,
         )
-    } else {
-        org.ort.app.ui.recordings.RecordingsContent(
+        else -> org.ort.app.ui.recordings.RecordingsContent(
             context = context,
             onDrawer = onOpenDrawer,
             modifier = modifier,
+            onOpenSession = recordingSession.onOpen,
             onOpenOverAudioBudget = onOpenSettingsStorage,
         )
     }
 }
+
+/** [EarlierNightsDestinationContent]'s own RC02-specific parameters, bundled (detekt
+ * `LongParameterList`) — the same "bundle the request" shape this file's own [NavHostIds]/
+ * [NavHostCallbacks] already establish. [sessionId] is `null` for every ordinary reach ([RecordingsContent]
+ * renders instead); [player], [onOpen] ([NavHostCallbacks.onOpenRecordingSession]), [onClose]
+ * (`NavHostCallbacks.onCloseDrillIns`), [onOpenStation] and [onOpenLog]
+ * ([NavHostCallbacks.onOpenRecordingSessionLog]) are otherwise plain pass-throughs. */
+private data class RecordingSessionRouting(
+    val sessionId: String?,
+    val player: org.ort.app.ui.audio.TransmissionAudioPlayer,
+    val onOpen: (String) -> Unit,
+    val onClose: () -> Unit,
+    val onOpenStation: (String) -> Unit,
+    val onOpenLog: (sessionId: String, overIds: Set<String>) -> Unit,
+)
+
+/** Builds [RecordingSessionRouting] — pulled out to a one-line call site purely to keep
+ * [DestinationContent] under detekt's `LongMethod` limit, the same reason every other `*Content`
+ * extraction in this file exists. */
+private fun recordingSessionRouting(
+    sessionId: String?,
+    player: org.ort.app.ui.audio.TransmissionAudioPlayer,
+    onOpenStation: (String) -> Unit,
+    callbacks: NavHostCallbacks,
+): RecordingSessionRouting = RecordingSessionRouting(
+    sessionId,
+    player,
+    callbacks.onOpenRecordingSession,
+    callbacks.onCloseDrillIns,
+    onOpenStation,
+    callbacks.onOpenRecordingSessionLog,
+)
 
 /** [DestinationContent]'s `IMPROVE_RECORDS` branch, split out purely to keep that function under
  * detekt's length limit — the same reason [ThreadDetailContent] below was already split out. */

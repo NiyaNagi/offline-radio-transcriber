@@ -34,7 +34,40 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPRC02: Recording-Session, R-1059)
 
-### (pending) — WPRC02: Recording-Session (RC02) — every over and gap in order, play, delete, export, label
+### (pending) — WPRC02: OrtNavHost wiring to open RC02 from RC01
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`,
+`app/src/main/kotlin/org/ort/app/ui/navigation/NavSeed.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/TourIds.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/TourSpec.kt`, `tools/ui-audit/tour.json`. No product
+file outside this list touched, per the prompt's own "in its own commit" instruction.
+**Requirements/ACs:** RC02 (design-intent), IA-3 (the Log-filter-origin generalisation), R-1055
+(dependency recorded, not fixed here — see the RC02 commit `da88bafe`'s own note).
+**What changed:** `NavHostNavState` gains `openRecordingSessionId` (mirrors `openStationId`'s own
+shape exactly — a drill-in-shaped id, reset by `closeDrillIns()`, included in the system-back
+`isDrillInOpen` check). `LogFilterOrigin` gains a `RecordingSession(sessionId)` case so RC02's own
+"Log" link (`openLogFiltered` with a `transmissionIds` filter of this session's real over ids, per
+IA-3's own generalisation) returns to the same session on back. `EarlierNightsDestinationContent`
+now checks `recordingSessionId` first, then `reviewSessionId` (DG04, unchanged), then falls back to
+`RecordingsContent` (RC01) — a `RecordingSessionRouting` bundle (detekt `LongParameterList`) carries
+the RC02-specific callbacks and the single hoisted `TransmissionAudioPlayer` through, threaded from
+`NavHostDispatch`'s own `audioPlayer` parameter (`TransmissionDetailContent` already receives the
+identical instance — RC02 never constructs a second player). `NavSeed.pendingRecordingSessionId`
+and the tour's own `recordingSession` drillIn key (`TourIds.resolveSeed`, mirroring `reviewSession`'s
+"self" shortcut) let the screenshot tour reach RC02 directly; four steps appended to the end of
+`tools/ui-audit/tour.json` (`overnight/RC02-recording-session` at 1.0/2.0/2.0-end,
+`gap-call/RC02-recording-session-gap`).
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.*" --tests
+"org.ort.app.ui.navigation.NavSeedTest"` — green, including `TourSpecTest.R_TOUR_DRILL_IN_KEYS`
+(the new `recordingSession` key resolves) and `TourStepsTest.R_TOUR_STEPS` (all four new RC02 tour
+steps land on the `EARLIER_NIGHTS` destination they claim, real navigation, no fake). `gradlew
+:app:ktlintCheck :app:detekt` (main, test and debug source sets) — green. `gradlew
+:app:compileDebugKotlin :app:compileDebugUnitTestKotlin` — green.
+**Left open / not done:** the tour cannot yet seed RC02's own delete/export/label sheets (they are
+interaction-only, the same class of gap `tour.json`'s own header comment already documents for
+D08-D11/R02-R04) — a real device tap is the only way to capture them, per this round's own report.
+
+### da88bafe — WPRC02: Recording-Session (RC02) — every over and gap in order, play, delete, export, label
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionViewData.kt`,
 `RecordingSessionViewStateMapper.kt`, `RecordingSessionPolling.kt`, `RecordingSessionScreen.kt`,
