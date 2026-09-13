@@ -6,6 +6,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.Configuration
+import androidx.work.testing.SynchronousExecutor
+import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
@@ -62,6 +65,22 @@ class ImproveDestinationStatePreservationTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    /**
+     * Register R-1041 (R04) follow-up: this test's own "Improve all" click reaches
+     * `ReprocessWorker.start` (`RealImproveRunner.run`), which calls `WorkManager.getInstance(context)`
+     * directly and unguarded (`ReprocessWorker.kt`'s own `start`) — a different call site than
+     * `ImproveContent`'s own composition-time reattachment check (`reattachToRunningWork`), which is
+     * the *only* call site WPREPLIFE's narrowed catch (`WORK_MANAGER_NOT_INITIALIZED_MESSAGE`,
+     * `ImproveContent.kt`) covers. Not auto-initialized under Robolectric — the same reason
+     * `OrtNavHostDestinationDispatchTest`, `TourStepsTest`, and the other `ui/improve` suites each
+     * already carry this identical setup.
+     */
+    @Before
+    fun initWorkManager() {
+        val config = Configuration.Builder().setExecutor(SynchronousExecutor()).build()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+    }
 
     @Before
     fun setUp() {

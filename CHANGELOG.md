@@ -34,6 +34,45 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
 
+### WPTESTFIX — the lead's full-gate failure on local `main`: `ImproveDestinationStatePreservationTest` needed `WorkManagerTestInitHelper` too
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/navigation/ImproveDestinationStatePreservationTest.kt`
+only (test file, per this builder's ownership), plus this changelog entry. No production code
+touched.
+**Requirements/ACs:** R-1041 (R04) — test-only follow-up; none new.
+**What changed:** the lead's full gate on local `main` (after merging WPREPLIFE, WPNAVHOST,
+WPRESEED, WPDETAILRES and WPCOMPONENTS) failed 1 of 2,468 tests:
+`ImproveDestinationStatePreservationTest > R_1041_R04 Improve's Done summary survives the same
+LOG round trip Review changes and back produce`, with
+`java.lang.IllegalStateException: WorkManager is not initialized properly.` This test's own
+"Improve all" click starts a real reprocess run (`RealImproveRunner.run` →
+`ReprocessWorker.start`), and `ReprocessWorker.start` (`pipeline/src/main/kotlin/org/ort/pipeline
+/reprocess/ReprocessWorker.kt:296`) calls `WorkManager.getInstance(context)` directly, with no
+try/catch — that is the exact throwing call. This is a *different* call site than the one
+WPREPLIFE's narrowed catch in `ImproveContent.kt`'s `reattachToRunningWork`
+(`WORK_MANAGER_NOT_INITIALIZED_MESSAGE`) covers, which only guards the composition-time
+reattachment check (`RealImproveRunner.observeState`), not the click-driven `start` path — so
+that catch was never supposed to cover this test's failure, and does not need widening. Added the
+same `WorkManagerTestInitHelper.initializeTestWorkManager` `@Before` setup this class's sibling
+suites already carry (`OrtNavHostDestinationDispatchTest`, `TourStepsTest`,
+`ImproveContentActivityTest`, `ImproveContentReattachTest`,
+`ReaderActivityDestinationSmokeTest`), leaving all of this test's own assertions unchanged.
+Grepped every test under `app/src/test/**` that reaches `IMPROVE_RECORDS`/composes `ImproveContent`
+and clicks "Improve all" (the only path that reaches the unguarded `ReprocessWorker.start`) — five
+files match "Improve all" at all: this one (fixed here), `NavHostBannerLiveBarSqueezeTest.kt` (only
+asserts the button's visibility/position, never clicks it — safe as-is), and
+`ReaderActivityDestinationSmokeTest.kt`/`ImproveContentReattachTest.kt`/
+`ImproveContentActivityTest.kt` (all three already carry the helper from WPREPLIFE). No sibling
+test needed the same fix.
+**Verified:** `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.improve.*" --tests "org.ort.app.debug.*"` — BUILD SUCCESSFUL, all tests including
+the discriminating case passing (dev machine, local JVM, Robolectric); `./gradlew
+:app:smokeTestDebugUnitTest` — BUILD SUCCESSFUL; `./gradlew ktlintCheck detekt` — BUILD
+SUCCESSFUL.
+**Left open / not done:** not pushed (builder scope); the full 2,468-test gate was not re-run in
+full by this builder — only the scoped package tests plus the smoke suite, per this prompt's own
+check list.
+
 ### WPNAVHOST round 2 — R-1061: reproduced on a real device, the reservation is now the bar's own measured height, and a real scenario proves it
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`liveBarHeight`,
