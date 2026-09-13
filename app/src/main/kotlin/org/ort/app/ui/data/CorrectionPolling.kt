@@ -8,6 +8,7 @@ import org.ort.core.TransmissionState
 import org.ort.core.Ulid
 import org.ort.data.OrtDatabase
 import org.ort.data.canTransition
+import org.ort.data.dao.CorrectionDao
 import org.ort.data.entity.PriorAdjustmentEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
@@ -330,6 +331,36 @@ public object CorrectionPolling {
         } else {
             fallback
         }
+    }
+
+    /**
+     * Register R-1046 (halt): `Detail.dc.html`'s INFERRED explanation fell back to its generic
+     * "Matched by voice." sentence for *every* INFERRED attribution with no resolved source over —
+     * but [Attribution.withCorrection] (what [currentAttribution] above returns for any corrected
+     * row) produces exactly that shape for **every** human correction, typed or verified alike, so
+     * a typed, unverified correction read as if the voice itself had matched. This is the second
+     * real fact [DetailViewStateMapper.bodyFor] needs to tell the two apart, alongside
+     * [Attribution.corrected] (already carried on the attribution itself, no extra read needed for
+     * that half): the same distinction `PropagatedScreen`'s own [CorrectionTier]-derived "typed,
+     * unverified" wording already makes at the moment a correction is *applied* — this is that same
+     * fact read back later, since [Attribution] itself has no field for it (it only remembers *that*
+     * a correction happened, not which [CorrectionDao] field it used).
+     *
+     * Read from the *most recent* [org.ort.data.entity.CorrectionEntity] audit row for this
+     * transmission ([CorrectionDao.correctionsFor]'s own oldest-first order, so `lastOrNull` is the
+     * newest) — the one durable place this fact survives once the correction flow that applied it
+     * has finished. `null` — never a guessed `false` — when [TransmissionEntity.corrected] is false
+     * (nothing to explain: [DetailViewStateMapper] must not call this typed/unverified for a
+     * genuine voice match) or no matching audit row exists (a correction applied before this table
+     * existed, or a write path that never recorded one): the honest "cannot say" case, not a
+     * fabricated verified-by-default reading (constitution I).
+     */
+    public suspend fun correctionTyped(context: Context, transmissionId: String): Boolean? {
+        val db = OrtDatabase.create(context.applicationContext)
+        val entity = db.transmissionDao().getById(transmissionId) ?: return null
+        if (!entity.corrected) return null
+        val last = db.correctionDao().correctionsFor(transmissionId).lastOrNull() ?: return null
+        return last.field == CorrectionDao.FIELD_STATION_UNVERIFIED
     }
 
     /**
