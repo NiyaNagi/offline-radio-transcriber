@@ -53,6 +53,7 @@ import org.ort.app.ui.data.NowViewState
 import org.ort.app.ui.data.NowViewStateMapper
 import org.ort.app.ui.data.WorthKnowingItem
 import org.ort.app.ui.data.WorthKnowingTone
+import org.ort.app.ui.data.hourFilterWindow
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -86,6 +87,11 @@ public fun NowScreen(
     // signature yet, so this is the new one, defaulted to a no-op so every existing caller keeps
     // compiling unchanged until `OrtNavHost.kt` (out of this package's row) wires it.
     onOpenCaptureMode: () -> Unit = {},
+    // R-1041 (N01, `LogFilterOrigin.Now`): `Main.dc.html`'s chart bar, real now — opens the Log
+    // filtered to the tapped bar's own `[fromMillis, toMillis]` hour window (see
+    // [org.ort.app.ui.data.hourFilterWindow]). Defaulted to a no-op so every existing caller keeps
+    // compiling unchanged until `OrtNavHost.kt` (out of this package's row) wires it.
+    onOpenHour: (fromMillis: Long, toMillis: Long) -> Unit = { _, _ -> },
 ) {
     // R-922 (register, `bt-audio-dropped/F23-now@2x.png`): `LiveBar` below is a plain sibling of
     // this scrollable `Column`, the same shape `CaptureStatusScreen`'s own R-613/R-826 fix
@@ -111,6 +117,7 @@ public fun NowScreen(
                     onOpenStations = onOpenStations,
                     onOpenModels = onOpenModels,
                     onOpenCaptureMode = onOpenCaptureMode,
+                    onOpenHour = onOpenHour,
                 )
             }
         }
@@ -331,6 +338,7 @@ private fun ActiveContent(
     onOpenStations: () -> Unit,
     onOpenModels: () -> Unit,
     onOpenCaptureMode: () -> Unit = {},
+    onOpenHour: (fromMillis: Long, toMillis: Long) -> Unit = { _, _ -> },
 ) {
     Text(
         text = state.sessionTitle,
@@ -373,6 +381,7 @@ private fun ActiveContent(
         // (UTC)" back above the chart. `title = null` is `ActivityPatternChart`'s own honest
         // no-title default; not passed at all, so a future default change is never silently undone
         // here again.
+        val sessionStartedAtUtc = state.sessionStartedAtUtc
         ActivityPatternChart(
             pattern = state.activityPattern,
             modifier = Modifier.padding(top = OrtSpacing.lg).testTag("now-activity-chart"),
@@ -380,6 +389,16 @@ private fun ActiveContent(
             axisStart = state.axisStartLabel,
             axisEnd = state.axisEndLabel,
             notListeningLabel = state.notListeningLabel,
+            // R-1041: only real once the session's own real start is known — every caller before
+            // this existed (and the legacy bridge, [NowViewStateMapper.legacyFrom]) leaves
+            // [NowViewState.Active.sessionStartedAtUtc] `null`, which renders the chart exactly as
+            // before, with no tap affordance at all rather than one built on a fabricated window.
+            onBarClick = sessionStartedAtUtc?.let { started ->
+                { index: Int ->
+                    val (fromMillis, toMillis) = hourFilterWindow(started, index)
+                    onOpenHour(fromMillis, toMillis)
+                }
+            },
         )
     }
 

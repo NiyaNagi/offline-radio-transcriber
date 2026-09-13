@@ -1,7 +1,10 @@
 package org.ort.app.ui.screens
 
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -10,6 +13,7 @@ import org.ort.app.ui.data.PriorAdjustmentOutcome
 import org.ort.app.ui.data.PropagationOutcome
 import org.ort.app.ui.data.VoiceprintRebindOutcome
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -155,5 +159,48 @@ class PropagatedScreenTest {
         }
 
         composeTestRule.onNodeWithText("CORRECTED").assertExists()
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1041 (D11): "View the N affected overs" opens the Log filtered to the real affected ids.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 the affected-overs link opens the Log filtered to the real affected transmission ids`() {
+        var opened: Set<String>? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                PropagatedScreen(
+                    outcome = outcome(),
+                    onUndoAll = {},
+                    onBackToOver = {},
+                    onDone = {},
+                    onViewAffectedOvers = { opened = it },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("View the 6 affected overs").assertExists()
+        composeTestRule.onNodeWithTag("propagated-view-affected-overs").performClick()
+        assertEquals(setOf("TX1"), opened)
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 no affected overs means no link at all - never a dead tap`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                PropagatedScreen(
+                    outcome = outcome().copy(affected = emptyList()),
+                    onUndoAll = {},
+                    onBackToOver = {},
+                    onDone = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("propagated-view-affected-overs").assertDoesNotExist()
+        composeTestRule.onNodeWithText("affected", substring = true).assertDoesNotExist()
     }
 }

@@ -1,18 +1,12 @@
 package org.ort.app.ui.settings
 
 import android.content.Context
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.width
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextEquals
-import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -21,8 +15,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -34,8 +26,6 @@ import org.ort.app.export.ExportRequest
 import org.ort.app.export.ExportRequestScope
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
-import org.robolectric.annotation.Config
-import org.robolectric.annotation.GraphicsMode
 import java.time.Instant
 
 /**
@@ -447,134 +437,10 @@ class SettingsExportScreenTest {
     }
 
     // -----------------------------------------------------------------------------------------
-    // R-1044 (register, design, `overnight/CF07-settings-export@2x-end.png`): the artboard's `.opt`
-    // rows carry a divider above every row and 4px of vertical padding — the build drew neither, so
-    // at font scale 2.0 a wrapped sub-line's own last line ran straight into the next row's title.
-    // Discriminating: reverting `OptionDivider`/the rows' own `padding(vertical = OrtSpacing.xs)`
-    // collapses two adjacent rows' bounds to touch or overlap (gap <= 0dp); these tests fail for
-    // exactly that reason against the pre-fix layout.
-    // -----------------------------------------------------------------------------------------
-
-    private fun assertPositiveGapBetweenRows(topTag: String, bottomTag: String, fontScale: Float) {
-        val preview = fakePreviewCount()
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
-                OrtTheme {
-                    SettingsExportScreen(
-                        state = state(),
-                        onBack = {},
-                        previewCount = preview.fn,
-                        previewSizeBytes = fakePreviewSize().fn,
-                    )
-                }
-            }
-        }
-        scrollToTag(bottomTag)
-        val topBounds = composeTestRule.onNodeWithTag(topTag).getUnclippedBoundsInRoot()
-        val bottomBounds = composeTestRule.onNodeWithTag(bottomTag).getUnclippedBoundsInRoot()
-        val gap = (bottomBounds.top - topBounds.bottom).value
-        assert(gap > 0f) {
-            "expected a positive vertical gap between $topTag and $bottomTag at fontScale=$fontScale, " +
-                "got ${gap}dp ($topTag=$topBounds, $bottomTag=$bottomBounds)"
-        }
-    }
-
-    @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    @Config(qualifiers = "w390dp-h844dp-420dpi")
-    fun `R_1044 a positive vertical gap separates the Tonight and A range of nights rows at font scale 2_0`() {
-        assertPositiveGapBetweenRows("export-scope-tonight", "export-scope-range", fontScale = 2f)
-    }
-
-    @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    @Config(qualifiers = "w390dp-h844dp-420dpi")
-    fun `R_1044 a positive vertical gap separates the A range of nights and Everything rows at font scale 1_0`() {
-        assertPositiveGapBetweenRows("export-scope-range", "export-scope-everything", fontScale = 1f)
-    }
-
-    @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    @Config(qualifiers = "w390dp-h844dp-420dpi")
-    fun `R_1044 a positive vertical gap separates the Digest and history rows at font scale 2_0`() {
-        assertPositiveGapBetweenRows("export-checkbox-digest", "export-checkbox-history", fontScale = 2f)
-    }
-
-    @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    @Config(qualifiers = "w390dp-h844dp-420dpi")
-    fun `R_1044 a positive vertical gap separates the history and Audio rows at font scale 2_0`() {
-        assertPositiveGapBetweenRows("export-checkbox-history", "export-checkbox-audio", fontScale = 2f)
-    }
-
-    // -----------------------------------------------------------------------------------------
-    // R-1045(a) (register, design, `overnight/CF07-settings-export@2x-end.png`): the preview row's
-    // amber "have no identified station" segment squeezed into a narrow hanging column at font
-    // scale 2.0 because a plain `Row` cannot wrap — the same defect class, and the same `FlowRow`
-    // fix, `ui/screens/NowScreen.kt`'s own R-260/R-552 already established. Discriminating:
-    // reverting the `FlowRow` (back to `Row`) leaves the excluded segment's own left edge deep
-    // inside the row (a narrow trailing column, never the row's own left edge) whenever it wraps.
-    // -----------------------------------------------------------------------------------------
-
-    private fun assertPreviewRowWrapsFromLeftEdge(widthDp: Int, fontScale: Float) {
-        val preview = fakePreviewCount(ExportCountPreview(totalCount = 42, exportableCount = 39, excludedCount = 3))
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
-                OrtTheme {
-                    Box(modifier = Modifier.width(widthDp.dp)) {
-                        SettingsExportScreen(
-                            state = state(),
-                            onBack = {},
-                            previewCount = preview.fn,
-                            previewSizeBytes = fakePreviewSize().fn,
-                        )
-                    }
-                }
-            }
-        }
-        scrollToTag("export-preview")
-        val rowBounds = composeTestRule
-            .onNodeWithTag("export-preview", useUnmergedTree = true)
-            .getUnclippedBoundsInRoot()
-        val exportableBounds = composeTestRule
-            .onNodeWithTag("export-preview-exportable", useUnmergedTree = true)
-            .getUnclippedBoundsInRoot()
-        // The reason phrase ("have no identified station") is the segment the register's own
-        // report names as the one that hung in a narrow trailing column — the tagged number
-        // ("3") alone is short enough it can still share a line even when this one cannot.
-        val reasonBounds = composeTestRule
-            .onNodeWithTag("export-preview-excluded-reason", useUnmergedTree = true)
-            .getUnclippedBoundsInRoot()
-
-        val wrapped = reasonBounds.top >= exportableBounds.bottom
-        assert(wrapped) {
-            "test setup failed to force a real wrap at ${widthDp}dp/fontScale=$fontScale — " +
-                "exportable=$exportableBounds reason=$reasonBounds"
-        }
-        val drift = (reasonBounds.left - rowBounds.left).value
-        assert(drift < 4f) {
-            "expected the amber reason text to start at the row's own left edge on its " +
-                "continuation line, drifted ${drift}dp at ${widthDp}dp/fontScale=$fontScale " +
-                "(row=$rowBounds reason=$reasonBounds)"
-        }
-    }
-
-    @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `R_1045a the amber reason text starts at the row's own left edge on its wrapped line at 260dp scale 2_0`() {
-        // A narrow width, not a device size — any width that forces the real wrap this fix targets
-        // discriminates the bug; 390dp/480dp (this screen's own content width after margins) turned
-        // out wide enough for this particular string to still fit on one line even at scale 2.0.
-        assertPreviewRowWrapsFromLeftEdge(widthDp = 260, fontScale = 2f)
-    }
-
-    @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `R_1045a the amber reason text starts at the row's own left edge on its wrapped line at 300dp scale 2_0`() {
-        assertPreviewRowWrapsFromLeftEdge(widthDp = 300, fontScale = 2f)
-    }
-
-    // -----------------------------------------------------------------------------------------
+    // R-1044 and R-1045(a) — the option-row divider/padding and count-preview `FlowRow` bounds
+    // tests — moved to `SettingsExportScreenGeometryTest.kt` (this class's own sibling, split out
+    // purely to keep either file under detekt's `LargeClass` threshold).
+    //
     // R-1045(b) (register, design): the `Save file` button reads `Save file · <filename> ·
     // <size>` on the artboard; the build showed only `Save file`. [ExportCoordinator
     // .suggestedFileName] (bound to a fixed `Instant` here) is the exact function the real save
@@ -644,34 +510,7 @@ class SettingsExportScreenTest {
         composeTestRule.onNodeWithTag("export-save-file-button").assertTextEquals("Save file")
     }
 
-    @Test
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun `R_1045b the Save file button grows to fit the wrapped label instead of clipping it at font scale 2_0`() {
-        composeTestRule.setContent {
-            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
-                OrtTheme {
-                    Box(modifier = Modifier.width(390.dp)) {
-                        SettingsExportScreen(
-                            state = state(),
-                            onBack = {},
-                            previewCount = fakePreviewCount().fn,
-                            previewSizeBytes = fakePreviewSize(184_000L).fn,
-                        )
-                    }
-                }
-            }
-        }
-        scrollToTag("export-save-file-button")
-        val buttonBounds = composeTestRule.onNodeWithTag("export-save-file-button").getUnclippedBoundsInRoot()
-        val buttonHeight = buttonBounds.bottom - buttonBounds.top
-        // `PrimaryButton`'s own `requiredHeightIn(min = 48.dp)` is a floor a single-line label never
-        // exceeds by much even at this font scale — a button this much taller is only possible if
-        // the real filename/size label actually wrapped onto more than one line, proving it got
-        // room to wrap rather than being clipped or overflowing the button (constitution VIII: a
-        // passing assertion here is not evidence on its own — the capture in this report is).
-        assert(buttonHeight > 70.dp) {
-            "expected the button to grow past a single line's worth of height at font scale 2.0 to " +
-                "fit the wrapped filename/size label; got $buttonHeight"
-        }
-    }
+    // R-1045(b)'s own geometry test (the button growing to fit its two-line label) and every
+    // R-1050 test (the filename's own middle-ellipsis, its single-line render, its symmetric
+    // padding) — also moved to `SettingsExportScreenGeometryTest.kt`, the same split as above.
 }

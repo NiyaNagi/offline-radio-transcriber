@@ -212,6 +212,53 @@ class TourIdsTest {
         assertEquals(2000L, seed?.pendingLogFilter?.toMillis)
     }
 
+    /**
+     * Register R-1047/R-1048-round verification: before this fix, `resolveLogFilter` only ever
+     * built a `LogFilterSelection` when `logFilterFrequency` was present — an hour-window-only
+     * filter (`fromMillis`/`toMillis`, no frequency) could not be seeded by the tour at all, so a
+     * transmissionIds/hour-filter tour step (the R-1047 register's own verification requirement)
+     * had no way to reach the Log in that state. Fixed to build a selection from any one of the
+     * three keys, never requiring frequency specifically.
+     */
+    @Test
+    fun `R_1047_TOUR_LOG_FILTER an hour window with no frequency still resolves to a LogFilterSelection`() = runTest {
+        val seed = TourIds.resolveSeed(
+            context,
+            sessionId = null,
+            mapOf("logFilterFromMillis" to "1000", "logFilterToMillis" to "2000"),
+        )
+        assertEquals(null, seed?.pendingLogFilter?.frequencyHz)
+        assertEquals(1000L, seed?.pendingLogFilter?.fromMillis)
+        assertEquals(2000L, seed?.pendingLogFilter?.toMillis)
+    }
+
+    @Test
+    fun `R_1047_TOUR_LOG_FILTER no log-filter keys at all still resolves to no filter`() = runTest {
+        val seed = TourIds.resolveSeed(context, sessionId = null, mapOf("frequency" to "145230000"))
+        assertEquals(null, seed?.pendingLogFilter)
+    }
+
+    @Test
+    fun `R_1047_TOUR_LOG_FILTER a comma-joined transmissionIds list resolves to a real Set, no frequency needed`() =
+        runTest {
+            val seed = TourIds.resolveSeed(
+                context,
+                sessionId = null,
+                mapOf("logFilterTransmissionIds" to "scenario-overnight-tx02, scenario-overnight-tx03"),
+            )
+            assertEquals(null, seed?.pendingLogFilter?.frequencyHz)
+            assertEquals(
+                setOf("scenario-overnight-tx02", "scenario-overnight-tx03"),
+                seed?.pendingLogFilter?.transmissionIds,
+            )
+        }
+
+    @Test
+    fun `R_1047_TOUR_LOG_FILTER a blank transmissionIds value resolves to no filter, never an empty set`() = runTest {
+        val seed = TourIds.resolveSeed(context, sessionId = null, mapOf("logFilterTransmissionIds" to ""))
+        assertEquals(null, seed?.pendingLogFilter)
+    }
+
     @Test
     fun `R_TOUR_IDS_REVIEW_SESSION_SELF resolves to the step's own just-loaded session id`() = runTest {
         val seed = TourIds.resolveSeed(context, sessionId = "scenario-overnight", mapOf("reviewSession" to "self"))

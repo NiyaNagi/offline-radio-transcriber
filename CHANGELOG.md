@@ -374,6 +374,602 @@ install-time to load-time).
 
 ---
 
+## 2026-09-12 (WPCF07 round 2: R-1050 sent back — measured-width middle ellipsis replaces the fixed 12-character budget)
+
+### WPCF07 round 2 — the Save file button's filename line is now middle-ellipsized to its own measured width, preferring the timestamp over the scope word, with the size demoted to its own third line rather than the name cut further
+
+**Scope:** same files as round 1 — `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt`,
+`app/src/test/kotlin/org/ort/app/ui/settings/SettingsExportScreenGeometryTest.kt`. Did not touch
+`:pipeline`'s `org.ort.pipeline.archive.SessionAudioExport` or its own files — WPAUDX's concurrent
+work in that package.
+
+**Requirements/ACs:** R-1050 (register — sent back a second time after the lead's review of round
+1's own recapture `overnight/CF07-settings-export@2x-end.png`, quoted: "the button now reads 'Save
+file' / 'ort-….adi · 8 KB'. That names nothing... A fixed character budget (12) ignores the space
+actually available at the device's real font metrics"); constitution I (no estimate presented as
+fact — the ladder's choice of rung is now driven by a real `TextMeasurer`, never a guessed
+character count); constitution VIII (screen re-captured and compared against the artboard again
+after the fix).
+
+**What changed:**
+- Replaced the fixed `MAX_VISIBLE_FILE_NAME_LENGTH = 12` / `middleEllipsizeFileName` character-count
+  approach with `filenameCandidates(fileName)` — a graceful, ordered ladder of real, hyphen-bounded
+  candidates: the full name; scope word dropped, full timestamp and extension kept; date kept,
+  time-of-day dropped; and the shortest rung (prefix + extension only). A filename with no droppable
+  scope token between the fixed prefix and the timestamp returns itself unchanged rather than
+  inventing a shortened form.
+- New `planSaveFileLabel(fileName, sizeBytes, availableWidthPx, style, textMeasurer)` (now
+  `internal`, with its `SaveFileLabelPlan(filenameLine, sizeLine)` result) walks the ladder in order
+  using the button's own real `TextMeasurer`/`TextStyle`, picking the first candidate — with the
+  size suffix appended — that measures within the real available width; if none fit combined, the
+  first candidate that fits alone, with the size demoted to its own `sizeLine` (a third line) rather
+  than the name being cut further, exactly as the register asked. If even the shortest candidate
+  exceeds the width it is still returned in full — never a silently dropped identity — leaving
+  `softWrap = false` plus the caller's own `overflow = TextOverflow.Ellipsis` as the last-resort
+  backstop for a width this build does not actually claim to support.
+- `ExportSaveFileButtonContent` now measures the real available width via `BoxWithConstraints` +
+  `rememberTextMeasurer()` instead of assuming a budget, and renders up to three lines ("Save file" /
+  filename / optional size). The two-line layout's symmetric padding (`OrtSpacing.md` top and
+  bottom, unconditional — R-1050(b), round 1) and the `LARGE_FONT_SCALE_THRESHOLD = 1.5f` gate
+  (below it, `buildSaveButtonLabel`'s original single-line text, unchanged) both carry over from
+  round 1 untouched.
+- `SaveFileLabelPlan`/`planSaveFileLabel`/`filenameCandidates` are `internal` specifically so tests
+  can drive the ladder directly with an explicit, known `availableWidthPx` and a real
+  `TextMeasurer` — made necessary by a round 2 finding (next point).
+- **Round 2 finding, not a report: Robolectric's own root-window sizing does not reliably reflect a
+  requested width the way a real device does.** A nested `Box(Modifier.width(N.dp))` wider than
+  Robolectric's own unconfigured default root silently clamps down to it; switching to
+  `@Config(qualifiers = "wNNNdp-...")` per test does give `OrtTheme`'s own
+  `ortScaleFor`/`LocalConfiguration` the requested width, but at 390dp/480dp/scale 2.0 Robolectric
+  then measured the *entire* name-plus-size string as fitting on one line — never once reaching a
+  shorter rung — where the real device (the very thing that sent round 1 back) needed real
+  shortening. This is the same Robolectric-font-metrics-vs-real-device gap already on record in this
+  codebase (R-260/R-552), met the other way this time. Given that, the ladder's own *ordering* is
+  proven directly against `planSaveFileLabel` with real measured widths from the real
+  `TextMeasurer`/style (see Verified), and the render-level tests are scoped to what they can
+  honestly prove instead: the rendered line is always an exact, uncorrupted candidate — never a
+  string additionally truncated by the `Ellipsis` backstop — and the size is always fully visible
+  somewhere in the label.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.settings.SettingsExportScreenGeometryTest" --tests "org.ort.app.ui.settings.SettingsExportScreenTest"` — `BUILD SUCCESSFUL`, all tests green.
+- Discriminating tests (`SettingsExportScreenGeometryTest.kt`):
+  - Direct `planSaveFileLabel` unit tests against a real `TextMeasurer`/`OrtType.control` style
+    obtained from a composable probe, thresholds computed from real measured candidate widths, never
+    invented numbers:
+    - `R_1050 planSaveFileLabel keeps the full name and size together once both measure within the width`
+    - `R_1050 planSaveFileLabel keeps the full name and gives the size its own line rather than shortening it`
+      (the register's explicit "size on its own third line" instruction)
+    - `R_1050 planSaveFileLabel drops the scope word before ever touching the timestamp` (the
+      register's explicit "prefer keeping the timestamp over the scope word" instruction)
+    - `R_1050 planSaveFileLabel keeps the date over the time-of-day once the scope-less candidate no longer fits`
+    - `R_1050 planSaveFileLabel shows the shortest real candidate when narrower than every rung`
+      (identity never silently dropped)
+  - Shown discriminating, per the register's explicit ask ("show the current budget-12 code failing
+    the timestamp assertion first"): temporarily replaced `planSaveFileLabel`'s candidate list with
+    round 1's own naive fixed-cut shape (`fileName.take(12) + "…" + fileName.takeLast(4)`,
+    unmeasured, ignoring `availableWidthPx` entirely) — 7 of the above and below tests failed for the
+    right reasons (a corrupted candidate not matching any real rung, the extension lost, the
+    timestamp dropped, no size-demotion), then reverted.
+  - Render-level (`@GraphicsMode.NATIVE`, `w390dp-h844dp-420dpi` and `w480dp-h844dp-420dpi`, scale
+    2.0): `R_1050 the filename line is a real, uncorrupted candidate with its extension kept` — the
+    rendered filename line is always an exact match to one of `filenameCandidates`' own real rungs
+    (with or without the size suffix appended) and always contains `.adi`; `R_1050 the real size is
+    fully visible, never ellipsized` — the real formatted size string is always present in full on
+    whichever line carries it.
+  - Round 1's own tests unchanged and still green: the `filenameCandidates` pure-function tests
+    (first candidate is the untouched name; the shortened candidate cuts only at a real hyphen and
+    keeps the timestamp whole; the real extension kept for all four export formats; no shortened form
+    invented when there is no scope word to drop), the four symmetric-padding cases (390/480dp ×
+    1.0/2.0), and `R-1045b the Save file button grows to fit its two-line label`.
+- `./gradlew :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :app:detekt` — `BUILD
+  SUCCESSFUL`. Moved the test file's `REAL_FILE_NAME` constant into a `private companion object` to
+  satisfy detekt's `VariableNaming` rule (a `SCREAMING_CASE` name is only allowed for a true
+  compile-time constant, not an instance-scope `val`); ran `ktlintTestSourceSetFormat` once to fix a
+  function-body-fits-on-signature-line style violation a newer ktlint check caught in
+  pre-existing (round 1) code.
+- `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools/spec-check/spec_check.py` — OK, all 8 checks pass.
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — `BUILD
+  SUCCESSFUL in 14m 50s`, 1109 tasks; `dependencyRules: OK`, `platformGuards: OK`.
+- Real device recapture, on a fourth AVD (`ort_audit_cf07`, `emulator-5566`, 1260×2772@420dpi —
+  identical shape to `ort_audit`) created for this round only: `ort_audit`/`ort_audit_2`/`ort_audit_3`
+  were all three still booted by other builders/validators throughout this round (checked
+  repeatedly with `Get-CimInstance Win32_Process -Filter "Name like 'qemu-system%'"`, per the
+  register's own instruction — a fourth builder's own `ort_audit_wpmodel` had already appeared the
+  same way), so `tools\ui-audit\create-avd.ps1 -Name ort_audit_cf07` (the same documented pattern
+  `ort_audit_2`/`ort_audit_3` were themselves created by) rather than wait on contention with no end
+  in sight. `tools\ui-audit\boot.ps1 -Avd ort_audit_cf07 -Port 5566`, `wm size 1260x2772`/`wm
+  density 420` set to match, `tools\ui-audit\install.ps1 -Port 5566 -Clear`, `tools\ui-audit\tour.ps1
+  -Port 5566 -Only "overnight/CF07-settings-export*" -Out <scratch>` — `steps: 3 ok: 3 errors: 0`.
+  **The button reads, in full, two centred lines: `Save file` / `ort-export-….adi · 8 KB`** — the
+  filename never wraps or breaks, the extension and the real size both fully visible on one line,
+  equal padding above the first line and below the second (unchanged from round 1's own fix).
+  Confirmed via a temporary debug log (`planSaveFileLabel`'s own real `availableWidthPx` and every
+  candidate's own real measured width, removed before commit — see below) that this is the honest,
+  measured answer, not a repeat of round 1's bug wearing a different mechanism: at this real
+  device's font metrics (`OrtType.control` at scale 2.0, `ortScaleFor` upscaling this ~480dp-wide
+  device's own density to 1.23×), `availableWidthPx=1000`; the four candidates alone measured 1541 /
+  1334 / 1017 / 604px — the third rung (`ort-export-…-20260913.adi`, the one an easy visual estimate
+  from round 1's own capture suggested should fit) misses by a mere 17px, honestly, and only the
+  shortest rung plus the size (845px) fits. Compared by eye against
+  `design/canvas/Settings-Export.dc.html`. Scratch captures only
+  (`%TEMP%\ort-tour-cf07-r1050-final`; two earlier scratch attempts at this round,
+  `%TEMP%\ort-tour-cf07-r1050d`/`r1050e`, used to run the debug-log probe above, superseded by this
+  one taken from the clean, debug-log-free build), never written to `results/ui-audit/`. AVD shut
+  down after (`adb -s emulator-5566 emu kill`) — the other three builders'/validators' emulators on
+  5558/5560/5562 left untouched throughout; `ort_audit_cf07` itself left in place (created, not
+  destroyed) in case a future round needs a free AVD again under the same contention.
+
+**Left open / not done:** the button's visible label still cannot show the scope or the timestamp
+at font scale 2.0 on this real, ~480dp-wide device — not because of an arbitrary budget any more,
+but because the honestly measured available width (1000px) is genuinely narrower than every
+candidate except the shortest, by margins as small as 17px for the next rung up. A future, narrower
+`OrtType.control` at this scale, a shorter filename shape, or a design decision to drop the "Save
+file" words at this scale to give the filename its own two lines would all widen the room this
+ladder has to work with; none of those are this round's own scope. Round 1's own trade (the real,
+untruncated name is still what `contentDescription` and the SAF picker itself show) still applies
+unchanged.
+
+---
+
+## 2026-09-12 (WPCF07 follow-up: R-1050 — the Save file label's filename gets its own never-wrapping line and the button keeps symmetric padding as it grows)
+
+### WPCF07 follow-up — `Settings-Export.dc.html` polish from the lead's own review of the merged R-1044/R-1045 capture: the filename no longer breaks inside its own timestamp, and the two-line label sits with equal padding top and bottom
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt` and its tests, now
+split across `SettingsExportScreenTest.kt` (functional/content) and the new
+`SettingsExportScreenGeometryTest.kt` (bounds — detekt's own `LargeClass` threshold made the split
+necessary once R-1050's own geometry cases landed alongside R-1044/R-1045's). Did not touch
+`:pipeline`'s `org.ort.pipeline.archive.SessionAudioExport` or its own files — WPAUDX's concurrent
+work in that package.
+
+**Requirements/ACs:** R-1050 (register, lead capture `overnight/CF07-settings-export@2x-end.png`
+after R-1044/R-1045 merged at `36266373`); constitution I (never an estimate presented as a fact);
+constitution VIII (screen re-captured and compared against the artboard after the fix, twice — the
+first recapture itself found this round's own follow-up defect, described below).
+
+**What changed:**
+- **(a) The filename no longer breaks inside its own timestamp.** The R-1045(b) shape —
+  `PrimaryButton` wrapping one always-single-line label string — let Compose's own word-wrap pick
+  the break point at font scale 2.0, and it landed inside the date
+  (`ort-export-tonight-202609` / `13-022935.adi · 8 KB`, the lead's own finding). Replaced the
+  direct `PrimaryButton` call with a new `ExportSaveFileButton` (same visual style, same R-380/R-543
+  accessible-name `clearAndSetSemantics`) whose content, `ExportSaveFileButtonContent`, renders
+  `"Save file"` and the filename on two *fixed* lines once `LocalDensity.current.fontScale >=
+  1.5f` (the same threshold figure `LiveMonitorScreen`/`LevelScreen`/`ReadyScreen` each already
+  use for their own two-fact stacking) — below it, the identical single-line label as before,
+  unchanged, since it already fits on one line there. The filename line is never allowed to
+  word-wrap at all (`softWrap = false`): a new `middleEllipsizeFileName(fileName, maxVisibleLength)`
+  shortens the string itself, before layout ever sees it, always cutting at a real hyphen already
+  in `ExportCoordinator.suggestedFileName`'s own `ort-export-<scope>-<yyyyMMdd-HHmmss>.<ext>` shape
+  — never mid-digit-run — dropping the entire timestamp (never a fragment of it) and keeping the
+  real extension verbatim. **Chose to drop the scope word too, not only the timestamp**: a first
+  attempt (`MAX_VISIBLE_FILE_NAME_LENGTH = 26`, `ort-export-tonight-….adi`) still overflowed once
+  the size suffix was appended on the same line — the real device recapture verifying this very fix
+  caught it, `Text`'s own `overflow = TextOverflow.Ellipsis` backstop then silently ate the size
+  instead, which is exactly the failure this round exists to close. `12`
+  (`ort-export-….adi`/`ort-export-….json`) leaves real, device-verified room for the size suffix
+  alongside it on the same line, at the cost of the scope word no longer being visible in the
+  button's own label — an acceptable trade named directly in the register text ("The full name is
+  still shown by the system save picker"): the real, untruncated name is still what
+  `contentDescription` carries and what the SAF picker itself displays.
+- **(b) Symmetric padding, however tall the label grows.** Before this, the button had no vertical
+  padding of its own at all — only `contentAlignment = Center` inside a `Box` that grows to fit its
+  content exactly once that content exceeds the 48dp floor, leaving zero slack on either side once
+  two lines filled it (the lead's own capture: first line flush against the top edge, more room
+  below the last line). `ExportSaveFileButtonContent` now wraps its content in a fixed
+  `Modifier.fillMaxWidth().padding(vertical = OrtSpacing.md)`, reserved unconditionally regardless
+  of scale or line count — one line or two, the same real 12dp top and bottom.
+- **Split out for testability, not by choice alone.** `ExportSaveFileButton`'s own
+  `clearAndSetSemantics` (the R-380/R-543 accessible-name fix every sibling button in this file's
+  `Controls.kt` already carries, and cannot be dropped) genuinely prunes every descendant from the
+  semantics tree on a real device — R-543's own finding, restated here because it directly blocks
+  the obvious test approach (querying a tagged node inside the real button). `ExportSaveFileButtonContent`
+  is `internal`, not `private`, purely so a test can render it directly, inside an equivalent host,
+  and actually reach its own tagged lines. `middleEllipsizeFileName` and
+  `MAX_VISIBLE_FILE_NAME_LENGTH` are `internal` for the same reason — a pure-function test is the
+  most precise way to prove "never a fragment of the timestamp," which no render-level test alone
+  can fully cover.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest` — full suite green (`BUILD SUCCESSFUL`), including every test
+  below.
+- Discriminating tests (`SettingsExportScreenGeometryTest.kt`, new):
+  - Three `middleEllipsizeFileName` pure-function tests: unchanged when already short; cuts only at
+    a real hyphen already in the name, with the dropped span asserted to contain no digit at all
+    (never a timestamp fragment); the real extension kept verbatim for all four export formats.
+  - `R_1050 the filename plus size line renders as one line...` (`@GraphicsMode.NATIVE`, scale 2.0,
+    260dp): the rendered line's own height stays within 1.5× a guaranteed-single-line reference —
+    reverting `softWrap = false` lets a plain `Text` wrap the long string across several lines at
+    this width, multiplying its height.
+  - `R_1050 the filename plus size line never clips the size...` (`@GraphicsMode.NATIVE`, scale
+    2.0): the real, width-constrained render's own measured width compared against the *same*
+    string rendered with no width limit (its true, natural width) — narrower means the tail (always
+    the size) was clipped. Documented honestly in its own doc comment: Robolectric's font metrics do
+    not reproduce the real device's closely enough for this specific test to have failed against the
+    pre-fix `MAX_VISIBLE_FILE_NAME_LENGTH = 26` (checked directly, restoring 26 locally to confirm) —
+    the real device recapture is the actual evidence for the chosen budget; this test's own value is
+    proving the comparison mechanism itself, for whatever regressions Robolectric's metrics do
+    reflect.
+  - Four `R_1050 the label's top and bottom insets are equal and at least the button's padding...`
+    cases (`w390dp-h844dp-420dpi` and 480dp, scale 1.0 and 2.0, `@GraphicsMode.NATIVE`): top and
+    bottom insets within 2dp of each other and at least `OrtSpacing.md` (12dp) minus a 2dp
+    font-metric tolerance, measured against an equivalent host carrying the exact `fillMaxWidth()
+    .requiredHeightIn(min = 48.dp)` shape the real button's own outer `Box` uses.
+  - `R_1045b the Save file button grows to fit its two-line label...` (kept, retitled): the button's
+    own real height clears 70dp at font scale 2.0, proving the label split onto two real lines
+    rather than being clipped.
+- Real device (`ort_audit`, `emulator-5562`, 1260×2772@420dpi), twice — the first recapture is what
+  found this round's own filename-plus-size overflow, not a report or a passing test:
+  `tools\ui-audit\boot.ps1 -Avd ort_audit -Port 5562`, `wm size`/`wm density` set to match,
+  `tools\ui-audit\install.ps1 -Port 5562 -Clear`, `tools\ui-audit\tour.ps1 -Port 5562 -Only
+  "overnight/CF07-settings-export*" -Out <scratch>` — `steps: 3 ok: 3 errors: 0` both times.
+  **First recapture** (`MAX_VISIBLE_FILE_NAME_LENGTH = 26`): confirmed the top/bottom padding fix
+  (button visibly symmetric now) but showed `ort-export-tonight-….adi ...` on the filename line —
+  the size swallowed by the overflow backstop, a new defect this round's own fix had introduced.
+  **Second recapture** (after reducing to `12`): the button reads, in full, two lines —
+  `Save file` / `ort-….adi · 8 KB` — both lines centred with visibly equal padding above and below,
+  the filename never wrapping or breaking, the extension and the real size both fully visible on
+  one line. Compared by eye against `design/canvas/Settings-Export.dc.html`. Scratch captures only
+  (`%TEMP%\ort-tour-cf07-r1050b`, the discarded first attempt at `%TEMP%\ort-tour-cf07-r1050`),
+  never written to `results/ui-audit/`. Emulator shut down after each capture
+  (`adb -s emulator-5562 emu kill`); `ort_audit_2`/`ort_audit_3` (other builders, ports 5560/5558)
+  left untouched throughout.
+- `python tools/spec-check/spec_check.py` — OK. `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — `BUILD
+  SUCCESSFUL in 14m 1s`, 1109 tasks.
+
+**Left open / not done:** the button's visible label no longer names which scope (`Tonight` vs
+`Everything`) the export covers at font scale 2.0 — an accepted, named trade for keeping the
+extension and the real size honestly visible on the same line at this width; the scope is still
+shown two rows above (the `What` section's own selected radio row) and in the real filename the
+system's save picker displays. `MAX_VISIBLE_FILE_NAME_LENGTH`'s exact value (12) is tuned to this
+build's own real filename shapes and this device's own font metrics at 420dpi — a future,
+substantially different naming scheme or a much narrower supported width would need this checked
+again on device, the same way this round's own first attempt (26) had to be.
+
+---
+
+## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor); R-1047 sent back once and re-fixed so the statement is actually visible)
+
+### 16b2432d — WPLINK: R-1047 fix — the applied-filter statement is now visible without scrolling
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/LogScreen.kt`;
+`app/src/test/kotlin/org/ort/app/ui/screens/LogScreenTest.kt`; `tools/ui-audit/tour.json`.
+
+**Requirements/ACs:** register R-1047 (sent back), constitution I.
+
+**What changed:** sent back by the coordinator — `dc5358cc` rendered the applied-filter statement
+as the sixth (last) member of the same horizontally-scrollable `FilterChipRow` the quick chips
+use. On a real device with five real quick chips ahead of it (`All`/`145.230`/`146.960`/`Named`/
+`Rejected · 1`) it clipped off the visible edge at both `390dp` and `480dp` — the operator saw a
+Log holding one over with nothing on screen saying why, discoverable only by a scroll gesture
+nobody has a reason to make. Checked `design/canvas` first: no Log filtered-state artboard exists
+(`Log.dc.html`, `Log-Filter.dc.html` — the filter sheet, not a filtered-result state —
+`Log-Partial.dc.html`, `Log-Rejected.dc.html`, `Log-Empty.dc.html` are the whole set). Fixed by
+moving the statement onto its own full-width line between the chip row and the column heads,
+reusing the position and shape `state.rejectedExplanation` already established immediately below
+it for the dedicated Rejected view, rather than inventing a second pattern for the same job. Reads
+"Filtered to `<label>`" with a `Clear` `TextAction` beside it (44dp floor, reused component);
+`fillMaxWidth` so it can never itself be scrolled out of a viewport the way a chip-row member can.
+The guard that no quick chip reads selected while the statement is present is unchanged
+(`LogViewData.kt` was not touched this round). Node tag renamed
+`log-applied-filter-chip` → `log-applied-filter-statement`; its dismiss affordance changed from a
+`FilterChip`'s dismiss icon to the visible `Clear` text.
+
+**Verified:** replaced the old "never collides" checks (which used a two-chip test fixture that
+never reproduced the real overflow — the register's own "how this slipped through") with four
+`R_1047` "is visible without scrolling" cases at `w390dp`/`w480dp` × font scale 1.0/2.0, using the
+real five-quick-chip fixture from the device capture, asserting the statement node's own
+left/right edges lie within the viewport width and its bottom clears the first log row — never
+merely `assertExists()`/`assertIsSelected()`. Shown failing first against the old chip-row
+placement (all four failed on the right-edge assertion, confirming the reproduction); passing
+again after the fix. `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.ui.screens.LogScreenTest"`, `:app:testDebugUnitTest` (full app module, 10m04s),
+`:app:ktlintCheck :app:detekt` — all green. Device re-capture on `ort_audit_2`/port 5560
+(`tools\ui-audit\tour.ps1 -Only "overnight/L01-log-filtered-overs*"`): `steps: 2  ok: 2  errors: 0`
+— at 1.0 and a new `@2x` step (appended at the end of `tour.json`) the Log filtered to one over now
+reads "Filtered to 1 over" with "Clear" beside it, directly beneath the chip row and above the
+column heads, fully on screen at both scales.
+
+**Left open / not done:** none for this commit's own scope.
+
+### 165cbc4c — WPLINK: R-1047 verification — the tour can now seed an hour-window or curated-overs Log filter
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourIds,TourSpec}.kt`;
+`app/src/test/kotlin/org/ort/app/debug/tour/TourIdsTest.kt`; `tools/ui-audit/tour.json`.
+
+**Requirements/ACs:** register R-1047 (verification tooling, not the fix itself — see `dc5358cc`).
+
+**What changed:** `TourIds.resolveLogFilter` only ever built a `LogFilterSelection` when
+`logFilterFrequency` was present, so an hour-window-only or curated-overs-only filter — the exact
+shape R-1047's own fix needed to verify on a real device, since it has no frequency chip to
+piggyback on — had no drillIn shape able to reach the Log in that state at all. Fixed to build a
+selection from any of four keys: the existing `logFilterFrequency`/`logFilterFromMillis`/
+`logFilterToMillis`, plus a new `logFilterTransmissionIds` (a comma-joined list of literal
+transmission ids, parsed into `LogFilterSelection.transmissionIds` — added to `TourStep`'s
+`SUPPORTED_DRILL_IN_KEYS`); `null` only when none of the four is present, unchanged from before.
+Appended two new steps at the end of `tour.json`: `overnight/L01-log-filtered-overs`
+(`logFilterTransmissionIds: scenario-overnight-tx02`, a real, deterministic fixture id) and
+`corrected/D02-inferred-corrected` (`transmission: inferred`, against the `corrected` scenario).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*" --tests
+"org.ort.app.debug.TourParityFixtureTest"` — all green, including two new `R_1047` cases in
+`TourIdsTest` and the existing `TourSpecTest`/`TourStepsTest` suite validating both new `tour.json`
+steps parse, name real scenarios/destinations, and land on the screen they claim to.
+Discrimination: reverting the four-key OR-gate back to frequency-only failed exactly the
+hour-window case; nulling out the new `transmissionIds` parse failed exactly its own case.
+`.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+
+### 4e89348e — WPLINK: R-1048 Search header's drawer icon and back chevron reach the 44dp touch-target floor
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/SearchScreen.kt`,
+`app/src/test/kotlin/org/ort/app/ui/screens/SearchScreenTest.kt`.
+
+**Requirements/ACs:** register R-1048, constitution VII (the accessibility floor) — closes the gap
+`b96aa3b0`'s own bounds test flagged rather than fixed.
+
+**What changed:** `SearchHeaderRow` put `clickable` directly on the drawer icon's and back
+chevron's own `Modifier.size(21.dp)`/`.size(20.dp)` glyphs, so the real hit-test region was the
+glyph's own bounds — under the 44dp floor for both. Fixed the same way `SetupScaffold.kt`'s
+`ScaffoldHeaderRow` already does it for its own back target: a new private
+`SearchHeaderTouchTargetIcon` composable wraps each icon in an outer `Box` carrying `.size(44.dp)`
+and the `clickable`, with the `Icon` centred inside at its own original, unchanged glyph size —
+raising the touch target without changing what is drawn. Pulled into its own composable (rather
+than two inline `Box`/`Icon` pairs) because inlining both pushed `SearchHeaderRow` over detekt's
+`LongMethod` threshold.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchScreenTest"`
+— all green. `b96aa3b0`'s own parity-only bounds test is replaced by `R_1048 the drawer icon and
+the back chevron both meet the 44dp touch-target floor` — a real floor assertion instead of a
+parity check that would have passed even under the old, broken sizing — plus a second new case,
+`R_1048 the 44dp touch target does not change either glyph's own size`, pinning the 21dp/20dp
+glyphs directly against the `Icon` nodes themselves (`useUnmergedTree`), never the new outer box.
+Discrimination: shrinking the drawer icon's outer `Box` to 30dp failed exactly the floor test,
+while the glyph-size test stayed green, confirming the two are not accidentally coupled.
+`.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+A real device `uiautomator dump` of the Search header's own node bounds, and a re-capture of Q01
+at 1.0/`@2x` on `ort_audit_2`/port 5560, are recorded in this round's own report (see the register).
+
+**Left open / not done:** none for this commit's own scope.
+
+### 9369fbbc — WPLINK: R-1046 a corrected attribution no longer claims a voice match it never had
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/CorrectionPolling.kt`, `DetailViewState.kt`;
+`app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailContent.kt`; matching tests under
+`app/src/test/kotlin/org/ort/app/ui/data/{CorrectionPollingTest,DetailViewStateMapperTest}.kt`.
+`TransmissionDetailScreen.kt` (owned by another builder this round, R-1006) was not touched.
+
+**Requirements/ACs:** register R-1046, constitution I (never assert a claim the data cannot back).
+
+**What changed:** `DetailViewState.kt`'s INFERRED explanation fell back to its generic "Not heard
+in this over. Matched by voice." sentence for every INFERRED attribution with no resolved source
+over — but `Attribution.withCorrection` (what `CorrectionPolling.currentAttribution` returns for
+any corrected row) produces exactly that shape for every human correction, typed or verified
+alike, so a typed, unverified correction read as if the voice itself had matched it. Told apart
+now using two real facts: `Attribution.corrected` (already carried on the attribution itself, no
+extra read needed) and the new `CorrectionPolling.correctionTyped(context, transmissionId)`, which
+reads the transmission's most recent correction audit row (`CorrectionDao.correctionsFor`, newest
+last) and reports whether its `field` was `CorrectionDao.FIELD_STATION_UNVERIFIED` — `null`, never
+a guessed `false`, when there is no correction or no surviving audit row to say which. A corrected
+INFERRED now reads "The operator corrected this" (or "…typed and unverified" when
+`correctionTyped` is true) instead of the old, misleading fallback; a genuine voice-matched
+INFERRED with no resolved source keeps its own unchanged text.
+`DetailBodyViewState.Inferred` gains structured `corrected`/`correctionTyped` fields so a caller
+(and this round's own tests) can assert the fact directly rather than parsing prose out of
+`explanation` (constitution II). `TransmissionDetailContent.kt`'s `pollDetail` looks up
+`correctionTyped` only when the polled attribution is genuinely INFERRED-and-corrected, the same
+per-state gating `ambiguousEvidence`/`unknownContext` already use.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.DetailViewStateMapperTest"
+--tests "org.ort.app.ui.data.CorrectionPollingTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailContentTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` — all green, including 6 new `R_1046` cases
+in each of `DetailViewStateMapperTest`/`CorrectionPollingTest` asserting the variant/structure
+(`corrected`, `correctionTyped`), never the exact sentence. Discrimination proven twice: reverting
+the `attribution.corrected` branch condition failed exactly the "never claims a voice match" case;
+reverting `correctionTyped`'s `lastOrNull` to `firstOrNull` failed exactly the
+"most-recent-of-several" case. `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+
+**Left open / not done:** the corrected detail screen's own re-capture on `ort_audit_2`/port 5560
+is recorded in this round's own report (see the register), not repeated here.
+
+### dc5358cc — WPLINK: R-1047 the Log states its own applied filter instead of leaving All selected
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/{LogScreen,LogContent}.kt`; matching tests under
+`app/src/test/kotlin/org/ort/app/ui/{data,screens}/Log{ViewData,Polling,Screen}Test.kt`.
+
+**Requirements/ACs:** register R-1047, constitution I ("the operator reads 'this is everything'").
+Affects the three `R-1041` entry points (N01, D11, R04) plus WPNAV's DG02 and station Overs, all of
+which route through this same mechanism.
+
+**What changed:** a `LogFilterSelection` carrying `transmissionIds`, an hour window
+(`fromMillis`/`toMillis`) or a `stationId` left the `All` quick chip reading selected and drew no
+other indication a filter was applied — the operator reads "this is everything" while looking at a
+narrowed Log. Root cause: `LogContent` tracked `quickFilter` (chip UI state) separately from
+`selection` (the real filter), and `LogItemsMapper.quickFilters` built every chip's `selected` flag
+from the former alone. Fixed by adding `LogItemsMapper.appliedFilterLabel`, a real, honest
+statement of the applied filter built from the selection itself — a count of overs
+(`transmissionIds`), a station callsign, an hour window ("23:00 – 00:00"), or a frequency not
+already covered by a quick chip; `null` when nothing narrows the view. Threaded through
+`LogPolling.screenState` as `LogScreenViewState.appliedFilterLabel`, and `quickFilters` no longer
+marks `All` selected while that label is non-null. `LogScreen` renders it as a dismissable
+`FilterChip` inside the existing `FilterChipRow` (never a second row, so it can never collide with
+the chip row or the first log row by construction) — the same dismissable-chip shape
+`SearchScreen`'s own applied-filter chips already use, since no Log filtered-state artboard exists
+in `design/canvas` to follow instead. `LogContent`'s `onClearAppliedFilter` resets both `selection`
+and `quickFilter` back to their unfiltered defaults.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.LogViewDataTest"
+--tests "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.screens.LogScreenTest"` — all
+green, including new `R_1047` cases covering every selection kind, quick-chip suppression,
+dismiss/clear, and Robolectric collision-bounds checks at `w390dp-h844dp-420dpi` and `480dp`, font
+scale 1.0/2.0. Discrimination: reverting the `!hasAppliedFilterStatement` guard failed exactly one
+test, for the right reason. `.\gradlew.bat :app:ktlintCheck :app:detekt` — green (`LogScreenTest.kt`
+now carries `@Suppress("LargeClass")`, the same established pattern as `ModelsScreenTest.kt`/
+`DigestPollingTest.kt`, once this round's own cases pushed it over the threshold).
+
+**Left open / not done:** the re-capture of D11 (or a new tour step) on `ort_audit_2`/port 5560 is
+recorded in this round's own report (see the register), not repeated here.
+
+### 4b78e721 — WPLINK: R-1041 the real per-transmission changed set behind a reprocess run's own `changedCount`
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessStatus.kt`,
+`ReprocessRunner.kt`; `pipeline/src/test/kotlin/org/ort/pipeline/reprocess/ReprocessRunnerTest.kt`.
+
+**Requirements/ACs:** none new — a data-layer prerequisite for R-1041's R04 (`Improve-Done`'s
+"Review the N changes" needs the real ids, not just the count).
+
+**What changed:** `ReprocessStatus.Summary` gains `changedTransmissionIds: Set<String>` (default
+empty, every existing caller compiles unchanged) — the exact per-transmission ids behind
+`transcriptsChanged`/`attributionsChanged`, a `Set` so an over whose transcript *and* attribution
+both changed contributes exactly one id, never a fabricated wider set (constitution I). Populated
+in `ReprocessRunner.run`'s own per-item comparison, alongside the existing counts. The function's
+own per-item bookkeeping was pulled into a new `RunTally`/`BeforeState`/`recordOutcome` split
+(detekt's `LongMethod`; a plain data move, no behaviour change to the existing counts).
+
+**Verified:** `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.reprocess.*"` —
+all green, including three updated `ReprocessRunnerTest` cases now asserting the real set (a
+single-item run, a missing-audio-file run where the failed item never joins the set, and the
+four-item `R_143` mix proving the no-double-count-on-both-changed case). `:pipeline:detekt` and
+`:pipeline:ktlintCheck` both green.
+
+### 9967fe4e — WPLINK: R-1041 N01's chart bar, D11's affected-overs link, R04's review-changes link, all real now — routed through the existing `LogFilterOrigin`/`openLogFiltered` mechanism
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/ActivityPatternChart.kt` (the tappable
+bar); `app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt` (`sessionStartedAtUtc`,
+`hourFilterWindow`), `LogViewData.kt` (`LogPolling.attributionFrom`'s own R-189-class fix, found
+while proving D11 — see Left open); `app/src/main/kotlin/org/ort/app/ui/screens/NowScreen.kt`,
+`NowContent.kt` (`onOpenHour`), `PropagatedScreen.kt` (`onViewAffectedOvers`),
+`TransmissionDetailContent.kt` (threading it through), `SearchScreen.kt`, `SearchContent.kt` (the
+drawer icon, R-1042); `app/src/main/kotlin/org/ort/app/ui/improve/ImproveScreens.kt`
+(`onReviewChanges`), `ImproveContent.kt` (`onOpenChangedOvers`); matching tests under
+`app/src/test/kotlin/org/ort/app/ui/{components,data,screens,improve}/**`;
+`tools/ui-audit/tour.json` (one new step, appended: `overnight-live/N01-now-live@2x` — the
+populated chart had no font-scale-2.0 capture at all before this).
+
+**Requirements/ACs:** register R-1041, R-1042 (design-conformance findings, not functional-spec
+requirements). Existing filter mechanisms reused, not duplicated: `LogFilterSelection.fromMillis`/
+`toMillis` (N01's hour window) and `.transmissionIds` (D11's affected overs, R04's changed overs)
+already existed — no new field added to the filter model itself.
+
+**What changed:**
+- **N01** (`Main.dc.html`'s chart bar → `L01` filtered to that hour): `ActivityPatternChart` gains
+  `onBarClick: ((Int) -> Unit)?` — real only for a bar whose own `heardCount > 0` (gated inside the
+  component itself, never left to a caller to re-derive; an hour with nothing heard is never a
+  dead tap). Bumps its own row height to 44dp only while tappable (every other caller — ST03's
+  day-of-week grid, the sparkline — passes no callback and is unaffected). `NowViewState.Active`
+  carries the session's own real `sessionStartedAtUtc`; the new top-level `hourFilterWindow(start,
+  index)` turns a tapped bar's index back into the real `[fromMillis, toMillis]` window
+  `ActivityPatternMapper.buildSessionElapsedPattern` folded it from. `NowScreen`/`NowContent` gain
+  `onOpenHour`, defaulted to a no-op.
+- **D11** (`Detail-Propagated.dc.html`'s "View the N affected overs" → `L01` filtered to those
+  overs): `PropagatedScreen` gains `onViewAffectedOvers: (Set<String>) -> Unit`, rendering the link
+  only when `outcome.affected` is non-empty, passing exactly `outcome.affected`'s own transmission
+  ids (never `overCount` alone, which the register's own fixture convention keeps deliberately
+  desynced from `affected.size` for other reasons). Threaded through
+  `TransmissionDetailContent`/`PropagatedDestination`.
+- **R04** (`Improve-Done`'s "Review the N changes" → `L01` filtered to those overs):
+  `ImproveDoneScreen` renders a `SecondaryButton` beside `Done` reading "Review the
+  &lt;Plurals.count&gt;" only when `summary.changedTransmissionIds` is non-empty — never the whole
+  attempted batch, so a run where nothing changed (every item failed or rejected) shows no link at
+  all. `ImproveContent` gains `onOpenChangedOvers`.
+- **Q01 (R-1042)**: `Search`'s own header (drawn by `SearchScreen` itself, per R-200 — the host
+  never renders its generic `ScreenHeader` for `SEARCH`) had no drawer icon at all, so an operator
+  reaching `Search` from its own new drawer row (IA-5) had no way back into the drawer except
+  system back. Added the same `OrtIcons.drawer` icon `ScreenHeader` draws for every other
+  destination, before the back chevron.
+- **Bonus fix, found proving D11 on a real device**: `LogPolling.attributionFrom`
+  (`LogViewData.kt`) duplicated `ReaderPolling`'s attribution derivation, including the identical
+  R-189 bug `CorrectionPolling.currentAttribution` already patches for the detail screen alone —
+  every real correction writes `INFERRED` with a `NULL` confidence (`Attribution.withCorrection`),
+  and the state-based branch required a non-null one for `INFERRED`, silently downgrading a
+  corrected row back to `UNKNOWN` in the **Log** specifically (never the detail screen, which was
+  already patched). A corrected transmission read as its real, corrected callsign in `Detail` and
+  as `UNKNOWN` in `Log` — found only because D11's own device verification opens exactly that Log.
+  Fixed with the identical `entity.corrected`-aware check `CorrectionPolling.currentAttribution`
+  already uses.
+
+**Verified:**
+`.\gradlew.bat :app:testDebugUnitTest` (full, unfiltered) — green.
+`.\gradlew.bat :app:smokeTestDebugUnitTest` (full, unfiltered) — green, including the new
+`ReaderActivityDestinationSmokeTest`/`NowContentTest`/`TransmissionDetailContentTest` cases (see
+the nav-host commit below for the real-`Activity` D11 round trip).
+`.\gradlew.bat :app:detekt :app:ktlintCheck` — green.
+Real-device verification (constitution VIII), AVD `ort_audit_2`, `emulator-5560`: N01
+(`overnight-live` scenario) and Q01 (`search-corpus` scenario) captured via
+`tools\ui-audit\tour.ps1 -Only <id>* -Out <scratch>` at 1.0 and 2.0 — chart height/tap affordance
+and the new drawer icon both render cleanly at both scales, no clipping or overlap, matching
+`Main.dc.html`/`Search.dc.html`. D11 driven live on-device (the `corrected` scenario, a real
+free-text "Not right?" correction, `KJ7ABC` → `KA7DEMO`): the propagated screen's own "View the 1
+affected over" link renders, opens the filtered Log for real, and system back reopens the
+corrected transmission's own detail — screenshots in the builder's own scratch directory (see
+report). R04 could not be captured on-device: its own affordance requires a real transcript or
+attribution change from an actual ASR pass, which needs a bundled model this local,
+no-`HF_TOKEN` install does not have — proven instead by `ReprocessRunnerTest`'s real
+change-detection and `ImproveScreensTest`'s real rendering/gating (both listed above), plus the
+existing `R_350` smoke test's own real `Improve-Done` round trip (missing-model failure path).
+
+**Left open / not done:** R04's own "changes present" visual state is unverified on a device —
+see Verified. N01's own tour step was added only at 1.0/2.0, not `@2x-end` — `overnight-live`'s
+own populated `Now` did not visibly need scrolling in the 1.0/2.0 captures taken, but this was not
+separately confirmed against a scroll-to-end capture.
+
+### 241e01b4 — WPLINK: nav-host wiring for R-1041's three new `LogFilterOrigin` cases (isolated commit — see report)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` only;
+`app/src/test/kotlin/org/ort/app/ui/navigation/ReaderActivityDestinationSmokeTest.kt` (the new D11
+real-`Activity` round trip, which exercises this wiring specifically).
+
+**Requirements/ACs:** register R-1041.
+
+**What changed:** `LogFilterOrigin` gains three cases — `Now` (data object, back to `Now`),
+`Transmission(transmissionId)` (back reopens that transmission's own drill-in at its `Main`
+sub-state, never the momentary `Propagated` one — the same "root, not the exact sub-screen"
+precedent `Frequency`/`Station` already established), `Improve` (data object, back to `Improve
+records`'s own list root) — with matching `LogFilterOriginSaver` encode/decode branches.
+`OrtNavHostBackHandler`'s own restore `when` was pulled into a new `restoreLogFilterOrigin`
+function (detekt's `CyclomaticComplexMethod`; a plain data move). `NavHostCallbacks` gains
+`onOpenHour`/`onViewAffectedOvers`/`onOpenChangedOvers`, each building the matching
+`LogFilterSelection` + origin and switching to `LOG`; wired into `NowContent` (NOW), into
+`TransmissionDetailContent` (the transmission drill-in), and into `ImproveContent`
+(IMPROVE_RECORDS). `SearchDestinationContent` gained an `onDrawer` parameter wired to the existing
+`NavHostCallbacks.onOpenDrawer` (R-1042's own nav-host half).
+
+**Verified:** `.\gradlew.bat :app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest"` — full class green (36 cases),
+including the new `R_1041_D11_view_affected_overs_link_opens_Log_filtered_to_that_over` case,
+which seeds a second, never-corrected transmission specifically so "the Log shows only the
+corrected one" is a real discriminator, and proves `LogFilterOriginSaver`'s new `Transmission`
+case survives a real `Activity` `recreate()` (the R-129 crash class) without crashing.
+`.\gradlew.bat :app:testDebugUnitTest`, `:app:smokeTestDebugUnitTest` (full, unfiltered),
+`:app:detekt`, `:app:ktlintCheck` — all green (same runs as the feature commit above, taken after
+this commit).
+
+**Left open / not done:** none for this commit's own scope.
+
+### b96aa3b0 — WPLINK: R-1042 measures the new drawer icon's own touch target rather than assuming it
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/screens/SearchScreenTest.kt` only.
+
+**Requirements/ACs:** register R-1042, constitution VII (the accessibility floor).
+
+**What changed:** a real bounds test proving the new `search-drawer-icon`'s own rendered footprint
+is at least as large as the pre-existing `search-back-chevron` beside it — found while writing it
+that **neither meets the 44dp floor** (this screen's header icons are bare `Icon` +
+`.clickable()`, not wrapped the way `ui/components/Rows.kt`'s `ScreenHeader` icons are). This is a
+pre-existing gap the new icon matches rather than introduces or worsens; flagged here rather than
+silently accepted, not fixed in this round (fixing it means touching `SearchHeaderRow`'s shared
+icon-sizing pattern, which both header icons use, not just the new one — a separate, intentionally
+scoped fix).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchScreenTest"`
+green (including the new case). `:app:ktlintCheck :app:detekt` green.
+
+---
+
 ## 2026-09-12 (WPAUDX: RC02's session-audio export replaces the typed stub — a per-session slice of FR-STO-6, streamed, with a full provenance manifest)
 
 ### 3df61335 — WPAUDX: `SessionAudioExport` replaces the WPDATA typed "unavailable" stub with a real per-session audio export — a streamed zip (over audio and/or the raw continuous archive) with a full provenance manifest, never buffering a whole file into memory
@@ -724,6 +1320,9 @@ pixels, dispatched through a new decision function — and no scenario/seed exis
 bar into its playback mode for a tour step; building that seam was judged out of scope for this
 slice). `design/design-intent.md`'s C10 row is left for the lead to update, per this package's own
 instructions.
+
+---
+
 ## 2026-09-12 (WPDATA fix: R-1043 correction — the v12→v13 migration test's own long name broke Windows MAX_PATH, not the environment)
 
 ### WPDATA fix — root cause found and fixed: `migration_from_v12_to_v13_...`'s combination of its own (correctly descriptive) test name and a long `dbName` pushed the resolved Robolectric sandbox path past Windows' 260-character limit; shortening `dbName` fixes it, verified 3× alone and 3× in the full `:data` suite

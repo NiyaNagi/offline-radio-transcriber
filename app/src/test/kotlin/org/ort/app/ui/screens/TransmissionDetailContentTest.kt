@@ -49,6 +49,7 @@ import org.robolectric.RobolectricTestRunner
  * exactly this "state arrives from off the composition clock" case.
  */
 @RunWith(RobolectricTestRunner::class)
+@Suppress("LargeClass") // one class per drill-in's own real, database-backed flow — see the file's own doc comment.
 class TransmissionDetailContentTest {
 
     // Not itself a `@Rule` — `ruleChain` below owns its lifecycle; see
@@ -300,6 +301,44 @@ class TransmissionDetailContentTest {
         composeTestRule.onNodeWithText("Corrected to KA7LWH", substring = true).assertExists()
         val corrected = runBlocking { db.transmissionDao().getById("TX1") }
         assert(corrected!!.stationId == "KA7LWH")
+    }
+
+    /**
+     * R-1041 (D11, `LogFilterOrigin.Transmission`): the propagated screen's own "View the N
+     * affected overs" reaches all the way out to this composable's own [onViewAffectedOvers] —
+     * proved through the real correction flow, not a direct `PropagatedScreen` call, so the whole
+     * wiring (not just one file's own plumbing) is what is discriminated here.
+     */
+    @Test
+    fun `R_1041 view affected overs reaches onViewAffectedOvers with the real transmission ids`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        var opened: Set<String>? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                    onViewAffectedOvers = { opened = it },
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Not right?")
+        composeTestRule.onNodeWithText("Not right?").performClick()
+        composeTestRule.waitUntilTextExists("Type a callsign")
+        composeTestRule.onNodeWithText("Type a callsign").performScrollTo().performClick()
+        composeTestRule.onNodeWithContentDescription("Typed callsign").performScrollTo().performTextInput("KA7LWH")
+        composeTestRule.onNodeWithText("Save unverified correction").performScrollTo().performClick()
+        composeTestRule.waitUntilTextExists("Corrected to KA7LWH")
+
+        composeTestRule.onNodeWithText("View the 1 affected over").performScrollTo().performClick()
+        assert(opened == setOf("TX1")) { "expected the real affected transmission ids, got $opened" }
     }
 
     /**

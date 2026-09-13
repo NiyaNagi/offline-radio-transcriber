@@ -79,6 +79,69 @@ class DetailViewStateMapperTest {
         assertNull(body.sourceTransmissionId)
     }
 
+    // ---- R-1046 (register, halt): a corrected INFERRED with no source must never reuse the
+    // genuine-voice-match "Matched by voice." sentence — it must say a human corrected it, and
+    // whether that correction was typed/unverified. Structure/state asserted, never the exact
+    // sentence text (constitution II). ----
+
+    @Test
+    fun `R_1046 a genuine voice-matched INFERRED with no source keeps its own honest text`() {
+        val body = DetailViewStateMapper.from(detail(Attribution.inferred("K7LWH", 0.82))).body
+        check(body is DetailBodyViewState.Inferred)
+        assertFalse(body.corrected)
+        assertNull(body.correctionTyped)
+        assertTrue(body.explanation.contains("Matched by voice"), body.explanation)
+    }
+
+    @Test
+    fun `R_1046 a corrected INFERRED never claims a voice match`() {
+        val corrected = Attribution.unknown().withCorrection("K7LWH")
+        val body = DetailViewStateMapper.from(detail(corrected), correctionTyped = true).body
+        check(body is DetailBodyViewState.Inferred)
+        assertTrue(body.corrected)
+        // The bug this register closes: the old fallback text is never reused for a correction.
+        assertFalse(body.explanation.contains("Matched by voice"), body.explanation)
+        assertNull(body.sourceTransmissionId)
+    }
+
+    @Test
+    fun `R_1046 a typed, unverified correction states so structurally, not just in prose`() {
+        val corrected = Attribution.unknown().withCorrection("K7LWH")
+        val body = DetailViewStateMapper.from(detail(corrected), correctionTyped = true).body
+        check(body is DetailBodyViewState.Inferred)
+        assertTrue(body.corrected)
+        assertEquals(true, body.correctionTyped)
+    }
+
+    @Test
+    fun `R_1046 a verified, picked correction states so structurally, distinctly from typed`() {
+        val corrected = Attribution.unknown().withCorrection("K7LWH")
+        val body = DetailViewStateMapper.from(detail(corrected), correctionTyped = false).body
+        check(body is DetailBodyViewState.Inferred)
+        assertTrue(body.corrected)
+        assertEquals(false, body.correctionTyped)
+    }
+
+    @Test
+    fun `R_1046 a corrected INFERRED whose typed-vs-verified fact was never looked up stays non-committal`() {
+        val corrected = Attribution.unknown().withCorrection("K7LWH")
+        val body = DetailViewStateMapper.from(detail(corrected)).body
+        check(body is DetailBodyViewState.Inferred)
+        assertTrue(body.corrected)
+        // Never a guessed `false` standing in for "verified" — the honest "cannot say" case.
+        assertNull(body.correctionTyped)
+    }
+
+    @Test
+    fun `R_1046 correctionTyped is only ever read when the attribution is actually corrected`() {
+        // Discrimination: a caller passing correctionTyped for an *uncorrected* row must not leak
+        // into the body's own correctionTyped field — bodyFor only trusts it when corrected is true.
+        val body = DetailViewStateMapper.from(detail(Attribution.inferred("K7LWH", 0.82)), correctionTyped = true).body
+        check(body is DetailBodyViewState.Inferred)
+        assertFalse(body.corrected)
+        assertNull(body.correctionTyped)
+    }
+
     @Test
     fun `R_057 AMBIGUOUS explains itself from the real top two candidates, never a fabricated letter`() {
         val inspection = InspectionViewState(

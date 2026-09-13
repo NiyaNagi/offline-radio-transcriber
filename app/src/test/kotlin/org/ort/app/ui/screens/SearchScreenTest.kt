@@ -8,6 +8,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -85,6 +86,7 @@ class SearchScreenTest {
         onOpenFilters: () -> Unit = {},
         onDismissFilters: () -> Unit = {},
         onBack: () -> Unit = {},
+        onDrawer: () -> Unit = {},
     ) {
         composeTestRule.setContent {
             OrtTheme {
@@ -102,6 +104,7 @@ class SearchScreenTest {
                     onSearch = onSearch,
                     onOpen = onOpen,
                     onBack = onBack,
+                    onDrawer = onDrawer,
                 )
             }
         }
@@ -206,6 +209,75 @@ class SearchScreenTest {
         composeTestRule.onNodeWithTag("search-back-chevron").performClick()
 
         assert(backed) { "expected the back chevron to invoke onBack" }
+    }
+
+    /**
+     * R-1042 (IA-5, register): `Search` is now a drawer row, reachable from anywhere — before this,
+     * its own header drew no drawer icon at all, so the only way back into the drawer from here was
+     * system back, which does not reopen the drawer, it leaves `Search` entirely.
+     */
+    @Test
+    fun `R_1042 the drawer icon exists and invokes onDrawer`() {
+        var opened = false
+        screen(onDrawer = { opened = true })
+
+        composeTestRule.onNodeWithTag("search-drawer-icon").assertExists()
+        composeTestRule.onNodeWithTag("search-drawer-icon").performClick()
+
+        assert(opened) { "expected the drawer icon to invoke onDrawer" }
+    }
+
+    /**
+     * R-1042/R-1048 (register): the drawer icon's own touch target, measured directly rather than
+     * assumed. Before R-1048's fix this only proved the new icon matched the pre-existing
+     * `search-back-chevron`'s own under-floor footprint (`clickable` sat directly on the 21dp
+     * `Icon`) — real device evidence (`b96aa3b0`'s own `uiautomator dump`) found both under FR-A11Y-2's
+     * 44dp floor. Fixed the same way `SetupScaffold.kt`'s `ScaffoldHeaderRow` already does it: an
+     * outer `Box` carries the 44dp floor and the `clickable`, the `Icon` inside keeps its original,
+     * unchanged size — so this is now a real floor assertion for both icons, not a parity check
+     * that would have passed even while both sat under 44dp.
+     */
+    @Test
+    fun `R_1048 the drawer icon and the back chevron both meet the 44dp touch-target floor`() {
+        screen()
+
+        val drawerBounds = composeTestRule.onNodeWithTag("search-drawer-icon").getUnclippedBoundsInRoot()
+        val backBounds = composeTestRule.onNodeWithTag("search-back-chevron").getUnclippedBoundsInRoot()
+        val drawerWidth = drawerBounds.right - drawerBounds.left
+        val drawerHeight = drawerBounds.bottom - drawerBounds.top
+        val backWidth = backBounds.right - backBounds.left
+        val backHeight = backBounds.bottom - backBounds.top
+        assert(drawerWidth >= 44.dp && drawerHeight >= 44.dp) {
+            "expected the drawer icon's touch target (${drawerWidth}x$drawerHeight) to meet the 44dp floor"
+        }
+        assert(backWidth >= 44.dp && backHeight >= 44.dp) {
+            "expected the back chevron's touch target (${backWidth}x$backHeight) to meet the 44dp floor"
+        }
+    }
+
+    /**
+     * R-1048 (register): the 44dp touch-target box must never resize the glyph itself — a caller
+     * cannot tell this fix landed by a suddenly-bigger icon, only by a bigger hit region around the
+     * same one. Measured against `OrtIcons`' own real `ImageVector` intrinsic size scaled by the
+     * `Icon` composable's own explicit `.size(...)` modifier — 21dp/20dp, unchanged from before this
+     * fix — rather than the outer 44dp box this test above already covers.
+     */
+    @Test
+    fun `R_1048 the 44dp touch target does not change either glyph's own size`() {
+        screen()
+
+        val drawerIconBounds = composeTestRule
+            .onNodeWithContentDescription("Open navigation", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val backIconBounds = composeTestRule
+            .onNodeWithContentDescription("Back", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        assert(drawerIconBounds.right - drawerIconBounds.left == 21.dp) {
+            "expected the drawer glyph to stay 21dp, was ${drawerIconBounds.right - drawerIconBounds.left}"
+        }
+        assert(backIconBounds.right - backIconBounds.left == 20.dp) {
+            "expected the back chevron glyph to stay 20dp, was ${backIconBounds.right - backIconBounds.left}"
+        }
     }
 
     // --- R-202/R-203: the filter sheet's live counts and heard-frequency chips flow through ---

@@ -3,7 +3,9 @@ package org.ort.app.ui.screens
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -153,5 +155,41 @@ class NowContentTest {
 
         composeTestRule.waitUntilTextExists("Room audio")
         composeTestRule.onNodeWithText("Room audio", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 tapping the chart's first bar opens the Log filtered to that real hour, via the real read path`() {
+        val sessionStart = SystemClock.wallMillis() - 3_600_000L
+        runBlocking {
+            db.sessionDao().insert(session("HOUR-1").copy(startedAt = sessionStart))
+            db.transmissionDao().insert(transmission("HOUR-1-tx1", "HOUR-1", sessionStart + 1_000L))
+        }
+        CaptureState.capturing("HOUR-1")
+
+        var openedFrom: Long? = null
+        var openedTo: Long? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                NowContent(
+                    context = context,
+                    sessionId = "HOUR-1",
+                    onOpenTransmission = {},
+                    onOpenStation = {},
+                    onOpenHour = { fromMillis, toMillis ->
+                        openedFrom = fromMillis
+                        openedTo = toMillis
+                    },
+                )
+            }
+        }
+
+        composeTestRule.waitUntilTextExists("1 over")
+        composeTestRule.onNodeWithTag("activity-bar-0").performClick()
+
+        assert(openedFrom == sessionStart) { "expected the real session start ($sessionStart), got $openedFrom" }
+        assert(openedTo == sessionStart + 3_600_000L - 1) {
+            "expected the real hour's own inclusive end, got $openedTo"
+        }
     }
 }
