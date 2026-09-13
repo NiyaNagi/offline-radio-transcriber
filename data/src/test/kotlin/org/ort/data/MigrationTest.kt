@@ -771,7 +771,19 @@ public class MigrationTest {
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-STO-3e", "FR-OBS-4")
     public fun migration_from_v12_to_v13_preserves_existing_rows_and_adds_the_over_audio_and_label_columns() {
-        val dbName = "migration-test-db-v13-over-audio-and-label"
+        // R-1043 (second correction): this test's own long name, embedded verbatim by Robolectric
+        // into its per-test sandbox temp directory name, combined with a descriptive dbName, pushed
+        // the resolved absolute path (this file's own `%TEMP%\robolectric-<class>_<test name><random
+        // suffix>\...\databases\<dbName>`) to 253 characters -- under Windows' MAX_PATH (260) for the
+        // bare `.db` file itself, but over it once SQLite's own `-journal` sidecar file (needed the
+        // moment a connection opens, before WAL is even established -- exactly where the crash
+        // occurred, in `SQLiteConnection.setJournalMode`/`.setWalModeFromConfiguration`) added its own
+        // 8-character suffix (261 characters, one past the ceiling). Confirmed empirically: printing
+        // the real resolved path and its length reproduced exactly 253/261; shortening only `dbName`
+        // (never the test's own name, which carries the requirement id `MigrationTest`'s other cases
+        // rely on for traceability) brings every sidecar file safely under the limit again, the same
+        // budget every other case in this file already keeps to by using a short `dbName`.
+        val dbName = "migration-test-db-v13"
         val v12 = helper.createDatabase(dbName, 12)
         v12.execSQL(
             "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +

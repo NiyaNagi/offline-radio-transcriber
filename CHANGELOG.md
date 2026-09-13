@@ -32,6 +32,94 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPDATA fix: R-1043 correction — the v12→v13 migration test's own long name broke Windows MAX_PATH, not the environment)
+
+### WPDATA fix — root cause found and fixed: `migration_from_v12_to_v13_...`'s combination of its own (correctly descriptive) test name and a long `dbName` pushed the resolved Robolectric sandbox path past Windows' 260-character limit; shortening `dbName` fixes it, verified 3× alone and 3× in the full `:data` suite
+
+**Scope:** `data/src/test/kotlin/org/ort/data/MigrationTest.kt` only — one test method's local `dbName`.
+
+**Requirements/ACs:** AC-53, FR-AST-5, FR-AST-6, FR-STO-3e, FR-OBS-4 (same test, same coverage —
+this is a fix to a false negative, not a behaviour change). Corrects register R-1043's own
+correction.
+
+**What changed:** The coordinator's own re-test (clearing 17,638 stale `robolectric-*` `%TEMP%`
+directories, then re-running) proved my earlier "temp-directory exhaustion" theory wrong: the
+failure was deterministic, not intermittent, and specific to this one test case. Root cause found
+by printing the real resolved absolute path and its length immediately before the failing
+`Room.databaseBuilder(...).build()` call:
+`%TEMP%\robolectric-MigrationTest_migration_from_v12_to_v13_preserves_existing_rows_and_adds_the_over_audio_and_label_columns<20-digit random suffix>\org.ort.data.test-dataDir\databases\migration-test-db-v13-over-audio-and-label`
+— **253 characters** for the bare `.db` file, already close to Windows' 260-character `MAX_PATH`.
+The crash (`SQLiteCantOpenDatabaseException`, thrown from `SQLiteConnection.setJournalMode` /
+`.setWalModeFromConfiguration` — i.e. the moment a connection opens, before WAL is even
+established) is exactly where SQLite needs its `-journal` sidecar file, an 8-character suffix that
+pushes the same path to **261 characters — one past the ceiling.** Compared line by line against
+the passing `migration_from_v11_to_v12_...` case: identical `helper.createDatabase`/
+`runMigrationsAndValidate`/`Room.databaseBuilder(...).build()` shape, WAL untouched, no shared or
+previously-held file — the only material difference is length: that test's own name and `dbName`
+(`"migration-test-db-v12-archive"`, 30 chars) are both shorter, keeping its own resolved path
+comfortably under the limit. **Fix:** shortened this test's `dbName` from
+`"migration-test-db-v13-over-audio-and-label"` (42 chars) to `"migration-test-db-v13"` (22 chars)
+— the 20-character reduction brings the worst case (with the `-journal` suffix) to 241 characters,
+matching the margin every other case in this file already has. The test's own method name is left
+exactly as it was: it is not the variable at fault, and shortening it would cost the traceability
+the constitution's own naming convention exists for. No retry, no skip, no journal-mode switch —
+the fix is the path, not the symptom.
+
+**Reproduction (before the fix, on a clean environment — main merged at `b978b47a`, no concurrent
+builds):** ran alone three times, `--rerun` each time:
+1. `FAILED` — `SQLiteCantOpenDatabaseException: unable to open database file (code 14 SQLITE_CANTOPEN)`
+2. `FAILED` — identical exception
+3. `FAILED` — identical exception (also reproduced once more with a diagnostic path-length print
+   attached, confirming 253/261 directly, before the fix was applied)
+
+**After the fix, alone, three times (`--rerun` each time):** `PASSED`, `PASSED`, `PASSED`.
+
+**After the fix, within the full `:data:testDebugUnitTest` suite, three times (`--rerun` each
+time):** `BUILD SUCCESSFUL` all three (120 tests, zero failures each run) — the flake this row's
+own "second cause" note worried about (temp-directory load) is now moot for this case since the
+case itself no longer depends on how much margin is left.
+
+**R-1051 cross-check (the coordinator's question):** the SQLITE_CANTOPEN root cause **cannot**
+explain R-1051's "Log shows no overs while Now shows 42" symptom, and cannot affect a real device
+or `OrtDatabase.create()`'s own production path, for three independent reasons: (1) it is a
+Windows-`MAX_PATH`-specific failure — Android runs on Linux, which has no such limit, and a real
+device's database path is the short, fixed `OrtDatabase.DATABASE_NAME = "ort.db"` under
+`/data/data/<package>/databases/`, nowhere near 260 characters; (2) the long path component is
+Robolectric's own per-test sandbox directory name, built from the *test method's own name* — this
+exists only inside a Robolectric-hosted JVM test run, never in the shipped app or in
+`OvernightScenario`'s own scenario-seeding path; (3) the failure mode is a **hard exception on
+open**, thrown before any query can run — it cannot produce a database that opens successfully for
+one screen's query (Now, 42 overs) and returns empty for another's (Log) against the same file,
+which is what R-1051 describes. Checked directly, per the coordinator's request, whether this
+change's new surfaces alter any *existing* query's behaviour: `recordingSessionSummaries`,
+`WorkQueueDao.countActiveForSession` and `TransmissionLabelDao`'s joins are all **new** read paths
+— none of them is called by `LogViewData.kt`/`LogPolling` (which reads
+`TransmissionDao.listBySession`/`CaptureGapDao.listBySession`, both untouched by this change) or by
+`NowContent`'s own path. The only entity change, `SessionEntity.overAudioRemovedAtMillis`, is
+appended after the existing last constructor parameter with a default of `null`; every scenario
+fixture (`ScenarioFixtures.session`/`.transmission`) constructs these entities with named
+arguments, so the new trailing field cannot shift any existing value. No existing table, column,
+index or DAO method was altered — the v12→v13 migration only adds a column and a table (verified
+by `MigrationTest`'s own "pre-existing row survives untouched" assertions, run on real inserted
+rows). Conclusion: **this change cannot be R-1051's cause**, stated with reasons rather than left
+implicit — the register row and the other builder's bisection are the authority on the actual
+cause.
+
+**Verified:**
+- `./gradlew :data:testDebugUnitTest --tests "org.ort.data.MigrationTest.migration_from_v12_to_v13_..."` —
+  three consecutive `--rerun` invocations, `PASSED` each time (see above for the three failing runs
+  beforehand, on the same clean, post-cleanup environment).
+- `./gradlew :data:testDebugUnitTest` (whole module) — three consecutive `--rerun` invocations,
+  `BUILD SUCCESSFUL` each time, 120 tests, zero failures.
+- `./gradlew dependencyRules platformGuards` — both `OK`.
+- `./gradlew build` (full gate, real `HF_TOKEN`, no escape hatch) — `BUILD SUCCESSFUL in 13m 21s`,
+  1107 tasks, zero failures (confirmed by scanning the full log for `FAILED`/`FAILURE`: none).
+- `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools/spec-check/spec_check.py` — all 8 checks `PASS`.
+- `./gradlew :data:detekt :data:ktlintCheck :data:compileDebugUnitTestKotlin` — `BUILD SUCCESSFUL`.
+
+**Left open / not done:** none for this fix — it is scoped to one test's `dbName`. R-1051 itself is
+another builder's bisection, not this row's to close.
 ## 2026-09-12 (WPCF07: R-1044/R-1045 — the Export screen's option rows get their divider and padding back, the preview row wraps as one flowing line, and Save file finally names the real file and its real size)
 
 ### WPCF07 — `Settings-Export.dc.html` conformance: dividers/padding on every `What`/`Include` row, `FlowRow` on the count-preview caption, and the Save file button showing the real filename and, when honestly knowable, the real size
