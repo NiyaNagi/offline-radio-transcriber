@@ -69,6 +69,10 @@ import org.ort.data.OrtDatabase
  *   has to `frequency`) — `true` opens the revisions list (D07) on the resolved transmission.
  * - `openDrawer` (v7, register R-010..R-014/R-334/R-770): `true` opens the drawer (N00) over
  *   whichever [org.ort.app.ui.navigation.ReaderDestination] the step names — [NavSeed.openDrawer].
+ * - `recordingSession` (WPRC02, RC02 `Recording-Session.dc.html`): `self` (this step's own loaded
+ *   [sessionId]) or a literal session id — the identical "self" shortcut `reviewSession` above
+ *   already has, into the separate [NavSeed.pendingRecordingSessionId] field (RC02, not the old
+ *   `Session` detail `reviewSession` seeds).
  *
  * A key naming a symbolic value this table does not recognise, and that also does not resolve as a
  * literal id/number, throws — caught by [TourRunner] the same as any other per-step failure, never
@@ -109,6 +113,9 @@ public object TourIds {
             logSheetOpen = drillIn["logSheetOpen"]?.let { it.equals("true", ignoreCase = true) },
             openTransmissionRevisions = drillIn["revisionsOpen"]?.let { it.equals("true", ignoreCase = true) },
             openDrawer = drillIn["openDrawer"]?.let { it.equals("true", ignoreCase = true) },
+            // WPRC02: mirrors `reviewSession`'s own "self" shortcut exactly — RC02 needs a session
+            // id the identical way `Settings-Storage`'s own Review link does.
+            pendingRecordingSessionId = drillIn["recordingSession"]?.let { if (it == "self") sessionId else it },
         )
     }
 

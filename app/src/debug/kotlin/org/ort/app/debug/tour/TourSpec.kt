@@ -133,6 +133,8 @@ public data class TourStep(
             "captureLevelMeter",
             "reviewSession",
             "reviewSessionView",
+            // WPRC02 — see `TourIds.resolveSeed`'s own doc comment.
+            "recordingSession",
             "frequencyInitialView",
             "stationSubScreen",
             "settingsScreen",
