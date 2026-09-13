@@ -4,12 +4,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -459,5 +462,78 @@ class ActivityPatternChartTest {
         // (a wrapped label reports a taller box — the same host-independent signal R-271 used).
         val heights = rects.map { it.height }.distinct()
         assertEquals("legend labels at font scale 2.0 rendered at different heights: $heights", 1, heights.size)
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1041 (N01): a bar with something to show is a real tap target; one with nothing is not.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 a bar with a real heardCount invokes onBarClick with its own index`() {
+        var clickedIndex: Int? = null
+        val pattern = listOf(
+            bucket(0, HourActivityState.SILENT_WHILE_LISTENING),
+            bucket(1, HourActivityState.HEARD, heardCount = 4),
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { ActivityPatternChart(pattern = pattern, onBarClick = { clickedIndex = it }) }
+        }
+
+        composeTestRule.onNodeWithTag("activity-bar-1").performClick()
+        assertEquals(1, clickedIndex)
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 an hour with zero overs is never a dead tap - it carries no click action at all`() {
+        var clicked = false
+        val pattern = listOf(
+            bucket(0, HourActivityState.NOT_LISTENING),
+            bucket(1, HourActivityState.SILENT_WHILE_LISTENING),
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { ActivityPatternChart(pattern = pattern, onBarClick = { clicked = true }) }
+        }
+
+        // Neither bucket has a real `heardCount` — [ActivityPatternChart] must gate the click
+        // itself (constitution I: never a dead tap), so no click semantics exist on either bar to
+        // even attempt a click through.
+        composeTestRule.onNodeWithTag("activity-bar-0", useUnmergedTree = true).assertHasNoClickAction()
+        composeTestRule.onNodeWithTag("activity-bar-1", useUnmergedTree = true).assertHasNoClickAction()
+        assertTrue(!clicked)
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 with no onBarClick supplied a bar with a real heardCount carries no click action`() {
+        // Discriminates the gating itself, not just the callback wiring: every existing caller
+        // (`Station-Pattern.dc.html`'s own use of this component, `AC_62`'s test above) passes no
+        // `onBarClick` at all and must keep rendering a plain, non-interactive bar.
+        val pattern = listOf(bucket(0, HourActivityState.HEARD, heardCount = 4))
+
+        composeTestRule.setContent { OrtTheme { ActivityPatternChart(pattern = pattern) } }
+
+        composeTestRule.onNodeWithTag("activity-bar-0", useUnmergedTree = true).assertHasNoClickAction()
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 a tappable chart's own bar row meets the 44dp touch-target height floor`() {
+        val pattern = listOf(bucket(0, HourActivityState.HEARD, heardCount = 4))
+
+        composeTestRule.setContent {
+            OrtTheme { ActivityPatternChart(pattern = pattern, onBarClick = {}) }
+        }
+
+        val bounds = composeTestRule.onNodeWithTag("activity-bar-0", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val height = bounds.bottom - bounds.top
+        assertTrue(
+            "expected the tappable chart's own bar height ($height) to meet the 44dp touch-target " +
+                "floor once `onBarClick` is supplied",
+            height >= 44.dp,
+        )
     }
 }

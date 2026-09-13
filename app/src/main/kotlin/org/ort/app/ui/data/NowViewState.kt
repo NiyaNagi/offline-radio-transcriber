@@ -49,8 +49,36 @@ public sealed interface NowViewState {
          * gates the persistent room-audio disclosure chip under the title. `false` (every caller
          * before this existed) renders exactly as before. */
         val isLocalMicrophone: Boolean = false,
+        /** R-1041 (N01, `LogFilterOrigin.Now`): this session's own real start instant — the same
+         * value [activityPattern] was itself bucketed from
+         * ([org.ort.app.ui.data.ActivityPatternMapper.buildSessionElapsedPattern]'s own `window
+         * .startedAtUtc`) — carried through so a tapped bar can be turned back into the real
+         * `[from, to)` millis window that produced it (`hourFilterWindow`, below), never
+         * re-derived or guessed. `null` (every caller before this existed, and the legacy bridge
+         * below) disables the chart's own tap affordance rather than opening a fabricated window.
+         */
+        val sessionStartedAtUtc: Long? = null,
     ) : NowViewState
 }
+
+/**
+ * R-1041: the real `[fromMillis, toMillis]` window [ActivityPatternMapper.buildSessionElapsedPattern]
+ * bucketed for elapsed-hour [index] of a session started at [sessionStartedAtUtc] — the inverse of
+ * that function's own `bucketStart = window.startedAtUtc + hourIndex * HOUR_MILLIS` arithmetic,
+ * kept in exact sync with it (both literal `3_600_000L`, the well-known millis-per-hour constant,
+ * never re-derived from a different unit). `toMillis` is inclusive (`bucketStart + HOUR_MILLIS - 1`)
+ * to match [org.ort.app.ui.data.LogItemsMapper]'s own `matchesTime`, which reads
+ * `startedAtUtcMillis <= toMillis`.
+ */
+public fun hourFilterWindow(sessionStartedAtUtc: Long, index: Int): Pair<Long, Long> {
+    val bucketStart = sessionStartedAtUtc + index * HOUR_MILLIS_FOR_FILTER
+    return bucketStart to (bucketStart + HOUR_MILLIS_FOR_FILTER - 1)
+}
+
+/** [hourFilterWindow]'s own millis-per-hour constant — kept local to this small, pure function
+ * rather than exposing [ActivityPatternMapper]'s private one, since the two are never required to
+ * be the same declaration, only the same well-known value. */
+private const val HOUR_MILLIS_FOR_FILTER = 3_600_000L
 
 /** `Now-Idle.dc.html`'s "Earlier nights" row (top 3, from `sessionDao`). */
 public data class EarlierNightRow(
@@ -162,6 +190,7 @@ public object NowViewStateMapper {
             missingModel = if (asrAvailable) null else missingModel,
             worthKnowing = worthKnowing(details, gaps, firstHeardStationIds),
             stations = stationsSection(details),
+            sessionStartedAtUtc = sessionStartedAtUtc,
         )
     }
 

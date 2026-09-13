@@ -1,6 +1,7 @@
 package org.ort.app.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -27,6 +28,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -40,6 +43,16 @@ import java.time.DayOfWeek
 import kotlin.math.roundToInt
 
 private val CHART_HEIGHT = 38.dp
+
+/** R-1041 (N01, `LogFilterOrigin.Now`): the chart's own height while [ActivityPatternChart.onBarClick]
+ * is non-null — 44dp meets the accessibility floor's touch-target height for the one caller (N01's
+ * populated chart) that makes a bar tappable; every other caller (`Station-Pattern.dc.html`'s grid,
+ * the sparkline) never passes [ActivityPatternChart.onBarClick] and keeps [CHART_HEIGHT] unchanged.
+ * A bar's *width* is structurally narrower than 44dp at 24 columns across a 390dp screen — no
+ * layout can widen an individual column without changing how many the chart shows at once; this is
+ * the documented, accepted limit of that one dimension, the same "adjacent dense targets" exception
+ * a slider or a calendar grid already relies on elsewhere. */
+private val TAPPABLE_CHART_HEIGHT = 44.dp
 private val BAR_GAP = 1.5.dp
 private val GRID_CELL = 16.dp
 private val GRID_GAP = 3.dp
@@ -90,6 +103,7 @@ private val SPARK_GAP = 1.dp
  * "not listening · 38 s" (constitution I: never fabricate a duration this component was not
  * given); when null the legend still renders, just without a duration.
  */
+@Suppress("LongParameterList") // every parameter is an independent, optional axis/label/callback slot.
 @Composable
 public fun ActivityPatternChart(
     pattern: List<ActivityBucket>,
@@ -102,6 +116,13 @@ public fun ActivityPatternChart(
     axisStart: String? = null,
     axisEnd: String? = null,
     notListeningLabel: String? = null,
+    // R-1041 (N01, `LogFilterOrigin.Now`): non-null makes every bar with a real `heardCount` its
+    // own tap target that opens the Log filtered to that bar's own hour — gated here, by the real
+    // bucket this component alone knows about, so an hour with nothing heard is never a dead tap
+    // (never left to the caller to re-derive the same rule). `null` (every existing caller — ST03's
+    // day-of-week grid and the sparkline use the other composables in this file, not this
+    // parameter) renders exactly as before, at [CHART_HEIGHT].
+    onBarClick: ((Int) -> Unit)? = null,
 ) {
     val heardHours = pattern.count { it.state == HourActivityState.HEARD }
     val silentHours = pattern.count { it.state == HourActivityState.SILENT_WHILE_LISTENING }
@@ -109,15 +130,25 @@ public fun ActivityPatternChart(
     val maxHeardCount = pattern.maxOfOrNull { it.heardCount } ?: 0
     val summary = "$summaryLabel: $heardHours hours heard, $silentHours hours quiet " +
         "while listening, $notListeningHours hours not listening"
+    val barChartHeight = if (onBarClick != null) TAPPABLE_CHART_HEIGHT else CHART_HEIGHT
 
     Column(modifier = modifier.semantics(mergeDescendants = true) { contentDescription = summary }) {
         title?.let { Text(text = it, style = OrtType.sectionLabel, color = OrtColors.textFaint) }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm).height(CHART_HEIGHT),
+            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.sm).height(barChartHeight),
             horizontalArrangement = Arrangement.spacedBy(BAR_GAP),
         ) {
-            pattern.forEach { bucket ->
-                HourBar(bucket = bucket, maxHeardCount = maxHeardCount, modifier = Modifier.weight(1f).fillMaxHeight())
+            pattern.forEachIndexed { index, bucket ->
+                HourBar(
+                    bucket = bucket,
+                    maxHeardCount = maxHeardCount,
+                    modifier = Modifier.weight(1f).fillMaxHeight().testTag("activity-bar-$index"),
+                    onClick = if (onBarClick != null && bucket.heardCount > 0) {
+                        { onBarClick(index) }
+                    } else {
+                        null
+                    },
+                )
             }
         }
         if (barLabels != null) {
@@ -238,8 +269,26 @@ private fun NotListeningLegend(notListeningLabel: String?, modifier: Modifier = 
 }
 
 @Composable
-private fun HourBar(bucket: ActivityBucket, maxHeardCount: Int, modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
+private fun HourBar(
+    bucket: ActivityBucket,
+    maxHeardCount: Int,
+    modifier: Modifier = Modifier,
+    // R-1041: real only for a bucket [ActivityPatternChart] has already decided has something to
+    // show (`heardCount > 0`) — see that composable's own doc comment on [onBarClick].
+    onClick: (() -> Unit)? = null,
+) {
+    val barModifier = if (onClick != null) {
+        modifier
+            .clickable(
+                role = Role.Button,
+                onClickLabel = "Open the Log filtered to this hour",
+                onClick = onClick,
+            )
+            .semantics { contentDescription = "${bucket.heardCount} overs, opens the Log filtered to this hour" }
+    } else {
+        modifier
+    }
+    Canvas(modifier = barModifier) {
         val width = size.width
         val height = size.height
         when (bucket.state) {

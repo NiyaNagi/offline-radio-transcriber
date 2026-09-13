@@ -257,12 +257,20 @@
     { "id": "llm-enabled-prose/DG05-digest-prose", "scenario": "llm-enabled-prose", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self", "reviewSessionView": "DIGEST" } },
     { "id": "llm-enabled-prose/DG05-digest-prose@2x", "scenario": "llm-enabled-prose", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self", "reviewSessionView": "DIGEST" }, "fontScale": 2.0 },
     { "id": "llm-disabled/DG01-digest", "scenario": "llm-disabled", "destination": "EARLIER_NIGHTS", "drillIn": { "reviewSession": "self", "reviewSessionView": "DIGEST" } },
+
+    { "id": "overnight-live/N01-now-live@2x", "scenario": "overnight-live", "destination": "NOW", "fontScale": 2.0 },
     { "id": "overnight/CF07-settings-export@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "EXPORT" }, "fontScale": 2.0 },
     { "id": "overnight/CF07-settings-export@2x-end", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "EXPORT" }, "fontScale": 2.0, "scroll": "end" },
 
     { "id": "overnight-live/C10-playing-then-log", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "playThenNavigate": "true" } },
     { "id": "overnight-live/C10-playing-then-log@2x", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "playThenNavigate": "true" }, "fontScale": 2.0 },
     { "id": "overnight-live/C10-paused-then-log", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "pauseThenNavigate": "true" } },
-    { "id": "overnight-live/C10-paused-then-log@2x", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "pauseThenNavigate": "true" }, "fontScale": 2.0 }
+    { "id": "overnight-live/C10-paused-then-log@2x", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "pauseThenNavigate": "true" }, "fontScale": 2.0 },
+
+    { "id": "overnight/L01-log-filtered-overs", "scenario": "overnight", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02" } },
+
+    { "id": "corrected/D02-inferred-corrected", "scenario": "corrected", "destination": "LOG", "drillIn": { "transmission": "inferred" } },
+
+    { "id": "overnight/L01-log-filtered-overs@2x", "scenario": "overnight", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02" }, "fontScale": 2.0 }
   ]
 }

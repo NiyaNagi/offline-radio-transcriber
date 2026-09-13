@@ -2,6 +2,7 @@ package org.ort.app.ui.improve
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -353,6 +355,12 @@ public fun ImproveDoneScreen(
     onDone: () -> Unit,
     modifier: Modifier = Modifier,
     onInstallModel: () -> Unit = {},
+    // R-1041 (R04, `LogFilterOrigin.Improve`): `Improve-Done.dc.html`'s own "Review the N changes"
+    // — opens the Log filtered to `summary.changedTransmissionIds`, the real, per-transmission set
+    // behind `changedCount` (never the whole attempted batch — see that field's own kdoc).
+    // Defaulted to a no-op so every existing caller keeps compiling unchanged until the nav host
+    // wires the real navigation.
+    onReviewChanges: (Set<String>) -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize().padding(horizontal = OrtSpacing.lg)) {
         Text(
@@ -409,11 +417,28 @@ public fun ImproveDoneScreen(
             )
         }
         Column(modifier = Modifier.weight(1f)) {}
-        PrimaryButton(
-            text = "Done",
-            onClick = onDone,
-            modifier = Modifier.fillMaxWidth().padding(bottom = OrtSpacing.lg),
-        )
+        // R-1041: never a dead tap — a run with nothing revised (every over rejected/failed, or no
+        // summary at all — `FakeImproveRunner`'s own run) shows no link at all, only `Done`.
+        val changedIds = summary?.changedTransmissionIds.orEmpty()
+        if (changedIds.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = OrtSpacing.lg),
+                horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+            ) {
+                SecondaryButton(
+                    text = "Review the " + Plurals.count(changedIds.size, "change"),
+                    onClick = { onReviewChanges(changedIds) },
+                    modifier = Modifier.weight(1f).testTag("improve-done-review-changes"),
+                )
+                PrimaryButton(text = "Done", onClick = onDone, modifier = Modifier.weight(1f))
+            }
+        } else {
+            PrimaryButton(
+                text = "Done",
+                onClick = onDone,
+                modifier = Modifier.fillMaxWidth().padding(bottom = OrtSpacing.lg),
+            )
+        }
     }
 }
 

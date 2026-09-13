@@ -48,6 +48,10 @@ public fun SearchContent(
     // for `SEARCH` (see this package's CHANGELOG entry — that second half is WP3's file, outside
     // this package's ownership).
     onBack: () -> Unit = {},
+    // R-1042 (IA-5, register): reopens the drawer — see `SearchScreen`'s own `SearchHeaderRow` doc
+    // comment. No-op by default so every existing caller keeps compiling unchanged until the nav
+    // host wires the real navigation.
+    onDrawer: () -> Unit = {},
     // Screenshot-tour seam (WP12/WP3's `NavSeed`): the tour can drive the initial screen (the
     // default, un-seeded state below) but has no real keyboard or Filters-chip tap to reach
     // results/empty/unavailable or the open filters sheet. `initialQuery`/[submitOnStart] together
@@ -149,6 +153,7 @@ public fun SearchContent(
         onSearch = onSearch,
         onOpen = onOpen,
         onBack = onBack,
+        onDrawer = onDrawer,
         modifier = modifier,
     )
 }

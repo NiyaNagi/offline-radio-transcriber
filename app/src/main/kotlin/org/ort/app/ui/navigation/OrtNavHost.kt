@@ -154,6 +154,22 @@ private sealed interface LogFilterOrigin {
     data class Frequency(val frequencyHz: Long) : LogFilterOrigin
     data class Station(val stationId: String) : LogFilterOrigin
     data object Capture : LogFilterOrigin
+
+    // R-1041 (N01): `Main.dc.html`'s chart bar — back returns to `Now`, the one destination this
+    // origin is ever opened from.
+    data object Now : LogFilterOrigin
+
+    // R-1041 (D11): `Detail-Propagated.dc.html`'s "View the N affected overs" — back reopens the
+    // transmission drill-in itself (its own `Main` sub-state, the same "root, not the exact
+    // sub-screen it was opened from" precedent [Frequency]'s own doc comment already establishes),
+    // never the momentary `Propagated` sub-state, which is this package's own private,
+    // reconstructed-on-demand `PropagationOutcome` and not worth threading back through a Bundle.
+    data class Transmission(val transmissionId: String) : LogFilterOrigin
+
+    // R-1041 (R04): `Improve-Done`'s "Review the N changes" — back reopens `Improve records` at
+    // its own list root, the same "root, not the exact sub-screen" precedent as [Transmission]
+    // (`ui/improve`'s own `ImprovePage.Done` is that package's private, unexported state).
+    data object Improve : LogFilterOrigin
 }
 
 /**
@@ -168,18 +184,25 @@ private val LogFilterOriginSaver: Saver<LogFilterOrigin, String> = Saver(
         when (origin) {
             LogFilterOrigin.None -> "None"
             LogFilterOrigin.Capture -> "Capture"
+            LogFilterOrigin.Now -> "Now"
+            LogFilterOrigin.Improve -> "Improve"
             is LogFilterOrigin.Frequency -> "Frequency:${origin.frequencyHz}"
             is LogFilterOrigin.Station -> "Station:${origin.stationId}"
+            is LogFilterOrigin.Transmission -> "Transmission:${origin.transmissionId}"
         }
     },
     restore = { encoded ->
         when {
             encoded == "None" -> LogFilterOrigin.None
             encoded == "Capture" -> LogFilterOrigin.Capture
+            encoded == "Now" -> LogFilterOrigin.Now
+            encoded == "Improve" -> LogFilterOrigin.Improve
             encoded.startsWith("Frequency:") ->
                 encoded.removePrefix("Frequency:").toLongOrNull()?.let { LogFilterOrigin.Frequency(it) }
                     ?: LogFilterOrigin.None
             encoded.startsWith("Station:") -> LogFilterOrigin.Station(encoded.removePrefix("Station:"))
+            encoded.startsWith("Transmission:") ->
+                LogFilterOrigin.Transmission(encoded.removePrefix("Transmission:"))
             else -> LogFilterOrigin.None // an unrecognised saved value never crashes restore.
         }
     },
@@ -411,28 +434,49 @@ private fun OrtNavHostBackHandler(
                 val origin = navState.logFilterOrigin.value
                 navState.logFilterOrigin.value = LogFilterOrigin.None
                 navState.pendingLogFilter.value = null
-                when (origin) {
-                    is LogFilterOrigin.Frequency -> {
-                        navState.openedFrom.value = ReaderDestination.LOG
-                        navState.frequencyInitialView.value = FrequencyDetailView.Change
-                        navState.openFrequencyHz.value = origin.frequencyHz
-                    }
-                    is LogFilterOrigin.Station -> {
-                        navState.openedFrom.value = ReaderDestination.LOG
-                        navState.openStationId.value = origin.stationId
-                    }
-                    LogFilterOrigin.Capture -> {
-                        navigator.currentState.value = ReaderDestination.CAPTURE
-                        navState.openCaptureLiveMonitor.value = true
-                    }
-                    LogFilterOrigin.None -> Unit
-                }
+                restoreLogFilterOrigin(origin, navigator, navState)
             }
             canReturnToSettingsStorage -> {
                 navState.pendingReviewSessionId.value = null
                 navigator.openSettings(SettingsScreenId.STORAGE)
             }
         }
+    }
+}
+
+/** [OrtNavHostBackHandler]'s own `canReturnToLogOrigin` restore, split out purely to keep that
+ * function under detekt's `CyclomaticComplexMethod` limit — a plain data move, not a behaviour
+ * change. Each branch is "reopen the one destination or drill-in [origin] was reached from," at
+ * its own root/`Main` sub-state, never the exact sub-screen it opened from (see each
+ * [LogFilterOrigin] case's own doc comment for why). */
+private fun restoreLogFilterOrigin(origin: LogFilterOrigin, navigator: ReaderNavigator, navState: NavHostNavState) {
+    when (origin) {
+        is LogFilterOrigin.Frequency -> {
+            navState.openedFrom.value = ReaderDestination.LOG
+            navState.frequencyInitialView.value = FrequencyDetailView.Change
+            navState.openFrequencyHz.value = origin.frequencyHz
+        }
+        is LogFilterOrigin.Station -> {
+            navState.openedFrom.value = ReaderDestination.LOG
+            navState.openStationId.value = origin.stationId
+        }
+        LogFilterOrigin.Capture -> {
+            navigator.currentState.value = ReaderDestination.CAPTURE
+            navState.openCaptureLiveMonitor.value = true
+        }
+        // R-1041 (N01): back to `Now` itself — the one destination this origin is ever opened from.
+        LogFilterOrigin.Now -> navigator.currentState.value = ReaderDestination.NOW
+        // R-1041 (D11): reopens the transmission drill-in at its own `Main` sub-state — see
+        // [LogFilterOrigin.Transmission]'s own doc comment for why not the exact `Propagated`
+        // sub-state.
+        is LogFilterOrigin.Transmission -> {
+            navState.openedFrom.value = ReaderDestination.LOG
+            navState.openTransmissionId.value = origin.transmissionId
+        }
+        // R-1041 (R04): reopens `Improve records` at its own list root — see
+        // [LogFilterOrigin.Improve]'s own doc comment for why not the exact `Done` sub-state.
+        LogFilterOrigin.Improve -> navigator.currentState.value = ReaderDestination.IMPROVE_RECORDS
+        LogFilterOrigin.None -> Unit
     }
 }
 
@@ -800,6 +844,33 @@ private fun navHostCallbacks(
             navState.closeDrillIns()
             navState.onOpenDrillIn(currentState.value) { navState.openThreadId.value = threadId }
         },
+        // R-1041 (N01, information-architecture finding — register R-1041): `Main.dc.html`'s
+        // chart bar, real now — filters to the tapped bar's own real `[fromMillis, toMillis]` hour
+        // window (`NowScreen`'s own `hourFilterWindow`), origin `Now` so back returns there.
+        onOpenHour = { fromMillis, toMillis ->
+            navState.openLogFiltered(
+                LogFilterSelection(fromMillis = fromMillis, toMillis = toMillis),
+                LogFilterOrigin.Now,
+            )
+            currentState.value = ReaderDestination.LOG
+        },
+        // R-1041 (D11, register R-1041): `Detail-Propagated.dc.html`'s own "View the N affected
+        // overs" — filters to exactly the real affected transmission ids (never a fabricated or
+        // wider set), origin `Transmission` so back reopens the same transmission's own drill-in.
+        onViewAffectedOvers = { transmissionId, overIds ->
+            navState.openLogFiltered(
+                LogFilterSelection(transmissionIds = overIds),
+                LogFilterOrigin.Transmission(transmissionId),
+            )
+            currentState.value = ReaderDestination.LOG
+        },
+        // R-1041 (R04, register R-1041): `Improve-Done`'s own "Review the N changes" — filters to
+        // exactly the real, revised over ids (`ReprocessStatus.Summary.changedTransmissionIds`,
+        // never the whole attempted batch), origin `Improve` so back reopens `Improve records`.
+        onOpenChangedOvers = { overIds ->
+            navState.openLogFiltered(LogFilterSelection(transmissionIds = overIds), LogFilterOrigin.Improve)
+            currentState.value = ReaderDestination.LOG
+        },
     )
 }
 
@@ -927,6 +998,14 @@ private data class NavHostCallbacks(
     val onOpenStationOvers: (String) -> Unit,
     // IA-6: see `navHostCallbacks`'s own construction site.
     val onOpenAttributedStation: (String) -> Unit,
+    // R-1041 (N01): `Main.dc.html`'s chart bar — see `navHostCallbacks`'s own construction site.
+    val onOpenHour: (fromMillis: Long, toMillis: Long) -> Unit,
+    // R-1041 (D11): `Detail-Propagated.dc.html`'s "View the N affected overs" — see
+    // `navHostCallbacks`'s own construction site.
+    val onViewAffectedOvers: (transmissionId: String, overIds: Set<String>) -> Unit,
+    // R-1041 (R04): `Improve-Done`'s "Review the N changes" — see `navHostCallbacks`'s own
+    // construction site.
+    val onOpenChangedOvers: (Set<String>) -> Unit,
 )
 
 /**
@@ -1206,6 +1285,8 @@ private fun NavHostDispatch(
             onOpenStation = callbacks.onOpenAttributedStation,
             backLabel = ids.openedFrom.label,
             initialRevisionsOpen = ids.transmissionInitialRevisionsOpen,
+            // R-1041 (D11): real now — `Detail-Propagated.dc.html`'s "View the N affected overs".
+            onViewAffectedOvers = { overIds -> callbacks.onViewAffectedOvers(ids.transmissionId, overIds) },
         )
 
         ids.stationId != null -> StationDetailContent(
@@ -1418,6 +1499,8 @@ private fun DestinationContent(
             modifier = content,
             onOpenStations = callbacks.onOpenStations,
             onOpenModels = callbacks.onOpenModels,
+            // R-1041 (N01): real now — `Main.dc.html`'s chart bar.
+            onOpenHour = callbacks.onOpenHour,
         )
 
         // Round 3: `LogContent` gained a real `onOpenThread` — a QSO group header now opens the
@@ -1435,7 +1518,7 @@ private fun DestinationContent(
             initialSheetOpen = logInitialSheetOpen,
         )
 
-        ReaderDestination.SEARCH -> SearchDestinationContent(search, onOpenTransmission, content)
+        ReaderDestination.SEARCH -> SearchDestinationContent(search, onOpenTransmission, onOpenDrawer, content)
 
         // Round 3: `ThreadContent` gained a real `onOpenThread` too — a thread card now opens the
         // same drill-in.
@@ -1520,7 +1603,7 @@ private fun DestinationContent(
         // above. Call itself extracted to [ImproveRecordsContent] purely to keep this function
         // under detekt's `LongMethod` limit.
         ReaderDestination.IMPROVE_RECORDS ->
-            ImproveRecordsContent(context, onOpenDrawer, content, callbacks.onOpenModels)
+            ImproveRecordsContent(context, onOpenDrawer, content, callbacks.onOpenModels, callbacks.onOpenChangedOvers)
     }
 }
 
@@ -1532,12 +1615,15 @@ private fun ImproveRecordsContent(
     onDrawer: () -> Unit,
     modifier: Modifier,
     onOpenModels: () -> Unit,
+    // R-1041 (R04): `Improve-Done`'s "Review the N changes", real now.
+    onOpenChangedOvers: (Set<String>) -> Unit,
 ) {
     org.ort.app.ui.improve.ImproveContent(
         context = context,
         onDrawer = onDrawer,
         modifier = modifier,
         onOpenModels = onOpenModels,
+        onOpenChangedOvers = onOpenChangedOvers,
     )
 }
 
@@ -1546,7 +1632,14 @@ private fun ImproveRecordsContent(
  * `initialQuery`/`submitOnStart`/`initialFiltersOpen` real now — WP7 merged them (confirmed by
  * reading `ui/screens/SearchContent.kt` before wiring this). */
 @Composable
-private fun SearchDestinationContent(search: SearchHostState, onOpen: (String) -> Unit, modifier: Modifier) {
+private fun SearchDestinationContent(
+    search: SearchHostState,
+    onOpen: (String) -> Unit,
+    // R-1042 (IA-5, register): real now — `Search` reopens the drawer through the same
+    // `NavHostCallbacks.onOpenDrawer` every other destination's header already uses.
+    onDrawer: () -> Unit,
+    modifier: Modifier,
+) {
     SearchContent(
         input = search.input,
         result = search.result,
@@ -1555,6 +1648,7 @@ private fun SearchDestinationContent(search: SearchHostState, onOpen: (String) -
         onOpen = onOpen,
         modifier = modifier,
         onBack = search.onBack,
+        onDrawer = onDrawer,
         initialQuery = search.initialQuery,
         submitOnStart = search.submitOnStart,
         initialFiltersOpen = search.initialFiltersOpen,

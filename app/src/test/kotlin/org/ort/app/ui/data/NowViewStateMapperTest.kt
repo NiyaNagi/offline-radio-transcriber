@@ -355,4 +355,34 @@ class NowViewStateMapperTest {
         )
         assertEquals("1 over · 1 station", view.summaryLabel)
     }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1041 (N01, `LogFilterOrigin.Now`): the chart's own tap needs the session's real start.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 active carries the session's own real start, not a fabricated one`() {
+        val view = NowViewStateMapper.active(
+            details = emptyList(),
+            gaps = emptyList(),
+            sessionStartedAtUtc = 12_345L,
+            sessionEndedAtUtc = null,
+            nowMillis = 12_345L,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertEquals(12_345L, view.sessionStartedAtUtc)
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 hourFilterWindow returns the exact hour a bucket index was folded from`() {
+        val sessionStart = 1_000L
+        val (from, to) = hourFilterWindow(sessionStartedAtUtc = sessionStart, index = 2)
+        assertEquals(sessionStart + 2 * 3_600_000L, from)
+        assertEquals(sessionStart + 3 * 3_600_000L - 1, to)
+    }
 }
