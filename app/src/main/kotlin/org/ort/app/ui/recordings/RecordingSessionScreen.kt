@@ -36,17 +36,18 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.ScoreChip
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.Sheet
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.components.rememberTimeColumnWidth
-import org.ort.app.ui.navigation.toGigabyteLabel
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 import org.ort.core.AttributionState
+import org.ort.pipeline.archive.ArchiveState
 import org.ort.pipeline.archive.SessionAudioDeletionRefusal
 import org.ort.pipeline.archive.SessionAudioExportRefusal
 
@@ -74,14 +75,14 @@ public fun RecordingSessionScreen(
     Column(modifier = modifier.fillMaxSize()) {
         DrillInHeader(parentLabel = "Recordings", onBack = actions.onBack)
         if (state == null) {
-            Text(
-                text = "Loading…",
-                style = OrtType.subtitle,
-                color = OrtColors.textDim,
-                modifier = Modifier.padding(OrtSpacing.lg)
-                    .semantics { contentDescription = "Loading recording session" }
-                    .testTag(RECORDING_SESSION_LOADING_TEST_TAG),
-            )
+            // Round 2 (coordinator review), register R-1022: the shared `LoadingState` (not a plain
+            // `Text`) so a screenshot tour step's own placeholder detection recognises this session
+            // is still loading, the same discipline every other WPRC/WPI screen already holds itself
+            // to — RC02's own `RECORDING_SESSION_LOADING_TEST_TAG` still names the outer node so
+            // this screen's own tests need not change what they assert on.
+            Column(modifier = Modifier.padding(OrtSpacing.lg).testTag(RECORDING_SESSION_LOADING_TEST_TAG)) {
+                LoadingState(message = "Loading recording session")
+            }
             return@Column
         }
         Column(
@@ -90,7 +91,7 @@ public fun RecordingSessionScreen(
             RecordingSessionHeaderSection(state.header, modifier = Modifier.padding(top = OrtSpacing.xs))
             val firstOverId = state.rows.filterIsInstance<RecordingSessionRow.Over>().firstOrNull()?.id
             RecordingSessionActionsRow(
-                deleteFreesBytesLabel = state.deleteFreesBytes.toGigabyteLabel(),
+                deleteFreesBytesLabel = recordingSessionByteLabel(state.deleteFreesBytes),
                 exportAvailable = state.exportAvailable,
                 firstOverId = firstOverId,
                 actions = actions,
@@ -593,11 +594,12 @@ private fun DeleteConfirmSheet(state: RecordingSessionDeleteState, actions: Reco
                 // here so the two never collide even at a large font scale.
                 Text(text = "Delete", style = OrtType.control, color = OrtColors.textHigh)
                 Text(
-                    text = "frees ${state.bytesToFree.toGigabyteLabel()}",
+                    text = "frees ${recordingSessionByteLabel(state.bytesToFree)}",
                     style = OrtType.subLine,
                     color = OrtColors.textDim,
                     modifier = Modifier.padding(top = 2.dp).testTag(RECORDING_SESSION_DELETE_FREES_TEST_TAG),
                 )
+                DeletePreviewBreakdown(state)
                 RecordingSessionSheetActions(
                     confirmLabel = "Delete",
                     onConfirm = actions.onConfirmDelete,
@@ -610,7 +612,7 @@ private fun DeleteConfirmSheet(state: RecordingSessionDeleteState, actions: Reco
             )
             is RecordingSessionDeleteState.Deleted -> {
                 Text(
-                    text = "Deleted · freed ${state.bytesFreed.toGigabyteLabel()}",
+                    text = "Deleted · freed ${recordingSessionByteLabel(state.bytesFreed)}",
                     style = OrtType.control,
                     color = OrtColors.accentGreen,
                     modifier = Modifier.testTag(RECORDING_SESSION_DELETE_DONE_TEST_TAG),
@@ -623,6 +625,34 @@ private fun DeleteConfirmSheet(state: RecordingSessionDeleteState, actions: Reco
             }
             RecordingSessionDeleteState.Idle -> Unit
         }
+    }
+}
+
+/**
+ * Round 2 (coordinator review): names what "frees N" above is actually made of — "Over audio" and
+ * "Raw archive", the same two labels RC01's own budget card uses
+ * ([org.ort.app.ui.recordings.RecordingsScreen]) — each shown only while it is a real, present
+ * fact: a half already removed, or an archive this session never kept, is an honest omission
+ * (constitution I), never a fabricated zero-byte line for something that was never there or is
+ * already gone.
+ */
+@Composable
+private fun DeletePreviewBreakdown(state: RecordingSessionDeleteState.Preview) {
+    if (!state.overAudioAlreadyRemoved) {
+        Text(
+            text = "Over audio · ${recordingSessionByteLabel(state.overAudioBytes)}",
+            style = OrtType.subLine,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = 6.dp).testTag(RECORDING_SESSION_DELETE_OVER_AUDIO_TEST_TAG),
+        )
+    }
+    if (state.archiveState == ArchiveState.KEPT) {
+        Text(
+            text = "Raw archive · ${recordingSessionByteLabel(state.archiveBytes)}",
+            style = OrtType.subLine,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = 2.dp).testTag(RECORDING_SESSION_DELETE_ARCHIVE_TEST_TAG),
+        )
     }
 }
 
@@ -639,7 +669,7 @@ private fun ExportSheet(state: RecordingSessionExportState, actions: RecordingSe
         when (state) {
             is RecordingSessionExportState.Preview -> {
                 Text(
-                    text = "${state.fileCount} files · ${state.totalBytes.toGigabyteLabel()}",
+                    text = "${state.fileCount} files · ${recordingSessionByteLabel(state.totalBytes)}",
                     style = OrtType.control,
                     color = OrtColors.textHigh,
                     modifier = Modifier.testTag(RECORDING_SESSION_EXPORT_PREVIEW_TEST_TAG),
@@ -661,14 +691,15 @@ private fun ExportSheet(state: RecordingSessionExportState, actions: RecordingSe
                 onDismiss = actions.onCloseExportSheet,
             )
             is RecordingSessionExportState.Writing -> Text(
-                text = "Writing · ${state.bytesWritten.toGigabyteLabel()} of ${state.totalBytes.toGigabyteLabel()}",
+                text = "Writing · ${recordingSessionByteLabel(state.bytesWritten)} of " +
+                    recordingSessionByteLabel(state.totalBytes),
                 style = OrtType.control,
                 color = OrtColors.textDim,
                 modifier = Modifier.testTag(RECORDING_SESSION_EXPORT_WRITING_TEST_TAG),
             )
             is RecordingSessionExportState.Written -> {
                 Text(
-                    text = "Saved · ${state.fileCount} files, ${state.totalBytes.toGigabyteLabel()}",
+                    text = "Saved · ${state.fileCount} files, ${recordingSessionByteLabel(state.totalBytes)}",
                     style = OrtType.control,
                     color = OrtColors.accentGreen,
                     modifier = Modifier.testTag(RECORDING_SESSION_EXPORT_DONE_TEST_TAG),
@@ -759,6 +790,8 @@ public const val RECORDING_SESSION_LABEL_TILE_TEST_TAG: String = "rc02-label-til
 public const val RECORDING_SESSION_DELETE_TEST_TAG: String = "rc02-delete-tile"
 public const val RECORDING_SESSION_DELETE_SHEET_TEST_TAG: String = "rc02-delete-sheet"
 public const val RECORDING_SESSION_DELETE_FREES_TEST_TAG: String = "rc02-delete-frees"
+public const val RECORDING_SESSION_DELETE_OVER_AUDIO_TEST_TAG: String = "rc02-delete-over-audio"
+public const val RECORDING_SESSION_DELETE_ARCHIVE_TEST_TAG: String = "rc02-delete-archive"
 public const val RECORDING_SESSION_DELETE_DONE_TEST_TAG: String = "rc02-delete-done"
 public const val RECORDING_SESSION_EXPORT_SHEET_TEST_TAG: String = "rc02-export-sheet"
 public const val RECORDING_SESSION_EXPORT_PREVIEW_TEST_TAG: String = "rc02-export-preview"

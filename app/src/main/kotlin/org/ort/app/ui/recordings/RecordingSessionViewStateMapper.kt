@@ -61,6 +61,31 @@ public data class RecordingSessionMapperInput(
 )
 
 /**
+ * RC02's own adaptive B/KB/MB/GB byte-size label — decimal (1000-based), the same convention
+ * `SettingsPolling`'s own private `formatDiagnosticsSize` already establishes for the CF07 export
+ * sheet's "N KB"/"X.X MB" bundle sizes (that function is `private` to a package this build unit does
+ * not own, so this is its own small copy — the same "each package keeps its own pure copy"
+ * convention [RecordingSessionViewStateMapper]'s own `attributionFrom`/`gapCauseProse` already
+ * follow). Round 2 (coordinator review): a plain `Long.toGigabyteLabel()` (always GB, RC01's own
+ * budget-card convention) rounds every one of RC02's real, small per-session sizes — a few
+ * kilobytes of 4-second clips — down to a fabricated "0.0 GB", reading as "nothing to free/export"
+ * for genuinely real, non-zero audio (constitution I). Never used for RC01's own multi-gigabyte
+ * device-wide budgets, which keep `toGigabyteLabel()` — this is RC02's own sheets and tiles only.
+ */
+internal fun recordingSessionByteLabel(bytes: Long): String {
+    val gb = bytes / 1_000_000_000.0
+    val mb = bytes / 1_000_000.0
+    val kb = bytes / 1_000.0
+    return when {
+        bytes <= 0L -> "0 B"
+        gb >= 1.0 -> "%.1f GB".format(Locale.US, gb)
+        mb >= 1.0 -> "%.1f MB".format(Locale.US, mb)
+        kb >= 1.0 -> "%.0f KB".format(Locale.US, kb)
+        else -> "$bytes B"
+    }
+}
+
+/**
  * `Recording-Session.dc.html` (RC02): the pure decision behind [RecordingSessionPolling.state] —
  * pulled out to a plain function of already-resolved data (the same
  * [RecordingsViewStateMapper]/[org.ort.app.ui.navigation.resolveTransportBarState] shape this
@@ -71,7 +96,15 @@ public object RecordingSessionViewStateMapper {
 
     private val DAY_FORMAT = DateTimeFormatter.ofPattern("EEE d MMM", Locale.US).withZone(ZoneOffset.UTC)
     private val HOUR_FORMAT = DateTimeFormatter.ofPattern("HH", Locale.US).withZone(ZoneOffset.UTC)
+    private val HOUR_MINUTE_FORMAT = DateTimeFormatter.ofPattern("HH:mm", Locale.US).withZone(ZoneOffset.UTC)
     private const val AXIS_LABEL_COUNT = 5
+
+    /** Round 2 (coordinator review): a session under this span reads its axis in "HH:mm" — hour-only
+     * ticks on, say, a 1 h 14 m live session round five evenly-spaced points to the *same* hour
+     * ("10 10 10 10 10", a genuine finding, not five real distinct times). At or above this span,
+     * hour-only ticks are already distinct by construction (five points at least 45 minutes apart)
+     * and match the artboard's own longer-session look. */
+    private const val SHORT_SPAN_THRESHOLD_MILLIS = 3 * 60 * 60 * 1000L
 
     public fun map(input: RecordingSessionMapperInput): RecordingSessionViewState {
         val sessionEnd = input.endedAtMillis ?: input.nowMillis
@@ -167,11 +200,12 @@ public object RecordingSessionViewStateMapper {
     )
 
     private fun axisLabels(sessionStart: Long, sessionEnd: Long): List<String> {
-        if (sessionEnd <= sessionStart) return listOf(HOUR_FORMAT.format(Instant.ofEpochMilli(sessionStart)))
-        val span = sessionEnd - sessionStart
+        val span = (sessionEnd - sessionStart).coerceAtLeast(0L)
+        val format = if (span < SHORT_SPAN_THRESHOLD_MILLIS) HOUR_MINUTE_FORMAT else HOUR_FORMAT
+        if (sessionEnd <= sessionStart) return listOf(format.format(Instant.ofEpochMilli(sessionStart)))
         return (0 until AXIS_LABEL_COUNT).map { index ->
             val at = sessionStart + span * index / (AXIS_LABEL_COUNT - 1)
-            HOUR_FORMAT.format(Instant.ofEpochMilli(at))
+            format.format(Instant.ofEpochMilli(at))
         }
     }
 

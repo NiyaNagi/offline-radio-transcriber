@@ -282,7 +282,7 @@
 
     { "id": "overnight/RC02-recording-session", "scenario": "overnight", "destination": "EARLIER_NIGHTS", "drillIn": { "recordingSession": "self" } },
     { "id": "overnight/RC02-recording-session@2x", "scenario": "overnight", "destination": "EARLIER_NIGHTS", "drillIn": { "recordingSession": "self" }, "fontScale": 2.0 },
-    { "id": "overnight/RC02-recording-session@2x-end", "scenario": "overnight", "destination": "EARLIER_NIGHTS", "drillIn": { "recordingSession": "self" }, "fontScale": 2.0, "scroll": "end" },
+    { "id": "overnight/RC02-recording-session@2x-end", "scenario": "overnight", "destination": "EARLIER_NIGHTS", "drillIn": { "recordingSession": "self" }, "fontScale": 2.0, "scroll": "end", "waitMillis": 2000 },
     { "id": "gap-call/RC02-recording-session-gap", "scenario": "gap-call", "destination": "EARLIER_NIGHTS", "drillIn": { "recordingSession": "self" } },
 
     { "id": "cross-session-review/L01-log-cross-session", "scenario": "cross-session-review", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02,scenario-overnight-tx03,scenario-overnight-tx04" } },

@@ -1,6 +1,7 @@
 package org.ort.app.ui.recordings
 
 import org.ort.core.Attribution
+import org.ort.pipeline.archive.ArchiveState
 import org.ort.pipeline.archive.SessionAudioDeletionRefusal
 import org.ort.pipeline.archive.SessionAudioExportRefusal
 
@@ -112,7 +113,22 @@ public data class RecordingSessionHeaderViewState(
 public sealed interface RecordingSessionDeleteState {
     public data object Idle : RecordingSessionDeleteState
 
-    public data class Preview(public val bytesToFree: Long) : RecordingSessionDeleteState
+    /**
+     * Round 2 (coordinator review): [bytesToFree] alone let the sheet repeat only the single
+     * combined figure — the artboard's own comment ("the confirm sheet repeats it") plus D40/P9's
+     * own "the operator sees what is removed" now shown as its own real breakdown too, named the
+     * same as RC01's own budget card ("Over audio" / "Raw archive",
+     * [org.ort.app.ui.recordings.RecordingsScreen]). [overAudioAlreadyRemoved]/[archiveState]
+     * decide which line(s) the sheet shows at all — a half already gone, or an archive never kept,
+     * is an honest omission, never a fabricated zero-byte line (constitution I).
+     */
+    public data class Preview(
+        public val bytesToFree: Long,
+        public val overAudioBytes: Long,
+        public val overAudioAlreadyRemoved: Boolean,
+        public val archiveBytes: Long,
+        public val archiveState: ArchiveState,
+    ) : RecordingSessionDeleteState
 
     /** Each typed refusal renders its own honest state — never a generic error (constitution II). */
     public data class Refused(public val reason: SessionAudioDeletionRefusal) : RecordingSessionDeleteState

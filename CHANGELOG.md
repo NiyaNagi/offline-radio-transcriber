@@ -32,6 +32,78 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPRC02 round 2: five coordinator-review defects on RC02)
+
+### WPRC02 round 2 — byte sizes, export refusal, coverage axis, loading placeholder
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionViewData.kt`,
+`RecordingSessionViewStateMapper.kt`, `RecordingSessionPolling.kt`, `RecordingSessionScreen.kt`,
+their tests, and `tools/ui-audit/tour.json` (one step's `waitMillis`). No file outside
+`ui/recordings/**` touched.
+**Requirements/ACs:** constitution I, II, VI; FR-STO-3, FR-STO-3b, D40, P9; R-1022.
+**What changed:** five defects the coordinator's own device-evidence review found, each fixed with
+its own discriminating test:
+1. **Byte sizes read as nothing.** RC02's Delete tile/sheet and Export sheet all called
+   `Long.toGigabyteLabel()` (RC01's own always-GB budget-card convention), rounding every one of
+   RC02's real, small per-session sizes to a fabricated "0.0 GB" (`screen_delete.png`,
+   `rc02_overnight.png`). `recordingSessionByteLabel(bytes: Long)` — RC02's own adaptive B/KB/MB/GB
+   copy of `SettingsPolling`'s own `formatDiagnosticsSize` decimal convention (that function is
+   `private` to a package this build unit does not own) — replaces every call site. The Delete
+   sheet also now names "Over audio" and "Raw archive" separately, each its own real size from
+   `SessionAudioDeletionService.preview`'s own already-separate fields (`RecordingSessionDeleteState
+   .Preview` gained `overAudioBytes`/`overAudioAlreadyRemoved`/`archiveBytes`/`archiveState`), a
+   half already gone or an archive never kept honestly omitted rather than a fabricated zero line.
+2. **Export nothing-to-export dropped.** `SessionAudioExport.canExport` refuses only against two
+   *marked* facts (over audio removed, archive state) — a session neither flag forbids can still
+   have zero real files on disk (`recordings-budget-exceeded`'s own shape: real DB byte accounting,
+   no real file ever written), which `export_2x_b.png` showed as "0 files · 0.0 GB" with Save still
+   enabled. `RecordingSessionPolling.exportPreview` now refuses locally
+   (`SessionAudioExportRefusal.NothingToExport`, this layer's own honest reason) whenever the real
+   `preview.files` list is empty, regardless of what `canExport` said — `:pipeline` is unchanged.
+3. **Coverage axis.** `axisLabels` formatted every tick "HH" only — five evenly-spaced points
+   inside a session under an hour long round to the same hour ("10 10 10 10 10" on the live
+   session, `delete_refusal.png`), and the mismatched `03 05 07 09 10`/`03 05 06 08 10` readings
+   across two `overnight` captures trace to that debug scenario's own `SystemClock.wallMillis()`-
+   relative fixture timestamps (`OvernightScenario.kt`, outside `ui/recordings/**` — a different
+   real session each scenario load, not a mapper defect). Fixed the one defect inside this
+   package: spans under 3 hours now format "HH:mm", producing five genuinely distinct ticks; longer
+   spans are unchanged (already distinct by construction).
+4. **`Back to Recordings` touch target (155×97px, ~37dp, three separate on-device dumps) is
+   `DrillInHeader` in `app/src/main/kotlin/org/ort/app/ui/components/Rows.kt` — shared by 29+ other
+   screens outside `ui/recordings/**` (Station Detail, Settings sub-screens, Digest, Failures,
+   Improve, …). Not fixed here per the ownership map; reported to the coordinator instead.**
+5. **Tour step `overnight/RC02-recording-session@2x-end` captured unscrolled.** Root cause: RC02's
+   `state == null` loading row rendered its own `RECORDING_SESSION_LOADING_TEST_TAG` only, never
+   the shared `org.ort.app.ui.components.LOADING_STATE_TEST_TAG` `TourAccessibilityScroll`'s own
+   placeholder detection (R-1022) reads — `ScreenshotTourActivity`'s `scroll: "end"` step runs
+   *before* `awaitStableSemantics`, so it found nothing to scroll during the brief loading window
+   and was never retried once the real 42 rows landed a moment later. Fixed by rendering the shared
+   `LoadingState` composable (RC02's own outer tag preserved, so this screen's existing tests did
+   not need to change what they assert on) and adding `"waitMillis": 2000` to the one step that
+   scrolls, the same value this file already uses for every other async-load-sensitive step
+   (`search-corpus/Q03-*`, `field-tier1/T03-*`) — both belt-and-suspenders, since the shared tag
+   alone does not reorder the scroll call. No change to shared `ScreenshotTourActivity.kt`/
+   `TourAccessibilityScroll.kt`.
+**Verified:** each defect above had its own test written first and confirmed to fail for the right
+reason before the fix (production code reverted, test run alone, restored) —
+`RecordingSessionViewStateMapperTest`'s `a real, non-zero byte count never reads as a fabricated
+0-point-0 GB`, `a short session's axis carries five distinct, evenly-spaced minute-precision
+labels`, `a multi-hour session's axis carries five distinct hour labels, no minutes needed`, `the
+same session's span always maps to the same axis labels`; `RecordingSessionPollingTest`'s
+`exportPreview refuses a session whose real files are empty, even when canExport would allow it`,
+`deletePreview names over audio and raw archive separately, honestly omitting a half never kept`;
+`RecordingSessionScreenTest`'s `the delete sheet names over audio and raw archive separately, each
+its own real size`, `the delete sheet omits the over-audio line once that half is already gone`,
+its own `each typed export refusal renders its own honest state` extended to assert Save's own
+shared confirm tag `assertDoesNotExist()`, and `a null state renders the loading tag, never the
+overs list` extended to assert the shared `LOADING_STATE_TEST_TAG` too. `gradlew :app:testDebugUnitTest
+--tests "org.ort.app.ui.recordings.*"` — all green (66 pre-existing plus 9 new this round).
+`gradlew :app:ktlintCheck :app:detekt` — green.
+**Left open / not done:** item 4 above (routed, not fixed — outside this package's ownership
+map). Round-2 device recapture (font scale 1.0/2.0/2.0-end on the real `overnight` session, the
+Delete/Export sheets on both `overnight` and `recordings-budget-exceeded`, the live session's
+coverage axis) reported separately with this round's own evidence paths.
+
 ## 2026-09-13 (WPRC02: post-merge coverage regeneration)
 
 ### 65de4cb3 — Merge branch 'main' into worktree-agent-a8b1edac4fd72d879

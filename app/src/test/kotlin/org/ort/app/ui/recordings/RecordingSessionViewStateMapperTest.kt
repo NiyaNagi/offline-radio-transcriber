@@ -393,6 +393,52 @@ class RecordingSessionViewStateMapperTest {
         assertTrue(withBoth.header.countsLabel.contains("2 failed"))
     }
 
+    @Test
+    @Requirement("RC02", "constitution I")
+    fun `a short session's axis carries five distinct, evenly-spaced minute-precision labels`() {
+        // 1 h 14 m, the live-session span round 2's own coordinator review found reading as five
+        // identical "10" ticks -- hour-only granularity cannot tell apart five points inside one
+        // hour.
+        val span = SessionSpan(startedAtMillis = 0L, endedAtMillis = 74 * 60_000L)
+        val state = RecordingSessionViewStateMapper.map(input(span = span))
+        assertEquals(5, state.coverage.axisLabels.size)
+        assertEquals(5, state.coverage.axisLabels.toSet().size)
+        assertEquals(listOf("00:00", "00:18", "00:37", "00:55", "01:14"), state.coverage.axisLabels)
+    }
+
+    @Test
+    @Requirement("RC02")
+    fun `a multi-hour session's axis carries five distinct hour labels, no minutes needed`() {
+        // 6 h 42 m, the real `overnight` scenario's own span.
+        val span = SessionSpan(startedAtMillis = 0L, endedAtMillis = (6 * 60 + 42) * 60_000L)
+        val state = RecordingSessionViewStateMapper.map(input(span = span))
+        assertEquals(5, state.coverage.axisLabels.size)
+        assertEquals(5, state.coverage.axisLabels.toSet().size)
+        assertEquals(listOf("00", "01", "03", "05", "06"), state.coverage.axisLabels)
+    }
+
+    @Test
+    @Requirement("RC02", "constitution VI")
+    fun `the same session's span always maps to the same axis labels`() {
+        val span = SessionSpan(startedAtMillis = 12_345L, endedAtMillis = 12_345L + 74 * 60_000L)
+        val first = RecordingSessionViewStateMapper.map(input(span = span))
+        val second = RecordingSessionViewStateMapper.map(input(span = span))
+        assertEquals(first.coverage.axisLabels, second.coverage.axisLabels)
+    }
+
+    @Test
+    @Requirement("constitution I")
+    fun `a real, non-zero byte count never reads as a fabricated 0-point-0 GB`() {
+        // Round 2 (coordinator review): the overnight session's own real over audio -- a few
+        // kilobytes of 4-second FLAC clips -- rendered "frees 0.0 GB" verbatim on device
+        // (`screen_delete.png`, `rc02_overnight.png`), an honest non-zero size read as nothing.
+        assertEquals("0 B", recordingSessionByteLabel(0L))
+        assertEquals("512 B", recordingSessionByteLabel(512L))
+        assertEquals("2 KB", recordingSessionByteLabel(2_400L))
+        assertEquals("1.5 MB", recordingSessionByteLabel(1_500_000L))
+        assertEquals("1.1 GB", recordingSessionByteLabel(1_100_000_000L))
+    }
+
     private fun gap(id: String, startedAt: Long, endedAt: Long?, cause: CaptureGapCause = CaptureGapCause.INPUT_LOST) =
         CaptureGapEntity(
             id = id,

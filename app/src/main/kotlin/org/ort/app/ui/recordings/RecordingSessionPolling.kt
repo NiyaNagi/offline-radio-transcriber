@@ -100,7 +100,13 @@ public object RecordingSessionPolling {
             if (refusal != null) return@withContext RecordingSessionDeleteState.Refused(refusal)
             val preview = SessionAudioDeletionService.preview(db, appContext.filesDir, sessionId)
                 ?: return@withContext RecordingSessionDeleteState.Refused(SessionAudioDeletionRefusal.SessionNotFound)
-            RecordingSessionDeleteState.Preview(preview.bytesFor(SessionAudioTarget.BOTH))
+            RecordingSessionDeleteState.Preview(
+                bytesToFree = preview.bytesFor(SessionAudioTarget.BOTH),
+                overAudioBytes = preview.overAudioBytes,
+                overAudioAlreadyRemoved = preview.overAudioAlreadyRemoved,
+                archiveBytes = preview.archiveBytes,
+                archiveState = preview.archiveState,
+            )
         }
 
     public suspend fun delete(context: Context, sessionId: String): RecordingSessionDeleteState =
@@ -134,6 +140,20 @@ public object RecordingSessionPolling {
             if (refusal != null) return@withContext RecordingSessionExportState.Refused(refusal)
             val preview = SessionAudioExport.preview(db, appContext.filesDir, sessionId, SessionAudioExportTarget.BOTH)
                 ?: return@withContext RecordingSessionExportState.Refused(SessionAudioExportRefusal.SessionNotFound)
+            // Round 2 (coordinator review): `canExport` refuses only against the two *marked* facts
+            // (over audio removed, archive state) -- a session neither flag forbids can still have
+            // genuinely zero real files on disk (this build's own `recordings-budget-exceeded`
+            // fixture: real DB byte accounting, no real file ever written). `preview` answers "what
+            // would this write, right now" honestly (its own kdoc) rather than refusing -- so RC02's
+            // own sheet, not the service, is where "nothing real to export" becomes its own refusal,
+            // never a `Preview(0, 0L, ...)` with Save left enabled over nothing (constitution I, II).
+            if (preview.files.isEmpty()) {
+                return@withContext RecordingSessionExportState.Refused(
+                    SessionAudioExportRefusal.NothingToExport(
+                        "nothing to export for session $sessionId: no audio files exist on disk for this session",
+                    ),
+                )
+            }
             RecordingSessionExportState.Preview(
                 fileCount = preview.files.size,
                 totalBytes = preview.totalBytes,

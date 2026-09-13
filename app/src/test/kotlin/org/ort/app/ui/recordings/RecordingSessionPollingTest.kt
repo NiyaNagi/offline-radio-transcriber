@@ -18,6 +18,7 @@ import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
+import org.ort.pipeline.archive.ArchiveState
 import org.ort.pipeline.archive.SessionAudioDeletionRefusal
 import org.ort.pipeline.archive.SessionAudioExportRefusal
 import org.ort.pipeline.capture.CaptureState
@@ -218,6 +219,43 @@ class RecordingSessionPollingTest {
         assertTrue(result is RecordingSessionExportState.Refused)
         assertTrue((result as RecordingSessionExportState.Refused).reason is SessionAudioExportRefusal.NothingToExport)
     }
+
+    @Test
+    @Requirement("constitution I", "constitution II")
+    fun `exportPreview refuses a session whose real files are empty, even when canExport would allow it`() =
+        runBlocking {
+            // Round 2 (coordinator review): a transmission row exists, over audio was never marked
+            // removed and no archive state forbids it either -- `SessionAudioExport.canExport` reads
+            // that as available and returns no refusal -- but no real audio file was ever written
+            // (`recordings-budget-exceeded`'s own on-device shape: real DB byte accounting, no real
+            // file on disk). `preview()` honestly finds zero real files; this must read as its own
+            // refusal, never a `Preview(0, 0L, ...)` with Save left enabled over nothing real.
+            db.sessionDao().insert(session("S1"))
+            db.transmissionDao().insert(transmission("T1", "S1"))
+            // Deliberately no writeOverAudio(...) call -- this is the whole point of the test.
+
+            val result = RecordingSessionPolling.exportPreview(context, "S1")
+            assertTrue(result is RecordingSessionExportState.Refused)
+            val refused = result as RecordingSessionExportState.Refused
+            assertTrue(refused.reason is SessionAudioExportRefusal.NothingToExport)
+        }
+
+    @Test
+    @Requirement("FR-STO-3", "constitution I")
+    fun `deletePreview names over audio and raw archive separately, honestly omitting a half never kept`() =
+        runBlocking {
+            db.sessionDao().insert(session("S1"))
+            db.transmissionDao().insert(transmission("T1", "S1"))
+            writeOverAudio("S1", "T1", 610)
+
+            val preview = RecordingSessionPolling.deletePreview(context, "S1")
+            assertTrue(preview is RecordingSessionDeleteState.Preview)
+            val ready = preview as RecordingSessionDeleteState.Preview
+            assertEquals(610L, ready.overAudioBytes)
+            assertFalse(ready.overAudioAlreadyRemoved)
+            assertEquals(0L, ready.archiveBytes)
+            assertEquals(ArchiveState.NONE, ready.archiveState)
+        }
 
     @Test
     @Requirement("FR-OBS-4", "constitution I")

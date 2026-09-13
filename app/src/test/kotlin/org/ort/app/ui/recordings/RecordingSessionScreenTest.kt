@@ -1,6 +1,7 @@
 package org.ort.app.ui.recordings
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -9,8 +10,10 @@ import androidx.compose.ui.test.performScrollTo
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
+import org.ort.pipeline.archive.ArchiveState
 import org.ort.pipeline.archive.SessionAudioDeletionRefusal
 import org.ort.pipeline.archive.SessionAudioExportRefusal
 import org.ort.testing.Requirement
@@ -80,6 +83,24 @@ class RecordingSessionScreenTest {
         canRetry = true,
     )
 
+    /** [RecordingSessionDeleteState.Preview]'s own fields, bundled so callers that only care about
+     * one or two of them (most of this file) do not have to restate every default — the same
+     * "bundle the request" shape this codebase already uses (`RecordingsBudgetInputs`,
+     * `RecordingSessionMapperInput`'s own `SessionSpan`/`SessionFacts` fixtures). */
+    private fun deletePreview(
+        bytesToFree: Long = 610_000_000L,
+        overAudioBytes: Long = bytesToFree,
+        overAudioAlreadyRemoved: Boolean = false,
+        archiveBytes: Long = 0L,
+        archiveState: ArchiveState = ArchiveState.NONE,
+    ) = RecordingSessionDeleteState.Preview(
+        bytesToFree = bytesToFree,
+        overAudioBytes = overAudioBytes,
+        overAudioAlreadyRemoved = overAudioAlreadyRemoved,
+        archiveBytes = archiveBytes,
+        archiveState = archiveState,
+    )
+
     private fun state(rows: List<RecordingSessionRow> = listOf(resolvedOver()), deleteFreesBytes: Long = 610_000_000L) =
         RecordingSessionViewState(
             sessionId = "S1",
@@ -107,6 +128,10 @@ class RecordingSessionScreenTest {
             }
         }
         composeTestRule.onNodeWithTag(RECORDING_SESSION_LOADING_TEST_TAG).assertIsDisplayed()
+        // Round 2 (coordinator review), register R-1022: the shared placeholder marker must be
+        // present too -- without it, a tour step's own scroll (which runs before this screen's real
+        // data has necessarily landed) can find nothing to scroll and never retries once it does.
+        composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertIsDisplayed()
     }
 
     @Test
@@ -119,7 +144,7 @@ class RecordingSessionScreenTest {
                     playingOverId = null,
                     isPlaying = false,
                     actions = RecordingSessionActions(),
-                    deleteSheet = RecordingSessionDeleteState.Preview(bytesToFree = 610_000_000L),
+                    deleteSheet = deletePreview(),
                     exportSheet = RecordingSessionExportState.Idle,
                     labelSheet = null,
                 )
@@ -234,6 +259,65 @@ class RecordingSessionScreenTest {
         }
         composeTestRule.onNodeWithTag(RECORDING_SESSION_REFUSAL_TEST_TAG).assertIsDisplayed()
         composeTestRule.onNodeWithText("over audio was removed", substring = true).assertIsDisplayed()
+        // Round 2 (coordinator review): a session with nothing real to export must offer no Save —
+        // the shared sheet-confirm tag (also Delete's "Delete" button) must not exist at all here,
+        // never merely hidden or disabled.
+        composeTestRule.onNodeWithTag(RECORDING_SESSION_SHEET_CONFIRM_TEST_TAG).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-STO-3", "constitution I")
+    fun `the delete sheet names over audio and raw archive separately, each its own real size`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RecordingSessionScreen(
+                    state = state(),
+                    playingOverId = null,
+                    isPlaying = false,
+                    actions = RecordingSessionActions(),
+                    deleteSheet = deletePreview(
+                        bytesToFree = 1_100_000_000L,
+                        overAudioBytes = 1_100_000_000L,
+                        archiveBytes = 0L,
+                        archiveState = ArchiveState.NONE,
+                    ),
+                    exportSheet = RecordingSessionExportState.Idle,
+                    labelSheet = null,
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag(RECORDING_SESSION_DELETE_OVER_AUDIO_TEST_TAG)
+            .assertIsDisplayed()
+            .assertTextContains("1.1 GB", substring = true)
+        // No continuous archive was ever kept for this session -- the raw-archive line is an
+        // honest omission, never a fabricated "0 B" line for something that never existed.
+        composeTestRule.onNodeWithTag(RECORDING_SESSION_DELETE_ARCHIVE_TEST_TAG).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-STO-3", "constitution I")
+    fun `the delete sheet omits the over-audio line once that half is already gone`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RecordingSessionScreen(
+                    state = state(),
+                    playingOverId = null,
+                    isPlaying = false,
+                    actions = RecordingSessionActions(),
+                    deleteSheet = deletePreview(
+                        bytesToFree = 250_000_000L,
+                        overAudioBytes = 0L,
+                        overAudioAlreadyRemoved = true,
+                        archiveBytes = 250_000_000L,
+                        archiveState = ArchiveState.KEPT,
+                    ),
+                    exportSheet = RecordingSessionExportState.Idle,
+                    labelSheet = null,
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag(RECORDING_SESSION_DELETE_OVER_AUDIO_TEST_TAG).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(RECORDING_SESSION_DELETE_ARCHIVE_TEST_TAG).assertIsDisplayed()
     }
 
     @Test
