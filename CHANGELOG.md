@@ -80,6 +80,60 @@ stale count.
 "12 overs can get better") is reported separately alongside this session's R-1056 device evidence,
 not duplicated here.
 
+### WPIMPROVE — fixed while device-verifying R-1056: Improve's navigation now survives a configuration change (R-1064, FR-REP-9/11, constitution I)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImproveContent.kt` and a new test file only.
+
+**Requirements/ACs:** R-1064 (register — corrected from an initially-used "R-1062" once the merge
+that landed WPSEGPROV's own, unrelated R-1062 row ("FR-SEG-5 squelch fusion was never built") made
+that collide; R-1063 above was already claimed by this session's own other fix, so R-1064 is the
+next free id — the lead's own filing may still rename either), FR-REP-9, FR-REP-11, constitution I.
+
+**What changed:** `ImproveContent`'s own `page` (`ImprovePage` — `Root`/`Select`/`Running`/`Done`)
+lived in a plain `remember`, so any configuration change `ReaderActivity` does not declare in its
+manifest (font scale, rotation — it declares none) recreated the Activity and silently dropped
+`Select`/`Running`/`Done` back to `Root`; mid-run, that told the operator, in effect, that nothing
+was happening. Fixed with a `rememberSaveable` + hand-written `Saver` (`ImprovePageSaver`), the same
+pattern this codebase already uses for every other file-private sealed navigation type —
+`OrtNavHost.kt`'s own `LogFilterOriginSaver`, `SessionsContent.kt`'s own `SessionsPageSaver` — one
+flat, delimiter-joined `String` (never a nested `Saver` call for the `Done` case's own
+`ReprocessStatus.Summary`), an unrecognised/truncated restored value falling back to `Root` rather
+than crashing, matching both precedents' own contract. **Disclosed, not hidden:** the underlying
+reprocess run itself does not survive — `RealImproveRunner`'s own doc comment already states
+cooperative cancellation stops `ReprocessRunner` the moment its collecting coroutine does, which is
+exactly what happens to the `LaunchedEffect` driving it when the old Activity is destroyed — so a
+restored `Running` shows the real board with a freshly restarted run's own real progress, never a
+seamless continuation of wherever the interrupted run had reached. Resuming a genuinely in-flight
+run across recreation would need the run to live somewhere longer-lived than a composition (a
+foreground service, `WorkManager`) — a `:pipeline`/architecture change outside this file's own
+ownership, not attempted here.
+
+**Verified:**
+- New `ImproveContentActivityTest` (Robolectric, a real `ReaderActivity` — not a bare
+  `ComponentActivity` with test-injected content, which cannot re-attach a composition on
+  `recreate()` at all, confirmed directly by trying it first and getting "No compose hierarchies
+  found in the app" instead of this fix's own assertions): `R_1064 Running survives a real Activity
+  recreation, not bounced back to Root` (the engine's own capture-priority yield, FR-REP-6,
+  `CaptureState.capturing(...)` + `ShedStatus.update(level = 3, ...)`, armed between reaching
+  `Improve-Select` and tapping Start, freezes a real run at its first item deterministically —
+  never a race against a real, fast, model-less run — so the board's own "waiting — capture is
+  busy" line is provably still there, real, after `recreate()`) and `R_1064 Done survives a real
+  Activity recreation, keeping its real summary` (a real run against a real, model-less `filesDir`
+  completes to Done; its own real "N overs no longer marked as reprocessing candidates" line
+  survives `recreate()` unchanged). **Discrimination performed and reverted**: reverting
+  `ImproveContent.kt` alone (temporary local commit, undone with `git reset --soft` before this
+  commit) fails both with `ComposeTimeoutException: Condition still not satisfied after 15000 ms` —
+  the expected line never reappears because the restored page is `Root` ("This phone can do more
+  than...") — restored, both pass again.
+- `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — green.
+- `gradlew ktlintCheck detekt` — green.
+
+**Left open / not done:** true engine-level resume (continuing an interrupted run's own progress,
+rather than restarting it) is out of scope for this file's own ownership — see "what changed" above
+for exactly what would be needed and why it was not attempted. Device evidence (font scale changed
+in place while genuinely on `Done`, with the real banner) is reported separately alongside this
+session's R-1056 evidence.
+
 ### WPIMPROVE — R-1056 fixed: Improve's Running/Done boards no longer overrun their action bar at font scale 2.0, and the per-record note no longer contradicts Review the changes
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/**` (`ImproveScreens.kt`, new
