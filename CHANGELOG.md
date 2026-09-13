@@ -32,6 +32,134 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPCF07: R-1044/R-1045 — the Export screen's option rows get their divider and padding back, the preview row wraps as one flowing line, and Save file finally names the real file and its real size)
+
+### WPCF07 — `Settings-Export.dc.html` conformance: dividers/padding on every `What`/`Include` row, `FlowRow` on the count-preview caption, and the Save file button showing the real filename and, when honestly knowable, the real size
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt` and its test
+(`SettingsExportScreenTest.kt`); `app/src/main/kotlin/org/ort/app/export/ExportCoordinator.kt`
+(one new accessor) and its test (`ExportCoordinatorTest.kt`); one collateral fix to
+`app/src/test/kotlin/org/ort/app/ui/settings/SettingsContentExportAndDebugDumpTest.kt` (its own
+`Save file` text assertions, made stale by this round's own button-label change). Did not touch
+the nav host, `Drawer.kt`, Capture/Recordings/transport bar, Now/Search/Propagated/Improve, or
+`tools/ui-audit/tour.json` (the CF07 steps already existed).
+
+**Requirements/ACs:** R-1044, R-1045(a), R-1045(b) (register, lead capture
+`overnight/CF07-settings-export{,@2x,@2x-end}.png`); FR-EXP-1..6; constitution I (never a
+fabricated size); constitution VI (no number without its provenance); constitution VIII (screen
+re-captured and compared against `design/canvas/Settings-Export.dc.html` after the fix).
+
+**What changed:**
+- **R-1044.** `Settings-Export.dc.html`'s `.opt` rows carry a 1px divider above every row (and one
+  more below the last row of each group) plus 4px of vertical padding — the build drew neither, so
+  at font scale 2.0 a wrapped sub-line's own last line ran straight into the next row's title with
+  no seam. Added a small private `OptionDivider()` (`Box`, 1dp, `OrtColors.lineFaint` — the exact
+  token the artboard's own `oklch(0.21 0.010 250)` names, per that colour's own doc comment in
+  `OrtColors.kt`, not `OrtColors.divider`/`lineDefault`, which is the different `oklch(0.26 ...)`
+  drawer-divider shade) around every `RadioRow`/`CheckboxRow` in `ExportScopeSection`/
+  `ExportIncludeSection`, and `Modifier.padding(vertical = OrtSpacing.xs)` on each row's own
+  modifier — composes with each row's existing `heightIn(min = 44.dp)` rather than replacing it, so
+  the 44dp touch-target floor and the vertically-centred radio/checkbox marker are unaffected; the
+  row only grows taller.
+- **R-1045(a).** The count-preview row (`"39 of 42 as QSOs · 3 have no identified station"`) was a
+  plain `Row` of several `Text` segments — at font scale 2.0 the neutral segments could consume the
+  whole line before the amber segment was even measured, leaving it a hanging sliver at the row's
+  right edge that then wrapped one word per line down a narrow column. The same defect class, and
+  the same fix, `ui/screens/NowScreen.kt`'s own R-260/R-552 (`EarlierNightMetaLine`/
+  `NowIdleMetaRow`) and `ui/components/Rows.kt`'s own R-373/R-420 already established: `ExportPreviewRow`
+  is now a `FlowRow` (`spacedBy(0.dp)`, matching `EarlierNightMetaLine`'s own choice since the
+  spacing already lives inside each segment's own leading/trailing text), so a segment that does
+  not fit wraps as a whole atomic unit onto a fresh line starting at the row's own left edge, never
+  a narrow leftover column. The reason-word segment (`" have no identified station"`) gained its
+  own geometry-only test tag (`export-preview-excluded-reason`) — a test may assert *where* it
+  renders, never its wording (constitution II, `exclusionReasonWord`'s own doc comment).
+- **R-1045(b).** The artboard's button reads `Save file · <filename> · <size>`; the build showed
+  only `Save file`. `ExportCoordinator.suggestedFileName` — the exact function
+  `SettingsExportSubScreen`'s own real `Save file` handler already names the SAF picker's document
+  with — is now also called from `SettingsExportScreen` itself (via a new, injectable
+  `suggestedFileName` parameter defaulting to that same real function, `remember`-ed per
+  scope/format so the name does not visibly tick over on every recomposition) to build the visible
+  label; never a second, independently-invented naming rule. For the size: added
+  `ExportCoordinator.previewSizeBytes(context, request): Long`, resolved the same "run the real
+  producer before the write" way `FieldReportBundleBuilder.preview` already resolves a real
+  pre-upload size for its own bundle — it literally calls `build()` (the same function the real
+  save write calls) and reports `.size`, never an independently-scoped estimate; a discriminating
+  test (`R_1045b previewSizeBytes varies with the real content...`) proves this by checking the
+  size actually varies with real record count, which a record-count-derived stub could fake but a
+  fixed constant could not, and a second test proves exact byte-for-byte equality with `build()`'s
+  own real output. Both `previewSizeBytes` and `suggestedFileName` follow `previewCount`'s own
+  injection idiom (R-1035) exactly. The button label is built by a new `buildSaveButtonLabel`/
+  `formatExportSize` (KB/MB, the same threshold idiom `SettingsContent.kt`/`SettingsPolling.kt`
+  already use for their own real sizes) and handed to the *existing*, unmodified `PrimaryButton` —
+  its `Text` has no `maxLines` cap, so it wraps naturally (a single `Text`, unlike the R-1045(a)
+  defect class, always wraps at word/hyphen boundaries) and `PrimaryButton`'s own
+  `requiredHeightIn(min = 48.dp)` is a floor, not a fixed height, so the button grows to fit rather
+  than clipping or overflowing.
+- **Size is shown; never guessed.** `sizeBytes` follows `preview`'s own absent-signal shape exactly
+  — `null` while `RANGE` is selected, still loading, or `previewSizeBytes` itself failed — and the
+  label degrades to `Save file · <filename>` with no size clause at all in that case, never an
+  estimate presented as a size (constitution I/VI). Confirmed real and computable before the write
+  in this build (unlike, say, a compressed format where size could only be known after encoding),
+  so it is shown.
+- **Collateral:** `SettingsContentExportAndDebugDumpTest`'s own `WPW Save file launches...` test
+  matched the button by *exact* text/content-description `"Save file"` — now a substring of the
+  real label — updated to `substring = true` throughout (three call sites); no other behaviour in
+  that file changed.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest` — full suite green (`BUILD SUCCESSFUL`, 2144 tests, 0
+  failures), including every new/changed test below.
+- Discriminating tests, each proven against the pre-fix shape (reverted locally, observed to fail
+  for the stated reason, restored):
+  - `SettingsExportScreenTest`'s four `R_1044` cases (`w390dp-h844dp-420dpi`, `@GraphicsMode.NATIVE`,
+    font scale 1.0 and 2.0): a positive real vertical gap between adjacent tagged rows in both the
+    `What` and `Include` groups — collapses to `<= 0dp` against the pre-fix layout (no divider, no
+    padding).
+  - `SettingsExportScreenTest`'s two `R_1045a` cases (`@GraphicsMode.NATIVE`, font scale 2.0, a
+    narrow width chosen to force the real wrap — 390dp/480dp, this screen's own content width,
+    turned out wide enough for this exact string to still fit on one line even at 2.0): the amber
+    reason segment's own real left edge sits within 4dp of the row's own left edge on its wrapped
+    line — against the pre-fix `Row`, it would sit deep inside the row's own trailing space
+    instead.
+  - `ExportCoordinatorTest`'s two `R_1045b` cases: `previewSizeBytes` equals `build()`'s own real
+    byte length exactly, and varies with real record count (a fixed/estimate implementation would
+    fail either).
+  - `SettingsExportScreenTest`'s four more `R_1045b` cases: the button shows the real filename
+    (from an injected fixed-`Instant` `suggestedFileName`) and the real size together; shows the
+    filename alone with no `KB`/`MB` anywhere when `previewSizeBytes` fails; shows plain `Save file`
+    while `RANGE` is selected (never naming a file that will not be written); and — `@GraphicsMode
+    .NATIVE`, font scale 2.0 — the button's own real height grows well past the 48dp single-line
+    floor, proving the label actually wrapped rather than being clipped.
+  - Found and fixed along the way, not by inspection: `R_1009 unchecking Transcripts...` started
+    failing after R-1044's own added padding/dividers pushed that checkbox row below this test's
+    default (un-scrolled) viewport in Robolectric's own un-sized root — `performClick()` on an
+    off-screen node silently no-ops rather than erroring. Fixed by scrolling to the row first
+    (`scrollToTag`), the same discipline this test class's own doc comment already states for other
+    below-the-fold controls; not a production defect.
+- Real device (`ort_audit`, `emulator-5562`, 1260×2772 @420dpi): `tools\ui-audit\boot.ps1 -Avd
+  ort_audit -Port 5562`, `wm size`/`wm density` set to match, `tools\ui-audit\install.ps1 -Port
+  5562 -Clear`, then `tools\ui-audit\tour.ps1 -Port 5562 -Only "overnight/CF07-settings-export*"
+  -Out <scratch>` — `steps: 3 ok: 3 errors: 0`. Compared by eye against
+  `design/canvas/Settings-Export.dc.html`: every `What`/`Include` row now shows a clear divider
+  line above it and visible breathing room around its own content; the count-preview caption reads
+  as one flowing sentence with the amber clause starting at the row's own left edge on its wrapped
+  line; the button reads `Save file · ort-export-tonight-<timestamp>.adi · 8 KB` across two wrapped
+  lines, fully inside the button. Scratch captures only (`%TEMP%\ort-tour-cf07-wpcf07`), never
+  written to `results/ui-audit/`. Emulator shut down afterward (`adb -s emulator-5562 emu kill`);
+  the other two audit emulators already running for other builders (`ort_audit_2`/`ort_audit_3`)
+  were left untouched.
+- `python tools/spec-check/spec_check.py` — OK. `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — `BUILD
+  SUCCESSFUL in 13m 37s`, 1109 tasks. Two ktlint violations (import ordering, a `let { ; }`
+  one-liner tripping `statement-wrapping`) and two detekt `MaxLineLength` findings surfaced and
+  fixed before this run.
+
+**Left open / not done:** none against this row's own scope. Size is shown only for the two real
+scopes (`Tonight`/`Everything`); `RANGE` never reaches `previewSizeBytes` at all (disabled
+regardless, per R-1009/WPX).
+
+---
+
 ## 2026-09-12 (WPVAD: FR-OBS-1/Q20 — `capture.log` finally carries the per-transmission VAD statistics the requirement has promised since draft 1)
 
 ### WPVAD — the segmenter's own close reason and frame tally, wired into `capture.log` and the debug dump, for every closed segment, accepted and rejected alike

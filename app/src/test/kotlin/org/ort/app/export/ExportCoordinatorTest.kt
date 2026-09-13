@@ -503,6 +503,53 @@ class ExportCoordinatorTest {
         assertEquals(AttributionState.INFERRED, (inferredAttribution as ExportAttribution.UnresolvedCallsign).state)
     }
 
+    // -----------------------------------------------------------------------------------------
+    // R-1045(b): the `Save file` button shows the real byte count `build` is about to write — the
+    // same producer, never a second, independently-scoped estimate (constitution I/VI).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_1045b previewSizeBytes equals the real written byte length exactly — the same producer as build`() =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L))
+            db.catalogDao().insert(station("ST1", "KI7ABC"))
+            db.transmissionDao().insert(
+                transmission("T1", "S1", AttributionState.CONFIRMED, stationId = "ST1", attributionConfidence = 0.9),
+            )
+
+            val request = ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.CSV)
+            val bytes = ExportCoordinator.build(context, request)
+            val size = ExportCoordinator.previewSizeBytes(context, request)
+
+            // A test that merely asserted "greater than zero" would pass for a fabricated estimate
+            // too (e.g. one derived from previewCount's record counts) — exact equality with the
+            // real write's own byte length is the one assertion that discriminates "the same
+            // producer" from any independently-scoped guess.
+            assertEquals(bytes.size.toLong(), size)
+        }
+
+    @Test
+    fun `R_1045b previewSizeBytes varies with the real content, never a fixed or record-count-derived stub`() =
+        runTest {
+            // Two distinct sessions (matching this file's own R_1009 tonight/everything scoping
+            // tests above) — TONIGHT resolves to only the most recent session's own single record,
+            // EVERYTHING to both, so the two requests below genuinely differ in record count.
+            db.sessionDao().insert(session("S1", startedAt = 0L))
+            db.sessionDao().insert(session("S2", startedAt = 1_000L))
+            db.transmissionDao().insert(transmission("T1", "S1", AttributionState.UNKNOWN))
+            db.transmissionDao().insert(transmission("T2", "S2", AttributionState.UNKNOWN))
+
+            val oneRecord = ExportRequest(scope = ExportRequestScope.TONIGHT, format = ExportFileFormat.CSV)
+            val twoRecords = ExportRequest(scope = ExportRequestScope.EVERYTHING, format = ExportFileFormat.CSV)
+            val sizeOne = ExportCoordinator.previewSizeBytes(context, oneRecord)
+            val sizeTwo = ExportCoordinator.previewSizeBytes(context, twoRecords)
+
+            assertTrue(
+                "expected two records to produce more bytes than one, got $sizeOne vs $sizeTwo",
+                sizeTwo > sizeOne,
+            )
+        }
+
     @Test
     fun `R_1009 suggestedFileName carries the real extension for each format`() {
         assertEquals(

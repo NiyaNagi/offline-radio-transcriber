@@ -52,16 +52,20 @@ class SettingsContentExportAndDebugDumpTest {
                 )
             }
         }
+        // R-1045(b): the button's own real text now reads `Save file · <filename> · <size>` (the
+        // artboard's own shape) rather than the bare word — every match below is `substring = true`
+        // for that reason, never an exact match on "Save file" alone.
         composeTestRule.waitUntil(5_000) {
-            composeTestRule.onAllNodesWithText("Save file", substring = false).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithText("Save file", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
 
         // `export-screen-scroll` names the screen's own outer, vertical scroll container
         // unambiguously — `SettingsExportScreen.kt`'s own doc comment on that tag explains why a
         // bare `hasScrollAction()` matches two nodes here (the Format row nests a second, horizontal
         // one).
-        composeTestRule.onNodeWithTag("export-screen-scroll").performScrollToNode(hasContentDescription("Save file"))
-        composeTestRule.onNodeWithText("Save file").performClick()
+        composeTestRule.onNodeWithTag("export-screen-scroll")
+            .performScrollToNode(hasContentDescription("Save file", substring = true))
+        composeTestRule.onNodeWithText("Save file", substring = true).performClick()
 
         val started = shadowOf(composeTestRule.activity).nextStartedActivityForResult
         assertNotNull("expected Save file to actually launch a SAF picker intent", started)
