@@ -200,8 +200,11 @@ private fun liveBarClearanceFor(liveBar: LiveBarViewState?): Dp = if (liveBar !=
 
 private val LIVE_BAR_CLEARANCE = 44.dp
 
+/** `internal`, not `private` (N08, WPCAP): [org.ort.app.ui.screens.CaptureContent] reuses this exact
+ * key/value-with-dot row for its own merged Status section — the identical [KeyValueFacts]
+ * rendering, never a second one that could drift from this screen's own. */
 @Composable
-private fun KeyValueRowWithDot(
+internal fun KeyValueRowWithDot(
     key: String,
     facts: KeyValueFacts,
     testTagValue: String,
@@ -237,9 +240,11 @@ private fun KeyValueRowWithDot(
 
 /** The artboard's literal inline state circle — no shared "state dot" component exists in WP2's
  * inventory to reuse (its markers are all attribution-state specific), so this is drawn locally,
- * the same way `Feedback.dc.html`'s `FailedMarker` is (see that composable's own doc comment). */
+ * the same way `Feedback.dc.html`'s `FailedMarker` is (see that composable's own doc comment).
+ * `internal`, not `private` (N08, WPCAP): [org.ort.app.ui.screens.CaptureContent] reuses this exact
+ * dot for its own merged title row. */
 @Composable
-private fun StateDot(tone: CaptureStateTone, size: Dp, modifier: Modifier = Modifier) {
+internal fun StateDot(tone: CaptureStateTone, size: Dp, modifier: Modifier = Modifier) {
     val color = when (tone) {
         CaptureStateTone.NOMINAL -> OrtColors.accentGreen
         CaptureStateTone.DEGRADED -> OrtColors.accentAmber

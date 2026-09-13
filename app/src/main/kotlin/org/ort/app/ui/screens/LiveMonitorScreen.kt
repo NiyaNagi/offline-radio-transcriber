@@ -225,8 +225,11 @@ private fun stateDotColor(tone: CaptureStateTone) = when (tone) {
  * ([LevelViewState.historyDbfs], the fixed target band, the clip line at 0 dBFS) — never a
  * fabricated waveform.
  */
+/** `internal`, not `private` (N08, WPCAP): [org.ort.app.ui.screens.CaptureContent] reuses this exact
+ * card for the merged surface's own level envelope — the identical facts and chart, never a second
+ * rendering of the same [LevelViewState] that could drift from this one. */
 @Composable
-private fun LiveMonitorLevelCard(level: LevelViewState, modifier: Modifier = Modifier) {
+internal fun LiveMonitorLevelCard(level: LevelViewState, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
         if (level.notMeasuredReason != null) {
             Text(
@@ -400,8 +403,10 @@ private fun bandStateColor(tone: CaptureStateTone?) = when (tone) {
     CaptureStateTone.IDLE, null -> OrtColors.textDim
 }
 
+/** `internal`, not `private` (N08, WPCAP): [org.ort.app.ui.screens.CaptureContent] reuses this exact
+ * "Hearing now" card — see [LiveMonitorLevelCard]'s own doc comment for why. */
 @Composable
-private fun LiveMonitorHearingCard(text: String, modifier: Modifier = Modifier) {
+internal fun LiveMonitorHearingCard(text: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
         SectionHeader(label = "Hearing now")
         Row(
@@ -432,8 +437,10 @@ private fun LiveMonitorHearingCard(text: String, modifier: Modifier = Modifier) 
     }
 }
 
+/** `internal`, not `private` (N08, WPCAP): [org.ort.app.ui.screens.CaptureContent] reuses this exact
+ * "this session's overs" section — see [LiveMonitorLevelCard]'s own doc comment for why. */
 @Composable
-private fun LiveMonitorOversSection(
+internal fun LiveMonitorOversSection(
     overs: LiveMonitorOversViewState,
     onOpenOver: (String) -> Unit,
     modifier: Modifier = Modifier,

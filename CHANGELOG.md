@@ -34,6 +34,108 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
 
+### pending — WPCAP: N08 Capture built as one surface, merging N04/N06/N07, carrying D40's over-audio warning and D39's archive disclosure
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/CaptureScreen.kt` (new), `CaptureStatusContent.kt`
+(rewired), `CaptureStatusScreen.kt`/`LiveMonitorScreen.kt` (three composables promoted `internal`
+for reuse, no behavioural change), `app/src/main/kotlin/org/ort/app/ui/data/CaptureStorageViewState.kt`
+(new), `CaptureStoragePolling.kt` (new), `LiveBarPolling.kt` (one new branch), `tools/ui-audit/tour.json`
+(appended), and tests. `LevelMeterScreen.kt`/`LiveMonitorScreen.kt`/`CaptureStatusScreen.kt` themselves
+are untouched apart from the three visibility promotions — their own tests stay green, unmodified.
+
+**Requirements/ACs:** FR-UI-7, FR-UI-12, FR-RUN-12, FR-CAP-13 (N08, design-intent `Capture.dc.html`);
+D40/FR-STO-3e/AC-156/AC-157/AC-160 (the over-audio budget's persistent warning); D39/FR-STO-3f/
+AC-158/AC-159 (the continuous archive's default-on state and monthly rate, measured-or-estimated);
+constitution I (no fabricated queue ETA), VI (measured rate outranks the estimate, labelled),
+VIII (the merge is a UI-surface change; re-verified, see below).
+
+**What changed:**
+1. **N08 (`Capture.dc.html`) built as one merged surface**, superseding N04 (`Capture-Status.dc.html`),
+   N06 (`Level-Meter.dc.html`) and N07 (`Live-Monitor.dc.html`) as *separate* destinations —
+   `CaptureStatusContent`'s own internal `CaptureStatusSubScreen` (`NONE`/`LEVEL_METER`/`LIVE_MONITOR`)
+   switch is gone; it now always renders the new `CaptureScreen`, which composes the level envelope
+   and "Hearing now" card (`LiveMonitorLevelCard`/`LiveMonitorHearingCard`, promoted `internal` in
+   `LiveMonitorScreen.kt`), the Input/Radio/Queue facts (`KeyValueRowWithDot`/`StateDot`, promoted
+   `internal` in `CaptureStatusScreen.kt`), this session's overs (`LiveMonitorOversSection`, same
+   promotion) and the new Storage section, all inline, always visible, never behind a tap. No
+   `LiveBar` of its own — the artboard's own note that this screen is what the transport bar
+   expands to (IA-2, C10). The old N04/N06/N07 composables and their own test files are byte-for-byte
+   untouched (P9 — nothing deleted quietly); they are simply no longer reachable from this
+   destination. `openLevelMeter`/`openLiveMonitor` stay accepted parameters on `CaptureStatusContent`
+   purely so `OrtNavHost.kt`'s existing call site keeps compiling unchanged — landing on
+   `ReaderDestination.CAPTURE` already shows both inline now, so neither flag changes what renders.
+   `onOpenFullLog` is likewise accepted but unwired — N08 has no `Full log` control of its own (an
+   accepted, documented deviation, this package's own report).
+2. **D40/FR-STO-3e — the over-audio budget's persistent warning, visible without a tap (AC-160).**
+   New `CaptureStorageMapper.overAudio` (in `CaptureStorageViewState.kt`) formats the existing,
+   already-real `org.ort.pipeline.capture.OverAudioBudgetState` (recomputed fresh every read, never
+   cached — AC-157's "persists across restarts" holds by construction) into the exact copy already
+   established on RC01's own budget card (`RecordingsScreen.kt`'s `OverAudioBudgetRow`: "Over budget
+   · never deleted without you" / "warns when full · never deleted without you") — one warning
+   vocabulary, never a second one invented for this screen. Rendered unconditionally in
+   `CaptureScreen`'s own ordinary scroll flow (`CaptureOverAudioRow`), never behind a dialog.
+   Additionally, `LiveBarPolling.toneAndLabel()` gained one new condition — an exceeded over-audio
+   budget now also produces the *existing* `"Low storage"` DEGRADED label (reusing the identical
+   state `ThreeNightsLeft`/`OneNightLeft` already produce, per the task's own instruction: reuse,
+   never invent a second live-bar state) — so the transport/live bar's own state label carries
+   AC-160's second surface too, at the cadence every other live-bar fact already reads at (a cheap
+   `SharedPreferences` read plus the already-held `StorageForecast.state.audioDirectoryBytes`, no
+   new filesystem walk on the 2 s poll).
+3. **D39/FR-STO-3f — the continuous archive's default-on state and monthly rate, beside its own
+   off control (AC-158/159).** New `CaptureStorageMapper.archive` mirrors
+   `RecordingsViewStateMapper.archiveCard`'s exact rate-label logic (D39's ~15 GB/month estimate,
+   visibly labelled, until `ArchiveWriteRateForecast` has a real measurement, which then replaces
+   it — constitution VI) and `RecordingsScreen.kt`'s own "on/off · rate · policy" line plus a
+   `Turn off`/`Turn on` `TextAction` beside it (`CaptureArchiveRow`) — copied rather than imported
+   across the `ui/recordings` boundary (this package's own row), the same "duplicate the small
+   mapping" choice `LiveMonitorViewData.kt`'s own file doc comment already makes for an identical
+   reason. The toggle writes straight through the shared `SharedPreferencesSettingsStore.archiveEnabled`
+   (`CaptureStoragePolling.setArchiveEnabled`) — the same file `:pipeline`'s own `ArchiveSettingsStore`
+   reads, so `RealCaptureService` sees the change on its very next tick.
+4. **Queue row**: a textual merge of the already-real backlog and tier facts
+   (`CaptureStatusViewState.backlog`/`.tier`) — no fabricated per-pass ETA (constitution I, the
+   same accepted-deviation reasoning N07's own five deviations already established for this exact
+   absence).
+5. **Visual re-verification (constitution VIII, this change touches `:app`'s `ui/**`).** A host-level
+   Robolectric bounds test (`CaptureScreenBoundsTest`, `@GraphicsMode(NATIVE)`) proves the Status and
+   Storage rows stack without overlap at `w390dp-h844dp-420dpi` and at 480dp (the operator's own
+   wider-device geometry), at font scale 1.0 and 2.0, and that the over-audio warning is never
+   clipped away at 2.0. `tools/ui-audit/tour.json` gained `overnight-live/N08-capture` (1.0, 2x,
+   2x-end) and `recordings-budget-exceeded/N08-capture` (1.0, 2x) — the latter reusing the existing
+   over-audio-budget scenario against the `CAPTURE` destination instead of `EARLIER_NIGHTS`, since
+   the budget fact is real and destination-independent.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.data.CaptureStorageViewStateTest"` — 5/5
+  green (pure mapper: the warning's exact copy and persistence, the no-budget third state, the
+  estimated/measured rate label, the archive on/off disclosure, the combined `from`).
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.data.LiveBarPollingTest"` — 29/29 green,
+  including the new D40 case; reverting the new `overAudioExceeded` branch makes it fail with
+  `expected:<L[ow storag]e> but was:<L[iv]e>` (discrimination shown, then restored).
+- `./gradlew :app:smokeTestDebugUnitTest --tests "org.ort.app.ui.screens.CaptureStatusContentTest"` —
+  9/9 green (the merged surface's own polling wrapper: level/overs inline without opening anything,
+  session-following, the top-inset contract, the Input sub-line, the loading-not-idle fix, the real
+  over-budget warning and archive disclosure reaching the screen through the real 2 s poll).
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.screens.CaptureScreenTest"` — 4/4 green
+  (deterministic, non-polling: the warning's exceeded/nominal copy, the toggle's own callback,
+  the disabled-archive copy); reverting the warning's production line to a hardcoded nominal string
+  makes the exceeded case fail (discrimination shown, then restored).
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.screens.CaptureScreenBoundsTest"` — 4/4
+  green (`w390dp-h844dp-420dpi` and `w480dp-h844dp-420dpi`, font scale 1.0 and 2.0).
+- `./gradlew ktlintCheck detekt` — both green (repository-wide).
+
+**Left open / not done:**
+- The full canonical tour re-capture (`tools\ui-audit\tour.ps1`) and the operator-geometry evidence
+  captures (`overnight-live`, `recordings-budget-exceeded`, a `uiautomator dump`) against the
+  `ort_audit_cap` AVD were not completed in this pass — see this package's own report for what is
+  still needed before the register row can move past `fixed` to `closed` (constitution VIII: a
+  builder's report is not that evidence).
+- AC-158 (the setup-time archive disclosure) is a separate, still-unbuilt gap under
+  `app/src/main/kotlin/org/ort/app/ui/setup/**` — out of this package's row (N08 is the capture
+  *status* surface, not Setup), flagged for whoever owns that screen next.
+- `design/design-intent.md`'s N08 row status line and `results/ui-audit/register.md` are the lead's
+  own files to update on judging this evidence — not touched here.
+
 ### WPNAVHOST round 2 — R-1061: reproduced on a real device, the reservation is now the bar's own measured height, and a real scenario proves it
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (`liveBarHeight`,

@@ -15,6 +15,7 @@ import org.ort.app.ui.failures.InterruptedViewState
 import org.ort.app.ui.failures.KilledViewState
 import org.ort.app.ui.failures.StorageAudioPausedViewState
 import org.ort.app.ui.failures.UsbViewState
+import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.data.OrtDatabase
@@ -104,6 +105,25 @@ class LiveBarPollingTest {
         StorageForecast.set(StorageForecast.State.OneNightLeft(1L, 1L, 0.5))
         val state = LiveBarPolling.current(context, null)
         assertEquals("Low storage", state.label)
+    }
+
+    @Test
+    @Requirement("D40", "FR-STO-3e", "AC-160")
+    fun `an exceeded over-audio budget reads Low storage too - the existing state, never a new one`() = runTest {
+        CaptureState.capturing("s1")
+        // Deliberately StorageForecast.State.Fine (plenty of nights left) so this discriminates the
+        // *new* over-audio-budget branch from the pre-existing nights-left one above — the two are
+        // independent facts that must each be able to trigger the identical label on their own.
+        StorageForecast.set(StorageForecast.State.Fine(100_000_000_000L, 9_000_000_000L, nightsLeft = 30.0))
+        SharedPreferencesSettingsStore(
+            context.getSharedPreferences(
+                SharedPreferencesSettingsStore.PREFS_NAME,
+                android.content.Context.MODE_PRIVATE,
+            ),
+        ).audioBudgetGb = 8
+        val state = LiveBarPolling.current(context, null)
+        assertEquals("Low storage", state.label)
+        assertEquals(LiveBarTone.DEGRADED, state.tone)
     }
 
     @Test
