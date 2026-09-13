@@ -90,6 +90,53 @@ yet"/"Not capturing". Emulator shut down after (`adb emu kill`).
 **Left open / not done:** `SessionsContent`/`DigestContent` carry the identical shape and are left
 for WPREC's own Recordings rewrite to close, per this prompt's explicit scope boundary.
 
+### pending — WPINIT: R-1022 — the tour's own readiness check gates on a structural marker, never rendered text
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourAccessibilityScroll.kt`;
+`app/src/test/kotlin/org/ort/app/debug/tour/TourAccessibilityScrollSnapshotTest.kt`.
+
+**Requirements/ACs:** register R-1022 (halt), constitution II.
+
+**What changed:** `TourAccessibilityScroll.snapshot`'s own `hasPlaceholder` used to be a
+case-insensitive substring match against the literal word "loading" in any rendered
+`text`/`contentDescription` — the actual mechanism behind R-1051 (see the commit above): a false
+empty state's real copy ("No overs yet.", "Not capturing") never contains that word, so the tour
+proceeded and captured it immediately instead of waiting for the real poll. Replaced with a
+structural check: `TourAccessibilityTap.hasNodeWithTestTag(rootView, LOADING_STATE_TEST_TAG)` — the
+same `testTagsAsResourceId` accessibility bridge `TourAccessibilityTap` already established for
+tapping the live bar by its stable tag rather than its rendered label (R-1021). `snapshot` still
+collects every node's own text (used for the settle comparison's other half — two readings agreeing
+on content), it simply no longer searches that text for a keyword. Every loading state R-1051 added
+carries the marker automatically (`LoadingState`'s own `testTag`); `SessionsContent`/`DigestContent`
+do not yet (WPREC's own rewrite lands it later) — until then a screen of theirs that is still
+mid-load and says nothing containing "loading" is captured exactly as promptly as everything else,
+which narrows what this check can catch, never widens it into a new false-negative.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.debug.tour.TourAccessibilityScrollSnapshotTest" --tests
+"org.ort.app.debug.tour.TourAccessibilityTapTest"` — green (12 tests). Shown failing first: reverted
+`hasPlaceholder` to the old substring check and re-ran the same class —
+"a screen whose real copy contains the word loading is never treated as a placeholder" failed
+(`expected:<false> but was:<true>`) and "the real LoadingState is detected as a placeholder by its
+structural marker" failed the other way (`expected:<true> but was:<false>`) — the exact two
+directions of the old defect this replaces; both passed again once the fix was restored. Device: the
+same `overnight-live/N01-now-live` / `overnight/L01-log` cold-run captures the R-1051 commit
+describes are this fix's own on-device proof too — Part A and Part B only work together (a genuine
+loading value the tour's own old text check would have skipped past regardless). Discovered and
+worked around a pre-existing, unrelated race in `tools\ui-audit\tour.ps1`'s own manifest poll while
+proving this on device: a fresh `am start` does not delete the *previous* run's on-device
+`files/tour/manifest.json` until the new `TourRunner.run()` reaches its own `deleteRecursively()`
+call a few seconds later, so polling immediately after `am start` can read a still-`"done":true`
+manifest left over from the *previous* step and return its (stale) result. Every cold run in this
+session's own device verification first ran `adb shell run-as org.ort.app sh -c 'rm -rf files/tour'`
+between `am force-stop` and the next `tour.ps1` invocation to close that window; `tour.ps1` itself
+was not touched (outside this package's ownership) — left as a finding for whoever owns it next.
+Full gate, ktlint/detekt, spec-check: see the R-1051 commit above (one combined verification pass
+covered both).
+
+**Left open / not done:** the `tour.ps1` manifest-poll race named above; `SessionsContent`/
+`DigestContent` do not carry the marker yet, per the R-1051 commit's own note.
+
 ## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor); R-1047 sent back once and re-fixed so the statement is actually visible)
 
 ### 16b2432d — WPLINK: R-1047 fix — the applied-filter statement is now visible without scrolling
