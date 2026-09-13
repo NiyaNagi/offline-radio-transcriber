@@ -48,7 +48,28 @@ import org.json.JSONObject
  * without it, `S10b-verified`'s own capture could land the instant the address selection landed,
  * before the scripted port had actually progressed past `Identified` to `Verified`, the exact defect
  * the register found. A
- * step naming a [drillIn] key outside this set fails loudly (recorded as one
+ * **WPUI follow-up** (coordinator round, R-1006's on-device proof): `playThenNavigate` /
+ * `pauseThenNavigate` (`"true"`) — a *destination*-step-only pair, read directly by
+ * [ScreenshotTourActivity] exactly like `tapLiveBar` (never through [TourIds.resolveSeed], which
+ * only ever builds a [org.ort.app.ui.navigation.NavSeed], and a `NavSeed` field can only seed a
+ * single static initial state, not a sequence of real taps). Meaningful only alongside a
+ * `transmission` key naming an over with real retained audio in the same step — use
+ * `confirmed-longest` ([TourIds]'s own doc comment), not plain `confirmed`: every other
+ * audio-bearing over inherits a 4.2s default, too short to still be playing by the time this same
+ * step navigates away and reaches its own final capture. After the transmission drill-in settles,
+ * taps its waveform card's real play control
+ * (`org.ort.app.ui.components.Inspection.kt`'s own stable `"waveform-glyph-play"` testTag —
+ * unowned by this package, not edited by it either; the same bounds-overlap tap
+ * [TourAccessibilityTap.tapNodeWithTestTag] already uses for the live bar), confirms real playback
+ * started (the glyph flips to `"waveform-glyph-pause"`), then — `pauseThenNavigate` only — taps it
+ * again and confirms it flips back to `"waveform-glyph-play"`. Either way, a real system back press
+ * (`ComponentActivity.onBackPressedDispatcher.onBackPressed()`, the identical mechanism this
+ * package's own `ReaderActivityDestinationSmokeTest` already uses, never `Espresso.pressBack()`)
+ * closes the drill-in, landing on this step's own [destination] with the transport bar (C10) now
+ * visible showing whichever mode the taps left it in — the on-device proof R-1006's reversal
+ * needed and no Robolectric test can substitute for (constitution VIII).
+ *
+ * A step naming a [drillIn] key outside this set fails loudly (recorded as one
  * `error` line in the manifest, per
  * this file's own contract with [ScreenshotTourActivity] — never a silent skip and never an
  * aborted tour) rather than being silently ignored.
@@ -131,6 +152,9 @@ public data class TourStep(
             // a `NavSeed`) — the real route onto `LiveMonitorScreen`, since no `NavSeed` field exists
             // for `OrtNavHost.NavHostNavState.openCaptureLiveMonitor`.
             "tapLiveBar",
+            // WPUI follow-up (R-1006's on-device proof) — see this class's own doc comment above.
+            "playThenNavigate",
+            "pauseThenNavigate",
         )
     }
 }

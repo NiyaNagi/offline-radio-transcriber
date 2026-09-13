@@ -7,7 +7,6 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -28,6 +27,17 @@ import org.robolectric.RobolectricTestRunner
  * out of `TransmissionDetailScreenTest.kt` for detekt's `LargeClass` (the same split that file's
  * own R-242/R-153 doc comments already document for `RejectedDetailScreenTest.kt`/
  * `PassFailureDetailScreenTest.kt`).
+ *
+ * **C10 (`design/canvas/Transport-Bar.dc.html`) reverses this row's own original fix.** The
+ * artboard's own rule: "the bar owns playback... leaving a screen never stops the audio; × or the
+ * end of the over does." The `DisposableEffect(detail.id) { onDispose { player.stop() } }` this
+ * row originally added is exactly what "leaving a screen" meant here — a back navigation, or (as
+ * the second test below covered) a drill-in reusing the same composable slot for a different over
+ * — so both of that fix's own tests are replaced below with the opposite assertion: playback
+ * survives both kinds of navigation. What still stops it is unchanged and still tested further
+ * down this file: reaching the recorded end of the over, and (in `TransportBarTest.kt`, C10's own
+ * suite) the bar's own `×`. `TransportPlaybackController` (`ui/audio/`) is what now owns the
+ * stop-on-leave decision instead of this screen — see that class's own doc comment.
  */
 @RunWith(RobolectricTestRunner::class)
 class PlaybackControlDetailScreenTest {
@@ -52,7 +62,7 @@ class PlaybackControlDetailScreenTest {
     private fun state(detail: TransmissionDetailViewState = detail()) = DetailViewStateMapper.from(detail)
 
     @Test
-    fun `R_1006_leaving_the_screen_mid_playback_stops_the_players_audio`() {
+    fun `R_1006_leaving_the_screen_mid_playback_does_not_stop_the_players_audio`() {
         val player = FakeTransmissionAudioPlayer()
         var showScreen by mutableStateOf(true)
         composeTestRule.setContent {
@@ -69,14 +79,16 @@ class PlaybackControlDetailScreenTest {
         showScreen = false
         composeTestRule.waitForIdle()
 
-        assertTrue(
-            "expected stop() once the screen is left mid-playback, got stopCallCount=${player.stopCallCount}",
-            player.stopCallCount >= 1,
+        assertEquals(
+            "C10: the bar owns playback now — leaving this screen must not stop the audio; " +
+                "only the bar's x or the end of the over does",
+            0,
+            player.stopCallCount,
         )
     }
 
     @Test
-    fun `R_1006_opening_a_different_over_from_the_same_screen_stops_the_previous_ones_playback`() {
+    fun `R_1006_showing_a_different_over_without_playing_it_does_not_stop_the_first_ones_playback`() {
         val player = FakeTransmissionAudioPlayer()
         var current by mutableStateOf(state())
         composeTestRule.setContent {
@@ -86,13 +98,17 @@ class PlaybackControlDetailScreenTest {
         composeTestRule.waitForIdle()
         assertEquals("setup: expected play(\"TX1\")", listOf("TX1"), player.playCalls)
 
+        // Merely showing a different over's detail — never tapping its own play control — is the
+        // same "leaving a screen" shape C10 reverses: the bar, not this screen, decides whether
+        // TX1 keeps playing.
         current = state(detail().copy(id = "TX2"))
         composeTestRule.waitForIdle()
 
-        assertTrue(
-            "expected stop() when a different over's detail replaces this one, " +
-                "got stopCallCount=${player.stopCallCount}",
-            player.stopCallCount >= 1,
+        assertEquals(
+            "C10: showing a different over's detail must not stop the first one's playback " +
+                "unless its own play control is actually tapped",
+            0,
+            player.stopCallCount,
         )
     }
 
