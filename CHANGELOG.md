@@ -342,7 +342,7 @@ defect is scenario-only.
 
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
 
-### (this commit) — WPRESEED: R-1076 follow-up - merged WPDETAILRES's resolver-output seeding (R-1071) into the same branch as the WPNAVHOST merge above and this round's own R-1076 fix
+### 499dd873 — WPRESEED: R-1076 follow-up - merged WPDETAILRES's resolver-output seeding (R-1071) into the same branch as the WPNAVHOST merge above and this round's own R-1076 fix
 
 **Scope:** `CHANGELOG.md` only (a merge conflict resolution, keeping both sides' entries); no code
 conflict.
@@ -369,7 +369,7 @@ green, `BUILD SUCCESSFUL`.
 
 **Left open / not done:** none new.
 
-### (this commit) — WPRESEED: R-1076 follow-up - merged WPNAVHOST's `improve-live-quiet` scenario (R-1061) and extracted its own `LevelStatus`/`CaptureState` facets into `republishImproveLiveQuietFacets()`
+### 96742166 — WPRESEED: R-1076 follow-up - merged WPNAVHOST's `improve-live-quiet` scenario (R-1061) and extracted its own `LevelStatus`/`CaptureState` facets into `republishImproveLiveQuietFacets()`
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (the one extraction, on top of the
 merge). Everything else this merge brings in is WPNAVHOST's own row, not touched further.
