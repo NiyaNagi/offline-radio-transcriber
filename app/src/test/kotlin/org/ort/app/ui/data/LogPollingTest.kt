@@ -545,6 +545,24 @@ class LogPollingTest {
         assertEquals(true, state.quickFilters.single { it.id == LogQuickFilterId.All }.selected)
     }
 
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 loadingState carries loading true and no empty-state claim`() {
+        val state = LogPolling.loadingState()
+
+        assertTrue(state.loading)
+        assertTrue(state.items.isEmpty())
+        assertEquals(null, state.emptyState)
+    }
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 noSessionState never carries the loading flag`() {
+        val state = LogPolling.noSessionState()
+
+        assertEquals(false, state.loading)
+    }
+
     private fun session(id: String, startedAt: Long = 0L, captureMode: String? = null, audioRouteKind: String? = null) =
         SessionEntity(
             id = id,

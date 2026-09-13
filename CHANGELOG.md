@@ -32,6 +32,64 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPINIT: R-1051 gives Log/Now/Capture status/Live monitor a real loading state distinct from empty, R-1022 replaces the tour's own text-matched placeholder check with a structural marker, and the transmission detail screen names the real, structured cause of a missing over's own audio instead of guessing one)
+
+### pending — WPINIT: R-1051 — a cold-start screen renders loading, never a false empty claim, until its first real query returns
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Feedback.kt`;
+`app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt`, `NowViewState.kt`,
+`CaptureStatusViewState.kt`; `app/src/main/kotlin/org/ort/app/ui/screens/LogContent.kt`,
+`LogScreen.kt`, `NowContent.kt`, `NowScreen.kt`, `CaptureStatusContent.kt`,
+`CaptureStatusScreen.kt`, `LiveMonitorScreen.kt`; tests under
+`app/src/test/kotlin/org/ort/app/ui/screens/` and `.../ui/data/LogPollingTest.kt`.
+
+**Requirements/ACs:** register R-1051 (halt), constitution I, IV.
+
+**What changed:** the register's own bisect found the real defect: Log's initial
+`remember(sessionId) { mutableStateOf(LogPolling.noSessionState()) }`, Now's initial
+`mutableStateOf(NowViewState.Idle(...))` and Capture status's initial
+`mutableStateOf(idleCaptureStatus())` were each a real, honest *empty* claim doing double duty as
+the screen's own pre-first-poll placeholder — so a cold start (the OS killing the app mid-capture,
+then restarting it) rendered "No overs yet"/"Not capturing" for up to one poll interval even while
+the session already held dozens of overs. Added a genuine third state, structurally distinct from
+both empty and real data: `LogScreenViewState.loading`/`LogPolling.loadingState()`,
+`NowViewState.Loading` (a new sealed case), and `CaptureStatusViewState.loading`/a private
+`loadingCaptureStatus()` seed in `CaptureStatusContent.kt`. Each screen (`LogScreen`, `NowScreen`,
+`CaptureStatusScreen`, and `LiveMonitorScreen` — the same `CaptureStatusViewState` its own sibling
+renders) now checks its own `loading` flag first, ahead of every other branch, and renders the new
+shared `LoadingState` composable (`Feedback.kt`, guide §6.8's missing third treatment: "only when a
+real fetch is in flight, and only where the content will land") instead. `LoadingState` carries a
+real Compose `testTag` (`LOADING_STATE_TEST_TAG = "loading-state"`) rather than relying on its own
+rendered copy — see the R-1022 commit below for why. Search's own `result == null` (Initial state,
+not conflated with a real empty `SearchResult`) and the live monitor's overs section (gated by the
+same `status.loading`) were checked and found not to share this defect; `SessionsContent`/
+`DigestContent` were not touched (WPREC is rewriting both into Recordings) — left for after that
+merge, per this prompt's own scope.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.LogScreenTest"
+--tests "org.ort.app.ui.screens.NowScreenTest" --tests "org.ort.app.ui.screens.CaptureStatusScreenTest"
+--tests "org.ort.app.ui.data.LogPollingTest"` and `:app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.screens.NowContentTest" --tests "org.ort.app.ui.screens.CaptureStatusContentTest"`
+(the isolated JVM these two `*ContentTest` classes require) — all green. Each of the three
+Content-level fixes (`LogContent`, `NowContent`, `CaptureStatusContent`) shown failing first by
+temporarily reverting its own seed back to the pre-fix value and re-running its own
+`R_1051 first frame is loading...` test with `composeTestRule.mainClock.autoAdvance = false`
+(freezes recomposition before the session-tied poll can run): each failed with
+`AssertionError: ... could not find any node ... TestTag = 'loading-state'` — the loading marker
+genuinely absent — then passed again once the fix was restored. Full gate:
+`.\gradlew.bat dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) —
+BUILD SUCCESSFUL in 16m51s, 1109 tasks, zero failures; `-p buildSrc test`; `python
+tools\spec-check\spec_check.py` — all 8 checks PASS; `:app:ktlintCheck :app:detekt` (repo-wide) —
+green. Device (`ort_audit_cf07`/port 5564, `wm size 1260x2772`, `wm density 420`,
+`install.ps1 -Clear`): three genuinely cold runs each (`am force-stop` + on-device
+`rm -rf files/tour` before every run — see the R-1022 commit's own note on why the extra
+`rm -rf` was needed) of `overnight-live/N01-now-live` and `overnight/L01-log` — all six captures
+show the real, populated screen (43 overs · 9 stations, "Live"; a fully-rowed Log), never "No overs
+yet"/"Not capturing". Emulator shut down after (`adb emu kill`).
+
+**Left open / not done:** `SessionsContent`/`DigestContent` carry the identical shape and are left
+for WPREC's own Recordings rewrite to close, per this prompt's explicit scope boundary.
+
 ## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor); R-1047 sent back once and re-fixed so the statement is actually visible)
 
 ### 16b2432d — WPLINK: R-1047 fix — the applied-filter statement is now visible without scrolling

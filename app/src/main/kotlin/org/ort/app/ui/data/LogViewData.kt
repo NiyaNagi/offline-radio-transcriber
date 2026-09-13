@@ -125,6 +125,16 @@ public data class LogScreenViewState(
      * own kdoc).
      */
     val appliedFilterLabel: String? = null,
+    /**
+     * Register R-1051 (halt, constitution I/IV): `true` exactly for [LogPolling.loadingState] —
+     * this screen's own real initial value now, in place of the pre-fix bug where
+     * [LogPolling.noSessionState] (a real, honest "no overs yet" claim) doubled as the placeholder
+     * shown before the very first poll of a session that might already hold overs. `false` (every
+     * other producer, including [noSessionState] itself) renders exactly as before this field
+     * existed. Never `true` alongside a non-empty [items] or a non-null [emptyState] — see
+     * [LogPolling.loadingState]'s own kdoc for the one shape that sets it.
+     */
+    val loading: Boolean = false,
 )
 
 // -------------------------------------------------------------------------------------------
@@ -885,6 +895,25 @@ public object LogPolling {
             dataExtentEndMillis,
         )
     }
+
+    /**
+     * Register R-1051 (halt): the Log's real initial value once a session id is already known
+     * (`LogContent`'s own `remember(sessionId)` seed) but its first poll has not returned yet — a
+     * cold start after the OS killed the app mid-capture is exactly this window. Distinct from
+     * [noSessionState] (a real, honest claim that no session has ever started) and from every
+     * other empty state (a real claim that a query ran and found nothing): [loading] is the only
+     * field set, [items]/[quickFilters] stay empty and [emptyState] stays `null` so
+     * [org.ort.app.ui.screens.LogScreen] never has to choose between rendering a loading sentence
+     * and an empty one from the same state.
+     */
+    public fun loadingState(): LogScreenViewState = LogScreenViewState(
+        items = emptyList(),
+        quickFilters = emptyList(),
+        rejectedFocus = false,
+        rejectedExplanation = null,
+        emptyState = null,
+        loading = true,
+    )
 
     /**
      * R-247: no session at all yet (`sessionId` itself `null` — the true first-launch state) —
