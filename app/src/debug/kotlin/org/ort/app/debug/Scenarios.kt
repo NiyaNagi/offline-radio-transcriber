@@ -1289,7 +1289,10 @@ public object Scenarios {
             ),
         )
         SharedPreferencesSettingsStore(
-            context.applicationContext.getSharedPreferences(SharedPreferencesSettingsStore.PREFS_NAME, Context.MODE_PRIVATE),
+            context.applicationContext.getSharedPreferences(
+                SharedPreferencesSettingsStore.PREFS_NAME,
+                Context.MODE_PRIVATE,
+            ),
         ).audioBudgetGb = 1
         val audioDir = File(context.filesDir, "audio/$sessionId")
         audioDir.mkdirs()
@@ -1327,7 +1330,10 @@ public object Scenarios {
             ),
         )
         db.sessionDao().setArchiveKept(archiveSessionId)
-        db.sessionDao().setArchiveRemoved(archiveSessionId, removedAtMillis = SystemClock.wallMillis() - 24 * 3_600_000L)
+        db.sessionDao().setArchiveRemoved(
+            archiveSessionId,
+            removedAtMillis = SystemClock.wallMillis() - 24 * 3_600_000L,
+        )
 
         db.sessionDao().insert(
             ScenarioFixtures.session(
@@ -1347,7 +1353,10 @@ public object Scenarios {
                 stationId = "N7ABC",
             ),
         )
-        db.sessionDao().setOverAudioRemoved(overAudioSessionId, removedAtMillis = SystemClock.wallMillis() - 2 * 24 * 3_600_000L)
+        db.sessionDao().setOverAudioRemoved(
+            overAudioSessionId,
+            removedAtMillis = SystemClock.wallMillis() - 2 * 24 * 3_600_000L,
+        )
 
         return LoadResult(2, 2, archiveSessionId)
     }
