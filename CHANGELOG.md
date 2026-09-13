@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPINIT round 2, coordinator review before merge: `NeverRetained` was itself an unrecorded guess — replaced with `Unknown`; fresh, single-AVD device evidence for Parts A/B/C and R-1055)
 
-### WPINIT: coordinator review — `NeverRetained` was never backed by an explicit record; it now reads `Unknown`
+### 97f6bfff — WPINIT: coordinator review — `NeverRetained` was never backed by an explicit record; it now reads `Unknown`
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt`;
 `app/src/test/kotlin/org/ort/app/ui/data/AudioAbsenceReasonMapperTest.kt`,
