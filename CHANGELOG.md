@@ -32,7 +32,61 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-13 (WPTESTROBUST: R-1053 - Settings' async loads no longer race the Compose test clock)
+## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
+
+### <pending-this-commit> — WPTESTROBUST: R-1043 - NavSeedTest's searchFiltersOpen now waits for the tag instead of asserting immediately, and SettingsContentTest's fixed waitUntil(5_000) calls use a shared, generous timeout constant
+
+**Scope:** `app/src/test/kotlin/org/ort/app/testing/OrtComposeTestRule.kt` (new shared constant only);
+`app/src/test/kotlin/org/ort/app/ui/navigation/NavSeedTest.kt`;
+`app/src/test/kotlin/org/ort/app/ui/settings/SettingsContentTest.kt`.
+
+**Requirements/ACs:** R-1043 (register, recurring under a loaded full gate), constitution II
+(assertions must not depend on timing that only holds on an idle machine).
+
+**What changed.**
+- **`ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS` (15,000ms)**, a new shared constant in
+  `OrtComposeTestRule.kt` — the file this suite's own build.gradle.kts comment already treats as
+  the place structural Compose-test fixes for `:app` belong. Exists so a fixed `waitUntil` that
+  genuinely cannot be expressed as idling (waiting on a `LaunchedEffect`'s real async result, not on
+  a pending frame) has one named, generous ceiling to raise again later, instead of a scattered
+  literal `5_000` nobody remembers to bump together.
+- **`SettingsContentTest`'s `AC_144` test**: its own `waitUntilTextExists` helper's default
+  (`5_000`) and its two explicit `waitUntil(5_000)` calls (waiting for the field-report consent
+  screen's toggle to render) now use the shared constant. `AC_144` polls for the field-report
+  bundle preview and destination to load (`FieldReportHost`'s own `LaunchedEffect`) before the
+  toggle can render — real async work a fixed 5s ceiling can trip on a loaded machine even though
+  the work itself always finishes; raising the ceiling, not weakening what is asserted, is the
+  correct fix per this file's own working agreement (never loosen an assertion; only what is
+  waited for should change).
+- **`NavSeedTest`'s `searchFiltersOpen` test** asserted `search-filters-sheet` exists immediately
+  after `setContent`, the one case in this file not built on its own `waitUntil...Exists` pattern
+  every other case already uses. Added a `waitUntilTagExists` helper (mirroring the file's existing
+  `waitUntilContentDescriptionExists`/`waitUntilTextExists`) and used it before the assertion.
+
+**Verified.**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.settings.SettingsContentTest"` — green
+  (0 failures), all 8 tests in the class including `AC_144`.
+- `./gradlew :app:smokeTestDebugUnitTest --tests "org.ort.app.ui.navigation.NavSeedTest"` — green
+  (`NavSeedTest` is one of this module's own isolated-JVM classes, `composeIdlePoisoningSmokeTestDebugUnitTest`
+  in `app/build.gradle.kts`; it is excluded from plain `testDebugUnitTest`, so use this task for it).
+- Load rate for `NavSeedTest`, same command with `:pipeline:testDebugUnitTest` racing it in one
+  `--parallel` Gradle invocation: **6/6 clean** after the fix (not reproduced flaky at this load
+  either before or after — the register's report of failure under a full gate implies a higher
+  concurrency than one extra module's tests provide; fixed on inspection per the working agreement's
+  own instruction for `searchFiltersOpen` — it is the one test in the file with no wait at all
+  before its assertion, an unambiguous gap regardless of whether this session's own load reproduced
+  the timeout).
+
+**Left open / not done:** `CaptureStatusContentTest`'s `R_232` NPE
+(`ActivityController.windowFocusChanged`) was not reproduced — 8/8 clean alone via its own
+`smokeTestDebugUnitTest` task, and 6/6 clean racing a full `:pipeline:testDebugUnitTest` in one
+`--parallel` invocation (the same load used for R-1053's own after-figures). Not fixed: no
+discriminating failure to fix against, and the register's own account (NPE inside a Robolectric-
+internal `ActivityController` method, no application frame) suggests a Robolectric-side scenario/
+focus race under heavier concurrency than reproduced here. Every other fixed `waitUntil(` site in
+`app/src/test/**` was surveyed (grep, reported in full in this session's own report) and left
+unchanged — no other file in the survey showed the specific symptom this round was asked to close,
+and this round's own file ownership does not extend to speculative changes across the whole suite.
 
 ### 5bb93147 — WPTESTROBUST: R-1053 - every async page-load in SettingsContent.kt defers its state write to a freshly entered Dispatchers.Main.immediate, closing the CalledFromWrongThreadException that was blocking the Release workflow
 
