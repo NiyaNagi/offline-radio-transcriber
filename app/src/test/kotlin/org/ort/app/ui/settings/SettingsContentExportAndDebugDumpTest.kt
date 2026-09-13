@@ -2,6 +2,7 @@
 
 import android.content.Intent
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
@@ -12,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -33,6 +35,19 @@ import org.robolectric.Shadows.shadowOf
  * `SettingsContentTest.kt` otherwise uses — [rememberLauncherForActivityResult] needs a real
  * `ComponentActivity` behind it to register against, and this suite needs that same activity
  * afterward to read back the `Intent` Robolectric's own shadow recorded for it.
+ *
+ * WPTESTROBUST (R-1053): both tests below click a `Save` button whose real handler hops onto
+ * [LocalSettingsSaveIoDispatcher] for its disk write, then mutates Compose state afterward — see
+ * that local's own doc comment in `SettingsContent.kt` for the full account, including why
+ * providing [Dispatchers.Unconfined] here is real (it removes one genuine thread hop from this
+ * test's own run) but not what actually closes R-1053: the production fix is the
+ * `withContext(Dispatchers.Main.immediate)` around each state write in `SettingsContent.kt`
+ * itself, needed because `ExportCoordinator.build`/`LocalSaveBundleBuilder.write`/`.preview` each
+ * already wrap themselves in their own real `withContext(Dispatchers.IO)` two calls deep, past
+ * where overriding [LocalSettingsSaveIoDispatcher] alone can reach. Reproduced at roughly 30-40%
+ * of runs, alone, on unpatched `main` (`CalledFromWrongThreadException`, `DefaultDispatcher-worker-N`,
+ * no application frame in the stack); 0 of 20 after the production fix, both alone and racing a
+ * full `:pipeline:testDebugUnitTest` in parallel.
  */
 @RunWith(RobolectricTestRunner::class)
 class SettingsContentExportAndDebugDumpTest {
@@ -44,12 +59,14 @@ class SettingsContentExportAndDebugDumpTest {
     @Requirement("R-1009")
     fun `WPW Save file launches a real SAF CreateDocument intent naming the real suggested export file`() {
         composeTestRule.setContent {
-            OrtTheme {
-                SettingsContent(
-                    context = composeTestRule.activity,
-                    onDrawer = {},
-                    initialScreen = SettingsScreenId.EXPORT,
-                )
+            CompositionLocalProvider(LocalSettingsSaveIoDispatcher provides Dispatchers.Unconfined) {
+                OrtTheme {
+                    SettingsContent(
+                        context = composeTestRule.activity,
+                        onDrawer = {},
+                        initialScreen = SettingsScreenId.EXPORT,
+                    )
+                }
             }
         }
         // R-1045(b): the button's own real text now reads `Save file · <filename> · <size>` (the
@@ -84,12 +101,14 @@ class SettingsContentExportAndDebugDumpTest {
     @Requirement("FR-OBS-3")
     fun `WPDUMP Save launches a real SAF CreateDocument intent naming one unified zip`() {
         composeTestRule.setContent {
-            OrtTheme {
-                SettingsContent(
-                    context = composeTestRule.activity,
-                    onDrawer = {},
-                    initialScreen = SettingsScreenId.DIAGNOSTICS,
-                )
+            CompositionLocalProvider(LocalSettingsSaveIoDispatcher provides Dispatchers.Unconfined) {
+                OrtTheme {
+                    SettingsContent(
+                        context = composeTestRule.activity,
+                        onDrawer = {},
+                        initialScreen = SettingsScreenId.DIAGNOSTICS,
+                    )
+                }
             }
         }
         composeTestRule.waitUntil(5_000) {
@@ -98,6 +117,7 @@ class SettingsContentExportAndDebugDumpTest {
 
         composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasTestTag(LOCAL_SAVE_SAVE_BUTTON_TEST_TAG))
         composeTestRule.onNodeWithTag(LOCAL_SAVE_SAVE_BUTTON_TEST_TAG).performClick()
+        composeTestRule.waitForIdle()
 
         val started = shadowOf(composeTestRule.activity).nextStartedActivityForResult
         assertNotNull("expected Save to actually launch a SAF picker intent", started)

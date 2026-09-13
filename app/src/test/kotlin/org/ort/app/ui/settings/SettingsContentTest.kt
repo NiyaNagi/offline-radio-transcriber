@@ -19,6 +19,7 @@ import androidx.test.core.app.ApplicationProvider
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.testing.ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -37,7 +38,10 @@ class SettingsContentTest {
 
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
 
-    private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 5_000) {
+    private fun ComposeContentTestRule.waitUntilTextExists(
+        text: String,
+        timeoutMillis: Long = ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS,
+    ) {
         waitUntil(timeoutMillis) {
             runCatching { onNodeWithText(text, substring = true).assertExists() }.isSuccess
         }
@@ -159,7 +163,7 @@ class SettingsContentTest {
         composeTestRule.onNode(hasScrollAction())
             .performScrollToNode(hasContentDescription("Send field report…"))
         composeTestRule.onNodeWithContentDescription("Send field report…").performClick()
-        composeTestRule.waitUntil(5_000) {
+        composeTestRule.waitUntil(ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS) {
             composeTestRule.onAllNodesWithTag(FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG).fetchSemanticsNodes()
                 .isNotEmpty()
         }
@@ -174,7 +178,7 @@ class SettingsContentTest {
         composeTestRule.onNode(hasScrollAction())
             .performScrollToNode(hasContentDescription("Send field report…"))
         composeTestRule.onNodeWithContentDescription("Send field report…").performClick()
-        composeTestRule.waitUntil(5_000) {
+        composeTestRule.waitUntil(ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS) {
             composeTestRule.onAllNodesWithTag(FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG).fetchSemanticsNodes()
                 .isNotEmpty()
         }

@@ -2,6 +2,7 @@ package org.ort.app.ui.navigation
 
 import android.content.Context
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
@@ -134,6 +135,10 @@ class NavSeedTest {
 
     private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 15_000) {
         waitUntil(timeoutMillis) { onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    private fun ComposeContentTestRule.waitUntilTagExists(tag: String, timeoutMillis: Long = 15_000) {
+        waitUntil(timeoutMillis) { onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() }
     }
 
     @Test
@@ -309,6 +314,15 @@ class NavSeedTest {
         composeTestRule.setContent {
             OrtTheme { OrtNavHost(sessionId = null, seed = NavSeed(searchFiltersOpen = true)) }
         }
+        // R-1043: this test asserted immediately after `setContent` with no wait at all — the one
+        // case in this file not built on this class's own `waitUntil...Exists` discipline every
+        // other case here already uses. `assertExists()` needs the node in the semantics tree *now*;
+        // under a loaded full gate, `setContent`'s own internal idle wait can return before the
+        // filters sheet's own composition has actually landed, and a bare assertion has no recourse
+        // but to fail outright (`ComposeTimeoutException`/`AssertionError`, never a legitimate "the
+        // sheet is not open"). Polling for the tag first is the same fix this file already applies
+        // to every other seed.
+        composeTestRule.waitUntilTagExists("search-filters-sheet")
         composeTestRule.onNodeWithTag("search-filters-sheet").assertExists()
     }
 
