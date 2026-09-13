@@ -32,6 +32,35 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (spec: FR-SEG-10 and Q22 - the VAD that cut a segment is recorded, and whether capture may continue without the specified one is asked)
+
+### spec · FR-SEG-10, AC-162, Q22: a missing VAD model silently switched capture to an unspecified detector
+
+**Scope:** `spec/functional-spec.md` (FR-SEG-10 after FR-SEG-9; AC-162 after AC-161), `spec/open-questions.md`
+(draft 3.7 note, Q22 in the status table and as a full entry, six open), `AGENTS.md` (counts: 290 requirement ids,
+162 acceptance criteria), `results/ui-audit/register.md` (R-1054), `results/coverage-matrix.md` (regenerated). Lead-owned
+documents only; no product code.
+
+**Requirements/ACs:** FR-SEG-10 (new), AC-162 (new), Q22 (opened). Bears on FR-SEG-1, FR-SEG-5, FR-SEG-7, FR-SEG-9,
+CON-SEG-1, FR-OBS-1, D39, D40, D41, constitution I, IV and VI; register R-1052, R-1054.
+
+**What changed:** R-1052's fix verified every model before native load and so made a missing or corrupt VAD model a
+real, reachable state. Its builder then established with file:line that capture continues on an RMS-energy VAD
+(`RealCaptureService.buildSegmenter`) and never drops an over. That keeps constitution IV but contradicts FR-SEG-1,
+which names Silero or TEN-VAD only, and FR-SEG-7 with CON-SEG-1, which forbid segmentation from varying because
+boundaries are the one decision reprocessing cannot undo. The spec had never chosen between them; the code chose
+silently, with one diagnostic line as the only trace. Two things are recorded rather than decided by the lead:
+FR-SEG-10 requires every session and transmission to record which detector cut it, marked when it is not an FR-SEG-1
+detector and carried into `vad_stats` and the debug dump - true under any answer, and plainly required by constitution
+VI; and Q22 asks the product owner whether capture may continue on such a detector and how loudly, recommending that
+it continue, disclosed without a tap the way D40 treats the over-audio budget, with re-segmentation from the
+continuous archive (on by default under D39) once the specified VAD is back.
+
+**Verified:** `python tools/spec-check/spec_check.py` and `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck`,
+run before this commit - results in the commit that carries this entry.
+
+**Left open / not done:** Q22 itself. FR-SEG-10 is specified, not built: AC-162 reads uncovered until a builder
+records the detector identity on the session and transmission and in `vad_stats`.
 ## 2026-09-12 (WPMODEL round 2: R-1052's own fix regressed real installs — every downloaded or side-loaded model would have read Failed; fixed with one shared sidecar rule across bundled/download/sideload, an upgrade path for a sha256-only record, and an atomic sideload)
 
 ### bb3dd013 — WPMODEL round 2: R-1052 fix's own regression closed — ModelAcquisition.fetch/sideload now write the same verified-install sidecars ModelFileVerifier reads, sideload is atomic, and a sha256-only upgrade install still loads

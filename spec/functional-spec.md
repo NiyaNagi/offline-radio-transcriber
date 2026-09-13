@@ -551,6 +551,15 @@ reprocessable. This is the only mechanism that fully closes the gap, and it is a
 than a Must because at ~1 GB per 8-hour shift it is affordable on the reference device and not
 on the floor device. Where enabled, records SHALL be marked as re-segmentable.
 
+**FR-SEG-10 (M)** — Every session and every transmission SHALL record **which voice-activity
+detector produced its segment boundaries** — the model identity and version when it is one FR-SEG-1
+names, or the fallback's identity when it is not — alongside whether rig squelch fusion (FR-SEG-5)
+applied. A segment whose edges were cut by a detector FR-SEG-1 does not name SHALL be marked as such
+at the data layer, shown wherever that segment's provenance is shown, carried in the `vad_stats` line
+(FR-OBS-1, D41) and the debug dump, and SHALL NOT be presented as conforming to FR-SEG-7. Whether
+capture may continue on such a detector at all, and how loudly the operator is told, is open as Q22;
+this requirement holds under any answer, because a boundary nobody can attribute is exactly the
+unrecoverable, unstated error CON-SEG-1 exists to prevent.
 > This also bounds AC-39. A T0 capture reprocessed at T3 matches a native T3 capture **only
 > because both were segmented identically**, which FR-SEG-7 is what guarantees. Without it,
 > AC-39 would be testing a claim that is not true.
@@ -2752,6 +2761,10 @@ NFR-2 stated latency targets that nothing tested.
   constitution I, constitution III).- **AC-126** Station and frequency views show activity patterns that **distinguish "not heard"
   from "not listening"**, verified against a session containing a capture gap (FR-UI-11,
   FR-UI-12).
+- **AC-162** With the FR-SEG-1 detector unavailable, a session still captures and every transmission
+  it produces records the detector that actually cut it, marked as not an FR-SEG-1 detector, in the
+  database, the `vad_stats` line and the debug dump; with the FR-SEG-1 detector available the same
+  fields name it - verified by driving capture both ways (FR-SEG-10, FR-SEG-7, constitution VI).
 - **AC-80** Full database and audio export completes and re-imports on another device,
   offering reprocessing for anything eligible (FR-STO-6, FR-REP-10).
 - **AC-81** Captured audio is not exposed to the system media store (FR-STO-8).

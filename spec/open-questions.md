@@ -33,6 +33,10 @@ WPDATA): an over can be marked for training and labelled with its true callsign,
 and a free-text note. That opens **Q21**, whether any of it may ever leave the device. Until decided,
 labels are excluded from every outbound path.
 
+**Draft 3.7 update.** R-1052's fix made a missing or corrupt VAD model a real, reachable state, and
+showed that the code then continues capture on an unspecified energy VAD. **FR-SEG-10** now requires
+every segment to record which detector cut it, and **Q22** asks whether capture should continue on
+such a detector at all, and how loudly the operator is told.
 ## Status, 7 September 2026 — the register is nearly empty
 
 **Closed:** Q3–Q11, Q13, Q14, Q15 and Q17, recorded as D19–D32 in spec §3. Q1 is closed but for
@@ -40,9 +44,10 @@ three hardware verifications (VID/PID, command terminator, whether `AI` pushes `
 [`../docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md). **Q12 is settled by
 rule**: a reference-tier lever that does not measure on the eval fold is deleted, not disabled.
 
-**Five remain.** Two concern the same hour of audio; two more were opened by the field-report
+**Six remain.** Two concern the same hour of audio; two more were opened by the field-report
 channel (D37, D38) and concern where it uploads to and how long what it uploads is kept; one more
-was opened when operator training labels were built. Q20, opened by an audit of what `capture.log`
+was opened when operator training labels were built, and one more when a missing VAD model turned out
+to switch capture to an unspecified detector. Q20, opened by an audit of what `capture.log`
 actually contained against what FR-OBS-1 promised, is closed by D41:
 
 | # | Question | Why it is still open |
@@ -52,6 +57,7 @@ actually contained against what FR-OBS-1 promised, is closed by D41:
 | **Q18** | Field-report destination | The repository is public today, by the product owner's own choice, "for now" — see D38. It closes when a gated upload happens against it, or the destination goes private, whichever comes first |
 | **Q19** | Uploaded bundle retention | Nothing yet says how long a field report survives at the destination, or who is responsible for deleting it |
 | **Q21** | May training labels leave the device? | Labels carry a third party's true callsign and a free-text note; the operator wants them for training, which may mean off-device. Excluded from every outbound path until decided |
+| **Q22** | Capture with the specified VAD unavailable | FR-SEG-1 and FR-SEG-7 cannot hold alongside constitution IV when the VAD model is missing; the code silently continues on an energy VAD. Recommended: continue, disclosed without a tap and recorded, and re-segment from the archive when possible |
 
 Everything else that could be decided on paper has been decided. **Q14 stays closed**: the
 product owner did not reopen the question, they reversed the answer — see D39 below.
@@ -562,6 +568,36 @@ retained indefinitely at the destination.
 
 ---
 
+### Q22 — May capture continue when the specified VAD is unavailable? · owner: product
+
+**Question.** FR-SEG-1 requires segmentation by Silero VAD (or TEN-VAD). When that model is
+unavailable, the code substitutes an RMS-energy VAD (`RealCaptureService.buildSegmenter`, register
+R-1054) and keeps capturing. Constitution IV says capture never blocks, drops or dies; FR-SEG-7 and
+CON-SEG-1 say segmentation must not vary, because boundaries are the one decision reprocessing cannot
+undo. With the model missing those cannot both hold: stopping keeps segmentation conformant and loses
+the night; continuing keeps the night and cuts it with an unspecified, cruder detector. The spec never
+chose, and the code chose silently.
+
+**Why it matters.** It should be rare - the VAD model is bundled, verified before load since R-1052,
+and re-copied from the APK's assets on the next launch - but when it happens it lasts the session,
+and today the only trace is one diagnostic line on the capture status surface.
+
+**Options.**
+(a) **Stop capture** and raise an alarm. Conformant segmentation; breaks constitution IV and loses audio.
+(b) **Continue on the fallback, loudly and recorded.** Record which detector cut every segment
+(FR-SEG-10, already required); disclose it without a tap on the capture status surface and in the live
+bar's state label for as long as it lasts, the way D40 treats the over-audio budget; and where the
+continuous archive (FR-SEG-9, on by default under D39) covers the interval, offer to re-segment it with
+the specified VAD once that is back.
+(c) Continue silently - what the code does today; contradicts constitution I and FR-SEG-7.
+
+**Recommendation.** (b). The continuous archive is the mechanism FR-SEG-9 names as fully closing
+CON-SEG-1's gap, and it is on by default, so a night cut by the fallback is usually recoverable rather
+than lost - provided every affected segment is marked, which FR-SEG-10 requires under any answer.
+Until decided, capture continues as it does today, FR-SEG-10 applies, and no requirement or acceptance
+criterion should assume either a loud disclosure or a stop.
+
+---
 ### Q21 — May operator training labels ever leave the device? · owner: product
 
 **Question.** The operator asked to mark, label and rate overs "for training". The data layer now
