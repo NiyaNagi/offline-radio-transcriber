@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
 
-### pending — WPCAP: N08 Capture built as one surface, merging N04/N06/N07, carrying D40's over-audio warning and D39's archive disclosure
+### 3b5d0e0a — WPCAP: N08 Capture built as one surface, merging N04/N06/N07, carrying D40's over-audio warning and D39's archive disclosure
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/CaptureScreen.kt` (new), `CaptureStatusContent.kt`
 (rewired), `CaptureStatusScreen.kt`/`LiveMonitorScreen.kt` (three composables promoted `internal`
