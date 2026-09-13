@@ -109,12 +109,28 @@ public data class FailureHostActions(
  * making room for itself. The `content`/`contentTopPadding` contract itself is unchanged by
  * R-300's own fix below (see [BannerOverlay]'s kdoc) — WP4 and every other destination-owning
  * package keep reading it exactly as before.
+ *
+ * [reservedBottomHeight] (register R-1061): how much room, at the bottom of this host's own
+ * viewport, a caller's pinned bottom bar (`org.ort.app.ui.navigation.OrtNavHost`'s own
+ * [org.ort.app.ui.components.TransportBar], never owned by this package) will occupy — subtracted
+ * from [BANNER_MAX_HEIGHT_FRACTION]'s own basis before the cap is applied (see [BannerOverlay]'s
+ * own kdoc for why). `0.dp` (the default) changes nothing for every existing caller, including
+ * every one of this file's own tests: the cap was always tuned ("55% ... leaves the destination's
+ * own header, title and at least one real control reachable underneath") against a viewport with
+ * *no* bottom bar in it at all — a live session's own pinned bar was a second, independent claim
+ * on that same "underneath" region nothing here ever subtracted, so a banner already at (or near)
+ * the cap left less real content room than the tuning assumed the moment a bar was also pinned —
+ * `Improve`'s own `Root` board (no fixed action bar of its own, `Improve all N` sitting inline near
+ * the top of its one scrollable column) is where this was found: banner near the cap plus a live
+ * bar left `Improve all N` an unreachable sliver. Never applied to [HEADER_HEIGHT] or
+ * [BANNER_CONTENT_CLEARANCE] — those already correctly describe the header/gap, not the bar.
  */
 @Composable
 public fun FailureHost(
     sessionId: String?,
     modifier: Modifier = Modifier,
     actions: FailureHostActions = FailureHostActions(),
+    reservedBottomHeight: Dp = 0.dp,
     content: @Composable (contentTopPadding: Dp) -> Unit,
 ) {
     val context = LocalContext.current
@@ -161,7 +177,7 @@ public fun FailureHost(
             actions = actions,
             dismiss = dismiss,
             onBannerHeightChanged = { bannerHeight = it },
-            viewportHeight = maxHeight,
+            viewportHeight = bannerCapViewportHeight(maxHeight, reservedBottomHeight),
             assetSwapSelectedOption = assetSwapSelectedOption,
             onAssetSwapSelectOption = { assetSwapSelectedOption = it },
         )
@@ -236,6 +252,22 @@ private val HEADER_HEIGHT: Dp = 44.dp
  * underneath on every device this app targets; anything taller than that (multiple bodies stacked,
  * an even larger font scale) still scrolls inside the banner itself, with the hint below. */
 private const val BANNER_MAX_HEIGHT_FRACTION = 0.55f
+
+/**
+ * Register R-1061: [BannerOverlay]'s own `viewportHeight` parameter — pulled out to a plain
+ * function (the same "pull the decision out of the composable" reasoning
+ * `org.ort.app.ui.navigation.OrtNavHost.kt`'s own `bannerClearance`/`resolveTransportBarState`
+ * already establish) so the reservation this file's own [FailureHost] kdoc documents is directly
+ * unit-testable without composing a `BoxWithConstraints` at all. `reservedBottomHeight` is
+ * subtracted from [totalViewportHeight] *before* [BANNER_MAX_HEIGHT_FRACTION] is applied — a live
+ * bar reserving real room lowers the cap itself, rather than being subtracted from an
+ * already-computed cap (which could still leave the cap taller than the space actually free once
+ * the bar is also pinned). Never negative: a [reservedBottomHeight] taller than
+ * [totalViewportHeight] itself (defensive only — this file's one real caller never constructs
+ * that) floors the basis at `0.dp`, not a negative cap [heightIn] would reject.
+ */
+internal fun bannerCapViewportHeight(totalViewportHeight: Dp, reservedBottomHeight: Dp): Dp =
+    (totalViewportHeight - reservedBottomHeight).coerceAtLeast(0.dp)
 
 /** Register R-883 (halt, validator V11, font scale 2.0): on the real device, [onHeightMeasured]'s
  * own reported height and the destination's own `contentTopPadding` were already the banner's real
