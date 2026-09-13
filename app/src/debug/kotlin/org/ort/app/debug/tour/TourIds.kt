@@ -32,9 +32,13 @@ import org.ort.data.OrtDatabase
  *   to look up beyond parsing the number).
  * - `thread`: `any` (the first transmission in [sessionId] carrying a non-null `threadId`), or a
  *   literal thread id.
- * - `logFilterFrequency` / `logFilterFromMillis` / `logFilterToMillis`: literal values assembled
- *   into one [LogFilterSelection] (R-276's own shape — see [NavSeed.pendingLogFilter]'s own doc
- *   comment for why only these three fields are seedable at all).
+ * - `logFilterFrequency` / `logFilterFromMillis` / `logFilterToMillis` / `logFilterTransmissionIds`:
+ *   literal values assembled into one [LogFilterSelection] — any one of the four is enough to
+ *   build a non-null selection (register R-1047: before that fix, only `logFilterFrequency` could;
+ *   an hour-window-only or curated-overs-only step had no way to seed the Log at all).
+ *   `logFilterTransmissionIds` is a comma-joined list of literal transmission ids (no lookup —
+ *   `overnight`'s own fixture ids like `scenario-overnight-tx02` are already deterministic and
+ *   literal, unlike `transmission`'s symbolic states above).
  * - `captureLevelMeter`: `true` (anything else is `false`/absent).
  * - `reviewSession`: `self` (this step's own loaded [sessionId] — `Settings-Storage`'s "Review" link
  *   always seeds *some* session, and the one this step just loaded is the only one a step naming no
@@ -147,12 +151,30 @@ public object TourIds {
     private fun resolveFrequencyHz(value: String): Long =
         value.toLongOrNull() ?: error("drillIn frequency '$value' is not a Hz integer")
 
+    // Register R-1047 (halt): before this fix, a `LogFilterSelection` was only ever built when
+    // `logFilterFrequency` was present — an hour-window-only or curated-overs-only filter
+    // (`logFilterFromMillis`/`logFilterToMillis`/`logFilterTransmissionIds`, no frequency) could
+    // not be seeded by the tour at all, so R-1047's own verification requirement (a tour step
+    // proving the Log states an applied filter, never leaving `All` selected, for a selection kind
+    // with no frequency chip of its own) had no drillIn shape to reach that state with. Fixed to
+    // build a selection from *any* of the four keys — `null` only when none of them is present,
+    // the same "nothing to seed" case this always returned for a step naming no log-filter key.
     private fun resolveLogFilter(drillIn: Map<String, String>): LogFilterSelection? {
-        val frequencyHz = drillIn["logFilterFrequency"]?.let { resolveFrequencyHz(it) } ?: return null
+        val frequencyHz = drillIn["logFilterFrequency"]?.let { resolveFrequencyHz(it) }
+        val fromMillis = drillIn["logFilterFromMillis"]?.toLongOrNull()
+        val toMillis = drillIn["logFilterToMillis"]?.toLongOrNull()
+        val transmissionIds = drillIn["logFilterTransmissionIds"]
+            ?.split(",")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.toSet()
+            ?.takeIf { it.isNotEmpty() }
+        if (frequencyHz == null && fromMillis == null && toMillis == null && transmissionIds == null) return null
         return LogFilterSelection(
             frequencyHz = frequencyHz,
-            fromMillis = drillIn["logFilterFromMillis"]?.toLongOrNull(),
-            toMillis = drillIn["logFilterToMillis"]?.toLongOrNull(),
+            fromMillis = fromMillis,
+            toMillis = toMillis,
+            transmissionIds = transmissionIds,
         )
     }
 }

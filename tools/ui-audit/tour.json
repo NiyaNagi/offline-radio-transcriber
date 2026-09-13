@@ -260,6 +260,10 @@
 
     { "id": "overnight-live/N01-now-live@2x", "scenario": "overnight-live", "destination": "NOW", "fontScale": 2.0 },
     { "id": "overnight/CF07-settings-export@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "EXPORT" }, "fontScale": 2.0 },
-    { "id": "overnight/CF07-settings-export@2x-end", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "EXPORT" }, "fontScale": 2.0, "scroll": "end" }
+    { "id": "overnight/CF07-settings-export@2x-end", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "EXPORT" }, "fontScale": 2.0, "scroll": "end" },
+
+    { "id": "overnight/L01-log-filtered-overs", "scenario": "overnight", "destination": "LOG", "drillIn": { "logFilterTransmissionIds": "scenario-overnight-tx02" } },
+
+    { "id": "corrected/D02-inferred-corrected", "scenario": "corrected", "destination": "LOG", "drillIn": { "transmission": "inferred" } }
   ]
 }

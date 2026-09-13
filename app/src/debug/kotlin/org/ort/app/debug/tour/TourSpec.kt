@@ -16,7 +16,12 @@ import org.json.JSONObject
  * `NavSeed`, a public seam `OrtNavHost`/`rememberReaderNavigator` both accept, closing the v1 gap
  * this class's own history records): `transmission` (`confirmed`|`inferred`|`ambiguous`|`unknown`
  * or a literal id), `station` (a callsign or a literal id), `frequency` (a literal Hz value),
- * `thread` (`any` or a literal id), `logFilterFrequency`/`logFilterFromMillis`/`logFilterToMillis`,
+ * `thread` (`any` or a literal id), `logFilterFrequency`/`logFilterFromMillis`/`logFilterToMillis`
+ * (register R-1047: any one of these three now resolves to a real `LogFilterSelection` — an
+ * hour-window-only step needs no `logFilterFrequency` at all — see `TourIds.resolveLogFilter`'s
+ * own doc comment), `logFilterTransmissionIds` (register R-1047: a comma-joined list of literal
+ * transmission ids, assembled into `LogFilterSelection.transmissionIds` — the D11/R04-shaped "N
+ * curated overs" filter, which needs no frequency or time window at all),
  * `captureLevelMeter` (`true`), `reviewSession` (`self` or a literal session id),
  * `frequencyInitialView` (`Detail`|`Change`), `settingsScreen` (a `SettingsScreenId` name — carried
  * through `NavSeed` now, same key as before). **v4** (WP3 round 14's `NavSeed` fields, after WP5/WP7/
@@ -103,6 +108,7 @@ public data class TourStep(
             "logFilterFrequency",
             "logFilterFromMillis",
             "logFilterToMillis",
+            "logFilterTransmissionIds",
             "captureLevelMeter",
             "reviewSession",
             "reviewSessionView",
