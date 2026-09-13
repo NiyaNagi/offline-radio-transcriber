@@ -32,7 +32,82 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-12 (WPUI: C10 the transport bar, replacing the plain live bar host-wide, and its own reversal of R-1006's stop-on-leave — the bar, not the screen, now owns playback)
+## 2026-09-12 (WPREC: RC01 Recordings, replacing Earlier nights as the home for sessions)
+
+### 06266fa4 — WPREC: RC01 Recordings — the session list, both storage budget cards, and the filter chips
+
+**Scope:** new package `app/src/main/kotlin/org/ort/app/ui/recordings/**` (`RecordingsViewData.kt`,
+`RecordingsViewStateMapper.kt`, `RecordingsPolling.kt`, `RecordingsScreen.kt`,
+`RecordingsContent.kt`) and its tests under `app/src/test/kotlin/org/ort/app/ui/recordings/**`.
+Deliberately **does not** touch `ReaderDestination.kt`, `Drawer.kt` or `OrtNavHost.kt` — that
+wiring is its own isolated commit, per this session's brief, so the later merge stays small.
+
+**Requirements/ACs:** FR-STO-3, FR-STO-3d, FR-STO-3e, FR-STO-3f, D39, D40, P9, FR-OBS-4,
+AC-156..160, register R-1036, R-1037, R-1051 (design-intent row RC01).
+
+**What changed:**
+- `RecordingsViewStateMapper.map` is the pure decision behind the screen: every session row
+  (newest first), both budget cards, and the four filter chips — built entirely from
+  `org.ort.pipeline.archive.recordingSessionSummaries`, `org.ort.pipeline.capture
+  .measureStorageAccounting`/`overAudioBudgetState`, and the shared `SharedPreferencesSettingsStore`
+  archive settings (`archiveEnabled`/`archiveBudgetGb`) and `ArchiveWriteRateForecast.state` — no
+  existing measurement, budget or forecast mechanism was rebuilt.
+- **Badges are a closed, priority-ordered set**: `capturing` beats a failure count, which beats a
+  labelled count (matches the artboard's own example rows exactly); the raw-archive
+  kept/removed-with-date badge and the operator's own over-audio-removed-with-date badge are two
+  independent, never-conflated facts (`RecordingBadgeKind.ARCHIVE_REMOVED` vs
+  `.OVER_AUDIO_REMOVED`), each carrying its own real date from `archiveRemovedAtMillis`/
+  `overAudioRemovedAtMillis` — never a single collapsed "removed" badge that would hide which
+  policy did it.
+- **The over-audio card never shows an estimate as a fact**: `exceeded`/the used-of-budget fraction
+  come straight from `overAudioBudgetState`, recomputed every poll (AC-157/AC-160 — the warning
+  text changes with no separate tap needed once exceeded). The archive card's monthly-rate line is
+  explicitly suffixed "(estimated)" before any real measurement exists and "(measured)" once
+  `ArchiveWriteRateForecast.state` has one — never presented as the other (constitution VI).
+- **R-1051 (initial state is not empty state)**: `RecordingsScreen(state = null, ...)` renders a
+  distinct loading row (`RECORDINGS_LOADING_TEST_TAG`) — the "No recordings match this filter."
+  empty state only ever renders once a real (possibly empty) view-state has actually arrived.
+- Chip counts (`Has failures N`/`Labelled N`/`Archive removed N`) are computed against every
+  session regardless of which chip is currently selected, so selecting one chip never changes a
+  sibling's own count.
+- `RecordingsContent` is the stateful entry point a future host wires the `RECORDINGS`/
+  `EARLIER_NIGHTS` destination to — it polls on composition, on filter change, and after the
+  archive on/off toggle. `onOpenSession`/`onOpenOverAudioBudget` are plain callbacks (default
+  no-ops, for a caller with nothing wired yet); turning the archive on/off is **not** an external
+  callback — `RecordingsPolling.setArchiveEnabled` writes straight through the same shared
+  preferences file `:pipeline`'s own `ArchiveSettingsStore` reads, entirely inside this package.
+- **Not built in this commit**: `Recording-Session.dc.html` (RC02) — `onOpenSession` has nothing to
+  open to yet, by design (see this session's own report for the stop point). The whole-card
+  `clickable` around both budget rows (`Storage card -> CF03`) merges its own descendants for
+  accessibility, by Compose's own by-design behaviour — confirmed real, not a defect, by comparing
+  the merged vs. unmerged semantics tree (`RecordingsScreenTest`'s own `useUnmergedTree` cases).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.recordings.*"` — 20
+tests passing (10 pure `RecordingsViewStateMapperTest` cases, no database/Android context; 7
+Robolectric `RecordingsScreenTest` cases, including a font-scale-2.0 render and a merged/unmerged
+accessibility-tree case; 3 `RecordingsContentTest` cases against a real, non-`inMemory` `OrtDatabase`
+and real `SharedPreferences`). `.\gradlew.bat :app:ktlintMainSourceSetCheck
+:app:ktlintTestSourceSetCheck :app:detekt` all green. `python tools/spec-check/spec_check.py` — all
+8 checks pass, unaffected. Discrimination shown by hand for the badge-priority rule (reverted the
+`failed`/`labelled` `when` order, watched `a failed count beats a labelled count...` fail for the
+right reason, restored it). `:app:compileDebugKotlin` green.
+
+**Left open / not done:**
+- No emulator capture of this screen exists yet — it is not reachable from any destination until
+  the isolated `OrtNavHost`/`Drawer`/`ReaderDestination` commit lands; the tour cannot reach an
+  unrouted screen. Captures happen against that commit.
+- No Robolectric layout/bounds test rendering RC01 inside `OrtNavHost`'s own real `Scaffold`
+  (constitution VIII's own "render the real host" requirement) — that test needs the nav-host
+  wiring to exist first; it is written against the isolated wiring commit instead of duplicated
+  here against a component composed alone.
+- `RecordingSessionSummary` (`:pipeline`, not owned by this package) carries no station or gap
+  count — RC01's own row sub-line is therefore "N overs" only, not the artboard's illustrative
+  "N overs · N stations · N gaps"; widening the summary is a `:pipeline` change, reported rather
+  than duplicated here as a second query.
+- The nested `Turn off` control inside the whole-card `clickable` region is exercised in the
+  Robolectric suite (`performClick` reaches it correctly, and does not also fire the card's own
+  `onOpenOverAudioBudget`) but not yet confirmed with a real `uiautomator` touch-target dump — filed
+  for the capture pass alongside RC02's.
 
 ### 48d5687d — WPUI: R-1049 halt fixed — the playback bar was a full-height panel, not a bottom strip
 
