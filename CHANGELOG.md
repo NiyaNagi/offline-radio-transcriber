@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPDATA: schema v13 — operator-initiated over-audio/archive deletion and FR-OBS-4 training labels, the data and domain layer for RC01/RC02)
 
-### WPDATA — one migration (v12→v13) for over-audio removal and FR-OBS-4 labels; `SessionAudioDeletionService` (mark-then-delete, typed refusals, crash-safe, idempotent); `TransmissionLabelRepository`; `recordingSessionSummaries` for RC01; a typed "unavailable" stub for RC02's audio Export
+### 53310b99 — WPDATA: one migration (v12→v13) for over-audio removal and FR-OBS-4 labels; `SessionAudioDeletionService` (mark-then-delete, typed refusals, crash-safe, idempotent); `TransmissionLabelRepository`; `recordingSessionSummaries` for RC01; a typed "unavailable" stub for RC02's audio Export
 
 **Scope:** `:data` entities/DAOs/migration (`SessionEntity.overAudioRemovedAtMillis`,
 `TransmissionLabelEntity`/`TransmissionLabelDao`, `WorkQueueDao.countActiveForSession`,
