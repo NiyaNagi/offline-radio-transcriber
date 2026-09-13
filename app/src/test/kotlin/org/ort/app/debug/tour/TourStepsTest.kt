@@ -145,21 +145,31 @@ class TourStepsTest {
         drillIn.containsKey("thread") -> Expected.Text("Threads")
         drillIn.containsKey("frequency") -> Expected.Text("Frequencies")
         drillIn.containsKey("logFilterFrequency") -> Expected.Text("Log")
-        // WPREC (register, this session's own find): this case's own "Earlier nights" marker was
-        // never actually reading the Digest's own header — `DigestScreens.kt`'s `DigestScreen`
-        // draws `DrillInHeader(parentLabel = "Session", ...)` ("Back to Session"), never "Earlier
-        // nights" at all. It passed regardless, on every build before this row's own drawer change,
-        // only because `ModalNavigationDrawer`'s `drawerContent` is *always* composed
+        // WPREC (register): this case's own "Earlier nights" marker was never actually reading the
+        // Digest's own header — `DigestScreens.kt`'s `DigestScreen` draws
+        // `DrillInHeader(parentLabel = "Session", ...)` ("Back to Session"), never "Earlier nights"
+        // at all. It passed regardless, on every build before this row's own drawer change, only
+        // because `ModalNavigationDrawer`'s `drawerContent` is *always* composed
         // (`Expected.DisplayedTag`'s own doc comment above) and the drawer's own `EARLIER_NIGHTS`
         // row used to render that literal text too — an accidental match on off-screen drawer
-        // content, not the Digest screen this case exists to verify. `ReaderDestination
-        // .EARLIER_NIGHTS.drawerLabel` now reads "Recordings" instead (RC01 absorbs that row), which
-        // is what exposed this: the accidental match is gone, and the real check was wrong all
-        // along. Split by `reviewSessionView` so each half checks the screen it actually reaches:
-        // `SessionDetailScreen`'s own real header ("Earlier nights") for the default `Session` view,
-        // `DigestScreen`'s own real header ("Session") for `DIGEST`.
+        // content, not the Digest screen this case exists to verify. Split by `reviewSessionView`
+        // so each half checks the screen it actually reaches: `DigestScreen`'s own real header
+        // ("Session") for `DIGEST`.
+        //
+        // R-1070 (register, WPSESSCOV): `SessionDetailScreen`'s own back label changed from
+        // "Earlier nights" to "Recordings" — which collides with `ReaderDestination
+        // .EARLIER_NIGHTS.drawerLabel`, now also "Recordings" (RC01 absorbs that row), reproducing
+        // the *exact* accidental-drawer-match failure this case's own history is documented above.
+        // `Expected.Text("Recordings")` here would pass whether or not `SessionDetailScreen` itself
+        // ever rendered that label — confirmed directly: it still passed with `SessionDetailScreen`
+        // temporarily hardcoded back to "Earlier nights". "COVERAGE" is this screen's own real,
+        // unconditional section header (`SessionsScreens.kt`'s `SessionDetailScreen`,
+        // `SectionHeader(label = "Coverage", ...)` — `SectionHeader` itself upper-cases every label
+        // it is given, confirmed by reading `Rows.kt`, so the real rendered text is "COVERAGE" —
+        // drawn before either of the screen's own gap/facts sections that could theoretically be
+        // empty), unique to this screen, never composed by the drawer.
         drillIn["reviewSessionView"] == "DIGEST" -> Expected.Text("Session")
-        drillIn.containsKey("reviewSession") -> Expected.Text("Earlier nights")
+        drillIn.containsKey("reviewSession") -> Expected.Text("COVERAGE")
         // Every Settings sub-screen carries its own "‹ Settings" back chevron (confirmed by
         // reading a real device capture of Settings-Capture/-Storage/-Assets before writing
         // this) - a weaker check than a per-sub-screen title, but one this class can make for
@@ -179,8 +189,10 @@ class TourStepsTest {
         "IMPROVE_RECORDS" -> Expected.Text("Improve records")
         // WPREC (design-intent row RC01): a plain reach (no drillIn) now lands on
         // `RecordingsContent` (`Recordings.dc.html`), not the old `SessionsContent` list root — a
-        // `reviewSession` drillIn (DG04/DG05) is still checked first, above, and still expects
-        // "Earlier nights" (`expectedForDrillIn`'s own `reviewSession` case, unchanged).
+        // `reviewSession` drillIn (DG04/DG05) is still checked first, above, and (R-1070) checks
+        // `SessionDetailScreen`'s own "Coverage" section instead of this destination's own
+        // "Recordings", precisely because that word is no longer unique to this real screen once
+        // the seeded review path is involved — see that case's own doc comment.
         "EARLIER_NIGHTS" -> Expected.Text("Recordings")
         "SETTINGS" -> Expected.Text("Settings")
         else -> error("TourStepsTest has no expected marker for destination '$destination'")

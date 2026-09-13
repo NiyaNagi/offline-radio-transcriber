@@ -32,6 +32,38 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPSESSCOV round 3: TourStepsTest's own accidental-drawer-match, reproduced by R-1070)
+
+### WPSESSCOV round 3 — TourStepsTest's `reviewSession` marker collided with the drawer's own relabelled row, exactly as its own history warns
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt` only (found while running
+the full, non-cached gate the session lead asked for; fixed under the same "assertions encoding
+R-1070's own defect are part of this fix" ruling already extended to the two nav tests above).
+**Requirements/ACs:** R-1070 (register).
+**What changed:** `expectedForDrillIn`'s `reviewSession` case asserted `Expected.Text("Earlier
+nights")`, which R-1070 turned into a fresh instance of a failure mode this exact file's own kdoc
+already documents happening once before with that very string: `ModalNavigationDrawer`'s drawer
+content is *always* composed (visible or not), so a plain substring-text check can match the
+drawer's own row instead of the destination screen it exists to verify. `ReaderDestination
+.EARLIER_NIGHTS.drawerLabel` now reads "Recordings" (RC01 absorbs the old "Earlier nights" row) —
+the same word R-1070 gave `SessionDetailScreen`'s own back label — so simply swapping the expected
+string to `"Recordings"` reproduces the identical accidental match: confirmed directly, that
+version of the check still passed with `SessionDetailScreen` temporarily hardcoded back to
+"Earlier nights". Changed to `Expected.Text("COVERAGE")` instead — `SessionDetailScreen`'s own
+real, unconditional section header (`SectionHeader` upper-cases every label it is given,
+confirmed by reading `Rows.kt`), unique to this screen and never composed by the drawer.
+**Verified:** the fixed check passes on real code; reverting `SectionHeader`'s own label to a
+throwaway string (a stand-in for "navigation lands on the wrong screen") failed it; restored,
+green. `gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourStepsTest"` and
+`gradlew :app:ktlintTestSourceSetCheck` (forced with `--rerun-tasks`) — both green.
+**Left open / not done:** the pre-existing, unrelated `"EARLIER_NIGHTS" -> Expected.Text
+("Recordings")` case (a plain reach, no drillIn, landing on RC01) may have the identical
+accidental-drawer-match property today (RC01's own real header also reads "Recordings") — not
+touched, since it predates this session's own diff and was already passing before R-1070; noted
+here rather than silently left for someone else to rediscover.
+
+---
+
 ## 2026-09-13 (WPSESSCOV round 2: nav tests updated for R-1070's corrected label, busierThanUsual pluralized)
 
 ### WPSESSCOV round 2 — the two nav-layer tests that encoded R-1070's own defect now assert the fix, plus one more R-1072 (s) site
