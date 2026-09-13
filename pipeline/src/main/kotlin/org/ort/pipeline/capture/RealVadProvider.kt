@@ -1,6 +1,8 @@
 package org.ort.pipeline.capture
 
 import org.ort.asrsherpa.real.RealSileroVad
+import org.ort.core.assets.ModelFileVerifier
+import org.ort.core.assets.ModelVerification
 import org.ort.segment.VadModel
 import java.io.File
 
@@ -28,6 +30,22 @@ public sealed interface VadProvisionResult {
  * [org.ort.pipeline.passb.RealAsrEngineProvider] reports for the ASR model.
  */
 public object RealVadProvider {
+
+    /**
+     * Register R-1052 (halt): the seam standing in for [RealSileroVad]'s constructor — the exact
+     * call whose native `Vad(...)` load threw an uncaught C++ exception, past `std::terminate`,
+     * when handed a corrupt file (`std::terminate` cannot be caught by [provide]'s own
+     * `catch (t: Throwable)` below, which only ever saw ordinary JVM/JNI-bridge exceptions such as
+     * `UnsatisfiedLinkError`). Never called until [ModelFileVerifier.verify] has already said the
+     * file is trustworthy — see [provide]. Returns a probability function plus its `close`
+     * callback rather than a bare [RealSileroVad], so a test can fake the entire native boundary
+     * without depending on that concrete type or its own native library at all.
+     */
+    internal var nativeLoader: (path: String) -> Pair<(FloatArray) -> Float, () -> Unit> = { path ->
+        val real = RealSileroVad(path)
+        ({ frame: FloatArray -> real.speechProbability(frame) }) to real::close
+    }
+
     public fun provide(filesDir: File): VadProvisionResult {
         val file = SileroVadLocator.modelFile(filesDir)
         if (!file.isFile) {
@@ -37,9 +55,17 @@ public object RealVadProvider {
                     "for the fetch URL, this build does not fetch it automatically",
             )
         }
+        // R-1052: never hand a path to native code without checking it first — a Kotlin
+        // catch (t: Throwable) around the constructor call below cannot stop a native abort.
+        when (val verification = ModelFileVerifier.verify(file)) {
+            is ModelVerification.Failed -> return VadProvisionResult.Unavailable(
+                "Silero VAD model at ${file.path} failed verification and was not loaded: ${verification.reason}",
+            )
+            ModelVerification.Verified -> Unit
+        }
         return try {
-            val real = RealSileroVad(file.path)
-            VadProvisionResult.Available(VadModel { frame -> real.speechProbability(frame) }, real::close)
+            val (probability, close) = nativeLoader(file.path)
+            VadProvisionResult.Available(VadModel { frame -> probability(frame) }, close)
         } catch (t: Throwable) {
             VadProvisionResult.Unavailable("Silero VAD model present but failed to load: ${t.message}")
         }

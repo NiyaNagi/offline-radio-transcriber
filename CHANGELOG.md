@@ -378,6 +378,603 @@ right reason, restored it). `:app:compileDebugKotlin` green.
   `onOpenOverAudioBudget`) but not yet confirmed with a real `uiautomator` touch-target dump — filed
   for the capture pass alongside RC02's.
 
+## 2026-09-12 (WPMODEL round 2: R-1052's own fix regressed real installs — every downloaded or side-loaded model would have read Failed; fixed with one shared sidecar rule across bundled/download/sideload, an upgrade path for a sha256-only record, and an atomic sideload)
+
+### bb3dd013 — WPMODEL round 2: R-1052 fix's own regression closed — ModelAcquisition.fetch/sideload now write the same verified-install sidecars ModelFileVerifier reads, sideload is atomic, and a sha256-only upgrade install still loads
+
+**Scope:** `:core` (`assets/ModelFileVerifier.kt` — new `recordVerifiedInstall`, upgrade-path
+verify), `:net` (`ModelAcquisition.kt` — atomic `sideload`, shared sidecar writes), `:app`
+(`assets/BundledAssetInstaller.kt` — calls the shared helper instead of writing markers itself),
+and their tests. No UI package touched.
+
+**Requirements/ACs:** R-1052 (register — halt, round 2), FR-ASR-8, FR-AST-2, FR-AST-3 (a
+side-loaded/downloaded model verifies and installs exactly as strictly as a bundled one),
+constitution I, constitution VII.
+
+**What changed:**
+- **The regression, as the coordinator found it (file:line):** round 1's `ModelFileVerifier`
+  required both `<name>.sha256` and `<name>.size`. `BundledAssetInstaller` wrote both;
+  `ModelAcquisition.fetch` (`ModelAcquisition.kt:109` in round 1) and `.sideload`
+  (`ModelAcquisition.kt:80`) wrote only `.sha256` — the real Settings > Models "Download" and
+  "Install from a file" paths (`ModelsViewData.kt:757`/`787`, called by `ModelsController.download`/
+  `.sideload` at `ModelsViewData.kt:775`/`796`). Every model an operator ever downloaded or
+  side-loaded would read `Failed` and never load — a regression, not a fix. Separately,
+  `ModelAcquisition.sideload` copied straight onto the final path (`source.copyTo(spec.destination,
+  overwrite = true)`, `ModelAcquisition.kt:79`) — an interrupted side-load in a release build is
+  exactly R-1052's own partial-file-at-the-final-path shape, on a path the round 1 fix never reached.
+- **`ModelFileVerifier.recordVerifiedInstall(destination, sha256, sizeBytes)`** (new, `:core`) — the
+  one place a verified install (bundled, downloaded, or side-loaded) records what it just verified,
+  writing both sidecars. `BundledAssetInstaller.installOne` and `ModelAcquisition.verifyAndInstall`
+  both call it now instead of writing `<name>.sha256`/`<name>.size` by hand; `markerFile()` in both
+  classes now delegates to `ModelFileVerifier.sha256MarkerFile` rather than duplicating the naming
+  rule a third time.
+- **Upgrade decision — the verifier now accepts `.sha256` alone.** `.size` is a fast-path
+  optimization, not a requirement: `ModelFileVerifier.verify` checks `.size` first when present
+  (free, no hashing), but when only `.sha256` exists it hashes the file directly and, on a match,
+  backfills `.size` (and the cache stamp) so every later call takes the cheap path. **Chosen over
+  requiring `.size`** because a model a real operator already downloaded or side-loaded before this
+  fix existed is real, verified, user-authorized input — refusing it is the opposite of what R-1052
+  is about — and the one-time hash cost lands once, on the first capture-session start after an
+  upgrade, ever, per asset. Chosen over silently trusting a bare `.sha256` on size alone because
+  that reopens exactly the class of bug R-1052 exists to close: `ScenarioFixtures`'s own stub
+  deliberately carries the *real* sha256 text, so a hash-only check (never a size-only one) is what
+  still catches it — proven by the retained `R_1052 a 64-byte debug stub with no size marker still
+  fails, on the hash` test.
+- **`ModelAcquisition.sideload`** now copies `source` to a `.part` file first, hashes the `.part`
+  (never the original `source`, so what is verified is exactly what will be installed), and only
+  `renameTo`s it into place on a match — the identical `.part`-then-`renameTo` sequence (with
+  `fetch`'s own copy-fallback) `verifyAndInstall` already used, now shared by both callers via a new
+  `sourceDescription` parameter (so error text still says "side-loaded file X" vs "checksum mismatch
+  for <url>"). An interrupted read of `source` (an `IOException` mid-copy) deletes the `.part` and
+  returns `Outcome.Err` — the destination is never touched until a full, verified copy exists to
+  rename. FR-AST-2's existing guarantee (a mismatch leaves whatever was previously at the
+  destination untouched) is preserved and, per the coordinator's brief, is now stronger: the
+  destination is untouched for an interrupted read too, not only a checksum mismatch.
+
+**Verified:**
+- Strict TDD, each discriminating: `ModelFileVerifierTest`'s 3 new cases (`recordVerifiedInstall
+  writes both sidecars...`, `an upgrade install with only the sha256 marker still verifies...`, `...
+  but wrong content still fails`) — compile failure without `recordVerifiedInstall`, then green;
+  `an upgrade install...` fails against the strict round-1 verifier (missing-`.size` ⇒ instant
+  `Failed`), passes after. `ModelAcquisitionFetchTest`/`ModelAcquisitionSideloadTest`'s 4 new
+  `R_1052` cases: the two "passes ModelFileVerifier" cases already pass once the verifier itself
+  accepts a sha256-only record (proving that fix alone closes the reported regression); `an
+  interrupted sideload (an unreadable source) leaves nothing at the final path` fails on today's
+  code with an uncaught `FileNotFoundException` from `sha256Of(source)` (`ModelAcquisition.kt:71`,
+  round 1) — confirmed by running it before the `sideload` rewrite — and passes after, catching the
+  `IOException` and returning `Outcome.Err` instead.
+- `.\gradlew.bat :core:test` — 14/14 `ModelFileVerifierTest` cases green (3 new), full suite green.
+- `.\gradlew.bat :net:testDebugUnitTest` — full suite green, including the 4 new `R_1052` cases and
+  every pre-existing `ModelAcquisitionFetchTest`/`ModelAcquisitionSideloadTest` case unaffected
+  (FR-AST-2's "a mismatch leaves the previous version active" still holds — verified by the
+  pre-existing test, unchanged, still green against the rewritten `sideload`).
+- `.\gradlew.bat :app:testDebugUnitTest` and `:pipeline:testDebugUnitTest` — full suites green,
+  confirming `BundledAssetInstaller`'s switch to the shared helper changed no observable behaviour.
+- **The VAD-unavailable question (asked in the coordinator's first brief, answered here):**
+  `RealCaptureService.buildSegmenter` (`pipeline/src/main/kotlin/org/ort/pipeline/capture/
+  RealCaptureService.kt:674-684`) — on `VadProvisionResult.Unavailable`, records
+  `VadAvailability.stub(reason)` and substitutes `EnergyVadModel()` (a plain RMS-energy threshold,
+  `RealCaptureService.kt:1560-1571`), wrapped in the same `SileroVad` hysteresis logic and fed to
+  the same `Segmenter` — **capture is never gated on VAD availability; it degrades, it does not
+  stop, and no over is silently dropped.** No FR-RUN/FR-CAP requirement names VAD degraded-mode
+  disclosure specifically (grepped both; nothing found) — the closest are constitution I
+  (uncertainty is content) and NFR-1b (a weaker device may know less, must not be more wrong),
+  neither of which currently mandates a *prominent* disclosure. Today the only operator-facing
+  surface is a passive diagnostic line — `CaptureStatusViewState.kt:508-510`'s tier-facts row reads
+  "energy VAD (not Silero)" — visible on the Capture screen, not a dedicated failure banner the way
+  a missing ASR model gets one (`NowViewStateMapperTest`'s "the failed missing-model block appears
+  only when ASR is unavailable"). This asymmetry (ASR-unavailable gets a prominent banner;
+  VAD-unavailable gets a buried diagnostic line) is a UI-visibility question, not a capture-halting
+  bug — **not fixed here**, per the coordinator's own instruction; routing back.
+- **Device evidence** (emulator-5564, the same `ort_audit_wpmodel` AVD, real bundled assets,
+  `HF_TOKEN` set; shut down afterward):
+  - **What repaired the earlier same-size corruption, found:** nothing did — round 1's report was
+    wrong. Re-run with temporary instrumentation directly inside `BundledAssetInstaller.installOne`
+    (added, exercised, then fully reverted — the diff carries none of it): on a fresh, real install
+    the VAD entry showed `isAlreadyVerified=false` and copied fresh; after overwriting
+    `silero_vad.onnx` with 643,854 zero bytes (same size as the manifest's declared `entrySize`,
+    confirmed by `sha256sum`/`stat` immediately before relaunch) and a clean `force-stop` + relaunch,
+    the log read `destLen=643854 entrySize=643854 markerText=<the real hash> entrySha=<the same real
+    hash> isAlreadyVerified=true` — `BundledAssetInstaller` correctly, and by design, does **not**
+    re-hash on its own fast path (its own KDoc says exactly this: "a fast, honest floor, not a
+    replacement" for the real digest check). The file stayed corrupt (confirmed: same inode, same
+    hash, unchanged `Modify` time) — no self-heal exists. Round 1's "the installer repaired it
+    within ~3 s" conclusion was a mistake in that session's own test sequencing, not a real
+    mechanism; there is nothing to fix or explain further.
+  - **A genuinely unavailable model, reached on device:** with `silero_vad.onnx` corrupted this way
+    and the process fresh (`force-stop` then `am start`), the `overnight` scenario was seeded
+    (`scenario.ps1 -Name overnight`) to reach the real `MainActivity` → `RealCaptureService` path.
+    `ScenarioFixtures.installModelFixture` found the corrupted file already unverified (per this
+    package's own round-1 fix) and replaced it with its 64-byte placeholder, which `RealVadProvider`
+    also refused (the round-1 unit tests already prove this in isolation; this is the same fact
+    reached live). **No crash**: `ps -A` showed the process alive; no `SIGABRT`/`Ort::Exception`/
+    tombstone anywhere in logcat; `RealCaptureService` genuinely started (`ActivityManager:
+    Background started FGS ... RealCaptureService`). Navigated to the real Capture screen (drawer →
+    Capture, since `ReaderActivity` is not exported and cannot be launched directly by `am start`)
+    and screenshotted it: **"Capturing" (green dot), "Since 06:25 · 1:11 · alive, heartbeat 11s
+    ago"**, and under **Tier: "3 of 3 — whisper-tiny-en-int8@1 · energy VAD (not Silero)"** — the
+    exact honest degraded-state line named above, reached live, with capture continuing.
+
+**Left open / not done:**
+- The VAD-unavailable UI-visibility asymmetry (a buried diagnostic line vs. ASR's dedicated banner)
+  is named above and left for the coordinator to route — it is a design/UI question, not this
+  package's fix.
+- No register row edited — filing/closing R-1052 is the lead's own job (constitution: only the
+  session lead edits the register).
+- `MediaPipeLlmEngine.load()`'s own `catch (e: Exception)` gap and
+  `ScenarioFixtures.uninstallEveryModelFixture`'s unconditional delete (both noted in round 1) are
+  unchanged by this round — still outside this package's ownership / outside the reported defect.
+
+---
+
+## 2026-09-12 (WPMODEL: R-1052 halt closed — a model file is verified against its own install record before it ever reaches sherpa-onnx/MediaPipe JNI, and a debug scenario can no longer overwrite a verified real model with a stub)
+
+### 477a5fc1 — WPMODEL: R-1052 halt fixed — SIGABRT on first launch, native code loading an unverified model file
+
+**Scope:** `:core` (new `org.ort.core.assets.ModelFileVerifier`, no Android dependency), `:app`
+(`assets/BundledAssetInstaller.kt` — writes the new `.size` sidecar; `app/src/debug`'s
+`ScenarioFixtures.kt`/`Scenarios.kt`), `:pipeline` (`capture/RealVadProvider.kt`,
+`passb/AsrEngineProvisioning.kt`, `digest/ProseDigestRunner.kt`), and their tests.
+
+**Requirements/ACs:** R-1052 (register — halt), constitution I (uncertainty is content, never a
+crash), constitution IV (capture never dies), constitution VII (assets share one lifecycle,
+integrity checked before activation), AC-137 (never activates a corrupt file — extended here from
+install-time to load-time).
+
+**What changed:**
+- **Step 1 finding (production reachability), with file:line evidence on the base commit
+  `eefac837`:**
+  - (a) No re-verification before native load. `BundledAssetInstaller.installOne`
+    (`app/src/main/kotlin/org/ort/app/assets/BundledAssetInstaller.kt:196-227`) verifies sha256
+    once, at install time, on the `.part` file it just copied. Nothing re-checks the file at its
+    final path later. `RealVadProvider.provide` (`pipeline/.../capture/RealVadProvider.kt:33-38`,
+    base commit) checked only `file.isFile`; `RealAsrEngineProvider.provide`'s
+    `AsrModelLocator.locate` (`pipeline/.../passb/AsrEngineProvisioning.kt:36-46`, base commit)
+    checked only `encoder.isFile && decoder.isFile && tokens.isFile`. Neither consulted the
+    `.sha256` marker the installer had already written next to each file.
+  - (b) The installer writes atomically: a `.part` file, hashed, then `renameTo` the real
+    destination only on a match (`installOne:196-224`) — not the bug.
+  - (c) Warm-up is not awaited against the installer. `OrtApplication.onCreate`
+    (`app/src/main/kotlin/org/ort/app/OrtApplication.kt:66-77`) launches `installAll` on a
+    background dispatcher, fire-and-forget; `MainActivity.startCaptureAndShowStatus`
+    (`app/src/main/kotlin/org/ort/app/MainActivity.kt:109-118`) starts `RealCaptureService`
+    unconditionally in `onCreate`, with no dependency on the installer finishing. In production
+    alone this race is benign — the installer's own atomicity means the file is either wholly
+    absent (races to `Unavailable`, no crash) or wholly present and verified. **The real
+    corruption vector is (d).**
+  - (d) Yes — debug-only, but it reaches native code unchanged from production's own load path.
+    `ScenarioFixtures.installModelFixture` (`app/src/debug/.../ScenarioFixtures.kt`, base commit)
+    wrote a 64-byte stub directly over `entry.destination(filesDir)` — the exact path
+    `SileroVadLocator`/`AsrModelLocator` read — and a `.sha256` marker carrying the **real**
+    expected checksum text (so `ModelsController`'s UI read "installed"), bypassing
+    `BundledAssetInstaller` entirely. `MainActivity`'s "overnight" scenario
+    (`seedConfiguredDeviceState`) also sets `setupComplete = true`, so a plain launch immediately
+    starts `RealCaptureService`, which builds a `Segmenter` via `RealVadProvider.provide` and
+    `RealAsrEngineProvider(...).provide()` — both existence-only checks pass on the stub, and
+    `RealSileroVad`/`RealSherpaDecoder`'s native constructors receive it.
+  - (e) Today: `RealCaptureService.startCapture` catches nothing at that boundary — the native
+    `Ort::Exception`/`std::terminate` is never a Kotlin exception at all, so
+    `RealVadProvider`'s/`RealAsrEngineProvider`'s own `catch (t: Throwable)` cannot see it; the
+    process aborts (`SIGABRT`) before any operator-facing state is ever produced.
+  - **Verdict: yes, a real release install can be handed a truncated/corrupt file at this
+    boundary** — not via `BundledAssetInstaller`'s own atomic write (which is sound), but via
+    anything else (today, only the debug scenario fixtures) that can place bytes at the same
+    path without going through it. The fix therefore verifies at the *load* boundary, not only
+    the install boundary, so it is agnostic to how the file got there.
+- **`org.ort.core.assets.ModelFileVerifier`** (new, `:core` — no Android dependency, so it is
+  reachable from `:pipeline` and `:app` without a new module edge — `dependencyRules` confirms
+  `:core -> (none)` unchanged). `verify(destination: File): ModelVerification` reads two sidecars:
+  the pre-existing `<name>.sha256` (unchanged format/meaning — still read by `ModelsController`)
+  and a new `<name>.size` (written by `BundledAssetInstaller` at the same moment). Size is checked
+  first and is free (a 64-byte stub fails instantly with no hashing); a same-size corruption still
+  needs the real digest, checked second and cached via a third, private `<name>.verified` stamp
+  keyed by `(length, lastModified)` so a repeat call (every capture-session start) does not
+  re-hash a large, unchanged model. A stale stamp is detected and the hash is recomputed the
+  moment the file's own size or mtime changes. Missing sidecars are `Failed`, never trusted —
+  fail closed always.
+- **`BundledAssetInstaller`** now writes `<name>.size` alongside the existing `<name>.sha256`, in
+  both the fresh-install success path and the `isAlreadyVerified` fast path (the latter backfills
+  it for an app installed before this fix, so an upgrade never reads as permanently unverifiable).
+- **`RealVadProvider`**: a `nativeLoader` seam (`internal var`, defaulting to the real
+  `RealSileroVad` construction) replaces the direct constructor call; `provide` runs
+  `ModelFileVerifier.verify` and returns `Unavailable` — never calling `nativeLoader` — on
+  `Failed`. `EnergyVadModel` remains the existing fallback in `RealCaptureService`; capture is
+  unaffected.
+- **`RealAsrEngineProvider`**: a `nativeLoader` constructor parameter (defaulting to the real
+  `RealSherpaDecoder` construction, paired with itself as the `AutoCloseable`) plays the same
+  role; all three files (encoder, decoder, tokens) are verified before any is loaded.
+  `SherpaOnnxSession`'s constructor parameter is retyped from the concrete `RealSherpaDecoder` to
+  plain `AutoCloseable` so the seam does not need to depend on that native type at all.
+- **`ProseDigestRunner`** (the LLM path, MediaPipe): `MediaPipeLlmEngine.load()`'s own
+  `catch (e: Exception)` has the identical gap (does not catch an `Error`/native abort), but
+  `:llm-mediapipe` is outside this package's ownership. Verified instead at the one `:pipeline`
+  call site that constructs it: `doWork` now runs `ModelFileVerifier.verify` on the located model
+  file and returns `Result.failure()` — never constructing `MediaPipeLlmEngine` — on `Failed`,
+  reusing the existing `EngineLoadFailed → Result.failure()` outcome shape.
+- **`ScenarioFixtures.installModelFixture`** now checks `ModelFileVerifier.verify` first and skips
+  writing the stub when a real model is already verified there — a debug scenario/tour run no
+  longer destroys a genuinely working model on a device that has one, and (independently of that)
+  a load-time refusal already made the stub harmless even before this. One deliberate exception:
+  `Scenarios.tier0LlmStored` passes the new `skipIfAlreadyVerified = false` to force its
+  placeholder over the LLM entry regardless — that scenario's own fixture source marks the gated
+  LLM installable (unlike a real `HF_TOKEN`-less build), so the real installer verifies a tiny
+  fixture there first, and forcing the placeholder anyway is that call's whole, documented
+  purpose (simulating the real build's genuine truncation for the Models screen's own
+  truncated-state UI test — a controlled, test-only corruption, never a live-loadable model).
+- `ActiveScenarioRepublishProvider`/`Scenarios.load` needed no direct change: the fix above (skip
+  when verified) and the load-time refusal both apply transitively to its repeated
+  `installEveryModelFixture` calls on every debug process restart.
+- **FR-RUN/FR-CAP degraded-mode note (asked for in the prompt, not invented):** capture already
+  continues with VAD/ASR unavailable — `RealCaptureService` falls back to `EnergyVadModel` when
+  `RealVadProvider` reports `Unavailable` (unchanged by this fix), and Pass B already has
+  `UnavailableAsrEngine`/`AsrUnavailableException` for the ASR case (also unchanged). This fix
+  makes that existing degraded path the *outcome* of a verification failure instead of a crash;
+  it does not add new degraded-mode behaviour.
+- **Left for a UI package:** none identified — `Unavailable`'s `reason` string already names the
+  file and what failed, read by the existing UI failure surfaces exactly as any other
+  `Unavailable`/`AsrUnavailableException` reason is today. No new copy is needed.
+
+**Verified:**
+- Strict TDD throughout, each discriminating (production line reverted, test shown to fail for
+  the stated reason, restored, green again) — confirmed for every fix in this change, not only
+  the first: `ModelFileVerifierTest` (8 tests, written before the implementation existed —
+  compile failure, then green), `BundledAssetInstallerTest`'s two new `R_1052` tests (assertion
+  failures without the `.size` writes, green after), `RealVadProviderTest`'s three new `R_1052`
+  tests (native-loader-called assertions failing without the verification gate, green after),
+  `AsrEngineProvisioningTest`'s three new `R_1052` tests (same shape), `ProseDigestRunnerTest`'s
+  new `R_1052` test (`Result.success()` instead of `failure()` without the gate — the pending
+  threads list is empty in this test, so the pre-fix code never even reached
+  `MediaPipeLlmEngine.load()`; the gate is checked earlier, independent of pending work),
+  `ScenarioFixturesTest`'s `R_1052` test (a verified real model's bytes were replaced without the
+  skip check, unchanged with it).
+- `.\gradlew.bat :core:test` — 8/8 new `ModelFileVerifierTest` cases green, full `:core` suite green.
+- `.\gradlew.bat :pipeline:testDebugUnitTest` — full suite green (RealVadProviderTest 5,
+  AsrEngineProvisioningTest 7, ProseDigestRunnerTest 5, plus every pre-existing test in the
+  module unaffected).
+- `.\gradlew.bat :app:testDebugUnitTest` — full suite green, including the pre-existing
+  `WpiScenariosTest.R_842_tier0-llm-stored...` (initially broken by the naive "always skip when
+  verified" version of the `ScenarioFixtures` fix — see `skipIfAlreadyVerified`'s own doc comment
+  for why, and the discrimination check above) and `R_873_a debug process restart re-publishes...`
+  (confirms `ActiveScenarioRepublishProvider` unaffected).
+- `.\gradlew.bat dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) —
+  **BUILD SUCCESSFUL in 15m 2s**, 1109 tasks; `dependencyRules: OK` (`:core -> (none)`
+  unchanged — the new class added no module edge); `platformGuards: OK`.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) —
+  `coverageMatrix: 483 requirements, 271 covered` (`R-1052` now cited by `BundledAssetInstallerTest`);
+  `coverageMatrixCheck: up to date`.
+- `:core:ktlintCheck`/`:app:ktlintCheck`/`:pipeline:ktlintCheck` and `:core:detekt`/
+  `:app:detekt`/`:pipeline:detekt` — all green (one `ReturnCount` finding in the first draft of
+  `ModelFileVerifier.verify`, split into a private `verifyHash` helper, matching
+  `BundledAssetInstaller`'s own `isAlreadyVerified` split for the identical detekt reason).
+- **Device evidence (constitution VIII's own standard applied here — a passing test is not this
+  evidence), emulator-5564 (a fourth AVD, `ort_audit_wpmodel`, created for this session since
+  `ort_audit`/`ort_audit_2`/`ort_audit_3` were all occupied by other builders/validators on
+  5558/5560/5562 for this session's whole duration; shut down afterward):**
+  1. **Before the fix** (base commit `eefac837`, real bundled assets, `install.ps1 -Port 5564
+     -Clear -PortAllowMissingBundledAssets:$false`, `scenario.ps1 -Port 5564 -Name overnight`,
+     `am start -n org.ort.app/.MainActivity`): the process died immediately. Logcat: `E
+     libc++abi: terminating due to uncaught exception of type Ort::Exception: Load model from
+     /data/user/0/org.ort.app/files/models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx
+     failed:Protobuf parsing failed.` / `F libc: Fatal signal 6 (SIGABRT) ... pid 5932
+     (org.ort.app)`, tombstone backtrace through `libsherpa-onnx-jni.so`. The auto-restarted
+     process crashed again seconds later, this time naming `silero_vad.onnx` — the same
+     crash-loop shape the register row describes (VAD first, then the ASR decoder, or vice
+     versa depending on which file the scheduler reaches first).
+  2. **After the fix**, same steps on the same emulator: the process survived
+     (`ps -A | grep org.ort.app` showed it running); no `SIGABRT`/`Ort::Exception`/tombstone lines
+     anywhere in logcat. Screenshot of the running `Now` screen: a live session ("0:21" elapsed,
+     green capture dot), the real-signal "Too quiet" advisory banner (from the scenario's own
+     seeded level, unrelated to this fix), "Tonight — 0 overs". `run-as ... ls -la` on both model
+     directories confirmed the real files were untouched by the scenario (`silero_vad.onnx`
+     643,854 bytes; `tiny.en-encoder.int8.onnx` 12,937,772 bytes; `tiny.en-decoder.int8.onnx`
+     89,853,865 bytes — not 64), each now carrying its own `.sha256`/`.size`/`.verified` sidecar —
+     direct on-device confirmation of the `ScenarioFixtures` skip-when-verified fix, not only the
+     load-time refusal.
+  3. **Truncation, at the app's own final path (`run-as`, staged through `/data/local/tmp`, per
+     the prompt):** (a) truncating `silero_vad.onnx` to 9 bytes and relaunching: no crash;
+     `BundledAssetInstaller`'s own pre-existing size-mismatch repair (R-865, unrelated to this
+     fix) re-copied the real file within the same launch. (b) The more precise case — overwriting
+     `silero_vad.onnx` with 643,854 zero bytes (**same size**, so R-865's cheap check alone cannot
+     tell it apart from a genuine install, which is exactly the class of corruption this fix
+     exists for): confirmed corrupted immediately before relaunch (`sha256sum` mismatched the
+     `.sha256` marker; `stat` showed a fresh `Modify` time), then no crash on relaunch, and the
+     real content was restored within ~3 s (`stat`'s inode number changed, confirming a genuine
+     `installOne` copy-verify-rename rather than an in-place edit). This shows the installer's own
+     background pass repairing a same-size corruption faster in practice than my reading of its
+     `isAlreadyVerified` fast path predicted from the source alone — a fact worth someone
+     re-reading `installOne` against `OrtApplication`'s launch-time scheduling to explain, since
+     the controlled proof this fix's own correctness rests on is the seam-based unit tests above
+     (which fully control timing and prove the native loader is never called on a `Failed`
+     verification), not this device race. In every case across (a) and (b): **no crash**, and the
+     app's own capture kept running throughout.
+
+**Left open / not done:**
+- The device evidence's same-size-corruption repair (item 3b above) restored the real file faster
+  than expected from a plain reading of `BundledAssetInstaller.isAlreadyVerified` — worth a
+  follow-up read of that interaction under real launch timing; it does not affect this fix's own
+  correctness (proven at the unit level with full timing control) but the discrepancy itself is
+  unexplained.
+- `org.ort.net.ModelAcquisition.sideload` (`net/src/main/kotlin/org/ort/net/ModelAcquisition.kt`)
+  copies a verified source file directly onto its destination (`source.copyTo(spec.destination,
+  overwrite = true)`) rather than through a temp-file-then-atomic-rename, unlike its own `fetch`
+  path (`verifyAndInstall`) and unlike `BundledAssetInstaller`. `:net` is outside this package's
+  ownership (":pipeline and :asr-*", "BundledAssetInstaller", "app/src/debug"); flagged, not
+  fixed. A concurrent reader mid-copy could see a partial file at the final path — the same shape
+  of gap this change closes elsewhere, on a path this fix does not reach.
+- `MediaPipeLlmEngine.load()` (`:llm-mediapipe`) still wraps its own native `LlmInference`
+  construction in `catch (e: Exception)`, which cannot stop a native abort any more than the
+  pre-fix `RealVadProvider`/`RealAsrEngineProvider` could — out of this package's ownership; the
+  verification gate added to `ProseDigestRunner` prevents an unverified file from ever reaching
+  it, but the engine's own defence is unchanged.
+- `ScenarioFixtures.uninstallEveryModelFixture` (the `model-missing` scenario's own contract)
+  still deletes whatever is at a model's destination unconditionally, including a real, verified
+  model on a device that has one — a different, pre-existing behaviour from the one this change
+  fixes (`installModelFixture`'s overwrite-with-a-stub), not addressed here since it was not part
+  of the reported crash loop.
+- No new `results/ui-audit/register.md` row: this session found no existing R-1052 row to update
+  (register's own tail ends at R-1051) — the row is the lead's to file; nothing under
+  `app/src/main/kotlin/org/ort/app/ui/**` was touched, so no visual re-verification is triggered
+  (constitution VIII's own diff-based trigger, AGENTS.md working agreement item 7).
+
+---
+
+## 2026-09-12 (WPCF07 round 2: R-1050 sent back — measured-width middle ellipsis replaces the fixed 12-character budget)
+
+### WPCF07 round 2 — the Save file button's filename line is now middle-ellipsized to its own measured width, preferring the timestamp over the scope word, with the size demoted to its own third line rather than the name cut further
+
+**Scope:** same files as round 1 — `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt`,
+`app/src/test/kotlin/org/ort/app/ui/settings/SettingsExportScreenGeometryTest.kt`. Did not touch
+`:pipeline`'s `org.ort.pipeline.archive.SessionAudioExport` or its own files — WPAUDX's concurrent
+work in that package.
+
+**Requirements/ACs:** R-1050 (register — sent back a second time after the lead's review of round
+1's own recapture `overnight/CF07-settings-export@2x-end.png`, quoted: "the button now reads 'Save
+file' / 'ort-….adi · 8 KB'. That names nothing... A fixed character budget (12) ignores the space
+actually available at the device's real font metrics"); constitution I (no estimate presented as
+fact — the ladder's choice of rung is now driven by a real `TextMeasurer`, never a guessed
+character count); constitution VIII (screen re-captured and compared against the artboard again
+after the fix).
+
+**What changed:**
+- Replaced the fixed `MAX_VISIBLE_FILE_NAME_LENGTH = 12` / `middleEllipsizeFileName` character-count
+  approach with `filenameCandidates(fileName)` — a graceful, ordered ladder of real, hyphen-bounded
+  candidates: the full name; scope word dropped, full timestamp and extension kept; date kept,
+  time-of-day dropped; and the shortest rung (prefix + extension only). A filename with no droppable
+  scope token between the fixed prefix and the timestamp returns itself unchanged rather than
+  inventing a shortened form.
+- New `planSaveFileLabel(fileName, sizeBytes, availableWidthPx, style, textMeasurer)` (now
+  `internal`, with its `SaveFileLabelPlan(filenameLine, sizeLine)` result) walks the ladder in order
+  using the button's own real `TextMeasurer`/`TextStyle`, picking the first candidate — with the
+  size suffix appended — that measures within the real available width; if none fit combined, the
+  first candidate that fits alone, with the size demoted to its own `sizeLine` (a third line) rather
+  than the name being cut further, exactly as the register asked. If even the shortest candidate
+  exceeds the width it is still returned in full — never a silently dropped identity — leaving
+  `softWrap = false` plus the caller's own `overflow = TextOverflow.Ellipsis` as the last-resort
+  backstop for a width this build does not actually claim to support.
+- `ExportSaveFileButtonContent` now measures the real available width via `BoxWithConstraints` +
+  `rememberTextMeasurer()` instead of assuming a budget, and renders up to three lines ("Save file" /
+  filename / optional size). The two-line layout's symmetric padding (`OrtSpacing.md` top and
+  bottom, unconditional — R-1050(b), round 1) and the `LARGE_FONT_SCALE_THRESHOLD = 1.5f` gate
+  (below it, `buildSaveButtonLabel`'s original single-line text, unchanged) both carry over from
+  round 1 untouched.
+- `SaveFileLabelPlan`/`planSaveFileLabel`/`filenameCandidates` are `internal` specifically so tests
+  can drive the ladder directly with an explicit, known `availableWidthPx` and a real
+  `TextMeasurer` — made necessary by a round 2 finding (next point).
+- **Round 2 finding, not a report: Robolectric's own root-window sizing does not reliably reflect a
+  requested width the way a real device does.** A nested `Box(Modifier.width(N.dp))` wider than
+  Robolectric's own unconfigured default root silently clamps down to it; switching to
+  `@Config(qualifiers = "wNNNdp-...")` per test does give `OrtTheme`'s own
+  `ortScaleFor`/`LocalConfiguration` the requested width, but at 390dp/480dp/scale 2.0 Robolectric
+  then measured the *entire* name-plus-size string as fitting on one line — never once reaching a
+  shorter rung — where the real device (the very thing that sent round 1 back) needed real
+  shortening. This is the same Robolectric-font-metrics-vs-real-device gap already on record in this
+  codebase (R-260/R-552), met the other way this time. Given that, the ladder's own *ordering* is
+  proven directly against `planSaveFileLabel` with real measured widths from the real
+  `TextMeasurer`/style (see Verified), and the render-level tests are scoped to what they can
+  honestly prove instead: the rendered line is always an exact, uncorrupted candidate — never a
+  string additionally truncated by the `Ellipsis` backstop — and the size is always fully visible
+  somewhere in the label.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.settings.SettingsExportScreenGeometryTest" --tests "org.ort.app.ui.settings.SettingsExportScreenTest"` — `BUILD SUCCESSFUL`, all tests green.
+- Discriminating tests (`SettingsExportScreenGeometryTest.kt`):
+  - Direct `planSaveFileLabel` unit tests against a real `TextMeasurer`/`OrtType.control` style
+    obtained from a composable probe, thresholds computed from real measured candidate widths, never
+    invented numbers:
+    - `R_1050 planSaveFileLabel keeps the full name and size together once both measure within the width`
+    - `R_1050 planSaveFileLabel keeps the full name and gives the size its own line rather than shortening it`
+      (the register's explicit "size on its own third line" instruction)
+    - `R_1050 planSaveFileLabel drops the scope word before ever touching the timestamp` (the
+      register's explicit "prefer keeping the timestamp over the scope word" instruction)
+    - `R_1050 planSaveFileLabel keeps the date over the time-of-day once the scope-less candidate no longer fits`
+    - `R_1050 planSaveFileLabel shows the shortest real candidate when narrower than every rung`
+      (identity never silently dropped)
+  - Shown discriminating, per the register's explicit ask ("show the current budget-12 code failing
+    the timestamp assertion first"): temporarily replaced `planSaveFileLabel`'s candidate list with
+    round 1's own naive fixed-cut shape (`fileName.take(12) + "…" + fileName.takeLast(4)`,
+    unmeasured, ignoring `availableWidthPx` entirely) — 7 of the above and below tests failed for the
+    right reasons (a corrupted candidate not matching any real rung, the extension lost, the
+    timestamp dropped, no size-demotion), then reverted.
+  - Render-level (`@GraphicsMode.NATIVE`, `w390dp-h844dp-420dpi` and `w480dp-h844dp-420dpi`, scale
+    2.0): `R_1050 the filename line is a real, uncorrupted candidate with its extension kept` — the
+    rendered filename line is always an exact match to one of `filenameCandidates`' own real rungs
+    (with or without the size suffix appended) and always contains `.adi`; `R_1050 the real size is
+    fully visible, never ellipsized` — the real formatted size string is always present in full on
+    whichever line carries it.
+  - Round 1's own tests unchanged and still green: the `filenameCandidates` pure-function tests
+    (first candidate is the untouched name; the shortened candidate cuts only at a real hyphen and
+    keeps the timestamp whole; the real extension kept for all four export formats; no shortened form
+    invented when there is no scope word to drop), the four symmetric-padding cases (390/480dp ×
+    1.0/2.0), and `R-1045b the Save file button grows to fit its two-line label`.
+- `./gradlew :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :app:detekt` — `BUILD
+  SUCCESSFUL`. Moved the test file's `REAL_FILE_NAME` constant into a `private companion object` to
+  satisfy detekt's `VariableNaming` rule (a `SCREAMING_CASE` name is only allowed for a true
+  compile-time constant, not an instance-scope `val`); ran `ktlintTestSourceSetFormat` once to fix a
+  function-body-fits-on-signature-line style violation a newer ktlint check caught in
+  pre-existing (round 1) code.
+- `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools/spec-check/spec_check.py` — OK, all 8 checks pass.
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — `BUILD
+  SUCCESSFUL in 14m 50s`, 1109 tasks; `dependencyRules: OK`, `platformGuards: OK`.
+- Real device recapture, on a fourth AVD (`ort_audit_cf07`, `emulator-5566`, 1260×2772@420dpi —
+  identical shape to `ort_audit`) created for this round only: `ort_audit`/`ort_audit_2`/`ort_audit_3`
+  were all three still booted by other builders/validators throughout this round (checked
+  repeatedly with `Get-CimInstance Win32_Process -Filter "Name like 'qemu-system%'"`, per the
+  register's own instruction — a fourth builder's own `ort_audit_wpmodel` had already appeared the
+  same way), so `tools\ui-audit\create-avd.ps1 -Name ort_audit_cf07` (the same documented pattern
+  `ort_audit_2`/`ort_audit_3` were themselves created by) rather than wait on contention with no end
+  in sight. `tools\ui-audit\boot.ps1 -Avd ort_audit_cf07 -Port 5566`, `wm size 1260x2772`/`wm
+  density 420` set to match, `tools\ui-audit\install.ps1 -Port 5566 -Clear`, `tools\ui-audit\tour.ps1
+  -Port 5566 -Only "overnight/CF07-settings-export*" -Out <scratch>` — `steps: 3 ok: 3 errors: 0`.
+  **The button reads, in full, two centred lines: `Save file` / `ort-export-….adi · 8 KB`** — the
+  filename never wraps or breaks, the extension and the real size both fully visible on one line,
+  equal padding above the first line and below the second (unchanged from round 1's own fix).
+  Confirmed via a temporary debug log (`planSaveFileLabel`'s own real `availableWidthPx` and every
+  candidate's own real measured width, removed before commit — see below) that this is the honest,
+  measured answer, not a repeat of round 1's bug wearing a different mechanism: at this real
+  device's font metrics (`OrtType.control` at scale 2.0, `ortScaleFor` upscaling this ~480dp-wide
+  device's own density to 1.23×), `availableWidthPx=1000`; the four candidates alone measured 1541 /
+  1334 / 1017 / 604px — the third rung (`ort-export-…-20260913.adi`, the one an easy visual estimate
+  from round 1's own capture suggested should fit) misses by a mere 17px, honestly, and only the
+  shortest rung plus the size (845px) fits. Compared by eye against
+  `design/canvas/Settings-Export.dc.html`. Scratch captures only
+  (`%TEMP%\ort-tour-cf07-r1050-final`; two earlier scratch attempts at this round,
+  `%TEMP%\ort-tour-cf07-r1050d`/`r1050e`, used to run the debug-log probe above, superseded by this
+  one taken from the clean, debug-log-free build), never written to `results/ui-audit/`. AVD shut
+  down after (`adb -s emulator-5566 emu kill`) — the other three builders'/validators' emulators on
+  5558/5560/5562 left untouched throughout; `ort_audit_cf07` itself left in place (created, not
+  destroyed) in case a future round needs a free AVD again under the same contention.
+
+**Left open / not done:** the button's visible label still cannot show the scope or the timestamp
+at font scale 2.0 on this real, ~480dp-wide device — not because of an arbitrary budget any more,
+but because the honestly measured available width (1000px) is genuinely narrower than every
+candidate except the shortest, by margins as small as 17px for the next rung up. A future, narrower
+`OrtType.control` at this scale, a shorter filename shape, or a design decision to drop the "Save
+file" words at this scale to give the filename its own two lines would all widen the room this
+ladder has to work with; none of those are this round's own scope. Round 1's own trade (the real,
+untruncated name is still what `contentDescription` and the SAF picker itself show) still applies
+unchanged.
+
+---
+
+## 2026-09-12 (WPCF07 follow-up: R-1050 — the Save file label's filename gets its own never-wrapping line and the button keeps symmetric padding as it grows)
+
+### WPCF07 follow-up — `Settings-Export.dc.html` polish from the lead's own review of the merged R-1044/R-1045 capture: the filename no longer breaks inside its own timestamp, and the two-line label sits with equal padding top and bottom
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt` and its tests, now
+split across `SettingsExportScreenTest.kt` (functional/content) and the new
+`SettingsExportScreenGeometryTest.kt` (bounds — detekt's own `LargeClass` threshold made the split
+necessary once R-1050's own geometry cases landed alongside R-1044/R-1045's). Did not touch
+`:pipeline`'s `org.ort.pipeline.archive.SessionAudioExport` or its own files — WPAUDX's concurrent
+work in that package.
+
+**Requirements/ACs:** R-1050 (register, lead capture `overnight/CF07-settings-export@2x-end.png`
+after R-1044/R-1045 merged at `36266373`); constitution I (never an estimate presented as a fact);
+constitution VIII (screen re-captured and compared against the artboard after the fix, twice — the
+first recapture itself found this round's own follow-up defect, described below).
+
+**What changed:**
+- **(a) The filename no longer breaks inside its own timestamp.** The R-1045(b) shape —
+  `PrimaryButton` wrapping one always-single-line label string — let Compose's own word-wrap pick
+  the break point at font scale 2.0, and it landed inside the date
+  (`ort-export-tonight-202609` / `13-022935.adi · 8 KB`, the lead's own finding). Replaced the
+  direct `PrimaryButton` call with a new `ExportSaveFileButton` (same visual style, same R-380/R-543
+  accessible-name `clearAndSetSemantics`) whose content, `ExportSaveFileButtonContent`, renders
+  `"Save file"` and the filename on two *fixed* lines once `LocalDensity.current.fontScale >=
+  1.5f` (the same threshold figure `LiveMonitorScreen`/`LevelScreen`/`ReadyScreen` each already
+  use for their own two-fact stacking) — below it, the identical single-line label as before,
+  unchanged, since it already fits on one line there. The filename line is never allowed to
+  word-wrap at all (`softWrap = false`): a new `middleEllipsizeFileName(fileName, maxVisibleLength)`
+  shortens the string itself, before layout ever sees it, always cutting at a real hyphen already
+  in `ExportCoordinator.suggestedFileName`'s own `ort-export-<scope>-<yyyyMMdd-HHmmss>.<ext>` shape
+  — never mid-digit-run — dropping the entire timestamp (never a fragment of it) and keeping the
+  real extension verbatim. **Chose to drop the scope word too, not only the timestamp**: a first
+  attempt (`MAX_VISIBLE_FILE_NAME_LENGTH = 26`, `ort-export-tonight-….adi`) still overflowed once
+  the size suffix was appended on the same line — the real device recapture verifying this very fix
+  caught it, `Text`'s own `overflow = TextOverflow.Ellipsis` backstop then silently ate the size
+  instead, which is exactly the failure this round exists to close. `12`
+  (`ort-export-….adi`/`ort-export-….json`) leaves real, device-verified room for the size suffix
+  alongside it on the same line, at the cost of the scope word no longer being visible in the
+  button's own label — an acceptable trade named directly in the register text ("The full name is
+  still shown by the system save picker"): the real, untruncated name is still what
+  `contentDescription` carries and what the SAF picker itself displays.
+- **(b) Symmetric padding, however tall the label grows.** Before this, the button had no vertical
+  padding of its own at all — only `contentAlignment = Center` inside a `Box` that grows to fit its
+  content exactly once that content exceeds the 48dp floor, leaving zero slack on either side once
+  two lines filled it (the lead's own capture: first line flush against the top edge, more room
+  below the last line). `ExportSaveFileButtonContent` now wraps its content in a fixed
+  `Modifier.fillMaxWidth().padding(vertical = OrtSpacing.md)`, reserved unconditionally regardless
+  of scale or line count — one line or two, the same real 12dp top and bottom.
+- **Split out for testability, not by choice alone.** `ExportSaveFileButton`'s own
+  `clearAndSetSemantics` (the R-380/R-543 accessible-name fix every sibling button in this file's
+  `Controls.kt` already carries, and cannot be dropped) genuinely prunes every descendant from the
+  semantics tree on a real device — R-543's own finding, restated here because it directly blocks
+  the obvious test approach (querying a tagged node inside the real button). `ExportSaveFileButtonContent`
+  is `internal`, not `private`, purely so a test can render it directly, inside an equivalent host,
+  and actually reach its own tagged lines. `middleEllipsizeFileName` and
+  `MAX_VISIBLE_FILE_NAME_LENGTH` are `internal` for the same reason — a pure-function test is the
+  most precise way to prove "never a fragment of the timestamp," which no render-level test alone
+  can fully cover.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest` — full suite green (`BUILD SUCCESSFUL`), including every test
+  below.
+- Discriminating tests (`SettingsExportScreenGeometryTest.kt`, new):
+  - Three `middleEllipsizeFileName` pure-function tests: unchanged when already short; cuts only at
+    a real hyphen already in the name, with the dropped span asserted to contain no digit at all
+    (never a timestamp fragment); the real extension kept verbatim for all four export formats.
+  - `R_1050 the filename plus size line renders as one line...` (`@GraphicsMode.NATIVE`, scale 2.0,
+    260dp): the rendered line's own height stays within 1.5× a guaranteed-single-line reference —
+    reverting `softWrap = false` lets a plain `Text` wrap the long string across several lines at
+    this width, multiplying its height.
+  - `R_1050 the filename plus size line never clips the size...` (`@GraphicsMode.NATIVE`, scale
+    2.0): the real, width-constrained render's own measured width compared against the *same*
+    string rendered with no width limit (its true, natural width) — narrower means the tail (always
+    the size) was clipped. Documented honestly in its own doc comment: Robolectric's font metrics do
+    not reproduce the real device's closely enough for this specific test to have failed against the
+    pre-fix `MAX_VISIBLE_FILE_NAME_LENGTH = 26` (checked directly, restoring 26 locally to confirm) —
+    the real device recapture is the actual evidence for the chosen budget; this test's own value is
+    proving the comparison mechanism itself, for whatever regressions Robolectric's metrics do
+    reflect.
+  - Four `R_1050 the label's top and bottom insets are equal and at least the button's padding...`
+    cases (`w390dp-h844dp-420dpi` and 480dp, scale 1.0 and 2.0, `@GraphicsMode.NATIVE`): top and
+    bottom insets within 2dp of each other and at least `OrtSpacing.md` (12dp) minus a 2dp
+    font-metric tolerance, measured against an equivalent host carrying the exact `fillMaxWidth()
+    .requiredHeightIn(min = 48.dp)` shape the real button's own outer `Box` uses.
+  - `R_1045b the Save file button grows to fit its two-line label...` (kept, retitled): the button's
+    own real height clears 70dp at font scale 2.0, proving the label split onto two real lines
+    rather than being clipped.
+- Real device (`ort_audit`, `emulator-5562`, 1260×2772@420dpi), twice — the first recapture is what
+  found this round's own filename-plus-size overflow, not a report or a passing test:
+  `tools\ui-audit\boot.ps1 -Avd ort_audit -Port 5562`, `wm size`/`wm density` set to match,
+  `tools\ui-audit\install.ps1 -Port 5562 -Clear`, `tools\ui-audit\tour.ps1 -Port 5562 -Only
+  "overnight/CF07-settings-export*" -Out <scratch>` — `steps: 3 ok: 3 errors: 0` both times.
+  **First recapture** (`MAX_VISIBLE_FILE_NAME_LENGTH = 26`): confirmed the top/bottom padding fix
+  (button visibly symmetric now) but showed `ort-export-tonight-….adi ...` on the filename line —
+  the size swallowed by the overflow backstop, a new defect this round's own fix had introduced.
+  **Second recapture** (after reducing to `12`): the button reads, in full, two lines —
+  `Save file` / `ort-….adi · 8 KB` — both lines centred with visibly equal padding above and below,
+  the filename never wrapping or breaking, the extension and the real size both fully visible on
+  one line. Compared by eye against `design/canvas/Settings-Export.dc.html`. Scratch captures only
+  (`%TEMP%\ort-tour-cf07-r1050b`, the discarded first attempt at `%TEMP%\ort-tour-cf07-r1050`),
+  never written to `results/ui-audit/`. Emulator shut down after each capture
+  (`adb -s emulator-5562 emu kill`); `ort_audit_2`/`ort_audit_3` (other builders, ports 5560/5558)
+  left untouched throughout.
+- `python tools/spec-check/spec_check.py` — OK. `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — `BUILD
+  SUCCESSFUL in 14m 1s`, 1109 tasks.
+
+**Left open / not done:** the button's visible label no longer names which scope (`Tonight` vs
+`Everything`) the export covers at font scale 2.0 — an accepted, named trade for keeping the
+extension and the real size honestly visible on the same line at this width; the scope is still
+shown two rows above (the `What` section's own selected radio row) and in the real filename the
+system's save picker displays. `MAX_VISIBLE_FILE_NAME_LENGTH`'s exact value (12) is tuned to this
+build's own real filename shapes and this device's own font metrics at 420dpi — a future,
+substantially different naming scheme or a much narrower supported width would need this checked
+again on device, the same way this round's own first attempt (26) had to be.
+
 ---
 
 ## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor); R-1047 sent back once and re-fixed so the statement is actually visible)
@@ -716,6 +1313,9 @@ scoped fix).
 
 **Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchScreenTest"`
 green (including the new case). `:app:ktlintCheck :app:detekt` green.
+
+---
+
 ## 2026-09-12 (WPAUDX: RC02's session-audio export replaces the typed stub — a per-session slice of FR-STO-6, streamed, with a full provenance manifest)
 
 ### 3df61335 — WPAUDX: `SessionAudioExport` replaces the WPDATA typed "unavailable" stub with a real per-session audio export — a streamed zip (over audio and/or the raw continuous archive) with a full provenance manifest, never buffering a whole file into memory
@@ -1066,6 +1666,8 @@ pixels, dispatched through a new decision function — and no scenario/seed exis
 bar into its playback mode for a tour step; building that seam was judged out of scope for this
 slice). `design/design-intent.md`'s C10 row is left for the lead to update, per this package's own
 instructions.
+
+---
 
 ## 2026-09-12 (WPDATA fix: R-1043 correction — the v12→v13 migration test's own long name broke Windows MAX_PATH, not the environment)
 

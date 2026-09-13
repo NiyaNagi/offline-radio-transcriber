@@ -3206,7 +3206,12 @@ public object Scenarios {
      */
     private fun tier0LlmStored(context: Context): LoadResult {
         installRealBundledAssets(context)
-        ScenarioFixtures.installModelFixture(context, ModelId.LLM_GEMMA3_1B)
+        // R-1052: this scenario's test fixture source marks every entry (LLM included) installable
+        // — unlike a real HF_TOKEN-less build's manifest — so the real installer above just
+        // verified it. skipIfAlreadyVerified = false forces the placeholder anyway: simulating the
+        // real build's genuine truncation is this call's whole purpose (see installModelFixture's
+        // own kdoc), not a live model any capture session could load.
+        ScenarioFixtures.installModelFixture(context, ModelId.LLM_GEMMA3_1B, skipIfAlreadyVerified = false)
         ShedStatus.update(level = 1, backlog = 0)
         return LoadResult(0, 0, null)
     }

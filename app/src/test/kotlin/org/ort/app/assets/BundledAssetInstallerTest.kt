@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.ort.core.assets.ModelFileVerifier
+import org.ort.core.assets.ModelVerification
 import org.ort.testing.Requirement
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -73,6 +75,65 @@ class BundledAssetInstallerTest {
         assertEquals(encoderBytes.toList(), encoderDest.readBytes().toList())
         val marker = java.io.File(encoderDest.parentFile, encoderDest.name + ".sha256")
         assertEquals(sha256(encoderBytes), marker.readText())
+    }
+
+    /** Register R-1052 (halt): [org.ort.core.assets.ModelFileVerifier] — the check every model
+     * loader now runs before touching native code — needs an expected *size* on disk, not only
+     * the pre-existing sha256 marker (a same-size corruption survives a hash-only pre-check; a
+     * debug stub of a different size is caught for free). This is the one place that expectation
+     * is known (the manifest entry), so this is the one place it gets written. */
+    @Test
+    @Requirement("R-1052")
+    fun `R_1052 a fresh install also writes the expected size sidecar ModelFileVerifier reads`() {
+        val filesDir = Files.createTempDirectory("bundled-installer-size-marker").toFile()
+        val vadBytes = byteArrayOf(9, 8, 7, 6, 5)
+        val entry = AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", sha256(vadBytes), vadBytes.size.toLong())
+        val source = FakeBundledAssetSource(
+            mapOf(
+                "bundled/manifest.json" to manifestJson(listOf(entry)).toByteArray(),
+                "bundled/models/silero-vad/silero_vad.onnx" to vadBytes,
+            ),
+        )
+
+        val result = BundledAssetInstaller.installAll(filesDir, source).single()
+
+        assertTrue("expected Installed, got $result", result is BundledAssetState.Installed)
+        val destination = java.io.File(filesDir, "models/silero-vad/silero_vad.onnx")
+        val sizeMarker = ModelFileVerifier.sizeMarkerFile(destination)
+        assertTrue("size sidecar must exist after a fresh install", sizeMarker.isFile)
+        assertEquals(vadBytes.size.toLong(), sizeMarker.readText().trim().toLong())
+        assertEquals(ModelVerification.Verified, ModelFileVerifier.verify(destination))
+    }
+
+    /** An app already installed before this fix has a `.sha256` marker but no `.size` sidecar —
+     * [BundledAssetInstaller]'s own idempotency shortcut (R-865's `isAlreadyVerified`) must
+     * backfill it on the very next launch's `installAll`, or every upgraded install would read
+     * [org.ort.core.assets.ModelVerification.Failed] forever despite having a perfectly good
+     * model on disk. */
+    @Test
+    @Requirement("R-1052")
+    fun `R_1052 the already-verified fast path backfills a missing size sidecar on upgrade`() {
+        val filesDir = Files.createTempDirectory("bundled-installer-size-backfill").toFile()
+        val vadBytes = byteArrayOf(1, 2, 3, 4)
+        val destination = java.io.File(filesDir, "models/silero-vad/silero_vad.onnx")
+        destination.parentFile?.mkdirs()
+        destination.writeBytes(vadBytes)
+        // Exactly what a pre-fix install left behind: a matching sha256 marker, no size sidecar.
+        java.io.File(destination.parentFile, destination.name + ".sha256").writeText(sha256(vadBytes))
+        val entry = AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", sha256(vadBytes), vadBytes.size.toLong())
+        val source = FakeBundledAssetSource(
+            mapOf(
+                "bundled/manifest.json" to manifestJson(listOf(entry)).toByteArray(),
+                "bundled/models/silero-vad/silero_vad.onnx" to vadBytes,
+            ),
+        )
+
+        val result = BundledAssetInstaller.installAll(filesDir, source).single()
+
+        assertTrue("the idempotency shortcut must still report Installed", result is BundledAssetState.Installed)
+        val sizeMarker = ModelFileVerifier.sizeMarkerFile(destination)
+        assertTrue("the fast path must backfill the size sidecar", sizeMarker.isFile)
+        assertEquals(vadBytes.size.toLong(), sizeMarker.readText().trim().toLong())
     }
 
     @Test
