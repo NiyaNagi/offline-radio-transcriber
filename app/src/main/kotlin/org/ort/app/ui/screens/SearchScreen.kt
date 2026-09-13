@@ -29,6 +29,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -40,6 +42,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Banner
 import org.ort.app.ui.components.BannerTone
@@ -223,28 +226,27 @@ private fun SearchHeaderRow(
         // other destination — `Search` draws its own header at all (R-200's own doc comment: a
         // back chevron plus the inline field, not the generic `ScreenHeader`), so it must draw
         // this itself too, or the operator who reached `Search` from the drawer row has no way
-        // back into it except system back.
-        Icon(
-            imageVector = OrtIcons.drawer,
+        // back into it except system back. R-1048: [SearchHeaderTouchTargetIcon] gives it (and the
+        // back chevron below) a real 44dp touch target — see that composable's own doc comment.
+        SearchHeaderTouchTargetIcon(
+            icon = OrtIcons.drawer,
             contentDescription = "Open navigation",
             tint = OrtColors.textIcon,
-            modifier = Modifier
-                .size(21.dp)
-                .clickable(role = Role.Button, onClickLabel = "Open navigation", onClick = onDrawer)
-                .testTag("search-drawer-icon"),
+            glyphSize = 21.dp,
+            onClick = onDrawer,
+            testTag = "search-drawer-icon",
         )
         // R-200: `Search.dc.html`'s own header is a back chevron directly beside the inline
         // field, not the generic drawer/search icon row every other destination's `ScreenHeader`
         // draws — WP3's host still renders that generic header above this content today (it does
         // not yet know to suppress it for `SEARCH`; see this package's CHANGELOG entry).
-        Icon(
-            imageVector = OrtIcons.back,
+        SearchHeaderTouchTargetIcon(
+            icon = OrtIcons.back,
             contentDescription = "Back",
             tint = OrtColors.accentGreen,
-            modifier = Modifier
-                .size(20.dp)
-                .clickable(role = Role.Button, onClickLabel = "Back", onClick = onBack)
-                .testTag("search-back-chevron"),
+            glyphSize = 20.dp,
+            onClick = onBack,
+            testTag = "search-back-chevron",
         )
         val mono = isCallsignLike(input.text) || isFrequencyLike(input.text)
         val notApplied = result?.textSearchUnavailable == true
@@ -307,6 +309,41 @@ private fun SearchHeaderRow(
                 modifier = Modifier.testTag("search-run-button").semantics { contentDescription = "Run search" },
             )
         }
+    }
+}
+
+/**
+ * R-1048 (register): a real 44dp touch target around an unchanged glyph, `SetupScaffold.kt`'s own
+ * `ScaffoldHeaderRow` established fix for exactly this shape — an outer `Box` carries the floor and
+ * the `clickable`, the `Icon` inside keeps its own [glyphSize], centred, so the fix is a bigger hit
+ * region, never a bigger icon. Before this existed, [SearchHeaderRow]'s drawer icon and back
+ * chevron both put `clickable` directly on the glyph's own `Modifier.size(...)` — the real hit-test
+ * region `b96aa3b0`'s own bounds test found under FR-A11Y-2's 44dp floor. Pulled out of
+ * [SearchHeaderRow] (which two near-identical inline `Box`/`Icon` pairs pushed over detekt's
+ * `LongMethod` threshold), not because either caller needs a second use.
+ */
+@Composable
+private fun SearchHeaderTouchTargetIcon(
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color,
+    glyphSize: Dp,
+    onClick: () -> Unit,
+    testTag: String,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clickable(role = Role.Button, onClickLabel = contentDescription, onClick = onClick)
+            .testTag(testTag),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(glyphSize),
+        )
     }
 }
 

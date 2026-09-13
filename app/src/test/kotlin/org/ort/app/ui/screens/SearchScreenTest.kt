@@ -228,15 +228,17 @@ class SearchScreenTest {
     }
 
     /**
-     * R-1042 (register): the new drawer icon's own touch target, measured directly rather than
-     * assumed — matches (never falls further below) the pre-existing `search-back-chevron`'s own
-     * footprint beside it, this screen's own established icon size, so the new icon is at least no
-     * worse than what already ships. **Neither meets the 44dp floor** (`Controls.kt`'s own
-     * `IconButton`-style wrapper is not used by either row icon here) — a pre-existing gap this
-     * addition matches rather than introduces; flagged, not silently accepted as fine.
+     * R-1042/R-1048 (register): the drawer icon's own touch target, measured directly rather than
+     * assumed. Before R-1048's fix this only proved the new icon matched the pre-existing
+     * `search-back-chevron`'s own under-floor footprint (`clickable` sat directly on the 21dp
+     * `Icon`) — real device evidence (`b96aa3b0`'s own `uiautomator dump`) found both under FR-A11Y-2's
+     * 44dp floor. Fixed the same way `SetupScaffold.kt`'s `ScaffoldHeaderRow` already does it: an
+     * outer `Box` carries the 44dp floor and the `clickable`, the `Icon` inside keeps its original,
+     * unchanged size — so this is now a real floor assertion for both icons, not a parity check
+     * that would have passed even while both sat under 44dp.
      */
     @Test
-    fun `R_1042 the drawer icon's own touch target matches the back chevron's, neither smaller`() {
+    fun `R_1048 the drawer icon and the back chevron both meet the 44dp touch-target floor`() {
         screen()
 
         val drawerBounds = composeTestRule.onNodeWithTag("search-drawer-icon").getUnclippedBoundsInRoot()
@@ -245,9 +247,36 @@ class SearchScreenTest {
         val drawerHeight = drawerBounds.bottom - drawerBounds.top
         val backWidth = backBounds.right - backBounds.left
         val backHeight = backBounds.bottom - backBounds.top
-        assert(drawerWidth >= backWidth && drawerHeight >= backHeight) {
-            "expected the new drawer icon (${drawerWidth}x$drawerHeight) to be at least as large as the " +
-                "existing back chevron (${backWidth}x$backHeight)"
+        assert(drawerWidth >= 44.dp && drawerHeight >= 44.dp) {
+            "expected the drawer icon's touch target (${drawerWidth}x$drawerHeight) to meet the 44dp floor"
+        }
+        assert(backWidth >= 44.dp && backHeight >= 44.dp) {
+            "expected the back chevron's touch target (${backWidth}x$backHeight) to meet the 44dp floor"
+        }
+    }
+
+    /**
+     * R-1048 (register): the 44dp touch-target box must never resize the glyph itself — a caller
+     * cannot tell this fix landed by a suddenly-bigger icon, only by a bigger hit region around the
+     * same one. Measured against `OrtIcons`' own real `ImageVector` intrinsic size scaled by the
+     * `Icon` composable's own explicit `.size(...)` modifier — 21dp/20dp, unchanged from before this
+     * fix — rather than the outer 44dp box this test above already covers.
+     */
+    @Test
+    fun `R_1048 the 44dp touch target does not change either glyph's own size`() {
+        screen()
+
+        val drawerIconBounds = composeTestRule
+            .onNodeWithContentDescription("Open navigation", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val backIconBounds = composeTestRule
+            .onNodeWithContentDescription("Back", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        assert(drawerIconBounds.right - drawerIconBounds.left == 21.dp) {
+            "expected the drawer glyph to stay 21dp, was ${drawerIconBounds.right - drawerIconBounds.left}"
+        }
+        assert(backIconBounds.right - backIconBounds.left == 20.dp) {
+            "expected the back chevron glyph to stay 20dp, was ${backIconBounds.right - backIconBounds.left}"
         }
     }
 
