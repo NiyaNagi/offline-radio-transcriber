@@ -8,6 +8,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -224,6 +225,30 @@ class SearchScreenTest {
         composeTestRule.onNodeWithTag("search-drawer-icon").performClick()
 
         assert(opened) { "expected the drawer icon to invoke onDrawer" }
+    }
+
+    /**
+     * R-1042 (register): the new drawer icon's own touch target, measured directly rather than
+     * assumed — matches (never falls further below) the pre-existing `search-back-chevron`'s own
+     * footprint beside it, this screen's own established icon size, so the new icon is at least no
+     * worse than what already ships. **Neither meets the 44dp floor** (`Controls.kt`'s own
+     * `IconButton`-style wrapper is not used by either row icon here) — a pre-existing gap this
+     * addition matches rather than introduces; flagged, not silently accepted as fine.
+     */
+    @Test
+    fun `R_1042 the drawer icon's own touch target matches the back chevron's, neither smaller`() {
+        screen()
+
+        val drawerBounds = composeTestRule.onNodeWithTag("search-drawer-icon").getUnclippedBoundsInRoot()
+        val backBounds = composeTestRule.onNodeWithTag("search-back-chevron").getUnclippedBoundsInRoot()
+        val drawerWidth = drawerBounds.right - drawerBounds.left
+        val drawerHeight = drawerBounds.bottom - drawerBounds.top
+        val backWidth = backBounds.right - backBounds.left
+        val backHeight = backBounds.bottom - backBounds.top
+        assert(drawerWidth >= backWidth && drawerHeight >= backHeight) {
+            "expected the new drawer icon (${drawerWidth}x$drawerHeight) to be at least as large as the " +
+                "existing back chevron (${backWidth}x$backHeight)"
+        }
     }
 
     // --- R-202/R-203: the filter sheet's live counts and heard-frequency chips flow through ---
