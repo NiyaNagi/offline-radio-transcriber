@@ -58,6 +58,14 @@ class ImproveContentReattachTest {
 
     @After
     fun tearDown() {
+        // register R-1067 round 2: this test freezes a real reprocess run indefinitely
+        // (CaptureState/ShedStatus armed busy) and never lifts that freeze mid-test -- resetting
+        // those flags alone leaves the real background worker coroutine (a genuine, still-running
+        // WorkManager job, executing on its own dispatcher) to notice and unwind on its own time,
+        // which can outlive this test method and poison a later Compose test sharing the same JVM
+        // fork (`AppNotIdleException`, confirmed the hard way). Explicitly cancelling the unique
+        // work tears its coroutine down deterministically, before this method returns.
+        WorkManager.getInstance(context).cancelUniqueWork(ReprocessWorker.UNIQUE_WORK_NAME)
         ShedStatus.reset()
         CaptureState.idle(clearSession = true)
     }

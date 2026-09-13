@@ -107,6 +107,16 @@ Robolectric tests already carry:
 - `OrtNavHostDestinationDispatchTest.kt` (`ui/navigation`).
 - `TourStepsTest.kt` (`app/debug/tour`) — the canonical screenshot-tour driver.
 
+**Defensive hardening, added while chasing the fixes above:** `reattachToRunningWork` now catches
+`IllegalStateException` from `WorkManager.getInstance` and treats it as an honest
+`ReprocessRunSnapshot.NotRunning` — never true on a real device (WorkManager auto-initializes),
+only a test harness composing `ImproveContent` without a test `WorkManager`. This check runs on
+every composition (not only when a run starts), so treating that condition as fatal would make it
+the single most fragile line on the whole screen. Also: `ImproveContentReattachTest`'s own `@After`
+now explicitly cancels the unique work it freezes indefinitely (found the hard way — leaving it
+running past the test method poisoned a later Compose test sharing the same JVM fork with
+`AppNotIdleException`).
+
 **Left open / not done:**
 - The stop-then-resume test simulates the system's stop via cancelling the coroutine `doWork()` is
   suspended in, not `WorkManagerTestInitHelper`'s `TestDriver` — `TestDriver`'s public surface

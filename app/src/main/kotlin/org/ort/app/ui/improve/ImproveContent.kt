@@ -279,6 +279,14 @@ public fun ImproveContent(
  * [ImproveContent]'s own top-level reattachment check, split out purely to keep that function
  * under detekt's length limit — a plain data/control-flow move, not a behaviour change. See the
  * `LaunchedEffect(Unit)` call site's own comment for what this does and why.
+ *
+ * **Never crashes this composable over `WorkManager` being unavailable.** `WorkManager.getInstance`
+ * throws `IllegalStateException` when nothing has initialized it — never true for a real device or
+ * production app (auto-initialized), only a test harness that composes `ImproveContent` without
+ * `WorkManagerTestInitHelper`. This check runs on *every* composition (not only when the operator
+ * starts a run), so treating that condition as fatal would make it the single most fragile line in
+ * the whole screen; caught and treated as an honest [ReprocessRunSnapshot.NotRunning] instead — the
+ * same state a genuine absence of any tracked work already reports.
  */
 private suspend fun reattachToRunningWork(
     runner: ImproveRunner,
@@ -287,7 +295,12 @@ private suspend fun reattachToRunningWork(
     onReattachRunning: () -> Unit,
     onJustFinished: (JustFinishedRun) -> Unit,
 ) {
-    when (val snapshot = runner.observeState().first()) {
+    val snapshot = try {
+        runner.observeState().first()
+    } catch (e: IllegalStateException) {
+        ReprocessRunSnapshot.NotRunning
+    }
+    when (snapshot) {
         is ReprocessRunSnapshot.Waiting, is ReprocessRunSnapshot.Running -> {
             if (!isRunningPage) onReattachRunning()
         }
