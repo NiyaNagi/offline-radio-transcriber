@@ -11,6 +11,8 @@ import org.ort.capture.android.heartbeat.HeartbeatRecord
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
+import org.ort.core.assets.ModelFileVerifier
+import org.ort.core.assets.ModelVerification
 import org.ort.data.entity.CallsignCandidateEntity
 import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.LatticeSource
@@ -283,13 +285,32 @@ internal object ScenarioFixtures {
      * that one entry's own purpose, the tier distinction, same as this function always did for
      * every entry before R-865).
      */
-    fun installModelFixture(context: Context, id: ModelId) {
-        installModelFixture(context, ModelCatalog.entry(id))
+    fun installModelFixture(context: Context, id: ModelId, skipIfAlreadyVerified: Boolean = true) {
+        installModelFixture(context, ModelCatalog.entry(id), skipIfAlreadyVerified)
     }
 
-    private fun installModelFixture(context: Context, entry: ModelCatalogEntry) {
+    /**
+     * Register R-1052 (halt): this used to overwrite whatever sat at [entry]'s destination —
+     * including a genuinely installed, verified real model — with a 64-byte stub. On a validator's
+     * device with real bundled models, that stub then reached sherpa-onnx JNI unverified and the
+     * process died with `SIGABRT` (`RealVadProvider`/`RealAsrEngineProvider` now refuse to load it
+     * regardless — see [org.ort.core.assets.ModelFileVerifier] — but destroying a real model for a
+     * scenario/tour run is still the wrong behaviour on its own, degrading real capability for no
+     * reason on a device that had it working). [ModelFileVerifier.verify] is exactly the same
+     * check those loaders run, so "a real verified model already sits here" and "a native loader
+     * would trust this file" are, by construction, the same question — checked by default here
+     * first, and left completely untouched when the answer is yes.
+     *
+     * [skipIfAlreadyVerified] `= false` is the one deliberate exception: `Scenarios.tier0LlmStored`
+     * (R-865) needs to *force* a placeholder over an entry the real installer just verified, to
+     * simulate the LLM's own genuinely-truncated shape on a build without `HF_TOKEN` for the Models
+     * screen's own truncated-state UI test — a controlled, test-only corruption, not a live model a
+     * capture session could ever eagerly load, so R-1052's protection does not apply to it.
+     */
+    private fun installModelFixture(context: Context, entry: ModelCatalogEntry, skipIfAlreadyVerified: Boolean = true) {
         val filesDir = context.filesDir
         val destination = entry.destination(filesDir)
+        if (skipIfAlreadyVerified && ModelFileVerifier.verify(destination) is ModelVerification.Verified) return
         destination.parentFile?.mkdirs()
         destination.writeBytes(ByteArray(64))
         val markerText = when (val state = entry.checksumState) {
