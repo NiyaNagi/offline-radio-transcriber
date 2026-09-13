@@ -1,17 +1,27 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,6 +42,7 @@ import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * The "Log" destination (R-040/R-041/R-042/R-043/R-045, ui-conformance WP5;
@@ -47,7 +58,13 @@ import org.robolectric.RobolectricTestRunner
  * every row carries regardless of whether a confidence number sits beside it; that is what this
  * test now establishes, through [org.ort.app.ui.components.AttributionRow] rather than the legacy
  * always-show-confidence [org.ort.app.ui.components.AttributionMarker] shim.
+ *
+ * `@Suppress("LargeClass")`: this round's own R-1047 applied-filter/collision-bounds cases pushed
+ * this file over detekt's `LargeClass` threshold — the same established pattern this codebase
+ * already uses elsewhere (`ModelsScreenTest.kt`, `DigestPollingTest.kt`,
+ * `TransmissionDetailContentTest.kt`) rather than an artificial split of one screen's own test file.
  */
+@Suppress("LargeClass")
 @RunWith(RobolectricTestRunner::class)
 class LogScreenTest {
 
@@ -85,7 +102,16 @@ class LogScreenTest {
             LogQuickFilterChipViewState(LogQuickFilterId.Rejected, "Rejected", false),
         ),
         bluetoothAudioFootnote: String? = null,
-    ) = LogScreenViewState(items, quickFilters, rejectedFocus, rejectedExplanation, emptyState, bluetoothAudioFootnote)
+        appliedFilterLabel: String? = null,
+    ) = LogScreenViewState(
+        items,
+        quickFilters,
+        rejectedFocus,
+        rejectedExplanation,
+        emptyState,
+        bluetoothAudioFootnote,
+        appliedFilterLabel,
+    )
 
     @Test
     fun `FR_UI_1 a transmission with no transcript yet shows the honest not-yet-transcribed state, not an empty row`() {
@@ -693,5 +719,151 @@ class LogScreenTest {
         }
 
         composeTestRule.onNodeWithTag("log-bluetooth-audio-footnote").assertDoesNotExist()
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1047 (register): a visible, specific statement of the real applied filter.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 the applied-filter chip renders its own real label and All reads unselected`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(
+                        listOf(LogListItem.Row(rowState("TX1", "roger"))),
+                        quickFilters = listOf(LogQuickFilterChipViewState(LogQuickFilterId.All, "All", false)),
+                        appliedFilterLabel = "1 over",
+                    ),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("log-applied-filter-chip").assertExists()
+        composeTestRule.onNodeWithText("1 over", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("log-applied-filter-chip").assertIsSelected()
+        composeTestRule.onNodeWithContentDescription("All").assertIsNotSelected()
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 no applied-filter chip renders when the label is null`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(listOf(LogListItem.Row(rowState("TX1", "roger")))),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("log-applied-filter-chip").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 dismissing the applied-filter chip invokes onClearAppliedFilter`() {
+        var cleared = false
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = screenState(
+                        listOf(LogListItem.Row(rowState("TX1", "roger"))),
+                        quickFilters = listOf(LogQuickFilterChipViewState(LogQuickFilterId.All, "All", false)),
+                        appliedFilterLabel = "WA7HJR",
+                    ),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                    onClearAppliedFilter = { cleared = true },
+                )
+            }
+        }
+
+        // R-380/R-381/R-543: the dismiss icon is only reachable on the unmerged tree in Robolectric
+        // (`SearchScreenTest`'s own identical note on `FilterChip`'s shared implementation).
+        composeTestRule
+            .onNodeWithContentDescription("Remove WA7HJR filter", useUnmergedTree = true)
+            .performClick()
+
+        assert(cleared) { "expected dismissing the applied-filter chip to invoke onClearAppliedFilter" }
+    }
+
+    /**
+     * R-1047 (register verification): the applied-filter chip is rendered *inside* the same
+     * scrollable [org.ort.app.ui.components.FilterChipRow] the quick chips already use — never a
+     * new row below it — so it structurally cannot push the chip row's own height into the column
+     * header/first log row underneath it. Proved directly, at the tour AVD's own width and 480dp,
+     * both font scales, rather than assumed from the layout shape alone.
+     */
+    @Test
+    @Requirement("R-1047")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1047 at 390dp font scale 1_0 the applied-filter chip never collides with the first log row`() {
+        assertAppliedFilterChipNeverCollides(widthDp = 390, fontScale = 1f)
+    }
+
+    @Test
+    @Requirement("R-1047")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1047 at 390dp font scale 2_0 the applied-filter chip never collides with the first log row`() {
+        assertAppliedFilterChipNeverCollides(widthDp = 390, fontScale = 2f)
+    }
+
+    @Test
+    @Requirement("R-1047")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1047 at 480dp font scale 1_0 the applied-filter chip never collides with the first log row`() {
+        assertAppliedFilterChipNeverCollides(widthDp = 480, fontScale = 1f)
+    }
+
+    @Test
+    @Requirement("R-1047")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun `R_1047 at 480dp font scale 2_0 the applied-filter chip never collides with the first log row`() {
+        assertAppliedFilterChipNeverCollides(widthDp = 480, fontScale = 2f)
+    }
+
+    private fun assertAppliedFilterChipNeverCollides(widthDp: Int, fontScale: Float) {
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                Box(modifier = Modifier.width(widthDp.dp)) {
+                    OrtTheme {
+                        LogScreen(
+                            state = screenState(
+                                listOf(LogListItem.Row(rowState("TX1", "roger that, good copy"))),
+                                quickFilters = listOf(
+                                    LogQuickFilterChipViewState(LogQuickFilterId.All, "All", false),
+                                    LogQuickFilterChipViewState(LogQuickFilterId.Rejected, "Rejected", false),
+                                ),
+                                // The longest real statement this mapper produces — an hour window
+                                // — to stress the chip's own width/wrap at font scale 2_0 too.
+                                appliedFilterLabel = "23:00 – 00:00",
+                            ),
+                            onOpen = {},
+                            onQuickFilterSelect = {},
+                            onFilterClick = {},
+                        )
+                    }
+                }
+            }
+        }
+
+        val chipBottom = composeTestRule.onNodeWithTag("log-applied-filter-chip").getUnclippedBoundsInRoot().bottom
+        val firstRowTop = composeTestRule
+            .onNodeWithText("roger that, good copy", substring = true)
+            .getUnclippedBoundsInRoot()
+            .top
+        assertTrue(
+            "expected the applied-filter chip's own bottom ($chipBottom) to clear the first log row's " +
+                "own top ($firstRowTop) at ${widthDp}dp, font scale $fontScale — got an overlap",
+            chipBottom <= firstRowTop,
+        )
     }
 }

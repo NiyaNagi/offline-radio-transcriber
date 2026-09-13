@@ -580,4 +580,96 @@ class LogViewDataTest {
             empty.subMessage,
         )
     }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1047 (register): a visible, specific statement of the real applied filter — none of
+    // transmissionIds/stationId/an hour window/a sheet-picked frequency was ever represented by
+    // anything but the silently-wrong "All" chip before this.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 a curated transmissionIds set states its own real count, plural`() {
+        val selection = LogFilterSelection(transmissionIds = setOf("TX1", "TX2"))
+        assertEquals("2 overs", LogItemsMapper.appliedFilterLabel(selection, LogQuickFilterId.All))
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 a single curated over is singular, never 1 overs`() {
+        val selection = LogFilterSelection(transmissionIds = setOf("TX1"))
+        assertEquals("1 over", LogItemsMapper.appliedFilterLabel(selection, LogQuickFilterId.All))
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 a station filter states the real callsign`() {
+        val selection = LogFilterSelection(stationId = "WA7HJR")
+        assertEquals("WA7HJR", LogItemsMapper.appliedFilterLabel(selection, LogQuickFilterId.All))
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 an hour window with no frequency states the real window`() {
+        val selection = LogFilterSelection(fromMillis = 23 * 3_600_000L, toMillis = 24 * 3_600_000L - 1)
+        assertEquals("23:00 – 00:00", LogItemsMapper.appliedFilterLabel(selection, LogQuickFilterId.All))
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 a frequency window already carried by its own selected chip needs no separate statement`() {
+        // FQ02/FQ03's own real shape (NavHostCallbacks.onOpenOvers): frequencyHz and the window
+        // together, reached with the matching Frequency chip already active — this already worked
+        // (register: "unchanged behaviour... already worked end to end") and must keep reading as
+        // no specific-filter statement, only the chip itself.
+        val selection = LogFilterSelection(frequencyHz = 146_960_000L, fromMillis = 0L, toMillis = 1_000L)
+        assertNull(LogItemsMapper.appliedFilterLabel(selection, LogQuickFilterId.Frequency(146_960_000L)))
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 a frequency chosen without its own chip active states the real frequency`() {
+        // The filter sheet's own frequency picker (LogFilterSheet.onFrequencySelect) never synced
+        // the separately-tracked quick-chip state — the exact same "All stays selected" defect,
+        // for frequency. The statement covers it without requiring that sync to be fixed too.
+        val selection = LogFilterSelection(frequencyHz = 146_960_000L)
+        assertEquals("146.960", LogItemsMapper.appliedFilterLabel(selection, LogQuickFilterId.All))
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 an ordinary unfiltered selection states nothing`() {
+        assertNull(LogItemsMapper.appliedFilterLabel(LogFilterSelection(), LogQuickFilterId.All))
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 the Named or Rejected quick filters alone state nothing extra`() {
+        assertNull(LogItemsMapper.appliedFilterLabel(LogFilterSelection(), LogQuickFilterId.Named))
+        assertNull(LogItemsMapper.appliedFilterLabel(LogFilterSelection(), LogQuickFilterId.Rejected))
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 quickFilters never marks All selected while a specific filter statement applies`() {
+        val chips = LogItemsMapper.quickFilters(
+            frequencies = emptyList(),
+            active = LogQuickFilterId.All,
+            rejectedCount = 0,
+            hasAppliedFilterStatement = true,
+        )
+        assertEquals(false, chips.first { it.id == LogQuickFilterId.All }.selected)
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 quickFilters still marks All selected when no specific filter statement applies`() {
+        val chips = LogItemsMapper.quickFilters(
+            frequencies = emptyList(),
+            active = LogQuickFilterId.All,
+            rejectedCount = 0,
+            hasAppliedFilterStatement = false,
+        )
+        assertEquals(true, chips.first { it.id == LogQuickFilterId.All }.selected)
+    }
 }

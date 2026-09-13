@@ -115,6 +115,16 @@ public data class LogScreenViewState(
      * from cabled audio, never averaged in." Present exactly when this session's own audio route
      * is Bluetooth SCO; `null` (every caller before this existed) omits the line entirely. */
     val bluetoothAudioFootnote: String? = null,
+    /**
+     * R-1047 (register): a visible, specific statement of a real narrowing [LogItemsMapper
+     * .appliedFilterLabel] found in the selection but not already represented by any selected
+     * quick chip — a curated over count, a station callsign, an hour window, or a sheet-picked
+     * frequency. `null` (every caller before this existed) renders exactly as before — no
+     * indication, matching the honest "nothing narrows this view" case. Never asserted alongside a
+     * quick chip reading `All` selected — [quickFilters] itself is built to guarantee that (see its
+     * own kdoc).
+     */
+    val appliedFilterLabel: String? = null,
 )
 
 // -------------------------------------------------------------------------------------------
@@ -583,12 +593,28 @@ public object LogItemsMapper {
         return groupRuns(merged)
     }
 
+    /**
+     * R-1047 (register): [hasAppliedFilterStatement] is true exactly when [appliedFilterLabel]
+     * found a real narrowing not already represented by a selected chip — `All`'s own `selected`
+     * is forced `false` whenever it is, so the chip row never claims "everything" beside a
+     * dismissable chip stating the opposite. Every other chip's own `active == id` comparison is
+     * unchanged: a genuinely selected `Named`/`Rejected`/`Frequency` chip stays selected alongside
+     * the new statement (both can be true at once — a station filter narrowed on top of Named,
+     * say — and only `All`'s claim is the one this register row found false).
+     */
     public fun quickFilters(
         frequencies: List<Long>,
         active: LogQuickFilterId,
         rejectedCount: Int,
+        hasAppliedFilterStatement: Boolean = false,
     ): List<LogQuickFilterChipViewState> = buildList {
-        add(LogQuickFilterChipViewState(LogQuickFilterId.All, "All", active == LogQuickFilterId.All))
+        add(
+            LogQuickFilterChipViewState(
+                LogQuickFilterId.All,
+                "All",
+                active == LogQuickFilterId.All && !hasAppliedFilterStatement,
+            ),
+        )
         frequencies.forEach { hz ->
             val id = LogQuickFilterId.Frequency(hz)
             add(LogQuickFilterChipViewState(id, ReaderTransmissionViewStateMapper.frequencyLabel(hz), active == id))
@@ -596,6 +622,34 @@ public object LogItemsMapper {
         add(LogQuickFilterChipViewState(LogQuickFilterId.Named, "Named", active == LogQuickFilterId.Named))
         val rejectedLabel = if (rejectedCount > 0) "Rejected · $rejectedCount" else "Rejected"
         add(LogQuickFilterChipViewState(LogQuickFilterId.Rejected, rejectedLabel, active == LogQuickFilterId.Rejected))
+    }
+
+    /**
+     * R-1047 (register): the real, specific narrowing [selection] carries that is not already
+     * represented by [activeQuickFilter]'s own selected chip — a curated `transmissionIds` set (a
+     * correction, a reprocess run, a digest's curated overs — the selection alone cannot say
+     * which, so this states only the real count, never a guessed origin), a station's real
+     * callsign, an hour window (only when no frequency also narrows it — [LogFilterOrigin
+     * .Frequency]'s own case already reads through its own selected chip), or a frequency the
+     * filter sheet's own picker set without syncing the separately-tracked quick-chip state (the
+     * same "All stays selected" defect, for frequency). `null` exactly when nothing here needs a
+     * statement beyond the chip row itself.
+     */
+    public fun appliedFilterLabel(selection: LogFilterSelection, activeQuickFilter: LogQuickFilterId): String? {
+        val transmissionIds = selection.transmissionIds
+        val fromMillis = selection.fromMillis
+        val toMillis = selection.toMillis
+        val frequencyHz = selection.frequencyHz
+        return when {
+            transmissionIds != null -> pluralize(transmissionIds.size, "over")
+            selection.stationId != null -> selection.stationId
+            fromMillis != null && frequencyHz == null ->
+                ReaderTransmissionViewStateMapper.hourMinuteLabel(fromMillis) + " – " +
+                    (toMillis?.let { ReaderTransmissionViewStateMapper.hourMinuteLabel(it + 1) } ?: "—")
+            frequencyHz != null && activeQuickFilter != LogQuickFilterId.Frequency(frequencyHz) ->
+                ReaderTransmissionViewStateMapper.frequencyLabel(frequencyHz)
+            else -> null
+        }
     }
 
     /** The selection a quick chip applies on top of whatever the sheet already has set (`Log.dc.html`'s row). */
@@ -748,7 +802,16 @@ public object LogPolling {
         // in the unselected chip style) rather than waiting for a first over on it.
         val distinctFrequencies = (entities.mapNotNull { it.frequencyHz } + connectedFrequencies()).distinct().sorted()
         val rejectedCount = details.count { it.processingState == TransmissionState.REJECTED }
-        val quickFilters = LogItemsMapper.quickFilters(distinctFrequencies, activeQuickFilter, rejectedCount)
+        // R-1047: computed from the real sheet selection, not the effective (quick-filter-merged)
+        // one — [LogItemsMapper.appliedFilterLabel]'s own kdoc for exactly what this does and does
+        // not cover.
+        val appliedFilterLabel = LogItemsMapper.appliedFilterLabel(selection, activeQuickFilter)
+        val quickFilters = LogItemsMapper.quickFilters(
+            distinctFrequencies,
+            activeQuickFilter,
+            rejectedCount,
+            hasAppliedFilterStatement = appliedFilterLabel != null,
+        )
 
         if (activeQuickFilter == LogQuickFilterId.Rejected) {
             val items = LogItemsMapper.buildRejectedFocus(details)
@@ -793,6 +856,7 @@ public object LogPolling {
             rejectedExplanation = null,
             emptyState = emptyState,
             bluetoothAudioFootnote = bluetoothAudioFootnote,
+            appliedFilterLabel = appliedFilterLabel,
         )
     }
 

@@ -49,6 +49,10 @@ public fun LogScreen(
     onFilterClick: () -> Unit,
     modifier: Modifier = Modifier,
     onOpenThread: (String) -> Unit = {},
+    // R-1047 (register): dismisses [LogScreenViewState.appliedFilterLabel]'s own chip, resetting
+    // to the plain, unfiltered `All` view — never called when that label is `null` (no chip to
+    // dismiss). Defaulted to a no-op so every existing caller keeps compiling unchanged.
+    onClearAppliedFilter: () -> Unit = {},
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         Row(
@@ -64,6 +68,19 @@ public fun LogScreen(
         ) {
             state.quickFilters.forEach { chip ->
                 FilterChip(label = chip.label, selected = chip.selected, onClick = { onQuickFilterSelect(chip.id) })
+            }
+            // R-1047: rendered in the same scrollable chip row (never a new row below it, so this
+            // can never collide with the chip row or the first log row) — the same dismissable-
+            // chip shape `SearchScreen.kt`'s own applied-filter chips already use, since no
+            // `Log`-filtered-state artboard exists to follow instead.
+            state.appliedFilterLabel?.let { label ->
+                FilterChip(
+                    label = label,
+                    selected = true,
+                    onClick = onFilterClick,
+                    onDismiss = onClearAppliedFilter,
+                    modifier = Modifier.testTag("log-applied-filter-chip"),
+                )
             }
         }
 

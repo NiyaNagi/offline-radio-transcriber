@@ -505,6 +505,46 @@ class LogPollingTest {
         assertEquals("KA7LWH", row.attribution?.stationId)
     }
 
+    /**
+     * R-1047 (register): the real, end-to-end wiring gap — [LogPolling.screenState] built its
+     * `quickFilters` from `activeQuickFilter` alone, never consulting whether [selection] itself
+     * carried a real narrowing `quickFilters` has no chip for. A `transmissionIds`-filtered
+     * selection reached with `activeQuickFilter` still `All` (D11/R04/N01/DG02/station-Overs'
+     * own real shape) used to read `All` selected with no indication anywhere.
+     */
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 a transmissionIds selection states its count and All no longer reads selected`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.transmissionDao().insert(transmission("TX1", sessionId = "S1", samplePosition = 1L, stationId = "K7LWH"))
+        db.transmissionDao().insert(transmission("TX2", sessionId = "S1", samplePosition = 2L, stationId = "W7NPC"))
+
+        val state = LogPolling.screenState(
+            context,
+            "S1",
+            LogFilterSelection(transmissionIds = setOf("TX1")),
+            LogQuickFilterId.All,
+        )
+
+        assertEquals("1 over", state.appliedFilterLabel)
+        assertEquals(false, state.quickFilters.single { it.id == LogQuickFilterId.All }.selected)
+        // The real narrowing itself is unaffected by this round — proven already by IA_3's own
+        // pure-mapper test; this only proves the indication now travels alongside it.
+        assertEquals(1, state.items.size)
+    }
+
+    @Test
+    @Requirement("R-1047")
+    fun `R_1047 an ordinary unfiltered poll still reads All selected with no indication`(): Unit = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.transmissionDao().insert(transmission("TX1", sessionId = "S1", samplePosition = 1L, stationId = "K7LWH"))
+
+        val state = LogPolling.screenState(context, "S1", LogFilterSelection(), LogQuickFilterId.All)
+
+        assertEquals(null, state.appliedFilterLabel)
+        assertEquals(true, state.quickFilters.single { it.id == LogQuickFilterId.All }.selected)
+    }
+
     private fun session(id: String, startedAt: Long = 0L, captureMode: String? = null, audioRouteKind: String? = null) =
         SessionEntity(
             id = id,
