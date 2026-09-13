@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
 
-### <pending> — WPCOMPONENTS: R-1065 - PrimaryButton/SecondaryButton keep symmetric vertical padding around a wrapped label; R-1073 - DrillInHeader's back chevron gets a real 44dp touch box
+### 4d87c807 — WPCOMPONENTS: R-1065 - PrimaryButton/SecondaryButton keep symmetric vertical padding around a wrapped label; R-1073 - DrillInHeader's back chevron gets a real 44dp touch box
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Controls.kt`,
 `app/src/main/kotlin/org/ort/app/ui/components/Rows.kt`, their tests
