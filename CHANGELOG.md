@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPINIT round 2, coordinator review before merge: `NeverRetained` was itself an unrecorded guess — replaced with `Unknown`; fresh, single-AVD device evidence for Parts A/B/C and R-1055)
 
-### WPINIT: R-1055 device evidence — a dedicated debug scenario proves the cross-session filter fix on a real device, on this builder's own named AVD
+### cf5a327d — WPINIT: R-1055 device evidence — a dedicated debug scenario proves the cross-session filter fix on a real device, on this builder's own named AVD
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/CrossSessionReviewScenario.kt` (new),
 `Scenarios.kt` (registers it); `tools/ui-audit/tour.json` (two new steps, appended at the end,
