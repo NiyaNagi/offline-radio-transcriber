@@ -370,6 +370,26 @@ class DebugDumpBuilderTest {
         assertTrue(line.isNull("rigSquelchFusionApplied"))
     }
 
+    /**
+     * R-1058 (spec): a `model_verification_failed` line — the closed asset id and failure kind
+     * `DiagnosticsLog.logModelVerificationFailed` writes — is parsed back out of `pipeline.log`
+     * exactly like [DebugDumpBuilder]'s own `vad_stats` reader does for `capture.log`, never
+     * re-derived from in-memory state.
+     */
+    @Test
+    fun `R_1058 a model_verification_failed line in pipeline log lands in the dump`() = runTest {
+        val logDir = DiagnosticsLogPaths.logDir(context)
+        logDir.mkdirs()
+        File(logDir, "pipeline.log").writeText(
+            "2026-01-01T00:00:00Z WARN model_verification_failed assetId=VAD kind=HASH_MISMATCH\n",
+        )
+
+        val lines = readLines(DebugDumpBuilder.build(context))
+        val line = lines.single { it.optString("type") == "model_verification_failed" }
+        assertEquals("VAD", line.getString("assetId"))
+        assertEquals("HASH_MISMATCH", line.getString("kind"))
+    }
+
     @Test
     fun `R_1009 no voiceprint, user name or note ever appears in the dump`() = runTest {
         // The debug dump is a diagnostic artifact an operator may share, exactly like

@@ -80,12 +80,13 @@ public object ModelFileVerifier {
 
     public fun verify(destination: File): ModelVerification {
         if (!destination.isFile) {
-            return ModelVerification.Failed("no file at ${destination.path}")
+            return ModelVerification.Failed(ModelVerificationFailureKind.MISSING_FILE, "no file at ${destination.path}")
         }
 
         val sha256Marker = sha256MarkerFile(destination)
         if (!sha256Marker.isFile) {
             return ModelVerification.Failed(
+                ModelVerificationFailureKind.MISSING_RECORD,
                 "${destination.name} has no verified-install record (${sha256Marker.name} is missing) — " +
                     "never loaded without one",
             )
@@ -96,9 +97,13 @@ public object ModelFileVerifier {
         val sizeMarker = sizeMarkerFile(destination)
         if (sizeMarker.isFile) {
             val expectedSize = sizeMarker.readText().trim().toLongOrNull()
-                ?: return ModelVerification.Failed("${sizeMarker.name} is unreadable — not loaded")
+                ?: return ModelVerification.Failed(
+                    ModelVerificationFailureKind.SIZE_MISMATCH,
+                    "${sizeMarker.name} is unreadable — not loaded",
+                )
             if (actualSize != expectedSize) {
                 return ModelVerification.Failed(
+                    ModelVerificationFailureKind.SIZE_MISMATCH,
                     "${destination.name} is $actualSize bytes, expected $expectedSize — not loaded",
                 )
             }
@@ -124,6 +129,7 @@ public object ModelFileVerifier {
         if (actualSha256 != expectedSha256) {
             stamp.delete()
             return ModelVerification.Failed(
+                ModelVerificationFailureKind.HASH_MISMATCH,
                 "${destination.name} failed checksum verification (expected " +
                     "${expectedSha256.take(CHECKSUM_PREFIX_LENGTH)}..., got " +
                     "${actualSha256.take(CHECKSUM_PREFIX_LENGTH)}...) — not loaded",
@@ -156,5 +162,26 @@ public object ModelFileVerifier {
  * native code when it does (constitution I — uncertainty is content, not a crash). */
 public sealed interface ModelVerification {
     public object Verified : ModelVerification
-    public data class Failed(public val reason: String) : ModelVerification
+
+    /**
+     * [kind] is register R-1058's closed-vocabulary reason a caller (`RealVadProvider`,
+     * `AsrEngineProvisioning`, `ProseDigestRunner`) logs to `org.ort.pipeline.diagnostics.DiagnosticsLog`
+     * — never [reason] itself, which is free-text prose for an in-memory/UI message only (that
+     * file's own no-free-text discipline).
+     */
+    public data class Failed(public val kind: ModelVerificationFailureKind, public val reason: String) :
+        ModelVerification
+}
+
+/**
+ * Register R-1058: the closed set of reasons [ModelFileVerifier.verify] can refuse a file — every
+ * branch in [ModelFileVerifier.verify]/`verifyHash` maps to exactly one of these, so a caller can
+ * log "which check failed" without ever passing free text or a filesystem path into a diagnostics
+ * event (FR-OBS-6, D41).
+ */
+public enum class ModelVerificationFailureKind {
+    MISSING_FILE,
+    MISSING_RECORD,
+    SIZE_MISMATCH,
+    HASH_MISMATCH,
 }

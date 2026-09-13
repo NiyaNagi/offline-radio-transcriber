@@ -107,6 +107,41 @@ class ModelFileVerifierTest {
         assertTrue((result as ModelVerification.Failed).reason.contains(destination.path))
     }
 
+    // ---- Register R-1058 (spec): every Failed branch must carry its own closed-vocabulary
+    // ModelVerificationFailureKind, so a caller can log "which check failed" without free text. ---
+
+    @Test
+    fun `R_1058 a missing file fails with kind MISSING_FILE`(@TempDir tmp: File) {
+        val destination = File(tmp, "model.onnx")
+        val result = ModelFileVerifier.verify(destination) as ModelVerification.Failed
+        assertEquals(ModelVerificationFailureKind.MISSING_FILE, result.kind)
+    }
+
+    @Test
+    fun `R_1058 a file with no verified-install record fails with kind MISSING_RECORD`(@TempDir tmp: File) {
+        val destination = File(tmp, "model.onnx").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val result = ModelFileVerifier.verify(destination) as ModelVerification.Failed
+        assertEquals(ModelVerificationFailureKind.MISSING_RECORD, result.kind)
+    }
+
+    @Test
+    fun `R_1058 a wrong size fails with kind SIZE_MISMATCH`(@TempDir tmp: File) {
+        val bytes = "a real model".toByteArray()
+        val destination = File(tmp, "model.onnx").apply { writeBytes(bytes) }
+        writeMarkers(destination, bytes.size.toLong() + 1, sha256(bytes))
+        val result = ModelFileVerifier.verify(destination) as ModelVerification.Failed
+        assertEquals(ModelVerificationFailureKind.SIZE_MISMATCH, result.kind)
+    }
+
+    @Test
+    fun `R_1058 a wrong hash fails with kind HASH_MISMATCH`(@TempDir tmp: File) {
+        val bytes = ByteArray(64)
+        val destination = File(tmp, "model.onnx").apply { writeBytes(bytes) }
+        writeMarkers(destination, bytes.size.toLong(), sha256("something else entirely".toByteArray()))
+        val result = ModelFileVerifier.verify(destination) as ModelVerification.Failed
+        assertEquals(ModelVerificationFailureKind.HASH_MISMATCH, result.kind)
+    }
+
     @Test
     fun `a size match but wrong content fails on the sha256 check`(@TempDir tmp: File) {
         val bytes = ByteArray(64)

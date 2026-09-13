@@ -1,11 +1,15 @@
 package org.ort.pipeline.capture
 
+import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.ort.pipeline.diagnostics.DiagnosticsLog
+import org.ort.pipeline.diagnostics.ModelAssetId
+import org.ort.testing.TestClock
 import java.io.File
 import java.security.MessageDigest
 
@@ -30,6 +34,12 @@ class RealVadProviderTest {
     @AfterEach
     fun restoreLoader() {
         RealVadProvider.nativeLoader = originalLoader
+        DiagnosticsLog.shutdown()
+    }
+
+    private fun capturePipelineLog(filesDir: File): List<String> {
+        val file = File(File(filesDir, "diagnostics-logs"), DiagnosticsLog.Category.PIPELINE.fileName)
+        return if (file.isFile) file.readLines() else emptyList()
     }
 
     private fun sha256(bytes: ByteArray): String =
@@ -116,5 +126,59 @@ class RealVadProviderTest {
         assertTrue(result is VadProvisionResult.Available)
         (result as VadProvisionResult.Available).close()
         assertTrue(closed, "the real close callback must run")
+    }
+
+    // ---- Register R-1058 (spec): a verification failure must reach DiagnosticsLog, not just the
+    // in-memory Unavailable reason -- once per launch, naming the closed-vocabulary asset id and
+    // failure kind, never free text. -------------------------------------------------------------
+
+    @Test
+    fun `R_1058 an unverified VAD file logs one model_verification_failed event naming VAD and its kind`(
+        @TempDir tmp: File,
+    ) {
+        DiagnosticsLog.configure(tmp, TestClock())
+        val file = SileroVadLocator.modelFile(tmp)
+        file.parentFile?.mkdirs()
+        file.writeBytes(ByteArray(64)) // no markers at all -> MISSING_RECORD
+
+        RealVadProvider.provide(tmp)
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = capturePipelineLog(tmp)
+        assertEquals(1, written.size, "expected exactly one event, got: $written")
+        assertTrue(written[0].contains(DiagnosticsLog.EVENT_MODEL_VERIFICATION_FAILED))
+        assertTrue(written[0].contains("assetId=${ModelAssetId.VAD.name}"))
+        assertTrue(written[0].contains("kind=MISSING_RECORD"))
+    }
+
+    @Test
+    fun `R_1058 calling provide twice in one launch logs the failure only once`(@TempDir tmp: File) {
+        DiagnosticsLog.configure(tmp, TestClock())
+        val file = SileroVadLocator.modelFile(tmp)
+        file.parentFile?.mkdirs()
+        file.writeBytes(ByteArray(64))
+
+        RealVadProvider.provide(tmp)
+        RealVadProvider.provide(tmp)
+        runBlocking { DiagnosticsLog.flush() }
+
+        assertEquals(1, capturePipelineLog(tmp).size, "must log once per launch, not once per call")
+    }
+
+    @Test
+    fun `R_1058 a genuinely verified model logs no verification failure`(@TempDir tmp: File) {
+        DiagnosticsLog.configure(tmp, TestClock())
+        val file = SileroVadLocator.modelFile(tmp)
+        file.parentFile?.mkdirs()
+        val bytes = "a real model".toByteArray()
+        file.writeBytes(bytes)
+        org.ort.core.assets.ModelFileVerifier.sizeMarkerFile(file).writeText(bytes.size.toString())
+        org.ort.core.assets.ModelFileVerifier.sha256MarkerFile(file).writeText(sha256(bytes))
+        RealVadProvider.nativeLoader = { _ -> ({ _: FloatArray -> 1f }) to {} }
+
+        RealVadProvider.provide(tmp)
+        runBlocking { DiagnosticsLog.flush() }
+
+        assertTrue(capturePipelineLog(tmp).isEmpty(), "a successful verification must log nothing")
     }
 }

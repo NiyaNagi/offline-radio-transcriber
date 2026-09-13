@@ -32,6 +32,54 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPMODLOG: model verification failures logged, honestly no longer silent)
+
+### <pending> — WPMODLOG R-1058: model verification failures are now logged, once per launch, closed vocabulary
+
+**Scope:** `core/src/main/kotlin/org/ort/core/assets/ModelFileVerifier.kt` (new
+`ModelVerificationFailureKind` on `ModelVerification.Failed`);
+`pipeline/src/main/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLog.kt` (new `ModelAssetId` enum
+and `logModelVerificationFailed`); the three real callers —
+`pipeline/.../capture/RealVadProvider.kt`, `pipeline/.../passb/AsrEngineProvisioning.kt`,
+`pipeline/.../digest/ProseDigestRunner.kt`; `app/src/main/kotlin/org/ort/app/export/DebugDumpBuilder.kt`.
+Tests in each of those packages plus `core/src/test/.../ModelFileVerifierTest.kt`,
+`pipeline/src/test/.../DiagnosticsLogTest.kt` and `app/src/test/.../DebugDumpBuilderTest.kt`.
+**Requirements/ACs:** register R-1058 (spec), constitution I/VI, FR-OBS-1, R-1052.
+**What changed:** `ModelFileVerifier.verify()`'s every `Failed` branch now carries a closed
+`ModelVerificationFailureKind` (`MISSING_FILE`, `MISSING_RECORD`, `SIZE_MISMATCH`, `HASH_MISMATCH`)
+alongside its existing free-text `reason` (unchanged, still in-memory/UI-only prose — never
+logged). `DiagnosticsLog.logModelVerificationFailed(assetId: ModelAssetId, kind)` writes one
+`model_verification_failed` line to `pipeline.log` per `(assetId)` **once per launch** (the
+dedupe set resets on every `configure()`/`shutdown()`), naming only the closed asset id
+(`VAD`, `ASR_ENCODER`, `ASR_DECODER`, `ASR_TOKENS`, `LLM`) and the kind — no free text, no
+filesystem path, matching this file's own no-message-string discipline (FR-OBS-6, D41). All
+three real verification call sites now call it exactly where they already handle
+`ModelVerification.Failed` (`RealVadProvider.provide` for VAD; `AsrEngineProvisioning.provide`'s
+per-file loop, now paired with its own `ModelAssetId` so encoder/decoder/tokens are distinguished;
+`ProseDigestRunner.doWork` for the LLM). `DebugDumpBuilder` gained a `modelVerificationFailureLines`
+reader mirroring its existing `vadStatsLines` — parses `pipeline.log` (and its `.1` rotation) back
+into a `model_verification_failed` NDJSON record with `assetId`/`kind`, never re-derived from
+in-memory state.
+**Verified:** `gradlew :core:test --tests ModelFileVerifierTest`,
+`gradlew :pipeline:testDebugUnitTest --tests DiagnosticsLogTest --tests RealVadProviderTest
+--tests AsrEngineProvisioningTest --tests ProseDigestRunnerTest`,
+`gradlew :app:testDebugUnitTest --tests DebugDumpBuilderTest` — all green. Discriminating: removed
+the `DiagnosticsLog.logModelVerificationFailed` call from `RealVadProvider`, confirmed
+`RealVadProviderTest`'s two new R-1058 tests fail for the right reason (2 failed, 6 passed),
+restored, confirmed green again. `gradlew :core:detekt :pipeline:detekt :app:detekt` and
+`gradlew :core:ktlintMainSourceSetCheck :core:ktlintTestSourceSetCheck
+:pipeline:ktlintMainSourceSetCheck :pipeline:ktlintTestSourceSetCheck :app:ktlintMainSourceSetCheck
+:app:ktlintTestSourceSetCheck` — green.
+**Left open / not done:** `ProseDigestRunner`'s LLM check only actually reaches `DiagnosticsLog`
+when something has already called `DiagnosticsLog.configure()` this process (today only
+`RealCaptureService` does, at capture start) — a digest run with no capture session active this
+launch drops the event silently, exactly as every other `DiagnosticsLog` caller outside an active
+capture session already does; not a new gap this change introduces, and out of this row's scope
+to fix (would mean configuring `DiagnosticsLog` app-wide, a bigger change). Device/logcat
+confirmation is combined with R-1060's below, since both need the same no-token build.
+
+---
+
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
 
 ### 64c1bc56 — WPREC: fix ktlintDebugSourceSetCheck violations in the two new recordings scenarios
