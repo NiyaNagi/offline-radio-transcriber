@@ -32,6 +32,124 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPCF07 follow-up: R-1050 — the Save file label's filename gets its own never-wrapping line and the button keeps symmetric padding as it grows)
+
+### WPCF07 follow-up — `Settings-Export.dc.html` polish from the lead's own review of the merged R-1044/R-1045 capture: the filename no longer breaks inside its own timestamp, and the two-line label sits with equal padding top and bottom
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt` and its tests, now
+split across `SettingsExportScreenTest.kt` (functional/content) and the new
+`SettingsExportScreenGeometryTest.kt` (bounds — detekt's own `LargeClass` threshold made the split
+necessary once R-1050's own geometry cases landed alongside R-1044/R-1045's). Did not touch
+`:pipeline`'s `org.ort.pipeline.archive.SessionAudioExport` or its own files — WPAUDX's concurrent
+work in that package.
+
+**Requirements/ACs:** R-1050 (register, lead capture `overnight/CF07-settings-export@2x-end.png`
+after R-1044/R-1045 merged at `36266373`); constitution I (never an estimate presented as a fact);
+constitution VIII (screen re-captured and compared against the artboard after the fix, twice — the
+first recapture itself found this round's own follow-up defect, described below).
+
+**What changed:**
+- **(a) The filename no longer breaks inside its own timestamp.** The R-1045(b) shape —
+  `PrimaryButton` wrapping one always-single-line label string — let Compose's own word-wrap pick
+  the break point at font scale 2.0, and it landed inside the date
+  (`ort-export-tonight-202609` / `13-022935.adi · 8 KB`, the lead's own finding). Replaced the
+  direct `PrimaryButton` call with a new `ExportSaveFileButton` (same visual style, same R-380/R-543
+  accessible-name `clearAndSetSemantics`) whose content, `ExportSaveFileButtonContent`, renders
+  `"Save file"` and the filename on two *fixed* lines once `LocalDensity.current.fontScale >=
+  1.5f` (the same threshold figure `LiveMonitorScreen`/`LevelScreen`/`ReadyScreen` each already
+  use for their own two-fact stacking) — below it, the identical single-line label as before,
+  unchanged, since it already fits on one line there. The filename line is never allowed to
+  word-wrap at all (`softWrap = false`): a new `middleEllipsizeFileName(fileName, maxVisibleLength)`
+  shortens the string itself, before layout ever sees it, always cutting at a real hyphen already
+  in `ExportCoordinator.suggestedFileName`'s own `ort-export-<scope>-<yyyyMMdd-HHmmss>.<ext>` shape
+  — never mid-digit-run — dropping the entire timestamp (never a fragment of it) and keeping the
+  real extension verbatim. **Chose to drop the scope word too, not only the timestamp**: a first
+  attempt (`MAX_VISIBLE_FILE_NAME_LENGTH = 26`, `ort-export-tonight-….adi`) still overflowed once
+  the size suffix was appended on the same line — the real device recapture verifying this very fix
+  caught it, `Text`'s own `overflow = TextOverflow.Ellipsis` backstop then silently ate the size
+  instead, which is exactly the failure this round exists to close. `12`
+  (`ort-export-….adi`/`ort-export-….json`) leaves real, device-verified room for the size suffix
+  alongside it on the same line, at the cost of the scope word no longer being visible in the
+  button's own label — an acceptable trade named directly in the register text ("The full name is
+  still shown by the system save picker"): the real, untruncated name is still what
+  `contentDescription` carries and what the SAF picker itself displays.
+- **(b) Symmetric padding, however tall the label grows.** Before this, the button had no vertical
+  padding of its own at all — only `contentAlignment = Center` inside a `Box` that grows to fit its
+  content exactly once that content exceeds the 48dp floor, leaving zero slack on either side once
+  two lines filled it (the lead's own capture: first line flush against the top edge, more room
+  below the last line). `ExportSaveFileButtonContent` now wraps its content in a fixed
+  `Modifier.fillMaxWidth().padding(vertical = OrtSpacing.md)`, reserved unconditionally regardless
+  of scale or line count — one line or two, the same real 12dp top and bottom.
+- **Split out for testability, not by choice alone.** `ExportSaveFileButton`'s own
+  `clearAndSetSemantics` (the R-380/R-543 accessible-name fix every sibling button in this file's
+  `Controls.kt` already carries, and cannot be dropped) genuinely prunes every descendant from the
+  semantics tree on a real device — R-543's own finding, restated here because it directly blocks
+  the obvious test approach (querying a tagged node inside the real button). `ExportSaveFileButtonContent`
+  is `internal`, not `private`, purely so a test can render it directly, inside an equivalent host,
+  and actually reach its own tagged lines. `middleEllipsizeFileName` and
+  `MAX_VISIBLE_FILE_NAME_LENGTH` are `internal` for the same reason — a pure-function test is the
+  most precise way to prove "never a fragment of the timestamp," which no render-level test alone
+  can fully cover.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest` — full suite green (`BUILD SUCCESSFUL`), including every test
+  below.
+- Discriminating tests (`SettingsExportScreenGeometryTest.kt`, new):
+  - Three `middleEllipsizeFileName` pure-function tests: unchanged when already short; cuts only at
+    a real hyphen already in the name, with the dropped span asserted to contain no digit at all
+    (never a timestamp fragment); the real extension kept verbatim for all four export formats.
+  - `R_1050 the filename plus size line renders as one line...` (`@GraphicsMode.NATIVE`, scale 2.0,
+    260dp): the rendered line's own height stays within 1.5× a guaranteed-single-line reference —
+    reverting `softWrap = false` lets a plain `Text` wrap the long string across several lines at
+    this width, multiplying its height.
+  - `R_1050 the filename plus size line never clips the size...` (`@GraphicsMode.NATIVE`, scale
+    2.0): the real, width-constrained render's own measured width compared against the *same*
+    string rendered with no width limit (its true, natural width) — narrower means the tail (always
+    the size) was clipped. Documented honestly in its own doc comment: Robolectric's font metrics do
+    not reproduce the real device's closely enough for this specific test to have failed against the
+    pre-fix `MAX_VISIBLE_FILE_NAME_LENGTH = 26` (checked directly, restoring 26 locally to confirm) —
+    the real device recapture is the actual evidence for the chosen budget; this test's own value is
+    proving the comparison mechanism itself, for whatever regressions Robolectric's metrics do
+    reflect.
+  - Four `R_1050 the label's top and bottom insets are equal and at least the button's padding...`
+    cases (`w390dp-h844dp-420dpi` and 480dp, scale 1.0 and 2.0, `@GraphicsMode.NATIVE`): top and
+    bottom insets within 2dp of each other and at least `OrtSpacing.md` (12dp) minus a 2dp
+    font-metric tolerance, measured against an equivalent host carrying the exact `fillMaxWidth()
+    .requiredHeightIn(min = 48.dp)` shape the real button's own outer `Box` uses.
+  - `R_1045b the Save file button grows to fit its two-line label...` (kept, retitled): the button's
+    own real height clears 70dp at font scale 2.0, proving the label split onto two real lines
+    rather than being clipped.
+- Real device (`ort_audit`, `emulator-5562`, 1260×2772@420dpi), twice — the first recapture is what
+  found this round's own filename-plus-size overflow, not a report or a passing test:
+  `tools\ui-audit\boot.ps1 -Avd ort_audit -Port 5562`, `wm size`/`wm density` set to match,
+  `tools\ui-audit\install.ps1 -Port 5562 -Clear`, `tools\ui-audit\tour.ps1 -Port 5562 -Only
+  "overnight/CF07-settings-export*" -Out <scratch>` — `steps: 3 ok: 3 errors: 0` both times.
+  **First recapture** (`MAX_VISIBLE_FILE_NAME_LENGTH = 26`): confirmed the top/bottom padding fix
+  (button visibly symmetric now) but showed `ort-export-tonight-….adi ...` on the filename line —
+  the size swallowed by the overflow backstop, a new defect this round's own fix had introduced.
+  **Second recapture** (after reducing to `12`): the button reads, in full, two lines —
+  `Save file` / `ort-….adi · 8 KB` — both lines centred with visibly equal padding above and below,
+  the filename never wrapping or breaking, the extension and the real size both fully visible on
+  one line. Compared by eye against `design/canvas/Settings-Export.dc.html`. Scratch captures only
+  (`%TEMP%\ort-tour-cf07-r1050b`, the discarded first attempt at `%TEMP%\ort-tour-cf07-r1050`),
+  never written to `results/ui-audit/`. Emulator shut down after each capture
+  (`adb -s emulator-5562 emu kill`); `ort_audit_2`/`ort_audit_3` (other builders, ports 5560/5558)
+  left untouched throughout.
+- `python tools/spec-check/spec_check.py` — OK. `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `./gradlew dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — `BUILD
+  SUCCESSFUL in 14m 1s`, 1109 tasks.
+
+**Left open / not done:** the button's visible label no longer names which scope (`Tonight` vs
+`Everything`) the export covers at font scale 2.0 — an accepted, named trade for keeping the
+extension and the real size honestly visible on the same line at this width; the scope is still
+shown two rows above (the `What` section's own selected radio row) and in the real filename the
+system's save picker displays. `MAX_VISIBLE_FILE_NAME_LENGTH`'s exact value (12) is tuned to this
+build's own real filename shapes and this device's own font metrics at 420dpi — a future,
+substantially different naming scheme or a much narrower supported width would need this checked
+again on device, the same way this round's own first attempt (26) had to be.
+
+---
+
 ## 2026-09-12 (WPDATA fix: R-1043 correction — the v12→v13 migration test's own long name broke Windows MAX_PATH, not the environment)
 
 ### WPDATA fix — root cause found and fixed: `migration_from_v12_to_v13_...`'s combination of its own (correctly descriptive) test name and a long `dbName` pushed the resolved Robolectric sandbox path past Windows' 260-character limit; shortening `dbName` fixes it, verified 3× alone and 3× in the full `:data` suite

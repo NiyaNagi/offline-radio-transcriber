@@ -2,6 +2,7 @@ package org.ort.app.ui.settings
 
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,9 +26,22 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.ort.app.export.ExportCoordinator
 import org.ort.app.export.ExportCountPreview
@@ -39,7 +54,6 @@ import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.OrtIcons
-import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.RadioRow
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.improve.Plurals
@@ -421,14 +435,14 @@ private fun ExportFooter(
             ExportPreviewRow(preview = preview, format = format, modifier = Modifier.padding(top = OrtSpacing.md))
         }
 
-        PrimaryButton(
-            text = buildSaveButtonLabel(fileName = fileName, sizeBytes = sizeBytes),
-            onClick = onSaveFile,
+        ExportSaveFileButton(
+            fileName = fileName,
+            sizeBytes = sizeBytes,
             enabled = scope != ExportScope.RANGE,
+            onClick = onSaveFile,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = OrtSpacing.md, bottom = OrtSpacing.lg)
-                .testTag("export-save-file-button"),
+                .padding(top = OrtSpacing.md, bottom = OrtSpacing.lg),
         )
     }
 }
@@ -442,11 +456,12 @@ private fun ExportFooter(
  * [org.ort.app.export.ExportCoordinator.previewSizeBytes] itself failed — and is honestly omitted
  * from the label rather than replaced with an estimate (constitution I/VI): the artboard's own
  * `184 KB` is real, [ExportCoordinator.previewSizeBytes]'s own kdoc explains how, but a size this
- * screen cannot yet vouch for must never be shown as if it could. [PrimaryButton]'s own `Text` has
- * no `maxLines`/`overflow` cap (unlike [ExportPreviewRow]'s own `FlowRow` fix, this is a *single*
- * `Text`, which already wraps at word/hyphen boundaries by default) — a long filename wraps the
- * button onto a second line rather than being clipped or overflowing it, and [PrimaryButton]'s own
- * `requiredHeightIn(min = 48.dp)` is a floor, not a fixed height, so the button grows to fit.
+ * screen cannot yet vouch for must never be shown as if it could.
+ *
+ * This is the *full, real* label — always the single-line shape, filename and size never
+ * shortened — used for the accessible name ([ExportSaveFileButton]'s own `contentDescription`) and
+ * for the visible label itself below [LARGE_FONT_SCALE_THRESHOLD] ([ExportSaveFileButtonContent]),
+ * where it already fits on one line without needing to wrap or truncate at all.
  */
 private fun buildSaveButtonLabel(fileName: String?, sizeBytes: Long?): String = buildString {
     append("Save file")
@@ -471,6 +486,168 @@ private fun formatExportSize(bytes: Long): String {
     val mb = bytes / 1_000_000.0
     val kb = bytes / 1_000.0
     return if (mb >= 1.0) "%.1f MB".format(Locale.ROOT, mb) else "%.0f KB".format(Locale.ROOT, kb)
+}
+
+/** R-1044/etc.'s own threshold family (`ui/screens/LiveMonitorScreen.kt`, `ui/setup/LevelScreen.kt`,
+ * `ui/setup/ReadyScreen.kt` each define their own copy at the same figure) — the smallest scale a
+ * real capture showed a two-fact row needed to stack rather than share one line. */
+private const val LARGE_FONT_SCALE_THRESHOLD = 1.5f
+
+/** R-1050 (register, lead capture `overnight/CF07-settings-export@2x-end.png`): the visible
+ * filename is never shortened past this many characters (ellipsis and extension included). A first
+ * attempt at 26 (long enough to keep the scope word — `ort-export-tonight-….adi`) still overflowed
+ * once the size suffix (` · 8 KB`) was appended on the same line, at the real device capture this
+ * round's own recapture caught — `PrimaryButton`'s/`ExportSaveFileButtonContent`'s own
+ * `overflow = TextOverflow.Ellipsis` backstop then silently ate the size instead, exactly the
+ * "extension and size visible" guarantee this round exists to keep. 12 — `ort-export-….<ext>`,
+ * dropping the scope word too, not only the timestamp — leaves real, verified room for the size
+ * suffix alongside it (see [middleEllipsizeFileName]'s own kdoc for why a fragment of the timestamp
+ * specifically is worse than dropping it whole; the scope word has no such honesty concern, it is
+ * simply not load-bearing enough to keep at this width). */
+internal const val MAX_VISIBLE_FILE_NAME_LENGTH = 12
+
+/**
+ * R-1050 (register): the R-1045(b) shape — [org.ort.app.ui.components.PrimaryButton] wrapping the
+ * single, always-one-line [buildSaveButtonLabel] — is correct at 1.0 (the label already fits on one
+ * line there) but at font scale 2.0 the label's own natural word-wrap broke *inside* the filename's
+ * own timestamp (`ort-export-tonight-202609` / `13-022935.adi · 8 KB` — a genuine on-device finding,
+ * not a hypothetical), reading as a corrupted name rather than a wrapped sentence. This composable
+ * replaces that direct `PrimaryButton` call, reusing its exact visual style, and delegates the
+ * visible content to [ExportSaveFileButtonContent] (below [LARGE_FONT_SCALE_THRESHOLD]: the same
+ * single-line label as before; at or above it: `"Save file"` on its own line, the filename on a
+ * second, *never-wrapping* line of its own — [middleEllipsizeFileName] shortens it up front, before
+ * layout ever sees it, so there is no line-break for a word-wrap to land inside). The content is
+ * split into its own composable purely so a test can render it directly: this button's own
+ * `clearAndSetSemantics` (below — the R-380/R-543 accessible-name fix this file's own sibling
+ * buttons all carry, see `PrimaryButton`'s own doc comment for why it cannot be dropped) genuinely
+ * prunes every descendant from the semantics tree on a real device (R-543's own finding), so no
+ * semantics-based query from inside a test could ever reach a tagged node beneath it otherwise.
+ */
+@Composable
+private fun ExportSaveFileButton(
+    fileName: String?,
+    sizeBytes: Long?,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val label = buildSaveButtonLabel(fileName, sizeBytes)
+    val bg = if (enabled) OrtColors.accentGreen else OrtColors.bgChip
+    val fg = if (enabled) OrtColors.accentOnGreen else OrtColors.textDisabled
+    Box(
+        modifier = modifier
+            .requiredHeightIn(min = 48.dp)
+            .background(bg, RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 20.dp)
+            .testTag("export-save-file-button")
+            .clearAndSetSemantics {
+                contentDescription = label
+                // R-380 correction (WP2, gate-blocking) — see `PrimaryButton`'s own doc comment.
+                this.text = AnnotatedString(label)
+                role = Role.Button
+                if (enabled) {
+                    onClick(label = null) {
+                        onClick()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        ExportSaveFileButtonContent(fileName = fileName, sizeBytes = sizeBytes, color = fg)
+    }
+}
+
+/**
+ * [ExportSaveFileButton]'s own visible content, split out — see that composable's own doc comment
+ * for why: `internal`, not `private`, purely so `SettingsExportScreenTest`'s own `R_1050` cases can
+ * render it directly, inside an equivalent test host, and reach its tagged nodes at all.
+ *
+ * R-1050(b): a fixed `Modifier.padding(vertical = OrtSpacing.md)` around the content, *inside* the
+ * button's own `requiredHeightIn(min = 48.dp)` floor — before this, the button had no vertical
+ * padding of its own at all, only `contentAlignment = Center` inside a Box that grows to fit its
+ * content exactly once that content exceeds 48dp, so a two-line label filled the button with zero
+ * slack on either side; the lead's own capture showed the *result* of that (first line flush
+ * against the top edge, more room below the last line) rather than its cause, but either way the
+ * fix is the same: reserve real, equal space top and bottom, unconditionally, so the button's own
+ * padding survives however tall the label grows.
+ */
+@Composable
+internal fun ExportSaveFileButtonContent(
+    fileName: String?,
+    sizeBytes: Long?,
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    val fontScale = LocalDensity.current.fontScale
+    val style = OrtType.control.copy(fontWeight = FontWeight.Medium)
+    Box(
+        // `fillMaxWidth()` here, not left to the caller's own outer Box, so this content always
+        // centres itself across the button's *full* inner width regardless of how that outer Box
+        // aligns an unconstrained child (R-1050 follow-up, found writing this composable's own
+        // isolated test host, which has no reason to default to the button's own alignment).
+        modifier = modifier.fillMaxWidth().padding(vertical = OrtSpacing.md),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (fileName != null && fontScale >= LARGE_FONT_SCALE_THRESHOLD) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "Save file",
+                    style = style,
+                    color = color,
+                    modifier = Modifier.testTag("export-save-file-line1"),
+                )
+                Text(
+                    text = middleEllipsizeFileName(fileName, MAX_VISIBLE_FILE_NAME_LENGTH) +
+                        (sizeBytes?.let { " · ${formatExportSize(it)}" } ?: ""),
+                    style = style,
+                    color = color,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("export-save-file-line2"),
+                )
+            }
+        } else {
+            Text(
+                text = buildSaveButtonLabel(fileName, sizeBytes),
+                style = style,
+                color = color,
+                modifier = Modifier.testTag("export-save-file-line1"),
+            )
+        }
+    }
+}
+
+/**
+ * R-1050 (register): the lead's own finding was a *line-wrap* landing inside the timestamp
+ * (`ort-export-tonight-202609` / `13-022935.adi`) — this never wraps at all (its caller sets
+ * `softWrap = false`), so the fragment this produces can only ever come from *this* function's own
+ * choice, on a single line, never from where Compose's own text layout happened to break. Rather
+ * than a generic "keep N chars, drop the middle" — which for this exact name shape would still cut
+ * through the timestamp's own digit run, exactly the defect being fixed — the cut point is always a
+ * hyphen already present in [fileName] (never mid-token): `ExportCoordinator.suggestedFileName`'s
+ * own shape is `ort-export-<scope>-<yyyyMMdd-HHmmss>.<ext>`, so backing up to the last hyphen within
+ * budget keeps the meaningful `ort-export-<scope>-` prefix whole and drops the entire timestamp —
+ * never a fragment of it — replacing it with one ellipsis character before the (always-kept)
+ * extension. [fileName] itself is never altered — the real, full name is what `Save file` actually
+ * writes and what the system's own document picker shows (R-1050's own register text). Internal,
+ * not private — `SettingsExportScreenTest`'s own `R_1050` cases assert this pure function
+ * directly, the most precise way to prove "never a hyphen-delimited token's own middle" (a
+ * render-level test can only observe the rendered *result*, not every possible input shape this
+ * function must handle correctly).
+ */
+internal fun middleEllipsizeFileName(fileName: String, maxVisibleLength: Int): String {
+    if (fileName.length <= maxVisibleLength) return fileName
+    val dot = fileName.lastIndexOf('.')
+    val extension = if (dot >= 0) fileName.substring(dot) else ""
+    val stem = if (dot >= 0) fileName.substring(0, dot) else fileName
+    val prefixBudget = (maxVisibleLength - extension.length - 1).coerceAtLeast(1)
+    val truncatedStem = stem.take(prefixBudget)
+    val cutAt = truncatedStem.lastIndexOf('-').let { if (it > 0) it + 1 else truncatedStem.length }
+    return stem.take(cutAt) + "…" + extension
 }
 
 /**
