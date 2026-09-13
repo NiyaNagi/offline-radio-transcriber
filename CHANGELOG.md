@@ -421,6 +421,72 @@ right reason, restored it). `:app:compileDebugKotlin` green.
 
 ## 2026-09-13 (spec: FR-SEG-10 and Q22 - the VAD that cut a segment is recorded, and whether capture may continue without the specified one is asked)
 
+### WPSEGPROV · FR-SEG-10, AC-162: every session and transmission now records which VAD detector cut it
+
+**Scope:** `:core` (new `org.ort.core.capture.VadDetectorKind` enum and its `conformsToFrSeg1` derived property),
+`:data` (`SessionEntity`/`TransmissionEntity` new columns, schema v13 -> v14 migration and schema JSON,
+`MigrationTest`, `FtsIndexRepairTest`), `:pipeline` (`RealCaptureService.resolveVad`/`buildSegmenter`/
+`RealSegmentSink`, `DiagnosticsLog.logVadStats`, and their tests), `:app` (`DebugDumpBuilder`'s session/over/
+`vad_stats` lines, `DebugDumpBuilderTest`), `results/coverage-matrix.md` (regenerated).
+
+**Requirements/ACs:** FR-SEG-10 (built), AC-162 (built and driven both ways). Bears on FR-SEG-1, FR-SEG-5, FR-SEG-7,
+FR-SEG-9, CON-SEG-1, FR-OBS-1, D41, constitution I and VI; register R-1052, R-1054 (the provenance half; disclosure
+and whether capture may continue on the fallback stay Q22, the product owner's).
+
+**What changed:** R-1054 established that `RealCaptureService.buildSegmenter` silently substitutes an RMS-energy VAD
+when Silero is unavailable, with only one diagnostic tier-facts line as evidence — no session, transmission,
+`vad_stats` line or debug dump ever named the detector that actually cut a boundary, a provenance hole CON-SEG-1
+exists to prevent. Checked first, per the prompt's instruction, rather than assumed: `VadAvailability` is a global,
+session-scoped `object` that already distinguishes real Silero from the stub, but it is a diagnostics-only holder with
+no persistence and no per-transmission granularity; `SessionEntity`/`TransmissionEntity` (schema v13) had no field for
+it at all; `RealCaptureService.buildSegmenter` resolved the VAD *after* the session row was already inserted, so
+recording it on the session required moving that resolution earlier, not just adding a column. A mid-session
+availability change is architecturally impossible today — `buildSegmenter` runs exactly once per session, building one
+fixed `Segmenter` for that session's whole lifetime — so a genuine change (e.g. the installer copying the model in
+between two launches) can only ever surface as a *new* session naming a different detector, never two different
+detectors inside one session's own transmissions; this is stated in `resolveVad`'s kdoc rather than guessed at.
+
+Built: a closed `VadDetectorKind` enum (`UNKNOWN`, `SILERO`, `TEN_VAD`, `ENERGY`) in `:core` (the only module both
+`:data` and `:pipeline` share), with a `conformsToFrSeg1` extension so UI/export never re-derive the FR-SEG-1
+conformance rule a second way. Schema v14 adds `session.vadDetector`/`.vadDetectorVersion` and
+`transmission.vadDetector`/`.vadDetectorVersion`/`.rigSquelchFusionApplied` — the two `vadDetector` columns are
+`NOT NULL DEFAULT 'UNKNOWN'` (Room's fresh-install CREATE TABLE carries the same `NOT NULL` with no SQL default, so
+`FtsIndexRepairTest`'s raw-SQL fixture needed the new columns added explicitly — a real, if minor, consequence of the
+additive migration, not a defect). `RealCaptureService.resolveVad` now runs once, before the session insert, and its
+`ResolvedVad` (detector, version, the real `VadModel`) is threaded into both the `SessionEntity` and
+`RealSegmentSink`, so a session and its own transmissions can never disagree. `TransmissionEntity.conformsToFrSeg1()`
+is the one data-layer answer to "does this boundary conform to FR-SEG-1". Rig squelch fusion (FR-SEG-5) is not built
+anywhere in `:pipeline` (confirmed by search — no code reads squelch state to gate a boundary), so
+`rigSquelchFusionApplied` is wired as an honest, always-`false` constant at the one call site that will need to carry
+the real decision once FR-SEG-5 exists — never a guess. `DiagnosticsLog.logVadStats` and `DebugDumpBuilder`'s
+`session`/`over`/`vad_stats` lines all carry the new fields; a pre-WPSEGPROV `capture.log` line with neither field
+still parses, reading them as `null` rather than throwing or guessing.
+
+**Verified:** `./gradlew :core:test :data:test :pipeline:test :app:test` (all green; the one real defect this
+change surfaced, `FtsIndexRepairTest`'s raw-SQL fixture missing the new `NOT NULL` columns, is fixed in this commit);
+`./gradlew dependencyRules platformGuards build` full gate, green (`BUILD SUCCESSFUL`); `./gradlew -p buildSrc test`;
+`python tools/spec-check/spec_check.py`; `./gradlew :core:ktlintCheck :core:detekt :data:ktlintCheck :data:detekt
+:pipeline:ktlintCheck :pipeline:detekt :app:ktlintCheck :app:detekt`; `./gradlew coverageMatrix` then
+`coverageMatrixCheck` — AC-162 and FR-SEG-10 both read covered, citing `MigrationTest`, `RealCaptureServiceTest`
+(driving capture both ways, Silero available and unavailable, through the real service composition — Silero faked
+only via register R-1052's own `RealVadProvider.nativeLoader`/`ModelFileVerifier` seam, never a real model),
+`RealSegmentSinkTest`, `DiagnosticsLogTest` and `DebugDumpBuilderTest`. Discriminating, revert-and-restore proven:
+(1) hardcoding `RealSegmentSink`'s persisted `vadDetector` to `UNKNOWN` failed the five tests that assert a real
+identity (`expected:<ENERGY/SILERO> but was:<UNKNOWN>`) while leaving every other test (including the "no explicit
+detector defaults to UNKNOWN" case) green; (2) changing `MIGRATION_13_14`'s session default to `'SILERO'` failed
+both the new migration test and the widened all-fixtures sweep (`must default to the honest UNKNOWN, never a
+fabricated SILERO`); (3) hardcoding `conformsToFrSeg1` to `false` failed `VadDetectorKindTest`'s conformance case
+(`expected:<true> but was:<false>`). All three reverts restored before this commit.
+
+**Left open / not done:** Q22 itself (whether capture may continue on the fallback at all, and how loud the
+disclosure should be) is the product owner's, not decided here — this package only records and exposes the truth
+under either answer. No detector version string is available from any real source yet (neither the Silero binding
+nor the energy stand-in reports one), so `vadDetectorVersion` is always `null` today — the column exists, honestly
+empty, for whenever a real version becomes knowable. No UI surfaces any of this; that is explicitly out of scope
+until Q22 resolves. `WPREC`'s `recordingSessionSummaries` widening was not touched — this session's `SessionDao`
+change is additive only (two new nullable-or-defaulted columns), so it should not conflict, but its own query shapes
+were not inspected beyond confirming they live in `:pipeline`, not `:data`.
+
 ### spec · FR-SEG-10, AC-162, Q22: a missing VAD model silently switched capture to an unspecified detector
 
 **Scope:** `spec/functional-spec.md` (FR-SEG-10 after FR-SEG-9; AC-162 after AC-161), `spec/open-questions.md`
