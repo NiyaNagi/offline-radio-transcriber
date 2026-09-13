@@ -34,7 +34,17 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPRC02: Recording-Session, R-1059)
 
-### (pending) — WPRC02: OrtNavHost wiring to open RC02 from RC01
+### (pending) — WPRC02: coverage matrix regenerated after RC02
+
+**Scope:** `results/coverage-matrix.md` (generated file) only.
+**Requirements/ACs:** none new.
+**What changed:** regenerated after `da88bafe` (RC02) and `da9acd2d` (OrtNavHost wiring) landed.
+**Verified:** `gradlew coverageMatrix` — 272 of 485 requirements covered, no new orphan-requirement
+names beyond this session's own known `RC01`/`RC02`/`C10`/`IA-3`/`P9`/constitution-tag entries (the
+same class of `@Requirement` citation `RecordingsViewStateMapperTest` already uses for RC01).
+`gradlew coverageMatrixCheck` — green (separate invocation, per AGENTS.md).
+
+### da9acd2d — WPRC02: OrtNavHost wiring to open RC02 from RC01
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`,
 `app/src/main/kotlin/org/ort/app/ui/navigation/NavSeed.kt`,
