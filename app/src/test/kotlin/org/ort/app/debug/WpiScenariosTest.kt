@@ -732,6 +732,62 @@ class WpiScenariosTest {
     }
 
     /**
+     * R-1076 (register, debug only): the actual bug this round found, and R-873's own test above
+     * could never catch it — [ActiveScenarioRepublishProvider] used to call [Scenarios.load] again
+     * on every republish, which re-ran [Scenarios.clearPriorScenarioData] and every scenario
+     * builder's own `:data` writes, silently discarding anything a validator or the operator had
+     * changed about that data since the scenario first loaded (R-873's own test never wrote to the
+     * database at all, so it never noticed). **Shown failing on the pre-fix code**: before this fix,
+     * `onCreate()` called `Scenarios.load(appContext, activeScenarioName)` again, which begins with
+     * `clearPriorScenarioData` — a real row this test wrote after that first load would have been
+     * deleted, then rewritten back to `rig-lost`'s own unmodified fixture value, failing the first
+     * assertion below.
+     *
+     * Loads a live scenario, changes a real DB row exactly the way an operator action would
+     * (`setOverAudioRemoved` — a real, existing write path, not a raw duplicate insert `@Insert`'s
+     * own `OnConflictStrategy.ABORT` default would reject), then does what a real debug process
+     * restart does (resets every process-wide holder, the same facets [resetProcessWideFacets]
+     * above resets between tests, standing in for the OS tearing the process down) and drives the
+     * provider's real entry point ([org.robolectric.Robolectric.buildContentProvider], which calls
+     * `onCreate()` the same way the OS does at real process start) — the changed row must survive
+     * untouched, and the process-wide holders must still come back.
+     */
+    @Test
+    @Requirement("R-1076")
+    fun `R_1076_a debug process restart republishes facets without re-seeding data`() = runTest {
+        Scenarios.load(context, "rig-lost")
+        val sessionId = ScenarioFixtures.sessionId("rig-lost")
+        assertNotNull(db.sessionDao().getById(sessionId))
+
+        // A real change to a DB row this scenario seeded, the same shape an operator action makes —
+        // never a re-seed, so a bug that re-seeds must overwrite it back to `null`.
+        val removedAtMillis = SystemClock.wallMillis()
+        db.sessionDao().setOverAudioRemoved(sessionId, removedAtMillis)
+        assertEquals(removedAtMillis, db.sessionDao().getById(sessionId)?.overAudioRemovedAtMillis)
+
+        // Simulate the OS tearing the process down: every process-wide holder a real restart would
+        // lose goes back to its own default.
+        InputStatus.reset()
+        RigStatus.reset()
+        CaptureState.idle(clearSession = true)
+
+        org.robolectric.Robolectric.buildContentProvider(ActiveScenarioRepublishProvider::class.java).create()
+
+        // The changed row survived -- never re-seeded.
+        assertEquals(
+            "a debug process restart must never re-seed data a validator or the operator changed",
+            removedAtMillis,
+            db.sessionDao().getById(sessionId)?.overAudioRemovedAtMillis,
+        )
+
+        // The process-wide facet came back.
+        assertTrue(
+            "expected RigStatus.Stale republished, got ${RigStatus.state}",
+            RigStatus.state is RigStatus.State.Stale,
+        )
+    }
+
+    /**
      * R-944: `setup-level`'s `peakHistoryDbfs` must be a real, non-constant speech-shaped envelope
      * — not the flat `-20f + (it % 5)` cycle that drew as alternating full-height amber/green blocks
      * once WPD's `levelBarRects` made S07's meter a real proportional envelope. Every sample stays

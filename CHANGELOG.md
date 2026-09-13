@@ -34,6 +34,79 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
 
+### (this commit) — WPRESEED: R-1076 - ActiveScenarioRepublishProvider now republishes only the process-wide, in-memory scenario facets on a debug process restart, never re-seeding `:data` rows or files
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, `ScenarioFixtures.kt`,
+`ActiveScenarioRepublishProvider.kt` (no change to their own file rows besides this); `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`.
+
+**Requirements/ACs:** R-1076 (register, debug-only), R-873 (the provider this replaces — its own
+kdoc claimed only in-memory facets were being republished, but its actual call re-seeded
+everything).
+
+**What changed.**
+- **Root cause, confirmed by reading, not guessed**: [`ActiveScenarioRepublishProvider.onCreate()`]
+  called `Scenarios.load(appContext, activeScenarioName)` again on every debug process start while a
+  scenario marker was set. `load` begins with `clearPriorScenarioData` (deletes every `scenario-`
+  prefixed row) and every scenario builder's own `:data`/heartbeat-file/`SharedPreferences` writes —
+  none of that is "republishing an in-memory facet", it is a second full seed. A validator or
+  operator's own change to that data since the first load (a correction, a session edit) was
+  silently discarded on the very next debug relaunch.
+- **`Scenarios.republish(name)`** (new, `public`, takes no `Context` at all): the real fix. Resets
+  every process-wide facet (`resetProcessWideFacets`, unchanged) then republishes exactly the
+  facet(s) the named scenario's own builder additionally sets, through a new `republishFacets`
+  dispatcher. Every scenario whose builder sets an extra process-wide singleton beyond the reset
+  defaults (`RigStatus`, `InputStatus`, `LevelStatus`, `ThermalStatus`, `ShedStatus`,
+  `StorageForecast`, `AsrAvailability`, `CaptureState`, `DebugFailureOverride`,
+  `DebugRigLinkPortOverride`, `DebugRouteCheckOverride`, `DebugSearchOverride` — roughly 35 of the
+  ~80 named scenarios) now exposes a small `republish<Scenario>Facets()` function, **extracted
+  (moved, never duplicated) out of the builder itself**, called from both the original builder (first
+  load, unchanged behaviour) and the new dispatcher (republish) — the two call sites cannot drift
+  apart because there is only one copy of the code. `Scenarios.load` itself is untouched: still
+  seeds on first load exactly as before.
+- **`ScenarioFixtures.republishCapturing(sessionId)`** (new): the in-memory half of `markCapturing`
+  alone — `CaptureState.capturing(sessionId)` with no heartbeat write, since the heartbeat file
+  already survives a process restart on its own (that is its entire purpose) and rewriting it on
+  every republish would falsify "how long ago" for no reason.
+- **`ActiveScenarioRepublishProvider.onCreate()`** now calls `Scenarios.republish(activeScenarioName)`
+  — no `Context`, no `runBlocking`, no suspend function at all, since every facet setter it touches is
+  a plain synchronous singleton call.
+- **Known, reported gap, not an oversight**: `lexicon-corrupt`'s one facet
+  (`org.ort.app.ui.data.DebugLexiconImportOverride`) is the *return value* of running the real
+  production lexicon validator against a staged asset file. Replaying it safely on every restart
+  would mean either re-running the whole validator (which would re-insert its own "previous version"
+  `LexiconVersionEntity` row a second time — a primary-key conflict) or duplicating the validator's
+  own logic here; neither is acceptable, so this one scenario republishes as a no-op beyond the
+  reset, documented in `republishFacets`'s own kdoc.
+
+**Verified.**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.*"` — green, `BUILD SUCCESSFUL`
+  (180 actionable tasks, 78 executed / 102 from cache). Includes the new discriminating test,
+  `WpiScenariosTest :: R_1076_a debug process restart republishes facets without re-seeding data`
+  (loads `rig-lost`, writes a real `overAudioRemovedAtMillis` via `setOverAudioRemoved` — a real
+  write path, not a raw duplicate `@Insert`, which `OnConflictStrategy.ABORT` would reject — resets
+  every process-wide holder to simulate the OS tearing the process down, drives
+  `ActiveScenarioRepublishProvider` the Robolectric way (`Robolectric.buildContentProvider(...).create()`,
+  the provider's real entry point), then asserts the row survived untouched **and** `RigStatus` came
+  back `Stale`); shown failing against the pre-fix `onCreate()` (`Scenarios.load` again) by
+  inspection — `clearPriorScenarioData` runs unconditionally at the top of `load`, so the corrected
+  row would have been deleted and rewritten back to the fixture's own unmodified value, failing the
+  test's own post-restart assertion. R-873's own two existing tests in the same class
+  (`R_873_a debug process restart re-publishes...`/`R_873_the republish provider is a no-op...`)
+  stay green unchanged, and every other test in the `org.ort.app.debug` package (`ScenariosTest`'s own
+  `R_110` five-times-thirty-scenario stress loop, `TourStepsTest`, `TourParityTest`, all of
+  `WpiScenariosTest`'s ~35 facet-bearing-scenario assertions) is green too — the extraction changed
+  no observable behaviour of a first `load`.
+- `./gradlew :app:smokeTestDebugUnitTest` — green, `BUILD SUCCESSFUL` (180 actionable tasks, 2
+  executed / 178 up-to-date; this module's own isolated-JVM Compose classes, unaffected by this
+  change).
+- `./gradlew ktlintCheck detekt` (every module) — green, `BUILD SUCCESSFUL` (173 actionable tasks,
+  163 executed / 10 up-to-date).
+
+**Left open / not done:** `lexicon-corrupt`'s own `DebugLexiconImportOverride` facet is not
+republished (see above — a deliberate, documented gap, not a fix left half-done). Not run: the full
+gate (`dependencyRules platformGuards build`), CI, or the Release workflow — this package's own
+scoped checks only, per this round's own brief; the lead's own merge gate covers the rest.
+
 ### 3e7cbf5f — WPTESTROBUST: R-1043 - NavSeedTest's searchFiltersOpen now waits for the tag instead of asserting immediately, and SettingsContentTest's fixed waitUntil(5_000) calls use a shared, generous timeout constant
 
 **Scope:** `app/src/test/kotlin/org/ort/app/testing/OrtComposeTestRule.kt` (new shared constant only);

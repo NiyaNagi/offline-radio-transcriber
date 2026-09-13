@@ -375,7 +375,7 @@ internal object ScenarioFixtures {
      * just flip [CaptureState].
      */
     fun markCapturing(context: Context, sessionId: String, samplePosition: Long = 0L) {
-        CaptureState.capturing(sessionId)
+        republishCapturing(sessionId)
         FileHeartbeatStore(File(context.filesDir, "heartbeat.txt")).write(
             HeartbeatRecord(
                 sessionId = sessionId,
@@ -384,5 +384,17 @@ internal object ScenarioFixtures {
                 samplePosition = samplePosition,
             ),
         )
+    }
+
+    /**
+     * R-1076: the in-memory half of [markCapturing] alone, with no heartbeat write — the heartbeat
+     * file already survives a debug process restart on its own (that is its whole job; see
+     * [markCapturing]'s own kdoc), so [ActiveScenarioRepublishProvider] republishing a scenario's
+     * process-wide facets after such a restart must flip [CaptureState] back without touching that
+     * file, or it would silently discard the real liveness history a genuinely-running capture
+     * (or a previous incarnation of this same debug process) already wrote there.
+     */
+    fun republishCapturing(sessionId: String) {
+        CaptureState.capturing(sessionId)
     }
 }
