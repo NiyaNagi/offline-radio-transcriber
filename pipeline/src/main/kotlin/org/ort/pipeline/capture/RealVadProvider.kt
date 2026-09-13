@@ -3,6 +3,8 @@ package org.ort.pipeline.capture
 import org.ort.asrsherpa.real.RealSileroVad
 import org.ort.core.assets.ModelFileVerifier
 import org.ort.core.assets.ModelVerification
+import org.ort.pipeline.diagnostics.DiagnosticsLog
+import org.ort.pipeline.diagnostics.ModelAssetId
 import org.ort.segment.VadModel
 import java.io.File
 
@@ -58,9 +60,12 @@ public object RealVadProvider {
         // R-1052: never hand a path to native code without checking it first — a Kotlin
         // catch (t: Throwable) around the constructor call below cannot stop a native abort.
         when (val verification = ModelFileVerifier.verify(file)) {
-            is ModelVerification.Failed -> return VadProvisionResult.Unavailable(
-                "Silero VAD model at ${file.path} failed verification and was not loaded: ${verification.reason}",
-            )
+            is ModelVerification.Failed -> {
+                DiagnosticsLog.logModelVerificationFailed(ModelAssetId.VAD, verification.kind)
+                return VadProvisionResult.Unavailable(
+                    "Silero VAD model at ${file.path} failed verification and was not loaded: ${verification.reason}",
+                )
+            }
             ModelVerification.Verified -> Unit
         }
         return try {

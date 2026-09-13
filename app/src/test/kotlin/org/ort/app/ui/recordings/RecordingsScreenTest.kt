@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -85,6 +86,10 @@ class RecordingsScreenTest {
             }
         }
         composeTestRule.onNodeWithTag(RECORDINGS_LOADING_TEST_TAG).assertIsDisplayed()
+        // Register R-1022 (WPDIGINIT): this screen's own loading row also carries the shared
+        // `LOADING_STATE_TEST_TAG`, so `TourAccessibilityScroll.snapshot`'s structural readiness
+        // scan — which only knows the shared tag, not this package's own — waits for it too.
+        composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertIsDisplayed()
         composeTestRule.onNodeWithText("No recordings match this filter.").assertDoesNotExist()
     }
 

@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performScrollToNode
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
 import org.ort.app.ui.data.ActivityPatternMapper
 import org.ort.app.ui.data.FrequencyDetailViewState
 import org.ort.app.ui.data.FrequencyListEntryViewState
@@ -34,6 +35,19 @@ class FrequencyScreenTest {
         composeTestRule.setContent { OrtTheme { FrequenciesListScreen(frequencies = emptyList(), onOpen = {}) } }
 
         composeTestRule.onNodeWithContentDescription("No frequencies recorded yet").assertExists()
+    }
+
+    // Register R-1022/R-1051 (halt, constitution I/IV): an empty list *while still loading* must
+    // never be mistaken for the real "no frequencies recorded" fact above — see this composable's
+    // own `loading` parameter kdoc.
+    @Test
+    fun `R_1022 loading true renders the shared loading state, never the empty-state text`() {
+        composeTestRule.setContent {
+            OrtTheme { FrequenciesListScreen(frequencies = emptyList(), onOpen = {}, loading = true) }
+        }
+
+        composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertExists()
+        composeTestRule.onNodeWithContentDescription("No frequencies recorded yet").assertDoesNotExist()
     }
 
     @Test

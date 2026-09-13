@@ -33,7 +33,18 @@ public fun ThreadContent(
     modifier: Modifier = Modifier,
     onOpenThread: (String) -> Unit = {},
 ) {
-    var state by remember { mutableStateOf<ThreadListViewState>(ThreadListViewState.Empty) }
+    // Register R-1022/R-1051 (halt, constitution I/IV): the real "not yet known" seed — see
+    // [ThreadListViewState.Loading]'s own kdoc for why a fabricated "nothing captured" claim
+    // before a real, live [sessionId]'s first poll is exactly the bug this replaces. A `null`
+    // [sessionId] is its own, different honest fact (no session to poll at all, resolved
+    // synchronously by the caller before this composable ever runs — never itself a pending
+    // poll) — that case is [ThreadListViewState.Empty] immediately, unchanged from before this fix,
+    // never stuck loading forever.
+    var state by remember(sessionId) {
+        mutableStateOf<ThreadListViewState>(
+            if (sessionId != null) ThreadListViewState.Loading else ThreadListViewState.Empty,
+        )
+    }
     if (sessionId != null) {
         LaunchedEffect(sessionId) {
             while (true) {

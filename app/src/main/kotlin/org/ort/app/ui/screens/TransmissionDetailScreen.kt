@@ -780,7 +780,11 @@ private fun NoAudioNotice(reason: AudioAbsenceReason?) {
                 "Pruned by the retention budget on ${reason.dateLabel}. Transcript, attribution and lattice " +
                     "were kept."
             AudioAbsenceReason.NeverRetained -> "Audio was never retained for this over."
-            AudioAbsenceReason.Unknown, null -> "No retained audio for this transmission. The reason is not recorded."
+            // R-1066 (polish): the box above ([WaveformCard]'s own `NoAudio` message, `Inspection
+            // .kt`) already names the absence — this line states only the cause, never repeating
+            // that title (the pre-fix sentence read "No retained audio for this transmission. The
+            // reason is not recorded.", restating the box's own words before naming anything new).
+            AudioAbsenceReason.Unknown, null -> "The reason is not recorded."
         },
         style = OrtType.cardBody,
         color = OrtColors.textFaint,

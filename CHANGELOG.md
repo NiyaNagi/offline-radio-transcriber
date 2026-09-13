@@ -208,6 +208,530 @@ for main code; `:app`'s test source set needed `work-testing` to run a test `Wor
 
 ---
 
+## 2026-09-13 (WPDIGINIT Part A: R-1022/R-1051 closed for every remaining screen)
+
+### f6474626 — WPDIGINIT Part A: R-1022/R-1051 - Sessions, Digest, Recordings' shared tag, Stations, Frequencies, Threads and the transmission detail's own loading frames now use the shared, tagged LoadingState
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/digest/{SessionsContent,DigestContent}.kt`;
+`app/src/main/kotlin/org/ort/app/ui/recordings/RecordingsScreen.kt` (the loading row's tag only —
+`ui/recordings/**` is WPRC02's package); `app/src/main/kotlin/org/ort/app/ui/screens/{StationsContent,
+StationScreen,StationDetailContent,FrequenciesContent,FrequencyScreen,FrequencyDetailContent,
+ThreadContent,ThreadScreen,DetailRevisionsScreen,TransmissionDetailContent}.kt`;
+`app/src/main/kotlin/org/ort/app/ui/data/{StationsAndFrequencies,ThreadViewData}.kt`;
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (new `audio-removed-by-operator` scenario);
+`tools/ui-audit/tour.json` (one step appended at the end); every file's own test.
+
+**Requirements/ACs:** R-1022, R-1051 (register, halt, constitution I/IV/VIII), R-1066 (device
+evidence for the Part B fix, captured here).
+
+**What changed.** WPINIT closed R-1022/R-1051 for Log, Now, capture status and the live monitor;
+this closes it for every other list/detail screen, per the register's own "remaining" note and
+this session's own sweep of every `*Content.kt`/`*Screen.kt` under `ui/**`:
+
+- **Genuine R-1051-class defects (an empty/"nothing yet" state was the initial value, indistinguishable
+  from "queried, and genuinely nothing"):** `StationsContent`/`StationScreen` (`StationsListState`
+  gained a `loading: Boolean` field, checked before the empty check); `FrequenciesContent`/
+  `FrequencyScreen` (`FrequenciesListScreen` gained a `loading` parameter, same shape);
+  `ThreadContent`/`ThreadScreen` (`ThreadListViewState` gained a `Loading` sealed case, mirroring
+  `NowViewState.Loading`'s own precedent exactly — a `null` `sessionId`, its own different honest
+  fact, seeds `Empty` immediately, never stuck loading forever); `TransmissionDetailContent`'s own
+  `RevisionsDestination`/`DetailRevisionsScreen` (`versions` seed of `emptyList()` rendered a
+  fabricated-looking "0 versions" header with no cards before the first poll — `DetailRevisionsScreen`
+  gained a `loading` parameter).
+- **Already correctly gated (nullable/distinct state), but the loading branch was a local, untagged
+  "Loading…" `Text` invisible to the tour's structural readiness scan:** `SessionsContent` (both the
+  sessions list and a session's own detail), `DigestContent`, `TransmissionDetailContent`'s own
+  top-level `detail == null` branch, `StationDetailContent`, `FrequencyDetailContent` — all now
+  render the shared `LoadingState` (`LOADING_STATE_TEST_TAG`).
+- **RC01 Recordings** (owned by WPRC02): `RecordingsLoading`'s own `RECORDINGS_LOADING_TEST_TAG` is
+  unchanged; it now also carries `LOADING_STATE_TEST_TAG` on its outer container (a second,
+  independent node), the minimal change asked for so the tour waits on it too.
+- **Search** (already fine, confirmed by re-reading `SearchContent.kt`/`SearchScreen.kt`/
+  `SearchViewData.kt`): `result == null` (never searched) is structurally distinct from a real
+  `SearchResult(details = emptyList(), ...)` (searched, found nothing) — no fix needed.
+- **Settings summaries, Improve, and `OrtNavHost`'s own `ThreadDetailContent`** have the identical
+  lower-severity "untagged local Loading" shape (`SettingsContent.kt`'s `LoadingSettings`,
+  `ImproveContent.kt`'s `Loading`, `OrtNavHost.kt`'s inline `Text`) but are explicitly out of this
+  builder's row (WPMODLOG/WPIMPROVE/WPRC02 respectively per this session's own prompt) — left
+  untouched, named here for whichever builder owns each file next.
+- **R-1066 device evidence:** a new debug scenario, `audio-removed-by-operator` (`Scenarios.kt`,
+  alongside the pre-existing `no-audio`), seeds a session whose `overAudioRemovedAtMillis` is
+  genuinely set — the one real `AudioAbsenceReason.RemovedByOperator` case `no-audio` cannot
+  produce — with one tour step (`audio-removed-by-operator/D06-audio-removed`) appended at the end
+  of `tour.json`.
+
+**Verified.**
+- Unit: every new/changed loading gate has a discriminating test (name, what it proves, and the
+  revert-and-confirm-fails-for-the-right-reason step actually run):
+  `SessionsContentLoadingTest` (list + detail, `mainClock.autoAdvance = false` before `setContent`,
+  the same idiom `LogContentLoadingTest` established), `DigestContentLoadingTest`,
+  `RecordingsScreenTest`'s existing null-state test extended to also assert the shared tag,
+  `StationsContentLoadingTest`, `FrequenciesContentLoadingTest` plus a pure `FrequencyScreenTest`
+  case, a pure `StationScreenTest` case, `ThreadContentLoadingTest` (both the live-session and the
+  null-`sessionId` cases), `StationDetailContentTest`/`FrequencyDetailContentTest` (root loading
+  frame), `TransmissionDetailContentTest` (top-level loading frame), `DetailRevisionsScreenTest`
+  (new file, both `loading = true`/`false`), and `ScenariosTest`'s new `audio-removed-by-operator`
+  case plus its own pre-existing `Scenarios.NAMES.forEach` sweep. Every one of these was reverted,
+  confirmed to fail for the stated reason, then restored — reported in full in this session's own
+  report, not repeated here. Two pre-existing `TransmissionDetailContentTest` assertions
+  (`a session whose over audio was never touched…`, `a pruned-archive session…`) still pinned Part
+  B's old duplicated sentence and were updated to the new one in the same pass that found them
+  broken by that commit.
+  `./gradlew :app:testDebugUnitTest` (14m11s) and `./gradlew :app:smokeTestDebugUnitTest` (3m40s) —
+  both **full suites**, not just the touched classes — green after every change in this entry.
+  `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourStepsTest"` — the new
+  tour.json step resolves to the screen it claims.
+- Device (own AVD `ort_audit_wpdiginit`, created with `tools\ui-audit\create-avd.ps1`; a first boot
+  attempt collided with another session's emulator already on port 5558 — a false "booted"
+  positive from `boot.ps1`'s own poll querying the wrong device — caught before any install/wipe
+  touched it, the zombie process killed, and the AVD rebooted clean on port 5566, confirmed by name
+  before proceeding): `wm size 1260x2772`, `wm density 420` (already 420 natively), `install.ps1
+  -Clear`. Cold-run tour captures under
+  `C:\Users\ADAMST~1\AppData\Local\Temp\claude\C--Users-Adam-Steenwyk-Documents-Code-offline-radio-transcriber\5e8e5dcf-16ae-49f4-8168-b515f13178ea\scratchpad\wpdiginit-evidence\`:
+  `dg-run{1,2,3}\` (`*DG0*`, the Sessions/Digest steps) and `rc01-run{1,2,3}\` (`*RC01*`, Recordings),
+  three genuinely distinct cold runs each (force-stopped between; the RC01 runs needed the on-device
+  `files/tour/manifest.json` deleted before each relaunch too — a same-step-count coincidence between
+  the DG0 and RC01 globs let a stale manifest satisfy `tour.ps1`'s own "done" poll instantly on the
+  first attempt, caught by the manifest's own `capturedAt` timestamps not advancing, redone
+  correctly). Every one of the 24 captures shows real data — the session detail, the digest's "Worth
+  knowing"/"By the numbers", the Recordings list's 14 real sessions — never a loading or empty
+  placeholder; viewed directly, including two at font scale 2.0 (`DG05-digest-prose@2x`,
+  `RC01-recordings@2x-end`) for layout (no collision, no clipping, scrolls to real tail content).
+  `detail-audio-absence\{no-audio,audio-removed-by-operator}\D06-*.png` (Part B): the grey box
+  ("No retained audio for this transmission") renders once; the cause line beneath reads only "The
+  reason is not recorded." or "Removed by the operator on 8 Aug. Transcript, attribution and lattice
+  were kept." respectively — confirmed by eye, not just the unit test's structural assertion.
+  Emulator shut down after (`adb emu kill`); the other four AVDs on this host (`ort_audit`,
+  `ort_audit_2`, `ort_audit_3`, `ort_audit_rc02`) were left untouched throughout.
+
+**Left open / not done:** SettingsContent/ImproveContent/OrtNavHost's own untagged local loading
+rows (named above) — out of this builder's row, flagged for their owning builders. No dedicated
+Robolectric geometry test (`w390dp-h844dp-420dpi`/480dp) was added for each new `LoadingState` call
+site specifically — `LoadingState` itself is WPINIT's already-verified shared composable, and the
+2.0 device captures above are this round's own layout evidence at the real host path instead;
+flagged in case the lead wants a dedicated unit test per screen regardless.
+
+---
+
+## 2026-09-13 (WPDIGINIT: R-1066 the no-audio cause line no longer repeats the box's own title)
+
+### 75a7b52a — WPDIGINIT Part B: R-1066 - the transmission detail's audio-absence cause line states only the cause
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt` (`NoAudioNotice`);
+`app/src/test/kotlin/org/ort/app/ui/screens/TransmissionDetailScreenTest.kt`.
+
+**Requirements/ACs:** R-1066 (register, polish), constitution VIII (screen not fixed until
+re-captured against its artboard).
+
+**What changed:** `Detail-Playback.dc.html`'s grey audio box already names the absence
+("No retained audio for this transmission" — `WaveformCard`'s own `NoAudio` message,
+`ui/components/Inspection.kt`, untouched). The sentence directly beneath it
+(`NoAudioNotice`, gated on `AudioAbsenceReason`) repeated that exact title verbatim before
+naming the cause, for the `Unknown`/`null` case: "No retained audio for this transmission. The
+reason is not recorded." Changed that one branch to state only the cause: "The reason is not
+recorded." The `RemovedByOperator`/`PrunedByRetentionBudget`/`NeverRetained` branches already
+stated only their own cause and are unchanged.
+
+**Verified:** `./gradlew :app:testDebugUnitTest --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` — reverted the fix first and confirmed
+`audio absence with no reason looked up yet reads as the honest unknown sentence` failed for the
+right reason (`assertCountEquals`: "Expected exactly '1' node but found '2' nodes" matching "No
+retained audio for this transmission" as a substring — the box and the duplicated cause line both
+matched); restored the fix and reran — 36 tests passed. Two tests
+(`audio absence with no reason looked up yet reads as the honest unknown sentence`,
+`AudioAbsenceReason Unknown reads as the honest unknown sentence, never a guessed cause`) now
+assert structurally (`onAllNodesWithText(..., substring = true).assertCountEquals(1)`) that the
+box's own title text appears exactly once, rather than asserting the exact old (or new) sentence —
+per this task's own instruction, a test that pinned exact prose would not have caught the class of
+defect this fixes. Device evidence captured under Part A's verification below (the same detail
+screen, both an unknown cause and an operator removal).
+
+**Left open / not done:** none for this row — R-1066 is closed by this commit, pending the device
+capture and hosted CI/Release green recorded in the gate section of this session's report.
+
+---
+
+## 2026-09-13 (WPSQUELCH: FR-SEG-5 rig squelch fusion, register R-1062)
+
+### 025ec8b0 — WPSQUELCH round 3: the squelch staleness bound must survive a poll descriptor's own rhythm
+
+**Scope:** `:pipeline` (`RigSupervisor`) and `:rig` (`FakeRigTransport`, the rig fake), plus their
+tests. No UI, no `DiagnosticsLog`, no spec files, no register.
+**Requirements/ACs:** FR-SEG-5 (M), FR-RUN-17, CON-SEG-1, constitution IV; register R-1062 (round
+3 — round 2, `7cd7c13c`, was not merged: the coordinator found its staleness watchdog would split
+real overs on the real TH-D75A).
+**What changed:** `squelchStalenessBoundMillis` checked `descriptor.unsolicited` before
+`descriptor.poll`, so **any** push-capable descriptor — including the real
+`kenwood-thd75a.json`, which declares `unsolicited` *and* a 2000 ms `poll` fallback — got a flat
+2000 ms bound. `DescriptorRigModule`'s poll loop writes a whole cycle's commands back-to-back
+then sleeps the *entire* interval before the next cycle, so the natural gap between one cycle's
+last reply and the next cycle's first reply is genuinely close to the poll interval itself, plus
+real reply latency — round 2's flat 2000 ms watchdog was firing on this ordinary rhythm,
+cutting a live, uninterrupted over into pieces a couple of seconds long. Segmentation cannot be
+reprocessed (CON-SEG-1), so this was strictly worse than the silent-loss defect round 2 fixed.
+Fixed:
+- `restartSquelchStaleWatchdog` now runs **only when the descriptor actually polls**
+  (`activeDescriptor?.poll?.intervalMs`), regardless of whether it is also push-capable. A
+  push-only descriptor with no poll fallback gets **no staleness watchdog at all** — there is no
+  natural heartbeat to judge silence against (a quiet radio genuinely sends nothing, by design);
+  loss for it still comes from the transport-lost and disconnect paths, unchanged. No heartbeat
+  command was added for push-only descriptors — this comment says so explicitly rather than
+  silently assuming one exists.
+- `squelchStalenessBoundMillis(pollIntervalMs) = pollIntervalMs × 2`. Justified against the real
+  TH-D75A descriptor's own poll loop (4 writes/cycle, back-to-back) and a modelled realistic link
+  (≥40 ms base reply latency, occasional ~300 ms jitter — Bluetooth SPP's own worst case): the
+  worst-case real gap between watchdog restarts is `pollIntervalMs + 300 ms` (2300 ms for the
+  TH-D75A's 2000 ms interval — already above round 2's flat 2000 ms bound, which is exactly the
+  defect). ×2 gives 4000 ms, 1700 ms (74%) of headroom above that worst case.
+- `declareStaleFromSilence` (the pre-existing generic link-silence backstop, 5–10 s) now applies
+  the identical poll-only gate before emitting a squelch loss — it was silently reintroducing the
+  push-only false-loss defect at its own, much looser timescale.
+- `FakeRigTransport` gains `replyLatencyMillis`/`replyJitterMillis` (both default `0`, so every
+  pre-existing caller's exact synchronous behaviour is unchanged) and `scope`/`random` constructor
+  parameters, so a test can script a realistic delayed-and-jittered reply under virtual time — no
+  prior mechanism for this existed anywhere in the repo.
+**Verified:** `RigSupervisorSquelchTest` (12 cases, `:pipeline`) — two new cases drive the **real**
+bundled `kenwood-thd75a.json` descriptor through `DescriptorRigModule`/`RigSupervisor` with
+realistic reply latency (40 ms flat, and 40 ms + up to 300 ms jitter via a seeded `Random`) and
+assert band 0 stays one uninterrupted open transmission across 30 s of virtual time, zero losses;
+a third proves a push-only descriptor gets no loss over 30 s of genuine silence; a fourth replaces
+round 2's now-invalid push-only staleness test with one proving a genuinely dead **polled** link
+(one reading, then permanent silence, mirroring the existing `R_1015` fixture pattern) still
+reverts to VAD-only within its own derived bound. Discrimination (constitution II): reverted
+`restartSquelchStaleWatchdog` to round 2's actual flat-bound logic — the flat-latency TH-D75A case
+failed with **29 events instead of 1** (repeated false loss/reopen cycles, precisely the
+coordinator's own "pieces a couple of seconds long" description), and the push-only case failed
+too. Restored, reran, both green. Separately reverted `declareStaleFromSilence`'s poll-only guard
+alone — the push-only case failed again (its own 10 s generic backstop reintroducing the same
+defect via a second path). Restored; all 12 cases green. `gradlew :rig:test :segment:test
+:pipeline:testDebugUnitTest` — full modules, green. `gradlew dependencyRules platformGuards build`
+— **green, 20m 42s, real `HF_TOKEN`, no escape hatch** (1109 tasks). `gradlew -p buildSrc test` —
+green. `python tools/spec-check/spec_check.py` — OK. `gradlew ktlintCheck detekt` (whole repo) —
+green (one `MaxLineLength` in the new test file's own helper, fixed). `gradlew coverageMatrix`
+then `coverageMatrixCheck` (separate invocations) — green. `git merge origin/main` — origin had
+moved to `5ee189d6` (WPINIT round 2, WPIMPROVE, and a lead-authored spec entry opening Q23 on
+exactly the two design questions round 1's report raised); merged with both `CHANGELOG.md` and
+`results/coverage-matrix.md` conflicts resolved (the latter by regenerating), no markers left
+(`git grep -n -E "^(<<<<<<<|>>>>>>>)"` — no matches).
+**Left open / not done:** not pushed, per the coordinator's explicit instruction — this branch is
+ahead of `origin/main` by these WPSQUELCH commits plus the merge. The hardware check for R-1062
+now also needs: hold a 20 s over on each band and confirm it renders as one transmission, not
+several (this round's own failure mode, on the real radio rather than the modelled latency). Q23
+(opened by the lead against round 1, `spec/open-questions.md`) is still open — this round changes
+nothing about the two design choices it names (the union rule, the eligibility cutoff). The 2000
+ms push-only floor round 2 introduced no longer exists at all (push-only now has no watchdog);
+confirming that push-only silence genuinely never needs one against the real hardware (rather
+than just the modelled 30 s window here) is part of the same hardware check.
+
+### 7cd7c13c — WPSQUELCH follow-up: FR-SEG-5 squelch authority can be lost, revert to VAD-only honestly
+
+**Scope:** `:segment` (`Segmenter`, `Squelch.kt`, `SegmentSink.kt`) and `:pipeline`
+(`RigSupervisor`, `SquelchSampleBridge.kt`), plus their tests — the same file set as `71ec04ec`
+below. No UI, no `DiagnosticsLog` internals (only the new `RIG_LOST` enum value, read generically
+by `logVadStats`'s existing `.name` — no edit to that file), no spec files, no register.
+**Requirements/ACs:** FR-SEG-5 (M), constitution IV; register R-1062 (this closes the silent-loss
+hole the lead found in `71ec04ec`'s own build, still pending the operator's hardware check below).
+**What changed:** the coordinator's review of `71ec04ec` found a severity-halt gap: once the
+first squelch transition arrived, `Segmenter.squelchOpen` was never reset to `null` on a rig
+drop. A rig lost while squelch was closed silently dropped every later over for the rest of the
+session (no transcript, no callsign, no Log row); a rig lost while squelch was open produced
+back-to-back maximum-length segments, silence included. This fixes it:
+- `SquelchGate` gains `markUnknown(atSample)`, a loss signal applied in the same arrival-ordered
+  queue as `push()`'s transitions (`SquelchUpdate.Transition`/`Loss`, replacing the bare
+  `SquelchTransition` type — never blocks, never throws, same discipline as `push()`).
+- `Segmenter.handleSquelchLoss` reverts `squelchOpen` to `null` — exactly the pre-first-transition
+  state, so the very next frame falls back to VAD — and, if a squelch-gated segment was actually
+  open, closes it at the loss point with the usual generous post-roll, a new
+  `SegmentCloseReason.RIG_LOST` (never `SQUELCH_CLOSE`), and `rigSquelchFusionApplied` always
+  `false`. A loss mid a pure-VAD segment or while idle touches nothing but `squelchOpen`. A fresh
+  transition after a loss resumes fusion with no separate "reconnect" mechanism needed.
+- `RigSquelchTransition.open` is now `Boolean?` — `null` means loss. `pushSquelchTransition`
+  routes it to `SquelchGate.markUnknown` instead of `push`, same sample-position conversion and
+  anchor clamp as before.
+- `RigSupervisor` now emits a loss on three paths: a transport-lost STALE `RigState` (immediate);
+  `disconnect()`/a rig change (before internal state resets, so a fresh connection never inherits
+  a stale "still open" reading); and a new squelch-specific staleness watchdog
+  (`restartSquelchStaleWatchdog`, restarted on every FRESH `RigState`). Staleness margin, derived
+  in one place (`squelchStalenessBoundMillis`) from the same descriptor shape
+  `squelchFusionEligible()` already reads: a push descriptor gets a stated 2000 ms bound (no
+  natural heartbeat exists for push — a quiet radio sends nothing at all, by design — so this
+  bounds how long a hung link could masquerade as a merely-quiet one, comfortably above
+  `DescriptorRigModule`'s own 1000 ms read timeout and far tighter than `RigHealth`'s generic
+  5-poll-cycle/10 s timeout, whose purpose is coarser); a poll descriptor gets 2× its own interval
+  (a poll response is a genuine heartbeat, changed or not — `applyMatch` has no dedup), tolerating
+  one missed cycle. The pre-existing generic link-silence path (`declareStaleFromSilence`) also
+  emits a loss now, as an honest backstop — its own looser bound (5–10 s) means the
+  squelch-specific watchdog almost always fires first in practice.
+**Verified:** `gradlew :segment:test` — 33/33 green (4 new `R_1062`-tagged `SquelchFusionTest`
+cases: rig lost while closed still segments a later VAD burst; rig lost while open closes at the
+loss sample as `RIG_LOST` with post-roll kept; every over after a loss stays VAD-only; reconnect
+resumes fusion from the fresh transition). `gradlew :pipeline:testDebugUnitTest` (full module) —
+green, including 3 new `RigSupervisorSquelchTest` cases proving `RigSupervisor` itself — not only
+the unit-level `SquelchGate` — emits the loss on a real `FakeRigTransport.dropMidStream`, on
+staleness past the bound, and on an explicit `disconnect()`. Discrimination (constitution II):
+reverted `Segmenter.handleSquelchLoss` to a no-op — all 4 new `SquelchFusionTest` cases failed for
+the right reason. Reverted `RigSupervisor.emitSquelchLoss` — all 3 new `RigSupervisorSquelchTest`
+loss cases failed. Reverted only `restartSquelchStaleWatchdog` (keeping `emitSquelchLoss` intact)
+and found the staleness test still passed — masked by the pre-existing generic 10 s health-silence
+path also calling `emitSquelchLoss`; tightened the test's own timeout window to 5000 ms (well
+under that 10 s bound, comfortably over the watchdog's own 2000 ms) so it discriminates the
+squelch-specific mechanism specifically — reran with the watchdog still disabled and confirmed it
+then failed alone. All three reverts restored and reconfirmed green. Full gate:
+`gradlew dependencyRules platformGuards build` — **green, 18m 7s, real `HF_TOKEN`, no escape
+hatch** (1109 tasks: 493 executed, 305 from cache, 311 up-to-date; includes `:app`'s full test
+suite, lint and release assembly). `gradlew -p buildSrc test` — green. `python
+tools/spec-check/spec_check.py` — OK (all 8 checks pass). `gradlew ktlintCheck detekt`
+(whole repo) — green (one ktlint wrap in `RigSupervisor.kt` and a `LoopWithTooManyJumpStatements`
+in `SquelchGate.drainBefore` from the prior commit were already fixed there; this commit introduced
+no new lint/detekt findings). `gradlew coverageMatrix` then `coverageMatrixCheck` (separate
+invocations) — green; new tracked id `R-1062` now shows covered by `RigSupervisorSquelchTest` and
+`SquelchFusionTest`, and `FR-RIG-15` gained `RigSupervisorSquelchTest` to its own list (the
+transport-drop loss test also exercises that requirement). `git merge origin/main` — already
+up to date (`origin/main` unchanged at `eba42f9f` since this branch was cut from it); `git grep
+-n -E "^(<<<<<<<|>>>>>>>)"` — no matches.
+**Left open / not done:** the hardware check for R-1062 (below) now also needs unplugging the
+rig while squelch is closed, confirming later overs still appear — see this session's own report
+for the full updated checklist. Two spec-level questions from `71ec04ec` remain open (poll-rig
+fusion eligibility exception; per-band segmenters for overlapping transmissions). The exact
+2000 ms push-staleness margin and the 2× poll-staleness multiplier are stated, reasoned defaults —
+confirming them against the real TH-D75A's actual `AI 1` push behaviour is part of the same
+hardware check. Register R-1062 and `results/ui-audit/register.md` remain the lead's to update.
+
+### 71ec04ec — WPSQUELCH: FR-SEG-5 rig squelch fusion — segment boundaries from squelch, VAD decides speech inside
+
+**Scope:** `:segment` (`Segmenter`, `SegmentSink`, new `Squelch.kt`) and `:pipeline`
+(`RigSupervisor`, `RealCaptureService.buildSegmenter`/`RealSegmentSink`, new
+`SquelchSampleBridge.kt`), plus their tests. No UI, no `DiagnosticsLog`/`DebugDumpBuilder`
+(WPMODLOG's territory), no spec files, no register — per this session's ownership.
+**Requirements/ACs:** FR-SEG-5 (M), FR-SEG-6, FR-SEG-7, FR-SEG-8, FR-SEG-10, FR-RIG-3, FR-RIG-6,
+FR-RUN-1, FR-RUN-16, FR-RUN-17, D23; register R-1062 (closed by this commit, pending the
+operator's hardware check below).
+**What changed:** FR-SEG-5 — "rig squelch is authoritative for boundaries, VAD is authoritative
+for whether there is speech inside them" — was specified but never built anywhere in `:pipeline`
+or `:segment` (R-1062: the only squelch reader was frequency attribution). This builds it:
+- `Segmenter` takes an optional `org.ort.segment.SquelchGate` (new file `Squelch.kt`). Once the
+  first squelch transition is known, squelch open starts a segment (with the usual pre-roll) and
+  squelch close ends it (with the usual post-roll), regardless of what VAD says about the same
+  frame; VAD's only remaining job inside that interval is tallying whether any frame was speech.
+  An interval with none is the new `SegmentOutcome.REJECTED_NO_SPEECH` — retained and logged
+  exactly like `REJECTED_TOO_SHORT`, never dropped (constitution III). New
+  `SegmentCloseReason.SQUELCH_CLOSE`. Before the first transition arrives, or with no
+  `SquelchGate` at all, the segmenter is byte-for-byte the pre-fusion VAD-only path — this is how
+  "no squelch capability" and "rig state is late" both degrade honestly.
+- `SegmentRecord.rigSquelchFusionApplied` (moved off a session-wide constant, onto the record
+  itself) is `true` only when **both** edges of that segment were squelch-decided. A forced
+  `MAX_DURATION` split or an `END_OF_STREAM` cut is therefore honestly `false` — which is also
+  how "a rig drops mid-over" closes correctly with no new mechanism at all: with no more
+  transitions arriving, the interval simply runs until FR-SEG-3's existing stuck-carrier safety
+  net force-splits it.
+- `RigSupervisor.observeSquelchUnion()` exposes the union of every band's squelch state — D23's
+  finding that one `Segmenter` processes one already-mixed audio stream, so only "some band is
+  open" is an honest boundary signal (flagged in the method's own kdoc as an open question:
+  genuinely overlapping different-band transmissions fuse into one segment under this rule).
+  `RigSupervisor.squelchFusionEligible()` gates it on FR-RUN-17's ≤250 ms correlation bound: a
+  push (`unsolicited`) descriptor always qualifies (receipt timestamp ≈ transition instant); a
+  poll-only descriptor qualifies only if its own interval is inside the bound.
+- `SquelchSampleBridge.pushSquelchTransition` is the one place a rig's monotonic receipt
+  timestamp becomes a sample position, via `SampleClock.samplePositionAtMonotonic` — already
+  FR-RUN-17's own stated mechanism — clamped to the session anchor rather than throwing on a
+  pre-anchor reading.
+- `RealCaptureService` builds one `SquelchGate` per session, bridges `RigSupervisor`'s squelch
+  union through the function above on its own coroutine (never touching the audio frame path —
+  `SquelchGate.push`/`drainBefore` are plain, non-suspending queue operations), and wires it into
+  `buildSegmenter`'s `Segmenter`. `RealSegmentSink` now reads `rigSquelchFusionApplied` off each
+  closed `SegmentRecord` instead of a constructor-time constant.
+**Verified:** `gradlew :segment:test` — 30/30 green including 9 new `SquelchFusionTest` cases.
+`gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.rig.*" --tests
+"org.ort.pipeline.capture.*"` — green, including 6 new `RigSupervisorSquelchTest` and 2 new
+`SquelchSampleBridgeTest` cases, and every pre-existing `RealSegmentSinkTest`/`RealCaptureServiceTest`
+case unchanged. Discrimination (constitution II): reverted the squelch-drain in
+`Segmenter.handleFrame` — 5 of 9 `SquelchFusionTest` cases failed for the right reason (VAD-only
+fallback dominated); reverted `RigSupervisor.emitSquelchUnionIfChanged` — both D23 union tests
+failed (nothing ever emitted). Both restored and reconfirmed green. `gradlew dependencyRules
+platformGuards` — green (real `HF_TOKEN`, no escape hatch). `gradlew -p buildSrc test` — green.
+`python tools/spec-check/spec_check.py` — OK. `gradlew ktlintCheck detekt` (whole repo) — green.
+`gradlew coverageMatrix` then `coverageMatrixCheck` (separate invocations) — green; FR-SEG-5 now
+reads covered by 13 test methods across `SquelchFusionTest`, `RigSupervisorSquelchTest` and
+`SquelchSampleBridgeTest` (was previously uncovered).
+**Left open / not done:** the full `gradlew build` gate (bundling every model asset) was not run
+in this session — only the module-scoped test/lint/detekt/coverage commands above; CI and the
+Release workflow are the next real proof of the whole-repo gate on the pushed commit. Closing
+evidence for R-1062 needs the operator's real TH-D75A (hardware protocol,
+`results/e2e-audit/`) — capture with the radio connected reporting squelch (`BY` push-enabled via
+`AI 1`), confirm `rigSquelchFusionApplied = true` on transmissions whose audio and vad_stats line
+show a real squelch-gated over, confirm `REJECTED_NO_SPEECH` appears for a key-up with no speech,
+and confirm capture is undisturbed if the rig is unplugged mid-session. Two spec-level questions
+raised rather than resolved: (1) whether a poll-only rig should ever be allowed fusion at a
+faster-than-250ms cadence exception, and (2) whether genuinely overlapping different-band
+transmissions should someday get a second, band-aware Segmenter instead of being unioned into
+one segment. Register R-1062 and the `results/ui-audit/register.md` row are the lead's to update
+(out of this session's file ownership).
+
+## 2026-09-13 (WPMODLOG: model verification failures logged, honestly no longer silent)
+
+### e7be30ac — WPMODLOG R-1058: model verification failures are now logged, once per launch, closed vocabulary
+
+**Scope:** `core/src/main/kotlin/org/ort/core/assets/ModelFileVerifier.kt` (new
+`ModelVerificationFailureKind` on `ModelVerification.Failed`);
+`pipeline/src/main/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLog.kt` (new `ModelAssetId` enum
+and `logModelVerificationFailed`); the three real callers —
+`pipeline/.../capture/RealVadProvider.kt`, `pipeline/.../passb/AsrEngineProvisioning.kt`,
+`pipeline/.../digest/ProseDigestRunner.kt`; `app/src/main/kotlin/org/ort/app/export/DebugDumpBuilder.kt`.
+Tests in each of those packages plus `core/src/test/.../ModelFileVerifierTest.kt`,
+`pipeline/src/test/.../DiagnosticsLogTest.kt` and `app/src/test/.../DebugDumpBuilderTest.kt`.
+**Requirements/ACs:** register R-1058 (spec), constitution I/VI, FR-OBS-1, R-1052.
+**What changed:** `ModelFileVerifier.verify()`'s every `Failed` branch now carries a closed
+`ModelVerificationFailureKind` (`MISSING_FILE`, `MISSING_RECORD`, `SIZE_MISMATCH`, `HASH_MISMATCH`)
+alongside its existing free-text `reason` (unchanged, still in-memory/UI-only prose — never
+logged). `DiagnosticsLog.logModelVerificationFailed(assetId: ModelAssetId, kind)` writes one
+`model_verification_failed` line to `pipeline.log` per `(assetId)` **once per launch** (the
+dedupe set resets on every `configure()`/`shutdown()`), naming only the closed asset id
+(`VAD`, `ASR_ENCODER`, `ASR_DECODER`, `ASR_TOKENS`, `LLM`) and the kind — no free text, no
+filesystem path, matching this file's own no-message-string discipline (FR-OBS-6, D41). All
+three real verification call sites now call it exactly where they already handle
+`ModelVerification.Failed` (`RealVadProvider.provide` for VAD; `AsrEngineProvisioning.provide`'s
+per-file loop, now paired with its own `ModelAssetId` so encoder/decoder/tokens are distinguished;
+`ProseDigestRunner.doWork` for the LLM). `DebugDumpBuilder` gained a `modelVerificationFailureLines`
+reader mirroring its existing `vadStatsLines` — parses `pipeline.log` (and its `.1` rotation) back
+into a `model_verification_failed` NDJSON record with `assetId`/`kind`, never re-derived from
+in-memory state.
+**Verified:** `gradlew :core:test --tests ModelFileVerifierTest`,
+`gradlew :pipeline:testDebugUnitTest --tests DiagnosticsLogTest --tests RealVadProviderTest
+--tests AsrEngineProvisioningTest --tests ProseDigestRunnerTest`,
+`gradlew :app:testDebugUnitTest --tests DebugDumpBuilderTest` — all green. Discriminating: removed
+the `DiagnosticsLog.logModelVerificationFailed` call from `RealVadProvider`, confirmed
+`RealVadProviderTest`'s two new R-1058 tests fail for the right reason (2 failed, 6 passed),
+restored, confirmed green again. `gradlew :core:detekt :pipeline:detekt :app:detekt` and
+`gradlew :core:ktlintMainSourceSetCheck :core:ktlintTestSourceSetCheck
+:pipeline:ktlintMainSourceSetCheck :pipeline:ktlintTestSourceSetCheck :app:ktlintMainSourceSetCheck
+:app:ktlintTestSourceSetCheck` — green.
+**Left open / not done:** `ProseDigestRunner`'s LLM check only actually reaches `DiagnosticsLog`
+when something has already called `DiagnosticsLog.configure()` this process (today only
+`RealCaptureService` does, at capture start) — a digest run with no capture session active this
+launch drops the event silently, exactly as every other `DiagnosticsLog` caller outside an active
+capture session already does; not a new gap this change introduces, and out of this row's scope
+to fix (would mean configuring `DiagnosticsLog` app-wide, a bigger change). Device/logcat
+confirmation is combined with R-1060's below, since both need the same no-token build.
+
+### 415d4b0f — WPMODLOG R-1057: the asset-swap board names the real staged asset, not always "the lexicon"
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureViewState.kt` (new `AssetSwapKind`,
+`AssetSwapViewState.kind`/`.assetLabel`), `FailureMapper.kt` (`assetSwapViewState` now computes and
+carries both), `FailAssetSwap.kt` (the F21 board: section heading and warning body keyed to
+`state.kind`). Tests in `FailureMapperTest.kt` and `FailureScreensTest.kt`.
+**Requirements/ACs:** register R-1057 (polish), constitution I.
+**What changed:** after staging a Silero VAD from a file during a live session, F21's board read
+"Installed, not yet active" under the section heading **LEXICON** with a warning about "replacing
+the lexicon" — copy written for a lexicon swap, reused unchanged for every asset kind.
+`AssetSwapViewState` gained `kind: AssetSwapKind` (`LEXICON`/`MODEL`, defaulted to `LEXICON` so
+every pre-existing scroll/layout test of this screen keeps compiling unchanged) and `assetLabel`
+(the real asset's own label, e.g. "Silero VAD"). `FailureMapper.assetSwapViewState` computes both
+from the same `staged.assetId == CALLSIGN_LEXICON_ASSET_ID` check it already used for
+`stagedLabel`. `FailAssetSwapScreen` now renders "LEXICON"/"MODEL" (via the existing `SectionLabel`
+uppercase treatment) and picks between the lexicon's own warning text (unchanged) and a model
+warning naming the real asset and leaning on segmentation being the one decision reprocessing
+cannot undo (CON-SEG-1) — the reasoning register R-1057 itself said holds, "arguably more so", for
+a VAD.
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*"` — green (2 new
+`FailureMapperTest` cases on structure — `kind`/`assetLabel`, not sentences — and 2 new
+`FailureScreensTest` Compose cases asserting the LEXICON/MODEL heading and which warning body node
+exists, never full-sentence matching beyond the distinguishing prefix). Discriminating: reverted
+the heading's `state.kind` branch to the old hardcoded `"Lexicon"`, confirmed the new
+`R_1057 F21 a staged model...` test fails (1 failed, 39 passed) for the right reason, restored,
+confirmed green. `gradlew :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :app:detekt`
+— green.
+**Verified on device (constitution VIII):** own AVD `ort_audit_wpmodlog` (Pixel 6, API 34,
+1260×2772@420), a real (`HF_TOKEN`) build. Evidence at
+`%TEMP%\claude\...\scratchpad\wpmodlog-evidence\`: `05-models.png`/`06-picker.png` — a real
+Silero VAD file, pushed to `/sdcard/Download/` and installed through the actual system
+`OpenDocument` picker during the `overnight-live` scenario's live session; `07-after-pick.png`
+(1.0) and `08-staged-2x.png` (2.0) — the board reads *Installed, not yet active*, heading
+**MODEL** (not LEXICON), body *"Replacing Silero VAD under a live capture could change what the
+rest of tonight's session hears — for the VAD, even where each over is cut — with no record of
+where the line is."*, no clipping at either scale. `09-lexicon-1x.png`/`10-lexicon-2x.png` — the
+`asset-swap` debug scenario's own lexicon board for contrast: heading **LEXICON**, body still
+*"Replacing the lexicon under a live capture..."*, unchanged and correct at both scales.
+
+### 858f1fb2 — WPMODLOG R-1060: placeholder assets are marked durably, refused before native code, and a release build can never mark one
+
+**Scope:** `core/src/main/kotlin/org/ort/core/assets/ModelFileVerifier.kt` (new
+`placeholderMarkerFile`/`recordPlaceholder`/`clearPlaceholder`, new `PLACEHOLDER` kind, `verify()`
+checks the marker first); `app/src/main/kotlin/org/ort/app/assets/BundledAssetInstaller.kt`
+(`installOne`'s `missing` branch now calls `recordPlaceholder`; both success paths call
+`clearPlaceholder`). Tests in `ModelFileVerifierTest.kt`, `BundledAssetInstallerTest.kt`,
+`RealVadProviderTest.kt`, `buildSrc/.../FetchBundledAssetsTaskTest.kt`.
+**Requirements/ACs:** register R-1060 (process), R-1052, the `-PortAllowMissingBundledAssets`
+escape hatch documented in `AGENTS.md`.
+**What changed:** on a build made with the local-only `-PortAllowMissingBundledAssets=true` escape
+hatch, `BundledAssetFetcher.fetchAll` already marked an unfetchable entry `missing` in the
+generated `bundled/manifest.json` (R-1052 round 2) — but `BundledAssetInstaller.installOne`'s
+`missing` branch only skipped writing a *new* file; it never touched whatever was already sitting
+at that destination (a stale real install from an earlier with-token build, still present because
+app data was never cleared between builds — the reported crash's actual shape) or recorded that
+*this build* does not vouch for it. `ModelFileVerifier` gained a `.placeholder` marker file,
+written by `recordPlaceholder` (which also clears any stale `.sha256`/`.size`/`.verified` sidecars
+so they cannot make a stale real install look genuinely verified) and checked by `verify()` before
+anything else about the file — it refuses regardless of whatever bytes, or none, are actually
+there. `BundledAssetInstaller.installOne` calls it for every `missing` entry, and clears it (via
+`clearPlaceholder`) on both real-install success paths (fresh copy, and the already-verified
+idempotency shortcut), so a later build that does carry the asset is never blocked by a leftover
+marker. `RealVadProvider`/`AsrEngineProvisioning`/`ProseDigestRunner` needed **no code changes at
+all** for this: all three already call `ModelFileVerifier.verify()` before any native construction
+(R-1052) and already treat any `Failed` — placeholder included — as the typed unavailable state.
+**The release-build guarantee:** `missing` can only ever be produced by
+`BundledAssetFetcher.fetchAll`'s catch block, gated behind `allowMissing`, itself only ever `true`
+when `-PortAllowMissingBundledAssets=true`/`ORT_ALLOW_MISSING_BUNDLED_ASSETS=1` is set —
+`ort.android-app.gradle.kts` defaults it to `false` and no `.github/workflows` file sets either
+form; with `allowMissing = false` any unfetchable entry throws and aborts the whole `fetchAll` call
+before the generated manifest is ever written, so no release or CI-built manifest can name a
+`missing` entry, and `BundledAssetInstaller.recordPlaceholder` therefore can never run against a
+real asset in such a build.
+**Verified:** `gradlew :core:test --tests ModelFileVerifierTest`,
+`gradlew :app:testDebugUnitTest --tests BundledAssetInstallerTest`,
+`gradlew :pipeline:testDebugUnitTest --tests RealVadProviderTest`,
+`gradlew -p buildSrc test --tests FetchBundledAssetsTaskTest` — all green. Discriminating: removed
+the `ModelFileVerifier.recordPlaceholder` call from `BundledAssetInstaller.installOne`, confirmed
+`BundledAssetInstallerTest`'s two placeholder-marker tests fail for the right reason (2 failed, 14
+passed), restored, confirmed green again. `gradlew :core:detekt :core:ktlintMainSourceSetCheck
+:app:detekt :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :pipeline:detekt
+:pipeline:ktlintTestSourceSetCheck` — green (one `ReturnCount` detekt finding in the new `verify()`
+fixed by splitting the size check into its own `checkSize` helper, matching the file's own existing
+`verifyHash` split).
+**Verified on device:** same `ort_audit_wpmodlog` AVD. A genuinely no-token build (`HF_TOKEN`
+unset for that one `assemble` invocation, `-PortAllowMissingBundledAssets` default true — every
+other asset already cache-hit real, so only the gated `LLM_GEMMA3_1B` came out `missing:true`,
+the same shape the escape hatch produces for anyone lacking the licence, not just a fully offline
+machine), installed fresh (`-Clear`). `11-notoken-launch.png` — `MainActivity` opens onto
+onboarding, no crash. `12-logcat-launch-raw.txt` — filtered for
+`SIGABRT|Fatal signal|tombstone|Ort::Exception|AndroidRuntime|FATAL EXCEPTION`: no matches.
+`14-notoken-models.png` — Settings > Models reports the digest model honestly (*"marker present,
+bytes missing — 0 KB of 555 MB on disk · re-verified on next launch"*) while Whisper/Silero VAD
+stay genuinely active, never a false "installed". `16-ondevice-models-listing.txt` — the on-device
+`files/models/llm/gemma3-1b-it-int4.task.placeholder` marker itself, its exact content
+(`"this build does not carry a real asset for this destination (no-token/local build)"`) matching
+`ModelFileVerifier.recordPlaceholder`'s own text — written by the real installer on first launch,
+proving the mechanism reaches the actual device. The listing also shows a `.sha256` marker at the
+same path (confirmed to hold the *real* asset's genuine pinned digest, `e3d981c0...`) left by the
+`overnight-live` debug scenario's own "every model asset installed" fixture, loaded afterward for
+unrelated setup purposes — exactly the "a stale/fake marker with the real hash text at the same
+path" shape this fix exists for, and the Settings screen and `ModelFileVerifier.verify()` both
+still read it honestly rather than as installed, corroborating the fix live rather than only in a
+unit test.
+**Left open / not done:** confirming R-1058's `model_verification_failed` event actually lands in
+`pipeline.log` on device was attempted (`adb shell cmd jobscheduler run -f` to force the
+`ProseDigestRunner` work item) but not achieved this session — no `diagnostics-logs/` directory
+was ever created on this device, because nothing had called `DiagnosticsLog.configure()` yet (only
+`RealCaptureService`, at a **real** capture-session start, calls it; this session's live-session
+evidence above used the `overnight-live` scenario, which seeds fake data rather than starting a
+real foreground service, and the forced digest-work run likely never reached the verification
+check at all — `ProseDigestWorkRunner`'s own device-idle/charging gate almost certainly refused it
+first). The event itself is proven at the unit level for all three asset kinds (`DiagnosticsLogTest`,
+and the per-provider tests in `RealVadProviderTest`/`AsrEngineProvisioningTest`/
+`ProseDigestRunnerTest`); a full real-capture-session walk (setup completed, not scenario-seeded)
+would be needed to see the log line land on a real device, and is left to a follow-up session.
+
+---
+
 ## 2026-09-13 (spec: Q23 opened - squelch fusion on a dual-band radio, and rigs that only poll)
 
 ### spec · Q23: two design choices squelch fusion made that the spec never did
@@ -228,6 +752,8 @@ building the loss and staleness fallback.
 **Verified:** `python tools/spec-check/spec_check.py`, run before this commit.
 
 **Left open / not done:** Q23 itself; R-1062's round 2.
+
+---
 
 ## 2026-09-13 (WPINIT round 2, coordinator review before merge: `NeverRetained` was itself an unrecorded guess — replaced with `Unknown`; fresh, single-AVD device evidence for Parts A/B/C and R-1055)
 

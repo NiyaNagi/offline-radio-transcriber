@@ -10,12 +10,17 @@ import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.WorkManagerTestInitHelper
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.pipeline.diagnostics.DiagnosticsLog
+import org.ort.pipeline.diagnostics.ModelAssetId
+import org.ort.testing.TestClock
 import org.robolectric.RobolectricTestRunner
+import java.io.File
 
 /**
  * The real `androidx.work.CoroutineWorker` adapter — [ProseDigestWorkRunnerTest] covers the
@@ -32,6 +37,16 @@ class ProseDigestRunnerTest {
     fun initWorkManager() {
         val config = Configuration.Builder().setExecutor(SynchronousExecutor()).build()
         WorkManagerTestInitHelper.initializeTestWorkManager(context, config)
+    }
+
+    @After
+    fun tearDownDiagnosticsLog() {
+        DiagnosticsLog.shutdown()
+    }
+
+    private fun capturePipelineLog(): List<String> {
+        val file = File(File(context.filesDir, "diagnostics-logs"), DiagnosticsLog.Category.PIPELINE.fileName)
+        return if (file.isFile) file.readLines() else emptyList()
     }
 
     @Test
@@ -66,6 +81,30 @@ class ProseDigestRunnerTest {
         val result = worker.doWork()
 
         assertEquals(ListenableWorker.Result.failure(), result)
+    }
+
+    /** Register R-1058 (spec): the same verification failure above must also reach DiagnosticsLog,
+     * naming the closed-vocabulary LLM asset id and failure kind -- never just the in-memory
+     * `Result.failure()`. */
+    @Test
+    fun `R_1058 an unverified LLM model logs a model_verification_failed event naming LLM`() = runTest {
+        DiagnosticsLog.configure(context.filesDir, TestClock())
+        val modelFile = LlmModelLocator.locate(context.filesDir)
+            ?: run {
+                val dir = LlmModelLocator.modelsDir(context.filesDir)
+                dir.mkdirs()
+                File(dir, "${LlmModelLocator.MODEL_ID}.task")
+            }
+        modelFile.writeBytes(ByteArray(64))
+        val worker = TestListenableWorkerBuilder<ProseDigestRunner>(context).build()
+
+        worker.doWork()
+        DiagnosticsLog.flush()
+
+        val written = capturePipelineLog()
+        assertEquals("expected exactly one event, got: $written", 1, written.size)
+        assertTrue(written[0].contains("assetId=${ModelAssetId.LLM.name}"))
+        assertTrue(written[0].contains("kind=MISSING_RECORD"))
     }
 
     @Test

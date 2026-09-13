@@ -60,6 +60,16 @@ public data class StationsListState(
     val unidentified: UnidentifiedVoicesSummary? = null,
     val heardAllTimeCount: Int = 0,
     val heardTonightCount: Int = 0,
+    /**
+     * Register R-1022/R-1051 (halt, constitution I/IV): `true` exactly until
+     * [org.ort.app.ui.screens.StationsContent]'s own first [org.ort.app.ui.data.StationPolling
+     * .listStations] read lands — before this field existed, that composable's initial
+     * `emptyList()`/`null` seed was indistinguishable from "queried, and genuinely no stations
+     * heard", so [org.ort.app.ui.screens.StationsListScreen] rendered "No stations heard yet" for
+     * up to one load, even for a device with a long history. `false` (every caller before this
+     * field existed) renders exactly as before.
+     */
+    val loading: Boolean = false,
 )
 
 // -------------------------------------------------------------------------------------------

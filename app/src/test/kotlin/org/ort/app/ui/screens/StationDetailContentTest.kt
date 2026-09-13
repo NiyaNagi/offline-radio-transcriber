@@ -124,6 +124,30 @@ class StationDetailContentTest {
         waitUntil(timeoutMillis) { onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty() }
     }
 
+    // Register R-1022 (WPDIGINIT, constitution I/IV): the root drill-in's own loading frame now
+    // carries the shared `LOADING_STATE_TEST_TAG` — `mainClock.autoAdvance = false` before
+    // `setContent` freezes recomposition so this assertion inspects the composed tree before the
+    // `LaunchedEffect` poll can land, the same idiom `LogContentLoadingTest` established.
+    @Test
+    fun `R_1022 first frame of the station detail root is the shared loading state`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.catalogDao().insert(station())
+            db.transmissionDao().insert(transmission())
+        }
+
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.setContent {
+            StationDetailContent(context = context, stationId = "WA7HJR", onBack = {})
+        }
+
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertExists()
+
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitUntilTextExists("WA7HJR")
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertDoesNotExist()
+    }
+
     @Test
     fun `R_272 the split screen resolves to a real empty state within a bounded time, never a bare Loading forever`() {
         runBlocking {

@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -14,9 +13,8 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.screens.LogContent
 import org.ort.app.ui.theme.OrtSpacing
@@ -342,9 +340,17 @@ private fun LogPage(
     }
 }
 
+/**
+ * Register R-1022/R-1051 (halt, constitution I/IV): the shared [LoadingState] (`loading-state`
+ * test tag) — before this fix this was a local, untagged "Loading…" `Text`, so
+ * [org.ort.app.debug.tour.TourAccessibilityScroll.snapshot]'s structural readiness check (which
+ * scans for [org.ort.app.ui.components.LOADING_STATE_TEST_TAG]) could not tell this screen's own
+ * genuine mid-load frame apart from anything else, and the tour could capture it before the real
+ * sessions list/detail landed. `list`/`detail` (both nullable, unchanged) already keep this
+ * distinct from a real empty state — this only adds the structural marker so a caller can wait for
+ * it.
+ */
 @Composable
 private fun Loading(modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(OrtSpacing.lg)) {
-        Text(text = "Loading…", modifier = Modifier.semantics { contentDescription = "Loading sessions" })
-    }
+    LoadingState(message = "Loading…", modifier = modifier.padding(horizontal = OrtSpacing.lg))
 }

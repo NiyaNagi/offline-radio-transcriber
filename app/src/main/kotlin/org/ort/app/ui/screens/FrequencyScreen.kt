@@ -26,6 +26,7 @@ import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.KeyValueRow
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.Sparkline
 import org.ort.app.ui.components.TextAction
@@ -54,7 +55,20 @@ public fun FrequenciesListScreen(
     modifier: Modifier = Modifier,
     heardAllTimeCount: Int = 0,
     heardTonightCount: Int = 0,
+    /**
+     * Register R-1022/R-1051 (halt, constitution I/IV): `true` exactly until
+     * [org.ort.app.ui.screens.FrequenciesContent]'s own first [org.ort.app.ui.data.FrequencyPolling
+     * .listFrequencies] read lands — before this parameter existed, that composable's initial
+     * `emptyList()` seed was indistinguishable from "queried, and genuinely no frequencies heard",
+     * so this screen rendered "No frequencies recorded yet" for up to one load. `false` (every
+     * caller before this parameter existed) renders exactly as before.
+     */
+    loading: Boolean = false,
 ) {
+    if (loading) {
+        LoadingState(message = "Loading…", modifier = modifier.fillMaxSize().padding(OrtSpacing.lg))
+        return
+    }
     if (frequencies.isEmpty()) {
         EmptyState(
             message = "No frequencies recorded yet",
