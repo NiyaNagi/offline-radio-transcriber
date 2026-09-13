@@ -34,6 +34,43 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPREC: RC01 Recordings, replacing Earlier nights as the home for sessions)
 
+### 22f460d0 — WPREC: RC01's row sub-line widens to "N overs · N stations · N gaps", per the artboard
+
+**Scope:** `:pipeline`'s `RecordingSessionSummary`/`recordingSessionSummaries` (additive: two new
+fields, no existing field changed or removed) and its test; `app/src/main/kotlin/org/ort/app/ui/
+recordings/{RecordingsViewData,RecordingsViewStateMapper,RecordingsScreen}.kt` and their tests.
+Coordinator round: extended this session's ownership into `:pipeline` for exactly this.
+
+**Requirements/ACs:** design-intent row RC01, FR-RUN-12 (a gap is data), constitution I (a real,
+distinct fact is never collapsed into a repeat of another).
+
+**What changed:**
+- `RecordingSessionSummary` gains `stationCount`/`gapCount`, computed the same way
+  `DigestPolling.sessions` already computes the identical facts for `Sessions.dc.html`:
+  `stationCount` is the distinct, non-null `stationId` count across the session's transmissions
+  (never merely the over count); `gapCount` is the session's own real
+  `CaptureGapDao.listBySession` row count. Both are additive — every existing field and every
+  existing caller keeps compiling and behaving unchanged.
+- RC01's row sub-line now reads "N overs · N stations[ · N gap(s)]" (the gap clause omitted, not
+  shown as "0 gaps", when a session genuinely had none — matching the artboard's own two examples,
+  "41 overs · 9 stations · 1 gap" against "33 overs · 7 stations"), replacing the over-count-alone
+  line this package's own RC01 commit had already disclosed as a known gap.
+
+**Verified:** `.\gradlew.bat :pipeline:testDebugUnitTest --tests
+"org.ort.pipeline.archive.RecordingSessionSummariesTest"` — 4/4 green, including the new
+`station and gap counts are real, distinct facts, never derived from the over count` case (written
+first; confirmed to fail to compile before the fields existed). `.\gradlew.bat
+:app:testDebugUnitTest --tests "org.ort.app.ui.recordings.*"` — 20/20 green, including the new
+`the row carries the real station and gap counts, distinct from the over count` mapper case.
+`:app:ktlintMainSourceSetCheck`/`ktlintTestSourceSetCheck`/`detekt` and the `:pipeline` equivalents
+all green (two `LongParameterList` test-helper bundles added; one real `LongMethod` fix to
+`OrtNavHost.kt`'s own `navHostCallbacks`, unrelated to this change but tipped over the limit by
+this session's earlier one-line addition combined with `main`'s own WPLINK growth — six duplicated
+"filter the Log and switch to it" callback bodies factored into one `openLogAndNavigate` helper,
+behaviour-preserving).
+
+**Left open / not done:** none for this commit's own scope.
+
 ### 3d1d8839 — WPREC: correction — the TourStepsTest digest-prose timeout was mine, not pre-existing; merge main
 
 **Scope:** `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt`, `tools/ui-audit/tour.json`

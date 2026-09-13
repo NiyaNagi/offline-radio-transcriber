@@ -75,6 +75,8 @@ public data class RecordingsSessionRowViewState(
     public val timeRangeLabel: String,
     public val durationLabel: String,
     public val overCount: Int,
+    public val stationCount: Int,
+    public val gapCount: Int,
     public val failedCount: Int,
     public val labelledCount: Int,
     public val isLive: Boolean,

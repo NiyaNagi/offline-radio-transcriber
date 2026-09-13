@@ -16,6 +16,14 @@ import org.ort.data.OrtDatabase
  * chip — not merely "has any label row at all". If the artboard's intent turns out to be broader
  * (any labelled field, mark or not) once RC01 is actually built, widening this is a one-line
  * change to [org.ort.data.dao.TransmissionLabelDao.countMarkedForTrainingBySession]'s `WHERE`.
+ *
+ * [stationCount]/[gapCount] (widened additively, coordinator round: `Recordings.dc.html`'s own
+ * row sub-line reads "N overs · N stations · N gaps" — three real, distinct facts, never the over
+ * count repeated) mirror `DigestPolling.sessions`'s own real computation exactly:
+ * [stationCount] is the distinct, non-null `stationId` count across this session's transmissions
+ * (never a station attributed more than once), and [gapCount] is this session's own real
+ * [org.ort.data.dao.CaptureGapDao.listBySession] row count (FR-RUN-12 — a gap is data, not
+ * silently folded into "listening time").
  */
 public data class RecordingSessionSummary(
     public val sessionId: String,
@@ -24,6 +32,8 @@ public data class RecordingSessionSummary(
     public val overCount: Int,
     public val failedCount: Int,
     public val labelledCount: Int,
+    public val stationCount: Int,
+    public val gapCount: Int,
     public val overAudioRemovedAtMillis: Long?,
     public val archiveState: ArchiveState,
     public val archiveRemovedAtMillis: Long?,
@@ -45,6 +55,8 @@ public suspend fun recordingSessionSummaries(db: OrtDatabase): List<RecordingSes
                 overCount = transmissions.size,
                 failedCount = transmissions.count { it.processingState == TransmissionState.FAILED },
                 labelledCount = db.transmissionLabelDao().countMarkedForTrainingBySession(session.id),
+                stationCount = transmissions.mapNotNull { it.stationId }.distinct().size,
+                gapCount = db.captureGapDao().listBySession(session.id).size,
                 overAudioRemovedAtMillis = session.overAudioRemovedAtMillis,
                 archiveState = archive?.state ?: ArchiveState.NONE,
                 archiveRemovedAtMillis = archive?.removedAtMillis,

@@ -130,6 +130,8 @@ public object RecordingsViewStateMapper {
                 hoursMinutesLabel(end - summary.startedAtMillis)
             },
             overCount = summary.overCount,
+            stationCount = summary.stationCount,
+            gapCount = summary.gapCount,
             failedCount = summary.failedCount,
             labelledCount = summary.labelledCount,
             isLive = isLive,

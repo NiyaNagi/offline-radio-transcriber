@@ -151,6 +151,22 @@ private fun RecordingsSessionList(
     }
 }
 
+/** `Recordings.dc.html`'s own row sub-line: "N overs · N stations[ · N gap(s)]" — three real,
+ * distinct facts ([RecordingSessionSummary][org.ort.pipeline.archive.RecordingSessionSummary]'s
+ * own `stationCount`/`gapCount`, widened for exactly this), never the over count alone. The gap
+ * clause is omitted, not shown as "0 gaps", when this session genuinely had none (constitution I:
+ * an absent fact is stated as absent, not as a zero literal the artboard never draws either —
+ * compare "41 overs · 9 stations · 1 gap" against "33 overs · 7 stations" on the board itself). */
+private fun sessionCountsLabel(session: RecordingsSessionRowViewState): String = buildString {
+    append(Plurals.count(session.overCount, "over"))
+    append(" · ")
+    append(Plurals.count(session.stationCount, "station"))
+    if (session.gapCount > 0) {
+        append(" · ")
+        append(Plurals.count(session.gapCount, "gap"))
+    }
+}
+
 private fun sessionRowDescription(session: RecordingsSessionRowViewState): String = buildString {
     append(session.label)
     append(". ")
@@ -158,7 +174,7 @@ private fun sessionRowDescription(session: RecordingsSessionRowViewState): Strin
     append(" · ")
     append(session.durationLabel)
     append(" · ")
-    append(Plurals.count(session.overCount, "over"))
+    append(sessionCountsLabel(session))
     session.badges.forEach { append(" · ${it.label}") }
 }
 
@@ -188,7 +204,7 @@ private fun RecordingsSessionRow(
                 modifier = Modifier.padding(top = 2.dp),
             )
             Text(
-                text = Plurals.count(session.overCount, "over"),
+                text = sessionCountsLabel(session),
                 style = OrtType.subLine,
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = 1.dp),

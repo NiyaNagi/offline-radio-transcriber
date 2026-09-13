@@ -60,6 +60,8 @@ class RecordingsScreenTest {
         timeRangeLabel = "21:48 – 06:12",
         durationLabel = "8 h 24 m",
         overCount = 41,
+        stationCount = 9,
+        gapCount = 1,
         failedCount = 0,
         labelledCount = 0,
         isLive = false,

@@ -734,6 +734,21 @@ private fun drawerOnSelect(
 /** Builds [NavHostBody]'s [NavHostCallbacks] — split out of [OrtNavHost] purely to keep that
  * function under detekt's `LongMethod` limit, the same reason [NavHostBody]/[DestinationContent]
  * were themselves split out before this round. */
+/** The repeated shape behind every "filter the Log and switch to it" callback below — pulled out
+ * once so each call site is the one line that differs (its own [filter]/[origin]), the same
+ * "extract the duplication" reason this file's own [ImproveRecordsContent] etc. already exist for,
+ * and (WPREC) what keeps [navHostCallbacks] itself under detekt's `LongMethod` limit now that it
+ * has six of these. */
+private fun openLogAndNavigate(
+    navState: NavHostNavState,
+    currentState: MutableState<ReaderDestination>,
+    filter: LogFilterSelection,
+    origin: LogFilterOrigin,
+) {
+    navState.openLogFiltered(filter, origin)
+    currentState.value = ReaderDestination.LOG
+}
+
 private fun navHostCallbacks(
     navigator: ReaderNavigator,
     scope: CoroutineScope,
@@ -762,10 +777,7 @@ private fun navHostCallbacks(
         // plain, unfiltered `Log`, now through the one filter model so back reopens `Capture` on
         // its own live monitor instead of discarding that context entirely (register: N07 used to
         // be the one link of the seven with no origin to restore at all).
-        onOpenLog = {
-            navState.openLogFiltered(LogFilterSelection(), LogFilterOrigin.Capture)
-            currentState.value = ReaderDestination.LOG
-        },
+        onOpenLog = { openLogAndNavigate(navState, currentState, LogFilterSelection(), LogFilterOrigin.Capture) },
         onOpenTransmission = { id ->
             navState.onOpenDrillIn(currentState.value) { navState.openTransmissionId.value = id }
         },
@@ -778,8 +790,8 @@ private fun navHostCallbacks(
         // [NavHostNavState.openLogFiltered] clears the live station drill-in first, [stationId]
         // itself is saved as the origin so back reopens the same station.
         onOpenStationOvers = { stationId ->
-            navState.openLogFiltered(LogFilterSelection(stationId = stationId), LogFilterOrigin.Station(stationId))
-            currentState.value = ReaderDestination.LOG
+            val filter = LogFilterSelection(stationId = stationId)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Station(stationId))
         },
         // IA-6 (information-architecture review, approved — WPNAV): a transmission's own
         // attributed station, one tap away — mirrors [onOpenActivationThread] below's own shape
@@ -802,8 +814,7 @@ private fun navHostCallbacks(
         // "Install a model" lands directly on `Assets` instead of the root the operator used to
         // have to tap through themselves.
         onOpenModels = { navigator.openSettings(SettingsScreenId.ASSETS) },
-        // WPREC: `Recordings.dc.html`'s storage card — see `NavHostCallbacks.onOpenSettingsStorage`'s
-        // own doc comment.
+        // WPREC: `Recordings.dc.html`'s storage card — `NavHostCallbacks.onOpenSettingsStorage`'s own doc comment.
         onOpenSettingsStorage = { navigator.openSettings(SettingsScreenId.STORAGE) },
         // Round 6, register R-132: `SettingsContent`'s own `onOpenLevelMeter` (its doc comment:
         // "the host is expected to wire it the same way it wires every other cross-package
@@ -820,11 +831,9 @@ private fun navHostCallbacks(
         // frequency drill-in this fires from in every real call (this only ever fires from inside
         // `FrequencyDetailContent`, which only composes while `openFrequencyHz` already holds it).
         onOpenOvers = { hz, window ->
-            navState.openLogFiltered(
-                LogFilterSelection(frequencyHz = hz, fromMillis = window.startMillis, toMillis = window.endMillis),
-                LogFilterOrigin.Frequency(hz),
-            )
-            currentState.value = ReaderDestination.LOG
+            val filter =
+                LogFilterSelection(frequencyHz = hz, fromMillis = window.startMillis, toMillis = window.endMillis)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Frequency(hz))
         },
         // Round 11, register R-133: `Settings-Storage`'s "Next deletion … Review" link
         // (`SettingsContent.onReviewSession`, WP10's `948fe55`) — see
@@ -851,28 +860,22 @@ private fun navHostCallbacks(
         // chart bar, real now — filters to the tapped bar's own real `[fromMillis, toMillis]` hour
         // window (`NowScreen`'s own `hourFilterWindow`), origin `Now` so back returns there.
         onOpenHour = { fromMillis, toMillis ->
-            navState.openLogFiltered(
-                LogFilterSelection(fromMillis = fromMillis, toMillis = toMillis),
-                LogFilterOrigin.Now,
-            )
-            currentState.value = ReaderDestination.LOG
+            val filter = LogFilterSelection(fromMillis = fromMillis, toMillis = toMillis)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Now)
         },
         // R-1041 (D11, register R-1041): `Detail-Propagated.dc.html`'s own "View the N affected
         // overs" — filters to exactly the real affected transmission ids (never a fabricated or
         // wider set), origin `Transmission` so back reopens the same transmission's own drill-in.
         onViewAffectedOvers = { transmissionId, overIds ->
-            navState.openLogFiltered(
-                LogFilterSelection(transmissionIds = overIds),
-                LogFilterOrigin.Transmission(transmissionId),
-            )
-            currentState.value = ReaderDestination.LOG
+            val filter = LogFilterSelection(transmissionIds = overIds)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Transmission(transmissionId))
         },
         // R-1041 (R04, register R-1041): `Improve-Done`'s own "Review the N changes" — filters to
         // exactly the real, revised over ids (`ReprocessStatus.Summary.changedTransmissionIds`,
         // never the whole attempted batch), origin `Improve` so back reopens `Improve records`.
         onOpenChangedOvers = { overIds ->
-            navState.openLogFiltered(LogFilterSelection(transmissionIds = overIds), LogFilterOrigin.Improve)
-            currentState.value = ReaderDestination.LOG
+            val filter = LogFilterSelection(transmissionIds = overIds)
+            openLogAndNavigate(navState, currentState, filter, LogFilterOrigin.Improve)
         },
     )
 }

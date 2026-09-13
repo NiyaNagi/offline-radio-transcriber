@@ -17,10 +17,17 @@ import org.ort.testing.Requirement
  */
 class RecordingsViewStateMapperTest {
 
-    /** [archiveState]/[archiveRemovedAtMillis] bundled so [summary] itself stays under detekt's
-     * `LongParameterList` — the same "bundle the request" reasoning [RecordingsBudgetInputs] above
-     * exists for. */
-    private data class Archive(val state: ArchiveState = ArchiveState.NONE, val removedAtMillis: Long? = null)
+    /** Every removal fact (archive and over-audio alike) bundled so [summary] itself stays under
+     * detekt's `LongParameterList` — the same "bundle the request" reasoning [RecordingsBudgetInputs]
+     * above exists for. */
+    private data class Removal(
+        val archiveState: ArchiveState = ArchiveState.NONE,
+        val archiveRemovedAtMillis: Long? = null,
+        val overAudioRemovedAtMillis: Long? = null,
+    )
+
+    /** [stationCount]/[gapCount] bundled for the same `LongParameterList` reason as [Removal]. */
+    private data class Counts(val stationCount: Int = 0, val gapCount: Int = 0)
 
     private fun summary(
         id: String,
@@ -29,8 +36,8 @@ class RecordingsViewStateMapperTest {
         overCount: Int = 1,
         failedCount: Int = 0,
         labelledCount: Int = 0,
-        overAudioRemovedAtMillis: Long? = null,
-        archive: Archive = Archive(),
+        removal: Removal = Removal(),
+        counts: Counts = Counts(),
     ) = RecordingSessionSummary(
         sessionId = id,
         startedAtMillis = startedAt,
@@ -38,9 +45,11 @@ class RecordingsViewStateMapperTest {
         overCount = overCount,
         failedCount = failedCount,
         labelledCount = labelledCount,
-        overAudioRemovedAtMillis = overAudioRemovedAtMillis,
-        archiveState = archive.state,
-        archiveRemovedAtMillis = archive.removedAtMillis,
+        stationCount = counts.stationCount,
+        gapCount = counts.gapCount,
+        overAudioRemovedAtMillis = removal.overAudioRemovedAtMillis,
+        archiveState = removal.archiveState,
+        archiveRemovedAtMillis = removal.archiveRemovedAtMillis,
     )
 
     private val emptyAccounting = StorageAccounting(
@@ -118,8 +127,11 @@ class RecordingsViewStateMapperTest {
                 summary(
                     "s",
                     startedAt = 1_000L,
-                    overAudioRemovedAtMillis = 1_694_563_200_000L, // 2023-09-13
-                    archive = Archive(ArchiveState.REMOVED, removedAtMillis = 1_694_476_800_000L), // 2023-09-12
+                    removal = Removal(
+                        archiveState = ArchiveState.REMOVED,
+                        archiveRemovedAtMillis = 1_694_476_800_000L, // 2023-09-12
+                        overAudioRemovedAtMillis = 1_694_563_200_000L, // 2023-09-13
+                    ),
                 ),
             ),
         )
@@ -134,7 +146,9 @@ class RecordingsViewStateMapperTest {
     @Test
     @Requirement("FR-STO-3d")
     fun `a session whose archive was never enabled carries no archive badge, never a fabricated one`() {
-        val state = map(summaries = listOf(summary("s", startedAt = 1_000L, archive = Archive(ArchiveState.NONE))))
+        val state = map(
+            summaries = listOf(summary("s", startedAt = 1_000L, removal = Removal(archiveState = ArchiveState.NONE))),
+        )
         assertTrue(
             state.sessions.single().badges.none {
                 it.kind == RecordingBadgeKind.ARCHIVE_KEPT || it.kind == RecordingBadgeKind.ARCHIVE_REMOVED
@@ -197,7 +211,11 @@ class RecordingsViewStateMapperTest {
         val summaries = listOf(
             summary("a", startedAt = 1_000L, failedCount = 1),
             summary("b", startedAt = 2_000L, labelledCount = 1),
-            summary("c", startedAt = 3_000L, archive = Archive(ArchiveState.REMOVED, removedAtMillis = 1L)),
+            summary(
+                "c",
+                startedAt = 3_000L,
+                removal = Removal(archiveState = ArchiveState.REMOVED, archiveRemovedAtMillis = 1L),
+            ),
         )
         val allSelected = map(summaries = summaries, selectedFilter = RecordingsFilter.ALL)
         val failuresSelected = map(summaries = summaries, selectedFilter = RecordingsFilter.HAS_FAILURES)
@@ -228,6 +246,20 @@ class RecordingsViewStateMapperTest {
         )
         assertTrue(state.headline.contains("2 sessions"))
         assertTrue(state.headline.contains("12 overs"))
+    }
+
+    @Test
+    @Requirement("RC01", "FR-RUN-12")
+    fun `the row carries the real station and gap counts, distinct from the over count`() {
+        val state = map(
+            summaries = listOf(
+                summary("a", startedAt = 1_000L, overCount = 41, counts = Counts(stationCount = 9, gapCount = 1)),
+            ),
+        )
+        val row = state.sessions.single()
+        assertEquals(41, row.overCount)
+        assertEquals(9, row.stationCount)
+        assertEquals(1, row.gapCount)
     }
 
     @Test
