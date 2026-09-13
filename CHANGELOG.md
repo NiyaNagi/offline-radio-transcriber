@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPTESTROBUST: R-1053 - Settings' async loads no longer race the Compose test clock)
 
-### <pending-this-commit> — WPTESTROBUST: R-1053 - every async page-load in SettingsContent.kt defers its state write to a freshly entered Dispatchers.Main.immediate, closing the CalledFromWrongThreadException that was blocking the Release workflow
+### 5bb93147 — WPTESTROBUST: R-1053 - every async page-load in SettingsContent.kt defers its state write to a freshly entered Dispatchers.Main.immediate, closing the CalledFromWrongThreadException that was blocking the Release workflow
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsContent.kt` (the dispatcher seam and
 every `LaunchedEffect`/SAF-launcher state write in this file only); `app/src/test/kotlin/org/ort/app/ui/settings/SettingsContentExportAndDebugDumpTest.kt`.
