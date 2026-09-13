@@ -32,7 +32,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-13 (WPINIT: R-1051 gives Log/Now/Capture status/Live monitor a real loading state distinct from empty, R-1022 replaces the tour's own text-matched placeholder check with a structural marker, and the transmission detail screen names the real, structured cause of a missing over's own audio instead of guessing one)
+## 2026-09-13 (WPINIT: R-1051 gives Log/Now/Capture status/Live monitor a real loading state distinct from empty, R-1022 replaces the tour's own text-matched placeholder check with a structural marker, the transmission detail screen names the real, structured cause of a missing over's own audio instead of guessing one, and R-1055 makes a curated Log filter reach across every session instead of just the live one)
 
 ### b4a7c949 — WPINIT: R-1051 — a cold-start screen renders loading, never a false empty claim, until its first real query returns
 
@@ -211,6 +211,77 @@ device, that `MainActivity` crashes (`RealCaptureService.runCaptureFlow`) when l
 scenario-seeded session on this emulator — unrelated to this change (real capture trying to open
 real hardware this AVD does not have against fixture-only data) and not investigated further; flagged
 separately rather than fixed here (outside this prompt's own scope).
+
+### pending — WPINIT: R-1055 — a curated Log filter (Improve's "Review changes", D11, DG02) reaches across every session, never just the live one
+
+**Scope:** `data/src/main/kotlin/org/ort/data/dao/TransmissionDao.kt`;
+`app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt`;
+`data/src/test/kotlin/org/ort/data/dao/TransmissionDaoTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/data/LogPollingTest.kt`, `LogViewDataTest.kt`.
+
+**Requirements/ACs:** register R-1055 (spec), constitution I.
+
+**What changed:** a validator's own field report against `ba3a66da`: Improve's "Review changes"
+opened the Log reading "Filtered to 12 overs" with "Clear" beside it, and directly beneath it "No
+overs yet. Listening since 07:19." — the screen claimed twelve overs and showed none.
+`LogPolling.screenState` scoped every read to the *live* capture session (`sessionId`), including a
+`LogFilterSelection.transmissionIds`/`.stationId` curated request — but the normal overnight shape
+is capture running in a different, live session while the operator reviews an earlier, already-
+ended night's overs, so a request naming that earlier night's own transmission ids found none of
+them against the live session's own (possibly over-less) rows. Fixed at the source: added
+`TransmissionDao.listByIds`/`.listByStationId` (cross-session queries, `:data`), and
+`LogPolling.screenState` (split into a new private `resolveSource` helper to stay under detekt's
+`LongMethod` limit) now reads through them whenever `transmissionIds`/`stationId` narrows the
+selection, falling back to the live session's own `listBySession` only when neither is set. A
+curated, cross-session list gets no gap timeline interleaved and no Bluetooth-audio footnote
+(`routeFacts`/`gaps` both honestly absent rather than borrowed from whichever session is live right
+now — see `LogSource`'s own kdoc). `LogItemsMapper.appliedFilterLabel` gained a `curatedFoundCount`
+parameter: the statement's own "N overs" is now the real, found row count, never
+`transmissionIds.size` — the second half of the same defect (the validator's own report showed
+"12" while zero rows actually rendered). A curated request that finds nothing at all now renders
+the new `LogItemsMapper.curatedEmptyStateFor` — "None of the requested overs could be found." (or,
+for a station, "No overs from `<callsign>`.") — never the live-session "No overs yet. Listening
+since..." wording, which would misrepresent "the requested overs are not here" as "nothing has
+happened yet tonight." The pre-existing R-1051 loading state (commit above) already covers "while
+this cross-session query is in flight" — `LogContent`'s own initial `LogPolling.loadingState()`
+seed needed no further change.
+
+**Not fixed here (stopped and reported, per this task's own instruction):** back-navigation from a
+curated Log to the *exact* screen state it was opened from. `OrtNavHost.kt`'s own
+`restoreLogFilterOrigin(LogFilterOrigin.Improve, ...)` already restores the Improve *destination*
+(`ReaderDestination.IMPROVE_RECORDS`) but not the "Done summary" sub-state Improve was actually
+showing when "Review changes" was tapped — that composable's own doc comment already names this
+same gap ("why not the exact `Done` sub-state"). Fixing it needs `OrtNavHost.kt`'s own navigation
+state machine, which this task's own ownership map excludes (WPREC is editing it).
+
+**Verified:** `.\gradlew.bat :data:testDebugUnitTest --tests "org.ort.data.dao.TransmissionDaoTest"`
+and `:app:testDebugUnitTest --tests "org.ort.app.ui.data.LogPollingTest" --tests
+"org.ort.app.ui.data.LogViewDataTest" --tests "org.ort.app.ui.screens.LogScreenTest"` — all green
+(10, 31, 52 and existing `LogScreenTest` cases respectively); `:app:smokeTestDebugUnitTest --tests
+"org.ort.app.ui.screens.LogContentBackHandlerTest" --tests
+"org.ort.app.ui.screens.LogAndThreadContentActivityTest"` (the isolated JVM these need) unaffected.
+Shown failing first: temporarily reverted `resolveSource`'s own `entities` lookup back to a bare
+`db.transmissionDao().listBySession(sessionId)` and re-ran the five new `LogPollingTest` `R_1055`
+cases — three failed for the right reason (`expected:<[EARLIER-1, EARLIER-2]> but was:<[]>` and
+equivalent for the station/missing-id cases — the exact validator-reported shape, zero rows found);
+the two that do not depend on cross-session lookup (the honest-empty-message and no-gaps cases)
+still passed, as expected; all five passed again once the fix was restored. Full gate
+(`dependencyRules platformGuards build`, real `HF_TOKEN`, no escape hatch) — BUILD SUCCESSFUL in
+18m48s, 1109 tasks, zero failures (the four `SQLException ... rolled back afterward regardless`
+log lines in the run are pre-existing tests deliberately exercising constraint-violation rollback,
+not failures). `-p buildSrc test`, `ktlintCheck detekt` (repo-wide), `python
+tools\spec-check\spec_check.py` — all green. `coverageMatrix`/`coverageMatrixCheck` (separate
+invocations) — up to date, no content change (this task introduced no new `FR-`/`AC-` id).
+
+**Left open / not done:** the back-navigation sub-state gap named above (needs `OrtNavHost.kt`).
+No on-device capture for this commit: reproducing the validator's exact shape (a live, over-less
+session plus a separate earlier session holding the filtered overs, reached through Improve's own
+"Review changes") needs either a debug scenario fixture that seeds both at once (none does today,
+and debug scenario fixtures are WPMODEL's ownership, off-limits here) or driving the real Improve
+UI by hand on-device, which was not attempted given this is a query-scoping fix with no rendering/
+layout change of its own — `LogScreen`'s own pixels are unchanged, already proven on device for the
+R-1051 commit above; the real, multi-session Room-database tests listed under "Verified" are this
+fix's own discriminating proof instead.
 
 ## 2026-09-12 (WPCF07 round 2: R-1050 sent back — measured-width middle ellipsis replaces the fixed 12-character budget)
 

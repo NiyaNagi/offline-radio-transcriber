@@ -644,14 +644,27 @@ public object LogItemsMapper {
      * filter sheet's own picker set without syncing the separately-tracked quick-chip state (the
      * same "All stays selected" defect, for frequency). `null` exactly when nothing here needs a
      * statement beyond the chip row itself.
+     *
+     * Register R-1055 (spec): [curatedFoundCount], when supplied, replaces
+     * `transmissionIds.size` in the `transmissionIds != null` branch — the real number of rows
+     * [LogPolling.screenState] actually found for the requested ids (now looked up across every
+     * session, not just the live one — see [LogPolling.screenState]'s own doc comment), never the
+     * size of the *requested* set. A validator's own field report named the exact defect this
+     * closes: "Filtered to 12 overs" beside a Log showing none of them, because the count came from
+     * the request, not the result. `null` (every caller before this existed, and every pure-mapper
+     * test that has no real query result to hand in) falls back to the old, request-sized count.
      */
-    public fun appliedFilterLabel(selection: LogFilterSelection, activeQuickFilter: LogQuickFilterId): String? {
+    public fun appliedFilterLabel(
+        selection: LogFilterSelection,
+        activeQuickFilter: LogQuickFilterId,
+        curatedFoundCount: Int? = null,
+    ): String? {
         val transmissionIds = selection.transmissionIds
         val fromMillis = selection.fromMillis
         val toMillis = selection.toMillis
         val frequencyHz = selection.frequencyHz
         return when {
-            transmissionIds != null -> pluralize(transmissionIds.size, "over")
+            transmissionIds != null -> pluralize(curatedFoundCount ?: transmissionIds.size, "over")
             selection.stationId != null -> selection.stationId
             fromMillis != null && frequencyHz == null ->
                 ReaderTransmissionViewStateMapper.hourMinuteLabel(fromMillis) + " – " +
@@ -706,6 +719,31 @@ public object LogItemsMapper {
         LogEmptyStateViewState(
             message = "No overs yet.",
             subMessage = "Listening since $since$onClause. The first one appears here the moment squelch opens.",
+        )
+    }
+
+    /**
+     * Register R-1055 (spec): the honest empty state for a curated, cross-session
+     * [LogFilterSelection.transmissionIds]/[LogFilterSelection.stationId] view that genuinely found
+     * nothing — never [emptyStateFor]'s own "No overs yet. Listening since..." wording, which
+     * claims a live-session-since fact this curated view has no session of its own to cite, and
+     * would misrepresent "the requested overs are not here" as "nothing has happened yet tonight."
+     * [requestedCount] (non-null only for the `transmissionIds` case — a `stationId` request has
+     * no "how many did I ask for" of its own) is stated honestly rather than silently dropped, per
+     * this task's own rule that a request for overs that turn out not to be showable must say so.
+     */
+    public fun curatedEmptyStateFor(requestedCount: Int?, stationId: String?): LogEmptyStateViewState = when {
+        requestedCount != null -> LogEmptyStateViewState(
+            message = "None of the requested overs could be found.",
+            subMessage = "$requestedCount requested; none exist in this log.",
+        )
+        stationId != null -> LogEmptyStateViewState(
+            message = "No overs from $stationId.",
+            subMessage = "Nothing has been heard from this station in any session.",
+        )
+        else -> LogEmptyStateViewState(
+            message = "None of the requested overs could be found.",
+            subMessage = "Nothing in this log matches the requested filter.",
         )
     }
 
@@ -788,6 +826,52 @@ public object LogItemsMapper {
  */
 public object LogPolling {
 
+    /**
+     * Register R-1055 (spec): what [screenState] reads its rows/gaps/route facts from — split out
+     * purely to keep that function under detekt's `LongMethod` threshold, not a behaviour change.
+     * [curated] is `true` exactly when [entities] came from a cross-session
+     * `transmissionIds`/`stationId` lookup rather than [sessionId]'s own rows.
+     */
+    private data class LogSource(
+        val entities: List<TransmissionEntity>,
+        val gaps: List<CaptureGapEntity>,
+        val routeFacts: SessionRouteFacts?,
+        val curated: Boolean,
+    )
+
+    /**
+     * Register R-1055 (spec): a curated `transmissionIds`/`stationId` selection names specific
+     * overs by id or by station, which may belong to any session, not necessarily the live one
+     * named by [sessionId] — the normal overnight shape is capture running in a *different*, live
+     * session while the operator reviews an earlier night's overs. Scoping this read to
+     * [sessionId] regardless found none of them (a validator's own field report: "Filtered to 12
+     * overs" beside a Log showing none). Read cross-session via
+     * [org.ort.data.dao.TransmissionDao.listByIds]/`.listByStationId`; every other selection
+     * narrows the *live* session's own overs exactly as before. A curated, cross-session list has
+     * no one session's own gap timeline to interleave, and mixes overs from potentially several
+     * sessions with their own, possibly different, routes — [gaps] is empty and [routeFacts] is
+     * `null` rather than borrowed from whichever session happens to be live right now.
+     */
+    private suspend fun resolveSource(
+        context: Context,
+        db: OrtDatabase,
+        sessionId: String,
+        selection: LogFilterSelection,
+    ): LogSource {
+        val transmissionIds = selection.transmissionIds
+        val stationId = selection.stationId
+        val curated = transmissionIds != null || stationId != null
+        val entities = when {
+            transmissionIds != null -> db.transmissionDao().listByIds(transmissionIds.toList())
+            stationId != null -> db.transmissionDao().listByStationId(stationId)
+            else -> db.transmissionDao().listBySession(sessionId)
+        }
+        val gaps = if (curated) emptyList() else db.captureGapDao().listBySession(sessionId)
+        // E2-G04 (F23, FR-CAP-13): the WPF seam — see that type's own kdoc.
+        val routeFacts = if (curated) null else RoomSessionRouteFactsReader(context).forSession(sessionId)
+        return LogSource(entities, gaps, routeFacts, curated)
+    }
+
     public suspend fun screenState(
         context: Context,
         sessionId: String,
@@ -795,13 +879,13 @@ public object LogPolling {
         activeQuickFilter: LogQuickFilterId,
     ): LogScreenViewState {
         val db = OrtDatabase.create(context.applicationContext)
-        val entities = db.transmissionDao().listBySession(sessionId)
+        val source = resolveSource(context, db, sessionId, selection)
+        val entities = source.entities
         val details = entities.map { buildDetail(context, db, it) }
-        val gaps = db.captureGapDao().listBySession(sessionId)
+        val gaps = source.gaps
         val session = db.sessionDao().getById(sessionId)
-        // E2-G04 (F23, FR-CAP-13): the WPF seam — see that type's own kdoc.
-        val routeFacts = RoomSessionRouteFactsReader(context).forSession(sessionId)
-        val bluetoothAudioFootnote = if (routeFacts.isBluetoothAudio) {
+        val routeFacts = source.routeFacts
+        val bluetoothAudioFootnote = if (routeFacts?.isBluetoothAudio == true) {
             "Every over captured over Bluetooth carries the bt audio mark. Its accuracy is " +
                 "reported separately from cabled audio, never averaged in."
         } else {
@@ -812,10 +896,15 @@ public object LogPolling {
         // in the unselected chip style) rather than waiting for a first over on it.
         val distinctFrequencies = (entities.mapNotNull { it.frequencyHz } + connectedFrequencies()).distinct().sorted()
         val rejectedCount = details.count { it.processingState == TransmissionState.REJECTED }
+        // R-1055: the real, found count for a curated `transmissionIds` request — never the size of
+        // the request itself (see [LogItemsMapper.appliedFilterLabel]'s own kdoc).
+        val curatedFoundCount = selection.transmissionIds?.let { requested ->
+            details.count { it.id in requested }
+        }
         // R-1047: computed from the real sheet selection, not the effective (quick-filter-merged)
         // one — [LogItemsMapper.appliedFilterLabel]'s own kdoc for exactly what this does and does
         // not cover.
-        val appliedFilterLabel = LogItemsMapper.appliedFilterLabel(selection, activeQuickFilter)
+        val appliedFilterLabel = LogItemsMapper.appliedFilterLabel(selection, activeQuickFilter, curatedFoundCount)
         val quickFilters = LogItemsMapper.quickFilters(
             distinctFrequencies,
             activeQuickFilter,
@@ -847,15 +936,19 @@ public object LogPolling {
             gaps,
             effectiveSelection,
             firstHeardIds,
-            bluetoothAudioSession = routeFacts.isBluetoothAudio,
+            bluetoothAudioSession = routeFacts?.isBluetoothAudio ?: false,
             nowMillis = SystemClock.wallMillis(),
         )
         val emptyState = if (items.isEmpty()) {
-            LogItemsMapper.emptyStateFor(
-                hasAnyTransmission = details.isNotEmpty(),
-                sessionStartedAtUtcMillis = session?.startedAt,
-                frequencies = distinctFrequencies,
-            )
+            if (source.curated) {
+                LogItemsMapper.curatedEmptyStateFor(selection.transmissionIds?.size, selection.stationId)
+            } else {
+                LogItemsMapper.emptyStateFor(
+                    hasAnyTransmission = details.isNotEmpty(),
+                    sessionStartedAtUtcMillis = session?.startedAt,
+                    frequencies = distinctFrequencies,
+                )
+            }
         } else {
             null
         }
