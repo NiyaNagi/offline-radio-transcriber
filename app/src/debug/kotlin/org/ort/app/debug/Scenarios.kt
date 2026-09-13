@@ -464,6 +464,10 @@ public object Scenarios {
                 ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("input-verified"))
                 republishInputVerifiedFacets()
             }
+            "improve-live-quiet" -> {
+                ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("improve-live-quiet"))
+                republishImproveLiveQuietFacets()
+            }
             "input-mismatch" -> republishInputMismatchFacets()
             "setup-verified" -> republishSetupVerifiedFacets()
             "setup-level" -> republishSetupLevelFacets()
@@ -1341,6 +1345,14 @@ public object Scenarios {
                 ),
             )
         }
+        republishImproveLiveQuietFacets()
+        ScenarioFixtures.markCapturing(context, sessionId)
+        return LoadResult(FIELD_TIER1_OVER_COUNT, 1, sessionId)
+    }
+
+    /** R-1076: [improveLiveQuiet]'s own process-wide facet, split out — see [republishFacets]'s
+     * own kdoc. */
+    private fun republishImproveLiveQuietFacets() {
         LevelStatus.update(
             LevelStatus.State.Measured(
                 peakDbfs = -34f,
@@ -1353,8 +1365,6 @@ public object Scenarios {
             ),
             peakHistoryDbfs = emptyList(),
         )
-        ScenarioFixtures.markCapturing(context, sessionId)
-        return LoadResult(FIELD_TIER1_OVER_COUNT, 1, sessionId)
     }
 
     /**

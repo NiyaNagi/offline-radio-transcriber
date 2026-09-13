@@ -237,6 +237,31 @@ what each one does and does not prove.
 
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
 
+### (this commit) — WPRESEED: R-1076 follow-up - merged WPNAVHOST's `improve-live-quiet` scenario (R-1061) and extracted its own `LevelStatus`/`CaptureState` facets into `republishImproveLiveQuietFacets()`
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (the one extraction, on top of the
+merge). Everything else this merge brings in is WPNAVHOST's own row, not touched further.
+
+**Requirements/ACs:** R-1076 (this scenario's own facets must survive a debug restart too, the same
+as every other facet-bearing scenario), R-1061 (the scenario itself, unchanged).
+
+**What changed:** merged `worktree-agent-aae495e19b25868a3` (WPNAVHOST round 2, R-1061's
+`improve-live-quiet` scenario plus its own live-bar/banner work) with no conflicts. `improveLiveQuiet`'s
+own `LevelStatus.update(...)` call (a live, genuinely-too-quiet reading) was extracted into
+`republishImproveLiveQuietFacets()`, called from the builder unchanged and wired into
+`republishFacets`'s `when` alongside `ScenarioFixtures.republishCapturing` for its `CaptureState`
+half — the same split every other facet-bearing scenario already has, so a debug restart mid
+`improve-live-quiet` republishes its own facets too, not just the ~35 scenarios this fix's first
+pass covered.
+
+**Verified:** `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.*"` — green,
+`BUILD SUCCESSFUL` (180 actionable tasks, 8 executed / 172 up-to-date), including the merged-in
+`ImproveLiveQuietScenarioTest` and this fix's own `R_1076` test. `./gradlew ktlintCheck detekt`
+(every module) — green, `BUILD SUCCESSFUL`.
+
+**Left open / not done:** none new — see the R-1076 entry below for what this whole change leaves
+open.
+
 ### 8b37f11f — WPRESEED: R-1076 - ActiveScenarioRepublishProvider now republishes only the process-wide, in-memory scenario facets on a debug process restart, never re-seeding `:data` rows or files
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, `ScenarioFixtures.kt`,
