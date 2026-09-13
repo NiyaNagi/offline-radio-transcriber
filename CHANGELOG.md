@@ -397,6 +397,176 @@ fix's own discriminating proof instead.
 
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
 
+### WPIMPROVE — fixed while device-verifying R-1056: Improve's root stopped claiming improved overs still "can get better" (R-1064, FR-REP-2/9, constitution I)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImprovePolling.kt` and its test only.
+
+**Requirements/ACs:** R-1064 (register — "Improve root counts overs already improved"; cited as
+"R-1063" in this fix's own first commit, corrected once the lead's own filing landed with the two
+Improve findings' ids swapped from this session's initial guess), FR-REP-2, FR-REP-8, FR-REP-9,
+constitution I.
+
+**What changed:** `ImprovePolling.root()` grouped sessions by `SessionEntity.deviceTier` and then
+counted **every** transmission in a qualifying session as a candidate — real at the moment of
+capture, but permanent, since a session's own `deviceTier` never changes. After a real Improve run
+left all twelve of a session's transmissions with `isReprocessCandidate = false` in the on-device
+database (confirmed directly via `sqlite3` on-device while verifying R-1056), the root screen still
+read "12 overs can get better" — a false statement once a real reprocessing engine existed to make
+it checkable, not a harmless stub. Read `isReprocessCandidate` itself is not the fix: nothing in
+production ever sets it `true` (grepped `:pipeline`/`:app`; FR-TIER-4's own marking is not wired to
+it), and `spec/technical-design.md` §3.4 describes it as a cache of a fingerprint-staleness
+computation that also is not built. What the real engine does stamp on every completed or rejected
+outcome — live capture included — is `TransmissionEntity.processedTier` (FR-REP-2: "every stored
+result SHALL record ... tier that produced it, so staleness is computable"), and `:data` already
+exposes `TransmissionDao.idsBelowProcessedTier(belowTiers)` for exactly "which records still need
+improving" — `ReprocessRunner.kt`'s own doc comment names this precise gap by name as "WP11d's
+read-path change to make". `root()` now intersects each qualifying session's transmissions against
+that real, current set; a session with none left in it contributes no group at all, and a fully
+brought-current selection now shows the honest empty state (`totalOverCount == 0`) instead of a
+stale count.
+
+**Verified:**
+- `ImprovePollingTest`: two new cases, both against a real Room DB — `R_1064 a completed run leaves
+  the root showing zero remaining candidates` (both overs stamped `processedTier = T3` by
+  `setProcessedTier`, current tier T3 → `totalOverCount == 0`, `groups.isEmpty()`) and
+  `R_1064 a mixed set counts only the overs not yet brought current` (one over stamped current, one
+  at its own capture tier, one never processed at all → exactly the two real outstanding ids, never
+  the stamped one). **Discrimination performed and reverted**: reverting `ImprovePolling.kt` alone
+  (temporary local commit, undone with `git reset --soft` before this commit) fails both — "expected
+  no remaining candidates, got 2" and the mixed case's own assertion — restored, both pass again; the
+  four pre-existing `ImprovePollingTest`/`ImproveScreensTest`/`RealImproveRunnerTest` cases are
+  unaffected (their own fixtures never stamp `processedTier`, so `processedTier IS NULL` still
+  qualifies them, matching the old behaviour for exactly the cases that exercised it).
+- `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — green (all cases in this
+  package, this fix's own new ones included).
+- `gradlew ktlintCheck detekt` — green.
+
+**Left open / not done:** the on-device confirmation that motivated this (a real `field-tier1` run,
+`sqlite3` query showing `isReprocessCandidate = 0` for all twelve rows while the root still read
+"12 overs can get better") is reported separately alongside this session's R-1056 device evidence,
+not duplicated here.
+
+### WPIMPROVE — fixed while device-verifying R-1056: Improve's navigation now survives a configuration change (R-1063, FR-REP-9/11, constitution I)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImproveContent.kt` and a new test file only.
+
+**Requirements/ACs:** R-1063 (register — "Improve flow state across Activity recreation"; this
+fix's own first commit guessed "R-1062", which the very next main merge landed as WPSEGPROV's own,
+unrelated squelch-fusion finding — corrected once the lead's own filing arrived with both Improve
+ids the opposite way round from this session's initial guess), FR-REP-9, FR-REP-11, constitution I.
+
+**What changed:** `ImproveContent`'s own `page` (`ImprovePage` — `Root`/`Select`/`Running`/`Done`)
+lived in a plain `remember`, so any configuration change `ReaderActivity` does not declare in its
+manifest (font scale, rotation — it declares none) recreated the Activity and silently dropped
+`Select`/`Running`/`Done` back to `Root`; mid-run, that told the operator, in effect, that nothing
+was happening. Fixed with a `rememberSaveable` + hand-written `Saver` (`ImprovePageSaver`), the same
+pattern this codebase already uses for every other file-private sealed navigation type —
+`OrtNavHost.kt`'s own `LogFilterOriginSaver`, `SessionsContent.kt`'s own `SessionsPageSaver` — one
+flat, delimiter-joined `String` (never a nested `Saver` call for the `Done` case's own
+`ReprocessStatus.Summary`), an unrecognised/truncated restored value falling back to `Root` rather
+than crashing, matching both precedents' own contract. **Disclosed, not hidden:** the underlying
+reprocess run itself does not survive — `RealImproveRunner`'s own doc comment already states
+cooperative cancellation stops `ReprocessRunner` the moment its collecting coroutine does, which is
+exactly what happens to the `LaunchedEffect` driving it when the old Activity is destroyed — so a
+restored `Running` shows the real board with a freshly restarted run's own real progress, never a
+seamless continuation of wherever the interrupted run had reached. Resuming a genuinely in-flight
+run across recreation would need the run to live somewhere longer-lived than a composition (a
+foreground service, `WorkManager`) — a `:pipeline`/architecture change outside this file's own
+ownership, not attempted here.
+
+**Verified:**
+- New `ImproveContentActivityTest` (Robolectric, a real `ReaderActivity` — not a bare
+  `ComponentActivity` with test-injected content, which cannot re-attach a composition on
+  `recreate()` at all, confirmed directly by trying it first and getting "No compose hierarchies
+  found in the app" instead of this fix's own assertions): `R_1063 Running survives a real Activity
+  recreation, not bounced back to Root` (the engine's own capture-priority yield, FR-REP-6,
+  `CaptureState.capturing(...)` + `ShedStatus.update(level = 3, ...)`, armed between reaching
+  `Improve-Select` and tapping Start, freezes a real run at its first item deterministically —
+  never a race against a real, fast, model-less run — so the board's own "waiting — capture is
+  busy" line is provably still there, real, after `recreate()`) and `R_1063 Done survives a real
+  Activity recreation, keeping its real summary` (a real run against a real, model-less `filesDir`
+  completes to Done; its own real "N overs no longer marked as reprocessing candidates" line
+  survives `recreate()` unchanged). **Discrimination performed and reverted**: reverting
+  `ImproveContent.kt` alone (temporary local commit, undone with `git reset --soft` before this
+  commit) fails both with `ComposeTimeoutException: Condition still not satisfied after 15000 ms` —
+  the expected line never reappears because the restored page is `Root` ("This phone can do more
+  than...") — restored, both pass again.
+- `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — green.
+- `gradlew ktlintCheck detekt` — green.
+
+**Left open / not done:** true engine-level resume (continuing an interrupted run's own progress,
+rather than restarting it) is out of scope for this file's own ownership — see "what changed" above
+for exactly what would be needed and why it was not attempted. Device evidence (font scale changed
+in place while genuinely on `Done`, with the real banner) is reported separately alongside this
+session's R-1056 evidence.
+
+### WPIMPROVE — R-1056 fixed: Improve's Running/Done boards no longer overrun their action bar at font scale 2.0, and the per-record note no longer contradicts Review the changes
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/**` (`ImproveScreens.kt`, new
+`ImproveActionBarScaffold.kt`) and their tests only.
+
+**Requirements/ACs:** R-1056 (register, halt-class), design-guide §10.1 (system insets), constitution
+VIII (a screen is not fixed until captured again and compared to its artboard).
+
+**What changed:**
+- **New `ImproveActionBarScaffold`** (`ui/improve/ImproveActionBarScaffold.kt`): the same
+  `SubcomposeLayout` two-slot shape as `ui/failures/FailureActionBarScaffold.kt` and
+  `SetupScaffold.kt` (bar measured first with `safeAreaBottomPadding()` folded into its own
+  height; the scrollable body measured second with a hard `maxHeight` of `screenHeight − barHeight`
+  — never bottom padding inside the scroll region, which R-292 already found lets real content
+  render behind a pinned bar at rest). `internal` to this package.
+- **`ImproveRunningScreen`** and **`ImproveDoneScreen`** now render through that scaffold instead
+  of a `Column(Modifier.weight(1f)) {}` spacer, which could not stop the body overrunning the
+  button row at font scale 2.0 (the register's own device evidence: the button row's bounds ending
+  at the literal screen height, no bottom inset, sharing a top edge with the body text). Both
+  action bars carry a `testTag` (`improve-running-action-bar`, `improve-done-action-bar`) for the
+  new host-level tests below. No visual change intended at font scale 1.0.
+- **The stale "per-record detail" line** (`perRecordDetailNote`): used to read *"no per-record
+  before/after view exists yet"* even directly above "Review the N changes" once R-1041 wired that
+  control to a real per-record view (the Log, filtered to those overs). Now states where that view
+  is when the link exists, and keeps the original honest claim when it does not (nothing revised,
+  or no summary at all).
+- **`ImproveDoneScreen`** split into `ImproveDoneBody`/`ImproveDoneActionBar` purely to stay under
+  detekt's `LongMethod` limit once the scaffold wiring was added.
+- Nothing else in the Improve flow changed — `ImproveScreen` (list/empty) and `ImproveSelectScreen`
+  were left as-is: neither has a fixed action bar riding on unconstrained content (the list's
+  button lives inside its own scrollable card; Select's existing `weight(1f)` sibling pattern,
+  R-151, was not reported broken and is outside this register row).
+
+**Verified:**
+- `ImproveScreensTest` (Robolectric, component-level): added `R_1056 the per-record note stops
+  claiming no view exists once Review the changes is offered` (asserts the stale substring is gone
+  once Review is shown) and `R_1056 the per-record note keeps its honest claim when there is
+  nothing to review` (asserts the original sentence still renders when there is nothing to
+  review) — neither asserts the corrected sentence's own wording, per this row's own instruction.
+- **New `ImproveScreensHostLayoutTest`** (Robolectric, `@GraphicsMode(NATIVE)`, real
+  `ImproveDoneScreen`/`ImproveRunningScreen` composed inside a `Scaffold` with a real
+  `org.ort.app.ui.failures.FailLevelBanner` ("too quiet") sharing the screen, matching
+  `TransportBarHostLayoutTest`'s established shape for this class of finding rather than a
+  component-only test — R-1049's own lesson, restated verbatim in this register row): 7 tests at
+  `w390dp-h844dp-420dpi` and `w480dp-h844dp-420dpi`, font scale 1.0 and 2.0, asserting the action
+  bar is displayed and every real body line can be scrolled to a position that clears it.
+  **Discrimination performed and reverted** (strict TDD): with `ImproveScreens.kt` reverted to its
+  pre-fix content (via a temporary local commit, undone with `git reset --soft` before this
+  commit), all 7 host-layout tests fail — `AssertionError: The component is not displayed!` on the
+  action bar's own `testTag`, i.e. the unfixed board's button row is not on screen at all, matching
+  the register's "clipped at the bottom edge" finding. Restored, all 7 pass again.
+  Robolectric's own `WindowInsets.navigationBars` (read via `windowInsetsPadding`, exactly what
+  `safeAreaBottomPadding()` calls) reads zero under this harness regardless of the code
+  (`FailureActionBarScaffold.kt`'s own doc comment, confirmed again empirically here via
+  `Scaffold`'s own — real, but width-bucket-dependent — `contentWindowInsets`), so the exact
+  navigation-bar inset itself is not asserted by these tests; that evidence is the device capture
+  below (constitution VIII: "the screenshot wins").
+- `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — 24 tests, all green
+  (`ImproveScreensTest`, `ImproveScreensHostLayoutTest`, `ImprovePollingTest`, `RealImproveRunnerTest`).
+- `gradlew ktlintCheck detekt` — green repo-wide after fixing one `LongMethod` (`ImproveDoneScreen`)
+  and one `function-signature` (collapsed `ImproveDoneActionBar`'s short parameter list to one line).
+
+**Left open / not done:** device capture and its exact pixel bounds are reported separately by this
+builder (base hash, evidence paths, gate results) rather than duplicated here; the full local gate
+(`dependencyRules platformGuards build`, `-p buildSrc test`, `spec_check.py`, `coverageMatrix` /
+`coverageMatrixCheck`) is likewise reported there, run once for the whole change.
+
 ### 64c1bc56 — WPREC: fix ktlintDebugSourceSetCheck violations in the two new recordings scenarios
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` only.
