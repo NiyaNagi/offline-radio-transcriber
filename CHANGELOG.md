@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
 
-### (this commit) — WPRESEED: R-1076 - ActiveScenarioRepublishProvider now republishes only the process-wide, in-memory scenario facets on a debug process restart, never re-seeding `:data` rows or files
+### 8b37f11f — WPRESEED: R-1076 - ActiveScenarioRepublishProvider now republishes only the process-wide, in-memory scenario facets on a debug process restart, never re-seeding `:data` rows or files
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, `ScenarioFixtures.kt`,
 `ActiveScenarioRepublishProvider.kt` (no change to their own file rows besides this); `app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`.
