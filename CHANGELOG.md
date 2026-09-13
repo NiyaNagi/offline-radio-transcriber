@@ -110,6 +110,55 @@ staging a VAD from a file during a live session on `ort_audit_wpmodlog` at 1.0 a
 lexicon staging for contrast — is recorded separately in this session's report once captured (see
 this row's own evidence path); not yet captured at the time this entry was written.
 
+### <pending> — WPMODLOG R-1060: placeholder assets are marked durably, refused before native code, and a release build can never mark one
+
+**Scope:** `core/src/main/kotlin/org/ort/core/assets/ModelFileVerifier.kt` (new
+`placeholderMarkerFile`/`recordPlaceholder`/`clearPlaceholder`, new `PLACEHOLDER` kind, `verify()`
+checks the marker first); `app/src/main/kotlin/org/ort/app/assets/BundledAssetInstaller.kt`
+(`installOne`'s `missing` branch now calls `recordPlaceholder`; both success paths call
+`clearPlaceholder`). Tests in `ModelFileVerifierTest.kt`, `BundledAssetInstallerTest.kt`,
+`RealVadProviderTest.kt`, `buildSrc/.../FetchBundledAssetsTaskTest.kt`.
+**Requirements/ACs:** register R-1060 (process), R-1052, the `-PortAllowMissingBundledAssets`
+escape hatch documented in `AGENTS.md`.
+**What changed:** on a build made with the local-only `-PortAllowMissingBundledAssets=true` escape
+hatch, `BundledAssetFetcher.fetchAll` already marked an unfetchable entry `missing` in the
+generated `bundled/manifest.json` (R-1052 round 2) — but `BundledAssetInstaller.installOne`'s
+`missing` branch only skipped writing a *new* file; it never touched whatever was already sitting
+at that destination (a stale real install from an earlier with-token build, still present because
+app data was never cleared between builds — the reported crash's actual shape) or recorded that
+*this build* does not vouch for it. `ModelFileVerifier` gained a `.placeholder` marker file,
+written by `recordPlaceholder` (which also clears any stale `.sha256`/`.size`/`.verified` sidecars
+so they cannot make a stale real install look genuinely verified) and checked by `verify()` before
+anything else about the file — it refuses regardless of whatever bytes, or none, are actually
+there. `BundledAssetInstaller.installOne` calls it for every `missing` entry, and clears it (via
+`clearPlaceholder`) on both real-install success paths (fresh copy, and the already-verified
+idempotency shortcut), so a later build that does carry the asset is never blocked by a leftover
+marker. `RealVadProvider`/`AsrEngineProvisioning`/`ProseDigestRunner` needed **no code changes at
+all** for this: all three already call `ModelFileVerifier.verify()` before any native construction
+(R-1052) and already treat any `Failed` — placeholder included — as the typed unavailable state.
+**The release-build guarantee:** `missing` can only ever be produced by
+`BundledAssetFetcher.fetchAll`'s catch block, gated behind `allowMissing`, itself only ever `true`
+when `-PortAllowMissingBundledAssets=true`/`ORT_ALLOW_MISSING_BUNDLED_ASSETS=1` is set —
+`ort.android-app.gradle.kts` defaults it to `false` and no `.github/workflows` file sets either
+form; with `allowMissing = false` any unfetchable entry throws and aborts the whole `fetchAll` call
+before the generated manifest is ever written, so no release or CI-built manifest can name a
+`missing` entry, and `BundledAssetInstaller.recordPlaceholder` therefore can never run against a
+real asset in such a build.
+**Verified:** `gradlew :core:test --tests ModelFileVerifierTest`,
+`gradlew :app:testDebugUnitTest --tests BundledAssetInstallerTest`,
+`gradlew :pipeline:testDebugUnitTest --tests RealVadProviderTest`,
+`gradlew -p buildSrc test --tests FetchBundledAssetsTaskTest` — all green. Discriminating: removed
+the `ModelFileVerifier.recordPlaceholder` call from `BundledAssetInstaller.installOne`, confirmed
+`BundledAssetInstallerTest`'s two placeholder-marker tests fail for the right reason (2 failed, 14
+passed), restored, confirmed green again. `gradlew :core:detekt :core:ktlintMainSourceSetCheck
+:app:detekt :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :pipeline:detekt
+:pipeline:ktlintTestSourceSetCheck` — green (one `ReturnCount` detekt finding in the new `verify()`
+fixed by splitting the size check into its own `checkSize` helper, matching the file's own existing
+`verifyHash` split).
+**Left open / not done:** on-device confirmation (a no-token build's real app opening honestly,
+with R-1058's placeholder event in logcat) is recorded once captured on `ort_audit_wpmodlog`; not
+yet captured at the time this entry was written.
+
 ---
 
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)

@@ -167,7 +167,14 @@ public object BundledAssetInstaller {
     private const val BUNDLED_ASSETS_MANIFEST_FILENAME = "bundled_assets.manifest"
 
     private fun installOne(entry: ManifestEntry, filesDir: File, source: BundledAssetSource): BundledAssetState {
+        val destination = File(filesDir, entry.destination)
         if (entry.missing) {
+            // R-1060: durably mark the destination a placeholder so ModelFileVerifier refuses it
+            // regardless of whatever bytes happen to sit there — including a stale real (or
+            // scenario-stub) install left over from a build that did carry this asset. Without
+            // this, a no-token build's real app could load a leftover file its own manifest never
+            // vouched for, or (the reported crash) hand a genuine placeholder file to native code.
+            ModelFileVerifier.recordPlaceholder(destination)
             return BundledAssetState.NotBundledInThisBuild(
                 entry.id,
                 "this build was packaged with the local-only allow-missing escape hatch and does not carry " +
@@ -175,7 +182,6 @@ public object BundledAssetInstaller {
             )
         }
 
-        val destination = File(filesDir, entry.destination)
         val marker = markerFile(destination)
         // R-865: a marker match alone is not enough — this is the exact shape of the reopened
         // register bug (a fixture, or in production a truncation/deletion after the marker was
@@ -190,6 +196,10 @@ public object BundledAssetInstaller {
             // here rather than leaving every upgraded, perfectly-good install paying the (still
             // correct, but avoidable) one-time re-hash ModelFileVerifier falls back to otherwise.
             ModelFileVerifier.recordVerifiedInstall(destination, entry.sha256, entry.sizeBytes)
+            // R-1060: a real, verified asset at this path is never a placeholder — clear any
+            // marker a previous no-token build might have left (a later build that does carry
+            // this asset installing over an old placeholder record).
+            ModelFileVerifier.clearPlaceholder(destination)
             return BundledAssetState.Installed(entry.id, destination)
         }
 
@@ -226,6 +236,7 @@ public object BundledAssetInstaller {
                 // own KDoc. `marker` (this file's own `.sha256` handle, used by `isAlreadyVerified`
                 // above) points at the exact same file `recordVerifiedInstall` writes.
                 ModelFileVerifier.recordVerifiedInstall(destination, entry.sha256, entry.sizeBytes)
+                ModelFileVerifier.clearPlaceholder(destination) // R-1060: a real copy is never a placeholder
                 rejectionFile(destination).delete() // R-934: this launch's copy verified — clear any prior rejection
                 BundledAssetState.Installed(entry.id, destination)
             }

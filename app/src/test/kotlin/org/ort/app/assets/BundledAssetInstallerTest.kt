@@ -226,6 +226,127 @@ class BundledAssetInstallerTest {
         assertTrue("expected NotBundledInThisBuild, got $result", result is BundledAssetState.NotBundledInThisBuild)
     }
 
+    // ---- Register R-1060 (process): a no-token build's manifest marks an entry missing, but
+    // nothing used to stop a real installer or a real loader from trusting whatever bytes already
+    // sat at that destination -- a stale real install from an earlier with-token build, or a
+    // debug-fixture stub. -----------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1060")
+    fun `R_1060 a missing entry records a placeholder marker so ModelFileVerifier refuses the destination`() {
+        val filesDir = Files.createTempDirectory("bundled-installer-r1060-fresh").toFile()
+        val manifest = manifestJson(
+            listOf(AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", "a".repeat(64), 643854)),
+            missingIds = setOf("VAD"),
+        )
+        val source = FakeBundledAssetSource(mapOf("bundled/manifest.json" to manifest.toByteArray()))
+
+        BundledAssetInstaller.installAll(filesDir, source)
+
+        val destination = java.io.File(filesDir, "models/silero-vad/silero_vad.onnx")
+        assertFalse("a fresh missing install must write no file at all", destination.exists())
+        val result = ModelFileVerifier.verify(destination)
+        assertTrue("expected Failed, got $result", result is ModelVerification.Failed)
+        assertEquals(
+            org.ort.core.assets.ModelVerificationFailureKind.PLACEHOLDER,
+            (result as ModelVerification.Failed).kind,
+        )
+    }
+
+    /**
+     * The exact reported shape: a real, fully-verified asset from an earlier with-token build is
+     * still sitting at the destination (an incremental install, app data never cleared) when this
+     * build's own manifest marks the same entry `missing`. Before this fix, `installOne`'s
+     * `missing` branch returned early and never touched the stale file or its sidecars, so
+     * `ModelFileVerifier.verify` still read [ModelVerification.Verified] against real, if
+     * unrelated-to-this-build, bytes -- the placeholder marker must win regardless.
+     */
+    @Test
+    @Requirement("R-1060")
+    fun `R_1060 a stale real install left over from an earlier build is refused once this build marks it missing`() {
+        val filesDir = Files.createTempDirectory("bundled-installer-r1060-stale").toFile()
+        val staleRealBytes = "a real model from an earlier with-token build".toByteArray()
+        val destination = java.io.File(filesDir, "models/silero-vad/silero_vad.onnx")
+        destination.parentFile?.mkdirs()
+        destination.writeBytes(staleRealBytes)
+        ModelFileVerifier.recordVerifiedInstall(destination, sha256(staleRealBytes), staleRealBytes.size.toLong())
+        check(ModelFileVerifier.verify(destination) == ModelVerification.Verified) {
+            "precondition: the stale install must genuinely verify before this build's manifest is applied"
+        }
+
+        val manifest = manifestJson(
+            listOf(AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", "a".repeat(64), 643854)),
+            missingIds = setOf("VAD"),
+        )
+        val source = FakeBundledAssetSource(mapOf("bundled/manifest.json" to manifest.toByteArray()))
+
+        BundledAssetInstaller.installAll(filesDir, source)
+
+        assertTrue(
+            "the stale file itself is left alone (never deleted)",
+            destination.isFile,
+        )
+        val result = ModelFileVerifier.verify(destination)
+        assertTrue(
+            "the stale real install must now be refused as a placeholder, got $result",
+            result is ModelVerification.Failed &&
+                result.kind == org.ort.core.assets.ModelVerificationFailureKind.PLACEHOLDER,
+        )
+    }
+
+    @Test
+    @Requirement("R-1060")
+    fun `R_1060 a later real install clears a previous placeholder marker via the fresh-copy path`() {
+        val filesDir = Files.createTempDirectory("bundled-installer-r1060-clear-fresh").toFile()
+        val destination = java.io.File(filesDir, "models/silero-vad/silero_vad.onnx")
+        ModelFileVerifier.recordPlaceholder(destination)
+
+        val vadBytes = byteArrayOf(1, 2, 3, 4)
+        val manifest = manifestJson(
+            listOf(AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", sha256(vadBytes), vadBytes.size.toLong())),
+        )
+        val source = FakeBundledAssetSource(
+            mapOf(
+                "bundled/manifest.json" to manifest.toByteArray(),
+                "bundled/models/silero-vad/silero_vad.onnx" to vadBytes,
+            ),
+        )
+
+        val result = BundledAssetInstaller.installAll(filesDir, source).single()
+
+        assertTrue("expected Installed, got $result", result is BundledAssetState.Installed)
+        assertEquals(ModelVerification.Verified, ModelFileVerifier.verify(destination))
+        assertFalse(
+            "the placeholder marker must be cleared by a genuine install",
+            ModelFileVerifier.placeholderMarkerFile(destination).isFile,
+        )
+    }
+
+    @Test
+    @Requirement("R-1060")
+    fun `R_1060 a later real install clears a previous placeholder marker via the already-verified path`() {
+        val filesDir = Files.createTempDirectory("bundled-installer-r1060-clear-idempotent").toFile()
+        val bytes = byteArrayOf(1, 2, 3)
+        val destination = java.io.File(filesDir, "models/silero-vad/silero_vad.onnx")
+        destination.parentFile?.mkdirs()
+        destination.writeBytes(bytes)
+        ModelFileVerifier.sha256MarkerFile(destination).writeText(sha256(bytes))
+        ModelFileVerifier.placeholderMarkerFile(destination).writeText("stale from a prior no-token build")
+
+        val manifest = manifestJson(
+            listOf(AssetFixture("VAD", "models/silero-vad/silero_vad.onnx", sha256(bytes), bytes.size.toLong())),
+        )
+        val source = FakeBundledAssetSource(mapOf("bundled/manifest.json" to manifest.toByteArray()))
+
+        val result = BundledAssetInstaller.installAll(filesDir, source).single()
+
+        assertTrue("expected Installed, got $result", result is BundledAssetState.Installed)
+        assertFalse(
+            "the idempotency shortcut must also clear a stale placeholder marker",
+            ModelFileVerifier.placeholderMarkerFile(destination).isFile,
+        )
+    }
+
     // ---- R-934 (register): the rejection is persisted, readable by a fresh controller, and clears
     // on a later successful verify — the "owed installer fact" WPE's own round-4 investigation
     // named, closing the gap where a corrupted-and-removed part read exactly like a never-attempted

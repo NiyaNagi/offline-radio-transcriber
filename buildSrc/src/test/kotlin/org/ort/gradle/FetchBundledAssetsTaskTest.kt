@@ -369,4 +369,45 @@ class FetchBundledAssetsTaskTest {
             )
         }
     }
+
+    /**
+     * Register R-1060 (process): the guarantee a release build (which never sets the escape
+     * hatch — `ort.android-app.gradle.kts` defaults `allowMissingBundledAssets` to `false`, and
+     * `.github/workflows` never sets the property/env var) can never mark a real asset a
+     * placeholder. A mixed list — one entry that would resolve fine, one that cannot be fetched —
+     * must fail the WHOLE `fetchAll` call with `allowMissing = false`, never return a list with the
+     * bad one silently marked `missing` alongside the good one's real result. The Gradle task
+     * itself (`FetchBundledAssetsTask.fetch`) only writes the generated `bundled/manifest.json`
+     * — the one file `BundledAssetInstaller` reads at runtime — after `fetchAll` returns
+     * successfully, so a thrown exception here means no `missing` entry, and no manifest naming
+     * one, ever reaches a packaged build.
+     */
+    @Test
+    fun `R_1060 a release build never marks any entry missing -- a mixed list fails the whole call`(
+        @TempDir dir: File,
+    ) {
+        val goodSource = File(dir, "good.bin").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        val manifestFile = File(dir, "bundled-assets.json").apply { writeText("""{"assets": []}""") }
+
+        val thrown = assertThrows(GradleException::class.java) {
+            BundledAssetFetcher.fetchAll(
+                entries = listOf(
+                    entry(id = "GOOD", url = goodSource.toURI().toString(), sha256 = sha256(goodSource.readBytes())),
+                    entry(
+                        id = "LLM_GEMMA3_1B",
+                        url = "http://ort-r1060-must-not-be-contacted.invalid/gemma.task",
+                        sha256 = "a".repeat(64),
+                        gated = true,
+                    ),
+                ),
+                cacheDir = File(dir, "cache"),
+                outDir = File(dir, "out"),
+                manifestFile = manifestFile,
+                hfToken = null,
+                allowMissing = false,
+            )
+        }
+
+        assertTrue(thrown.message!!.contains("LLM_GEMMA3_1B"))
+    }
 }

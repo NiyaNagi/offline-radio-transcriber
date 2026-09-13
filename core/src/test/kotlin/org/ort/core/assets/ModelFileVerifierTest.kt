@@ -142,6 +142,46 @@ class ModelFileVerifierTest {
         assertEquals(ModelVerificationFailureKind.HASH_MISMATCH, result.kind)
     }
 
+    // ---- Register R-1060 (process): a no-token/local build marks an asset a placeholder; the
+    // marker must win regardless of whatever bytes (or none) already sit at the destination. ------
+
+    @Test
+    fun `R_1060 recordPlaceholder makes a missing file fail with kind PLACEHOLDER`(@TempDir tmp: File) {
+        val destination = File(tmp, "model.onnx")
+        ModelFileVerifier.recordPlaceholder(destination)
+
+        val result = ModelFileVerifier.verify(destination) as ModelVerification.Failed
+
+        assertEquals(ModelVerificationFailureKind.PLACEHOLDER, result.kind)
+    }
+
+    @Test
+    fun `R_1060 a placeholder marker wins even over a fully verified real file at the same path`(@TempDir tmp: File) {
+        val bytes = "a real, previously verified model".toByteArray()
+        val destination = File(tmp, "model.onnx").apply { writeBytes(bytes) }
+        ModelFileVerifier.recordVerifiedInstall(destination, sha256(bytes), bytes.size.toLong())
+        assertEquals(ModelVerification.Verified, ModelFileVerifier.verify(destination))
+
+        ModelFileVerifier.recordPlaceholder(destination)
+
+        val result = ModelFileVerifier.verify(destination)
+        assertTrue(result is ModelVerification.Failed)
+        assertEquals(ModelVerificationFailureKind.PLACEHOLDER, (result as ModelVerification.Failed).kind)
+    }
+
+    @Test
+    fun `R_1060 clearPlaceholder lets a subsequent real verify succeed again`(@TempDir tmp: File) {
+        val bytes = "a real model".toByteArray()
+        val destination = File(tmp, "model.onnx").apply { writeBytes(bytes) }
+        ModelFileVerifier.recordPlaceholder(destination)
+        assertTrue(ModelFileVerifier.verify(destination) is ModelVerification.Failed)
+
+        ModelFileVerifier.clearPlaceholder(destination)
+        ModelFileVerifier.recordVerifiedInstall(destination, sha256(bytes), bytes.size.toLong())
+
+        assertEquals(ModelVerification.Verified, ModelFileVerifier.verify(destination))
+    }
+
     @Test
     fun `a size match but wrong content fails on the sha256 check`(@TempDir tmp: File) {
         val bytes = ByteArray(64)

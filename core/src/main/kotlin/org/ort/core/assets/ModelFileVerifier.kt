@@ -66,6 +66,38 @@ public object ModelFileVerifier {
     private fun verifiedStampFile(destination: File): File =
         File(destination.parentFile, destination.name + ".verified")
 
+    /** R-1060: the durable, on-disk record that this destination is a placeholder in this build —
+     * written by `org.ort.app.assets.BundledAssetInstaller` via [recordPlaceholder] whenever the
+     * fetch task's manifest marks an entry `missing` (a no-token/local-dev build). [verify] checks
+     * this before anything else about the file itself, so it wins even over a stale real/scenario
+     * install already sitting at the same path. */
+    public fun placeholderMarkerFile(destination: File): File =
+        File(destination.parentFile, destination.name + ".placeholder")
+
+    /**
+     * R-1060: records [destination] as a placeholder — never a real asset — and clears any
+     * previous verified-install record so a stale real/scenario install's sidecars at the same
+     * path can never make a later [verify] call read [ModelVerification.Verified] for it.
+     * Idempotent. Does not touch or delete the file at [destination] itself (there may be none, or
+     * — the exact case this exists for — a stale real one from an earlier build); only the markers.
+     */
+    public fun recordPlaceholder(destination: File) {
+        sha256MarkerFile(destination).delete()
+        sizeMarkerFile(destination).delete()
+        verifiedStampFile(destination).delete()
+        destination.parentFile?.mkdirs()
+        placeholderMarkerFile(destination).writeText(
+            "this build does not carry a real asset for this destination (no-token/local build)",
+        )
+    }
+
+    /** R-1060: clears a previous [recordPlaceholder] marker — called the moment a real asset is
+     * genuinely installed at [destination] (a later build that does carry it). A no-op when there
+     * was never one. */
+    public fun clearPlaceholder(destination: File) {
+        placeholderMarkerFile(destination).delete()
+    }
+
     /**
      * The one place every verified install — bundled, downloaded or side-loaded — records what it
      * just verified, so there is one rule for what "verified" means instead of each writer
@@ -79,6 +111,17 @@ public object ModelFileVerifier {
     }
 
     public fun verify(destination: File): ModelVerification {
+        // R-1060: a no-token/local build's fetch task can mark an entry a placeholder — never a
+        // real asset — and BundledAssetInstaller.recordPlaceholder writes this marker durably next
+        // to the destination. It is checked before anything else so it wins regardless of whatever
+        // bytes (or none at all) happen to already sit at this path, e.g. a stale prior install.
+        if (placeholderMarkerFile(destination).isFile) {
+            return ModelVerification.Failed(
+                ModelVerificationFailureKind.PLACEHOLDER,
+                "${destination.name} is a placeholder in this build (no real asset was fetched) — not loaded",
+            )
+        }
+
         if (!destination.isFile) {
             return ModelVerification.Failed(ModelVerificationFailureKind.MISSING_FILE, "no file at ${destination.path}")
         }
@@ -94,24 +137,32 @@ public object ModelFileVerifier {
         val expectedSha256 = sha256Marker.readText().trim()
 
         val actualSize = destination.length()
-        val sizeMarker = sizeMarkerFile(destination)
-        if (sizeMarker.isFile) {
-            val expectedSize = sizeMarker.readText().trim().toLongOrNull()
-                ?: return ModelVerification.Failed(
-                    ModelVerificationFailureKind.SIZE_MISMATCH,
-                    "${sizeMarker.name} is unreadable — not loaded",
-                )
-            if (actualSize != expectedSize) {
-                return ModelVerification.Failed(
-                    ModelVerificationFailureKind.SIZE_MISMATCH,
-                    "${destination.name} is $actualSize bytes, expected $expectedSize — not loaded",
-                )
-            }
-        }
-        // No size sidecar: an upgrade-era install (see this class's own KDoc, "the upgrade case")
-        // — fall through to the real hash rather than refusing it outright.
+        checkSize(destination, actualSize)?.let { return it }
+        // No size sidecar, or a matching one: an upgrade-era install (see this class's own KDoc,
+        // "the upgrade case") falls through here too — fall through to the real hash rather than
+        // refusing it outright.
 
         return verifyHash(destination, actualSize, expectedSha256)
+    }
+
+    /** Split from [verify] purely to keep its own return count under detekt's threshold. `null`
+     * means "no size sidecar, or it matches" — either way [verify] should fall through to the real
+     * hash, never treated the same as a genuine mismatch. */
+    private fun checkSize(destination: File, actualSize: Long): ModelVerification? {
+        val sizeMarker = sizeMarkerFile(destination)
+        if (!sizeMarker.isFile) return null
+        val expectedSize = sizeMarker.readText().trim().toLongOrNull()
+            ?: return ModelVerification.Failed(
+                ModelVerificationFailureKind.SIZE_MISMATCH,
+                "${sizeMarker.name} is unreadable — not loaded",
+            )
+        if (actualSize != expectedSize) {
+            return ModelVerification.Failed(
+                ModelVerificationFailureKind.SIZE_MISMATCH,
+                "${destination.name} is $actualSize bytes, expected $expectedSize — not loaded",
+            )
+        }
+        return null
     }
 
     /** Split from [verify] purely to keep each function's own return count under detekt's
@@ -177,11 +228,13 @@ public sealed interface ModelVerification {
  * Register R-1058: the closed set of reasons [ModelFileVerifier.verify] can refuse a file — every
  * branch in [ModelFileVerifier.verify]/`verifyHash` maps to exactly one of these, so a caller can
  * log "which check failed" without ever passing free text or a filesystem path into a diagnostics
- * event (FR-OBS-6, D41).
+ * event (FR-OBS-6, D41). [PLACEHOLDER] is register R-1060's addition — a no-token/local build's
+ * fetch task marked this asset absent on purpose, never a corruption.
  */
 public enum class ModelVerificationFailureKind {
     MISSING_FILE,
     MISSING_RECORD,
     SIZE_MISMATCH,
     HASH_MISMATCH,
+    PLACEHOLDER,
 }

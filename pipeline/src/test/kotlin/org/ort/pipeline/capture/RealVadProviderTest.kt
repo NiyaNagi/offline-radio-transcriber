@@ -165,6 +165,33 @@ class RealVadProviderTest {
         assertEquals(1, capturePipelineLog(tmp).size, "must log once per launch, not once per call")
     }
 
+    // ---- Register R-1060 (process): a placeholder marker must win even over real-looking bytes
+    // already sitting at the destination -- the shape of a no-token build's manifest marking VAD
+    // missing while a stale real (or debug-fixture) file from an earlier build is still present. --
+
+    @Test
+    fun `R_1060 a placeholder-marked destination is refused without reaching native code, even with real bytes present`(
+        @TempDir tmp: File,
+    ) {
+        val file = SileroVadLocator.modelFile(tmp)
+        file.parentFile?.mkdirs()
+        val bytes = "looks exactly like a real, previously verified model".toByteArray()
+        file.writeBytes(bytes)
+        org.ort.core.assets.ModelFileVerifier.recordVerifiedInstall(file, sha256(bytes), bytes.size.toLong())
+        org.ort.core.assets.ModelFileVerifier.recordPlaceholder(file) // this build's manifest marks VAD missing
+
+        var nativeLoaderCalled = false
+        RealVadProvider.nativeLoader = { _ ->
+            nativeLoaderCalled = true
+            error("must never be reached — a placeholder must never reach native code")
+        }
+
+        val result = RealVadProvider.provide(tmp)
+
+        assertFalse(nativeLoaderCalled)
+        assertTrue(result is VadProvisionResult.Unavailable)
+    }
+
     @Test
     fun `R_1058 a genuinely verified model logs no verification failure`(@TempDir tmp: File) {
         DiagnosticsLog.configure(tmp, TestClock())
