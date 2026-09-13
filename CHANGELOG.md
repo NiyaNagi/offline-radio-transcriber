@@ -32,7 +32,119 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon)
+## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor))
+
+### 4e89348e — WPLINK: R-1048 Search header's drawer icon and back chevron reach the 44dp touch-target floor
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/SearchScreen.kt`,
+`app/src/test/kotlin/org/ort/app/ui/screens/SearchScreenTest.kt`.
+
+**Requirements/ACs:** register R-1048, constitution VII (the accessibility floor) — closes the gap
+`b96aa3b0`'s own bounds test flagged rather than fixed.
+
+**What changed:** `SearchHeaderRow` put `clickable` directly on the drawer icon's and back
+chevron's own `Modifier.size(21.dp)`/`.size(20.dp)` glyphs, so the real hit-test region was the
+glyph's own bounds — under the 44dp floor for both. Fixed the same way `SetupScaffold.kt`'s
+`ScaffoldHeaderRow` already does it for its own back target: a new private
+`SearchHeaderTouchTargetIcon` composable wraps each icon in an outer `Box` carrying `.size(44.dp)`
+and the `clickable`, with the `Icon` centred inside at its own original, unchanged glyph size —
+raising the touch target without changing what is drawn. Pulled into its own composable (rather
+than two inline `Box`/`Icon` pairs) because inlining both pushed `SearchHeaderRow` over detekt's
+`LongMethod` threshold.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchScreenTest"`
+— all green. `b96aa3b0`'s own parity-only bounds test is replaced by `R_1048 the drawer icon and
+the back chevron both meet the 44dp touch-target floor` — a real floor assertion instead of a
+parity check that would have passed even under the old, broken sizing — plus a second new case,
+`R_1048 the 44dp touch target does not change either glyph's own size`, pinning the 21dp/20dp
+glyphs directly against the `Icon` nodes themselves (`useUnmergedTree`), never the new outer box.
+Discrimination: shrinking the drawer icon's outer `Box` to 30dp failed exactly the floor test,
+while the glyph-size test stayed green, confirming the two are not accidentally coupled.
+`.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+A real device `uiautomator dump` of the Search header's own node bounds, and a re-capture of Q01
+at 1.0/`@2x` on `ort_audit_2`/port 5560, are recorded in this round's own report (see the register).
+
+**Left open / not done:** none for this commit's own scope.
+
+### 9369fbbc — WPLINK: R-1046 a corrected attribution no longer claims a voice match it never had
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/CorrectionPolling.kt`, `DetailViewState.kt`;
+`app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailContent.kt`; matching tests under
+`app/src/test/kotlin/org/ort/app/ui/data/{CorrectionPollingTest,DetailViewStateMapperTest}.kt`.
+`TransmissionDetailScreen.kt` (owned by another builder this round, R-1006) was not touched.
+
+**Requirements/ACs:** register R-1046, constitution I (never assert a claim the data cannot back).
+
+**What changed:** `DetailViewState.kt`'s INFERRED explanation fell back to its generic "Not heard
+in this over. Matched by voice." sentence for every INFERRED attribution with no resolved source
+over — but `Attribution.withCorrection` (what `CorrectionPolling.currentAttribution` returns for
+any corrected row) produces exactly that shape for every human correction, typed or verified
+alike, so a typed, unverified correction read as if the voice itself had matched it. Told apart
+now using two real facts: `Attribution.corrected` (already carried on the attribution itself, no
+extra read needed) and the new `CorrectionPolling.correctionTyped(context, transmissionId)`, which
+reads the transmission's most recent correction audit row (`CorrectionDao.correctionsFor`, newest
+last) and reports whether its `field` was `CorrectionDao.FIELD_STATION_UNVERIFIED` — `null`, never
+a guessed `false`, when there is no correction or no surviving audit row to say which. A corrected
+INFERRED now reads "The operator corrected this" (or "…typed and unverified" when
+`correctionTyped` is true) instead of the old, misleading fallback; a genuine voice-matched
+INFERRED with no resolved source keeps its own unchanged text.
+`DetailBodyViewState.Inferred` gains structured `corrected`/`correctionTyped` fields so a caller
+(and this round's own tests) can assert the fact directly rather than parsing prose out of
+`explanation` (constitution II). `TransmissionDetailContent.kt`'s `pollDetail` looks up
+`correctionTyped` only when the polled attribution is genuinely INFERRED-and-corrected, the same
+per-state gating `ambiguousEvidence`/`unknownContext` already use.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.DetailViewStateMapperTest"
+--tests "org.ort.app.ui.data.CorrectionPollingTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailContentTest" --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` — all green, including 6 new `R_1046` cases
+in each of `DetailViewStateMapperTest`/`CorrectionPollingTest` asserting the variant/structure
+(`corrected`, `correctionTyped`), never the exact sentence. Discrimination proven twice: reverting
+the `attribution.corrected` branch condition failed exactly the "never claims a voice match" case;
+reverting `correctionTyped`'s `lastOrNull` to `firstOrNull` failed exactly the
+"most-recent-of-several" case. `.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+
+**Left open / not done:** the corrected detail screen's own re-capture on `ort_audit_2`/port 5560
+is recorded in this round's own report (see the register), not repeated here.
+
+### dc5358cc — WPLINK: R-1047 the Log states its own applied filter instead of leaving All selected
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/{LogScreen,LogContent}.kt`; matching tests under
+`app/src/test/kotlin/org/ort/app/ui/{data,screens}/Log{ViewData,Polling,Screen}Test.kt`.
+
+**Requirements/ACs:** register R-1047, constitution I ("the operator reads 'this is everything'").
+Affects the three `R-1041` entry points (N01, D11, R04) plus WPNAV's DG02 and station Overs, all of
+which route through this same mechanism.
+
+**What changed:** a `LogFilterSelection` carrying `transmissionIds`, an hour window
+(`fromMillis`/`toMillis`) or a `stationId` left the `All` quick chip reading selected and drew no
+other indication a filter was applied — the operator reads "this is everything" while looking at a
+narrowed Log. Root cause: `LogContent` tracked `quickFilter` (chip UI state) separately from
+`selection` (the real filter), and `LogItemsMapper.quickFilters` built every chip's `selected` flag
+from the former alone. Fixed by adding `LogItemsMapper.appliedFilterLabel`, a real, honest
+statement of the applied filter built from the selection itself — a count of overs
+(`transmissionIds`), a station callsign, an hour window ("23:00 – 00:00"), or a frequency not
+already covered by a quick chip; `null` when nothing narrows the view. Threaded through
+`LogPolling.screenState` as `LogScreenViewState.appliedFilterLabel`, and `quickFilters` no longer
+marks `All` selected while that label is non-null. `LogScreen` renders it as a dismissable
+`FilterChip` inside the existing `FilterChipRow` (never a second row, so it can never collide with
+the chip row or the first log row by construction) — the same dismissable-chip shape
+`SearchScreen`'s own applied-filter chips already use, since no Log filtered-state artboard exists
+in `design/canvas` to follow instead. `LogContent`'s `onClearAppliedFilter` resets both `selection`
+and `quickFilter` back to their unfiltered defaults.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.data.LogViewDataTest"
+--tests "org.ort.app.ui.data.LogPollingTest" --tests "org.ort.app.ui.screens.LogScreenTest"` — all
+green, including new `R_1047` cases covering every selection kind, quick-chip suppression,
+dismiss/clear, and Robolectric collision-bounds checks at `w390dp-h844dp-420dpi` and `480dp`, font
+scale 1.0/2.0. Discrimination: reverting the `!hasAppliedFilterStatement` guard failed exactly one
+test, for the right reason. `.\gradlew.bat :app:ktlintCheck :app:detekt` — green (`LogScreenTest.kt`
+now carries `@Suppress("LargeClass")`, the same established pattern as `ModelsScreenTest.kt`/
+`DigestPollingTest.kt`, once this round's own cases pushed it over the threshold).
+
+**Left open / not done:** the re-capture of D11 (or a new tour step) on `ort_audit_2`/port 5560 is
+recorded in this round's own report (see the register), not repeated here.
 
 ### 4b78e721 — WPLINK: R-1041 the real per-transmission changed set behind a reprocess run's own `changedCount`
 
