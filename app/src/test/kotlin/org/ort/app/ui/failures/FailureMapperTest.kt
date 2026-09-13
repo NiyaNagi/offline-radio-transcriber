@@ -635,6 +635,42 @@ class FailureMapperTest {
         )
     }
 
+    /** Register R-1057 (polish): the mapper's own real signal, not just the screen — a lexicon
+     * swap must map to [AssetSwapKind.LEXICON]. */
+    @Test
+    @Requirement("R-1057")
+    fun `R_1057 a staged lexicon activation maps to kind LEXICON`() {
+        val staged = StagedActivation(
+            assetId = ModelsController.CALLSIGN_LEXICON_ASSET_ID,
+            version = "2026.09",
+            stagedAtMillis = 500_000L,
+            reason = "a session is live",
+        )
+        val presentation = FailureMapper.map(signals(stagedActivation = staged, stagedActivationActiveLabel = null))
+        assertTrue(presentation is FailurePresentation.AssetSwap)
+        presentation as FailurePresentation.AssetSwap
+        assertEquals(AssetSwapKind.LEXICON, presentation.state.kind)
+        assertEquals("callsign lexicon", presentation.state.assetLabel)
+    }
+
+    /** Register R-1057: a staged model (here the VAD) must map to [AssetSwapKind.MODEL], carrying
+     * the real model's own label, never the lexicon's. */
+    @Test
+    @Requirement("R-1057")
+    fun `R_1057 a staged model activation maps to kind MODEL, naming the real asset`() {
+        val staged = StagedActivation(
+            assetId = ModelId.VAD.name,
+            version = "9e2449e1",
+            stagedAtMillis = 500_000L,
+            reason = "a session is live",
+        )
+        val presentation = FailureMapper.map(signals(stagedActivation = staged, stagedActivationActiveLabel = null))
+        assertTrue(presentation is FailurePresentation.AssetSwap)
+        presentation as FailurePresentation.AssetSwap
+        assertEquals(AssetSwapKind.MODEL, presentation.state.kind)
+        assertEquals(ModelId.VAD.label, presentation.state.assetLabel)
+    }
+
     @Test
     @Requirement("R-448")
     fun `R_100 a debug override still wins outright, over a real staged activation`() {

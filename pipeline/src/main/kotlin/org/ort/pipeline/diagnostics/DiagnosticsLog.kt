@@ -12,12 +12,14 @@ import org.ort.core.Clock
 import org.ort.core.PassId
 import org.ort.core.SystemClock
 import org.ort.core.Tier
+import org.ort.core.assets.ModelVerificationFailureKind
 import org.ort.core.capture.VadDetectorKind
 import org.ort.data.entity.TerminationReason
 import org.ort.segment.SegmentCloseReason
 import org.ort.segment.SegmentOutcome
 import java.io.File
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * FR-OBS-1 (register R-133 follow-up): the diagnostics-log writer WP11e's `DiagnosticsBundleBuilder`
@@ -68,6 +70,10 @@ public object DiagnosticsLog {
      * (`org.ort.app.export.DebugDumpBuilder`) never hand-copies the literal. */
     public const val EVENT_VAD_STATS: String = "vad_stats"
 
+    /** The event name [logModelVerificationFailed] writes — exported for the same reason as
+     * [EVENT_VAD_STATS]. */
+    public const val EVENT_MODEL_VERIFICATION_FAILED: String = "model_verification_failed"
+
     public enum class Category(public val fileName: String) {
         LIFECYCLE("lifecycle.log"),
         CAPTURE("capture.log"),
@@ -89,6 +95,11 @@ public object DiagnosticsLog {
     private var consumerJob: Job? = null
     private val consumerScope = CoroutineScope(Dispatchers.IO)
 
+    /** R-1058: which [ModelAssetId]s have already had a verification failure logged this launch —
+     * see [logModelVerificationFailed]. Reset on every [configure] (a new launch/session) and
+     * [shutdown], never left stale across a test or a service restart. */
+    private val loggedModelVerificationFailures: MutableSet<ModelAssetId> = ConcurrentHashMap.newKeySet()
+
     /**
      * Sets (or resets) where this session's four log files live and starts the single consumer
      * coroutine. Idempotent-safe to call again (a test reconfiguring between cases, a service
@@ -101,6 +112,7 @@ public object DiagnosticsLog {
         dir.mkdirs()
         this.logDir = dir
         this.clock = clock
+        loggedModelVerificationFailures.clear()
         val ch = Channel<Message>(Channel.UNLIMITED)
         this.channel = ch
         consumerJob = consumerScope.launch { drain(ch) }
@@ -112,6 +124,7 @@ public object DiagnosticsLog {
         consumerJob = null
         channel = null
         logDir = null
+        loggedModelVerificationFailures.clear()
     }
 
     /** Test-only: blocks until every line enqueued before this call has actually been written. */
@@ -317,6 +330,31 @@ public object DiagnosticsLog {
         enqueue(Category.PIPELINE, Level.ERROR, "safe_pass_failure", listOf("errorClass" to errorClass))
     }
 
+    // --- pipeline.log (R-1058: bundled model verification failures) ----------------------------
+
+    /**
+     * Register R-1058 (spec): a bundled model's [ModelVerificationFailureKind] reached only the
+     * caller's in-memory [org.ort.core.assets.ModelVerification.Failed.reason] — never
+     * `capture.log`, the diagnostics bundle or logcat — so a field report from a phone that
+     * refused a model showed a degraded tier with no cause. [assetId] and [kind] are the whole
+     * payload, both closed enums, matching this file's own no-free-text discipline: never the
+     * filesystem path, never [org.ort.core.assets.ModelVerification.Failed.reason]'s own prose.
+     *
+     * Logged **once per launch** (i.e. once per [configure] call) per [assetId] — the three real
+     * callers (`RealVadProvider`, `AsrEngineProvisioning`, `ProseDigestRunner`) each call
+     * [org.ort.core.assets.ModelFileVerifier.verify] on every `provide()`/`doWork()`, which for a
+     * VAD in continuous use could otherwise write one line per capture-session start.
+     */
+    public fun logModelVerificationFailed(assetId: ModelAssetId, kind: ModelVerificationFailureKind) {
+        if (!loggedModelVerificationFailures.add(assetId)) return
+        enqueue(
+            Category.PIPELINE,
+            Level.WARN,
+            EVENT_MODEL_VERIFICATION_FAILED,
+            listOf("assetId" to assetId.name, "kind" to kind.name),
+        )
+    }
+
     // --- rig.log (FR-OBS-1: "rig connection events"; frequencies are explicitly not private) ----
 
     public fun logRigConnected(bandCount: Int) {
@@ -346,3 +384,11 @@ public object DiagnosticsLog {
 
     private const val LOG_DIR_NAME = "diagnostics-logs"
 }
+
+/**
+ * Register R-1058: the closed set of bundled model assets [DiagnosticsLog.logModelVerificationFailed]
+ * can name — exactly the ones `RealVadProvider`/`AsrEngineProvisioning`/`ProseDigestRunner` verify
+ * before handing a path to native code (register R-1052). Never a free-text asset name or a
+ * filesystem path (this file's own no-free-text discipline).
+ */
+public enum class ModelAssetId { VAD, ASR_ENCODER, ASR_DECODER, ASR_TOKENS, LLM }

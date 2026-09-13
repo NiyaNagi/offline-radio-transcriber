@@ -311,14 +311,30 @@ public data class MigrationViewState(
  * each choice ("the default · nothing else to do", ...). */
 public data class AssetSwapOption(public val label: String, public val subLine: String)
 
+/**
+ * Register R-1057 (polish): which real asset kind is staged — the section heading and the "why it
+ * waits" warning must be keyed to this, never hardcoded to the lexicon. [LEXICON] is the callsign
+ * lexicon (`ModelsController.CALLSIGN_LEXICON_ASSET_ID`); [MODEL] is any of the bundled `ModelId`s
+ * (VAD, ASR, or the prose-digest LLM).
+ */
+public enum class AssetSwapKind { LEXICON, MODEL }
+
 /** `Fail-Asset-Swap.dc.html`. The Lexicon rows' own dots (solid `accent/green` for [activeLabel],
  * a hollow ring for [stagedLabel] — guide §6.1's marker vocabulary, reused generically the way
- * `FailedState`'s own marker already is) are fixed to those two rows, not a field here. */
+ * `FailedState`'s own marker already is) are fixed to those two rows, not a field here.
+ *
+ * [kind]/[assetLabel] are register R-1057's addition — defaulted to the lexicon so the many
+ * pre-existing tests of this screen's scroll/layout behaviour, which construct this state without
+ * caring which asset is staged, keep compiling unchanged. [FailureMapper.assetSwapViewState] is
+ * the one real production caller and always passes both explicitly.
+ */
 public data class AssetSwapViewState(
     public val activeLabel: String,
     public val stagedLabel: String,
     public val options: List<AssetSwapOption>,
     public val selectedOption: Int,
+    public val kind: AssetSwapKind = AssetSwapKind.LEXICON,
+    public val assetLabel: String = "the callsign lexicon",
 )
 
 // -------------------------------------------------------------------------------------------

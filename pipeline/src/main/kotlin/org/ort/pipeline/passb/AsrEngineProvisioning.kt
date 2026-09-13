@@ -15,6 +15,8 @@ import org.ort.onnx.ModelFamily
 import org.ort.onnx.ModelSizeClass
 import org.ort.onnx.OnnxSession
 import org.ort.onnx.ResidencyClass
+import org.ort.pipeline.diagnostics.DiagnosticsLog
+import org.ort.pipeline.diagnostics.ModelAssetId
 import java.io.File
 
 /**
@@ -97,9 +99,17 @@ public class RealAsrEngineProvider(
             )
         // R-1052: never hand a path to native code without checking it first — a Kotlin
         // catch (t: Throwable) around the constructor call below cannot stop a native abort.
-        for (file in listOf(files.encoder, files.decoder, files.tokens)) {
+        val filesById = listOf(
+            ModelAssetId.ASR_ENCODER to files.encoder,
+            ModelAssetId.ASR_DECODER to files.decoder,
+            ModelAssetId.ASR_TOKENS to files.tokens,
+        )
+        for ((assetId, file) in filesById) {
             val verification = ModelFileVerifier.verify(file)
             if (verification is ModelVerification.Failed) {
+                // R-1058: logged before returning, once per launch per assetId — see
+                // DiagnosticsLog.logModelVerificationFailed's own kdoc.
+                DiagnosticsLog.logModelVerificationFailed(assetId, verification.kind)
                 return AsrEngineAvailability.Unavailable(
                     "ASR model file ${file.name} failed verification and was not loaded: ${verification.reason}",
                 )

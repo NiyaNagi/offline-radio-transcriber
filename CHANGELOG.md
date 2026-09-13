@@ -233,6 +233,171 @@ has no stated destination of its own (unlike every sibling action) — recorded 
 gap in `RecordingSessionScreen`'s own doc comment, resolved here as a shortcut to the first real
 over's label sheet, never a fabricated session-wide action.
 
+## 2026-09-13 (WPMODLOG: model verification failures logged, honestly no longer silent)
+
+### e7be30ac — WPMODLOG R-1058: model verification failures are now logged, once per launch, closed vocabulary
+
+**Scope:** `core/src/main/kotlin/org/ort/core/assets/ModelFileVerifier.kt` (new
+`ModelVerificationFailureKind` on `ModelVerification.Failed`);
+`pipeline/src/main/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLog.kt` (new `ModelAssetId` enum
+and `logModelVerificationFailed`); the three real callers —
+`pipeline/.../capture/RealVadProvider.kt`, `pipeline/.../passb/AsrEngineProvisioning.kt`,
+`pipeline/.../digest/ProseDigestRunner.kt`; `app/src/main/kotlin/org/ort/app/export/DebugDumpBuilder.kt`.
+Tests in each of those packages plus `core/src/test/.../ModelFileVerifierTest.kt`,
+`pipeline/src/test/.../DiagnosticsLogTest.kt` and `app/src/test/.../DebugDumpBuilderTest.kt`.
+**Requirements/ACs:** register R-1058 (spec), constitution I/VI, FR-OBS-1, R-1052.
+**What changed:** `ModelFileVerifier.verify()`'s every `Failed` branch now carries a closed
+`ModelVerificationFailureKind` (`MISSING_FILE`, `MISSING_RECORD`, `SIZE_MISMATCH`, `HASH_MISMATCH`)
+alongside its existing free-text `reason` (unchanged, still in-memory/UI-only prose — never
+logged). `DiagnosticsLog.logModelVerificationFailed(assetId: ModelAssetId, kind)` writes one
+`model_verification_failed` line to `pipeline.log` per `(assetId)` **once per launch** (the
+dedupe set resets on every `configure()`/`shutdown()`), naming only the closed asset id
+(`VAD`, `ASR_ENCODER`, `ASR_DECODER`, `ASR_TOKENS`, `LLM`) and the kind — no free text, no
+filesystem path, matching this file's own no-message-string discipline (FR-OBS-6, D41). All
+three real verification call sites now call it exactly where they already handle
+`ModelVerification.Failed` (`RealVadProvider.provide` for VAD; `AsrEngineProvisioning.provide`'s
+per-file loop, now paired with its own `ModelAssetId` so encoder/decoder/tokens are distinguished;
+`ProseDigestRunner.doWork` for the LLM). `DebugDumpBuilder` gained a `modelVerificationFailureLines`
+reader mirroring its existing `vadStatsLines` — parses `pipeline.log` (and its `.1` rotation) back
+into a `model_verification_failed` NDJSON record with `assetId`/`kind`, never re-derived from
+in-memory state.
+**Verified:** `gradlew :core:test --tests ModelFileVerifierTest`,
+`gradlew :pipeline:testDebugUnitTest --tests DiagnosticsLogTest --tests RealVadProviderTest
+--tests AsrEngineProvisioningTest --tests ProseDigestRunnerTest`,
+`gradlew :app:testDebugUnitTest --tests DebugDumpBuilderTest` — all green. Discriminating: removed
+the `DiagnosticsLog.logModelVerificationFailed` call from `RealVadProvider`, confirmed
+`RealVadProviderTest`'s two new R-1058 tests fail for the right reason (2 failed, 6 passed),
+restored, confirmed green again. `gradlew :core:detekt :pipeline:detekt :app:detekt` and
+`gradlew :core:ktlintMainSourceSetCheck :core:ktlintTestSourceSetCheck
+:pipeline:ktlintMainSourceSetCheck :pipeline:ktlintTestSourceSetCheck :app:ktlintMainSourceSetCheck
+:app:ktlintTestSourceSetCheck` — green.
+**Left open / not done:** `ProseDigestRunner`'s LLM check only actually reaches `DiagnosticsLog`
+when something has already called `DiagnosticsLog.configure()` this process (today only
+`RealCaptureService` does, at capture start) — a digest run with no capture session active this
+launch drops the event silently, exactly as every other `DiagnosticsLog` caller outside an active
+capture session already does; not a new gap this change introduces, and out of this row's scope
+to fix (would mean configuring `DiagnosticsLog` app-wide, a bigger change). Device/logcat
+confirmation is combined with R-1060's below, since both need the same no-token build.
+
+### 415d4b0f — WPMODLOG R-1057: the asset-swap board names the real staged asset, not always "the lexicon"
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureViewState.kt` (new `AssetSwapKind`,
+`AssetSwapViewState.kind`/`.assetLabel`), `FailureMapper.kt` (`assetSwapViewState` now computes and
+carries both), `FailAssetSwap.kt` (the F21 board: section heading and warning body keyed to
+`state.kind`). Tests in `FailureMapperTest.kt` and `FailureScreensTest.kt`.
+**Requirements/ACs:** register R-1057 (polish), constitution I.
+**What changed:** after staging a Silero VAD from a file during a live session, F21's board read
+"Installed, not yet active" under the section heading **LEXICON** with a warning about "replacing
+the lexicon" — copy written for a lexicon swap, reused unchanged for every asset kind.
+`AssetSwapViewState` gained `kind: AssetSwapKind` (`LEXICON`/`MODEL`, defaulted to `LEXICON` so
+every pre-existing scroll/layout test of this screen keeps compiling unchanged) and `assetLabel`
+(the real asset's own label, e.g. "Silero VAD"). `FailureMapper.assetSwapViewState` computes both
+from the same `staged.assetId == CALLSIGN_LEXICON_ASSET_ID` check it already used for
+`stagedLabel`. `FailAssetSwapScreen` now renders "LEXICON"/"MODEL" (via the existing `SectionLabel`
+uppercase treatment) and picks between the lexicon's own warning text (unchanged) and a model
+warning naming the real asset and leaning on segmentation being the one decision reprocessing
+cannot undo (CON-SEG-1) — the reasoning register R-1057 itself said holds, "arguably more so", for
+a VAD.
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.failures.*"` — green (2 new
+`FailureMapperTest` cases on structure — `kind`/`assetLabel`, not sentences — and 2 new
+`FailureScreensTest` Compose cases asserting the LEXICON/MODEL heading and which warning body node
+exists, never full-sentence matching beyond the distinguishing prefix). Discriminating: reverted
+the heading's `state.kind` branch to the old hardcoded `"Lexicon"`, confirmed the new
+`R_1057 F21 a staged model...` test fails (1 failed, 39 passed) for the right reason, restored,
+confirmed green. `gradlew :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :app:detekt`
+— green.
+**Verified on device (constitution VIII):** own AVD `ort_audit_wpmodlog` (Pixel 6, API 34,
+1260×2772@420), a real (`HF_TOKEN`) build. Evidence at
+`%TEMP%\claude\...\scratchpad\wpmodlog-evidence\`: `05-models.png`/`06-picker.png` — a real
+Silero VAD file, pushed to `/sdcard/Download/` and installed through the actual system
+`OpenDocument` picker during the `overnight-live` scenario's live session; `07-after-pick.png`
+(1.0) and `08-staged-2x.png` (2.0) — the board reads *Installed, not yet active*, heading
+**MODEL** (not LEXICON), body *"Replacing Silero VAD under a live capture could change what the
+rest of tonight's session hears — for the VAD, even where each over is cut — with no record of
+where the line is."*, no clipping at either scale. `09-lexicon-1x.png`/`10-lexicon-2x.png` — the
+`asset-swap` debug scenario's own lexicon board for contrast: heading **LEXICON**, body still
+*"Replacing the lexicon under a live capture..."*, unchanged and correct at both scales.
+
+### 858f1fb2 — WPMODLOG R-1060: placeholder assets are marked durably, refused before native code, and a release build can never mark one
+
+**Scope:** `core/src/main/kotlin/org/ort/core/assets/ModelFileVerifier.kt` (new
+`placeholderMarkerFile`/`recordPlaceholder`/`clearPlaceholder`, new `PLACEHOLDER` kind, `verify()`
+checks the marker first); `app/src/main/kotlin/org/ort/app/assets/BundledAssetInstaller.kt`
+(`installOne`'s `missing` branch now calls `recordPlaceholder`; both success paths call
+`clearPlaceholder`). Tests in `ModelFileVerifierTest.kt`, `BundledAssetInstallerTest.kt`,
+`RealVadProviderTest.kt`, `buildSrc/.../FetchBundledAssetsTaskTest.kt`.
+**Requirements/ACs:** register R-1060 (process), R-1052, the `-PortAllowMissingBundledAssets`
+escape hatch documented in `AGENTS.md`.
+**What changed:** on a build made with the local-only `-PortAllowMissingBundledAssets=true` escape
+hatch, `BundledAssetFetcher.fetchAll` already marked an unfetchable entry `missing` in the
+generated `bundled/manifest.json` (R-1052 round 2) — but `BundledAssetInstaller.installOne`'s
+`missing` branch only skipped writing a *new* file; it never touched whatever was already sitting
+at that destination (a stale real install from an earlier with-token build, still present because
+app data was never cleared between builds — the reported crash's actual shape) or recorded that
+*this build* does not vouch for it. `ModelFileVerifier` gained a `.placeholder` marker file,
+written by `recordPlaceholder` (which also clears any stale `.sha256`/`.size`/`.verified` sidecars
+so they cannot make a stale real install look genuinely verified) and checked by `verify()` before
+anything else about the file — it refuses regardless of whatever bytes, or none, are actually
+there. `BundledAssetInstaller.installOne` calls it for every `missing` entry, and clears it (via
+`clearPlaceholder`) on both real-install success paths (fresh copy, and the already-verified
+idempotency shortcut), so a later build that does carry the asset is never blocked by a leftover
+marker. `RealVadProvider`/`AsrEngineProvisioning`/`ProseDigestRunner` needed **no code changes at
+all** for this: all three already call `ModelFileVerifier.verify()` before any native construction
+(R-1052) and already treat any `Failed` — placeholder included — as the typed unavailable state.
+**The release-build guarantee:** `missing` can only ever be produced by
+`BundledAssetFetcher.fetchAll`'s catch block, gated behind `allowMissing`, itself only ever `true`
+when `-PortAllowMissingBundledAssets=true`/`ORT_ALLOW_MISSING_BUNDLED_ASSETS=1` is set —
+`ort.android-app.gradle.kts` defaults it to `false` and no `.github/workflows` file sets either
+form; with `allowMissing = false` any unfetchable entry throws and aborts the whole `fetchAll` call
+before the generated manifest is ever written, so no release or CI-built manifest can name a
+`missing` entry, and `BundledAssetInstaller.recordPlaceholder` therefore can never run against a
+real asset in such a build.
+**Verified:** `gradlew :core:test --tests ModelFileVerifierTest`,
+`gradlew :app:testDebugUnitTest --tests BundledAssetInstallerTest`,
+`gradlew :pipeline:testDebugUnitTest --tests RealVadProviderTest`,
+`gradlew -p buildSrc test --tests FetchBundledAssetsTaskTest` — all green. Discriminating: removed
+the `ModelFileVerifier.recordPlaceholder` call from `BundledAssetInstaller.installOne`, confirmed
+`BundledAssetInstallerTest`'s two placeholder-marker tests fail for the right reason (2 failed, 14
+passed), restored, confirmed green again. `gradlew :core:detekt :core:ktlintMainSourceSetCheck
+:app:detekt :app:ktlintMainSourceSetCheck :app:ktlintTestSourceSetCheck :pipeline:detekt
+:pipeline:ktlintTestSourceSetCheck` — green (one `ReturnCount` detekt finding in the new `verify()`
+fixed by splitting the size check into its own `checkSize` helper, matching the file's own existing
+`verifyHash` split).
+**Verified on device:** same `ort_audit_wpmodlog` AVD. A genuinely no-token build (`HF_TOKEN`
+unset for that one `assemble` invocation, `-PortAllowMissingBundledAssets` default true — every
+other asset already cache-hit real, so only the gated `LLM_GEMMA3_1B` came out `missing:true`,
+the same shape the escape hatch produces for anyone lacking the licence, not just a fully offline
+machine), installed fresh (`-Clear`). `11-notoken-launch.png` — `MainActivity` opens onto
+onboarding, no crash. `12-logcat-launch-raw.txt` — filtered for
+`SIGABRT|Fatal signal|tombstone|Ort::Exception|AndroidRuntime|FATAL EXCEPTION`: no matches.
+`14-notoken-models.png` — Settings > Models reports the digest model honestly (*"marker present,
+bytes missing — 0 KB of 555 MB on disk · re-verified on next launch"*) while Whisper/Silero VAD
+stay genuinely active, never a false "installed". `16-ondevice-models-listing.txt` — the on-device
+`files/models/llm/gemma3-1b-it-int4.task.placeholder` marker itself, its exact content
+(`"this build does not carry a real asset for this destination (no-token/local build)"`) matching
+`ModelFileVerifier.recordPlaceholder`'s own text — written by the real installer on first launch,
+proving the mechanism reaches the actual device. The listing also shows a `.sha256` marker at the
+same path (confirmed to hold the *real* asset's genuine pinned digest, `e3d981c0...`) left by the
+`overnight-live` debug scenario's own "every model asset installed" fixture, loaded afterward for
+unrelated setup purposes — exactly the "a stale/fake marker with the real hash text at the same
+path" shape this fix exists for, and the Settings screen and `ModelFileVerifier.verify()` both
+still read it honestly rather than as installed, corroborating the fix live rather than only in a
+unit test.
+**Left open / not done:** confirming R-1058's `model_verification_failed` event actually lands in
+`pipeline.log` on device was attempted (`adb shell cmd jobscheduler run -f` to force the
+`ProseDigestRunner` work item) but not achieved this session — no `diagnostics-logs/` directory
+was ever created on this device, because nothing had called `DiagnosticsLog.configure()` yet (only
+`RealCaptureService`, at a **real** capture-session start, calls it; this session's live-session
+evidence above used the `overnight-live` scenario, which seeds fake data rather than starting a
+real foreground service, and the forced digest-work run likely never reached the verification
+check at all — `ProseDigestWorkRunner`'s own device-idle/charging gate almost certainly refused it
+first). The event itself is proven at the unit level for all three asset kinds (`DiagnosticsLogTest`,
+and the per-provider tests in `RealVadProviderTest`/`AsrEngineProvisioningTest`/
+`ProseDigestRunnerTest`); a full real-capture-session walk (setup completed, not scenario-seeded)
+would be needed to see the log line land on a real device, and is left to a follow-up session.
+
+---
+
 ## 2026-09-13 (spec: Q23 opened - squelch fusion on a dual-band radio, and rigs that only poll)
 
 ### spec · Q23: two design choices squelch fusion made that the spec never did

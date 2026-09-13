@@ -69,12 +69,14 @@ public fun FailAssetSwapScreen(
                 )
                 Banner(
                     title = "A session is running — the swap waits",
-                    body = "Replacing the lexicon under a live capture would make tonight's log half one " +
-                        "version and half another, with no record of where the line is. So it does not happen.",
+                    body = assetSwapWarningBody(state.kind, state.assetLabel),
                     tone = BannerTone.DEGRADED,
                     modifier = Modifier.padding(horizontal = 20.dp),
                 )
-                SectionLabel("Lexicon", modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
+                SectionLabel(
+                    if (state.kind == AssetSwapKind.LEXICON) "Lexicon" else "Model",
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                )
                 LexiconRow(marker = LexiconMarker.ACTIVE, label = state.activeLabel)
                 LexiconRow(marker = LexiconMarker.STAGED, label = state.stagedLabel)
                 SectionLabel("Options", modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp))
@@ -105,6 +107,24 @@ public fun FailAssetSwapScreen(
             },
         )
     }
+}
+
+/**
+ * Register R-1057 (polish): the warning body was written for a lexicon swap and reused, unchanged,
+ * for every asset kind — after installing a Silero VAD model from a file during a live session,
+ * the board said "Replacing the lexicon..." Keyed to [kind] now: the lexicon's own reasoning (a
+ * log stitched from two versions) stays exactly as written; a model's own reasoning names the real
+ * asset and leans on segmentation being the one decision reprocessing cannot undo (CON-SEG-1) —
+ * true for every bundled model, most legible for the VAD.
+ */
+private fun assetSwapWarningBody(kind: AssetSwapKind, assetLabel: String): String = when (kind) {
+    AssetSwapKind.LEXICON ->
+        "Replacing the lexicon under a live capture would make tonight's log half one version and " +
+            "half another, with no record of where the line is. So it does not happen."
+    AssetSwapKind.MODEL ->
+        "Replacing $assetLabel under a live capture could change what the rest of tonight's session " +
+            "hears — for the VAD, even where each over is cut — with no record of where the line is. " +
+            "So it does not happen."
 }
 
 private enum class LexiconMarker { ACTIVE, STAGED }
