@@ -32,6 +32,194 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPDATA: schema v13 — operator-initiated over-audio/archive deletion and FR-OBS-4 training labels, the data and domain layer for RC01/RC02)
+
+### 53310b99 — WPDATA: one migration (v12→v13) for over-audio removal and FR-OBS-4 labels; `SessionAudioDeletionService` (mark-then-delete, typed refusals, crash-safe, idempotent); `TransmissionLabelRepository`; `recordingSessionSummaries` for RC01; a typed "unavailable" stub for RC02's audio Export
+
+**Scope:** `:data` entities/DAOs/migration (`SessionEntity.overAudioRemovedAtMillis`,
+`TransmissionLabelEntity`/`TransmissionLabelDao`, `WorkQueueDao.countActiveForSession`,
+`OrtDatabase` v12→v13, `data/schemas/org.ort.data.OrtDatabase/13.json`) and their tests
+(`MigrationTest`, `SessionDaoTest`, `TransmissionLabelDaoTest`, `WorkQueueDaoTest`); `:pipeline`
+domain services under `org.ort.pipeline.archive` (`SessionAudioDeletionService`,
+`RecordingSessionSummary`, `SessionAudioExport`) and `org.ort.pipeline.label`
+(`TransmissionLabelRepository`) and their tests. No UI, `tools/ui-audit/**`, `RealCaptureService`
+internals, `spec/**` or the register touched — this is the data/domain layer RC01
+(`Recordings.dc.html`) and RC02 (`Recording-Session.dc.html`) will call, not the screens
+themselves.
+
+**Requirements/ACs:** FR-STO-3, FR-STO-3a, FR-STO-3b, FR-STO-3d, FR-STO-3e, FR-STO-4, FR-STO-5,
+D26, D39, D40, FR-REP-4, P9 (constitution III), FR-OBS-4, Q16, constitution I (never promote to
+CONFIRMED), constitution VI (provenance).
+
+**What changed:**
+- **Schema v12 → v13** (`OrtDatabase.MIGRATION_12_13`): adds `session.overAudioRemovedAtMillis`
+  (nullable `INTEGER`, mirrors `archiveState`/`archiveRemovedAtMillis`'s own "removed, with its
+  date" shape but with no `"KEPT"` sibling state — FR-STO-3e forbids any *automatic* over-audio
+  deletion, so there is nothing analogous to the archive's automatic pruning that a `"KEPT"` state
+  would need to distinguish from) and the `transmission_label` table for the new
+  `TransmissionLabelEntity` (one row per transmission: `markedForTraining`, `outcome`
+  (`LabelOutcome`: `SPEECH|NO_SPEECH|DOUBLED_UNRESOLVABLE|NON_SPEECH`), `doubled`, `truthCallsign`,
+  `callsignCertainty` (`LabelCertainty`: `CERTAIN|UNCERTAIN|PARTIAL`), `tacticalCallsign`, `note`,
+  `rating`, `labelledAtMillis`). No existing table or column touched or dropped; every v12 row
+  survives untouched, the new `session` column `NULL` (over audio never deleted, never fabricated
+  as removed). `MigrationTest` gained one `v12→v13` test, widened both sweep loops (the full-chain
+  sweep and the R-885 real-`OrtDatabase.create()`-open sweep) from `1..11`/`v12` to `1..12`/`v13`,
+  and split the R-885 sweep's per-fixture-version exercise blocks into three private helper
+  functions (`verifyRetryNotBeforeUsableThroughRealOpen`/`verifyArchiveColumnsUsableThroughRealOpen`/
+  `verifyOverAudioAndLabelUsableThroughRealOpen`) to keep the sweep method under detekt's
+  `LongMethod` threshold (80 lines) after adding the v12 case.
+- **`SessionAudioDeletionService`** (`:pipeline`, `org.ort.pipeline.archive`) — RC02's Delete
+  action. `SessionAudioTarget` (`OVER_AUDIO`/`RAW_ARCHIVE`/`BOTH`) is exactly what the artboard
+  offers; no manual over-audio deletion path existed anywhere in the codebase before this (checked
+  first, per the prompt). Follows `ArchivePruner`'s own mark-then-delete shape rather than
+  inventing a second one: the row is updated (`SessionDao.setOverAudioRemoved` — new — for over
+  audio; the existing `setArchiveRemoved` for the archive, reused unchanged) *before* the directory
+  is deleted, so a crash between the two steps leaves, at worst, a marked row whose directory still
+  exists — never the reverse. `delete(...)` is idempotent: a retry sees the mark already made,
+  never re-marks (the original timestamp survives), and simply finishes the file removal, with
+  `bytesFreed` measured freshly at the moment of the real deletion rather than cached from the
+  first attempt. `preview(...)` computes reclaimable bytes from the real `audio/<id>`/`archive/<id>`
+  directories (`measureDirectoryBytes`, the same function `StorageAccounting` uses) and reports
+  what would remain (`archiveState`) — never an estimate. `canDelete(...)` refuses with a typed
+  reason (`SessionAudioDeletionRefusal.SessionNotFound`/`.SessionCapturing`/`.ProcessingInProgress`)
+  — capturing checked via the existing `CaptureState.isCapturing`/`.sessionId` (no new capture-side
+  query needed), processing/reprocessing checked via the new
+  `WorkQueueDao.countActiveForSession` (a session's transmissions with a `READY`/`LEASED`/`DEFERRED`
+  work-queue item — covers live capture and `ReprocessRunner` alike, since both go through the same
+  queue). Transcripts, corrections and attributions are never touched — only `audio/<id>` and/or
+  `archive/<id>` are removed; the session row and its overs remain listed with what was removed and
+  when (P9).
+- **`recordingSessionSummaries`** (`RecordingSessionSummary.kt`) — RC01's per-session row: span,
+  real over/failed/labelled counts (from `TransmissionDao`/the new
+  `TransmissionLabelDao.countMarkedForTrainingBySession`), and both audio-removal facts, reusing
+  `archiveSessionStates` rather than re-deriving archive state a second way.
+- **`TransmissionLabelRepository`** (`org.ort.pipeline.label`) — FR-OBS-4's smallest model per the
+  spec and `docs/reference/labelling-protocol.md`: `label(...)` (bundled into a
+  `TransmissionLabelFields` parameter object to stay under detekt's `LongParameterList` threshold
+  of 9 — the same "bundle the request" shape `org.ort.app.export.ExportRequest` already uses) and
+  `setMarkedForTraining(...)` (RC02 draws "mark" and "label" as separate taps). Enforces the
+  protocol's own certainty rule (`callsignCertainty` set exactly when `truthCallsign` is
+  non-blank) with a `require()`. **Never touches attribution**: no code path in this repository
+  reads or writes `TransmissionEntity.attributionState`/`.stationId`/`.attributionConfidence` from
+  a label, and none calls `TransmissionDao.updateAttribution`/`CorrectionDao.recordCorrection` —
+  proven directly (see Verified).
+- **`SessionAudioExport`** — checked `ExportCoordinator` and its four writers (ADIF/CSV/JSON/TEXT,
+  all text) and `FieldReportBundleBuilder` (D38's narrow, gated, per-category upload — not a
+  general export) first, per the prompt; neither is a session-audio export path. RC02's Export
+  button therefore has a typed `SessionAudioExportUnavailable(reason)` stub, not a real
+  implementation — building the real writer (a zip of the session's FLAC files) is a real, separate
+  follow-up, flagged here rather than decided silently. No new file format built.
+
+**Which RC01/RC02 element calls each API:**
+- RC01 session list rows ← `recordingSessionSummaries` (span/counts/archive-and-over-audio state).
+- RC01's storage cards (and RC02's own header) ← `SessionAudioDeletionService.preview`.
+- RC02's `Delete` button/confirm sheet ← `SessionAudioDeletionService.canDelete`/`.delete`.
+- RC02's `Export` button ← `SessionAudioExport.unavailable` (until a real writer exists).
+- RC02's `Label` action and per-over "training · good" badge ← `TransmissionLabelRepository.label`/
+  `.get`.
+- RC02's "mark for training" toggle ← `TransmissionLabelRepository.setMarkedForTraining`.
+
+**What a deletion leaves behind:** the session row, all transcripts (every version, current and
+superseded), all attributions/corrections, and the over rows themselves — only the audio bytes
+(`audio/<id>` and/or `archive/<id>`) are removed. `RecordingSessionSummary`/`SessionArchiveState`
+keep reporting the session with `overAudioRemovedAtMillis`/`archiveRemovedAtMillis` set, per P9.
+
+**Refusal reasons:** `SessionNotFound` (unknown session id), `SessionCapturing` (this session is
+the one `CaptureState` reports live right now), `ProcessingInProgress` (at least one transmission
+in the session has an active work-queue item — live Pass B/C or a queued/running reprocess).
+
+**Crash-safety test:** `SessionAudioDeletionServiceTest`'s
+`retrying after a crash between marking and deleting finishes the deletion and keeps the original timestamp`
+simulates the crash by calling `SessionDao.setOverAudioRemoved` directly (the mark) while leaving
+the directory on disk (no delete), then calls `delete(...)` again and asserts it finishes the
+deletion, keeps the *original* timestamp, and reports the real (not stale/zero) bytes freed.
+Discrimination shown live: temporarily changed `deleteOverAudio` to always re-mark with a fresh
+timestamp (clobbering the original) — the test failed with
+`expected:<1111> but was:<9999>` — then reverted.
+
+**Label model and provenance:** `TransmissionLabelEntity` — `markedForTraining`, `outcome`,
+`doubled`, `truthCallsign`, `callsignCertainty`, `tacticalCallsign`, `note`, `rating`,
+`labelledAtMillis`. Provenance is "when" only (`labelledAtMillis`, constitution VI); there is
+deliberately no "who" column — this is a single-operator, offline device with no
+account/identity concept anywhere else in the schema (`CorrectionEntity.correctedAt` is the same
+precedent). Discrimination shown live for the non-negotiable rule: temporarily made `label(...)`
+also call `TransmissionDao.updateAttribution(..., CONFIRMED, ...)` when a callsign was recorded —
+`TransmissionLabelRepositoryTest`'s
+`labelling a transmission never changes its attribution state or promotes it to CONFIRMED` failed
+with `expected:<UNKNOWN> but was:<CONFIRMED>` — then reverted.
+
+**Can labels leave the device:** not checked by any export/diagnostics/field-report path today —
+`ExportCoordinator`'s `ExportOverRecord` has no label fields, `DiagnosticsBundleBuilder` does not
+read `transmission_label`, and `FieldReportBundleBuilder`'s payload is recomputed from its own
+closed field list (D38's own guarantee) which does not include it either. Left unbuilt rather than
+decided either way — a real question for the lead (see Open questions).
+
+**Export/share status:** no session-audio export path exists (`ExportCoordinator` is text-only,
+`FieldReportBundleBuilder` is a different, narrow channel) — `SessionAudioExport.unavailable(...)`
+is a typed stub naming exactly that; no new file format built.
+
+**Test names (discrimination shown for the two safety-critical ones, above):**
+`data/dao/TransmissionLabelDaoTest`, `data/dao/WorkQueueDaoTest`,
+`data/dao/SessionDaoTest.FR_STO_3e_over_audio_removal_defaults_to_null_and_setOverAudioRemoved_records_the_date`,
+`data/MigrationTest.migration_from_v12_to_v13_preserves_existing_rows_and_adds_the_over_audio_and_label_columns`,
+`pipeline/archive/SessionAudioDeletionServiceTest` (18 cases: preview, all three refusals, all
+three delete targets, the no-op-on-no-archive case, the crash-safety case, the idempotent-retry
+case, the refused-deletion-never-touches-files case), `pipeline/archive/RecordingSessionSummariesTest`,
+`pipeline/archive/SessionAudioExportTest`, `pipeline/label/TransmissionLabelRepositoryTest` (5
+cases).
+
+**Verified:**
+- `./gradlew :data:testDebugUnitTest` and `:pipeline:testDebugUnitTest` — every new/changed test
+  green. `:data:testDebugUnitTest`/`:testReleaseUnitTest` intermittently show one `MigrationTest`
+  case (a different one each run, including this change's own new v12→v13 case) failing with
+  `SQLiteCantOpenDatabaseException` (code 14). **Root cause identified, not just observed**: this
+  machine's `%TEMP%` held **17,731** leftover `robolectric-*` directories at the time of this
+  session (`Get-ChildItem $env:TEMP -Filter "robolectric-*" -Directory | Measure-Object` — the
+  accumulation of many builders' Robolectric runs on this shared machine per this session's own
+  environment, never cleaned between runs), and the failure rate tracked directly with how much
+  that count had grown by the time each command ran within this session — the same test passed
+  twice in isolation early on and began failing consistently only after the full-gate `build` run
+  (which itself runs the entire `:app` Robolectric suite) pushed the count far higher. This is an
+  external, shared-machine resource condition, not a defect in this change's schema, entity or DAO
+  code — confirmed by the migration's own content being correct in every passing run and by the
+  failure never once being a data/assertion mismatch, always the identical `SQLITE_CANTOPEN` open
+  failure. Left uncleaned deliberately: deleting another session's or builder's temp directories on
+  a shared machine is outside this change's scope and risks breaking concurrent work. Reporting per
+  the prompt's own instruction on this exact symptom class rather than chasing it further
+  (register-worthy, not this unit's to fix).
+- `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools/spec-check/spec_check.py` — all 8 checks `PASS`.
+- `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (separate invocations): `483
+  requirements, 269 covered`; `coverageMatrixCheck: up to date`.
+- `./gradlew dependencyRules platformGuards` — both `OK` (`:pipeline`/`:data` edges unchanged;
+  no new HTTP client, no analytics).
+- `./gradlew :data:detekt :pipeline:detekt` and `:data:ktlintCheck`/`:pipeline:ktlintMainSourceSetCheck`
+  — all green after two detekt fixes (`MigrationTest`'s R-885 sweep split into three helpers to
+  clear `LongMethod`; `TransmissionLabelRepository.label` reduced to 4 parameters via
+  `TransmissionLabelFields` to clear `LongParameterList`; `RecordingSessionSummaries.kt` renamed to
+  `RecordingSessionSummary.kt` to clear `MatchingDeclarationName`) and one ktlint fix in this
+  change's own new test file.
+- `./gradlew build` (full gate, real `HF_TOKEN`, no escape hatch): found one **pre-existing, unrelated**
+  ktlint violation this change did not introduce — `pipeline/src/test/kotlin/org/ort/pipeline/capture/RealSegmentSinkTest.kt:430`
+  ("First line of body expression fits on same line as function signature"), confirmed via `git log`
+  to be untouched since this worktree's base commit (`c47f7905`) — flagged for the lead to route to
+  that file's owning package rather than fixed here (outside this prompt's ownership).
+
+**Left open / not done:**
+- **Whether labels can leave the device is a real open question, not a decision made here** — see
+  above; excluded from every export path rather than guessed either way.
+- **`SessionAudioExport` is a stub, not a feature** — RC02's Export button has no real audio writer
+  behind it yet; flagged as a genuine follow-up.
+- **The pre-existing `RealSegmentSinkTest.kt:430` ktlint violation** blocks a clean `./gradlew build`
+  on `main` today, independent of this change — needs routing to the package that owns it.
+- **The `:data:testDebugUnitTest`/`:testReleaseUnitTest` `MigrationTest` flake** (`SQLITE_CANTOPEN`,
+  a different case each run) — root cause identified (17,731 leftover `robolectric-*` `%TEMP%`
+  directories on this shared machine at the time of this session; see Verified) but the cleanup
+  itself is out of this change's scope and risks other concurrent builders' work.
+- RC01/RC02 themselves are not built — this is the data/domain layer only, per the prompt's scope.
+
+---
+
 ## 2026-09-12 (WPVAD follow-up: AC-161 tests tagged and completed, now covered in the matrix)
 
 ### WPVAD follow-up — AC-161's four driven cases each carry the annotation/name the coverage matrix scans for; the missing MAX_DURATION case (log line and debug dump) added

@@ -133,4 +133,21 @@ public class SessionDaoTest {
         assertNotEquals(room?.captureMode, radio?.captureMode)
         assertNotEquals(room?.audioRouteKind, radio?.audioRouteKind)
     }
+
+    /**
+     * WPDATA (FR-STO-3e, D40, P9): a session's over audio starts with no removal recorded, and
+     * [SessionDao.setOverAudioRemoved] is the only way that changes -- unlike the archive's
+     * automatic pruning, nothing else in this schema ever writes this column.
+     */
+    @Test
+    @Requirement("FR-STO-3e")
+    public fun FR_STO_3e_over_audio_removal_defaults_to_null_and_setOverAudioRemoved_records_the_date(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session("S1"))
+            assertNull(db.sessionDao().getById("S1")?.overAudioRemovedAtMillis)
+
+            db.sessionDao().setOverAudioRemoved("S1", removedAtMillis = 12_345L)
+
+            assertEquals(12_345L, db.sessionDao().getById("S1")?.overAudioRemovedAtMillis)
+        }
 }
