@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPDETAILRES: R-1071 - the debug scenario suite now seeds resolver output alongside every CONFIRMED attribution it writes, plus a regression invariant)
 
-### (pending) — WPDETAILRES: R-1071 - every debug scenario that seeds a CONFIRMED attribution with a confidence now seeds the resolver row (lattice + selected candidate) production always writes alongside it, and a new ResolverOutputScenariosTest proves the invariant for every declared scenario
+### 49d4bbfc — WPDETAILRES: R-1071 - every debug scenario that seeds a CONFIRMED attribution with a confidence now seeds the resolver row (lattice + selected candidate) production always writes alongside it, and a new ResolverOutputScenariosTest proves the invariant for every declared scenario
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/ScenarioFixtures.kt` (new
 `seedConfirmedResolverOutput` helper), `Scenarios.kt`, `OvernightScenario.kt`,
