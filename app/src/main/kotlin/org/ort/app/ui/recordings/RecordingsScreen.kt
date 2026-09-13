@@ -302,7 +302,13 @@ private fun OverAudioBudgetRow(state: OverAudioCardViewState, modifier: Modifier
             )
         }
         if (state.fractionUsed != null) {
-            ProgressBar(progress = state.fractionUsed, modifier = Modifier.padding(top = 5.dp))
+            // R-1059 (register): exceeded reads amber (the same tone the sub-line below already
+            // carries), never a full green bar for a state the caption calls "over budget".
+            ProgressBar(
+                progress = state.fractionUsed,
+                modifier = Modifier.padding(top = 5.dp),
+                fillColor = if (state.exceeded) OrtColors.accentAmber else OrtColors.accentGreen,
+            )
         }
         Text(
             // AC-160: the warning shows without a tap the instant the budget is exceeded — the
