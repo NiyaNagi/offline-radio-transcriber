@@ -86,6 +86,38 @@ class RecordingSessionScreenLayoutTest {
         exportAvailable = true,
     )
 
+    /** Round 3 (coordinator review): an INFERRED over — a real transcript, a real confidence chip
+     * — the exact shape the device evidence (`KJ7ABC`, `overnight/RC02-recording-session@2x-end.png`)
+     * found squeezed to a sliver at font scale 2.0. */
+    private fun inferredOverWithChip(id: String) = RecordingSessionRow.Over(
+        id = id,
+        timeLabel = "10:44:00",
+        frequencyLabel = "145.230",
+        durationLabel = "4 s",
+        status = RecordingSessionOverStatus.RESOLVED,
+        transcript = "QRZ, this is KJ7ABC",
+        attribution = Attribution.inferred("KJ7ABC", 0.70),
+        callsign = "KJ7ABC",
+        alternate = null,
+        attributionStateLabel = "inferred",
+        inferredFromLabel = "05:23:36",
+        hasAudio = false,
+        stationId = "KJ7ABC",
+        trainingLabel = null,
+        markedForTraining = false,
+        statusReasonLabel = null,
+        canRetry = false,
+    )
+
+    private fun stateWithInferredOver() = RecordingSessionViewState(
+        sessionId = "S1",
+        header = header(),
+        coverage = coverage(),
+        rows = listOf(inferredOverWithChip("T2")),
+        deleteFreesBytes = 610_000_000L,
+        exportAvailable = true,
+    )
+
     private fun playback() = TransportBarViewState.Playback(
         transmissionId = "TX-ELSEWHERE",
         callsignLabel = "W7NPC",
@@ -206,5 +238,94 @@ class RecordingSessionScreenLayoutTest {
             "expected the Delete tile's own card to be at least as tall as its 58dp floor, got $height",
             height >= 58.dp,
         )
+    }
+
+    /**
+     * Round 3 (coordinator review): `round2\tour\overnight\RC02-recording-session@2x-end.png`
+     * found an over row's own transcript/callsign column squeezed to about a third of the row's
+     * real width at font scale 2.0 (the fixed time column, at full width, plus the fixed Label
+     * column, left too little for the weighted column to hold "thanks for the contact WA7HJR" or
+     * KJ7ABC's own confidence chip without wrapping one or two words per line and clipping the
+     * chip to a sliver). Asserted here as real, measured bounds — never a pixel comparison — at
+     * both widths the tour's own AVD and its wider sibling exercise.
+     */
+    private fun assertOverRowContentAndChipFit(fontScale: Float, expectWideContent: Boolean) {
+        composeTestRule.setContent {
+            CompositionLocalProvider(
+                LocalDensity provides Density(density = LocalDensity.current.density, fontScale = fontScale),
+            ) {
+                OrtTheme {
+                    RecordingSessionScreen(
+                        state = stateWithInferredOver(),
+                        playingOverId = null,
+                        isPlaying = false,
+                        actions = RecordingSessionActions(),
+                        deleteSheet = RecordingSessionDeleteState.Idle,
+                        exportSheet = RecordingSessionExportState.Idle,
+                        labelSheet = null,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+        }
+        val rowBounds = composeTestRule
+            .onNodeWithTag("rc02-over-row-T2", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val contentBounds = composeTestRule
+            .onNodeWithTag(recordingSessionOverContentTestTag("T2"), useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val chipBounds = composeTestRule
+            .onNodeWithTag(recordingSessionOverChipTestTag("T2"), useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+
+        val rowWidth = rowBounds.right - rowBounds.left
+        val contentWidth = contentBounds.right - contentBounds.left
+        if (expectWideContent) {
+            val floor = rowWidth * MIN_CONTENT_WIDTH_FRACTION
+            assertTrue(
+                "expected the content column ($contentWidth) to be at least 60% of the row's own " +
+                    "real width ($rowWidth, floor=$floor) at font scale $fontScale",
+                contentWidth >= floor,
+            )
+        }
+        assertTrue(
+            "expected the confidence chip (left=${chipBounds.left}, right=${chipBounds.right}) to sit " +
+                "fully inside its row (left=${rowBounds.left}, right=${rowBounds.right}) at font scale " +
+                "$fontScale, never clipped to a sliver past the row's own bound",
+            chipBounds.left >= rowBounds.left && chipBounds.right <= rowBounds.right,
+        )
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `an over row's content column and confidence chip fit at 390dp font scale 1_0`() {
+        assertOverRowContentAndChipFit(fontScale = 1f, expectWideContent = false)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `an over row restacks so its content column holds at least 60 percent of the row at 390dp font scale 2_0`() {
+        assertOverRowContentAndChipFit(fontScale = 2f, expectWideContent = true)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w480dp-h844dp-420dpi")
+    fun `an over row's content column and confidence chip fit at 480dp font scale 1_0`() {
+        assertOverRowContentAndChipFit(fontScale = 1f, expectWideContent = false)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w480dp-h844dp-420dpi")
+    fun `an over row restacks so its content column holds at least 60 percent of the row at 480dp font scale 2_0`() {
+        assertOverRowContentAndChipFit(fontScale = 2f, expectWideContent = true)
+    }
+
+    private companion object {
+        /** The coordinator's own literal floor ("at least ~60% of the row width at 2.0"). */
+        const val MIN_CONTENT_WIDTH_FRACTION = 0.6f
     }
 }

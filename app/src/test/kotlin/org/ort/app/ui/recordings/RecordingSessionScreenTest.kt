@@ -258,11 +258,43 @@ class RecordingSessionScreenTest {
             }
         }
         composeTestRule.onNodeWithTag(RECORDING_SESSION_REFUSAL_TEST_TAG).assertIsDisplayed()
-        composeTestRule.onNodeWithText("over audio was removed", substring = true).assertIsDisplayed()
+        // Round 3 (coordinator review): operator copy, keyed to the typed refusal alone -- never
+        // the raw diagnostic sentence :pipeline built for a log line (a session id, lowercase).
+        composeTestRule.onNodeWithText("Nothing to export", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("over audio was removed", substring = true).assertDoesNotExist()
         // Round 2 (coordinator review): a session with nothing real to export must offer no Save —
         // the shared sheet-confirm tag (also Delete's "Delete" button) must not exist at all here,
         // never merely hidden or disabled.
         composeTestRule.onNodeWithTag(RECORDING_SESSION_SHEET_CONFIRM_TEST_TAG).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("constitution I", "constitution II")
+    fun `the nothing-to-export message is keyed to the refusal type, never the diagnostic sentence inside it`() {
+        // A different raw reason string than the test above -- same typed refusal -- must render
+        // the identical operator copy. Proves the mapping switches on the sealed type, never on
+        // :pipeline's own message text (which log wording is free to change without notice).
+        composeTestRule.setContent {
+            OrtTheme {
+                RecordingSessionScreen(
+                    state = state(),
+                    playingOverId = null,
+                    isPlaying = false,
+                    actions = RecordingSessionActions(),
+                    deleteSheet = RecordingSessionDeleteState.Idle,
+                    exportSheet = RecordingSessionExportState.Refused(
+                        SessionAudioExportRefusal.NothingToExport(
+                            "nothing to export for session scenario-recordings-budget-exceeded: " +
+                                "no audio files exist on disk for this session",
+                        ),
+                    ),
+                    labelSheet = null,
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("Nothing to export", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("scenario-recordings-budget-exceeded", substring = true).assertDoesNotExist()
+        composeTestRule.onNodeWithText("no audio files exist on disk", substring = true).assertDoesNotExist()
     }
 
     @Test

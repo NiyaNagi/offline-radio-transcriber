@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,6 +29,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -350,6 +352,25 @@ private fun overRowDescription(row: RecordingSessionRow.Over): String = listOfNo
     row.trainingLabel,
 ).joinToString(", ")
 
+/** guide's own "2.0" ceiling (FR-A11Y-3, AC-63) — the same figure [LiveMonitorScreen.kt]'s own
+ * `LARGE_FONT_SCALE_THRESHOLD` (R-1027) and `ui/components/Rows.kt`'s own `LogRow` (R-373) already
+ * apply for "a fixed-width sibling column squeezes the weighted one below its own floor." Not
+ * re-imported from either — both are `private`/file-local too, the same small policy-constant shape
+ * this codebase already repeats per file rather than sharing. */
+private const val RC02_LARGE_FONT_SCALE_THRESHOLD = 1.5f
+
+/**
+ * **Round 3** (coordinator review, device evidence): below [RC02_LARGE_FONT_SCALE_THRESHOLD] this
+ * row keeps its one-line shape — a fixed play control and time column beside a weighted content
+ * column and a fixed Label action. At or above it, the fixed columns (play, time, Label) together
+ * left the weighted column under a third of the row's own real width — a transcript wrapping one
+ * or two words per line, a facts line breaking at every `·`, an INFERRED confidence chip cut to a
+ * sliver (`round2\tour\overnight\RC02-recording-session@2x-end.png`, WA7HJR/KJ7ABC). The same
+ * threshold-based restack `LiveMonitorScreen.kt`'s own `LevelCardCaption` (R-1027) and
+ * `ui/components/Rows.kt`'s own `LogRow` (R-373) already establish: time, play and Label move to
+ * their own top row (still reachable, never buried, never removed), and the transcript/attribution/
+ * facts content renders at the row's own full width beneath it.
+ */
 @Composable
 private fun RecordingSessionOverRow(
     row: RecordingSessionRow.Over,
@@ -357,21 +378,33 @@ private fun RecordingSessionOverRow(
     actions: RecordingSessionActions,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = 44.dp)
-            .then(
-                if (isPlaying) {
-                    Modifier.background(OrtColors.bgCurrent).border(2.dp, OrtColors.accentGreen)
-                } else {
-                    Modifier
-                },
-            )
-            .padding(vertical = OrtSpacing.sm)
-            .semantics(mergeDescendants = true) { contentDescription = overRowDescription(row) },
-        horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
-    ) {
+    val rowModifier = modifier
+        .fillMaxWidth()
+        .heightIn(min = 44.dp)
+        .then(
+            if (isPlaying) {
+                Modifier.background(OrtColors.bgCurrent).border(2.dp, OrtColors.accentGreen)
+            } else {
+                Modifier
+            },
+        )
+        .padding(vertical = OrtSpacing.sm)
+        .semantics(mergeDescendants = true) { contentDescription = overRowDescription(row) }
+    if (LocalDensity.current.fontScale >= RC02_LARGE_FONT_SCALE_THRESHOLD) {
+        RecordingSessionOverRowStacked(row, isPlaying, actions, rowModifier)
+    } else {
+        RecordingSessionOverRowCompact(row, isPlaying, actions, rowModifier)
+    }
+}
+
+@Composable
+private fun RecordingSessionOverRowCompact(
+    row: RecordingSessionRow.Over,
+    isPlaying: Boolean,
+    actions: RecordingSessionActions,
+    modifier: Modifier,
+) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm)) {
         RecordingSessionPlayControl(
             hasAudio = row.hasAudio,
             isPlaying = isPlaying,
@@ -389,14 +422,10 @@ private fun RecordingSessionOverRow(
         Column(
             modifier = Modifier
                 .weight(1f)
-                .clickable(role = Role.Button, onClick = { actions.onOpenTransmission(row.id) }),
+                .clickable(role = Role.Button, onClick = { actions.onOpenTransmission(row.id) })
+                .testTag(recordingSessionOverContentTestTag(row.id)),
         ) {
-            when (row.status) {
-                RecordingSessionOverStatus.RESOLVED -> ResolvedOverBody(row)
-                RecordingSessionOverStatus.PROCESSING -> ProcessingOverBody()
-                RecordingSessionOverStatus.REJECTED -> RejectedOverBody(row)
-                RecordingSessionOverStatus.FAILED -> FailedOverBody(row, actions)
-            }
+            RecordingSessionOverBody(row, actions)
         }
         TextAction(
             text = "Label",
@@ -405,6 +434,64 @@ private fun RecordingSessionOverRow(
         )
     }
 }
+
+@Composable
+private fun RecordingSessionOverRowStacked(
+    row: RecordingSessionRow.Over,
+    isPlaying: Boolean,
+    actions: RecordingSessionActions,
+    modifier: Modifier,
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(OrtSpacing.xs)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RecordingSessionPlayControl(
+                hasAudio = row.hasAudio,
+                isPlaying = isPlaying,
+                onClick = { actions.onPlayRow(row.id) },
+                modifier = Modifier.testTag("rc02-play-${row.id}"),
+            )
+            Text(
+                text = row.timeLabel,
+                style = OrtType.timeFreq,
+                color = OrtColors.textDim,
+                maxLines = 1,
+                softWrap = false,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            TextAction(
+                text = "Label",
+                onClick = { actions.onOpenLabelSheet(row.id) },
+                modifier = Modifier.testTag("rc02-label-${row.id}"),
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button, onClick = { actions.onOpenTransmission(row.id) })
+                .testTag(recordingSessionOverContentTestTag(row.id)),
+        ) {
+            RecordingSessionOverBody(row, actions)
+        }
+    }
+}
+
+@Composable
+private fun RecordingSessionOverBody(row: RecordingSessionRow.Over, actions: RecordingSessionActions) {
+    when (row.status) {
+        RecordingSessionOverStatus.RESOLVED -> ResolvedOverBody(row)
+        RecordingSessionOverStatus.PROCESSING -> ProcessingOverBody()
+        RecordingSessionOverStatus.REJECTED -> RejectedOverBody(row)
+        RecordingSessionOverStatus.FAILED -> FailedOverBody(row, actions)
+    }
+}
+
+internal fun recordingSessionOverContentTestTag(overId: String): String = "rc02-over-content-$overId"
+
+internal fun recordingSessionOverChipTestTag(overId: String): String = "rc02-over-chip-$overId"
 
 @Composable
 private fun ResolvedOverBody(row: RecordingSessionRow.Over) {
@@ -417,7 +504,12 @@ private fun ResolvedOverBody(row: RecordingSessionRow.Over) {
                 showScore = false,
             )
             if (attribution.state == AttributionState.INFERRED) {
-                attribution.confidence?.let { ScoreChip(confidence = it, modifier = Modifier.padding(start = 4.dp)) }
+                attribution.confidence?.let {
+                    ScoreChip(
+                        confidence = it,
+                        modifier = Modifier.padding(start = 4.dp).testTag(recordingSessionOverChipTestTag(row.id)),
+                    )
+                }
             }
         }
     }
@@ -717,7 +809,11 @@ private fun ExportSheet(state: RecordingSessionExportState, actions: RecordingSe
 
 private fun exportRefusalMessage(reason: SessionAudioExportRefusal): String = when (reason) {
     SessionAudioExportRefusal.SessionNotFound -> "This session no longer exists."
-    is SessionAudioExportRefusal.NothingToExport -> reason.reason
+    // Round 3 (coordinator review): `reason.reason` is `:pipeline`'s own diagnostic string (a
+    // session id, lowercase, built for a log line) -- keyed on the typed refusal alone, never on
+    // that sentence's own text (constitution II), so its wording can change on either side
+    // without this operator-facing copy drifting or breaking.
+    is SessionAudioExportRefusal.NothingToExport -> "Nothing to export — no audio from this session is on the phone."
     SessionAudioExportRefusal.ArchiveCapturingNow ->
         "The continuous archive is still being written for this " +
             "session — export over audio alone, or wait for it to end."

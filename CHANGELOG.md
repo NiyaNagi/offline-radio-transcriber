@@ -32,6 +32,52 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPRC02 round 3: over-row restack, refusal copy, axis spacing)
+
+### WPRC02 round 3 — the over row at font scale 2.0, operator-facing refusal copy, honest axis spacing
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionScreen.kt`,
+`RecordingSessionViewStateMapper.kt`, and their tests. No file outside `ui/recordings/**`
+touched.
+**Requirements/ACs:** constitution I, II, VIII; R-1027, R-373 (precedent, not modified).
+**What changed:** three defects the coordinator's own round-2 device evidence found, each with
+its own discriminating test:
+1. **Over rows collapsed at font scale 2.0.** The fixed play-control, time and Label columns
+   together left the weighted content column under a third of the row's own real width
+   (`round2\tour\overnight\RC02-recording-session@2x-end.png`: a transcript wrapping one or two
+   words per line, a facts line breaking at every `·`, an INFERRED confidence chip cut to a
+   sliver). `RecordingSessionOverRow` now checks `LocalDensity.current.fontScale` against the
+   same `1.5f` ceiling `LiveMonitorScreen.kt`'s own `LARGE_FONT_SCALE_THRESHOLD` (R-1027) and
+   `ui/components/Rows.kt`'s own `LogRow` (R-373) already use (both file-local constants, not
+   shared): below it, `RecordingSessionOverRowCompact` keeps the one-line shape unchanged; at or
+   above it, `RecordingSessionOverRowStacked` moves play/time/Label to their own top row (Label
+   stays reachable, never buried) and renders the transcript/attribution/facts content at the
+   row's own full width beneath it.
+2. **Refusal copy.** `exportRefusalMessage`'s `NothingToExport` branch rendered `:pipeline`'s own
+   diagnostic sentence verbatim (a session id, lowercase, built for a log line —
+   `export_empty_1x.png`). Replaced with a fixed operator sentence ("Nothing to export — no audio
+   from this session is on the phone."), keyed on the sealed type alone — `reason.reason` is no
+   longer read at all, so the copy cannot drift with whatever `:pipeline` logs next.
+3. **Axis spacing.** `rc02_overnight_1x.png` read "05 07 08 10 12" — uneven-looking gaps between
+   hour labels for five instants that were always evenly spaced in real time; the defect was
+   `axisLabels` truncating every instant down to its own hour, which reads as unevenly-spaced
+   labels the moment an instant does not land exactly on the hour. Each tick now shows its real
+   minute unless it truly lands on the hour (`axisLabelFor`) — never a silent round-down.
+**Verified:** each defect above had its own test written first and confirmed to fail for the
+right reason before the fix (production code reverted, test run alone, restored) —
+`RecordingSessionScreenLayoutTest`'s new `an over row restacks so its content column holds at
+least 60 percent of the row at 390dp font scale 2_0`/`...480dp font scale 2_0` (content column
+measured 110–114dp of a ~349dp row — 31–33% — before the fix); `RecordingSessionScreenTest`'s
+`the nothing-to-export message is keyed to the refusal type, never the diagnostic sentence inside
+it`; `RecordingSessionViewStateMapperTest`'s `a multi-hour session's axis shows a bare hour only
+when a tick truly lands on it` (updated from round 2's own `..., no minutes needed` — that
+expectation encoded the very defect this round fixes) and `a multi-hour session starting off the
+hour shows five genuinely evenly-spaced minute labels` (05:12–12:04, the coordinator's own cited
+span). `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.recordings.*"` — all green (75
+pre-existing plus new this round). `gradlew :app:ktlintCheck :app:detekt` — green.
+**Left open / not done:** none for this round's own three items — item 4 from round 2
+(`DrillInHeader`'s touch target) remains routed, not fixed, confirmed correct to stop on.
+
 ## 2026-09-13 (WPRC02 round 2: five coordinator-review defects on RC02)
 
 ### WPRC02 round 2 — byte sizes, export refusal, coverage axis, loading placeholder

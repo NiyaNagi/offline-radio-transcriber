@@ -408,13 +408,34 @@ class RecordingSessionViewStateMapperTest {
 
     @Test
     @Requirement("RC02")
-    fun `a multi-hour session's axis carries five distinct hour labels, no minutes needed`() {
-        // 6 h 42 m, the real `overnight` scenario's own span.
+    fun `a multi-hour session's axis shows a bare hour only when a tick truly lands on it`() {
+        // 6 h 42 m, the real `overnight` scenario's own span, starting exactly on the hour.
+        // Round 3 (coordinator review): the previous version of this test asserted
+        // ["00","01","03","05","06"] -- truncating every tick to its own hour, which is exactly
+        // the "05 07 08 10 12, uneven gaps" defect the coordinator's device evidence found: the
+        // five real instants ARE evenly spaced (100.5 minutes apart), but four of the five land
+        // between hours, so rounding every one down to "the hour" makes evenly-spaced instants
+        // read as unevenly-spaced labels. Only a tick that truly lands on the hour omits minutes.
         val span = SessionSpan(startedAtMillis = 0L, endedAtMillis = (6 * 60 + 42) * 60_000L)
         val state = RecordingSessionViewStateMapper.map(input(span = span))
         assertEquals(5, state.coverage.axisLabels.size)
         assertEquals(5, state.coverage.axisLabels.toSet().size)
-        assertEquals(listOf("00", "01", "03", "05", "06"), state.coverage.axisLabels)
+        assertEquals(listOf("00", "01:40", "03:21", "05:01", "06:42"), state.coverage.axisLabels)
+    }
+
+    @Test
+    @Requirement("RC02", "constitution I")
+    fun `a multi-hour session starting off the hour shows five genuinely evenly-spaced minute labels`() {
+        // 05:12 - 12:04 UTC (6 h 52 m) -- round 3's own coordinator-cited span: no tick lands on
+        // an exact hour, so this is the shape that most needs minutes to read honestly.
+        val span = SessionSpan(startedAtMillis = 18_720_000L, endedAtMillis = 43_440_000L)
+        val state = RecordingSessionViewStateMapper.map(input(span = span))
+        assertEquals(5, state.coverage.axisLabels.size)
+        assertEquals(5, state.coverage.axisLabels.toSet().size)
+        assertEquals(
+            listOf("05:12", "06:55", "08:38", "10:21", "12:04"),
+            state.coverage.axisLabels,
+        )
     }
 
     @Test

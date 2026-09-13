@@ -201,12 +201,27 @@ public object RecordingSessionViewStateMapper {
 
     private fun axisLabels(sessionStart: Long, sessionEnd: Long): List<String> {
         val span = (sessionEnd - sessionStart).coerceAtLeast(0L)
-        val format = if (span < SHORT_SPAN_THRESHOLD_MILLIS) HOUR_MINUTE_FORMAT else HOUR_FORMAT
-        if (sessionEnd <= sessionStart) return listOf(format.format(Instant.ofEpochMilli(sessionStart)))
+        val alwaysShowMinutes = span < SHORT_SPAN_THRESHOLD_MILLIS
+        if (sessionEnd <= sessionStart) return listOf(axisLabelFor(sessionStart, alwaysShowMinutes))
         return (0 until AXIS_LABEL_COUNT).map { index ->
             val at = sessionStart + span * index / (AXIS_LABEL_COUNT - 1)
-            format.format(Instant.ofEpochMilli(at))
+            axisLabelFor(at, alwaysShowMinutes)
         }
+    }
+
+    /**
+     * Round 3 (coordinator review): the five axis instants are always evenly spaced in real time
+     * (a plain linear interpolation, unchanged) — the defect the device evidence found
+     * (`rc02_overnight_1x.png`'s own "05 07 08 10 12", uneven-looking gaps) was this label's own
+     * formatting truncating every instant down to its hour, which reads as unevenly-spaced *labels*
+     * for evenly-spaced *instants* the moment one of them does not land exactly on the hour. A tick
+     * that genuinely lands on the hour reads bare ("06"); every other tick shows its real minute
+     * rather than silently rounding down to a nearby hour that is not actually where it falls.
+     */
+    private fun axisLabelFor(atMillis: Long, alwaysShowMinutes: Boolean): String {
+        val instant = Instant.ofEpochMilli(atMillis)
+        val onTheHour = instant.atZone(ZoneOffset.UTC).minute == 0
+        return if (alwaysShowMinutes || !onTheHour) HOUR_MINUTE_FORMAT.format(instant) else HOUR_FORMAT.format(instant)
     }
 
     private fun overRow(
