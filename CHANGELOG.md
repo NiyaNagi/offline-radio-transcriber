@@ -97,6 +97,13 @@ untouched), `app/src/main/kotlin/org/ort/app/ui/improve/` (`ImproveRunner.kt`, `
 - Full local gate after merging `origin/main` (WPMODLOG, WPSQUELCH, WPDIGINIT): see the session
   report for the exact green run and durations.
 
+**Out-of-package fix, flagged (mechanical, same shape as round 1's identical fix):**
+`OrtNavHostDestinationDispatchTest.kt` (`ui/navigation`) broke on the full gate after merging
+`origin/main` — round 2's own reattachment check runs on *every* composition of `ImproveContent`,
+not only when a run is started, so simply dispatching to `IMPROVE_RECORDS` (no tap at all) now
+reaches `WorkManager.getInstance(...)` through `RealImproveRunner.observeState`. Added the same one
+`@Before` this repository's other Worker-touching Robolectric tests already carry.
+
 **Left open / not done:**
 - The stop-then-resume test simulates the system's stop via cancelling the coroutine `doWork()` is
   suspended in, not `WorkManagerTestInitHelper`'s `TestDriver` — `TestDriver`'s public surface
