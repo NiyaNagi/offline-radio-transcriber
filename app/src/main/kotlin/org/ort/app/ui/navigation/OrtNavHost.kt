@@ -37,9 +37,13 @@ import kotlinx.coroutines.launch
 import org.ort.app.fieldreport.recorder.FieldReportRecorder
 import org.ort.app.fieldreport.recorder.RecorderDestination
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
-import org.ort.app.ui.components.LiveBar
+import org.ort.app.ui.audio.TransportPlaybackController
 import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.components.ScreenHeader
+import org.ort.app.ui.components.TransportBar
+import org.ort.app.ui.components.TransportBarActions
+import org.ort.app.ui.components.TransportBarViewState
+import org.ort.app.ui.components.formatTransportBarTime
 import org.ort.app.ui.components.safeAreaBottomPadding
 import org.ort.app.ui.data.DrawerCounts
 import org.ort.app.ui.data.DrawerCountsViewState
@@ -79,6 +83,12 @@ import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.RigStatus
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
+
+/** C10: the transport bar's own playback-position poll cadence — matches
+ * `TransmissionDetailScreen.kt`'s former per-screen `POSITION_POLL_MILLIS` (now hoisted here,
+ * `transportPlayback`'s own doc comment) rather than [POLL_INTERVAL_MILLIS]'s coarser 2s cadence,
+ * which would make the scrub bar visibly stutter. */
+private const val TRANSPORT_POLL_INTERVAL_MILLIS = 150L
 
 /** The delimiter [SearchFilterInputSaver] joins fields on - a control character no field's
  * own free text is expected to contain. */
@@ -276,7 +286,7 @@ public fun OrtNavHost(
     LaunchedEffect(drawerLive.liveBar, navigator) {
         navigator.liveBarState.value = drawerLive.liveBar
     }
-    val audioPlayer = remember { RealTransmissionAudioPlayer(context) }
+    val transportPlayback = rememberTransportPlayback(context, drawerLive)
 
     OrtNavHostBackHandler(current, navigator, navState, drawerState, scope)
 
@@ -351,7 +361,7 @@ public fun OrtNavHost(
                     sessionId = sessionId,
                     context = context,
                     drawerLive = drawerLive,
-                    audioPlayer = audioPlayer,
+                    transportPlayback = transportPlayback,
                     search = searchHostState(navigator, context, scope, navState, seed),
                 )
             }
@@ -1047,6 +1057,47 @@ private fun bannerClearance(hostHeaderShown: Boolean, contentTopPadding: Dp): Dp
     if (!hostHeaderShown && contentTopPadding > 0.dp) contentTopPadding + HOST_HEADER_HEIGHT else contentTopPadding
 
 /**
+ * C10 (`design/canvas/Transport-Bar.dc.html`): which [TransportBarViewState] [NavHostBody] should
+ * render, pulled out to a plain function — the same "pull the decision out of the composable" this
+ * file's own [bannerClearance] already established — so it is directly unit-testable
+ * (`TransportBarStateResolutionTest.kt`) without composing this whole host.
+ *
+ * The rules, in the order they are checked: **playback wins over live** ("one mode at a time" —
+ * checked first, before [embedsOwnLiveBar] even applies, because the artboard's "hidden on the
+ * screen it expands to" rule for playback is a *different* screen than the one it is for live:
+ * [openTransmissionId] naming the loaded transmission's own drill-in, not `Now`/`Capture`); a
+ * screen with no live session and nothing loaded shows nothing; a destination that embeds its own
+ * copy of the live bar (`Now`/`Capture`, [embedsOwnLiveBar]) never gets the host's live bar too
+ * (IA-2 — unchanged from R-022's own original rule); and the playing transmission's own detail
+ * screen never shows the bar that would just reopen itself.
+ */
+internal fun resolveTransportBarState(
+    transportPlayback: TransportPlaybackController,
+    liveBar: LiveBarViewState?,
+    embedsOwnLiveBar: Boolean,
+    openTransmissionId: String?,
+): TransportBarViewState {
+    val loadedTransmissionId = transportPlayback.loadedTransmissionId
+    return when {
+        loadedTransmissionId == null && embedsOwnLiveBar -> TransportBarViewState.Hidden
+        loadedTransmissionId == null ->
+            liveBar?.let { TransportBarViewState.Live(it) } ?: TransportBarViewState.Hidden
+        loadedTransmissionId == openTransmissionId -> TransportBarViewState.Hidden
+        else -> TransportBarViewState.Playback(
+            transmissionId = loadedTransmissionId,
+            callsignLabel = transportPlayback.callsignLabel,
+            isPlaying = transportPlayback.isPlayingState,
+            positionFraction = transportPlayback.positionFractionState,
+            elapsedLabel = formatTransportBarTime(
+                transportPlayback.positionFractionState * transportPlayback.durationSeconds,
+            ),
+            totalLabel = formatTransportBarTime(transportPlayback.durationSeconds),
+            capturingDotVisible = transportPlayback.isPlayingState && transportPlayback.capturingNow,
+        )
+    }
+}
+
+/**
  * The header (R-003/R-004/R-015/R-016), the current destination or drill-in's content, and the
  * live bar (R-022), stacked in one column filling [OrtNavHost]'s `Scaffold`. Extracted out of
  * [OrtNavHost] purely to keep that function under detekt's length limit — the same reason
@@ -1060,7 +1111,7 @@ private fun NavHostBody(
     sessionId: String?,
     context: android.content.Context,
     drawerLive: DrawerLiveState,
-    audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
+    transportPlayback: TransportPlaybackController,
     search: SearchHostState,
 ) {
     // Register R-262 (accessibility validator), superseded by R-957 (root cause, WPI's host
@@ -1157,27 +1208,45 @@ private fun NavHostBody(
         // extra clearance that comment explains.
         val clearance = bannerClearance(!isDrillIn && !isSearch && !isSettings, layout.contentTopPadding)
         Box(modifier = Modifier.weight(1f).padding(top = clearance)) {
-            NavHostDispatch(ids, callbacks, sessionId, context, audioPlayer, search)
+            NavHostDispatch(ids, callbacks, sessionId, context, transportPlayback, search)
         }
 
-        // R-022: pinned to the bottom of every destination and drill-in alike, while a session
-        // runs — `null` (nothing pinned) covers both "no session" and "session idle", never a bar
-        // with nothing real to show. Now and Capture are the two destinations that already pin
-        // their own (`NowScreen`/`CaptureStatusScreen`, WP4's — confirmed by reading both before
-        // assuming otherwise); rendering the host's bar there too would stack two.
+        // C10 (`design/canvas/Transport-Bar.dc.html`): replaces the plain pinned [LiveBar] this
+        // block used to render directly — see [resolveTransportBarState]'s own doc comment for the
+        // decision itself, pulled out to a plain function the same way [bannerClearance] above
+        // already is, so it is directly unit-testable without composing this whole host.
         val embedsOwnLiveBar = !isDrillIn &&
             (ids.current == ReaderDestination.NOW || ids.current == ReaderDestination.CAPTURE)
-        val shownLiveBar = if (!embedsOwnLiveBar) drawerLive.liveBar else null
-        if (shownLiveBar != null) {
-            // Wrapped, not passed as `LiveBar`'s own `modifier` (that param reaches only its
-            // inner clickable `Row`, not the 1dp top-edge strip above it — `ui/components/
-            // LiveBar.kt` is outside this row to edit for a more precise seam) — a plain `Column`
-            // sibling below the weighted content box above; Compose's own layout already gives
-            // that box exactly the remaining height, no measured-height state needed (R-957).
-            // `testTag` (register R-262): a stable node for a test to read this wrapper's own
-            // `boundsInRoot`, independent of `LiveBar`'s own runtime-varying label text.
+        val transportState = resolveTransportBarState(
+            transportPlayback = transportPlayback,
+            liveBar = drawerLive.liveBar,
+            embedsOwnLiveBar = embedsOwnLiveBar,
+            openTransmissionId = ids.transmissionId,
+        )
+        if (transportState != TransportBarViewState.Hidden) {
+            // Wrapped, not passed as a `modifier` (the same reasoning this block's own prior form
+            // had for `LiveBar`) — a plain `Column` sibling below the weighted content box above;
+            // Compose's own layout already gives that box exactly the remaining height, no
+            // measured-height state needed (R-957). `testTag` (register R-262): a stable node for a
+            // test to read this wrapper's own `boundsInRoot`, independent of the bar's own
+            // runtime-varying label/callsign text.
             Box(modifier = Modifier.testTag("live-bar-clearance")) {
-                LiveBar(state = shownLiveBar, onClick = callbacks.onOpenCapture)
+                TransportBar(
+                    state = transportState,
+                    actions = TransportBarActions(
+                        onTapLive = callbacks.onOpenCapture,
+                        onTapPlaying = callbacks.onOpenTransmission,
+                        onPlayPauseToggle = {
+                            if (transportPlayback.isPlayingState) {
+                                transportPlayback.pause()
+                            } else {
+                                transportPlayback.resume()
+                            }
+                        },
+                        onScrub = transportPlayback::seekToFraction,
+                        onClear = transportPlayback::clear,
+                    ),
+                )
             }
         }
     }
@@ -1286,6 +1355,45 @@ private fun NavHostDispatch(
             modifier = Modifier.fillMaxSize(),
         )
     }
+}
+
+/**
+ * C10 (`design/canvas/Transport-Bar.dc.html`): the single [RealTransmissionAudioPlayer] instance
+ * this host has always owned (this function's own `remember` block's prior form, inline in
+ * [OrtNavHost] before this) is now wrapped in [TransportPlaybackController] rather than passed
+ * raw — the controller delegates every [org.ort.app.ui.audio.TransmissionAudioPlayer] method (so
+ * every existing call site typed to that plain interface, all the way down to
+ * `TransmissionDetailScreen`'s own `PlaybackSection`, keeps compiling and behaving unchanged)
+ * while also tracking what is loaded, so the bar and whichever screen is on top never disagree
+ * about what is playing (R-1006 reversal — that class's own doc comment). Extracted out of
+ * [OrtNavHost] purely to keep that function under detekt's length limit, the same reason
+ * [rememberDrawerLiveState] already is.
+ *
+ * The one poll loop for playback (was `TransmissionDetailScreen`'s own, per-screen, before this
+ * round) lives in the `LaunchedEffect` below — hoisted here so end-of-track detection and
+ * position refresh happen whether or not the loaded transmission's own detail screen is currently
+ * on screen, the same reason [drawerLive]'s own status polling already lives at this level rather
+ * than per-destination. The second `LaunchedEffect` is C10 state 5 ("Playing while capturing"):
+ * the bar's own live dot persists during playback exactly when a session is genuinely live — the
+ * same fact [DrawerLiveState.liveBar] already being non-null means (constitution IV: capture is
+ * never out of sight, even while the bar reads playback).
+ */
+@Composable
+private fun rememberTransportPlayback(
+    context: android.content.Context,
+    drawerLive: DrawerLiveState,
+): TransportPlaybackController {
+    val transportPlayback = remember { TransportPlaybackController(RealTransmissionAudioPlayer(context)) }
+    LaunchedEffect(transportPlayback) {
+        while (true) {
+            transportPlayback.poll()
+            delay(TRANSPORT_POLL_INTERVAL_MILLIS)
+        }
+    }
+    LaunchedEffect(drawerLive.liveBar, transportPlayback) {
+        transportPlayback.capturingNow = drawerLive.liveBar != null
+    }
+    return transportPlayback
 }
 
 /** Everything [rememberDrawerLiveState] polls, bundled so it returns one value. */

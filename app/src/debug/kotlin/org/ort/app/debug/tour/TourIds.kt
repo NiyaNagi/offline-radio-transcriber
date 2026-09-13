@@ -23,8 +23,14 @@ import org.ort.data.OrtDatabase
  * - `transmission`: `confirmed` | `inferred` | `ambiguous` | `unknown` (the first transmission in
  *   [sessionId] carrying that [AttributionState]), `rejected` (v7, register R-010..R-014/R-334/
  *   R-770 — the first transmission in [sessionId] with [org.ort.core.TransmissionState.REJECTED] as
- *   its own `processingState`, F04 `Fail-Hallucination.dc.html`'s own detail), or a literal
- *   transmission id as a fallback for a case this table does not name.
+ *   its own `processingState`, F04 `Fail-Hallucination.dc.html`'s own detail), `confirmed-longest`
+ *   (WPUI follow-up, R-1006's on-device proof — the CONFIRMED transmission with the greatest
+ *   `durationMs` in [sessionId], never `confirmed`'s own *first*-by-`samplePosition` pick: every
+ *   other audio-bearing over in `OvernightScenario` inherits `ScenarioFixtures.transmission()`'s
+ *   4.2s default, too short to still be playing by the time a drillIn that navigates *away* and
+ *   captures again actually reaches its own `drawToBitmap()` — `overnight-live` alone seeds one
+ *   additional, longer CONFIRMED over for exactly this; see that file's own gated insert), or a
+ *   literal transmission id as a fallback for a case this table does not name.
  * - `station`: a callsign (looked up against every station this database knows, not scoped to one
  *   session — stations persist across sessions), or a literal station id.
  * - `frequency`: a literal Hz value (`"145230000"`, the coordinator's own example — a frequency is
@@ -108,6 +114,7 @@ public object TourIds {
 
     private suspend fun resolveTransmissionId(db: OrtDatabase, sessionId: String?, value: String): String {
         if (value == "rejected") return resolveRejectedTransmissionId(db, sessionId)
+        if (value == "confirmed-longest") return resolveLongestConfirmedTransmissionId(db, sessionId)
         val state = when (value) {
             "confirmed" -> AttributionState.CONFIRMED
             "inferred" -> AttributionState.INFERRED
@@ -127,6 +134,21 @@ public object TourIds {
      * [AttributionState] — a genuinely rejected segment's own `attributionState` stays whatever it
      * was last set to (`UNKNOWN` in every fixture today), so this cannot share
      * [resolveTransmissionId]'s own `AttributionState`-keyed lookup above. */
+    /** `confirmed-longest` (WPUI follow-up, R-1006's on-device proof) — see this file's own doc
+     * comment for why `confirmed`'s *first*-by-`samplePosition` pick is the wrong one for a step
+     * that needs the clip to still be playing after navigating away and capturing again. */
+    private suspend fun resolveLongestConfirmedTransmissionId(db: OrtDatabase, sessionId: String?): String {
+        val session = requireNotNull(sessionId) {
+            "transmission:'confirmed-longest' needs a session, but this step loaded none"
+        }
+        val match = db.transmissionDao().listBySession(session)
+            .filter { it.attributionState == AttributionState.CONFIRMED }
+            .maxByOrNull { it.durationMs }
+        return requireNotNull(match?.id) {
+            "no CONFIRMED transmission found in session '$session' for drillIn transmission:'confirmed-longest'"
+        }
+    }
+
     private suspend fun resolveRejectedTransmissionId(db: OrtDatabase, sessionId: String?): String {
         val session = requireNotNull(sessionId) { "transmission:'rejected' needs a session, but this step loaded none" }
         val match = db.transmissionDao().listBySession(session)

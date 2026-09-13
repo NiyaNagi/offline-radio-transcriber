@@ -368,6 +368,357 @@ scoped fix).
 
 **Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.ui.screens.SearchScreenTest"`
 green (including the new case). `:app:ktlintCheck :app:detekt` green.
+## 2026-09-12 (WPAUDX: RC02's session-audio export replaces the typed stub — a per-session slice of FR-STO-6, streamed, with a full provenance manifest)
+
+### 3df61335 — WPAUDX: `SessionAudioExport` replaces the WPDATA typed "unavailable" stub with a real per-session audio export — a streamed zip (over audio and/or the raw continuous archive) with a full provenance manifest, never buffering a whole file into memory
+
+**Scope:** `:pipeline` only — `pipeline/src/main/kotlin/org/ort/pipeline/archive/SessionAudioExport.kt` (rewritten; the stub removed, no dead path left), `pipeline/src/main/kotlin/org/ort/pipeline/archive/SessionAudioExportManifest.kt` (new: the manifest model and its hand-rolled JSON writer), and their tests. No `:data` schema, UI, or `ExportCoordinator` touched.
+
+**Requirements/ACs:** FR-STO-6, AC-80 (this is that export's per-session slice — see What changed for why no second format was invented), FR-EXP-4 (attribution confidence travels with every callsign in the manifest; `AMBIGUOUS`/`UNKNOWN` never carry one, reusing `org.ort.pipeline.export.ExportAttribution`), FR-SPK-20/FR-SPK-25 (voiceprints, embeddings, user-supplied station names/notes structurally excluded — stricter here than FR-STO-6 itself allows for its own future whole-database export), Q21 (open — training labels excluded from this export until decided), constitution I/III/VI, P9.
+
+**What changed:**
+- Searched first, per the prompt: no backup/export/archive writer of any kind existed anywhere in this codebase before this change. `org.ort.app.export.ExportCoordinator`'s four formats (ADIF/CSV/JSON/TEXT) are text-only; FR-STO-6's "export of the full database and audio archive" had no implementation at all. WPDATA's `SessionAudioExport.unavailable(sessionId)` was a typed stub naming exactly that gap for RC02's Export action (`Recording-Session.dc.html`). This change is FR-STO-6's audio export, applied to one session — not a second, competing format — and is shaped (both files' own kdoc says so) so a future whole-database export can nest many of these unchanged: the same `audio/<sessionId>/…`/`archive/<sessionId>/…` zip-entry layout the app's own on-disk directories already use, and the same manifest schema, one per session.
+- `SessionAudioExportTarget` (`OVER_AUDIO`/`RAW_ARCHIVE`/`BOTH`), mirroring `SessionAudioDeletionService`'s own `SessionAudioTarget` shape for the same screen's sibling action.
+- `canExport`/`preview`/`write`: `canExport` returns a typed `SessionAudioExportRefusal` (`SessionNotFound`, `NothingToExport(reason)`, `ArchiveCapturingNow`) or `null`; `preview` reports every file that will be written and the real total bytes (`File.length()`, never an estimate), `null` only for an unknown session — mirroring `SessionAudioDeletionService.preview`'s own null-for-unknown shape; `write` streams one zip to a caller-supplied `OutputStream` (the same shape `DiagnosticsBundleBuilder.write` already uses, so `:pipeline` never needs `Uri`/`ContentResolver`), refusing first and never touching the stream at all if refused.
+- Container chosen and justified: a zip, audio entries `ZipEntry.STORED` (FLAC is already compressed; re-deflating it wastes CPU on a container that can be gigabytes — the continuous archive, D39 — for essentially no size benefit), `manifest.json` alone left deflated (small text, compression is free). `STORED` requires size/CRC32 known before `putNextEntry`; both are computed by reading the file in 64 KiB chunks — never `File.readBytes()` — so a file is read twice, never loaded whole into memory.
+- `SessionAudioExportManifest`/`SessionAudioManifestWriter` (new file): session id, start/end, the real captured app version (`SessionEntity.appVersion`), the export target, both audio halves' state with an honest `includedInThisExport` flag kept distinct from "removed"/"never existed" (P9 — nothing reads as silently absent), and one row per over regardless of target — time, duration, frequency+provenance (deliberately per-over, never invented as one session-wide fact: a session can span many frequencies in scanner mode), attribution via the existing `ExportAttribution`/`toCells()` (reused, not reinvented — the same FR-EXP-4 structural guarantee `JsonExportWriter` already has), the current transcript version, processed tier and execution provider when recorded, and `audioIncluded` stating plainly whether this row's own FLAC actually made it into this particular zip. Hand-rolled JSON (no library on this module's classpath, matching `JsonExportWriter`'s own reasoning) rather than widening that object's private helpers past its own file.
+- Refusal rules: `SessionNotFound` for an unknown session; `NothingToExport` when everything the target asked for is already gone (over audio removed, or — for `RAW_ARCHIVE` — no archive was ever kept, or it was removed), the reason naming which, plainly; `ArchiveCapturingNow` for `RAW_ARCHIVE`/`BOTH` against the session capturing right now (`CaptureState`) — the continuous archive's trailing chunk is only flushed at session end (`ContinuousArchiveAttachment.finishAndAwait`), so reading the directory mid-session could ship a truncated chunk as though it were the whole recording. Over audio for overs already closed is never refused for this reason (each over's FLAC is written and verified independently the moment that over ends); a `BOTH` request while capturing is refused whole rather than silently downgraded to over-audio-only.
+- Excluded structurally, never merely filtered after being read: `VoiceprintEntity`/its embedding, `StationEntity.userName`/`.notes`, `OperatorLocationEntity`, and every `TransmissionLabelDao`/`TransmissionLabelEntity` field (Q21) — this object never queries any of them at all. Proven, not merely assumed: each marker seeded in the same database the export reads from, and asserted absent from the *decompressed* manifest entry (the raw zip bytes are not a valid absence proof for the deflated `manifest.json` entry — a bug caught and fixed in this same round, see Verified).
+- Naming: `SessionAudioExport.suggestedFileName` mirrors `ExportCoordinator.suggestedFileName`'s shape (scope/target word, UTC timestamp, real extension) — cannot literally share the function (`:pipeline` may not depend on `:app`, where `ExportCoordinator` lives).
+- Removed the WPDATA stub (`SessionAudioExportUnavailable`, `SessionAudioExport.unavailable`) entirely. RC02's future UI Export action is named as this file's consumer in its own KDoc, per the prompt, for whichever package wires it next.
+
+**Verified:**
+- Strict TDD, discriminating, revert-and-restore: (1) reverted `putStoredFileEntry`'s streaming loop to `zip.write(file.readBytes())` — `a large over-audio file is streamed in bounded chunks, never buffered whole into one write call` failed for the right reason (`the largest single write() call was 8388608 bytes`), restored, green again. (2) Added a `db.transmissionLabelDao().getByTransmissionId(...)` lookup feeding `label?.note` into `transcriptText` when no transcript exists — `training labels never appear in the export` failed for the right reason, restored, green again. Fixing (2) also caught a real weakness in two other exclusion tests (`station knowledge…`, `no voiceprint…`): they asserted absence against the *raw*, deflate-compressed zip bytes, which cannot prove absence from a compressed entry's plaintext — fixed to assert against the decompressed `manifest.json` entry instead.
+- `.\gradlew.bat :pipeline:testDebugUnitTest --tests "org.ort.pipeline.archive.*"` — 45 tests green (36 new across `SessionAudioExportTest`/`SessionAudioManifestWriterTest`; the 9 pre-existing tests in the package unaffected).
+- `.\gradlew.bat dependencyRules platformGuards build` (real `HF_TOKEN`, no escape hatch) — **BUILD SUCCESSFUL in 14m 34s**, 1109 tasks; `dependencyRules: OK` (20 modules, every edge permitted); `platformGuards: OK` (no analytics/telemetry SDK, no HTTP client outside `:net`, `INTERNET` declared by `:net` only). One `ktlint` round-trip along the way: `:pipeline:ktlintTestSourceSetCheck` flagged this round's own new `SessionAudioExportTest.kt` (`standard:function-signature` — a multi-line parameter list that fit under 120 columns collapsed), fixed with `:pipeline:ktlintFormat` (formatting-only, diff read before trusting it), reverified green (`:pipeline:ktlintTestSourceSetCheck`, `:pipeline:detekt`, the archive package's tests) before the full gate re-run above.
+- `.\gradlew.bat -p buildSrc test` — BUILD SUCCESSFUL.
+- `python tools/spec-check/spec_check.py` — 8/8 PASS.
+- `.\gradlew.bat coverageMatrix` then `.\gradlew.bat coverageMatrixCheck` (separate invocations) — `coverageMatrix: 483 requirements, 271 covered -> results\coverage-matrix.md` (up from 269); `coverageMatrixCheck: up to date (271 covered of 483)`. `FR-STO-6`, `FR-SPK-20`, `FR-SPK-25` and `Q21` now list `SessionAudioExportTest`/`SessionAudioManifestWriterTest`.
+
+**Left open / not done:** FR-REP-10 (offering reprocessing after an import) and the rest of AC-80 (a real whole-database export/import) are not built — this change is FR-STO-6's per-session audio slice only, as scoped, and says so in its own KDoc. Q21 (whether training labels may ever leave the device) stays open; this export excludes them structurally rather than deciding the question. RC02's UI Export action (the consumer) and the future whole-database export that would reuse this manifest shape are both out of this package's ownership and not built here.
+
+---
+
+## 2026-09-12 (WPUI: C10 the transport bar, replacing the plain live bar host-wide, and its own reversal of R-1006's stop-on-leave — the bar, not the screen, now owns playback)
+
+### 48d5687d — WPUI: R-1049 halt fixed — the playback bar was a full-height panel, not a bottom strip
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/TransportBar.kt` (the fix), plus one new
+Robolectric test file `app/src/test/kotlin/org/ort/app/ui/navigation/TransportBarHostLayoutTest.kt`.
+
+**Requirements/ACs:** R-1006, R-1049 (register, severity halt — the coordinator's own on-device
+finding after this session's own prior WPUI follow-up commit), constitution VIII ("a screenshot
+wins over a passing test") and constitution II (discrimination: failing before, passing after).
+
+**What changed:**
+- **Root cause**: `TransportBar.kt`'s `ScrubTrack` composable wrapped its thin 3dp track line in
+  `Column(Modifier.fillMaxWidth().fillMaxHeight())`. `TransportBarLayoutTest.kt`'s own existing
+  coverage never caught this because it composes `TransportBar` alone inside an artificially
+  fixed-height `Box(Modifier.height(200.dp))` — bounding the very growth this bug is about, so a
+  bar that had already grown to fill that fixed 200dp still passed the suite's own "at least 44dp"
+  floor assertion (there was no ceiling assertion at all). On the real host
+  (`OrtNavHost.kt`'s `NavHostBody`: `Scaffold` → `Column` → a `weight(1f)` content box → the bar as
+  a plain, unweighted sibling below, with no height cap of its own), that `fillMaxHeight()` instead
+  filled the entire real, unbounded remaining screen height — exactly the "full-height dark panel"
+  the coordinator described from this session's own prior capture, and exactly what the prior
+  capture's own uiautomator dump had already shown (`transport-bar-scrub` at 2437px tall) — this
+  session had misread that number as the known Compose accessibility-bounds-merging artifact
+  (R-1025) rather than a real, reproducible layout bug; the coordinator's own re-inspection of the
+  captures themselves is what actually caught it, per constitution VIII.
+- **The fix**: removed `.fillMaxHeight()` from that `Column` — the outer `Box`'s own
+  `contentAlignment = Alignment.CenterStart` already centers it vertically within whatever height
+  the row actually needs, so no explicit fill was ever required to get that centering, only to
+  cause the defect. Live mode is untouched (it delegates entirely to the existing `LiveBar`, which
+  `ScrubTrack`/`PlaybackTransportBar` are never part of).
+- **New test, `TransportBarHostLayoutTest`**: composes the *same scaffold shape* `NavHostBody`
+  actually uses — real `Scaffold`/`Column`/`weight(1f)` content box (real `LogContent`, not a
+  stand-in), the bar as a plain sibling below — at the tour's own real device height
+  (`@Config(qualifiers = "w390dp-h844dp-420dpi")`/`"w480dp-h844dp-420dpi"`, `@GraphicsMode.NATIVE`),
+  font scale 1.0 and 2.0. Asserts the bar's own row (`transport-bar-playback`) is bounded (<=70dp
+  at 1.0, <=76dp at 2.0 — measured post-fix: 64.0dp/63.76dp at 1.0, identical at 2.0) and that the
+  destination's own content (`LogContent`'s real "No overs yet." empty state) sits above the bar's
+  top edge, never covered by it. Deliberately not `OrtNavHost` driven into Playback via a real tap:
+  this app's only way to reach a genuine `Playback` state is a real
+  `RealTransmissionAudioPlayer` decode-then-`AudioTrack` cycle, and that class's own test file says
+  outright Robolectric's `AudioTrack` shadow "does not play sound" / "does not faithfully reproduce
+  real hardware initialization" — no UI-level test in this codebase drives that real path end to
+  end for exactly that reason. Seeding `TransportBarViewState.Playback` as a plain value is the
+  same discipline this file's own existing tests already use, applied to a layout defect that has
+  nothing to do with how the state is produced.
+
+**Verified:**
+- Discrimination, shown not claimed: `TransportBarHostLayoutTest`'s four cases, run against the
+  unfixed `ScrubTrack`, failed with the bar's own row measured at **842.67dp** (390dp width) /
+  **684.67dp** (480dp width) — effectively the whole 844dp root minus the header. Run again after
+  the fix, all four passed with the row at **64.0dp** (390dp) / **63.76dp** (480dp), both font
+  scales.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.navigation.TransportBarHostLayoutTest"
+  --tests "org.ort.app.ui.components.TransportBarLayoutTest" --tests
+  "org.ort.app.ui.components.TransportBarTest" --tests
+  "org.ort.app.ui.navigation.TransportBarStateResolutionTest" --tests
+  "org.ort.app.ui.navigation.OrtNavHostDestinationDispatchTest" --tests
+  "org.ort.app.ui.components.LiveBarTest" --tests "org.ort.app.ui.navigation.NavSeedTest"` — all
+  green, confirming Live mode (which never touches `ScrubTrack`) is pixel-identical.
+- On-device: `install.ps1 -Port 5558 -Clear` then `tour.ps1 -Port 5558 -Only "overnight-live/C10-*"`
+  on `emulator-5558` — 4/4 ok, 0 errors, 77.7s. All four captures (new scratch dir
+  `wpui-r1049-fix-proof`) now show the real, full `LogContent` (header, Filter, All/Named/Rejected,
+  TIME/FREQ/STATION/SIG, "No overs yet.") with the bar as a thin strip at the bottom, never
+  covering it. `uiautomator dump` in both states: `transport-bar-playback` container
+  `[0,2503][1260,2709]` (206px/78.5dp tall using the coordinator's own 420dpi/2.625px-per-dp
+  figure); `transport-bar-scrub` height dropped from the prior capture's 2437px to **142px** in
+  both Playing and Paused — the "sane number" the coordinator asked for, not explained away.
+- Full gate (with a real `HF_TOKEN`, no escape hatch): see the follow-up commit that records its
+  own result once run — the exact command lines and outcome are reported to the coordinator
+  directly per this round's own instruction, not duplicated here ahead of that report landing.
+
+**Left open / not done:**
+- The exact effective px-per-dp this specific emulator override (`wm size` 1260x2772 layered over
+  a physical 1080x2400 @420dpi, both reported by `wm density`/`dumpsys window displays`) actually
+  renders at is not fully reconciled: the coordinator's own literal 420dpi/2.625px-per-dp figure
+  and a figure back-computed from the toggle's own known-44dp size (156px, ~3.545px/dp) disagree,
+  and neither cleanly explains every measured node. Both conversions land the pause/scrub/×
+  measurements well clear of the 44dp/115.5px floor either way, so this did not block the fix or
+  its verification, but the discrepancy itself is unexplained and pre-existing to this round (not
+  introduced by it).
+
+### 48e94a0d — WPUI follow-up: on-device proof of C10's Playing/Paused modes surviving navigation (R-1006)
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourSpec,TourIds,ScreenshotTourActivity}.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/OvernightScenario.kt`, `tools/ui-audit/tour.json`, plus
+matching tests under `app/src/test/kotlin/org/ort/app/{debug/tour,ui/components,ui/navigation}/**`.
+No production (`main`) source touched this round — this is entirely tour/scenario infra and tests.
+
+**Requirements/ACs:** R-1006 (reversal, on-device proof — the coordinator's own explicit demand,
+constitution VIII: "a screenshot wins over a passing test"), constitution II (discrimination shown
+for every new test).
+
+**What changed:**
+- **Two new destination-step-only tour drillIns**, `playThenNavigate`/`pauseThenNavigate`
+  (`TourSpec.kt`, `ScreenshotTourActivity.kt`): after a step's own transmission drill-in settles,
+  taps the real waveform play control (`Inspection.kt`'s stable `waveform-glyph-play` testTag,
+  the same bounds-overlap accessibility tap `TourAccessibilityTap` already uses for the live bar),
+  confirms real playback started, then — `pauseThenNavigate` only — taps pause and confirms it
+  took, then a real system back press (`onBackPressedDispatcher.onBackPressed()`, never
+  `Espresso.pressBack()`, matching `ReaderActivityDestinationSmokeTest`'s own established
+  mechanism) closes the drill-in, landing on the step's own destination with the transport bar
+  (C10) visible in whichever mode the taps left it in. Appended to `tour.json` as four new steps
+  (`overnight-live/C10-playing-then-log[@2x]`, `overnight-live/C10-paused-then-log[@2x]`).
+- **`confirmed-longest` drillIn value** (`TourIds.kt`, new
+  `resolveLongestConfirmedTransmissionId`): every other audio-bearing over in `OvernightScenario`
+  inherits `ScenarioFixtures.transmission()`'s 4.2s default duration — real, decodable audio, but
+  too short for the tour's own real-device latency between tapping play and that same step's final
+  `drawToBitmap()` after navigating away: the clip finished first, and
+  `TransportPlaybackController.poll()`'s end-of-track handling correctly cleared the bar back to
+  Live *before* the capture (device evidence: the plain `confirmed`-keyed step's 1.0 capture showed
+  Live, not Playback, while its own @2x sibling happened to still catch Playing — a timing race,
+  not a fix). `confirmed-longest` resolves to the CONFIRMED transmission with the greatest
+  `durationMs` in the session instead of `confirmed`'s first-by-`samplePosition` pick.
+- **`OvernightScenario.kt`**: one additional CONFIRMED, audio-bearing over (24s, `W7NPC`), gated to
+  `scenarioName == "overnight-live"` only (never `overnight`/`gap-call`, this same `build()`'s other
+  two callers) and inserted last (highest `samplePosition`), so plain `confirmed` still resolves to
+  tx1 unchanged everywhere else — the smallest addition per the coordinator's own allowance ("if no
+  scenario has retained audio the tour can play, add the smallest scenario that does"; here audio
+  already existed and played, so the fix is a longer-lived over, not a new scenario).
+- **Tests:** `TourIdsTest.R_TOUR_IDS_TRANSMISSION_CONFIRMED_LONGEST` (discrimination: temporarily
+  made the new resolver reuse the plain `confirmed` first-by-`samplePosition` lookup, watched it
+  fail on `resolvedId != tx1Id`, reverted); `TransportBarTest.` "x in Paused really stops the
+  underlying player, not merely the bar's own callback" (discrimination: temporarily made
+  `TransportPlaybackController.clear`/`stop` skip `delegate.stop()`, watched `stopCallCount` stay
+  `0`, reverted); `TransportBarStateResolutionTest.` "a finished over's poll tick clears the bar
+  back to Live/Hidden" (discrimination: temporarily made `poll()` skip its end-of-track `stop()`
+  call, watched `state` stay `Playback`, reverted).
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourIdsTest" --tests
+  "org.ort.app.debug.WpiScenariosTest" --tests "org.ort.app.debug.OvernightLiveMonitorScenarioTest"
+  --tests "org.ort.app.debug.TourParityFixtureTest" --tests "org.ort.app.ui.components.TransportBarTest"
+  --tests "org.ort.app.ui.navigation.TransportBarStateResolutionTest"` — all green (`BUILD
+  SUCCESSFUL`), confirming the new `overnight-live` fixture addition breaks no existing scenario
+  or scene count assertion.
+- On-device: `install.ps1 -Port 5558 -Clear` then `tour.ps1 -Port 5558 -Only "overnight-live/C10-*"`
+  on `emulator-5558` (AVD `ort_audit_3`) — 4/4 steps ok, 0 errors, 66.2s elapsed. All four captures
+  now show the intended state reliably (previously only 3 of 4 did, by timing luck): Playing shows
+  pause, elapsed/total (`0:08 / 0:24`), scrub, callsign `W7NPC`, and the live capturing dot;
+  Paused shows play, the same elapsed/total, and the `×` clear control. Confirmed via a temporary
+  hand-built one-step spec (`waitMillis: 20000`, never committed) plus `adb shell uiautomator dump`
+  mid-hold: `transport-bar-toggle` (pause, Playing) `[117,1381][273,1537]` = 156×156px;
+  `transport-bar-toggle` (play, Paused) `[58,1381][214,1537]` = 156×156px; `transport-bar-clear`
+  (×, Paused) `[1046,1381][1202,1537]` = 156×156px — all comfortably over the coordinator's own
+  115.5px (44dp @ 420dpi) floor, and matching `TransportBar.kt`'s own `.size(44.dp)` declarations
+  for both controls exactly (this device's actual effective scale, back-computed from these
+  self-consistent 44dp-by-source bounds, is ~3.545px/dp — the AVD carries a `wm size` override atop
+  its 420dpi physical density, so 115.5px is a conservative floor here, not the literal threshold).
+
+**Left open / not done:**
+- `transport-bar-scrub`'s uiautomator-reported *height* (`[591,240][1034,2677]` while Playing,
+  `[532,240][856,2677]` while Paused — 2437px either way) is not trustworthy evidence: this is the
+  same Compose accessibility-node bounds-merging artifact this package's own `TourAccessibilityTapTest`
+  already documented and reproduced for the live bar (R-1025 — a tagged node reporting a
+  merged-ancestor's bounds rather than its own). The scrub's *width* narrowed correctly between
+  Playing (443px, more filled) and Paused (324px, less filled) states, so the node itself is real;
+  only its reported height is unusable. The 44dp-minimum-height claim for the scrub rests instead
+  on `TransportBar.kt:242`'s own `.heightIn(min = 44.dp)` source declaration and the already-green
+  `TransportBarTest.` "the pause-play control and the scrub track each carry a 44dp touch target"
+  Robolectric assertion (`assertHeightIsAtLeast(44.dp)`) — not on-device pixel evidence, which this
+  entry could not honestly produce for this one dimension.
+- The temporary one-step hold specs (`hold-playing-spec.json`/`hold-paused-spec.json`,
+  `waitMillis: 20000`) used to catch the uiautomator dump mid-state live only in this session's own
+  scratch directory and were never written into `tools/ui-audit/tour.json` or any tracked file —
+  the canonical tour steps keep `waitMillis` unset (0), unchanged from the prior commit.
+
+### 6340b3e7 — WPUI: the transport bar (C10) and the R-1006 reversal — the bar owns playback, so leaving a screen never stops it
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/TransportBar.kt` (new),
+`app/src/main/kotlin/org/ort/app/ui/audio/TransportPlaybackController.kt` (new),
+`app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt` (the pinned-bar construction/render
+site and the new `resolveTransportBarState` decision function), `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt`
+(`PlaybackSection`'s R-1006 stop-on-dispose removed, its `playing`/`positionFraction` seeded from
+the shared controller when one is in play, `togglePlayback` now also feeds the bar's
+callsign/duration on a successful play); matching tests under
+`app/src/test/kotlin/org/ort/app/ui/{components,audio,navigation,screens}/**`.
+**Not touched this round, and explicitly out of scope — see Left open**: Capture (N08), Recordings
+(RC01), Recording-Session (RC02), the `EARLIER_NIGHTS`→`RECORDINGS` drawer change, the FR-OBS-4
+label migration, and session deletion.
+
+**Requirements/ACs:** IA-1, IA-2, FR-UI-5, constitution IV (the live dot persists during playback
+so capture is never out of sight). Register R-1006 (`results/ui-audit/register.md` — status there
+is the lead's to update, not this entry's). R-1021's own rule (never match on the live label's
+text) is unaffected — the playback half of the bar carries no such label at all.
+
+**What changed:**
+- **`TransportBar` (new, `ui/components/TransportBar.kt`)**: one composable, two modes, matching
+  `design/canvas/Transport-Bar.dc.html` exactly. `TransportBarViewState.Live` delegates straight
+  to the existing `LiveBar` (states 1-3, unchanged pixels — nothing about the live rendering
+  changed, only what decides when to show it). `TransportBarViewState.Playback` (new, states 4-6)
+  renders the pause/play toggle (44dp target, reusing `Inspection.kt`'s own
+  `waveformControlGlyph`/`PauseGlyph`/`OrtIcons.play` pairing rather than a second hand-drawn
+  glyph), the `m:ss / m:ss` elapsed/total (mono, locale-independent — plain integer division,
+  never a formatted number per constitution II), a scrub track (44dp touch target around a 3dp
+  visual bar, reusing `Inspection.kt`'s own `scrubFraction`), the callsign (falls back to
+  "Unknown", never blank), a small live dot only while playing during a real capture session
+  (state 5), and the `×` clear control — drawn, per the artboard, only in the paused state (a
+  bar mid-play has no dismiss control; pause first). `TransportBarViewState.Hidden` renders
+  nothing. The artboard's own "tap → that transmission" is scoped to the callsign specifically,
+  not the whole row — the row also hosts three other independent 44dp targets, and a single
+  row-wide `clickable`/`clearAndSetSemantics` (the shape `LiveBar`'s own single-target row uses)
+  would either swallow their touches or erase their individual descriptions from the
+  accessibility tree entirely (confirmed by trying it first and watching
+  `TransportBarTest`'s glyph-tag assertions fail against a merged tree).
+- **`TransportPlaybackController` (new, `ui/audio/TransportPlaybackController.kt`)**: wraps the
+  single `TransmissionAudioPlayer` instance `OrtNavHost` has always owned, implementing the same
+  interface by delegation so every existing call site typed to that plain interface —
+  `TransmissionDetailScreen`/`TransmissionDetailContent`, `NavHostBody`/`NavHostDispatch` — keeps
+  compiling and behaving unchanged; only `OrtNavHost`'s own construction site changes what
+  concrete instance flows through. Every interface call updates the controller's own observable
+  state (`loadedTransmissionId`, `callsignLabel`, `durationSeconds`, `isPlayingState`,
+  `positionFractionState`) as a side effect, regardless of which screen made the call, so the bar
+  and whichever screen is on top never disagree about what is playing. `poll()` is the one
+  playback poll loop, hoisted to `OrtNavHost` (a `LaunchedEffect` running every 150ms regardless of
+  destination) rather than living per-screen as it used to — this is what lets end-of-track
+  detection and position refresh keep working while the loaded transmission's own detail screen is
+  not even on screen. `clear()` is the bar's own named `×` action (same effect as `stop()`, a
+  distinct entry point so a test can name what it asserts without leaning on the interface
+  method's more generic doc comment).
+- **`OrtNavHost.kt`**: `audioPlayer` is now a `TransportPlaybackController` wrapping the same
+  `RealTransmissionAudioPlayer` construction as before (one line changed at the construction site);
+  a new `resolveTransportBarState(transportPlayback, liveBar, embedsOwnLiveBar, openTransmissionId)`
+  (pulled out to a plain, `internal`, directly-unit-testable function — the same "pull the
+  decision out of the composable" discipline this file's own `bannerClearance` already
+  established) replaces the inline `shownLiveBar`/`LiveBar(...)` block that used to render the
+  pinned bar directly. The decision: playback wins over live whenever something is loaded
+  (`TransportBarStateResolutionTest`'s own "one mode at a time" case) *except* on the playing
+  transmission's own detail screen (hidden there — that screen already shows full playback
+  controls of its own); live shows only when nothing is loaded, and only on a destination that
+  does not already embed its own copy (`Now`/`Capture`, IA-2, unchanged from R-022's original
+  rule) — critically, *unlike* live, **playback still shows on `Now`/`Capture`**, since it is a
+  different mode the artboard's own "playing while capturing" state (5) requires to be visible
+  there too.
+- **R-1006 reversal, `TransmissionDetailScreen.kt`'s `PlaybackSection`**: the
+  `DisposableEffect(detail.id) { onDispose { player.stop() } }` this function added for R-1006 is
+  removed outright, not narrowed — both shapes it used to cover (a genuine navigate-away, and a
+  same-screen switch to a different over's detail before that over's own play control is ever
+  tapped) are now cases the artboard requires playback to survive. What still stops playback is
+  unchanged: reaching the over's own recorded end (the poll loop, untouched — a real `AudioTrack`
+  never flips `playState` on its own) and the bar's own `×`; neither lives in this screen anymore,
+  because the bar, not the screen, owns the decision. `playing`/`positionFraction` now seed from
+  the shared `TransportPlaybackController` (via an `as?` check — `null` for every existing test
+  that passes a plain `FakeTransmissionAudioPlayer`, so no behaviour change for any caller that
+  does not opt into the controller) so a still-playing transmission returned to reads "Pause"
+  immediately rather than resetting to a stale "Play". `togglePlayback` also calls
+  `setNowPlayingMeta` on a successful play, since `TransmissionAudioPlayer.play()` itself has no
+  way to carry a callsign or duration to the bar.
+
+**Verified:**
+- `TransportPlaybackControllerTest` (11 tests, plain JVM, no Robolectric) — play/pause/resume/
+  seek/clear/poll, end-of-track clearing, stale-id metadata rejection, "a second play stops
+  whatever was loaded". All pass.
+- `TransportBarTest` (10 tests, Robolectric) — hidden/live/playback dispatch, pause vs. play
+  glyph, `×` present only when paused, the toggle firing its own action rather than the row's,
+  the capturing dot's visibility, the "Unknown" fallback, scrub reporting a `0f..1f` fraction, the
+  44dp targets, and `formatTransportBarTime`. All pass.
+- `TransportBarLayoutTest` (5 tests, Robolectric, `@GraphicsMode(NATIVE)` at 2.0) — no overlap
+  between the toggle/scrub/callsign at 390dp and 480dp, font scale 1.0 and 2.0, and the row's own
+  44dp floor. All pass. **Not proven by any Robolectric test in this repo** (per
+  `ui/components/SafeArea.kt`'s own doc comment, unchanged by this round): that the bar clears the
+  real navigation-bar inset — `WindowInsets.navigationBars` reads zero under this project's
+  Robolectric setup by every method that file's own investigation tried. Structurally unchanged
+  from before this round: the bar occupies the exact `Column` slot the plain `LiveBar` it replaces
+  already did, under the same `.safeAreaBottomPadding()` the host applies once to that whole
+  column — a device dump is the only evidence that would close this, not written here.
+- `TransportBarStateResolutionTest` (9 tests, plain JVM) — every branch of
+  `resolveTransportBarState`: nothing loaded and no live session hides the bar; a live session
+  shows live; `Now`/`Capture` hide the host's own live copy (IA-2); playback wins over live and
+  shows even on `Now`/`Capture`; the playing transmission's own screen hides the bar; a
+  *different* open transmission still shows it; callsign/position/capturing-dot carry through
+  correctly, including no dot while paused. All pass.
+- `PlaybackControlDetailScreenTest` — the R-1006 suite, two of its three tests replaced with the
+  opposite assertion (`R_1006_leaving_the_screen_mid_playback_does_not_stop_the_players_audio`,
+  `R_1006_showing_a_different_over_without_playing_it_does_not_stop_the_first_ones_playback`),
+  the third (reaching the recorded end) unchanged. **Discrimination proven**: temporarily restored
+  the removed `DisposableEffect`, confirmed both new tests fail
+  (`expected:<0> but was:<1>` on `stopCallCount`), reverted, confirmed both pass again.
+- Full regression, `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.navigation.*" --tests "org.ort.app.ui.screens.*" --tests "org.ort.app.ui.components.*" --tests "org.ort.app.ui.audio.*"`
+  — BUILD SUCCESSFUL, every test green (~1000+ tests across those four packages, including
+  `TransmissionDetailScreenTest`, `TransmissionDetailScreenCorrectionTest`'s FR-OBS-4 suite,
+  `DrawerContentTest`, every `*ScreenTest` in `ui.screens`).
+- The Compose-idle-poisoning-isolated classes this project runs under a separate task
+  (`app/build.gradle.kts`'s own `smokeTestDebugUnitTest`) run and pass individually:
+  `NavSeedTest` (15/15), `OrtNavHostDestinationDispatchTest` (26/26 — including every
+  `R_910 exactly one live bar on <destination>` case across all ten destinations, `R_957`'s live-bar
+  boundary geometry, and `R_1007`'s tap-opens-Live-Monitor), `ReaderActivityDestinationSmokeTest`
+  (30/30 — every destination composing and surviving recreation, `R_333`'s back-pop ordering,
+  `R_276`'s frequency-overs-link/back-restore), `ReaderAccessibilityTest` (3/3),
+  `TransmissionDetailContentTest` (17/17, a real `OrtDatabase`-backed integration test of the
+  exact screen this round edited), `FailureHostTest` (9/9).
+- `./gradlew dependencyRules platformGuards` — OK (20 modules, no forbidden edge; no analytics/
+  telemetry, `INTERNET` declared by `:net` only).
+- `python tools/spec-check/spec_check.py` — OK, all 8 checks pass.
+- `./gradlew -p buildSrc test` — BUILD SUCCESSFUL.
+- `./gradlew dependencyRules platformGuards build -PortAllowMissingBundledAssets=true` — BUILD
+  SUCCESSFUL in 13m 47s (1109 actionable tasks), on this shared, heavily-loaded workstation —
+  covers the whole gate: dependency-rule/platform-guard checks, ktlint, detekt, lint, every
+  module's unit tests (including `:app`'s ~1200-test `testDebugUnitTest` and the isolated
+  `smokeTestDebugUnitTest` classes above, run again here as part of `check`), and both the debug
+  and release APK assembly.
+
+**Left open / not done:** The full WPUI brief also asked for Capture (N08, merging N04/N06/N07
+into one surface with the over-audio budget warning), Recordings (RC01, absorbing DG03, both
+storage-budget policies, filter chips), Recording-Session (RC02, coverage timeline, per-over play/
+label/delete with reclaimed-space-before-confirming), the `EARLIER_NIGHTS`→`RECORDINGS` drawer
+row, the FR-OBS-4 label/rating Room migration, and a session-deletion path satisfying
+FR-STO-3a/3b/3e. None of that is built. Reason, stated plainly rather than silently dropped: this
+is a genuinely separate, large scope from the transport bar — RC02's delete action alone requires
+a new transactional deletion subsystem with no existing code to reuse (confirmed by investigation:
+no manual over-audio deletion path exists anywhere in `:app`/`:pipeline` today), and N08/RC01/RC02
+each need their own artboard-accurate layout work, Robolectric bounds tests and tour captures on
+top of that. Attempting all of it in one pass risked exactly the kind of half-finished, unverified
+work AGENTS.md's working agreement warns against. No tour capture was taken this round (nothing
+visual changed for the live-bar rendering path — it is the same `LiveBar` composable, unchanged
+pixels, dispatched through a new decision function — and no scenario/seed exists yet to put the
+bar into its playback mode for a tour step; building that seam was judged out of scope for this
+slice). `design/design-intent.md`'s C10 row is left for the lead to update, per this package's own
+instructions.
+
 ## 2026-09-12 (WPDATA fix: R-1043 correction — the v12→v13 migration test's own long name broke Windows MAX_PATH, not the environment)
 
 ### WPDATA fix — root cause found and fixed: `migration_from_v12_to_v13_...`'s combination of its own (correctly descriptive) test name and a long `dbName` pushed the resolved Robolectric sandbox path past Windows' 260-character limit; shortening `dbName` fixes it, verified 3× alone and 3× in the full `:data` suite

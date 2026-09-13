@@ -299,6 +299,34 @@ public class ScreenshotTourActivity : ComponentActivity() {
             }
             awaitLiveMonitorVisible(step.id)
         }
+        // WPUI follow-up (R-1006's on-device proof, coordinator round): see `TourStep`'s own doc
+        // comment for the full contract. Meaningful only alongside `transmission` in the same
+        // step's own `drillIn` (the drill-in this just settled on, above) — a step naming either
+        // key with no `transmission` finds no waveform play control to tap and fails loudly at the
+        // first `awaitTagPresent` below, the same "never a silent no-op" contract every other
+        // drillIn key here already has.
+        val playThenNavigate = step.drillIn["playThenNavigate"] == "true"
+        val pauseThenNavigate = step.drillIn["pauseThenNavigate"] == "true"
+        if (playThenNavigate || pauseThenNavigate) {
+            awaitTagPresent(step.id, WAVEFORM_PLAY_TEST_TAG)
+            tapTaggedNodeOrFail(step.id, WAVEFORM_PLAY_TEST_TAG)
+            // Proves real playback actually started — the glyph is driven by
+            // `PlaybackSection`'s own `playing` state, not the tap itself succeeding.
+            awaitTagPresent(step.id, WAVEFORM_PAUSE_TEST_TAG)
+            if (pauseThenNavigate) {
+                tapTaggedNodeOrFail(step.id, WAVEFORM_PAUSE_TEST_TAG)
+                // Proves the pause actually took — the glyph flips back only once `playing` does.
+                awaitTagPresent(step.id, WAVEFORM_PLAY_TEST_TAG)
+            }
+            // R-1006 reversal: a real system back press — the same
+            // `onBackPressedDispatcher.onBackPressed()` mechanism
+            // `ReaderActivityDestinationSmokeTest` already uses, never `Espresso.pressBack()` (this
+            // module carries no dependency on it) — closes the transmission drill-in without
+            // stopping playback, landing on this step's own `destination` with the transport bar
+            // (C10) now visible.
+            onBackPressedDispatcher.onBackPressed()
+            awaitTagPresent(step.id, TRANSPORT_BAR_PLAYBACK_TEST_TAG)
+        }
         if (step.override != null) {
             Scenarios.load(applicationContext, step.override)
             // The override must be observed by the *next* poll tick, not a fresh composition (this
@@ -425,6 +453,41 @@ public class ScreenshotTourActivity : ComponentActivity() {
                     "awaitDestinationSettled already proved that) but the accessibility tree never " +
                     "reflected it",
             )
+        }
+    }
+
+    /**
+     * WPUI follow-up (R-1006's on-device proof): a generic version of [awaitLiveBarTagPresent] for
+     * any [testTag], not only the live bar's own — waits (bounded,
+     * [STATE_WAIT_TIMEOUT_MILLIS]) until some node anywhere in the tree carries [testTag], the same
+     * "wait on observed state, never a wall-clock guess" discipline that function's own doc comment
+     * argues for. Not a rename of that function (kept, unchanged, for its own existing callers) —
+     * a second, narrower one would only invite the two drifting apart later.
+     */
+    private suspend fun awaitTagPresent(stepId: String, testTag: String) {
+        val settled = withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
+            while (!TourAccessibilityTap.hasNodeWithTestTag(window.decorView, testTag)) {
+                delay(STATE_POLL_INTERVAL_MILLIS)
+            }
+            true
+        } == true
+        if (!settled) {
+            error(
+                "tour step '$stepId' never found a node tagged '$testTag' within " +
+                    "${STATE_WAIT_TIMEOUT_MILLIS}ms",
+            )
+        }
+    }
+
+    /** WPUI follow-up: [TourAccessibilityTap.tapNodeWithTestTag], failing loudly with
+     * [TourAccessibilityTap.describeNodes]'s own evidence in the message — the identical shape the
+     * `tapLiveBar` block above already uses, pulled out only because this round's own two new
+     * drillIn keys each need it more than once. */
+    private fun tapTaggedNodeOrFail(stepId: String, testTag: String) {
+        val tapped = TourAccessibilityTap.tapNodeWithTestTag(window.decorView, testTag)
+        if (tapped != TourAccessibilityTap.TapOutcome.Tapped) {
+            val dump = TourAccessibilityTap.describeNodes(window.decorView, testTag)
+            error("tour step '$stepId' could not find a clickable node tagged '$testTag' to tap\n$dump")
         }
     }
 
@@ -600,6 +663,15 @@ public class ScreenshotTourActivity : ComponentActivity() {
          * "LOGGED TONIGHT" section header text for the identical reason [LIVE_BAR_TEST_TAG] replaced
          * the label match; see [awaitLiveMonitorVisible]'s own doc comment. */
         private const val LIVE_MONITOR_TOP_BAR_TEST_TAG = "live-monitor-top-bar"
+
+        /** WPUI follow-up: `org.ort.app.ui.components.Inspection.kt`'s own waveform play-control
+         * glyph tags (`WaveformPlayControl`'s existing `"waveform-glyph-play"`/`"-pause"`, unowned
+         * by this package, not edited by it — see `TourStep`'s own doc comment) and this package's
+         * own `TransportBar`'s `"transport-bar-playback"` (the row that only exists while the bar
+         * shows [org.ort.app.ui.components.TransportBarViewState.Playback]). */
+        private const val WAVEFORM_PLAY_TEST_TAG = "waveform-glyph-play"
+        private const val WAVEFORM_PAUSE_TEST_TAG = "waveform-glyph-pause"
+        private const val TRANSPORT_BAR_PLAYBACK_TEST_TAG = "transport-bar-playback"
 
         /** R-803 (halt): the bound `awaitDestinationSettled`/`renderSetupStep`'s own settle-wait use
          * before giving up and reporting an honest error — generous (well past a single dropped

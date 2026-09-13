@@ -528,6 +528,38 @@ internal object OvernightScenario {
             )
         }
 
+        // WPUI follow-up (R-1006's on-device proof, coordinator message 2026-09-12): every other
+        // audio-bearing over above inherits `ScenarioFixtures.transmission()`'s own 4.2s default
+        // duration (tx1's own worth) — real, decodable audio, but too short for the screenshot
+        // tour's own real-device latency between a drillIn step tapping play and that *same* step
+        // navigating away and reaching its own final `drawToBitmap()`: the clip finishes first, and
+        // `TransportPlaybackController.poll()`'s end-of-track handling correctly clears the bar back
+        // to Live before the capture — right behaviour, wrong moment to prove "still Playing"
+        // survives navigation. Gated to `overnight-live` only, never `overnight`/`gap-call` (this
+        // same `build()`'s other two callers) — the smallest possible addition per the coordinator's
+        // own allowance ("if no scenario has retained audio the tour can play, add the smallest
+        // scenario that does"), not a change to any existing transmission, id, or count any other
+        // test/capture already depends on (`txCount` below reads the database, never a literal).
+        // Inserted last (highest `samplePosition`) so `TourIds`'s own `confirmed` resolution (first
+        // CONFIRMED by `samplePosition`) still finds tx1 unchanged; reachable only via the new,
+        // dedicated `confirmed-longest` drillIn value (see that file's own doc comment).
+        if (scenarioName == "overnight-live") {
+            insertTx(
+                db,
+                context,
+                ScenarioFixtures.transmission(
+                    id = TransmissionId.new().toString(), sessionId = sessionId,
+                    startedAtUtc = offset(400.0), samplePosition = nextSample(),
+                    durationMs = 24_000L,
+                    frequencyHz = FREQ_A, signalStrength = 8.0,
+                    attributionState = AttributionState.CONFIRMED, stationId = "W7NPC",
+                    attributionConfidence = 0.94,
+                ),
+                text = "long test tone, retained for the transport bar's own on-device playback proof",
+                writeAudio = true,
+            )
+        }
+
         if (live) {
             // Marked *after* every insert above, not before: `markCapturing` also writes a fresh
             // heartbeat (liveness proven by heartbeat, never by battery-exemption APIs — see
