@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -253,7 +252,16 @@ private fun ScrubTrack(
             },
         contentAlignment = Alignment.CenterStart,
     ) {
-        Column(modifier = Modifier.fillMaxWidth().fillMaxHeight(), verticalArrangement = Arrangement.Center) {
+        // Register R-1049 (halt): this `Column` used to also carry `.fillMaxHeight()` — with no max
+        // height of its own, the Row above (`PlaybackTransportBar`'s `heightIn(min = 44.dp)`, no
+        // upper bound) simply inherited whatever the real host's ancestor chain offered, which on a
+        // real, unbounded-height `Scaffold`/`Column` (`OrtNavHost.kt`'s `NavHostBody`) is the entire
+        // remaining screen height, not the fixed 200dp box `TransportBarLayoutTest.kt`'s own prior
+        // coverage happened to compose it inside (which is exactly why that suite never caught
+        // this). The outer `Box`'s own `contentAlignment = Alignment.CenterStart` above already
+        // centers this `Column` vertically within whatever height the *row* actually needs — no
+        // `fillMaxHeight()` here is required to achieve that, only to cause this defect.
+        Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.Center) {
             Box(modifier = Modifier.fillMaxWidth().height(3.dp)) {
                 Box(
                     modifier = Modifier

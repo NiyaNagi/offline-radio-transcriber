@@ -34,6 +34,86 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPUI: C10 the transport bar, replacing the plain live bar host-wide, and its own reversal of R-1006's stop-on-leave — the bar, not the screen, now owns playback)
 
+### PENDING_HASH — WPUI: R-1049 halt fixed — the playback bar was a full-height panel, not a bottom strip
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/TransportBar.kt` (the fix), plus one new
+Robolectric test file `app/src/test/kotlin/org/ort/app/ui/navigation/TransportBarHostLayoutTest.kt`.
+
+**Requirements/ACs:** R-1006, R-1049 (register, severity halt — the coordinator's own on-device
+finding after this session's own prior WPUI follow-up commit), constitution VIII ("a screenshot
+wins over a passing test") and constitution II (discrimination: failing before, passing after).
+
+**What changed:**
+- **Root cause**: `TransportBar.kt`'s `ScrubTrack` composable wrapped its thin 3dp track line in
+  `Column(Modifier.fillMaxWidth().fillMaxHeight())`. `TransportBarLayoutTest.kt`'s own existing
+  coverage never caught this because it composes `TransportBar` alone inside an artificially
+  fixed-height `Box(Modifier.height(200.dp))` — bounding the very growth this bug is about, so a
+  bar that had already grown to fill that fixed 200dp still passed the suite's own "at least 44dp"
+  floor assertion (there was no ceiling assertion at all). On the real host
+  (`OrtNavHost.kt`'s `NavHostBody`: `Scaffold` → `Column` → a `weight(1f)` content box → the bar as
+  a plain, unweighted sibling below, with no height cap of its own), that `fillMaxHeight()` instead
+  filled the entire real, unbounded remaining screen height — exactly the "full-height dark panel"
+  the coordinator described from this session's own prior capture, and exactly what the prior
+  capture's own uiautomator dump had already shown (`transport-bar-scrub` at 2437px tall) — this
+  session had misread that number as the known Compose accessibility-bounds-merging artifact
+  (R-1025) rather than a real, reproducible layout bug; the coordinator's own re-inspection of the
+  captures themselves is what actually caught it, per constitution VIII.
+- **The fix**: removed `.fillMaxHeight()` from that `Column` — the outer `Box`'s own
+  `contentAlignment = Alignment.CenterStart` already centers it vertically within whatever height
+  the row actually needs, so no explicit fill was ever required to get that centering, only to
+  cause the defect. Live mode is untouched (it delegates entirely to the existing `LiveBar`, which
+  `ScrubTrack`/`PlaybackTransportBar` are never part of).
+- **New test, `TransportBarHostLayoutTest`**: composes the *same scaffold shape* `NavHostBody`
+  actually uses — real `Scaffold`/`Column`/`weight(1f)` content box (real `LogContent`, not a
+  stand-in), the bar as a plain sibling below — at the tour's own real device height
+  (`@Config(qualifiers = "w390dp-h844dp-420dpi")`/`"w480dp-h844dp-420dpi"`, `@GraphicsMode.NATIVE`),
+  font scale 1.0 and 2.0. Asserts the bar's own row (`transport-bar-playback`) is bounded (<=70dp
+  at 1.0, <=76dp at 2.0 — measured post-fix: 64.0dp/63.76dp at 1.0, identical at 2.0) and that the
+  destination's own content (`LogContent`'s real "No overs yet." empty state) sits above the bar's
+  top edge, never covered by it. Deliberately not `OrtNavHost` driven into Playback via a real tap:
+  this app's only way to reach a genuine `Playback` state is a real
+  `RealTransmissionAudioPlayer` decode-then-`AudioTrack` cycle, and that class's own test file says
+  outright Robolectric's `AudioTrack` shadow "does not play sound" / "does not faithfully reproduce
+  real hardware initialization" — no UI-level test in this codebase drives that real path end to
+  end for exactly that reason. Seeding `TransportBarViewState.Playback` as a plain value is the
+  same discipline this file's own existing tests already use, applied to a layout defect that has
+  nothing to do with how the state is produced.
+
+**Verified:**
+- Discrimination, shown not claimed: `TransportBarHostLayoutTest`'s four cases, run against the
+  unfixed `ScrubTrack`, failed with the bar's own row measured at **842.67dp** (390dp width) /
+  **684.67dp** (480dp width) — effectively the whole 844dp root minus the header. Run again after
+  the fix, all four passed with the row at **64.0dp** (390dp) / **63.76dp** (480dp), both font
+  scales.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.navigation.TransportBarHostLayoutTest"
+  --tests "org.ort.app.ui.components.TransportBarLayoutTest" --tests
+  "org.ort.app.ui.components.TransportBarTest" --tests
+  "org.ort.app.ui.navigation.TransportBarStateResolutionTest" --tests
+  "org.ort.app.ui.navigation.OrtNavHostDestinationDispatchTest" --tests
+  "org.ort.app.ui.components.LiveBarTest" --tests "org.ort.app.ui.navigation.NavSeedTest"` — all
+  green, confirming Live mode (which never touches `ScrubTrack`) is pixel-identical.
+- On-device: `install.ps1 -Port 5558 -Clear` then `tour.ps1 -Port 5558 -Only "overnight-live/C10-*"`
+  on `emulator-5558` — 4/4 ok, 0 errors, 77.7s. All four captures (new scratch dir
+  `wpui-r1049-fix-proof`) now show the real, full `LogContent` (header, Filter, All/Named/Rejected,
+  TIME/FREQ/STATION/SIG, "No overs yet.") with the bar as a thin strip at the bottom, never
+  covering it. `uiautomator dump` in both states: `transport-bar-playback` container
+  `[0,2503][1260,2709]` (206px/78.5dp tall using the coordinator's own 420dpi/2.625px-per-dp
+  figure); `transport-bar-scrub` height dropped from the prior capture's 2437px to **142px** in
+  both Playing and Paused — the "sane number" the coordinator asked for, not explained away.
+- Full gate (with a real `HF_TOKEN`, no escape hatch): see the follow-up commit that records its
+  own result once run — the exact command lines and outcome are reported to the coordinator
+  directly per this round's own instruction, not duplicated here ahead of that report landing.
+
+**Left open / not done:**
+- The exact effective px-per-dp this specific emulator override (`wm size` 1260x2772 layered over
+  a physical 1080x2400 @420dpi, both reported by `wm density`/`dumpsys window displays`) actually
+  renders at is not fully reconciled: the coordinator's own literal 420dpi/2.625px-per-dp figure
+  and a figure back-computed from the toggle's own known-44dp size (156px, ~3.545px/dp) disagree,
+  and neither cleanly explains every measured node. Both conversions land the pause/scrub/×
+  measurements well clear of the 44dp/115.5px floor either way, so this did not block the fix or
+  its verification, but the discrepancy itself is unexplained and pre-existing to this round (not
+  introduced by it).
+
 ### 48e94a0d — WPUI follow-up: on-device proof of C10's Playing/Paused modes surviving navigation (R-1006)
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourSpec,TourIds,ScreenshotTourActivity}.kt`,
