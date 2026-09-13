@@ -181,11 +181,10 @@ class DigestPollingTest {
 
     @Test
     @Requirement("R-1069")
-    fun `R_1069 a real recorded gap is placed and sized from its own real start and duration, never a whole hour`():
-        Unit = runTest {
+    fun `R_1069 a real gap is placed and sized from its own start and duration, never a whole hour`(): Unit = runTest {
         // R-1069 (register, halt): the exact register repro — a 3 h session, real overs in every
-        // hour (so the old whole-hour-bucket code read solid HEARD in every bucket except the one a
-        // gap touched), plus one real, recorded 22-minute gap 25 minutes in. The fix places the
+        // hour (so the old whole-hour-bucket code read solid HEARD in every bucket except the one
+        // a gap touched), plus one real, recorded 22-minute gap 25 minutes in. The fix places the
         // hatched segment at the gap's own real fraction of the session's span, never the whole
         // hour it happens to fall inside.
         val sessionEnd = 3 * 3_600_000L
@@ -1017,16 +1016,16 @@ class DigestPollingTest {
 
     @Test
     @Requirement("R-1072")
-    fun `R_1072 a station first heard with several overs this session reads plural, never the literal (s)`():
-        Unit = runTest {
-        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
-        db.transmissionDao().insert(transmission("TX1", "S1", stationId = "W7NEW"))
-        db.transmissionDao().insert(transmission("TX2", "S1", startedAtUtc = 1_000L, stationId = "W7NEW"))
+    fun `R_1072 a station first heard with several overs this session reads plural, never the literal (s)`(): Unit =
+        runTest {
+            db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+            db.transmissionDao().insert(transmission("TX1", "S1", stationId = "W7NEW"))
+            db.transmissionDao().insert(transmission("TX2", "S1", startedAtUtc = 1_000L, stationId = "W7NEW"))
 
-        val digest = DigestPolling.digest(context, "S1")!!
+            val digest = DigestPolling.digest(context, "S1")!!
 
-        val item = digest.items.single { it.id == "first-W7NEW" }
-        assert(item.subLine == "first time heard · 2 overs this session") { "got '${item.subLine}'" }
-        assert(!item.subLine.contains("(s)")) { "got '${item.subLine}'" }
-    }
+            val item = digest.items.single { it.id == "first-W7NEW" }
+            assert(item.subLine == "first time heard · 2 overs this session") { "got '${item.subLine}'" }
+            assert(!item.subLine.contains("(s)")) { "got '${item.subLine}'" }
+        }
 }

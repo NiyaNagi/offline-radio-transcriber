@@ -32,6 +32,29 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPSESSCOV follow-up: ktlint line-wrap fix)
+
+### WPSESSCOV follow-up — ktlint line-wrap style on the two new R-1069/R-1072 test functions
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/digest/DigestPollingTest.kt` only.
+**Requirements/ACs:** none new — a style fix to the previous commit's own new tests.
+**What changed:** the previous commit's two new wrapped-signature test functions
+(`R_1069 a real gap is placed and sized from its own start and duration, never a whole hour` and
+the `R_1072` first-heard-plural case) broke `ktlintTestSourceSetCheck` two ways in sequence
+(caught by running the full gate, not by `:app:testDebugUnitTest` alone, which does not run
+ktlint): first "Newline expected before expression body" (the `Unit =` split across the wrong
+line), then — once the R-1069 name was shortened to fit — "First line of body expression fits on
+same line as function signature" (ktlint wanted it on one line after all, once it fit under 120
+columns). Fixed by matching this file's own established wrapped-signature style exactly
+(`fun ...(): Unit =` / next line `runTest {`, body indented one level deeper) for the case that
+still needs to wrap, and collapsing to one line for the case that now fits.
+**Verified:** `gradlew :app:ktlintTestSourceSetCheck` — green (was failing). `gradlew
+:app:testDebugUnitTest --tests "org.ort.app.ui.digest.DigestPollingTest"` — still green,
+unchanged behaviour (a formatting-only fix; no assertion touched).
+**Left open / not done:** none.
+
+---
+
 ## 2026-09-13 (WPSESSCOV: DG04 coverage bar, session-review back label, digest plural counts)
 
 ### WPSESSCOV — R-1069 (halt): DG04's coverage bar places every gap from its real start/duration, never a whole hour; R-1070: the back label names where back actually returns; R-1072: digest counts are plural by count
