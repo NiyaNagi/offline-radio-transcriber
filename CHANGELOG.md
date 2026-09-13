@@ -212,7 +212,7 @@ scenario-seeded session on this emulator — unrelated to this change (real capt
 real hardware this AVD does not have against fixture-only data) and not investigated further; flagged
 separately rather than fixed here (outside this prompt's own scope).
 
-### pending — WPINIT: R-1055 — a curated Log filter (Improve's "Review changes", D11, DG02) reaches across every session, never just the live one
+### 706d1a74 — WPINIT: R-1055 — a curated Log filter (Improve's "Review changes", D11, DG02) reaches across every session, never just the live one
 
 **Scope:** `data/src/main/kotlin/org/ort/data/dao/TransmissionDao.kt`;
 `app/src/main/kotlin/org/ort/app/ui/data/LogViewData.kt`;
