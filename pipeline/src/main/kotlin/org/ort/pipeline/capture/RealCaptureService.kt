@@ -86,6 +86,9 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
 import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.log10
+import kotlin.math.sqrt
 
 /**
  * **This is a v0 smoke-test wiring, not a build-plan prompt's output.** Every piece it composes
@@ -1585,6 +1588,21 @@ internal class RealSegmentSink(
      * every pre-existing caller/test of this class keeps compiling unchanged. */
     private val frequencyProvider: (startNanos: Long, endNanos: Long) -> FrequencyReading =
         { _, _ -> FrequencyReading.UNKNOWN },
+    /**
+     * FR-OBS-1 (Q20): the noise-floor estimate at this segment's onset, read once at [open] time
+     * -- `:capture-android`'s [org.ort.capture.android.LevelMeter] already computes this
+     * continuously off the same audio-reading thread (see [LevelStatus]'s own kdoc: it is a pure
+     * republishing holder, no arithmetic of its own), so this is wiring an existing mechanism, not
+     * a new one. A plain, non-suspending field read -- never a channel or a lock -- so this can
+     * never block the frame path that calls [SegmentSink.open]. `null` exactly when the meter
+     * has not tracked enough history yet to report one honestly ([LevelStatus.State.NotMeasured],
+     * or a [LevelStatus.State.Measured] whose own `noiseFloorDbfs` is still `null`) -- never a
+     * fabricated reading (constitution I). Placed before [onSegmentPersisted] so every pre-existing
+     * caller's trailing lambda keeps binding to that last parameter unchanged.
+     */
+    private val noiseFloorDbfsProvider: () -> Float? = {
+        (LevelStatus.state as? LevelStatus.State.Measured)?.noiseFloorDbfs
+    },
     private val onSegmentPersisted: () -> Unit,
 ) : SegmentSink {
 
@@ -1593,6 +1611,18 @@ internal class RealSegmentSink(
     private companion object {
         /** FR-SEG-6 / AC-72's `rejected:too_short` tag, as the free-text `rejectionReason` value. */
         const val REJECTION_REASON_TOO_SHORT = "too_short"
+
+        /** Matches [org.ort.capture.android.LevelMeter.FLOOR_DBFS]'s own convention exactly: the
+         * quietest reading ever reported for genuine digital silence, never a fabricated `0.0`. */
+        const val FLOOR_DBFS: Float = -120f
+
+        /** Float PCM in `[-1.0, 1.0]` is already normalised to full scale -- 1.0 magnitude is
+         * 0 dBFS, unlike [org.ort.capture.android.LevelMeter]'s 16-bit-integer domain. */
+        fun toDbfs(value: Double): Float {
+            if (value <= 0.0) return FLOOR_DBFS
+            val dbfs = (20.0 * log10(value)).toFloat()
+            return if (dbfs < FLOOR_DBFS) FLOOR_DBFS else dbfs
+        }
     }
 
     override fun open(id: SegmentId, startSample: Long): SegmentWriter {
@@ -1600,9 +1630,27 @@ internal class RealSegmentSink(
         staged.parentFile?.mkdirs()
         val raf = RandomAccessFile(staged, "rw")
         raf.setLength(0)
+        // FR-OBS-1 (Q20): read once, here, at the same moment the segment itself opens -- never a
+        // fresh read at close time, which could reflect several seconds of a since-changed signal
+        // rather than the level this segment actually started against.
+        val noiseFloorAtOnsetDbfs = noiseFloorDbfsProvider()
+        var peakAbs = 0.0
+        var sumSquares = 0.0
+        var sampleTotal = 0L
 
         return object : SegmentWriter {
             override fun append(pcm: FloatArray) {
+                // FR-OBS-1 (Q20): the same float samples already being encoded below, tallied for
+                // this segment's own peak/mean dBFS -- O(n) arithmetic over a frame already in
+                // memory, the same "never blocks capture" discipline
+                // org.ort.capture.android.LevelMeter's own kdoc documents for its per-frame tally.
+                for (s in pcm) {
+                    val magnitude = abs(s.toDouble())
+                    if (magnitude > peakAbs) peakAbs = magnitude
+                    sumSquares += magnitude * magnitude
+                }
+                sampleTotal += pcm.size
+
                 val bytes = ByteArray(pcm.size * 2)
                 for (i in pcm.indices) {
                     val s = (pcm[i] * Short.MAX_VALUE).toInt().coerceIn(
@@ -1672,6 +1720,24 @@ internal class RealSegmentSink(
                     // frequencyProvider wiring). Either way, never silently overwritten.
                     rigStateChangedMidTransmission = frequencyReading.changedDuringTransmission,
                 )
+
+                // FR-OBS-1 (Q20): logged for every closed segment, accepted and rejected alike
+                // (constitution III -- a rejected segment stays reachable, including here), and
+                // unconditionally before the FLAC encode below -- a diagnostics line about why a
+                // segment closed the way it did must not depend on that segment's audio having
+                // encoded successfully.
+                DiagnosticsLog.logVadStats(
+                    transmissionId = transmissionId,
+                    outcome = record.outcome,
+                    closeReason = record.closeReason,
+                    durationMs = entity.durationMs,
+                    vadFrameCount = record.vadFrameCount,
+                    vadSpeechFrameCount = record.vadSpeechFrameCount,
+                    peakDbfs = toDbfs(peakAbs),
+                    meanDbfs = if (sampleTotal > 0) toDbfs(sqrt(sumSquares / sampleTotal)) else null,
+                    noiseFloorDbfsAtOnset = noiseFloorAtOnsetDbfs,
+                )
+
                 val encoded = File(filesDir, entity.audioPath())
 
                 val result = flacStore.encodeAndVerify(staged, encoded)

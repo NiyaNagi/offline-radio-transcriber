@@ -32,6 +32,145 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (WPVAD: FR-OBS-1/Q20 — `capture.log` finally carries the per-transmission VAD statistics the requirement has promised since draft 1)
+
+### WPVAD — the segmenter's own close reason and frame tally, wired into `capture.log` and the debug dump, for every closed segment, accepted and rejected alike
+
+**Scope:** `segment/src/main/kotlin/org/ort/segment/{SegmentSink.kt,Segmenter.kt}` and their tests
+(`SegmentVadStatisticsTest.kt` new; `RealSegmentSinkTest.kt`'s four pre-existing `SegmentRecord(...)`
+constructions updated to the new required fields); `pipeline/src/main/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLog.kt`
+(`logVadStats`, `EVENT_VAD_STATS`) and `DiagnosticsLogTest.kt`; the one minimal call site in
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`'s `RealSegmentSink` (peak/
+mean dBFS accumulation in `SegmentWriter.append`, the onset noise-floor read in `open`, the
+`logVadStats` call in `close`) and its test; `app/src/main/kotlin/org/ort/app/export/DebugDumpBuilder.kt`
+(a `vad_stats` NDJSON line parsed back out of `capture.log`) and its test. Did not touch
+`spec/open-questions.md` (Q20 is the lead's to close) or any UI/`tools/ui-audit` path.
+
+**Requirements/ACs:** FR-OBS-1, Q20 (spec/open-questions.md). Builds on the existing FR-OBS-13/14
+provenance discipline and constitution I ("never fabricate"), III ("never delete quietly"), IV
+("capture never blocks"), VI ("no number without its provenance").
+
+**What changed:**
+- **Wired an existing mechanism, mostly; built one new fact.** Before this, `DiagnosticsLog.Category.CAPTURE`
+  had exactly five call sites (`route_verified`, `route_mismatch`, `input_lost`, `level_clip`,
+  `overrun`) — all session/fault-level, none per-transmission, confirming Q20's audit finding
+  exactly. `:segment`'s `Segmenter` already ran a per-frame VAD decision loop but threw the tally
+  away the instant a segment closed; `:capture-android`'s `LevelMeter`/`LevelStatus` already
+  computed a continuously-updated noise floor off the audio-reading thread but nothing downstream
+  ever read it at a segment's onset. Both were wiring gaps, not missing arithmetic — fixed by
+  threading through what already existed. The one genuinely new computation is peak/mean dBFS,
+  which no existing per-segment mechanism produced (`LevelMeter` is a session-wide live gauge, not
+  a per-segment accumulator) — added as O(n) arithmetic in `RealSegmentSink`'s own `SegmentWriter.append`,
+  over PCM already in memory, the same "never blocks capture" discipline `LevelMeter`'s own kdoc
+  documents.
+- **`Segmenter`/`SegmentSink` (`:segment`).** New `SegmentCloseReason` enum (`SILENCE`,
+  `MAX_DURATION`, `END_OF_STREAM`) and two new `SegmentRecord` fields, `vadFrameCount`/
+  `vadSpeechFrameCount` — the honest speech-frame-ratio numerator/denominator, left as raw counts
+  rather than a pre-divided ratio so nothing is rounded before a reader sees it. `closeSpeech`'s old
+  `forced: Boolean` parameter is now `closeReason: SegmentCloseReason` (`forcedSplit` on the record
+  is unchanged, now derived as `closeReason == MAX_DURATION`); `emitRejected` gained the same
+  parameter. Every one of the three real closing paths — the hangover timeout, the max-duration
+  force-split, and `Segmenter.finish()` (stream end, mid-`TENTATIVE`/`SPEECH`/`HANGOVER`) — now
+  passes its own genuine reason; previously a stream-end truncation was indistinguishable from a
+  natural silence close. The frame tally is accumulated in `handleFrame()` (one increment per frame
+  that belongs to the active window, including the exact frame whose decision closes it) and reset
+  to `0` the instant a segment or rejected candidate closes — proven not to leak across segments by
+  a dedicated two-segment test.
+- **`DiagnosticsLog.logVadStats`, CAPTURE category (`:pipeline`).** One `vad_stats` line per closed
+  segment — **accepted and rejected alike** (constitution III) — carrying `transmissionId` (the
+  same opaque `<sessionId>-<index>` id `RealSegmentSink` already mints, never a callsign),
+  `outcome`/`closeReason` (the two closed enums; there being only one rejection reason the
+  segmenter can report today, `REJECTED_TOO_SHORT`, no separate free-text reason field exists),
+  `durationMs`, `vadFrameCount`/`vadSpeechFrameCount`, and `peakDbfs`/`meanDbfs`/
+  `noiseFloorDbfsAtOnset` — the last three logged as the literal `NONE`, never a fabricated `0.0`,
+  exactly when genuinely unmeasurable (constitution I). `@Suppress("LongParameterList")`: every
+  parameter is an independent, real fact, matching this file's own no-free-text-parameter
+  discipline stated at the top of the class.
+- **`RealSegmentSink` wiring (`:pipeline`, minimal call site as scoped).** `SegmentWriter.append`
+  tallies peak/mean (as sum-of-squares) alongside the existing byte-encoding loop, over the same
+  samples, no second pass. `open` reads `LevelStatus.state`'s `noiseFloorDbfs` once, at segment
+  open — a plain `@Volatile` field read, never blocking — via a new defaulted constructor
+  parameter `noiseFloorDbfsProvider` (placed *before* the existing trailing-lambda
+  `onSegmentPersisted` parameter so no existing call site's `{ ... }` binds to the wrong
+  parameter). `close` calls `logVadStats` unconditionally, before the FLAC encode/verify step —
+  a diagnostics line about why a segment closed must not depend on its audio having encoded
+  successfully.
+- **`DebugDumpBuilder` (`:app`).** A `vad_stats` NDJSON line type, parsed back out of
+  `capture.log` (and its one `.1` rotation generation, oldest first) rather than a new database
+  column — `DiagnosticsLog` is already exactly where these facts land, and no build-plan wave
+  scoped a schema migration here. A field logged as `NONE` round-trips as JSON `null`, matching
+  every other nullable field this file already emits.
+
+**Byte cost / bound (per the ask):** a `vad_stats` line is ASCII, one line, no transcript/callsign
+content — typical (moderate values, a 2-digit segment index) ≈ 200–235 bytes; worst case (longest
+enum names `REJECTED_TOO_SHORT`/`END_OF_STREAM`, a 4-digit segment index, `-120.0` floor values on
+every dBFS field) ≈ 264 bytes. A busy net of 400 overs in one session: 400 × 264 ≈ 106 KB —
+about 5% of `DiagnosticsLog.ROTATE_AT_BYTES`'s 2 MiB per-generation cap, which `capture.log`
+already shares with `route_verified`/`route_mismatch`/`input_lost`/`level_clip`/`overrun`. It would
+take roughly 8,000 transmissions in a single, never-rotated capture.log generation to fill 2 MiB
+from `vad_stats` lines alone — far past any plausible session — so this does not materially change
+`capture.log`'s existing growth profile; when it does grow past the cap, the existing 2 MiB × 2
+generation rotation (unchanged) applies exactly as it already did, confirmed here by a real
+`logVadStats` call tripping the same rotation path a pre-existing test already proved for another
+category.
+
+**Verified:**
+- `./gradlew :segment:test` — `BUILD SUCCESSFUL`, all 22 tests (including six new
+  `SegmentVadStatisticsTest` cases). Discrimination: reverting `Segmenter`'s `closeReason`/
+  frame-tally threading back to the old `forced: Boolean` signature (a) fails to compile every new
+  test (the `SegmentCloseReason`/`vadFrameCount`/`vadSpeechFrameCount` named arguments have no
+  target) and (b), with a minimal stub restoring the fields but hardcoding `SegmentCloseReason.SILENCE`/
+  `0`/`0` instead of the real per-branch values, fails all six new tests on the exact assertion each
+  case names (e.g. `a segment forced closed by the maximum-duration cap reports MAX_DURATION, not
+  SILENCE` asserts `MAX_DURATION` on the forced records and `END_OF_STREAM` on the last one from the
+  same run — a single hardcoded constant cannot satisfy either, let alone both).
+- `./gradlew :pipeline:testDebugUnitTest --tests "org.ort.pipeline.diagnostics.DiagnosticsLogTest"` and
+  `--tests "org.ort.pipeline.capture.RealSegmentSinkTest"` — both `BUILD SUCCESSFUL`. Discrimination
+  for the peak/mean math: a constant-0.25-amplitude one-second segment asserts `peakDbfs`/`meanDbfs`
+  both ≈ `-12.04` (20·log₁₀(0.25)) within 0.01 — reverting the accumulation loop in `append()` (so
+  `peakAbs`/`sumSquares` stay `0.0`) makes both assert against the `FLOOR_DBFS` sentinel `-120.0`
+  instead, failing loudly. Discrimination for the `NONE`-not-`0.0` rule: a rejected-segment test
+  injects `noiseFloorDbfsProvider = { null }` and asserts the literal string `"NONE"`; reverting the
+  `?: "NONE"` fallback to `?: "0.0"` fails that assertion directly.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.export.DebugDumpBuilderTest"` — `BUILD
+  SUCCESSFUL`, including the new round-trip test (a hand-written `capture.log` fixture with one
+  unrelated `route_verified` line and two `vad_stats` lines, one accepted with real numeric fields,
+  one rejected with three `NONE` fields) — asserts exactly 2 `vad_stats` lines parsed (the
+  unrelated line excluded), the accepted line's fields exactly, and the rejected line's three
+  `NONE` fields round-tripping as JSON `null` via `JSONObject.isNull`.
+- `./gradlew dependencyRules platformGuards` — `OK` (no new module edges; `:capture-*` still has no
+  edge to `:asr-*`/`:lexicon`/`:identity`).
+- `./gradlew build` (real `HF_TOKEN`, no escape hatch) — `BUILD SUCCESSFUL in 16m 42s`, 1107
+  actionable tasks (two detekt/ktlint round-trips along the way: `LongParameterList` on
+  `logVadStats`, suppressed with the file's own established rationale; a `MaxLineLength` test name
+  and an import-order violation in the new `SegmentVadStatisticsTest.kt`, both fixed).
+- `./gradlew -p buildSrc test` — `BUILD SUCCESSFUL`.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK`, all 8 checks pass (no spec file
+  touched by this change).
+
+**Left open / not done:**
+- **Q20 itself is not closed here** — that is the lead's call (spec is not this package's file),
+  per the prompt's own instruction. What this package would record for it: FR-OBS-1's "VAD
+  statistics" now means, concretely, one `vad_stats` line per closed segment carrying
+  `outcome`/`closeReason`/`durationMs`/`vadFrameCount`/`vadSpeechFrameCount`/`peakDbfs`/`meanDbfs`/
+  `noiseFloorDbfsAtOnset` — every field the segmenter and the existing level meter genuinely have,
+  nothing invented, `NONE` (never `0`) where a value cannot be measured.
+- **No new rejection reason was invented.** The segmenter can currently only report
+  `REJECTED_TOO_SHORT`; if a future segmenter change adds a second rejection path, `logVadStats`'s
+  `outcome` field already carries it without a schema change, but there is deliberately no separate
+  `rejectionReason: String` field, since that would reopen exactly the free-text risk this file's
+  class kdoc is built to close off structurally.
+- **`DebugDumpBuilder`'s `vad_stats` correlation is by `transmissionId` string match against the
+  `over` line's own `id`**, left as two separate NDJSON line types rather than merged into one
+  `over` record — merging would have meant adding VAD-stat columns to `TransmissionEntity` (a
+  `:data` schema migration, outside this package's ownership and outside FR-OBS-1's own scope,
+  which is about the diagnostics log, not the transmission table).
+- **Peak/mean dBFS are computed over every sample this segment's `SegmentWriter` actually
+  appended** — pre-roll, the confirmed speech, and (for a natural `SILENCE` close) the trimmed
+  post-roll actually written to the sink — not over the full, untrimmed hangover buffer some of
+  which is discarded. This matches what the persisted audio itself contains, not a larger window
+  the operator cannot hear back.
+
 ## 2026-09-12 (WPNAV: IA-3 generalises the Log's own frequency-filter mechanism to a station, a curated set of overs and Capture's own Full log, all with a real back restore; IA-5 gives Search a drawer row; IA-6 links a transmission to its attributed station)
 
 ### 7584d1cc — WPNAV: one filter model for the Log (IA-3), Search reachable from anywhere via the drawer (IA-5), a transmission's attributed station one tap away (IA-6)
