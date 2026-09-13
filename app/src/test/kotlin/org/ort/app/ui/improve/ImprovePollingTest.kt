@@ -8,6 +8,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.core.AttributionState
+import org.ort.core.Tier
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
@@ -105,6 +106,55 @@ class ImprovePollingTest {
         assert(result.groups.first().overCount == 2)
         assert(result.everythingElseCount == 1) {
             "expected 1 over ('TX3') at current capability, got ${result.everythingElseCount}"
+        }
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1063 (coordinator round, WPIMPROVE, FR-REP-2/9): a session's own `deviceTier` never
+    // changes, so it alone cannot say whether any particular over in it still needs improving --
+    // only `TransmissionEntity.processedTier` (stamped by the real engine on every completed or
+    // rejected outcome, live capture included per its own doc comment) can. These two discriminate
+    // against the old behaviour, which counted every transmission in a qualifying session
+    // regardless of `processedTier` and so kept claiming "N overs can get better" forever.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    fun `R_1063 a completed run leaves the root showing zero remaining candidates`(): Unit = runTest {
+        ShedStatus.update(level = 0, backlog = 0) // current tier = T3 (MAX)
+        db.sessionDao().insert(session("S1", tier = "T1"))
+        db.transmissionDao().insert(transmission("TX1", "S1"))
+        db.transmissionDao().insert(transmission("TX2", "S1"))
+        // The real engine's own completion write (`ReprocessRunner.setProcessedTier`) -- both
+        // overs already brought current; neither is a genuine candidate any more.
+        db.transmissionDao().setProcessedTier("TX1", Tier.T3)
+        db.transmissionDao().setProcessedTier("TX2", Tier.T3)
+
+        val result = ImprovePolling.root(context)
+
+        assert(result.totalOverCount == 0) { "expected no remaining candidates, got ${result.totalOverCount}" }
+        assert(result.groups.isEmpty()) { "expected no group for a session with nothing left to improve" }
+    }
+
+    @Test
+    fun `R_1063 a mixed set counts only the overs not yet brought current`(): Unit = runTest {
+        ShedStatus.update(level = 0, backlog = 0) // current tier = T3 (MAX)
+        db.sessionDao().insert(session("S1", tier = "T1"))
+        db.transmissionDao().insert(transmission("TX1", "S1"))
+        db.transmissionDao().insert(transmission("TX2", "S1"))
+        db.transmissionDao().insert(transmission("TX3", "S1"))
+        // TX1 already reprocessed at the current tier (no longer a candidate). TX2 is still at its
+        // own capture tier (real live-capture write, per `TransmissionEntity.processedTier`'s own
+        // doc comment). TX3 has never been processed at all (`processedTier` stays `null` until a
+        // pass first finishes for it) -- both TX2 and TX3 are real, outstanding candidates.
+        db.transmissionDao().setProcessedTier("TX1", Tier.T3)
+        db.transmissionDao().setProcessedTier("TX2", Tier.T1)
+
+        val result = ImprovePolling.root(context)
+
+        assert(result.totalOverCount == 2) { "expected 2 remaining candidates, got ${result.totalOverCount}" }
+        assert(result.groups.size == 1)
+        assert(result.groups.single().transmissionIds.toSet() == setOf("TX2", "TX3")) {
+            "expected exactly the two not-yet-current overs, got ${result.groups.single().transmissionIds}"
         }
     }
 

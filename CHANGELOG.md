@@ -34,6 +34,52 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
 
+### WPIMPROVE — fixed while device-verifying R-1056: Improve's root stopped claiming improved overs still "can get better" (R-1063, FR-REP-2/9, constitution I)
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/ImprovePolling.kt` and its test only.
+
+**Requirements/ACs:** R-1063 (register), FR-REP-2, FR-REP-8, FR-REP-9, constitution I.
+
+**What changed:** `ImprovePolling.root()` grouped sessions by `SessionEntity.deviceTier` and then
+counted **every** transmission in a qualifying session as a candidate — real at the moment of
+capture, but permanent, since a session's own `deviceTier` never changes. After a real Improve run
+left all twelve of a session's transmissions with `isReprocessCandidate = false` in the on-device
+database (confirmed directly via `sqlite3` on-device while verifying R-1056), the root screen still
+read "12 overs can get better" — a false statement once a real reprocessing engine existed to make
+it checkable, not a harmless stub. Read `isReprocessCandidate` itself is not the fix: nothing in
+production ever sets it `true` (grepped `:pipeline`/`:app`; FR-TIER-4's own marking is not wired to
+it), and `spec/technical-design.md` §3.4 describes it as a cache of a fingerprint-staleness
+computation that also is not built. What the real engine does stamp on every completed or rejected
+outcome — live capture included — is `TransmissionEntity.processedTier` (FR-REP-2: "every stored
+result SHALL record ... tier that produced it, so staleness is computable"), and `:data` already
+exposes `TransmissionDao.idsBelowProcessedTier(belowTiers)` for exactly "which records still need
+improving" — `ReprocessRunner.kt`'s own doc comment names this precise gap by name as "WP11d's
+read-path change to make". `root()` now intersects each qualifying session's transmissions against
+that real, current set; a session with none left in it contributes no group at all, and a fully
+brought-current selection now shows the honest empty state (`totalOverCount == 0`) instead of a
+stale count.
+
+**Verified:**
+- `ImprovePollingTest`: two new cases, both against a real Room DB — `R_1063 a completed run leaves
+  the root showing zero remaining candidates` (both overs stamped `processedTier = T3` by
+  `setProcessedTier`, current tier T3 → `totalOverCount == 0`, `groups.isEmpty()`) and
+  `R_1063 a mixed set counts only the overs not yet brought current` (one over stamped current, one
+  at its own capture tier, one never processed at all → exactly the two real outstanding ids, never
+  the stamped one). **Discrimination performed and reverted**: reverting `ImprovePolling.kt` alone
+  (temporary local commit, undone with `git reset --soft` before this commit) fails both — "expected
+  no remaining candidates, got 2" and the mixed case's own assertion — restored, both pass again; the
+  four pre-existing `ImprovePollingTest`/`ImproveScreensTest`/`RealImproveRunnerTest` cases are
+  unaffected (their own fixtures never stamp `processedTier`, so `processedTier IS NULL` still
+  qualifies them, matching the old behaviour for exactly the cases that exercised it).
+- `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.improve.*"` — green (all cases in this
+  package, this fix's own new ones included).
+- `gradlew ktlintCheck detekt` — green.
+
+**Left open / not done:** the on-device confirmation that motivated this (a real `field-tier1` run,
+`sqlite3` query showing `isReprocessCandidate = 0` for all twelve rows while the root still read
+"12 overs can get better") is reported separately alongside this session's R-1056 device evidence,
+not duplicated here.
+
 ### WPIMPROVE — R-1056 fixed: Improve's Running/Done boards no longer overrun their action bar at font scale 2.0, and the per-record note no longer contradicts Review the changes
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/improve/**` (`ImproveScreens.kt`, new
