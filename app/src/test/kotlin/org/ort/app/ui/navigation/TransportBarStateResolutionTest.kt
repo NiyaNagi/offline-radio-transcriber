@@ -134,4 +134,42 @@ class TransportBarStateResolutionTest {
 
         assertTrue(!state.capturingDotVisible, "expected no capturing dot while paused")
     }
+
+    /**
+     * Coordinator follow-up (R-1006's on-device proof): "a finished over clears itself" (the
+     * artboard's own rule) means the *bar*, not only the controller's own fields, reverts once
+     * playback reaches its recorded end — [TransportPlaybackControllerTest]'s own
+     * "poll reaching the recorded end clears playback" proves [TransportPlaybackController
+     * .loadedTransmissionId] goes `null`; this proves [resolveTransportBarState] then actually
+     * shows `Live` again once a real session is running. Discrimination: temporarily made
+     * [TransportPlaybackController.poll] skip the `stop()` call on end-of-track (report the
+     * position without clearing), watched this fail (`state` stayed `Playback`), reverted.
+     */
+    @Test
+    fun `a finished over's poll tick clears the bar back to Live when a session is running`() = runTest {
+        val player = FakeTransmissionAudioPlayer()
+        val controller = TransportPlaybackController(player)
+        controller.play("TX1")
+        player.seekToFraction(1f)
+
+        controller.poll()
+        val state = resolve(controller, liveBar = live)
+
+        assertEquals(TransportBarViewState.Live(live), state)
+    }
+
+    /** Same as above, but with no live session at all — the bar goes fully `Hidden`, never a
+     * stale `Playback` for an over that has finished. */
+    @Test
+    fun `a finished over's poll tick clears the bar back to Hidden when no session is running`() = runTest {
+        val player = FakeTransmissionAudioPlayer()
+        val controller = TransportPlaybackController(player)
+        controller.play("TX1")
+        player.seekToFraction(1f)
+
+        controller.poll()
+        val state = resolve(controller)
+
+        assertEquals(TransportBarViewState.Hidden, state)
+    }
 }

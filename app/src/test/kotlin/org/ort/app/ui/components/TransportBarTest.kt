@@ -13,11 +13,14 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
+import org.ort.app.ui.audio.TransportPlaybackController
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
@@ -205,5 +208,42 @@ class TransportBarTest {
             .assertHeightIsAtLeast(44.dp)
             .assertWidthIsAtLeast(44.dp)
         composeTestRule.onNodeWithTag("transport-bar-scrub").assertHeightIsAtLeast(44.dp)
+    }
+
+    /**
+     * Coordinator follow-up (R-1006's on-device proof): [TransportBarTest]'s own existing "paused
+     * state shows the play glyph and a clear control that fires onClear" only proves the `×`
+     * invokes whatever `onClear` lambda the test supplies — it says nothing about what happens
+     * once that lambda is the *real* production one. This wires `actions.onClear` to a real
+     * [TransportPlaybackController] exactly the way `OrtNavHost.kt` does
+     * (`onClear = transportPlayback::clear`) and asserts the real, underlying
+     * [FakeTransmissionAudioPlayer] actually stopped — not merely that the bar's own callback
+     * fired. Discrimination: temporarily changed [TransportPlaybackController.clear] to update its
+     * own fields without calling `delegate.stop()`, watched this fail (`stopCallCount` stayed `0`),
+     * reverted.
+     */
+    @Test
+    fun `x in Paused really stops the underlying player, not merely the bar's own callback`() = runTest {
+        val player = FakeTransmissionAudioPlayer()
+        val controller = TransportPlaybackController(player)
+        controller.play("TX1")
+        controller.pause()
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransportBar(
+                    state = playing(isPlaying = controller.isPlayingState),
+                    actions = TransportBarActions(onClear = controller::clear),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("transport-bar-clear").performClick()
+
+        assertTrue(
+            "expected the real player to have stopped, got stopCallCount=${player.stopCallCount}",
+            player.stopCallCount >= 1,
+        )
+        assertEquals(null, controller.loadedTransmissionId)
     }
 }

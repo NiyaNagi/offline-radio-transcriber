@@ -34,6 +34,91 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPUI: C10 the transport bar, replacing the plain live bar host-wide, and its own reversal of R-1006's stop-on-leave — the bar, not the screen, now owns playback)
 
+### e0cec74e — WPUI follow-up: on-device proof of C10's Playing/Paused modes surviving navigation (R-1006)
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourSpec,TourIds,ScreenshotTourActivity}.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/OvernightScenario.kt`, `tools/ui-audit/tour.json`, plus
+matching tests under `app/src/test/kotlin/org/ort/app/{debug/tour,ui/components,ui/navigation}/**`.
+No production (`main`) source touched this round — this is entirely tour/scenario infra and tests.
+
+**Requirements/ACs:** R-1006 (reversal, on-device proof — the coordinator's own explicit demand,
+constitution VIII: "a screenshot wins over a passing test"), constitution II (discrimination shown
+for every new test).
+
+**What changed:**
+- **Two new destination-step-only tour drillIns**, `playThenNavigate`/`pauseThenNavigate`
+  (`TourSpec.kt`, `ScreenshotTourActivity.kt`): after a step's own transmission drill-in settles,
+  taps the real waveform play control (`Inspection.kt`'s stable `waveform-glyph-play` testTag,
+  the same bounds-overlap accessibility tap `TourAccessibilityTap` already uses for the live bar),
+  confirms real playback started, then — `pauseThenNavigate` only — taps pause and confirms it
+  took, then a real system back press (`onBackPressedDispatcher.onBackPressed()`, never
+  `Espresso.pressBack()`, matching `ReaderActivityDestinationSmokeTest`'s own established
+  mechanism) closes the drill-in, landing on the step's own destination with the transport bar
+  (C10) visible in whichever mode the taps left it in. Appended to `tour.json` as four new steps
+  (`overnight-live/C10-playing-then-log[@2x]`, `overnight-live/C10-paused-then-log[@2x]`).
+- **`confirmed-longest` drillIn value** (`TourIds.kt`, new
+  `resolveLongestConfirmedTransmissionId`): every other audio-bearing over in `OvernightScenario`
+  inherits `ScenarioFixtures.transmission()`'s 4.2s default duration — real, decodable audio, but
+  too short for the tour's own real-device latency between tapping play and that same step's final
+  `drawToBitmap()` after navigating away: the clip finished first, and
+  `TransportPlaybackController.poll()`'s end-of-track handling correctly cleared the bar back to
+  Live *before* the capture (device evidence: the plain `confirmed`-keyed step's 1.0 capture showed
+  Live, not Playback, while its own @2x sibling happened to still catch Playing — a timing race,
+  not a fix). `confirmed-longest` resolves to the CONFIRMED transmission with the greatest
+  `durationMs` in the session instead of `confirmed`'s first-by-`samplePosition` pick.
+- **`OvernightScenario.kt`**: one additional CONFIRMED, audio-bearing over (24s, `W7NPC`), gated to
+  `scenarioName == "overnight-live"` only (never `overnight`/`gap-call`, this same `build()`'s other
+  two callers) and inserted last (highest `samplePosition`), so plain `confirmed` still resolves to
+  tx1 unchanged everywhere else — the smallest addition per the coordinator's own allowance ("if no
+  scenario has retained audio the tour can play, add the smallest scenario that does"; here audio
+  already existed and played, so the fix is a longer-lived over, not a new scenario).
+- **Tests:** `TourIdsTest.R_TOUR_IDS_TRANSMISSION_CONFIRMED_LONGEST` (discrimination: temporarily
+  made the new resolver reuse the plain `confirmed` first-by-`samplePosition` lookup, watched it
+  fail on `resolvedId != tx1Id`, reverted); `TransportBarTest.` "x in Paused really stops the
+  underlying player, not merely the bar's own callback" (discrimination: temporarily made
+  `TransportPlaybackController.clear`/`stop` skip `delegate.stop()`, watched `stopCallCount` stay
+  `0`, reverted); `TransportBarStateResolutionTest.` "a finished over's poll tick clears the bar
+  back to Live/Hidden" (discrimination: temporarily made `poll()` skip its end-of-track `stop()`
+  call, watched `state` stay `Playback`, reverted).
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourIdsTest" --tests
+  "org.ort.app.debug.WpiScenariosTest" --tests "org.ort.app.debug.OvernightLiveMonitorScenarioTest"
+  --tests "org.ort.app.debug.TourParityFixtureTest" --tests "org.ort.app.ui.components.TransportBarTest"
+  --tests "org.ort.app.ui.navigation.TransportBarStateResolutionTest"` — all green (`BUILD
+  SUCCESSFUL`), confirming the new `overnight-live` fixture addition breaks no existing scenario
+  or scene count assertion.
+- On-device: `install.ps1 -Port 5558 -Clear` then `tour.ps1 -Port 5558 -Only "overnight-live/C10-*"`
+  on `emulator-5558` (AVD `ort_audit_3`) — 4/4 steps ok, 0 errors, 66.2s elapsed. All four captures
+  now show the intended state reliably (previously only 3 of 4 did, by timing luck): Playing shows
+  pause, elapsed/total (`0:08 / 0:24`), scrub, callsign `W7NPC`, and the live capturing dot;
+  Paused shows play, the same elapsed/total, and the `×` clear control. Confirmed via a temporary
+  hand-built one-step spec (`waitMillis: 20000`, never committed) plus `adb shell uiautomator dump`
+  mid-hold: `transport-bar-toggle` (pause, Playing) `[117,1381][273,1537]` = 156×156px;
+  `transport-bar-toggle` (play, Paused) `[58,1381][214,1537]` = 156×156px; `transport-bar-clear`
+  (×, Paused) `[1046,1381][1202,1537]` = 156×156px — all comfortably over the coordinator's own
+  115.5px (44dp @ 420dpi) floor, and matching `TransportBar.kt`'s own `.size(44.dp)` declarations
+  for both controls exactly (this device's actual effective scale, back-computed from these
+  self-consistent 44dp-by-source bounds, is ~3.545px/dp — the AVD carries a `wm size` override atop
+  its 420dpi physical density, so 115.5px is a conservative floor here, not the literal threshold).
+
+**Left open / not done:**
+- `transport-bar-scrub`'s uiautomator-reported *height* (`[591,240][1034,2677]` while Playing,
+  `[532,240][856,2677]` while Paused — 2437px either way) is not trustworthy evidence: this is the
+  same Compose accessibility-node bounds-merging artifact this package's own `TourAccessibilityTapTest`
+  already documented and reproduced for the live bar (R-1025 — a tagged node reporting a
+  merged-ancestor's bounds rather than its own). The scrub's *width* narrowed correctly between
+  Playing (443px, more filled) and Paused (324px, less filled) states, so the node itself is real;
+  only its reported height is unusable. The 44dp-minimum-height claim for the scrub rests instead
+  on `TransportBar.kt:242`'s own `.heightIn(min = 44.dp)` source declaration and the already-green
+  `TransportBarTest.` "the pause-play control and the scrub track each carry a 44dp touch target"
+  Robolectric assertion (`assertHeightIsAtLeast(44.dp)`) — not on-device pixel evidence, which this
+  entry could not honestly produce for this one dimension.
+- The temporary one-step hold specs (`hold-playing-spec.json`/`hold-paused-spec.json`,
+  `waitMillis: 20000`) used to catch the uiautomator dump mid-state live only in this session's own
+  scratch directory and were never written into `tools/ui-audit/tour.json` or any tracked file —
+  the canonical tour steps keep `waitMillis` unset (0), unchanged from the prior commit.
+
 ### 6340b3e7 — WPUI: the transport bar (C10) and the R-1006 reversal — the bar owns playback, so leaving a screen never stops it
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/components/TransportBar.kt` (new),
