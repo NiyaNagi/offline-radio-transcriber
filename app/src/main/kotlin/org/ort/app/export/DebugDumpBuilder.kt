@@ -118,6 +118,10 @@ public object DebugDumpBuilder {
         put("audioNativeRateHz", session.audioNativeRateHz ?: JSONObject.NULL)
         put("gapCount", session.gapCount)
         put("shedEvents", session.shedEvents)
+        // FR-SEG-10 (register R-1054, AC-162): the detector this session's whole Segmenter ran --
+        // see TransmissionEntity.vadDetector's own kdoc for why this is denormalized here too.
+        put("vadDetector", session.vadDetector.name)
+        put("vadDetectorVersion", session.vadDetectorVersion ?: JSONObject.NULL)
         put("appVersion", session.appVersion ?: JSONObject.NULL)
         put("deviceTier", session.deviceTier ?: JSONObject.NULL)
         put("schemaVersion", session.schemaVersion)
@@ -146,6 +150,14 @@ public object DebugDumpBuilder {
         put("calibrationId", t.calibrationId ?: JSONObject.NULL)
         put("isReprocessCandidate", t.isReprocessCandidate)
         put("rigStateChangedMidTransmission", t.rigStateChangedMidTransmission)
+        // FR-SEG-10 (register R-1054, AC-162): which detector actually cut this over's boundaries,
+        // whether rig squelch fusion applied, and the single data-layer answer to "does this
+        // conform to FR-SEG-1" -- never re-derived by this exporter (see
+        // TransmissionEntity.conformsToFrSeg1's own kdoc).
+        put("vadDetector", t.vadDetector.name)
+        put("vadDetectorVersion", t.vadDetectorVersion ?: JSONObject.NULL)
+        put("rigSquelchFusionApplied", t.rigSquelchFusionApplied)
+        put("conformsToFrSeg1", t.conformsToFrSeg1())
     }
 
     private fun gapLine(gap: CaptureGapEntity): JSONObject = JSONObject().apply {
@@ -242,5 +254,10 @@ public object DebugDumpBuilder {
         put("peakDbfs", numericFieldOrNull(f, "peakDbfs") ?: JSONObject.NULL)
         put("meanDbfs", numericFieldOrNull(f, "meanDbfs") ?: JSONObject.NULL)
         put("noiseFloorDbfsAtOnset", numericFieldOrNull(f, "noiseFloorDbfsAtOnset") ?: JSONObject.NULL)
+        // FR-SEG-10 (register R-1054, AC-162): the same closed-enum discipline every other field on
+        // this line already holds -- absent only if a pre-WPSEGPROV capture.log line is ever parsed
+        // (a line this build itself never writes without the field), never fabricated as a guess.
+        put("vadDetector", f["vadDetector"] ?: JSONObject.NULL)
+        put("rigSquelchFusionApplied", f["rigSquelchFusionApplied"]?.toBooleanStrictOrNull() ?: JSONObject.NULL)
     }
 }

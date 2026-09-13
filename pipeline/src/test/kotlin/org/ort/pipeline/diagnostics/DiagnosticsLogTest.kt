@@ -10,6 +10,7 @@ import org.ort.asrapi.rules.RejectionRuleId
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.core.PassId
 import org.ort.core.Tier
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.entity.TerminationReason
 import org.ort.segment.SegmentCloseReason
 import org.ort.segment.SegmentOutcome
@@ -111,10 +112,13 @@ class DiagnosticsLogTest {
      * Q20 (FR-OBS-1): the per-transmission VAD statistics `capture.log` was promised since draft 1
      * and, before this, never wrote — this proves an accepted segment's real fields land verbatim,
      * and that a value the caller genuinely could not measure is logged as the literal `NONE`,
-     * never a fabricated `0.0` (constitution I).
+     * never a fabricated `0.0` (constitution I). FR-SEG-10/AC-162 (register R-1054): also proves the
+     * line names the real detector that cut each segment — SILERO for the accepted one, the
+     * fallback ENERGY for the rejected one — discriminating on the enum value actually written, not
+     * merely that some value is present.
      */
     @Test
-    @Requirement("FR-OBS-1")
+    @Requirement("FR-OBS-1", "FR-SEG-10", "AC-162")
     fun `FR_OBS_1_vad_stats an accepted segment logs its real fields, and an unmeasurable one logs NONE not zero`() {
         val filesDir = tempFilesDir()
         DiagnosticsLog.configure(filesDir, TestClock())
@@ -129,6 +133,8 @@ class DiagnosticsLogTest {
             peakDbfs = -3.2f,
             meanDbfs = -18.7f,
             noiseFloorDbfsAtOnset = -42.1f,
+            vadDetector = VadDetectorKind.SILERO,
+            rigSquelchFusionApplied = false,
         )
         DiagnosticsLog.logVadStats(
             transmissionId = "SESSION01-5",
@@ -140,6 +146,8 @@ class DiagnosticsLogTest {
             peakDbfs = null,
             meanDbfs = null,
             noiseFloorDbfsAtOnset = null,
+            vadDetector = VadDetectorKind.ENERGY,
+            rigSquelchFusionApplied = false,
         )
         runBlocking { DiagnosticsLog.flush() }
 
@@ -155,6 +163,11 @@ class DiagnosticsLogTest {
         assertTrue(written[0].contains("peakDbfs=-3.2"))
         assertTrue(written[0].contains("meanDbfs=-18.7"))
         assertTrue(written[0].contains("noiseFloorDbfsAtOnset=-42.1"))
+        assertTrue(
+            "FR-SEG-10: the detector that actually cut this segment must be named in the line",
+            written[0].contains("vadDetector=SILERO"),
+        )
+        assertTrue(written[0].contains("rigSquelchFusionApplied=false"))
 
         assertWellFormedLine(written[1], "vad_stats")
         assertTrue(written[1].contains("transmissionId=SESSION01-5"))
@@ -165,6 +178,10 @@ class DiagnosticsLogTest {
             written[1].contains("peakDbfs=NONE") &&
                 written[1].contains("meanDbfs=NONE") &&
                 written[1].contains("noiseFloorDbfsAtOnset=NONE"),
+        )
+        assertTrue(
+            "FR-SEG-10: a rejected segment still names its real (fallback) detector, not SILERO",
+            written[1].contains("vadDetector=ENERGY"),
         )
     }
 
@@ -262,6 +279,8 @@ class DiagnosticsLogTest {
             peakDbfs = -6f,
             meanDbfs = -20f,
             noiseFloorDbfsAtOnset = -40f,
+            vadDetector = VadDetectorKind.SILERO,
+            rigSquelchFusionApplied = false,
         )
         runBlocking { DiagnosticsLog.flush() }
 
@@ -310,6 +329,8 @@ class DiagnosticsLogTest {
             peakDbfs = -6f,
             meanDbfs = -20f,
             noiseFloorDbfsAtOnset = -40f,
+            vadDetector = VadDetectorKind.SILERO,
+            rigSquelchFusionApplied = false,
         )
         DiagnosticsLog.logPassLatency(PassId.B_OFFLINE, Tier.T0, 100L)
         DiagnosticsLog.logRejection(RejectionRuleId.BLOCKLIST)

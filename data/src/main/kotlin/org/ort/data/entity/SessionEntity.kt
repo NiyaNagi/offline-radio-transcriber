@@ -2,6 +2,7 @@ package org.ort.data.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import org.ort.core.capture.VadDetectorKind
 
 /** Functional spec §8 `Session`, plus the additional fields technical design §12.1 calls out. */
 public enum class TerminationReason { USER, CRASH, KILLED, STORAGE, UNKNOWN }
@@ -92,4 +93,21 @@ public data class SessionEntity(
      * [org.ort.pipeline.archive.SessionAudioDeletionService], the only writer.
      */
     val overAudioRemovedAtMillis: Long? = null,
+    /**
+     * Schema v14 (FR-SEG-10, register R-1054, AC-162): which voice-activity detector this
+     * session's `Segmenter` actually ran — see [org.ort.data.entity.TransmissionEntity.vadDetector]'s
+     * own doc comment for the full reasoning; this is the identical fact, denormalized onto the
+     * session row too so a session with zero transmissions (nothing ever keyed) still names its
+     * own detector, and a reader does not have to find one transmission just to learn it.
+     * [VadDetectorKind.UNKNOWN] is the honest default for every pre-v14 row (constitution I).
+     * `org.ort.pipeline.capture.RealCaptureService` resolves the real detector once, before this
+     * row is ever inserted, and stamps the identical value here and on every transmission this
+     * session produces — a session and its own transmissions can therefore never disagree about
+     * which detector was running.
+     */
+    val vadDetector: VadDetectorKind = VadDetectorKind.UNKNOWN,
+    /** The detector's own version string, when one is known — see the sibling column's own kdoc
+     * on [org.ort.data.entity.TransmissionEntity.vadDetectorVersion] for why this is `null` today
+     * for every detector, never a guessed value. */
+    val vadDetectorVersion: String? = null,
 )
