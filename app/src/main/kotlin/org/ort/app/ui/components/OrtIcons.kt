@@ -214,6 +214,13 @@ public object OrtIcons {
     }
     public val edit: ImageVector = buildIcon("edit") { strokePath("M4 20h4l10-10-4-4L4 16v4z M12 8l4 4", 1.9f) }
 
+    /** WPRC02 (`Recording-Session.dc.html`'s Delete action): traced directly from that board's own
+     * inline SVG `d` path — see this object's own doc comment on why every icon here is lifted
+     * rather than redrawn by eye. */
+    public val trash: ImageVector = buildIcon("trash") {
+        strokePath("M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13", 1.9f)
+    }
+
     private fun buildIcon(name: String, build: ImageVector.Builder.() -> Unit): ImageVector = ImageVector.Builder(
         name = name,
         defaultWidth = 24.dp,

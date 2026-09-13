@@ -25,7 +25,9 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onChild
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -41,6 +43,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -324,6 +327,31 @@ class ControlsTest {
         }
 
         composeTestRule.onNodeWithTag("progress").assert(hasContentDescription("42 percent"))
+    }
+
+    @Test
+    @Requirement("R-1059")
+    fun `R_1059 a caller-supplied warn fill colour renders the warn fill state, never the default`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                Column {
+                    ProgressBar(
+                        progress = 1f,
+                        modifier = Modifier.testTag("progress-normal"),
+                    )
+                    ProgressBar(
+                        progress = 1f,
+                        modifier = Modifier.testTag("progress-warn"),
+                        fillColor = OrtColors.accentAmber,
+                    )
+                }
+            }
+        }
+
+        // Structure, not a pixel: the fill node's own state tag differs by the colour the caller
+        // asked for, never both reading as the same default fill regardless of the argument.
+        composeTestRule.onNodeWithTag("progress-normal").onChild().assert(hasTestTag("progress-bar-fill-normal"))
+        composeTestRule.onNodeWithTag("progress-warn").onChild().assert(hasTestTag("progress-bar-fill-warn"))
     }
 
     @Test

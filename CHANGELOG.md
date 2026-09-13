@@ -32,6 +32,72 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPRC02: Recording-Session, R-1059)
+
+### (pending) — WPRC02: Recording-Session (RC02) — every over and gap in order, play, delete, export, label
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionViewData.kt`,
+`RecordingSessionViewStateMapper.kt`, `RecordingSessionPolling.kt`, `RecordingSessionScreen.kt`,
+`RecordingSessionContent.kt` (all new), plus `app/src/main/kotlin/org/ort/app/ui/components/OrtIcons.kt`
+(one new `trash` icon, traced from the artboard's own SVG path — RC02's Delete action needed one and
+none existed) and their tests (`RecordingSessionViewStateMapperTest.kt`, `RecordingSessionScreenTest.kt`,
+`RecordingSessionScreenLayoutTest.kt`, `RecordingSessionPollingTest.kt`, all new).
+**Requirements/ACs:** FR-OBS-4, FR-UI-5, FR-RUN-12, FR-STO-3, FR-STO-3b, FR-STO-3e, D40, P9, IA-6,
+constitution I/II/III/IV/VI (cited per-test via `@Requirement`), RC02 (design-intent row).
+**What changed:** `Recording-Session.dc.html`'s own screen, built against `design/design-intent.md`
+row RC02 and `design-guide.md`'s tokens. `RecordingSessionViewStateMapper` is the pure decision (no
+database) turning a session's real transmissions/gaps/labels into the coverage strip (real ticks —
+amber only for a real `FAILED` status — a real hatch per `CaptureGapEntity`, and a playhead real only
+when the transport controller's own loaded transmission belongs to this session; the artboard's own
+"listened X of Y" line is an accepted, recorded deviation — no such signal exists anywhere in this
+schema, and constitution I forbids inventing one) and the row list (`RESOLVED`/`PROCESSING`/
+`REJECTED`/`FAILED` — a closed status enum, not independent booleans, so an impossible combination
+cannot be represented at all). `RecordingSessionPolling` is the real read/write path: session state
+from `recordingSessionSummaries` plus this session's own transmission/transcript/catalog/gap/work-
+queue DAOs; Delete/Export/Label are never reimplemented — `SessionAudioDeletionService`,
+`SessionAudioExport` and `TransmissionLabelRepository` are consumed exactly as they already exist
+(a previous builder's stale-base report that `SessionAudioExport` was a stub is wrong — confirmed
+real by reading it and by this round's own passing integration tests against it), and Retry reuses
+`CorrectionPolling.retryFailedPass` verbatim, the identical mechanism `TransmissionDetailContent`'s
+own `onRetryPass` already uses. `RecordingSessionScreen` renders the coverage card, the action row
+(Play all / Export / Label / Delete, with the real "frees N GB" caption *before* any tap, per the
+artboard's own two-line split — a discriminating layout test proves the two never collide), the over/
+gap rows (play control state driven by the single hoisted `TransportPlaybackController`, never a
+second player — C10), and three sheets (Delete confirm, Export preview/progress, Label) each
+rendering every typed refusal as its own honest state (constitution II). `RecordingSessionContent`
+is the stateful entry point: polls on session/reload-key/loaded-transmission change, writes through
+the Storage Access Framework for Export (`ActivityResultContracts.CreateDocument`, the write on
+`Dispatchers.IO` inside `SessionAudioExport.write`, real progress reported back through `onProgress`)
+exactly as `SettingsExportSubScreen` already does. R-1059 (register): RC01's own over-audio progress
+bar stayed full green past 100% of budget — `ProgressBar` gains an optional `fillColor` parameter
+(defaults to `accent/green`, every existing caller unaffected) and `RecordingsScreen`'s own
+over-audio row now passes `accent/amber` when `exceeded` is real, matching the sub-line already
+beside it.
+**Verified:** `gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.recordings.*"` — all 66
+tests in the package green (13 `RecordingSessionViewStateMapperTest`, 16 `RecordingSessionScreenTest`,
+4 `RecordingSessionScreenLayoutTest`, 11 `RecordingSessionPollingTest` against a real Robolectric
+`OrtDatabase` and the real `context.filesDir` — delete/export/label/retry each exercised against the
+actual pipeline services, not a fake — plus the pre-existing 3 `RecordingsContentTest`, 8
+`RecordingsScreenTest` and 11 `RecordingsViewStateMapperTest` for RC01, all still green). The layout
+suite's 4 cases (`w390dp-h844dp-420dpi`/`w480dp-h844dp-420dpi`, `@GraphicsMode(NATIVE)`) prove the
+transport bar stays a bounded strip with RC02's own content visible above it while playing. The
+R-1059 fix was shown to discriminate: production change reverted, the two new tests —
+`ControlsTest.R_1059`, `RecordingsScreenTest`'s own `R_1059` — fail for the right reason (`assertExists`
+on `progress-bar-fill-warn` finds nothing); restored, both pass again. `gradlew :app:testDebugUnitTest
+--tests "org.ort.app.ui.recordings.*" --tests "org.ort.app.ui.navigation.*" --tests
+"org.ort.app.ui.components.ControlsTest"` — all 206 tests green, no regression in the
+drawer/transport-bar/RC01 suites this change sits beside. `gradlew
+:app:ktlintCheck :app:detekt` — green. `gradlew dependencyRules platformGuards` — green (no new
+module edges; `:app` still depends only on `:core, :data, :lexicon, :llm-api, :net, :pipeline,
+:rig`). `python tools/spec-check/spec_check.py` — OK.
+**Left open / not done:** device capture (constitution VIII) is reported separately — see this
+round's own report for the emulator session's evidence paths, pixel descriptions and uiautomator
+dump bounds, and for the R-1055 dependency (a Log opened from RC02 via `transmissionIds` shows "No
+overs yet" for a non-live session, WPINIT's fix, not this round's). The artboard's top `Label` tile
+has no stated destination of its own (unlike every sibling action) — recorded as an interpretation
+gap in `RecordingSessionScreen`'s own doc comment, resolved here as a shortcut to the first real
+over's label sheet, never a fabricated session-wide action.
+
 ## 2026-09-13 (WPREC round 2: merge, tour capture, constitution VIII evidence)
 
 ### 64c1bc56 — WPREC: fix ktlintDebugSourceSetCheck violations in the two new recordings scenarios
