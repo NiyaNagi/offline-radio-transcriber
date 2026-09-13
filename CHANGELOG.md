@@ -34,6 +34,33 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPLINK: R-1041 builds the three log links the design inventory documented as built but the code never had — N01's chart bar, D11's affected-overs link, R04's review-changes link — all through the existing `LogFilterOrigin`/`openLogFiltered` mechanism; R-1042 gives Search's own header a drawer icon; a lead follow-up round closes R-1047 (the Log's own applied-filter indication), R-1046 (a corrected attribution stops claiming a voice match) and R-1048 (Search's header icons reach the 44dp floor))
 
+### 165cbc4c — WPLINK: R-1047 verification — the tour can now seed an hour-window or curated-overs Log filter
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/{TourIds,TourSpec}.kt`;
+`app/src/test/kotlin/org/ort/app/debug/tour/TourIdsTest.kt`; `tools/ui-audit/tour.json`.
+
+**Requirements/ACs:** register R-1047 (verification tooling, not the fix itself — see `dc5358cc`).
+
+**What changed:** `TourIds.resolveLogFilter` only ever built a `LogFilterSelection` when
+`logFilterFrequency` was present, so an hour-window-only or curated-overs-only filter — the exact
+shape R-1047's own fix needed to verify on a real device, since it has no frequency chip to
+piggyback on — had no drillIn shape able to reach the Log in that state at all. Fixed to build a
+selection from any of four keys: the existing `logFilterFrequency`/`logFilterFromMillis`/
+`logFilterToMillis`, plus a new `logFilterTransmissionIds` (a comma-joined list of literal
+transmission ids, parsed into `LogFilterSelection.transmissionIds` — added to `TourStep`'s
+`SUPPORTED_DRILL_IN_KEYS`); `null` only when none of the four is present, unchanged from before.
+Appended two new steps at the end of `tour.json`: `overnight/L01-log-filtered-overs`
+(`logFilterTransmissionIds: scenario-overnight-tx02`, a real, deterministic fixture id) and
+`corrected/D02-inferred-corrected` (`transmission: inferred`, against the `corrected` scenario).
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*" --tests
+"org.ort.app.debug.TourParityFixtureTest"` — all green, including two new `R_1047` cases in
+`TourIdsTest` and the existing `TourSpecTest`/`TourStepsTest` suite validating both new `tour.json`
+steps parse, name real scenarios/destinations, and land on the screen they claim to.
+Discrimination: reverting the four-key OR-gate back to frequency-only failed exactly the
+hour-window case; nulling out the new `transmissionIds` parse failed exactly its own case.
+`.\gradlew.bat :app:ktlintCheck :app:detekt` — green.
+
 ### 4e89348e — WPLINK: R-1048 Search header's drawer icon and back chevron reach the 44dp touch-target floor
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/SearchScreen.kt`,
