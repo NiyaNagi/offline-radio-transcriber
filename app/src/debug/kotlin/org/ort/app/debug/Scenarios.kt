@@ -941,6 +941,10 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row (see
+        // ScenarioFixtures.seedConfirmedResolverOutput's own doc comment) — Detail-Why must not
+        // contradict this over's own header.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "W7NPC", 0.95, createdAt = startedAt + 1_000L)
         // Deliberately no ScenarioFixtures.writeAudioFixture(...) call — hasAudio must read false.
         return LoadResult(1, 1, sessionId)
     }
@@ -983,6 +987,12 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071 (this scenario's own repro capture, D06-audio-removed.png): a real
+        // CONFIRMED-with-confidence over always has a resolver row (see
+        // ScenarioFixtures.seedConfirmedResolverOutput's own doc comment) — before this fix,
+        // Detail-Why's own "No resolver output recorded" contradicted this over's own header
+        // sentence ("Heard in this over. Resolved from the phonetics at 0.95.").
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "W7NPC", 0.95, createdAt = startedAt + 1_000L)
         // Deliberately no ScenarioFixtures.writeAudioFixture(...) call — hasAudio must read false,
         // the same as `no-audio` above; the difference this scenario proves is the session's own
         // real removal timestamp, not the audio file's presence.
@@ -1009,6 +1019,8 @@ public object Scenarios {
         )
         db.transmissionDao().insert(tx)
         ScenarioFixtures.writeAudioFixture(context, tx)
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "W7NPC", 0.9, createdAt = startedAt + 1_000L)
         db.transcriptDao().supersede(
             ScenarioFixtures.transcript(
                 id = "$txId-t1",
@@ -1178,6 +1190,8 @@ public object Scenarios {
                         createdAt = startedAt + 1_000L,
                     ),
                 )
+                // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+                ScenarioFixtures.seedConfirmedResolverOutput(db, txId, callsign, 0.9, createdAt = startedAt + 1_000L)
                 transmissionCount++
             }
         }
@@ -1565,6 +1579,14 @@ public object Scenarios {
                 isCurrent = true,
                 createdAt = SystemClock.wallMillis() - 5 * 60_000L + 500L,
             ),
+        )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(
+            db,
+            txId,
+            "W7NPC",
+            0.7,
+            createdAt = SystemClock.wallMillis() - 5 * 60_000L + 500L,
         )
         return LoadResult(1, 1, sessionId)
     }
@@ -2592,6 +2614,8 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "W7NPC", 0.9, createdAt = startedAt + 1_000L)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
         store.captureMode = CaptureMode.LOCAL_MICROPHONE
@@ -2668,6 +2692,8 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "K7LWH", 0.92, createdAt = startedAt + 1_000L)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
         store.captureMode = CaptureMode.USB_RADIO
@@ -2756,6 +2782,8 @@ public object Scenarios {
                 createdAt = startedAt + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "WA7HJR", 0.88, createdAt = startedAt + 1_000L)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
@@ -2807,6 +2835,14 @@ public object Scenarios {
                 createdAt = start + 5 * 60_000L + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(
+            db,
+            tx1,
+            "WA7HJR",
+            0.9,
+            createdAt = start + 5 * 60_000L + 1_000L,
+        )
         db.transmissionDao().insert(
             ScenarioFixtures.transmission(
                 id = tx2,
@@ -2827,6 +2863,14 @@ public object Scenarios {
                 isCurrent = true,
                 createdAt = start + 8 * 60_000L + 1_000L,
             ),
+        )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(
+            db,
+            tx2,
+            "KJ7ABC",
+            0.87,
+            createdAt = start + 8 * 60_000L + 1_000L,
         )
         return LoadResult(2, 1, sessionId)
     }
@@ -3320,6 +3364,8 @@ public object Scenarios {
                 createdAt = otherStart + 1_000L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, other1, "KJ7ABC", 0.9, createdAt = otherStart + 1_000L)
         db.transmissionDao().insert(
             ScenarioFixtures.transmission(
                 id = other2,
@@ -3341,6 +3387,14 @@ public object Scenarios {
                 isCurrent = true,
                 createdAt = otherStart + 60_000L + 1_000L,
             ),
+        )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(
+            db,
+            other2,
+            "N7XYZ",
+            0.86,
+            createdAt = otherStart + 60_000L + 1_000L,
         )
         db.catalogDao().insert(
             ThreadEntity(
@@ -3543,6 +3597,8 @@ public object Scenarios {
                 createdAt = tConfirmed + 500L,
             ),
         )
+        // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+        ScenarioFixtures.seedConfirmedResolverOutput(db, txConfirmed, "W7NPC", 0.95, createdAt = tConfirmed + 500L)
 
         // 5. Inferred -- links back to the confirmed over above.
         val txInferred = "$sessionId-inferred"

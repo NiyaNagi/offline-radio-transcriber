@@ -130,6 +130,8 @@ internal object StationsFixtures {
                         createdAt = t + 500L,
                     ),
                 )
+                // R-1071: a real CONFIRMED-with-confidence over always has a resolver row.
+                ScenarioFixtures.seedConfirmedResolverOutput(db, id, station, 0.9, createdAt = t + 500L)
                 transmissionCount++
                 firstHeard[station] = minOf(firstHeard[station] ?: t, t)
                 lastHeard[station] = maxOf(lastHeard[station] ?: t, t)

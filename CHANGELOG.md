@@ -32,7 +32,108 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-13 (WPTESTROBUST: R-1043 - a shared generous wait timeout, and two fixed-wait/no-wait sites replaced with idling)
+## 2026-09-13 (WPDETAILRES: R-1071 - the debug scenario suite now seeds resolver output alongside every CONFIRMED attribution it writes, plus a regression invariant)
+
+### (pending) — WPDETAILRES: R-1071 - every debug scenario that seeds a CONFIRMED attribution with a confidence now seeds the resolver row (lattice + selected candidate) production always writes alongside it, and a new ResolverOutputScenariosTest proves the invariant for every declared scenario
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/ScenarioFixtures.kt` (new
+`seedConfirmedResolverOutput` helper), `Scenarios.kt`, `OvernightScenario.kt`,
+`StationsFixtures.kt`, `FrequencyChangeFixtures.kt` (every CONFIRMED-with-confidence call site);
+`app/src/test/kotlin/org/ort/app/debug/ResolverOutputScenariosTest.kt` (new file — see "What
+changed" for why it is not in `ScenariosTest.kt` itself).
+
+**Requirements/ACs:** R-1071 (register), constitution I ("never fabricate", "an attribution
+without its confidence state is a bug ... at the data layer"), constitution VI (no unbacked
+claim).
+
+**What changed.**
+- **Step 1 investigation (file:line).** The Detail header's per-state explanation sentence is
+  built by `DetailViewStateMapper.bodyFor` in
+  `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt:401-414` — the CONFIRMED branch
+  unconditionally renders `"Heard in this over. Resolved from the phonetics at %.2f."` from
+  `attribution.confidence` alone, with no check of whether any resolver output was actually
+  recorded. "Why this callsign" is built by `DetailViewStateMapper.whyFor`
+  (`DetailViewState.kt:583-619`), which reads `TransmissionDetail.inspection`
+  (`InspectionViewState`, populated by `ReaderPolling`/`CorrectionPolling.inspectionWithSlots`
+  from `:data`'s `phonetic_lattice`/`callsign_candidate` tables) and renders the "No resolver
+  output recorded for this transmission yet." line in
+  `app/src/main/kotlin/org/ort/app/ui/screens/DetailWhyScreen.kt:60-68` exactly when that
+  inspection is empty. The two surfaces read independent facts (`attribution.confidence` on the
+  `transmission` row vs. the presence of `phonetic_lattice`/`callsign_candidate` rows), so nothing
+  in the mapper enforces they agree.
+  Real capture cannot desync them: `CallsignResolver.resolve`
+  (`pipeline/src/main/kotlin/org/ort/pipeline/passb/CallsignResolver.kt:29-44`) only ever returns
+  `Attribution.confirmed(...)` from `ranked.firstOrNull()`, i.e. only when the same call already
+  produced a non-empty ranked candidate list, and `PassB.resolveFromText`
+  (`pipeline/src/main/kotlin/org/ort/pipeline/passb/PassB.kt:142-154`) only calls
+  `resolver.resolve` after building a non-empty lattice and a non-empty candidate list — CONFIRMED
+  is structurally impossible without both. `DataPassBResultSink.record`
+  (`pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt:63-105`) then persists
+  `updateAttribution` and `persistLattice`/`persistCandidates` in the *same* write transaction, for
+  every `PassBOutcome.Accepted` outcome. So a real CONFIRMED-with-confidence transmission always
+  carries a resolver row — this is scenario-only, per the prompt's own branching.
+  The actual gap: nearly every debug scenario builder set `attributionState = CONFIRMED` with a
+  real `attributionConfidence` and never called a resolver-seeding path at all — the specific
+  reported repro (`audio-removed-by-operator`) plus its near-identical sibling `no-audio`, plus
+  (found by sweeping every `AttributionState.CONFIRMED` site in `app/src/debug/kotlin/org/ort/app/debug/**`)
+  `revisions`, `search-corpus`, `level-low`, `mode-local-mic`, `mode-usb`, `mode-bluetooth`,
+  `bt-audio-session`, `llm-enabled-prose`/`llm-disabled`, `overnight-live-monitor`,
+  `OvernightScenario`'s own first-heard-station/revised/QSO-thread/filler/confirmed-longest overs,
+  `stations-14-nights`'s whole 14-night loop and `frequency-change`'s whole two-loop body all
+  shared the identical gap. `recordings-budget-exceeded`/`recordings-archive-removed` set CONFIRMED
+  with no `attributionConfidence` at all (stays honestly `null`) and are correctly excluded.
+- **The fix.** `ScenarioFixtures.seedConfirmedResolverOutput(db, transmissionId, callsign,
+  confidence, createdAt)` — a new helper wrapping the pre-existing `ScenarioFixtures.lattice`/
+  `.candidate` builders into one `PhoneticLatticeEntity` + one `selected = true`
+  `CallsignCandidateEntity`, `score` on the same un-clamped `totalScore` scale this fixture suite
+  already used (`OvernightScenario`'s own tx1: confidence 0.94, score 9.4). Every CONFIRMED-with-
+  confidence call site named above now calls it immediately after inserting the transmission (or,
+  inside a mixed CONFIRMED/INFERRED loop, only on the CONFIRMED branch).
+- **New `ResolverOutputScenariosTest`'s `R_1071 every CONFIRMED attribution with a confidence
+  carries a selected resolver candidate`** loads every name in `Scenarios.NAMES`, and for every
+  transmission row across every session with `attributionState == CONFIRMED &&
+  attributionConfidence != null`, asserts `catalogDao().candidatesFor(id).any { it.selected }`.
+  INFERRED is deliberately excluded (documented in the test's own kdoc): `CallsignResolver`'s own
+  kdoc says INFERRED is never reachable from the resolver at all, and `bodyFor`'s INFERRED branch
+  never claims a phonetic resolution either ("Matched by voice ..."/"The operator corrected this")
+  — a real INFERRED-with-confidence row legitimately carries no resolver row of its own. This test
+  was written directly in `ScenariosTest.kt` first, then moved into its own new file
+  (`ResolverOutputScenariosTest.kt`, `@Before`/`@After` duplicated rather than shared) once it
+  tripped detekt's `LargeClass` finding on that class — the same split `RowsTest.kt`'s own
+  `NavRowTest.kt`/this package's own `FailureOverrideScenariosTest.kt` already establish as house
+  style, confirmed by re-running `ktlintCheck detekt` clean afterward.
+- No production code changed — `DetailViewStateMapper`/`DetailWhyScreen` are untouched, per the
+  prompt's own scenario-only branch.
+
+**Verified.**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.*" --tests "org.ort.app.debug.*"` —
+  BUILD SUCCESSFUL (180 actionable tasks, 78 executed), including the new
+  `ScenariosTest > R_1071 every CONFIRMED attribution with a confidence carries a selected
+  resolver candidate` (PASSED, before the move into `ResolverOutputScenariosTest.kt`) and every
+  pre-existing test in both packages (`WpiScenariosTest`, `TourIdsTest` — including
+  `R_TOUR_IDS_TRANSMISSION_CONFIRMED_LONGEST`, which reads the `overnight-live` fixture this
+  change also touched — `OvernightScenario`/`StationsFixtures`/`FrequencyChangeFixtures`-backed
+  tests, `DetailViewStateMapperTest`, `TransmissionDetailScreenTest` unaffected). Re-run after the
+  file split, same command, same result — `ResolverOutputScenariosTest`'s own test PASSED in its
+  new home.
+- `./gradlew ktlintCheck detekt` — failed once on `app:detekt`'s `LargeClass` finding against
+  `ScenariosTest.kt` (the test added directly there first); green after moving it into
+  `ResolverOutputScenariosTest.kt`.
+- No emulator run: the tour was not re-captured because no screen composable, view state, or
+  mapper changed — only debug-scenario fixture data. Per the working agreement's own trigger list
+  (`ui/**`, `res/**`, `design/**`, a debug scenario *or tour step*, `*Content`/`*Screen`/
+  `*ViewState`/`*ViewData`/`*Mapper`), a debug *scenario* file is named explicitly, so the prompt's
+  own narrower ask ("only if a screen changes") governs here: seeding an extra DB row a screen
+  already knew how to render (the "Why" section already renders real resolver output correctly —
+  see `overnight`'s own tx1/tx2/tx3) is a data-only fix with no rendering change, so
+  `audio-removed-by-operator`'s own D06 capture was not retaken; the lead should re-run the
+  `audio-removed-by-operator` scenario capture as the closing evidence for this register row before
+  filing it closed.
+
+**Left open / not done:** `LexiconCorruptScenario.kt` and `CrossSessionReviewScenario.kt` were
+checked and never set `AttributionState.CONFIRMED` at all — no change needed there. No production
+(`:pipeline`, `:app` main-source) code was touched, since Step 1's investigation established the
+defect is scenario-only.
 
 ### 3e7cbf5f — WPTESTROBUST: R-1043 - NavSeedTest's searchFiltersOpen now waits for the tag instead of asserting immediately, and SettingsContentTest's fixed waitUntil(5_000) calls use a shared, generous timeout constant
 
