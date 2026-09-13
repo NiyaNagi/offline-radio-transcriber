@@ -263,6 +263,10 @@
     { "id": "overnight-live/C10-playing-then-log", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "playThenNavigate": "true" } },
     { "id": "overnight-live/C10-playing-then-log@2x", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "playThenNavigate": "true" }, "fontScale": 2.0 },
     { "id": "overnight-live/C10-paused-then-log", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "pauseThenNavigate": "true" } },
-    { "id": "overnight-live/C10-paused-then-log@2x", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "pauseThenNavigate": "true" }, "fontScale": 2.0 }
+    { "id": "overnight-live/C10-paused-then-log@2x", "scenario": "overnight-live", "destination": "LOG", "drillIn": { "transmission": "confirmed-longest", "pauseThenNavigate": "true" }, "fontScale": 2.0 },
+
+    { "id": "stations-14-nights/RC01-recordings", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS" },
+    { "id": "stations-14-nights/RC01-recordings@2x", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS", "fontScale": 2.0 },
+    { "id": "stations-14-nights/RC01-recordings@2x-end", "scenario": "stations-14-nights", "destination": "EARLIER_NIGHTS", "fontScale": 2.0, "scroll": "end" }
   ]
 }

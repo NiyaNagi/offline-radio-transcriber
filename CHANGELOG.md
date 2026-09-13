@@ -34,6 +34,48 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPREC: RC01 Recordings, replacing Earlier nights as the home for sessions)
 
+### 3430f07b — WPREC: RC01's tour steps, and the regenerated coverage matrix
+
+**Scope:** `tools/ui-audit/tour.json` (append-only, per this session's own ownership map),
+`results/coverage-matrix.md` (regenerated, not hand-edited).
+
+**Requirements/ACs:** design-intent row RC01, constitution VIII.
+
+**What changed:**
+- Three new steps, appended at the end of `tour.json` (never edited an existing line — the
+  ownership map for this session is explicitly append-only there): `stations-14-nights/RC01-
+  recordings` at 1.0 and 2.0 font scale, plus a `@2x-end` scrolled variant, all against the
+  `stations-14-nights` scenario's real 14-session data (the richest existing multi-month fixture).
+- `results/coverage-matrix.md` regenerated (`./gradlew coverageMatrix`) to pick up every new
+  `@Requirement`-tagged test this session's two prior commits added; `coverageMatrixCheck` passes
+  against it.
+
+**Verified:** `.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourSpecTest"`
+— all 12 structural checks on `tour.json` still pass. `.\gradlew.bat coverageMatrix` then
+`.\gradlew.bat coverageMatrixCheck` (separate invocations, as required) both green.
+
+**Left open / not done:**
+- **No capture was taken for these new steps.** All three canonical AVDs
+  (`ort_audit`/`ort_audit_2`/`ort_audit_3`, ports 5558/5560/5562) were already running, occupied by
+  concurrent builders/validators, at every point this session reached the capture step — see this
+  session's own report for the full account. The steps are ready; whoever next has a free AVD
+  should run `tools\ui-audit\tour.ps1 -Port <p> -Only "stations-14-nights/RC01-recordings*"`.
+- **No scenario exists yet for RC01's over-audio-exceeded or archive-removed-with-date states.**
+  `storage-warn` sets `StorageForecast` directly, a different mechanism than the
+  `SettingsStore.audioBudgetGb`/`StorageAccounting.audioBytes` pair RC01's own over-audio card
+  reads, and no existing scenario ever sets a session's `overAudioRemovedAtMillis`/
+  `archiveRemovedAtMillis` at all. Building a new scenario (with its own test coverage, per
+  constitution II) was out of this session's remaining scope — reported, not skipped silently; the
+  brief's own "including a removed-archive row and the budget warning state" capture requirement is
+  therefore only partially met (`RecordingsViewStateMapperTest`/`RecordingsScreenTest` cover both
+  states at the unit/Robolectric level; no on-device capture of either exists).
+- **Three pre-existing steps now capture different content than their own names claim**:
+  `stations-14-nights/DG03-sessions`, `field-tier1/DG03-sessions` and `gap-call/DG03-sessions`
+  (lines 77-79) name a bare `EARLIER_NIGHTS` destination with no `drillIn` — under the previous
+  commit's redesign, that is now RC01 (`RecordingsContent`), not the old DG03 `Sessions` list. Not
+  renamed here: they sit outside the append-only end of the file this session owns, and renaming an
+  existing line is a judgement call for whoever owns `tour.json` at large. Flagged for the lead.
+
 ### 9e0500bc — WPREC: wire Recordings into the drawer and OrtNavHost, isolated from the RC01 commit
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/{ReaderDestination,Drawer,OrtNavHost}.kt`
