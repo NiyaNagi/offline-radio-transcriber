@@ -3,6 +3,7 @@ package org.ort.app.ui.screens
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
@@ -116,6 +117,29 @@ class FrequencyDetailContentTest {
 
     private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 5_000) {
         waitUntil(timeoutMillis) { onAllNodes(hasText(text, substring = true)).fetchSemanticsNodes().isNotEmpty() }
+    }
+
+    // Register R-1022 (WPDIGINIT, constitution I/IV): the root drill-in's own loading frame now
+    // carries the shared `LOADING_STATE_TEST_TAG` — `mainClock.autoAdvance = false` before
+    // `setContent` freezes recomposition so this assertion inspects the composed tree before the
+    // `LaunchedEffect` poll can land, the same idiom `LogContentLoadingTest` established.
+    @Test
+    fun `R_1022 first frame of the frequency detail root is the shared loading state`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission())
+        }
+
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.setContent {
+            FrequencyDetailContent(context = context, frequencyHz = 146_960_000L, onBack = {})
+        }
+
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertExists()
+
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitUntilTextExists("146.960")
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertDoesNotExist()
     }
 
     @Test

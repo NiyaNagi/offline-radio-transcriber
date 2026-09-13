@@ -18,7 +18,14 @@ import org.ort.app.ui.data.FrequencyPolling
 @Composable
 public fun FrequenciesContent(context: Context, onOpen: (Long) -> Unit, modifier: Modifier = Modifier) {
     var frequencies by remember { mutableStateOf(emptyList<FrequencyListEntryViewState>()) }
-    LaunchedEffect(Unit) { frequencies = FrequencyPolling.listFrequencies(context) }
+    // Register R-1022/R-1051 (halt, constitution I/IV): `true` until the first real
+    // `FrequencyPolling.listFrequencies` read lands — see `FrequenciesListScreen`'s own `loading`
+    // parameter kdoc.
+    var loading by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        frequencies = FrequencyPolling.listFrequencies(context)
+        loading = false
+    }
     FrequenciesListScreen(
         frequencies = frequencies,
         onOpen = onOpen,
@@ -26,5 +33,6 @@ public fun FrequenciesContent(context: Context, onOpen: (Long) -> Unit, modifier
         // R-215: "N heard all time · M tonight" — the frequency counts, not any one row's.
         heardAllTimeCount = frequencies.size,
         heardTonightCount = frequencies.count { it.tonightCount > 0 },
+        loading = loading,
     )
 }

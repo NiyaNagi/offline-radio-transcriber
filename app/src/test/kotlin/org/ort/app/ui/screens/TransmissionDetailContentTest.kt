@@ -127,6 +127,39 @@ class TransmissionDetailContentTest {
         }
     }
 
+    // Register R-1022/R-1051 (halt, constitution I/IV): before this fix, the top-level `detail ==
+    // null` branch (already correctly gated — never a false empty claim) rendered a local, untagged
+    // "Loading…" `Text`, invisible to `TourAccessibilityScroll.snapshot`'s structural readiness
+    // scan. `mainClock.autoAdvance = false` before `setContent` freezes recomposition so the
+    // assertion right after inspects the composed tree before the `LaunchedEffect` poll can land —
+    // the same idiom `LogContentLoadingTest` established.
+    @Test
+    fun `R_1022 first frame of the detail screen is the shared loading state`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.mainClock.autoAdvance = false
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertExists()
+
+        composeTestRule.mainClock.autoAdvance = true
+        composeTestRule.waitUntilDescriptionExists("K7LWH")
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertDoesNotExist()
+    }
+
     @Test
     fun `renders the real transmission once the poll resolves`() {
         runBlocking {
@@ -906,7 +939,7 @@ class TransmissionDetailContentTest {
             }
         }
 
-        composeTestRule.waitUntilTextExists("No retained audio for this transmission. The reason is not recorded.")
+        composeTestRule.waitUntilTextExists("The reason is not recorded.")
         composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("never retained", substring = true).assertDoesNotExist()
     }
@@ -941,7 +974,7 @@ class TransmissionDetailContentTest {
             }
         }
 
-        composeTestRule.waitUntilTextExists("No retained audio for this transmission. The reason is not recorded.")
+        composeTestRule.waitUntilTextExists("The reason is not recorded.")
         composeTestRule.onNodeWithText("Pruned by the retention budget", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
     }

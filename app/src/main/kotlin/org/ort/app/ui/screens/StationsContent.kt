@@ -32,6 +32,9 @@ public fun StationsContent(context: Context, onOpen: (String) -> Unit, modifier:
     // R-207: `Most heard` sorts by real all-time overs count — a display concern like the chips
     // themselves, so it lives here rather than a second `StationPolling` query.
     var sortMostHeard by remember { mutableStateOf(false) }
+    // Register R-1022/R-1051 (halt, constitution I/IV): `true` until the first real
+    // `StationPolling.listStations` read lands — see [StationsListState.loading]'s own kdoc.
+    var loading by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
         val loaded = StationPolling.listStations(context)
@@ -42,6 +45,7 @@ public fun StationsContent(context: Context, onOpen: (String) -> Unit, modifier:
         if (loaded.none { it.heardTonight }) {
             filter = StationsFilter.ALL_TIME
         }
+        loading = false
     }
     LaunchedEffect(filter) {
         unidentified = StationPolling.unidentifiedSummary(context, tonightOnly = filter == StationsFilter.TONIGHT)
@@ -63,6 +67,7 @@ public fun StationsContent(context: Context, onOpen: (String) -> Unit, modifier:
         unidentified = unidentified,
         heardAllTimeCount = allStations.size,
         heardTonightCount = allStations.count { it.heardTonight },
+        loading = loading,
     )
     StationsListScreen(
         state = listState,

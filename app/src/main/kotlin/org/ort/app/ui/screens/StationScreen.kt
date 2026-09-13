@@ -36,6 +36,7 @@ import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.KeyValueRow
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.components.rememberFreqColumnWidth
@@ -101,6 +102,13 @@ public fun StationsListScreen(
                     modifier = Modifier.testTag("stations-filter-${filter.name}"),
                 )
             }
+        }
+        // Register R-1022/R-1051 (halt, constitution I/IV): the real "not yet known" fact — see
+        // [StationsListState.loading]'s own kdoc for why this must be checked before the empty
+        // check below, never folded into it.
+        if (state.loading) {
+            LoadingState(message = "Loading…", modifier = Modifier.padding(horizontal = OrtSpacing.lg))
+            return@Column
         }
         if (state.stations.isEmpty() && state.unidentified == null) {
             EmptyState(

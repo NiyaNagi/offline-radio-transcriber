@@ -32,6 +32,149 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-13 (WPDIGINIT Part A: R-1022/R-1051 closed for every remaining screen)
+
+### f6474626 — WPDIGINIT Part A: R-1022/R-1051 - Sessions, Digest, Recordings' shared tag, Stations, Frequencies, Threads and the transmission detail's own loading frames now use the shared, tagged LoadingState
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/digest/{SessionsContent,DigestContent}.kt`;
+`app/src/main/kotlin/org/ort/app/ui/recordings/RecordingsScreen.kt` (the loading row's tag only —
+`ui/recordings/**` is WPRC02's package); `app/src/main/kotlin/org/ort/app/ui/screens/{StationsContent,
+StationScreen,StationDetailContent,FrequenciesContent,FrequencyScreen,FrequencyDetailContent,
+ThreadContent,ThreadScreen,DetailRevisionsScreen,TransmissionDetailContent}.kt`;
+`app/src/main/kotlin/org/ort/app/ui/data/{StationsAndFrequencies,ThreadViewData}.kt`;
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (new `audio-removed-by-operator` scenario);
+`tools/ui-audit/tour.json` (one step appended at the end); every file's own test.
+
+**Requirements/ACs:** R-1022, R-1051 (register, halt, constitution I/IV/VIII), R-1066 (device
+evidence for the Part B fix, captured here).
+
+**What changed.** WPINIT closed R-1022/R-1051 for Log, Now, capture status and the live monitor;
+this closes it for every other list/detail screen, per the register's own "remaining" note and
+this session's own sweep of every `*Content.kt`/`*Screen.kt` under `ui/**`:
+
+- **Genuine R-1051-class defects (an empty/"nothing yet" state was the initial value, indistinguishable
+  from "queried, and genuinely nothing"):** `StationsContent`/`StationScreen` (`StationsListState`
+  gained a `loading: Boolean` field, checked before the empty check); `FrequenciesContent`/
+  `FrequencyScreen` (`FrequenciesListScreen` gained a `loading` parameter, same shape);
+  `ThreadContent`/`ThreadScreen` (`ThreadListViewState` gained a `Loading` sealed case, mirroring
+  `NowViewState.Loading`'s own precedent exactly — a `null` `sessionId`, its own different honest
+  fact, seeds `Empty` immediately, never stuck loading forever); `TransmissionDetailContent`'s own
+  `RevisionsDestination`/`DetailRevisionsScreen` (`versions` seed of `emptyList()` rendered a
+  fabricated-looking "0 versions" header with no cards before the first poll — `DetailRevisionsScreen`
+  gained a `loading` parameter).
+- **Already correctly gated (nullable/distinct state), but the loading branch was a local, untagged
+  "Loading…" `Text` invisible to the tour's structural readiness scan:** `SessionsContent` (both the
+  sessions list and a session's own detail), `DigestContent`, `TransmissionDetailContent`'s own
+  top-level `detail == null` branch, `StationDetailContent`, `FrequencyDetailContent` — all now
+  render the shared `LoadingState` (`LOADING_STATE_TEST_TAG`).
+- **RC01 Recordings** (owned by WPRC02): `RecordingsLoading`'s own `RECORDINGS_LOADING_TEST_TAG` is
+  unchanged; it now also carries `LOADING_STATE_TEST_TAG` on its outer container (a second,
+  independent node), the minimal change asked for so the tour waits on it too.
+- **Search** (already fine, confirmed by re-reading `SearchContent.kt`/`SearchScreen.kt`/
+  `SearchViewData.kt`): `result == null` (never searched) is structurally distinct from a real
+  `SearchResult(details = emptyList(), ...)` (searched, found nothing) — no fix needed.
+- **Settings summaries, Improve, and `OrtNavHost`'s own `ThreadDetailContent`** have the identical
+  lower-severity "untagged local Loading" shape (`SettingsContent.kt`'s `LoadingSettings`,
+  `ImproveContent.kt`'s `Loading`, `OrtNavHost.kt`'s inline `Text`) but are explicitly out of this
+  builder's row (WPMODLOG/WPIMPROVE/WPRC02 respectively per this session's own prompt) — left
+  untouched, named here for whichever builder owns each file next.
+- **R-1066 device evidence:** a new debug scenario, `audio-removed-by-operator` (`Scenarios.kt`,
+  alongside the pre-existing `no-audio`), seeds a session whose `overAudioRemovedAtMillis` is
+  genuinely set — the one real `AudioAbsenceReason.RemovedByOperator` case `no-audio` cannot
+  produce — with one tour step (`audio-removed-by-operator/D06-audio-removed`) appended at the end
+  of `tour.json`.
+
+**Verified.**
+- Unit: every new/changed loading gate has a discriminating test (name, what it proves, and the
+  revert-and-confirm-fails-for-the-right-reason step actually run):
+  `SessionsContentLoadingTest` (list + detail, `mainClock.autoAdvance = false` before `setContent`,
+  the same idiom `LogContentLoadingTest` established), `DigestContentLoadingTest`,
+  `RecordingsScreenTest`'s existing null-state test extended to also assert the shared tag,
+  `StationsContentLoadingTest`, `FrequenciesContentLoadingTest` plus a pure `FrequencyScreenTest`
+  case, a pure `StationScreenTest` case, `ThreadContentLoadingTest` (both the live-session and the
+  null-`sessionId` cases), `StationDetailContentTest`/`FrequencyDetailContentTest` (root loading
+  frame), `TransmissionDetailContentTest` (top-level loading frame), `DetailRevisionsScreenTest`
+  (new file, both `loading = true`/`false`), and `ScenariosTest`'s new `audio-removed-by-operator`
+  case plus its own pre-existing `Scenarios.NAMES.forEach` sweep. Every one of these was reverted,
+  confirmed to fail for the stated reason, then restored — reported in full in this session's own
+  report, not repeated here. Two pre-existing `TransmissionDetailContentTest` assertions
+  (`a session whose over audio was never touched…`, `a pruned-archive session…`) still pinned Part
+  B's old duplicated sentence and were updated to the new one in the same pass that found them
+  broken by that commit.
+  `./gradlew :app:testDebugUnitTest` (14m11s) and `./gradlew :app:smokeTestDebugUnitTest` (3m40s) —
+  both **full suites**, not just the touched classes — green after every change in this entry.
+  `./gradlew :app:testDebugUnitTest --tests "org.ort.app.debug.tour.TourStepsTest"` — the new
+  tour.json step resolves to the screen it claims.
+- Device (own AVD `ort_audit_wpdiginit`, created with `tools\ui-audit\create-avd.ps1`; a first boot
+  attempt collided with another session's emulator already on port 5558 — a false "booted"
+  positive from `boot.ps1`'s own poll querying the wrong device — caught before any install/wipe
+  touched it, the zombie process killed, and the AVD rebooted clean on port 5566, confirmed by name
+  before proceeding): `wm size 1260x2772`, `wm density 420` (already 420 natively), `install.ps1
+  -Clear`. Cold-run tour captures under
+  `C:\Users\ADAMST~1\AppData\Local\Temp\claude\C--Users-Adam-Steenwyk-Documents-Code-offline-radio-transcriber\5e8e5dcf-16ae-49f4-8168-b515f13178ea\scratchpad\wpdiginit-evidence\`:
+  `dg-run{1,2,3}\` (`*DG0*`, the Sessions/Digest steps) and `rc01-run{1,2,3}\` (`*RC01*`, Recordings),
+  three genuinely distinct cold runs each (force-stopped between; the RC01 runs needed the on-device
+  `files/tour/manifest.json` deleted before each relaunch too — a same-step-count coincidence between
+  the DG0 and RC01 globs let a stale manifest satisfy `tour.ps1`'s own "done" poll instantly on the
+  first attempt, caught by the manifest's own `capturedAt` timestamps not advancing, redone
+  correctly). Every one of the 24 captures shows real data — the session detail, the digest's "Worth
+  knowing"/"By the numbers", the Recordings list's 14 real sessions — never a loading or empty
+  placeholder; viewed directly, including two at font scale 2.0 (`DG05-digest-prose@2x`,
+  `RC01-recordings@2x-end`) for layout (no collision, no clipping, scrolls to real tail content).
+  `detail-audio-absence\{no-audio,audio-removed-by-operator}\D06-*.png` (Part B): the grey box
+  ("No retained audio for this transmission") renders once; the cause line beneath reads only "The
+  reason is not recorded." or "Removed by the operator on 8 Aug. Transcript, attribution and lattice
+  were kept." respectively — confirmed by eye, not just the unit test's structural assertion.
+  Emulator shut down after (`adb emu kill`); the other four AVDs on this host (`ort_audit`,
+  `ort_audit_2`, `ort_audit_3`, `ort_audit_rc02`) were left untouched throughout.
+
+**Left open / not done:** SettingsContent/ImproveContent/OrtNavHost's own untagged local loading
+rows (named above) — out of this builder's row, flagged for their owning builders. No dedicated
+Robolectric geometry test (`w390dp-h844dp-420dpi`/480dp) was added for each new `LoadingState` call
+site specifically — `LoadingState` itself is WPINIT's already-verified shared composable, and the
+2.0 device captures above are this round's own layout evidence at the real host path instead;
+flagged in case the lead wants a dedicated unit test per screen regardless.
+
+---
+
+## 2026-09-13 (WPDIGINIT: R-1066 the no-audio cause line no longer repeats the box's own title)
+
+### 75a7b52a — WPDIGINIT Part B: R-1066 - the transmission detail's audio-absence cause line states only the cause
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt` (`NoAudioNotice`);
+`app/src/test/kotlin/org/ort/app/ui/screens/TransmissionDetailScreenTest.kt`.
+
+**Requirements/ACs:** R-1066 (register, polish), constitution VIII (screen not fixed until
+re-captured against its artboard).
+
+**What changed:** `Detail-Playback.dc.html`'s grey audio box already names the absence
+("No retained audio for this transmission" — `WaveformCard`'s own `NoAudio` message,
+`ui/components/Inspection.kt`, untouched). The sentence directly beneath it
+(`NoAudioNotice`, gated on `AudioAbsenceReason`) repeated that exact title verbatim before
+naming the cause, for the `Unknown`/`null` case: "No retained audio for this transmission. The
+reason is not recorded." Changed that one branch to state only the cause: "The reason is not
+recorded." The `RemovedByOperator`/`PrunedByRetentionBudget`/`NeverRetained` branches already
+stated only their own cause and are unchanged.
+
+**Verified:** `./gradlew :app:testDebugUnitTest --tests
+"org.ort.app.ui.screens.TransmissionDetailScreenTest"` — reverted the fix first and confirmed
+`audio absence with no reason looked up yet reads as the honest unknown sentence` failed for the
+right reason (`assertCountEquals`: "Expected exactly '1' node but found '2' nodes" matching "No
+retained audio for this transmission" as a substring — the box and the duplicated cause line both
+matched); restored the fix and reran — 36 tests passed. Two tests
+(`audio absence with no reason looked up yet reads as the honest unknown sentence`,
+`AudioAbsenceReason Unknown reads as the honest unknown sentence, never a guessed cause`) now
+assert structurally (`onAllNodesWithText(..., substring = true).assertCountEquals(1)`) that the
+box's own title text appears exactly once, rather than asserting the exact old (or new) sentence —
+per this task's own instruction, a test that pinned exact prose would not have caught the class of
+defect this fixes. Device evidence captured under Part A's verification below (the same detail
+screen, both an unknown cause and an operator removal).
+
+**Left open / not done:** none for this row — R-1066 is closed by this commit, pending the device
+capture and hosted CI/Release green recorded in the gate section of this session's report.
+
+---
+
 ## 2026-09-13 (WPSQUELCH: FR-SEG-5 rig squelch fusion, register R-1062)
 
 ### 025ec8b0 — WPSQUELCH round 3: the squelch staleness bound must survive a poll descriptor's own rhythm
@@ -432,6 +575,8 @@ building the loss and staleness fallback.
 **Verified:** `python tools/spec-check/spec_check.py`, run before this commit.
 
 **Left open / not done:** Q23 itself; R-1062's round 2.
+
+---
 
 ## 2026-09-13 (WPINIT round 2, coordinator review before merge: `NeverRetained` was itself an unrecorded guess — replaced with `Unknown`; fresh, single-AVD device evidence for Parts A/B/C and R-1055)
 

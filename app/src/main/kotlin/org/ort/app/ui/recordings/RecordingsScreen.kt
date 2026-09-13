@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
+import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
 import org.ort.app.ui.components.ProgressBar
 import org.ort.app.ui.components.ScreenHeader
 import org.ort.app.ui.components.SectionHeader
@@ -115,7 +116,12 @@ public fun RecordingsScreen(
 
 @Composable
 private fun RecordingsLoading(modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(OrtSpacing.lg)) {
+    // Register R-1022 (WPDIGINIT, minimal addition — this screen's own `RECORDINGS_LOADING_TEST_TAG`
+    // is unchanged and still the tag this package's own tests key on): also carries the shared
+    // `LOADING_STATE_TEST_TAG` on the outer container, a second, independent node from the `Text`
+    // below, so `org.ort.app.debug.tour.TourAccessibilityScroll.snapshot`'s structural readiness
+    // scan (which only knows the shared tag) waits for this screen's real data too.
+    Column(modifier = modifier.padding(OrtSpacing.lg).testTag(LOADING_STATE_TEST_TAG)) {
         Text(
             text = "Loading…",
             style = OrtType.subtitle,

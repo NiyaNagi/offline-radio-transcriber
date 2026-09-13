@@ -20,6 +20,7 @@ import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.Badge
 import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.theme.OrtColors
@@ -41,7 +42,24 @@ public fun DetailRevisionsScreen(
     onRestore: (versionId: String) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * Register R-1022/R-1051 (halt, constitution I/IV): `true` exactly until
+     * [org.ort.app.ui.screens.RevisionsDestination]'s own first [org.ort.app.ui.data.CorrectionPolling
+     * .revisions] read lands — before this parameter existed, [versions]' initial `emptyList()`
+     * seed rendered as a fabricated-looking "0 versions · none deleted…" header with no cards,
+     * indistinguishable from a real (impossible, since every transmission has at least one
+     * version) empty result. `false` (every caller before this parameter existed) renders exactly
+     * as before.
+     */
+    loading: Boolean = false,
 ) {
+    if (loading) {
+        Column(modifier = modifier.fillMaxSize()) {
+            DrillInHeader(parentLabel = parentLabel, onBack = onBack)
+            LoadingState(message = "Loading…", modifier = Modifier.padding(OrtSpacing.lg))
+        }
+        return
+    }
     val current = versions.firstOrNull { it.isCurrent }
     Column(modifier = modifier.fillMaxSize()) {
         DrillInHeader(parentLabel = parentLabel, onBack = onBack)
