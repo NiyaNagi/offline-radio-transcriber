@@ -2,10 +2,15 @@ package org.ort.app.ui.settings
 
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +46,7 @@ import org.ort.app.ui.improve.Plurals
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
+import java.util.Locale
 
 /** Constitution III's never-included list, `Settings-Export.dc.html` verbatim (R-135, round 4
  * System validator: this must show even while export is unbuilt, not only once a real exporter
@@ -91,6 +97,21 @@ private fun ExportScope.toRequestScope(): ExportRequestScope = when (this) {
  * [ExportCoordinator.previewCount] so every existing caller keeps compiling and now genuinely
  * shows the real count with no wiring change of its own; a test injects a behavioural fake instead
  * of a real `Context`-backed Room read (this module's own `SettingsExportScreenTest`).
+ *
+ * [previewSizeBytes]/[suggestedFileName] (R-1045(b), register, design: `Settings-Export.dc.html`'s
+ * button reads `Save file · <filename> · <size>`, the build showed only `Save file`).
+ * [suggestedFileName] is never a second, independently-invented naming rule — it *is*
+ * [ExportCoordinator.suggestedFileName], the exact function [onSaveFile]'s own real caller
+ * ([org.ort.app.ui.settings.SettingsExportSubScreen]) already hands the Storage Access Framework
+ * picker, only bound here to a fixed `Instant` per [scope]/[format] combination (via `remember`) so
+ * the displayed name does not visibly tick over between recompositions while the operator is still
+ * looking at it. [previewSizeBytes] defaults to [ExportCoordinator.previewSizeBytes] — the real
+ * byte count [ExportCoordinator.build] would produce, resolved the same "run the real producer
+ * before the write" way [org.ort.app.fieldreport.bundle.FieldReportBundleBuilder.preview] already
+ * does for its own bundle (that function's own doc comment has the full reasoning) — never an
+ * estimate presented as a size (constitution I/VI). Both follow [previewCount]'s own injection
+ * idiom exactly: a test supplies a behavioural fake for each (this module's own
+ * `SettingsExportScreenTest`).
  */
 @Composable
 public fun SettingsExportScreen(
@@ -99,6 +120,8 @@ public fun SettingsExportScreen(
     onSaveFile: (ExportRequest) -> Unit = {},
     modifier: Modifier = Modifier,
     previewCount: suspend (Context, ExportRequest) -> ExportCountPreview = ExportCoordinator::previewCount,
+    previewSizeBytes: suspend (Context, ExportRequest) -> Long = ExportCoordinator::previewSizeBytes,
+    suggestedFileName: (ExportRequest) -> String = { ExportCoordinator.suggestedFileName(it) },
 ) {
     var scope by remember { mutableStateOf(ExportScope.TONIGHT) }
     var format by remember { mutableStateOf(ExportFileFormat.ADIF) }
@@ -121,25 +144,40 @@ public fun SettingsExportScreen(
     // honest way a `notMeasuredReason` elsewhere in this codebase treats an absent signal: nothing
     // shown, never a crash and never a fabricated count (constitution I).
     var preview by remember { mutableStateOf<ExportCountPreview?>(null) }
+    // R-1045(b): the same absent-signal shape as [preview] above — `null` while `RANGE` is
+    // selected, still loading, or [previewSizeBytes] itself failed; never a fabricated size.
+    var sizeBytes by remember { mutableStateOf<Long?>(null) }
     val context = LocalContext.current
 
+    // R-1045(b): the artboard's filename never depends on `includeTranscripts` (only [scope]/
+    // [format] feed [ExportCoordinator.suggestedFileName]), so it is `remember`-ed off those two
+    // alone — otherwise every `includeTranscripts` toggle would also re-mint a fresh timestamp for
+    // a name the operator has not actually changed the scope/format of.
+    val displayFileName = if (scope == ExportScope.RANGE) {
+        null
+    } else {
+        remember(scope, format) {
+            suggestedFileName(ExportRequest(scope = scope.toRequestScope(), format = format))
+        }
+    }
+
     LaunchedEffect(scope, format, includeTranscripts) {
-        preview = if (scope == ExportScope.RANGE) {
-            null
+        if (scope == ExportScope.RANGE) {
+            preview = null
+            sizeBytes = null
         } else {
-            runCatching {
-                previewCount(
-                    context,
-                    ExportRequest(
-                        scope = scope.toRequestScope(),
-                        format = format,
-                        includeTranscripts = includeTranscripts,
-                    ),
-                )
-            }.onFailure {
+            val request = ExportRequest(
+                scope = scope.toRequestScope(),
+                format = format,
+                includeTranscripts = includeTranscripts,
+            )
+            preview = runCatching { previewCount(context, request) }.onFailure {
                 // Logged, never silent (constitution: never delete/drop a real failure quietly) —
                 // this is exactly the on-device failure this file's own doc comment names.
                 android.util.Log.w("SettingsExportScreen", "previewCount failed; showing no preview", it)
+            }.getOrNull()
+            sizeBytes = runCatching { previewSizeBytes(context, request) }.onFailure {
+                android.util.Log.w("SettingsExportScreen", "previewSizeBytes failed; showing filename only", it)
             }.getOrNull()
         }
     }
@@ -176,6 +214,8 @@ public fun SettingsExportScreen(
                 scope = scope,
                 preview = preview,
                 format = format,
+                fileName = displayFileName,
+                sizeBytes = sizeBytes,
                 onSaveFile = {
                     onSaveFile(
                         ExportRequest(
@@ -190,9 +230,26 @@ public fun SettingsExportScreen(
     }
 }
 
+/**
+ * R-1044 (register, design): `Settings-Export.dc.html`'s `.opt` rows carry a 1px divider above
+ * every row (and one more below the last row of each group) plus 4px of vertical padding around
+ * the row's own content — the build drew neither, so at font scale 2.0 a wrapped sub-line's own
+ * last line ran straight into the next row's title with no seam between them. [OrtColors.lineFaint]
+ * is the same hairline token the artboard's own `oklch(0.21 0.010 250)` names (that colour's own
+ * doc comment in `OrtColors.kt` — "between station rows" — states the exact value), never a new one
+ * invented for this row. The padding is added via each row's own `modifier` (so it composes with
+ * [RadioRow]/[CheckboxRow]'s own `heightIn(min = 44.dp)` rather than replacing it — the visible row
+ * only grows taller, the 44dp floor and the vertically-centred marker are unaffected).
+ */
+@Composable
+private fun OptionDivider(modifier: Modifier = Modifier) {
+    Box(modifier = modifier.fillMaxWidth().height(1.dp).background(OrtColors.lineFaint))
+}
+
 /** `Settings-Export.dc.html`'s "What" section — split out of [SettingsExportScreen] purely to
  * keep that function under detekt's `LongMethod` threshold; every row, label and test tag moved
- * verbatim. */
+ * verbatim. R-1044: a divider above every row and one more after the last (see [OptionDivider]'s
+ * own kdoc). */
 @Composable
 private fun ExportScopeSection(
     state: SettingsExportViewState,
@@ -200,70 +257,82 @@ private fun ExportScopeSection(
     onScopeChange: (ExportScope) -> Unit,
 ) {
     SectionHeader(label = "What", modifier = Modifier.padding(top = OrtSpacing.md))
+    OptionDivider()
     RadioRow(
         label = "Tonight",
         selected = scope == ExportScope.TONIGHT,
         onClick = { onScopeChange(ExportScope.TONIGHT) },
         count = "${state.tonightOverCount}",
-        modifier = Modifier.testTag("export-scope-tonight"),
+        modifier = Modifier.padding(vertical = OrtSpacing.xs).testTag("export-scope-tonight"),
     )
+    OptionDivider()
     RadioRow(
         label = "A range of nights",
         selected = scope == ExportScope.RANGE,
         onClick = { onScopeChange(ExportScope.RANGE) },
-        modifier = Modifier.testTag("export-scope-range"),
+        modifier = Modifier.padding(vertical = OrtSpacing.xs).testTag("export-scope-range"),
     )
+    OptionDivider()
     RadioRow(
         label = "Everything",
         selected = scope == ExportScope.EVERYTHING,
         onClick = { onScopeChange(ExportScope.EVERYTHING) },
         count = Plurals.count(state.allSessionCount, "session"),
-        modifier = Modifier.testTag("export-scope-everything"),
+        modifier = Modifier.padding(vertical = OrtSpacing.xs).testTag("export-scope-everything"),
     )
+    OptionDivider()
 }
 
 /** `Settings-Export.dc.html`'s "Include" section — split out of [SettingsExportScreen] for the
  * same `LongMethod` reason as [ExportScopeSection]. See [SettingsExportScreen]'s own kdoc for why
  * `Log with attributions`/`Digest`/`Superseded transcripts...`/`Audio` are pinned or disabled
- * rather than interactive — only `Transcripts, current version` genuinely toggles behaviour. */
+ * rather than interactive — only `Transcripts, current version` genuinely toggles behaviour. R-1044:
+ * a divider above every row and one more after the last (see [OptionDivider]'s own kdoc). */
 @Composable
 private fun ExportIncludeSection(includeTranscripts: Boolean, onIncludeTranscriptsChange: (Boolean) -> Unit) {
     SectionHeader(label = "Include", modifier = Modifier.padding(top = OrtSpacing.md))
+    OptionDivider()
     CheckboxRow(
         label = "Log with attributions and their state",
         checked = true,
         onCheckedChange = {},
         subLine = "the state travels with every callsign — an export without it would be a lie; " +
             "always included, the one thing every format actually writes",
+        modifier = Modifier.padding(vertical = OrtSpacing.xs),
     )
+    OptionDivider()
     CheckboxRow(
         label = "Transcripts, current version",
         checked = includeTranscripts,
         onCheckedChange = onIncludeTranscriptsChange,
         subLine = "superseded versions optional below",
-        modifier = Modifier.testTag("export-checkbox-transcripts"),
+        modifier = Modifier.padding(vertical = OrtSpacing.xs).testTag("export-checkbox-transcripts"),
     )
+    OptionDivider()
     CheckboxRow(
         label = "Digest",
         checked = false,
         onCheckedChange = {},
         subLine = "not yet written by this exporter",
-        modifier = Modifier.testTag("export-checkbox-digest"),
+        modifier = Modifier.padding(vertical = OrtSpacing.xs).testTag("export-checkbox-digest"),
     )
+    OptionDivider()
     CheckboxRow(
         label = "Superseded transcripts and corrections history",
         checked = false,
         onCheckedChange = {},
         subLine = "not yet written by this exporter",
-        modifier = Modifier.testTag("export-checkbox-history"),
+        modifier = Modifier.padding(vertical = OrtSpacing.xs).testTag("export-checkbox-history"),
     )
+    OptionDivider()
     CheckboxRow(
         label = "Audio",
         checked = false,
         onCheckedChange = {},
         subLine = "not yet written by this exporter",
-        modifier = Modifier.testTag("export-checkbox-audio"),
+        modifier = Modifier.padding(vertical = OrtSpacing.xs).testTag("export-checkbox-audio"),
     )
+    OptionDivider()
 }
 
 /** `Settings-Export.dc.html`'s "Format" section — split out of [SettingsExportScreen] for the same
@@ -304,12 +373,17 @@ private fun ExportFormatSection(format: ExportFileFormat, onFormatChange: (Expor
  * own kdoc), and `Save file` calls [onSaveFile] and is enabled for the other two.
  *
  * R-1035: [preview] renders between the `FailedState` and the button — `null` (still loading, or
- * `RANGE`) shows nothing rather than a fabricated count. */
+ * `RANGE`) shows nothing rather than a fabricated count.
+ *
+ * R-1045(b): [fileName]/[sizeBytes] feed [buildSaveButtonLabel] — see that function's own kdoc for
+ * why [sizeBytes] alone (never [fileName]) is allowed to be honestly absent from the label. */
 @Composable
 private fun ExportFooter(
     scope: ExportScope,
     preview: ExportCountPreview?,
     format: ExportFileFormat,
+    fileName: String?,
+    sizeBytes: Long?,
     onSaveFile: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -348,12 +422,55 @@ private fun ExportFooter(
         }
 
         PrimaryButton(
-            text = "Save file",
+            text = buildSaveButtonLabel(fileName = fileName, sizeBytes = sizeBytes),
             onClick = onSaveFile,
             enabled = scope != ExportScope.RANGE,
-            modifier = Modifier.fillMaxWidth().padding(top = OrtSpacing.md, bottom = OrtSpacing.lg),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = OrtSpacing.md, bottom = OrtSpacing.lg)
+                .testTag("export-save-file-button"),
         )
     }
+}
+
+/**
+ * R-1045(b) (register, design): `Settings-Export.dc.html`'s button reads
+ * `Save file · <filename> · <size>`; the build showed only `Save file`. [fileName] is `null` only
+ * while `RANGE` is selected ([SettingsExportScreen]'s own `displayFileName`) — `Save file` is
+ * disabled for that scope regardless, so the label degrades to plain "Save file" rather than
+ * naming a file that will never be written. [sizeBytes] is separately nullable — still loading, or
+ * [org.ort.app.export.ExportCoordinator.previewSizeBytes] itself failed — and is honestly omitted
+ * from the label rather than replaced with an estimate (constitution I/VI): the artboard's own
+ * `184 KB` is real, [ExportCoordinator.previewSizeBytes]'s own kdoc explains how, but a size this
+ * screen cannot yet vouch for must never be shown as if it could. [PrimaryButton]'s own `Text` has
+ * no `maxLines`/`overflow` cap (unlike [ExportPreviewRow]'s own `FlowRow` fix, this is a *single*
+ * `Text`, which already wraps at word/hyphen boundaries by default) — a long filename wraps the
+ * button onto a second line rather than being clipped or overflowing it, and [PrimaryButton]'s own
+ * `requiredHeightIn(min = 48.dp)` is a floor, not a fixed height, so the button grows to fit.
+ */
+private fun buildSaveButtonLabel(fileName: String?, sizeBytes: Long?): String = buildString {
+    append("Save file")
+    fileName?.let {
+        append(" · ")
+        append(it)
+    }
+    if (fileName != null) {
+        sizeBytes?.let {
+            append(" · ")
+            append(formatExportSize(it))
+        }
+    }
+}
+
+/** `184 KB`/`1.4 MB` — the same threshold/precision idiom this package's own
+ * `SettingsContent.kt#formatFieldReportSize`/`SettingsPolling.kt#formatDiagnosticsSize` already use
+ * for a real, computed byte count; not shared code with either (each of those three call sites
+ * formats a size for a different, independently-owned screen) but the identical rule, so the same
+ * number reads the same way everywhere in Settings. */
+private fun formatExportSize(bytes: Long): String {
+    val mb = bytes / 1_000_000.0
+    val kb = bytes / 1_000.0
+    return if (mb >= 1.0) "%.1f MB".format(Locale.ROOT, mb) else "%.0f KB".format(Locale.ROOT, kb)
 }
 
 /**
@@ -369,13 +486,32 @@ private fun ExportFooter(
  * surrounding wording (" of ", " as QSOs · ", [exclusionReasonWord]'s own phrase) — constitution
  * II: a caption's prose is not something a test may lock a designer's copy to, only the facts it
  * reports.
+ *
+ * R-1045(a) (register, design, `overnight/CF07-settings-export@2x-end.png`): a plain (non-wrapping)
+ * `Row` measures every one of these `Text` segments against one shared width budget, consumed in
+ * order — at font scale 2.0 the neutral segments alone ("39", " of ", "42", " as QSOs · ") could
+ * consume the whole line before the amber "3 have no identified station" segment was even
+ * measured, leaving it a hanging sliver at the row's right edge that then wrapped one word per
+ * line down a narrow column — the same defect class `ui/screens/NowScreen.kt`'s own R-260/R-552
+ * (`EarlierNightMetaLine`/`NowIdleMetaRow`) and `ui/components/Rows.kt`'s own R-373/R-420 already
+ * fixed for exactly this shape, by exactly this fix: `FlowRow` (never a plain `Row`, which cannot
+ * wrap at all) gives every segment room to be measured as a whole, atomic unit, and wraps a segment
+ * that does not fit onto a fresh line that starts at the row's own left edge — never a narrow
+ * leftover column — rather than shrinking or hyphen-splitting it. `spacedBy(0.dp)` matches
+ * `EarlierNightMetaLine`'s own choice: the spacing already lives inside each segment's own leading/
+ * trailing text (`" of "`, `" as QSOs · "`), so the row adds none of its own.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ExportPreviewRow(preview: ExportCountPreview?, format: ExportFileFormat, modifier: Modifier = Modifier) {
     if (preview == null) return
     val dimColor = OrtColors.textDim
     val flagColor = OrtColors.accentAmberDim
-    Row(modifier = modifier.fillMaxWidth().testTag("export-preview")) {
+    FlowRow(
+        modifier = modifier.fillMaxWidth().testTag("export-preview"),
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
         if (preview.totalCount == 0) {
             Text(text = "Nothing to export for this scope.", style = OrtType.subLine, color = dimColor)
         } else {
@@ -402,7 +538,16 @@ private fun ExportPreviewRow(preview: ExportCountPreview?, format: ExportFileFor
                     color = flagColor,
                     modifier = Modifier.testTag("export-preview-excluded"),
                 )
-                Text(text = " ${exclusionReasonWord(format)}", style = OrtType.subLine, color = flagColor)
+                Text(
+                    text = " ${exclusionReasonWord(format)}",
+                    style = OrtType.subLine,
+                    color = flagColor,
+                    // R-1045(a): geometry-only tag — a test may assert where this segment renders
+                    // (its own left edge on a wrapped line, never a narrow trailing column) but
+                    // never its text content, which stays free to be reworded at any time
+                    // (constitution II, this file's own `exclusionReasonWord` doc comment).
+                    modifier = Modifier.testTag("export-preview-excluded-reason"),
+                )
             }
         }
     }
