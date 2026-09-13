@@ -265,6 +265,38 @@ public fun EmptyState(message: String, modifier: Modifier = Modifier, subMessage
     }
 }
 
+/**
+ * Register R-1051 (halt, constitution I/IV). guide §6.8: "Loading — only when a real fetch is in
+ * flight, and only where the content will land." This is the missing third treatment: before the
+ * fix, several screens' own initial `remember { mutableStateOf(...) }` value *was* their empty
+ * state (`LogPolling.noSessionState()`, `NowViewState.Idle(...)`, `idleCaptureStatus()`) — so a
+ * cold start (the OS killing the process mid-capture, then restarting it) rendered "No overs yet"
+ * or "Not capturing" for up to one poll interval even while a session genuinely was live, because
+ * nothing distinguished "queried, and truly nothing" from "no query has landed yet". This
+ * composable is that missing distinction — a plain sentence, matching [EmptyState]'s own visual
+ * weight (never a spinner or illustration, per the same guide section), but structurally marked
+ * with [LOADING_STATE_TEST_TAG] so a caller — [org.ort.app.debug.tour.TourAccessibilityScroll],
+ * register R-1022 — can wait for it to disappear without matching on rendered prose (constitution
+ * II: an operator-facing sentence a designer may reword tomorrow must never be a machine contract).
+ */
+@Composable
+public fun LoadingState(message: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .testTag(LOADING_STATE_TEST_TAG)
+            .padding(vertical = 22.dp)
+            .semantics(mergeDescendants = true) { contentDescription = message },
+    ) {
+        Text(text = message, style = OrtType.bodyProse, color = OrtColors.textMuted)
+    }
+}
+
+/** [LoadingState]'s own structural marker (register R-1022) — the real Compose `testTag` a tour or
+ * test reads back as `AccessibilityNodeInfo.viewIdResourceName` once an ancestor opts into
+ * `testTagsAsResourceId` (the same bridge [org.ort.app.debug.tour.TourAccessibilityTap] already
+ * uses — see that object's own doc comment), never rendered text. */
+public const val LOADING_STATE_TEST_TAG: String = "loading-state"
+
 /** guide §6.8: a screen with nothing to show because a *capability is missing* is failed, not
  * empty — amber, names the cause in operator terms, confirms nothing is being lost, carries the
  * recovery action. Never a bare "error". */

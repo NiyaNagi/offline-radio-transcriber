@@ -5,6 +5,7 @@ import android.view.ViewGroup
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityNodeProvider
 import kotlinx.coroutines.delay
+import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
 
 /**
  * spec/ui-conformance-plan.md WP12 v5, register R-460: scrolls a composed screen's own primary
@@ -224,39 +225,47 @@ public object TourAccessibilityScroll {
      * no "Loading…" text to key on) has actually finished landing. [text] deliberately excludes node
      * bounds — a settled layout's bounds do not move between two checks, so including them would only
      * add noise a real content change does not need to be caught by.
+     *
+     * **Register R-1022 (halt), the fix for the defect this class's own previous doc comment
+     * confessed to**: [hasPlaceholder] used to be a case-insensitive substring match against the
+     * word "loading" in any rendered `text`/`contentDescription` — gating whether
+     * [awaitStableSemantics] was allowed to proceed at all, on rendered copy a designer can reword
+     * at any time (constitution II), and the *actual* cause of R-1051: a screen whose real initial
+     * value said "No overs yet"/"Not capturing" contains no "loading" substring, so the tour
+     * captured that false empty state immediately instead of waiting for it to resolve. Replaced by
+     * a structural marker: [snapshot] now scans for [org.ort.app.ui.components.LOADING_STATE_TEST_TAG]
+     * the same way [org.ort.app.debug.tour.TourAccessibilityTap] already reads any other `testTag`
+     * back off `AccessibilityNodeInfo.viewIdResourceName` (see that object's own doc comment for the
+     * `testTagsAsResourceId` bridge) — every loading state R-1051 added
+     * ([org.ort.app.ui.components.LoadingState]) carries it. `SessionsContent`/`DigestContent` do
+     * not carry the marker yet (WPREC is rewriting both into Recordings this same round) — until
+     * that lands, a screen of theirs that is still mid-load is captured exactly as promptly as
+     * everything else already is, which narrows what this check can catch, never widens it into a
+     * new false-negative.
      */
     public data class SemanticsSnapshot(val text: String, val hasPlaceholder: Boolean)
-
-    /** Known placeholder copy this codebase's own screens use while data is still loading (checked
-     * across `SessionsContent.kt`/`DigestContent.kt`/`SettingsContent.kt`/others before writing this)
-     * — the one textual signal available; there is no structural placeholder marker (a testTag or
-     * semantics property) anywhere in this codebase to key on instead. */
-    private const val PLACEHOLDER_TEXT_MARKER = "loading"
 
     /** A separator no real screen's own text is expected to contain, so two genuinely different
      * strings can never collide into the same [SemanticsSnapshot.text] by concatenation alone. */
     private const val SNAPSHOT_SEPARATOR = '\u0001'
 
-    /** Walks the same accessibility bridge [scrollToEnd] does (see this object's own doc comment for
+    /**
+     * Walks the same accessibility bridge [scrollToEnd] does (see this object's own doc comment for
      * why), collecting every node's own `text`/`contentDescription` into one order-stable string —
-     * cheap, in-process, bounded the same way [findTallestScrollableVirtualViewId] already is. */
+     * cheap, in-process, bounded the same way [findTallestScrollableVirtualViewId] already is. The
+     * structural placeholder check (register R-1022) is a second, independent pass over the same
+     * provider, via [TourAccessibilityTap.hasNodeWithTestTag] — see [SemanticsSnapshot]'s own doc
+     * comment for why this no longer matches on this loop's own collected text instead.
+     */
     public fun snapshot(rootView: View): SemanticsSnapshot {
         val provider = findAccessibilityNodeProvider(rootView) ?: return SemanticsSnapshot("", false)
         val builder = StringBuilder()
-        var placeholder = false
         for (virtualViewId in AccessibilityNodeProvider.HOST_VIEW_ID..MAX_VIRTUAL_VIEW_ID) {
             val node = provider.createAccessibilityNodeInfo(virtualViewId) ?: continue
-            val text = node.text?.toString()
-            val description = node.contentDescription?.toString()
-            if (text != null) {
-                builder.append(text).append(SNAPSHOT_SEPARATOR)
-                if (text.contains(PLACEHOLDER_TEXT_MARKER, ignoreCase = true)) placeholder = true
-            }
-            if (description != null) {
-                builder.append(description).append(SNAPSHOT_SEPARATOR)
-                if (description.contains(PLACEHOLDER_TEXT_MARKER, ignoreCase = true)) placeholder = true
-            }
+            node.text?.toString()?.let { builder.append(it).append(SNAPSHOT_SEPARATOR) }
+            node.contentDescription?.toString()?.let { builder.append(it).append(SNAPSHOT_SEPARATOR) }
         }
-        return SemanticsSnapshot(builder.toString(), placeholder)
+        val hasPlaceholder = TourAccessibilityTap.hasNodeWithTestTag(rootView, LOADING_STATE_TEST_TAG)
+        return SemanticsSnapshot(builder.toString(), hasPlaceholder)
     }
 }

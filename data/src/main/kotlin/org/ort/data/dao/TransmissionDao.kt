@@ -24,6 +24,30 @@ public interface TransmissionDao {
     @Query("SELECT * FROM transmission WHERE sessionId = :sessionId ORDER BY samplePosition")
     public suspend fun listBySession(sessionId: String): List<TransmissionEntity>
 
+    /**
+     * Register R-1055 (spec): a curated set of ids, across every session — never scoped to one
+     * session's own rows the way [listBySession] is. The Log's own `LogFilterSelection
+     * .transmissionIds` narrowing (a digest item's "The N overs", an Improve "review changes"
+     * result, D11's affected-overs link) names specific overs by id; those overs may belong to an
+     * earlier, already-ended session while a *different* session is live and capturing right now
+     * (the normal overnight case: capture runs while the operator reviews an earlier night), so
+     * scoping this read to whichever session happens to be live would silently find none of them.
+     * An id in [ids] this table has no row for is simply absent from the result — never an error,
+     * and never a placeholder row — so a caller can tell exactly which requested ids resolved by
+     * comparing the result's own size against [ids]'s.
+     */
+    @Query("SELECT * FROM transmission WHERE id IN (:ids) ORDER BY samplePosition")
+    public suspend fun listByIds(ids: List<String>): List<TransmissionEntity>
+
+    /**
+     * Register R-1055 (spec): the identical cross-session reasoning [listByIds] documents, for a
+     * station's own overs (`LogFilterSelection.stationId`, ST02's "a station's own Overs · Log") —
+     * a station heard across many nights must not read as empty merely because tonight's live
+     * session has not heard it yet.
+     */
+    @Query("SELECT * FROM transmission WHERE stationId = :stationId ORDER BY samplePosition")
+    public suspend fun listByStationId(stationId: String): List<TransmissionEntity>
+
     @Query("SELECT * FROM transmission")
     public suspend fun listAll(): List<TransmissionEntity>
 

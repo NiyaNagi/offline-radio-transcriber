@@ -3,6 +3,10 @@ package org.ort.app.ui.data
 import org.ort.app.ui.components.PriorBarViewState
 import org.ort.core.AttributionState
 import org.ort.core.PassId
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
  * ui-conformance WP6 (R-050/R-051/R-053/R-057), `Detail.dc.html`/`Detail-Confirmed.dc.html`/
@@ -200,6 +204,92 @@ public data class PassFailureViewState(
  */
 public data class RejectedViewState(val reason: String?)
 
+/**
+ * This task (constitution I, III — the R-1051-adjacent finding on the detail screen's own
+ * `Detail-Playback.dc.html` "No retained audio" card): the real, structured cause behind
+ * `!TransmissionDetailViewState.hasAudio`, replacing the mapper's old `everProcessed` heuristic
+ * (whether *any* attribution/inspection fact was ever recorded) — an inference, not a fact, that
+ * rendered the single generic sentence "Audio deleted by retention" for both a genuine operator
+ * deletion and a segment that plainly never had audio to begin with, and never carried a date.
+ *
+ * **Only one cause this codebase can actually produce today, and this type says exactly why.**
+ * [RemovedByOperator] mirrors [org.ort.data.entity.SessionEntity.overAudioRemovedAtMillis] — the
+ * one real signal [org.ort.pipeline.archive.SessionAudioDeletionService] writes when the operator
+ * runs `Recording-Session.dc.html`'s (RC02) Delete action against `audio/<sessionId>/`, the exact
+ * directory [TransmissionDetail.hasAudio] checks. [PrunedByRetentionBudget] and [NeverRetained] are
+ * both modelled for a *future* explicit record and are never constructed by
+ * [AudioAbsenceReasonMapper] against today's real data — every other case reads [Unknown].
+ *
+ * **Register (coordinator review, halt): [NeverRetained] used to be this mapper's own fallback —
+ * "no removal was recorded, so the audio must never have existed."** That is an inference, not a
+ * fact, and constitution I forbids stating an unrecorded cause: [org.ort.core.TransmissionState
+ * .CAPTURED]'s own doc comment ("Audio on disk, queued, no passes run. Entered on VAD close.")
+ * establishes that **every** transmission row is created only after its audio is already written —
+ * a `REJECTED` segment keeps its audio exactly the same way (confirmed directly:
+ * `TransmissionDetailContentTest`'s own R-242 case plays a rejected segment's retained audio), and
+ * no `:data` table records a session ever having audio retention turned off (no such setting exists
+ * — AGENTS.md's own "Audio is retained losslessly" bullet). So a real transmission whose audio is
+ * missing and whose session recorded no removal is indistinguishable, from this mapper's own data,
+ * between an unrecorded automatic prune, a lost/corrupted file, or a build that predates a column
+ * this schema does not have yet — [PrunedByRetentionBudget]'s own case for exactly this reasoning,
+ * generalised. [NeverRetained] is kept only for a genuine future explicit record (e.g. a session-
+ * level "retention was off" flag, if one is ever added) — the same "modelled, never guessed" shape
+ * [PrunedByRetentionBudget] already has. [Unknown] is now what every unrecorded absence reads as,
+ * whether the cause is "the session could not be read at all" or "the session was read and simply
+ * never recorded a removal" — both are the identical honest admission, never silently upgraded to
+ * a claim this mapper cannot back.
+ */
+public sealed interface AudioAbsenceReason {
+    public data class RemovedByOperator(val dateLabel: String) : AudioAbsenceReason
+    public data class PrunedByRetentionBudget(val dateLabel: String) : AudioAbsenceReason
+    public data object NeverRetained : AudioAbsenceReason
+    public data object Unknown : AudioAbsenceReason
+}
+
+public object AudioAbsenceReasonMapper {
+
+    /** `Detail-Playback.dc.html`'s own example wording ("on 8 Aug") — day and month only, in the
+     * device's own locale (guide §9 — dates are prose), never a numeric or `Locale.ROOT` rendering
+     * ([SearchScreen.kt]'s own `DAY_FORMAT`'s identical `Locale.getDefault()` fix, R-370, applies
+     * here for the same reason: `Locale.ROOT` has no real month-name data). */
+    private val DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM", Locale.getDefault())
+
+    private fun dateLabel(utcMillis: Long): String =
+        Instant.ofEpochMilli(utcMillis).atZone(ZoneOffset.UTC).toLocalDate().format(DATE_FORMAT)
+
+    /**
+     * Pure (no `Context`, no I/O — the caller, [org.ort.app.ui.data.CorrectionPolling
+     * .audioAbsenceReason], does the one real `:data` read this needs). `null` exactly when
+     * [hasAudio] is `true` — nothing to explain. [sessionKnown] `false` (the owning session's own
+     * row could not be read at all) and a session that *was* read but simply carries no removal
+     * timestamp both read [AudioAbsenceReason.Unknown] — see this type's own kdoc (the coordinator
+     * review) for why neither is ever [AudioAbsenceReason.NeverRetained], which this function never
+     * constructs. [prunedByRetentionBudgetAtMillis] defaults to `null` and is never set by any real
+     * caller today — see this type's own kdoc for why no such automatic over-audio pruning exists in
+     * this codebase; the parameter exists only so a future, genuine signal has somewhere honest to
+     * land without a second mapper.
+     */
+    public fun from(
+        hasAudio: Boolean,
+        sessionKnown: Boolean,
+        overAudioRemovedAtMillis: Long?,
+        prunedByRetentionBudgetAtMillis: Long? = null,
+    ): AudioAbsenceReason? {
+        if (hasAudio) return null
+        if (!sessionKnown) return AudioAbsenceReason.Unknown
+        return when {
+            overAudioRemovedAtMillis != null ->
+                AudioAbsenceReason.RemovedByOperator(dateLabel(overAudioRemovedAtMillis))
+            prunedByRetentionBudgetAtMillis != null ->
+                AudioAbsenceReason.PrunedByRetentionBudget(dateLabel(prunedByRetentionBudgetAtMillis))
+            // Coordinator review (halt): no explicit record backs "never retained" anywhere in this
+            // schema (see this type's own kdoc) — an unrecorded absence is honestly Unknown, never a
+            // guessed claim.
+            else -> AudioAbsenceReason.Unknown
+        }
+    }
+}
+
 public data class DetailViewState(
     val detail: TransmissionDetailViewState,
     val body: DetailBodyViewState,
@@ -223,6 +313,14 @@ public data class DetailViewState(
      * facts and the Log's row mark both say so too). `false` (every caller before this existed)
      * renders exactly as before. */
     val btAudioMark: Boolean = false,
+    /**
+     * This task (constitution I, III): `null` exactly when [detail]'s own `hasAudio` is `true`
+     * (nothing to explain) or a caller has not looked it up yet (every call site built before this
+     * field existed) — never a guessed value. Non-null names the real, structured cause — see
+     * [AudioAbsenceReason]'s own kdoc — a caller that has read it
+     * ([org.ort.app.ui.data.CorrectionPolling.audioAbsenceReason]) passes it through.
+     */
+    val audioAbsenceReason: AudioAbsenceReason? = null,
 )
 
 public object DetailViewStateMapper {
@@ -284,6 +382,10 @@ public object DetailViewStateMapper {
         // unchanged; a caller that has looked it up
         // ([org.ort.app.ui.data.CorrectionPolling.correctionTyped]) passes it through.
         correctionTyped: Boolean? = null,
+        // This task: the real, structured "why is there no audio" cause — defaulted to `null` so
+        // every existing call site compiles unchanged; a caller that has looked it up
+        // ([org.ort.app.ui.data.CorrectionPolling.audioAbsenceReason]) passes it through.
+        audioAbsenceReason: AudioAbsenceReason? = null,
     ): DetailViewState = DetailViewState(
         detail = detail,
         body = bodyFor(detail, sourceOverTimeLabel, ambiguousEvidence, unknownContext, correctionTyped),
@@ -293,6 +395,7 @@ public object DetailViewStateMapper {
         transcriptConfidence = transcriptConfidence,
         transcriptCharSpan = transcriptCharSpan,
         btAudioMark = btAudioMark,
+        audioAbsenceReason = audioAbsenceReason,
     )
 
     private fun bodyFor(

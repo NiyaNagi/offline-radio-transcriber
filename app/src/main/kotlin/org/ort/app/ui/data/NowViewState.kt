@@ -22,6 +22,20 @@ import java.util.Locale
  */
 public sealed interface NowViewState {
 
+    /**
+     * Register R-1051 (halt, constitution I/IV): [org.ort.app.ui.screens.NowContent]'s own real
+     * initial value — before this fix, that composable's `remember { mutableStateOf(...) }` seeded
+     * with [Idle] directly, which is a real, honest "nothing capturing" *claim*, not a placeholder.
+     * On a cold start after the OS kills the app mid-capture, [org.ort.app.ui.data.ReaderPolling
+     * .effectiveSessionId] can resolve to a genuinely live session on the very first poll — so
+     * seeding [Idle] told the operator "Not capturing" for up to one poll interval while capture
+     * was, in fact, running (the register's own bisect: "Now showed Not capturing" for a scenario
+     * holding 43 overs and a live session). This is the honest "not yet known" value that first
+     * poll replaces; it is never itself polled for or written by
+     * [org.ort.app.ui.data.NowViewStateMapper], only ever a composable's own seed.
+     */
+    public data object Loading : NowViewState
+
     /** `Now-Idle.dc.html`: no session running right now. */
     public data class Idle(
         val lastSessionSummaryLabel: String?,

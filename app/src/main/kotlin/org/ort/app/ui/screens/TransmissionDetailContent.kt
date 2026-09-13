@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import org.ort.app.ui.audio.TransmissionAudioPlayer
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.clearedWhileOverlaid
+import org.ort.app.ui.data.AudioAbsenceReason
 import org.ort.app.ui.data.CorrectionPolling
 import org.ort.app.ui.data.CorrectionRequest
 import org.ort.app.ui.data.CorrectionScope
@@ -116,6 +117,7 @@ public fun TransmissionDetailContent(
     var unknownContext by remember(transmissionId) { mutableStateOf<UnknownTriedContextViewState?>(null) }
     var btAudioMark by remember(transmissionId) { mutableStateOf(false) }
     var correctionTyped by remember(transmissionId) { mutableStateOf<Boolean?>(null) }
+    var audioAbsenceReason by remember(transmissionId) { mutableStateOf<AudioAbsenceReason?>(null) }
     var destination by remember(transmissionId) {
         mutableStateOf<DetailDestination>(
             if (initialRevisionsOpen) DetailDestination.Revisions else DetailDestination.Main,
@@ -136,6 +138,7 @@ public fun TransmissionDetailContent(
         unknownContext = polled.unknownContext
         btAudioMark = polled.btAudioMark
         correctionTyped = polled.correctionTyped
+        audioAbsenceReason = polled.audioAbsenceReason
     }
     LaunchedEffect(transmissionId) { refresh() }
 
@@ -158,6 +161,7 @@ public fun TransmissionDetailContent(
         unknownContext = unknownContext,
         btAudioMark = btAudioMark,
         correctionTyped = correctionTyped,
+        audioAbsenceReason = audioAbsenceReason,
     )
     val callsignLabel = viewState.detail.attribution.stationId ?: "unknown station"
     val whyParentLabel = "$callsignLabel · ${viewState.detail.timeLabel}"
@@ -497,6 +501,9 @@ private data class DetailPollResult(
      * [detail]'s polled attribution is genuinely INFERRED-and-corrected — the same state-specific
      * gating [ambiguousEvidence]/[unknownContext] already use, never a read this poll does not need. */
     val correctionTyped: Boolean? = null,
+    /** This task: [CorrectionPolling.audioAbsenceReason]'s own real result — `null` when [detail]
+     * is `null` or its `hasAudio` is `true` (nothing to explain). */
+    val audioAbsenceReason: AudioAbsenceReason? = null,
 )
 
 /**
@@ -567,6 +574,9 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
         ?.let { RoomSessionRouteFactsReader(context).forSession(it) }
         ?.isBluetoothAudio
         ?: false
+    // This task: only a genuinely audio-absent over needs this second read — the same per-state
+    // gating [passFailure]/[ambiguousEvidence]/[unknownContext] above already use.
+    val audioAbsenceReason = fetched?.let { CorrectionPolling.audioAbsenceReason(context, it.sessionId, it.hasAudio) }
     return DetailPollResult(
         fetched,
         passFailure,
@@ -577,6 +587,7 @@ private suspend fun pollDetail(context: Context, transmissionId: String): Detail
         unknownContext,
         btAudioMark,
         correctionTyped,
+        audioAbsenceReason,
     )
 }
 

@@ -106,14 +106,16 @@ class LogScreenTest {
         ),
         bluetoothAudioFootnote: String? = null,
         appliedFilterLabel: String? = null,
+        loading: Boolean = false,
     ) = LogScreenViewState(
-        items,
-        quickFilters,
-        rejectedFocus,
-        rejectedExplanation,
-        emptyState,
-        bluetoothAudioFootnote,
-        appliedFilterLabel,
+        items = items,
+        quickFilters = quickFilters,
+        rejectedFocus = rejectedFocus,
+        rejectedExplanation = rejectedExplanation,
+        emptyState = emptyState,
+        bluetoothAudioFootnote = bluetoothAudioFootnote,
+        appliedFilterLabel = appliedFilterLabel,
+        loading = loading,
     )
 
     @Test
@@ -912,5 +914,54 @@ class LogScreenTest {
                 "row's own top ($firstRowTop) at ${widthDp}dp, font scale $fontScale",
             bounds.bottom <= firstRowTop,
         )
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Register R-1051 (halt, constitution I/IV): the loading state renders distinctly from both
+    // the empty state and real data — never conflated with either.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 loading renders the loading marker, never the empty state`() {
+        val loading = screenState(
+            items = emptyList(),
+            emptyState = null,
+            quickFilters = emptyList(),
+            loading = true,
+        )
+        composeTestRule.setContent {
+            OrtTheme { LogScreen(state = loading, onOpen = {}, onQuickFilterSelect = {}, onFilterClick = {}) }
+        }
+
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertExists()
+        composeTestRule.onNodeWithText("No overs yet", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 a real empty state never renders the loading marker`() {
+        val empty = screenState(
+            items = emptyList(),
+            emptyState = LogEmptyStateViewState("No overs yet.", "Listening since 23:32."),
+        )
+        composeTestRule.setContent {
+            OrtTheme { LogScreen(state = empty, onOpen = {}, onQuickFilterSelect = {}, onFilterClick = {}) }
+        }
+
+        composeTestRule.onNodeWithText("No overs yet.", substring = true).assertExists()
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("R-1051")
+    fun `R_1051 real data never renders the loading marker`() {
+        val data = screenState(listOf(LogListItem.Row(rowState("TX1", "roger that"))))
+        composeTestRule.setContent {
+            OrtTheme { LogScreen(state = data, onOpen = {}, onQuickFilterSelect = {}, onFilterClick = {}) }
+        }
+
+        composeTestRule.onNodeWithText("roger that", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag(org.ort.app.ui.components.LOADING_STATE_TEST_TAG).assertDoesNotExist()
     }
 }

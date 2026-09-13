@@ -17,6 +17,7 @@ import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FilterChip
 import org.ort.app.ui.components.FilterChipRow
 import org.ort.app.ui.components.GapRow
+import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.LogGroupHeader
 import org.ort.app.ui.components.LogRow
 import org.ort.app.ui.components.RejectedRow
@@ -112,6 +113,18 @@ public fun LogScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.xs),
                 )
             }
+        }
+
+        // Register R-1051 (halt): the screen's own real "not yet known" value — checked ahead of
+        // the column headers and the empty state below, never rendered alongside either (see
+        // `LogPolling.loadingState`'s own kdoc for why this is a distinct field, not a third
+        // meaning folded into `emptyState`).
+        if (state.loading) {
+            LoadingState(
+                message = "Loading the log…",
+                modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg),
+            )
+            return@Column
         }
 
         ColumnHeaderRow(

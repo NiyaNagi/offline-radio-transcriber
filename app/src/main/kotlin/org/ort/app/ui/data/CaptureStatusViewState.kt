@@ -44,6 +44,16 @@ public data class CaptureStatusViewState(
     val thermal: KeyValueFacts,
     val storage: KeyValueFacts,
     val battery: KeyValueFacts,
+    /**
+     * Register R-1051 (halt, constitution I/IV): `true` exactly for the real "not yet known" value
+     * [org.ort.app.ui.screens.CaptureStatusContent] now seeds before its first poll, in place of
+     * the pre-fix bug where `idleCaptureStatus()` (a real, honest "Not capturing" claim) doubled as
+     * that placeholder. `false` for every other producer — including `idleCaptureStatus()` itself,
+     * which stays a genuine, real claim for the case capture truly is not running. Never read by
+     * [CaptureStatusMapper.from]: nothing here claims to know whether capture is running until the
+     * caller has actually asked.
+     */
+    val loading: Boolean = false,
 )
 
 /** The state dot's tone — reuses the product's one halt/degrade/nominal vocabulary (guide §3's
