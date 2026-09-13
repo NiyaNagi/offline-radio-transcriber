@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPFETCHRETRY: R-1075 - bounded retry with backoff for both asset-download tasks)
 
-### (pending) — WPFETCHRETRY: R-1075 - FetchSherpaNativeTask and FetchBundledAssetsTask retry transient download failures through one shared RetryingDownload helper instead of failing on the first HTTP 500/429 or I/O error
+### 2f2fe262 — WPFETCHRETRY: R-1075 - FetchSherpaNativeTask and FetchBundledAssetsTask retry transient download failures through one shared RetryingDownload helper instead of failing on the first HTTP 500/429 or I/O error
 
 **Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/RetryingDownload.kt` (new);
 `buildSrc/src/main/kotlin/org/ort/gradle/FetchSherpaNativeTask.kt`;
