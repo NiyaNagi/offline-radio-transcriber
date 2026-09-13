@@ -34,6 +34,63 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPREC: RC01 Recordings, replacing Earlier nights as the home for sessions)
 
+### 3d1d8839 — WPREC: correction — the TourStepsTest digest-prose timeout was mine, not pre-existing; merge main
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt`, `tools/ui-audit/tour.json`
+(rename only), a merge of `origin/main` (`c966c6f2`) resolving `CHANGELOG.md`,
+`results/coverage-matrix.md` and `tools/ui-audit/tour.json`.
+
+**Requirements/ACs:** design-intent row RC01, IA-1, constitution II (a claim must be checked, not
+assumed), constitution VIII.
+
+**What changed — a correction, stated plainly:**
+- **The previous commit's "pre-existing, environmental" diagnosis for `TourStepsTest`'s
+  `llm-enabled-prose/DG05-digest-prose(@2x)`/`llm-disabled/DG01-digest` timeout was wrong.** It was
+  reached by comparing against this session's own stale local base (`90a87d75`, missing the WPAUDX
+  merge), not real `origin/main`. Proven by running the test three times on this branch and three
+  times on a clean temporary worktree of `origin/main` (`c966c6f2`): **this branch failed 3/3,
+  `origin/main` passed 3/3** — conclusive, not environmental.
+- **Root cause, found by reading the two real screens the failing steps actually reach**:
+  `expectedForDrillIn`'s `reviewSession` case asserted `Expected.Text("Earlier nights")`
+  unconditionally, for both `reviewSessionView` values — but `DigestScreens.kt`'s `DigestScreen`
+  (DG01/DG05) draws `DrillInHeader(parentLabel = "Session", ...)`, never "Earlier nights" at all;
+  only `SessionDetailScreen` (DG04) does. The assertion passed on every build before this session's
+  own `Drawer.kt` change only by accident: `ModalNavigationDrawer`'s `drawerContent` is *always*
+  composed, and the drawer's own `EARLIER_NIGHTS` row used to render that same literal text — an
+  off-screen coincidental match, never the Digest screen the case exists to check. Once
+  `ReaderDestination.EARLIER_NIGHTS.drawerLabel` became "Recordings" (RC01 absorbing that row), the
+  accidental match was gone and the assertion's own long-standing imprecision was exposed.
+- **Fix**: `expectedForDrillIn` now checks `drillIn["reviewSessionView"] == "DIGEST"` first,
+  expecting "Session" (`DigestScreen`'s own real header); the plain `reviewSession` case (default
+  `SESSION` view) still expects "Earlier nights" (`SessionDetailScreen`'s own real header,
+  unchanged). Both routes were always reachable and correct in product code — this fixes the test's
+  own marker, not `OrtNavHost.kt`.
+- Renamed the three bare-`EARLIER_NIGHTS`, no-`drillIn` steps this content now genuinely is —
+  `stations-14-nights/DG03-sessions` → `.../RC01-recordings`, `field-tier1/DG03-sessions` →
+  `.../RC01-recordings`, `gap-call/DG03-sessions` → `.../RC01-recordings` — and removed this
+  session's own duplicate 1.0-scale `stations-14-nights/RC01-recordings` step added previously
+  (the renamed line already covers it); its `@2x`/`@2x-end` siblings stay.
+- Merged `origin/main` (`c966c6f2`, bringing in WPLINK/WPARC/WPNAV/WPAUDX work, including the real
+  `SessionAudioExport.canExport/preview/write` this session's own report previously called a
+  discrepancy against a stale base — dropped, corrected by the merge itself). `CHANGELOG.md`
+  resolved by keeping both sides' entries; `tools/ui-audit/tour.json` resolved by keeping both
+  sides' new steps (no id collisions); `results/coverage-matrix.md` regenerated fresh rather than
+  hand-merged (a generated file). `OrtNavHost.kt` and one test file auto-merged cleanly, no manual
+  resolution needed. Verified no conflict markers remain: `git grep -n -E "^(<<<<<<<|>>>>>>>)"` —
+  no matches, repo-wide.
+
+**Verified:** the six-run comparison above (`.\gradlew.bat :app:testDebugUnitTest --tests
+"org.ort.app.debug.tour.TourStepsTest" --rerun`, three times per branch). Post-fix:
+`TourStepsTest` green, confirmed on three further reruns (5/5 total since the fix, 0 failures).
+`.\gradlew.bat :app:testDebugUnitTest --tests "org.ort.app.debug.tour.*" --tests
+"org.ort.app.ui.navigation.OrtNavHostDestinationDispatchTest" --tests
+"org.ort.app.ui.navigation.ReaderActivityDestinationSmokeTest" --tests
+"org.ort.app.ui.navigation.DrawerContentTest"` green. `:app:compileDebugKotlin`/
+`compileDebugUnitTestKotlin` green after the merge.
+
+**Left open / not done:** none for this commit's own scope — see the next commits for the
+capture pass and the widened `RecordingSessionSummary`.
+
 ### 3430f07b — WPREC: RC01's tour steps, and the regenerated coverage matrix
 
 **Scope:** `tools/ui-audit/tour.json` (append-only, per this session's own ownership map),
