@@ -32,6 +32,29 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-12 (spec: Q21 opened - may operator training labels ever leave the device)
+
+### spec · Q21: training labels exist now, and nothing says whether they may leave the phone
+
+**Scope:** `spec/open-questions.md` only (draft 3.6 note, Q21 in the status table and as a full entry,
+the count of open questions back to five). Lead-owned; no product code.
+
+**Requirements/ACs:** none new. Q21 (opened). Bears on D25, D37, D38, FR-EXP-4, FR-OBS-4 and the
+non-negotiables on user-supplied names and voiceprints.
+
+**What changed:** WPDATA (merged `156d38ac`) built FR-OBS-4's labels - marked for training, outcome,
+true callsign and certainty, tactical callsign, a free-text note, a rating, and when each was set -
+and deliberately kept them out of every outbound path rather than guess. This records that as a
+product question instead of an accident of implementation. The entry sets out why each existing
+rule would answer differently, and recommends deciding per field: structural fields may travel like
+attribution state already does; the true callsign could follow D38's gated, default-off shape; the
+free-text note should never leave, like a user-supplied station name.
+
+**Verified:** `python tools/spec-check/spec_check.py`, run after this edit - result below in the commit's
+own check.
+
+**Left open / not done:** Q21 itself. Until it is answered, labels stay excluded from export, the
+diagnostics bundle, the field report and contribution.
 ## 2026-09-12 (WPDATA: schema v13 — operator-initiated over-audio/archive deletion and FR-OBS-4 training labels, the data and domain layer for RC01/RC02)
 
 ### 53310b99 — WPDATA: one migration (v12→v13) for over-audio removal and FR-OBS-4 labels; `SessionAudioDeletionService` (mark-then-delete, typed refusals, crash-safe, idempotent); `TransmissionLabelRepository`; `recordingSessionSummaries` for RC01; a typed "unavailable" stub for RC02's audio Export
