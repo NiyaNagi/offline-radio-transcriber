@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-12 (WPMODEL: R-1052 halt closed — a model file is verified against its own install record before it ever reaches sherpa-onnx/MediaPipe JNI, and a debug scenario can no longer overwrite a verified real model with a stub)
 
-### (pending) — WPMODEL: R-1052 halt fixed — SIGABRT on first launch, native code loading an unverified model file
+### 477a5fc1 — WPMODEL: R-1052 halt fixed — SIGABRT on first launch, native code loading an unverified model file
 
 **Scope:** `:core` (new `org.ort.core.assets.ModelFileVerifier`, no Android dependency), `:app`
 (`assets/BundledAssetInstaller.kt` — writes the new `.size` sidecar; `app/src/debug`'s
