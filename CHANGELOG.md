@@ -34,6 +34,52 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
 
+### 1c7b9347 — WPCAP fix: restore N08's own live bar and Full log entry point, broken by the first merge pass
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/CaptureScreen.kt`,
+`CaptureStatusContent.kt`, and `app/src/test/kotlin/org/ort/app/ui/navigation/NavSeedTest.kt`,
+`OrtNavHostDestinationDispatchTest.kt`, `ReaderActivityDestinationSmokeTest.kt`.
+**Requirements/ACs:** R-910 (exactly one live bar per destination), IA-3 (`Full log` from a live
+session), R-1007 (the pinned live bar's own tap), R-132 (`Settings-Capture`'s `Meter` action) —
+no new ids; these are the same ones the N08 merge's own commit (`3b5d0e0a`) already cites,
+re-verified after the batch gate on local main (merge `37c23292`) found them broken.
+**What changed:** the batch gate ran `smokeTestDebugUnitTest` in full, which the WPCAP merge's own
+narrower checks did not — it found 2 genuine regressions and 4 tests still asserting superseded
+N04/N06/N07 tags:
+1. **R-910, code fix.** `CaptureScreen` had no `LiveBar` of its own — a first pass read the
+   artboard's "no live bar here" note (about the still-unbuilt `Transport-Bar.dc.html`/C10) as
+   already applying, but `NavHostBody`'s own `embedsOwnLiveBar` still suppresses the host's copy on
+   `CAPTURE`, so removing the embedded one left zero live bars on this destination. Restored:
+   `CaptureStatusContent` computes `liveBar` exactly as N04's `CaptureStatusScreen` always did, and
+   `CaptureScreen` embeds it (own `testTag("capture-livebar")`, tapping it is a no-op — nowhere
+   further to go, the live content is already inline).
+2. **IA-3, code fix.** `CaptureScreen` had no `Full log` action — a first pass called this an
+   "accepted deviation"; it was the only entry point from a live session into the plain, unfiltered
+   Log, so dropping it was a regression. Restored as `CaptureFullLogRow` (same
+   `testTag("live-monitor-full-log")` N07's own footer used), wired through a real `onOpenFullLog`
+   end to end (`CaptureStatusContent` no longer discards it). Pinned *outside* the scrollable
+   content, like the live bar — confirmed directly that a control inside the scroll is not reliably
+   reachable by a plain `performClick()` on a real, shorter `Activity` window
+   (`ReaderActivityDestinationSmokeTest`'s own `IA_3` case failed with the control still inside the
+   scroll, before this placement).
+3. **Four tests, renamed expectations only** (the entry points themselves already worked once 1–2
+   landed): `OrtNavHostDestinationDispatchTest`'s generic `CAPTURE` dispatch check and its `R_1007`
+   case now wait for `capture-title`/`live-monitor-level-not-measured` (were `capture-status-title`/
+   `live-monitor-back`, N04's and N07's own superseded tags); `NavSeedTest`'s
+   `openCaptureLevelMeter` case the same; `ReaderActivityDestinationSmokeTest`'s `R_132` and `IA_3`
+   (renamed `...back restores Live Monitor` → `...back restores Capture`) the same — N08 is the
+   primary destination content now, not a drill-in, so it has no `DrillInHeader`/`Back to Capture`
+   or `live-monitor-back` of its own; `capture-title` is the real marker that landing (or returning)
+   reached the one merged surface.
+**Verified:**
+- `./gradlew :app:smokeTestDebugUnitTest` — 177 tests, `BUILD SUCCESSFUL`.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.*" --tests "org.ort.app.debug.*"` —
+  `BUILD SUCCESSFUL` (20m59s; shared-machine contention, not a hang — confirmed by watching test
+  worker CPU climb throughout the run rather than sit flat).
+- `./gradlew ktlintCheck detekt` — both green.
+**Left open / not done:** nothing new; the N08 merge's own commit (`3b5d0e0a`) already lists what
+remains (AC-158 setup disclosure, `design-intent.md`/register updates for the lead).
+
 ### WPPOLISH — R-1077/R-1078: the banner's scroll-hint chevron no longer covers its own last line; DestructiveButton gets the same vertical padding R-1065 already gave PrimaryButton/SecondaryButton
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureHost.kt` (`BannerOverlay` only),

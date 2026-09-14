@@ -387,13 +387,17 @@ class ReaderActivityDestinationSmokeTest {
             // `clearAndSetSemantics`-registered click action before concluding scroll position still
             // matters to `performClick()` despite it).
             rule.onNode(hasText("Meter") and hasClickAction()).performScrollTo().performClick()
-            // `LevelMeterScreen.kt`'s own `DrillInHeader(parentLabel = "Capture", ...)`.
-            rule.waitUntilContentDescriptionExists("Back to Capture")
+            // N08/WPCAP (coordinator round): `Meter` still lands on Capture's own level content —
+            // it is the merged `CaptureScreen` now (design-intent `Capture.dc.html`), which has no
+            // `DrillInHeader`/`Back to Capture` of its own (it is the primary destination content,
+            // not a drill-in `LevelMeterScreen` is superseded, no longer reachable this way). The
+            // level card's own tag is the real replacement marker.
+            rule.waitUntilTestTagExists("capture-title")
 
             rule.activityRule.scenario.recreate()
             rule.waitForIdle()
 
-            rule.waitUntilContentDescriptionExists("Back to Capture")
+            rule.waitUntilTestTagExists("capture-title")
         }
     }
 
@@ -691,14 +695,16 @@ class ReaderActivityDestinationSmokeTest {
         }
     }
 
-    // IA-3: N07, `Live-Monitor.dc.html`'s own `Full log` — before this round the only one of the
-    // seven Log entry points with no origin to restore at all (`Capture` is not a drill-in, so
-    // system back from a plain, unfiltered `Log` reached this way just exited past it). Reached the
-    // identical way `R_1007` (`OrtNavHostDestinationDispatchTest.kt`) already proves the pinned
-    // live bar's own tap opens `LiveMonitorScreen` — this class's own real `Activity`/back
-    // dispatcher is what additionally proves back actually returns.
+    // IA-3: originally N07's own `Full log` — before that round the only one of the seven Log
+    // entry points with no origin to restore at all (`Capture` is not a drill-in, so system back
+    // from a plain, unfiltered `Log` reached this way just exited past it). N08/WPCAP (coordinator
+    // round): the entry point is real again on the merged `CaptureScreen` (a first N08 pass dropped
+    // it as an "accepted deviation" that was a genuine regression — `CaptureScreen.kt`'s own class
+    // kdoc). Reached the identical way `R_1007` (`OrtNavHostDestinationDispatchTest.kt`) already
+    // proves the pinned live bar's own tap opens the Capture surface's live content — this class's
+    // own real `Activity`/back dispatcher is what additionally proves back actually returns.
     @Test
-    fun `IA_3_N07_full_log_from_Live_Monitor_opens_the_plain_unfiltered_Log, back restores Live Monitor`() {
+    fun `IA_3_full_log_from_Capture_opens_the_plain_unfiltered_Log, back restores Capture`() {
         val liveSessionId = "ia3-n07-session"
         try {
             CaptureState.capturing(liveSessionId)
@@ -706,8 +712,8 @@ class ReaderActivityDestinationSmokeTest {
                 rule.waitUntilTestTagExists("live-bar-clearance")
                 rule.onNodeWithTag("live-bar-clearance").performClick()
 
-                // `LiveMonitorScreen.kt`'s own `testTag("live-monitor-back")`/`testTag
-                // ("live-monitor-full-log")`.
+                // `CaptureScreen.kt`'s own `testTag("live-monitor-full-log")` — the same tag N07's
+                // now-superseded `LiveMonitorFooter` used, kept verbatim on this real replacement.
                 rule.waitUntilTestTagExists("live-monitor-full-log")
                 rule.onNodeWithTag("live-monitor-full-log").performClick()
 
@@ -717,9 +723,12 @@ class ReaderActivityDestinationSmokeTest {
                 rule.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
                 rule.waitForIdle()
 
-                // Back reopens `Capture` on its own live monitor — not `Capture`'s plain status
-                // root, and not system back exiting past it.
-                rule.waitUntilTestTagExists("live-monitor-back")
+                // Back reopens `Capture` — N08/WPCAP (coordinator round): the merged `CaptureScreen`
+                // (design-intent `Capture.dc.html`) has no separate "live monitor" sub-screen to
+                // return to any more (`live-monitor-back` was that sub-screen's own drill-in header,
+                // superseded); `capture-title` is the real marker that back landed back on Capture's
+                // one surface, not on Log still, and not past the app.
+                rule.waitUntilTestTagExists("capture-title")
             }
         } finally {
             CaptureState.idle(clearSession = true)

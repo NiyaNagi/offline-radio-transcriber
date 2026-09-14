@@ -19,7 +19,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.components.LiveBar
+import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.ProgressBar
 import org.ort.app.ui.components.SectionHeader
@@ -55,10 +58,19 @@ import org.ort.app.ui.theme.OrtType
  * default-on state and monthly rate (AC-158/159), both **visible without a tap**, on this one
  * surface (FR-UI-7).
  *
- * **No [org.ort.app.ui.components.LiveBar] of its own** — the artboard's own note: this screen is
- * what the transport bar/live bar expands to (IA-2, C10), so drawing one here would be showing the
- * bar its own destination. Matches [LiveMonitorScreen]'s identical precedent (that screen's own
- * kdoc has the same reasoning).
+ * **Embeds its own [LiveBar]**, exactly as N04's `CaptureStatusScreen` always did (coordinator
+ * round, R-910): the artboard's "no live bar here" note is about `Transport-Bar.dc.html` (C10),
+ * which *supersedes* this component once built — until then, dropping the current one leaves this
+ * destination with zero live bars while the host still suppresses its own copy here
+ * (`NavHostBody`'s `embedsOwnLiveBar`), breaking "exactly one live bar on every destination". A
+ * first N08 pass removed it on the (wrong) theory that the artboard note applied today; fixed back.
+ *
+ * **Carries a real `Full log` action again (IA-3, coordinator round)** — N07's own entry from a
+ * live session into the plain, unfiltered Log. A first N08 pass dropped this as an "accepted
+ * deviation"; it is not one — the only path from a live session into the plain Log was removed
+ * entirely, a genuine regression. Restored as [CaptureFullLogRow], pinned *outside* the scroll
+ * (like [LiveBar] below it) rather than inside the overs section — a real, shorter device window
+ * could not otherwise reach it with a plain tap, confirmed directly.
  *
  * **One documented deviation from the artboard's literal drawing (constitution VIII):** the board
  * draws Storage as a single collapsed `.fact` row with a chevron into settings; AC-159 requires the
@@ -78,18 +90,33 @@ public fun CaptureScreen(
     overs: LiveMonitorOversViewState,
     storage: CaptureStorageViewState,
     modifier: Modifier = Modifier,
+    liveBar: LiveBarViewState? = null,
     onStop: () -> Unit = {},
     onOpenOver: (String) -> Unit = {},
+    onOpenFullLog: () -> Unit = {},
     onTurnOffArchive: () -> Unit = {},
 ) {
     var confirmingStop by remember { mutableStateOf(false) }
+    // R-910/R-613 precedent (`CaptureStatusScreen.kt`'s own `liveBarClearanceFor`): the trailing
+    // padding lives *inside* the scrollable content, not on the outer modifier — a `weight(1f)`
+    // column already ends flush against whatever sits fixed below it at any scroll offset; padding
+    // outside that weighted budget only eats into it 1:1 instead of adding real clearance.
+    // `Full log` is pinned outside the scroll unconditionally (own floor, IA-3 below) with the live
+    // bar's own floor added on top only when it is actually shown.
+    val liveBarClearance = if (liveBar != null) LIVE_BAR_CLEARANCE else 0.dp
+    val bottomClearance = FULL_LOG_ROW_CLEARANCE + liveBarClearance
 
     Column(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.lg)
+                .padding(
+                    start = OrtSpacing.lg,
+                    top = OrtSpacing.lg,
+                    end = OrtSpacing.lg,
+                    bottom = OrtSpacing.lg + bottomClearance,
+                )
                 .testTag(CAPTURE_SCROLL_TEST_TAG),
         ) {
             if (status.loading) {
@@ -118,6 +145,23 @@ public fun CaptureScreen(
                 )
             }
         }
+
+        // IA-3 (coordinator round): pinned outside the scroll, unconditionally — the same
+        // always-reachable placement N07's own `LiveMonitorFooter` used, needed for the identical
+        // reason: a control inside the scrollable content is not reliably reachable by a plain
+        // `performClick()` on a real, shorter device window without an explicit scroll-to first
+        // (confirmed directly: moving this row into the scroll made `ReaderActivityDestinationSmokeTest
+        // .IA_3...` fail to find it clickable on that real `Activity`'s own window size).
+        CaptureFullLogRow(
+            onOpenFullLog = onOpenFullLog,
+            modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.xs),
+        )
+
+        // R-910: this destination's own embedded bar — see this file's own class kdoc for why
+        // dropping it entirely was a genuine regression, not a simplification.
+        if (liveBar != null) {
+            LiveBar(state = liveBar, onClick = {}, modifier = Modifier.testTag("capture-livebar"))
+        }
     }
 
     if (confirmingStop) {
@@ -129,6 +173,35 @@ public fun CaptureScreen(
                 onStop()
             },
             onDismiss = { confirmingStop = false },
+        )
+    }
+}
+
+/** The tour AVD's own `LiveBar` floor (`CaptureStatusScreen.kt`'s identical constant/reasoning —
+ * that composable's own `heightIn(min = 44.dp)`, a deliberately simple static floor rather than a
+ * live measurement for one row's worth of breathing room). */
+private val LIVE_BAR_CLEARANCE: Dp = 44.dp
+
+/** [CaptureFullLogRow]'s own floor — a single `TextAction` row, `requiredHeightIn(min = 44.dp)`
+ * (`Controls.kt`) — the same deliberately-simple-static-floor choice [LIVE_BAR_CLEARANCE] makes,
+ * unconditional here since the row itself always renders. */
+private val FULL_LOG_ROW_CLEARANCE: Dp = 44.dp
+
+/**
+ * IA-3 (coordinator round): N07's own `Full log` action, the only entry point a live session had
+ * into the plain, unfiltered Log — dropped in a first N08 pass as an "accepted deviation" that
+ * turned out to be a genuine regression, restored here. `LiveMonitorOversSection`'s own header
+ * (shared, unmodified, with the still-tested N07 screen) already states the real summary; this is
+ * a plain trailing action row beneath it, matching `LiveMonitorScreen.kt`'s own `LiveMonitorFooter`
+ * shape without duplicating that file's `room`-mark/background treatment N08 has no seam for here.
+ */
+@Composable
+private fun CaptureFullLogRow(onOpenFullLog: () -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier = modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        TextAction(
+            text = "Full log",
+            onClick = onOpenFullLog,
+            modifier = Modifier.testTag("live-monitor-full-log"),
         )
     }
 }

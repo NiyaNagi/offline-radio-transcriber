@@ -227,8 +227,12 @@ class OrtNavHostDestinationDispatchTest {
             }
         }
 
+        // N08/WPCAP: `CaptureStatusContent` now always renders the merged `CaptureScreen`
+        // (design-intent `Capture.dc.html`) — its own title row carries `capture-title`, not the
+        // superseded N04 `CaptureStatusScreen`'s `capture-status-title` (that composable is
+        // untouched and still carries its own tag; it is simply no longer reachable here).
         composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("capture-status-title").fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodesWithTag("capture-title").fetchSemanticsNodes().isNotEmpty()
         }
     }
 
@@ -567,13 +571,21 @@ class OrtNavHostDestinationDispatchTest {
      * entire recording" — this is the route this package's own row added:
      * `NavHostCallbacks.onOpenCapture`, the host's shared pinned bar's own tap target on every
      * destination that shows its copy (`STATIONS` here — neither `NOW` nor `CAPTURE`, which embed
-     * their own bar and are `LiveMonitorScreen`'s two *other*, in-package routes, covered by
-     * `CaptureStatusContentTest` instead), now lands on `LiveMonitorScreen` directly rather than the
-     * `Capture-Status.dc.html` root a second tap used to be needed to leave.
+     * their own bar and are the merged N08 surface's own two *other*, in-package routes, covered by
+     * `CaptureStatusContentTest` instead), lands on the live level/hearing content directly rather
+     * than the `Capture-Status.dc.html` root a second tap used to be needed to leave.
+     *
+     * N08/WPCAP (coordinator round): the tap still lands on real live content — it is simply the
+     * *same* merged `CaptureScreen` now (design-intent `Capture.dc.html`) rather than the
+     * superseded N07 `LiveMonitorScreen` sub-screen, so `live-monitor-back` (that sub-screen's own
+     * drill-in header, which N08 has none of — it is the primary destination content, not an
+     * overlay) is checked here for its real replacement: `capture-title` (proves the merged surface
+     * itself loaded) plus the level card's own tag (proves the *live level* content specifically —
+     * `LevelStatus` is never seeded by this test, so the honest not-measured variant renders).
      */
     @Test
     @Requirement("R-1007")
-    fun `R_1007 tapping the host-rendered live bar on STATIONS opens LiveMonitorScreen directly`() {
+    fun `R_1007 tapping the host-rendered live bar on STATIONS opens the Capture surface's live content directly`() {
         val sessionId = "r1007-live-bar-session"
         try {
             CaptureState.capturing(sessionId)
@@ -592,9 +604,10 @@ class OrtNavHostDestinationDispatchTest {
             composeTestRule.onNodeWithTag("live-bar-clearance").performClick()
 
             composeTestRule.waitUntil(15_000) {
-                composeTestRule.onAllNodesWithTag("live-monitor-back").fetchSemanticsNodes().isNotEmpty()
+                composeTestRule.onAllNodesWithTag("capture-title").fetchSemanticsNodes().isNotEmpty()
             }
-            composeTestRule.onNodeWithTag("live-monitor-back").assertExists()
+            composeTestRule.onNodeWithTag("capture-title").assertExists()
+            composeTestRule.onNodeWithTag("live-monitor-level-not-measured").assertExists()
         } finally {
             CaptureState.idle(clearSession = true)
         }
