@@ -34,6 +34,92 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
 
+### WPPOLISH — R-1077/R-1078: the banner's scroll-hint chevron no longer covers its own last line; DestructiveButton gets the same vertical padding R-1065 already gave PrimaryButton/SecondaryButton
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/FailureHost.kt` (`BannerOverlay` only),
+`app/src/main/kotlin/org/ort/app/ui/components/Controls.kt` (`DestructiveButton` only), and their
+tests. No other file in either package touched — `OrtNavHost.kt` and `ui/capture/**` are WPCAP's,
+not this row's.
+
+**Requirements/ACs:** constitution II (test written and shown to discriminate before the fix, and
+again after reverting it), constitution VII ("every user-visible surface obeys the accessibility
+floor ... no clipping at maximum font scale"), constitution VIII (screens re-captured at font
+scale 2.0 and compared against the running app, capture paths below); R-1077, R-1078 (register).
+
+**What changed:**
+1. **R-1077 (`FailureHost.kt`'s `BannerOverlay`):** the scrollable content box and the down-facing
+   scroll-hint chevron (register R-883) used to be two `Box`-overlaid children of the same capped
+   rectangle — the scroll box took the box's own full measured height (no `align`) and the hint
+   `Row` was pinned `Alignment.BottomCenter` over the *same* rectangle, so the chevron's pill was
+   always painted directly on top of whatever text the scrolled content still showed at that
+   shared bottom edge. `Fail-Level`'s own "... the peaks sit in the green band." wrapped so its
+   last word landed under the chevron on the reference device (reported as "in the
+   gree[chevron]and."). Fixed by making the scroll box and the hint `Column` siblings instead: the
+   hint's own (unweighted) natural height is measured first and reserved out of the capped total,
+   and the scroll box gets only what remains (`Modifier.weight(1f, fill = false)` — still shrinks
+   to its own content, exactly as before, whenever the hint is not showing at all). The two can no
+   longer share a vertical span regardless of what the wrapped text's own last visible line is.
+2. **R-1078 (`Controls.kt`'s `DestructiveButton`):** padded horizontally only
+   (`padding(horizontal = 18.dp)`) — the identical defect class R-1065 already fixed on
+   `PrimaryButton`/`SecondaryButton` (`requiredHeightIn(min = 44.dp)` only ever raises a floor, it
+   adds no padding once a wrapped label already exceeds it), left unfixed on this one remaining
+   button style, so a wrapped label's own last line touched the border. Fixed the same way R-1065
+   was: `padding(horizontal = 18.dp, vertical = OrtSpacing.sm)`.
+
+**New tests (strict TDD — each shown failing before its fix, passing after, and failing again on a
+temporary revert):**
+- `app/src/test/kotlin/org/ort/app/ui/failures/BannerChevronClearanceTest.kt` (`R_1077`, Robolectric
+  `@GraphicsMode(NATIVE)`, `w390dp-h844dp-420dpi`, font scale 2.0): renders the real `FailLevelBanner`
+  inside a `requiredSize(390.dp, 400.dp)` host to force the banner to cap and scroll, then asserts
+  the scroll-hint chevron's bounds never intersect the *visually rendered* last line of the body
+  text (the last line whose top sits above the scroll box's own clipped bottom edge — most of a
+  long paragraph's own lines sit off-screen at rest, which is not the same thing as the wrapped
+  text's absolute last line). Pre-fix: chevron `[1143,1161]` overlaps the last visible line
+  `[1153,1171]`. Post-fix: chevron `[1143,1161]` sits below the (now-shorter) scroll box's own
+  bottom edge (`1139`), no overlap.
+- `app/src/test/kotlin/org/ort/app/ui/components/DestructiveButtonPaddingTest.kt` (`R_1078`, two
+  cases: a wrapped label keeps ≥4dp symmetric padding at font scale 2.0; a single-line label still
+  meets the 44dp floor). Kept in its own file rather than folded into `ControlsTest` — that file
+  was already at detekt's `LargeClass` threshold (746 lines, confirmed by running `:app:detekt`
+  against the pre-change file directly) before this row; adding cases there would have tipped it
+  over for a reason unconnected to `DestructiveButton` itself.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.failures.BannerChevronClearanceTest"
+  --tests "org.ort.app.ui.components.DestructiveButtonPaddingTest" --tests
+  "org.ort.app.ui.components.ControlsTest" --tests "org.ort.app.ui.failures.FailureScreensTest"` —
+  all green.
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.*"` — 2081 tests, 2080 green; the one
+  failure (`ImproveDestinationStatePreservationTest`, a WorkManager test-initialization error) is
+  pre-existing on `main` (reproduces identically in isolation on a clean merge with none of this
+  round's changes applied) and unrelated to either file this round owns — flagged separately, not
+  fixed here.
+- `./gradlew :app:smokeTestDebugUnitTest` — green.
+- `./gradlew ktlintCheck detekt` — green (confirmed the `LargeClass` finding was a pre-existing
+  condition of `ControlsTest.kt`, not introduced by this round, by running `:app:detekt` against
+  the file's pre-change content directly before moving the new tests to their own file).
+- Discrimination: both new tests shown red for the right reason before their fix (chevron/last-line
+  intersection; zero top/bottom inset on the wrapped label) and green after; `BannerOverlay` and
+  `DestructiveButton` each temporarily reverted to their pre-fix shape and re-run — both new tests
+  failed again, confirming they discriminate rather than passing regardless.
+- Device evidence, `ort_audit_polish` (Pixel 6, API 34, own AVD, port 5572): `level-low` scenario,
+  font scale 2.0, via a scoped one-step `ScreenshotTourActivity` spec (`destination: NOW`,
+  `fontScale: 2.0`) — the chevron pill sits with clear daylight under "...peaks sit in the green
+  band.", never overlapping it. `overnight` scenario, font scale 2.0, via
+  `ScenarioReaderActivity --es nav_pending_recording_session_id scenario-overnight` (RC02) plus one
+  real tap on the Delete tile: the delete-confirmation sheet renders correctly at 2.0. Honesty note:
+  this sheet's own confirm/cancel row (`RecordingSessionSheetActions`) uses `TextAction`, not
+  `DestructiveButton` — no shipped screen wires `DestructiveButton` into a real destination yet
+  (confirmed by grep), so this capture demonstrates the sheet at 2.0 as asked but does not itself
+  exercise the R-1078 fix visually; the Robolectric test above is the fix's real evidence.
+
+**Left open / not done:**
+- `DestructiveButton` is not currently wired into any real screen (`RecordingSessionScreen.kt`'s
+  own delete sheet uses `TextAction` for both actions) — R-1078's fix is real and tested, but has
+  no live on-device surface to visually re-verify against today; not this row's file to wire up
+  (`RecordingSessionScreen.kt` is outside this row's owned files).
+- The pre-existing `ImproveDestinationStatePreservationTest` WorkManager failure (see "Verified"
+  above) is unrelated and left for its own fix.
 ### 40f0890a — WPCAP fix: TourStepsTest expects N08's real tags now that CAPTURE always renders the merged screen
 
 **Scope:** `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt` only.
