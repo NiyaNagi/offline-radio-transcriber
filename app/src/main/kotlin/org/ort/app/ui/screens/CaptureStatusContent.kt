@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.data.CaptureStatusMapper
 import org.ort.app.ui.data.CaptureStatusViewState
 import org.ort.app.ui.data.CaptureStoragePolling
@@ -56,6 +57,15 @@ private const val POLL_INTERVAL_MILLIS = 2_000L
  * operator on the one surface that carries both the level and the live overs inline, so neither
  * flag changes what renders any more.
  *
+ * **R-910 (coordinator round, batch-gate finding): this destination still embeds its own
+ * [org.ort.app.ui.components.LiveBar]**, exactly as N04's `CaptureStatusScreen` always did —
+ * dropping it entirely in the first N08 pass left `CAPTURE` with zero live bars while
+ * `NavHostBody`'s own `embedsOwnLiveBar` still suppresses the host's copy here, breaking the
+ * "exactly one live bar on every destination" invariant. The artboard's "no live bar — this
+ * screen is what it expands to" note is about `Transport-Bar.dc.html` (C10), which supersedes this
+ * component once built (design-intent, inventory C10) — until then, removing the current one is a
+ * real regression, not a simplification.
+ *
  * R-172: [sessionId] is a fallback only, and the poll loop is unconditional (never gated on
  * [sessionId] being non-null) — see [ReaderPolling.effectiveSessionId]'s own kdoc. Before this
  * fix, a `null` [sessionId] at first composition meant this screen would never start polling at
@@ -74,10 +84,12 @@ public fun CaptureStatusContent(
     @Suppress("UNUSED_PARAMETER") openLiveMonitor: Boolean = false,
     // R-1007 (WPL): `Live-Monitor.dc.html`'s own "Over row → D01–D04" — defaulted to a no-op so
     // every existing caller (this file's own tests included) keeps compiling; `OrtNavHost.kt`
-    // wires it to its real cross-destination navigation. `onOpenFullLog` (N07's own `Full log`)
-    // has no seam left to wire on N08's merged surface — see this package's own report.
+    // wires it to its real cross-destination navigation. `onOpenFullLog` (N07's own `Full log`,
+    // IA-3) is real again on N08 too — coordinator round: dropping it was a genuine regression,
+    // not a simplification, since it was the only entry point from a live session into the plain,
+    // unfiltered Log.
     onOpenOver: (String) -> Unit = {},
-    @Suppress("UNUSED_PARAMETER") onOpenFullLog: () -> Unit = {},
+    onOpenFullLog: () -> Unit = {},
 ) {
     val coroutineScope = rememberCoroutineScope()
     // Register R-1051 (halt, constitution I/IV): the real "not yet known" seed — before this fix,
@@ -89,6 +101,9 @@ public fun CaptureStatusContent(
     var liveMonitorOvers by remember { mutableStateOf(LiveMonitorOversViewState.EMPTY) }
     var hearingText by remember { mutableStateOf<String?>(null) }
     var storageState by remember { mutableStateOf(CaptureStorageViewState.LOADING) }
+    // R-910: this destination's own embedded live bar — `null` while idle, matching N04's own
+    // `CaptureStatusScreen` rule (`if (liveBar != null) LiveBar(...)`, that composable's own kdoc).
+    var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
     // Not [currentLevelViewState] (suspend, R-175 reads the session's overs) — the first frame
     // renders the same honest LevelStatus-only snapshot it always has; the LaunchedEffect below
     // fills in the weakest-over label and band-state sentence on its very first tick.
@@ -126,6 +141,9 @@ public fun CaptureStatusContent(
                     radio = CaptureStatusMapper.radioFacts(RigStatus.state, routeFacts),
                 )
             }
+            // R-910: the same embedded-bar rule N04 always had — only while genuinely capturing,
+            // `null` (no bar at all) otherwise.
+            liveBar = if (CaptureState.isCapturing) LiveBarPolling.current(context, effectiveSessionId) else null
             // R-039: read alongside the status, at the same 2 s cadence — LevelStatus is a
             // process-wide holder (like every other capture signal here), not session-scoped.
             levelState = currentLevelViewState(context, effectiveSessionId)
@@ -147,9 +165,11 @@ public fun CaptureStatusContent(
         hearingText = hearingText,
         overs = liveMonitorOvers,
         storage = storageState,
+        liveBar = liveBar,
         modifier = modifier,
         onStop = { stopCapture(context) },
         onOpenOver = onOpenOver,
+        onOpenFullLog = onOpenFullLog,
         onTurnOffArchive = {
             coroutineScope.launch { CaptureStoragePolling.setArchiveEnabled(context, !storageState.archive.enabled) }
         },

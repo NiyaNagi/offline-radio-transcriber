@@ -247,13 +247,19 @@ class NavSeedTest {
     }
 
     @Test
-    fun `openCaptureLevelMeter lands on the level meter directly`() {
+    fun `openCaptureLevelMeter lands on the Capture surface's own level content`() {
         composeTestRule.setContent {
             OrtTheme { OrtNavHost(sessionId = SESSION_ID, seed = NavSeed(openCaptureLevelMeter = true)) }
         }
-        // `LevelMeterScreen`'s own `DrillInHeader(parentLabel = "Capture", ...)` — the same marker
-        // R-132's own real-tap case (`Settings-Capture`'s `Meter` action) already establishes.
-        composeTestRule.waitUntilContentDescriptionExists("Back to Capture")
+        // N08/WPCAP (coordinator round): `openLevelMeter` no longer opens a separate
+        // `LevelMeterScreen` sub-screen with its own `DrillInHeader(parentLabel = "Capture", ...)`
+        // back label (that composable is superseded, no longer reachable) — the merged
+        // `CaptureScreen` (design-intent `Capture.dc.html`) always shows the level content inline,
+        // so landing on `CAPTURE` at all already satisfies this seed. `live-monitor-level-not
+        // -measured` is the level card's own honest tag when `LevelStatus` (never seeded here) has
+        // nothing measured yet — the real replacement for the old "Back to Capture" marker.
+        composeTestRule.waitUntilTagExists("capture-title")
+        composeTestRule.onNodeWithTag("live-monitor-level-not-measured").assertExists()
     }
 
     @Test
