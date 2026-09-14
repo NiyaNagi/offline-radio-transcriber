@@ -7,12 +7,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.delay
-import org.ort.app.ui.components.LiveBarViewState
+import kotlinx.coroutines.launch
 import org.ort.app.ui.data.CaptureStatusMapper
 import org.ort.app.ui.data.CaptureStatusViewState
+import org.ort.app.ui.data.CaptureStoragePolling
+import org.ort.app.ui.data.CaptureStorageViewState
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.data.LevelViewStateMapper
 import org.ort.app.ui.data.LiveBarPolling
@@ -34,18 +37,24 @@ import org.ort.pipeline.capture.VadAvailability
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
 
-private enum class CaptureStatusSubScreen { NONE, LEVEL_METER, LIVE_MONITOR }
-
 /**
  * The Capture destination's polling wrapper (ui-conformance-plan WP4, R-031/R-032/R-034/R-035/
- * R-038/R-039) — reachable from the drawer's Capture row (`OrtNavHost.kt`, WP3, dispatches
- * `ReaderDestination.CAPTURE` here — confirmed post-merge, R-035 closed).
+ * R-038/R-039; N08/WPCAP) — reachable from the drawer's Capture row (`OrtNavHost.kt`, WP3,
+ * dispatches `ReaderDestination.CAPTURE` here).
  *
- * Owns an internal "which sub-screen" state for `Level-Meter.dc.html` (design-intent N04 → N06),
- * the same pattern [StationDetailContent] (WP8) uses for its own drill-ins: tapping the Level row
- * shows [LevelMeterScreen] full-screen over this same destination rather than a separate drawer
- * entry (N06 is never a standalone destination — see that screen's own kdoc), polled at the same
- * cadence as the status; its `DrillInHeader` back returns here.
+ * **N08 (design-intent, `Capture.dc.html`): renders [CaptureScreen], the one merged surface that
+ * supersedes [CaptureStatusScreen] (N04), [LevelMeterScreen] (N06) and [LiveMonitorScreen] (N07) as
+ * *separate* destinations** — every fact those three screens polled (status, level, this session's
+ * overs) is still polled here, at the identical 2 s cadence, and handed to the one screen instead
+ * of switched between three. [LevelMeterScreen]/[LiveMonitorScreen] and their own tests are
+ * untouched (P9 — nothing deleted quietly); they are simply no longer reachable from this
+ * composable's own internal state.
+ *
+ * [openLevelMeter]/[openLiveMonitor] are kept as accepted parameters purely so
+ * `OrtNavHost.kt`'s existing call site (`Settings-Capture`'s `Meter` action, the pinned live bar's
+ * tap) keeps compiling unchanged — landing on `ReaderDestination.CAPTURE` at all already puts the
+ * operator on the one surface that carries both the level and the live overs inline, so neither
+ * flag changes what renders any more.
  *
  * R-172: [sessionId] is a fallback only, and the poll loop is unconditional (never gated on
  * [sessionId] being non-null) — see [ReaderPolling.effectiveSessionId]'s own kdoc. Before this
@@ -55,46 +64,31 @@ private enum class CaptureStatusSubScreen { NONE, LEVEL_METER, LIVE_MONITOR }
  * that later stopped matching the live session meant it kept polling the *wrong* one forever
  * instead of falling back to the honest idle facts. Both are fixed by resolving the session to
  * read fresh, every tick, rather than once.
- *
- * [openLevelMeter] (round 6, register R-132, lead-approved single-parameter addition — WP4 is
- * idle): lets a caller land directly on [LevelMeterScreen] instead of always starting at the
- * status root — the same "opens there on launch" contract
- * [org.ort.app.ui.settings.SettingsContent]'s own `initialScreen` already has (a fresh `remember`
- * seeded once; re-entering `Capture` is what gives a later change to this parameter effect, since
- * that disposes and rebuilds this composition — see `OrtNavHost.kt`'s own doc comment on the
- * identical reasoning for `initialScreen`). `false` (the default, so every existing caller keeps
- * compiling unchanged) starts at the status root, exactly as before this parameter existed. Its
- * one caller today is `OrtNavHost`, routing `Settings-Capture`'s `Meter` action here.
- *
- * [openLiveMonitor] (R-1007, WPL, the same "opens there on launch" contract [openLevelMeter]
- * already has): lets a caller land directly on [LiveMonitorScreen] — `OrtNavHost.kt`'s own route
- * for the pinned bar's tap, on every destination that shows its shared copy. `false` by default so
- * every existing caller keeps compiling unchanged; this composable's own embedded live bar
- * (`onOpenLive` below) is the other, in-package way to reach it.
  */
 @Composable
 public fun CaptureStatusContent(
     context: Context,
     sessionId: String?,
     modifier: Modifier = Modifier,
-    openLevelMeter: Boolean = false,
-    openLiveMonitor: Boolean = false,
-    // R-1007 (WPL): `Live-Monitor.dc.html`'s own "Over row → D01–D04" / "`Full log` → L01" —
-    // defaulted to no-ops so every existing caller (this file's own tests included) keeps
-    // compiling; `OrtNavHost.kt` wires both to its real cross-destination navigation.
+    @Suppress("UNUSED_PARAMETER") openLevelMeter: Boolean = false,
+    @Suppress("UNUSED_PARAMETER") openLiveMonitor: Boolean = false,
+    // R-1007 (WPL): `Live-Monitor.dc.html`'s own "Over row → D01–D04" — defaulted to a no-op so
+    // every existing caller (this file's own tests included) keeps compiling; `OrtNavHost.kt`
+    // wires it to its real cross-destination navigation. `onOpenFullLog` (N07's own `Full log`)
+    // has no seam left to wire on N08's merged surface — see this package's own report.
     onOpenOver: (String) -> Unit = {},
-    onOpenFullLog: () -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onOpenFullLog: () -> Unit = {},
 ) {
-    var sub by remember { mutableStateOf(initialSubScreen(openLevelMeter, openLiveMonitor)) }
+    val coroutineScope = rememberCoroutineScope()
     // Register R-1051 (halt, constitution I/IV): the real "not yet known" seed — before this fix,
     // this was `idleCaptureStatus()` directly, a real "Not capturing" claim that read false on a
     // cold start whose session (per `ReaderPolling.effectiveSessionId`, resolved fresh every tick
     // below) turns out to already be capturing. `loadingCaptureStatus()` is the honest placeholder
     // the first poll's `state = ...` assignment below replaces.
     var state by remember { mutableStateOf(loadingCaptureStatus()) }
-    var liveBar by remember { mutableStateOf<LiveBarViewState?>(null) }
     var liveMonitorOvers by remember { mutableStateOf(LiveMonitorOversViewState.EMPTY) }
     var hearingText by remember { mutableStateOf<String?>(null) }
+    var storageState by remember { mutableStateOf(CaptureStorageViewState.LOADING) }
     // Not [currentLevelViewState] (suspend, R-175 reads the session's overs) — the first frame
     // renders the same honest LevelStatus-only snapshot it always has; the LaunchedEffect below
     // fills in the weakest-over label and band-state sentence on its very first tick.
@@ -132,68 +126,34 @@ public fun CaptureStatusContent(
                     radio = CaptureStatusMapper.radioFacts(RigStatus.state, routeFacts),
                 )
             }
-            liveBar = if (CaptureState.isCapturing) LiveBarPolling.current(context, effectiveSessionId) else null
             // R-039: read alongside the status, at the same 2 s cadence — LevelStatus is a
-            // process-wide holder (like every other capture signal here), not session-scoped,
-            // so it is safe (and cheap) to sample every tick regardless of which sub-screen is
-            // showing, rather than starting a second poll loop when the meter opens.
+            // process-wide holder (like every other capture signal here), not session-scoped.
             levelState = currentLevelViewState(context, effectiveSessionId)
-            // R-1007 (WPL): the same cadence again — [LiveMonitorScreen] is a sub-screen of this
-            // same destination (like the level meter above it), not a second poll loop.
+            // R-1007 (WPL): the same cadence again — this session's overs are now inline on N08,
+            // not a second poll loop gated on a sub-screen being open.
             liveMonitorOvers = LiveMonitorOversPolling.current(context, effectiveSessionId)
             hearingText = effectiveSessionId?.let { LiveBarPolling.newestPassAPartial(context, it) }
+            // D40/D39 (FR-STO-3e/3f, AC-156..160): the over-audio warning and the archive
+            // disclosure, at the same 2 s cadence — real, recomputed every read, never cached
+            // past a single poll (constitution VI/AC-157).
+            storageState = CaptureStoragePolling.current(context)
             delay(POLL_INTERVAL_MILLIS)
         }
     }
 
-    when (sub) {
-        CaptureStatusSubScreen.LEVEL_METER ->
-            LevelMeterScreen(
-                state = levelState,
-                modifier = modifier,
-                liveBar = liveBar,
-                onBack = { sub = CaptureStatusSubScreen.NONE },
-            )
-
-        // R-1007 (WPL): design-intent N07 — reached from this screen's own embedded live bar
-        // (`onOpenLive` below, the seam this row landed on) and, via `openLiveMonitor`, from the
-        // pinned bar's host-level copy on every other destination (`OrtNavHost.kt`'s own route).
-        CaptureStatusSubScreen.LIVE_MONITOR ->
-            LiveMonitorScreen(
-                status = state,
-                level = levelState,
-                hearingText = hearingText,
-                overs = liveMonitorOvers,
-                localMicrophone = liveBar?.localMicrophone ?: false,
-                modifier = modifier,
-                actions = LiveMonitorActions(
-                    onBack = { sub = CaptureStatusSubScreen.NONE },
-                    onOpenOver = onOpenOver,
-                    onOpenFullLog = onOpenFullLog,
-                    onStop = { stopCapture(context) },
-                ),
-            )
-
-        CaptureStatusSubScreen.NONE ->
-            CaptureStatusScreen(
-                state = state,
-                modifier = modifier,
-                liveBar = liveBar,
-                onStop = { stopCapture(context) },
-                onOpenLive = { sub = CaptureStatusSubScreen.LIVE_MONITOR },
-                onOpenLevel = { sub = CaptureStatusSubScreen.LEVEL_METER },
-            )
-    }
-}
-
-/** R-1007 (WPL): [CaptureStatusContent]'s own initial `sub` value — split out purely to keep that
- * composable under detekt's `LongMethod` limit. `openLevelMeter` wins over `openLiveMonitor` when
- * (implausibly) both are ever true at once, matching the order the two `Boolean` parameters are
- * declared in — neither caller in this codebase ever sets both. */
-private fun initialSubScreen(openLevelMeter: Boolean, openLiveMonitor: Boolean): CaptureStatusSubScreen = when {
-    openLevelMeter -> CaptureStatusSubScreen.LEVEL_METER
-    openLiveMonitor -> CaptureStatusSubScreen.LIVE_MONITOR
-    else -> CaptureStatusSubScreen.NONE
+    CaptureScreen(
+        status = state,
+        level = levelState,
+        hearingText = hearingText,
+        overs = liveMonitorOvers,
+        storage = storageState,
+        modifier = modifier,
+        onStop = { stopCapture(context) },
+        onOpenOver = onOpenOver,
+        onTurnOffArchive = {
+            coroutineScope.launch { CaptureStoragePolling.setArchiveEnabled(context, !storageState.archive.enabled) }
+        },
+    )
 }
 
 /** `Stop` (R-032): the same `ACTION_STOP` [RealCaptureService.onStartCommand] already handles —

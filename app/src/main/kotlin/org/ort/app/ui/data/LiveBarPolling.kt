@@ -5,6 +5,7 @@ import org.ort.app.ui.components.LiveBarTone
 import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailurePresentation
+import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.capture.android.AudioDeviceKind
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.TranscriptPass
@@ -15,6 +16,7 @@ import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.ShedStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
+import org.ort.pipeline.capture.overAudioBudgetState
 
 /**
  * The persistent live bar's read path (ui-conformance-plan WP4, guide §6.6, `Flow-Degrade.dc.html`)
@@ -37,7 +39,11 @@ public object LiveBarPolling {
     public suspend fun current(context: Context, sessionId: String?): LiveBarViewState {
         val override = failureOverrideLiveBar()
         val routeFacts = RoomSessionRouteFactsReader(context).forSession(sessionId)
-        val (tone, label) = if (override != null) override.tone to override.label else toneAndLabel()
+        val (tone, label) = if (override != null) {
+            override.tone to override.label
+        } else {
+            toneAndLabel(overAudioBudgetGb(context))
+        }
         val input = InputStatus.state
         return LiveBarViewState(
             // R-836 (register, design): input genuinely lost -- audio structurally cannot be
@@ -169,13 +175,19 @@ public object LiveBarPolling {
      * `Fail-Rig.dc.html` "Rig lost" (renamed from the placeholder "Radio disconnected" this file
      * carried before no board had been checked against).
      */
-    private fun toneAndLabel(): Pair<LiveBarTone, String> {
+    private fun toneAndLabel(overAudioBudgetGb: Int?): Pair<LiveBarTone, String> {
         val captureState = CaptureState.state
         val shedLevel = ShedStatus.currentLevel
         val shedBacklog = ShedStatus.backlog
         val thermal = ThermalStatus.state
         val level = LevelStatus.state
         val input = InputStatus.state
+        // D40/FR-STO-3e/AC-160: the over-audio budget's own persistent warning reuses this exact
+        // "Low storage" state rather than inventing a second one — [StorageForecast.state]'s own
+        // audioDirectoryBytes is already the same, cheap, process-wide-holder read every other
+        // branch here uses (no filesystem walk on every 2 s poll), so this costs nothing extra.
+        val overAudioExceeded =
+            overAudioBudgetState(StorageForecast.state.audioDirectoryBytes, overAudioBudgetGb).exceeded
         return when {
             captureState !is CaptureState.State.Capturing ->
                 LiveBarTone.HALTED to if (captureState is CaptureState.State.Idle) "Not capturing" else "Halted"
@@ -197,7 +209,8 @@ public object LiveBarPolling {
                 LiveBarTone.DEGRADED to "Quiet"
 
             StorageForecast.state is StorageForecast.State.ThreeNightsLeft ||
-                StorageForecast.state is StorageForecast.State.OneNightLeft ->
+                StorageForecast.state is StorageForecast.State.OneNightLeft ||
+                overAudioExceeded ->
                 LiveBarTone.DEGRADED to "Low storage"
 
             // Register R-149: this must match `FailureMapper.mapThermalOrBacklogOrRigBanner`'s own
@@ -244,6 +257,15 @@ public object LiveBarPolling {
                 }
         }
         return newestText
+    }
+
+    /** A plain `SharedPreferences` read (cheap, no filesystem walk) — the same setting
+     * [org.ort.app.ui.recordings.RecordingsPolling]/`CaptureStoragePolling` read for the identical
+     * fact, so the live bar's own D40 branch can never disagree with the Storage rows it labels. */
+    private fun overAudioBudgetGb(context: Context): Int? {
+        val prefs = context.applicationContext
+            .getSharedPreferences(SharedPreferencesSettingsStore.PREFS_NAME, Context.MODE_PRIVATE)
+        return SharedPreferencesSettingsStore(prefs).audioBudgetGb
     }
 
     private const val MAX_TIER: Int = 3

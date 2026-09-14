@@ -2,15 +2,14 @@ package org.ort.app.ui.screens
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
@@ -21,6 +20,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
+import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
@@ -29,6 +29,7 @@ import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.pipeline.capture.ArchiveWriteRateForecast
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.InputStatus
@@ -40,11 +41,19 @@ import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import java.io.RandomAccessFile
 
 /**
- * The Capture destination's polling wrapper (ui-conformance-plan WP4, R-039, design-intent
- * N04 → N06). Proves the internal sub-navigation against real process-wide holders, the same
- * pattern `TransmissionDetailContentTest` (WP6) already uses for a real (file-backed) `OrtDatabase`.
+ * The Capture destination's polling wrapper (ui-conformance-plan WP4, R-039, design-intent N08,
+ * `Capture.dc.html`). Proves the merged surface against real process-wide holders and a real
+ * (file-backed) `OrtDatabase`, the same pattern `TransmissionDetailContentTest` (WP6) already uses.
+ *
+ * N08/WPCAP: this class used to prove [CaptureStatusContent]'s own internal N04→N06/N07
+ * sub-navigation — that navigation no longer exists (the merged [CaptureScreen] renders the level
+ * envelope and this session's overs inline, always, never behind a tap), so the cases that proved
+ * it are replaced with cases proving the equivalent facts are visible on the one surface without
+ * navigating anywhere. [CaptureStatusScreenTest]/[LevelMeterScreenTest]/[LiveMonitorScreenTest]
+ * keep proving their own composables directly — those files are untouched.
  */
 @RunWith(RobolectricTestRunner::class)
 class CaptureStatusContentTest {
@@ -71,16 +80,17 @@ class CaptureStatusContentTest {
         StorageForecast.reset()
         InputStatus.reset()
         LevelStatus.reset()
+        ArchiveWriteRateForecast.reset()
+        settingsStore().audioBudgetGb = null
+        settingsStore().archiveEnabled = true
     }
+
+    private fun settingsStore() = SharedPreferencesSettingsStore(
+        context.getSharedPreferences(SharedPreferencesSettingsStore.PREFS_NAME, android.content.Context.MODE_PRIVATE),
+    )
 
     private fun ComposeContentTestRule.waitUntilTagExists(tag: String, timeoutMillis: Long = 5_000) {
         waitUntil(timeoutMillis) { onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty() }
-    }
-
-    private fun ComposeContentTestRule.waitUntilDescriptionExists(description: String, timeoutMillis: Long = 5_000) {
-        waitUntil(timeoutMillis) {
-            onAllNodes(hasContentDescription(description, substring = true)).fetchSemanticsNodes().isNotEmpty()
-        }
     }
 
     private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 5_000) {
@@ -131,8 +141,8 @@ class CaptureStatusContentTest {
     )
 
     @Test
-    @Requirement("R-039")
-    fun `R_039_the_level_row_opens_the_level_meter_and_back_returns`() {
+    @Requirement("FR-UI-7", "N08")
+    fun `N08 the level envelope is inline and visible without opening anything`() {
         runBlocking { db.sessionDao().insert(session()) }
         CaptureState.capturing("S1")
         LevelStatus.update(
@@ -150,21 +160,24 @@ class CaptureStatusContentTest {
 
         composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "S1") } }
 
-        composeTestRule.waitUntilTagExists("capture-status-level")
-        composeTestRule.onNodeWithTag("capture-status-level").assertExists()
+        composeTestRule.waitUntilTagExists("live-monitor-level-chart")
+        composeTestRule.onNodeWithTag("live-monitor-level-chart").assertExists()
+        composeTestRule.onNodeWithTag("capture-title").assertExists()
+    }
 
-        composeTestRule.onNodeWithTag("capture-status-level").performClick()
+    @Test
+    @Requirement("FR-UI-7", "FR-RUN-12", "N08")
+    fun `N08 this session's overs are inline and visible without opening anything`() {
+        runBlocking {
+            db.sessionDao().insert(session("S1"))
+            db.transmissionDao().insert(transmission("S1-tx1", "S1", 1L))
+        }
+        CaptureState.capturing("S1")
 
-        composeTestRule.waitUntilTagExists("level-meter-chart")
-        composeTestRule.onNodeWithTag("level-meter-chart").assertExists()
-        composeTestRule.onNodeWithTag("capture-status-title").assertDoesNotExist()
+        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "S1") } }
 
-        composeTestRule.waitUntilDescriptionExists("Back to Capture")
-        composeTestRule.onNodeWithContentDescription("Back to Capture").performClick()
-
-        composeTestRule.waitUntilTagExists("capture-status-title")
-        composeTestRule.onNodeWithTag("capture-status-title").assertExists()
-        composeTestRule.onNodeWithTag("level-meter-chart").assertDoesNotExist()
+        composeTestRule.waitUntilTagExists("live-monitor-row-S1-tx1")
+        composeTestRule.onNodeWithTag("live-monitor-row-S1-tx1").assertExists()
     }
 
     @Test
@@ -186,9 +199,9 @@ class CaptureStatusContentTest {
 
         composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "S1") } }
 
-        composeTestRule.waitUntilTextExists("2 captured")
-        composeTestRule.onNodeWithText("2 captured", substring = true).assertExists()
-        composeTestRule.onNodeWithText("1 captured", substring = true).assertDoesNotExist()
+        composeTestRule.waitUntilTextExists("2 overs")
+        composeTestRule.onNodeWithText("2 overs", substring = true).assertExists()
+        composeTestRule.onNodeWithText("1 over ", substring = true).assertDoesNotExist()
     }
 
     @Test
@@ -202,8 +215,8 @@ class CaptureStatusContentTest {
 
         composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = null) } }
 
-        composeTestRule.waitUntilTextExists("1 captured")
-        composeTestRule.onNodeWithText("1 captured", substring = true).assertExists()
+        composeTestRule.waitUntilTagExists("live-monitor-row-S2-tx1")
+        composeTestRule.onNodeWithTag("live-monitor-row-S2-tx1").assertExists()
     }
 
     @Test
@@ -215,7 +228,7 @@ class CaptureStatusContentTest {
         // with that already-padded space, unchanged, the same as every other destination (confirmed
         // by reading `OrtNavHost.kt` before writing this test: the padding is applied once, at
         // `NavHostBody`, never per-destination). So closing R-232 needs no code change in this
-        // package's own files — `CaptureStatusContent`/`CaptureStatusScreen` take whatever `modifier`
+        // package's own files — `CaptureStatusContent`/`CaptureScreen` take whatever `modifier`
         // they are given and were never the ones dropping it. This test proves that contract holds:
         // a caller-supplied top inset (standing in for the host's real `contentTopPadding`) is
         // respected, not silently reset by an internal `fillMaxSize()` that ignores its parent.
@@ -229,10 +242,10 @@ class CaptureStatusContentTest {
             }
         }
 
-        composeTestRule.waitUntilTagExists("capture-status-title")
+        composeTestRule.waitUntilTagExists("capture-title")
         val density = composeTestRule.density
         val insetPx = with(density) { insetDp.toPx() }
-        val titleTop = composeTestRule.onNodeWithTag("capture-status-title").fetchSemanticsNode().boundsInRoot.top
+        val titleTop = composeTestRule.onNodeWithTag("capture-title").fetchSemanticsNode().boundsInRoot.top
         assertTrue(
             "expected the title to sit at or below the caller's top inset (${insetPx}px), was ${titleTop}px",
             titleTop >= insetPx - 1f, // sub-pixel rounding tolerance
@@ -272,81 +285,6 @@ class CaptureStatusContentTest {
         composeTestRule.onNodeWithText("Bluetooth SPP", substring = true).assertExists()
     }
 
-    @Test
-    @Requirement("R-039")
-    fun `the Level row carries a real 44dp target with an Open level meter description`() {
-        runBlocking { db.sessionDao().insert(session()) }
-        CaptureState.capturing("S1")
-
-        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "S1") } }
-
-        composeTestRule.waitUntilDescriptionExists("Open level meter")
-        composeTestRule.onNodeWithContentDescription("Open level meter", substring = true).assertExists()
-    }
-
-    // -- R-1007 (WPL): the seam this row landed on — `onOpenLive` was `{}` at this file's own
-    // CaptureStatusContent.kt:141 before this round. -------------------------------------------
-
-    @Test
-    @Requirement("R-1007")
-    fun `R_1007 tapping the embedded live bar opens LiveMonitorScreen, and back returns`() {
-        runBlocking { db.sessionDao().insert(session()) }
-        CaptureState.capturing("S1")
-
-        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "S1") } }
-
-        composeTestRule.waitUntilTagExists("capture-status-livebar")
-        composeTestRule.onNodeWithTag("capture-status-livebar").performClick()
-
-        composeTestRule.waitUntilTagExists("live-monitor-back")
-        composeTestRule.onNodeWithTag("live-monitor-back").assertExists()
-        composeTestRule.onNodeWithTag("capture-status-title").assertDoesNotExist()
-
-        composeTestRule.onNodeWithTag("live-monitor-back").performClick()
-
-        composeTestRule.waitUntilTagExists("capture-status-title")
-        composeTestRule.onNodeWithTag("capture-status-title").assertExists()
-        composeTestRule.onNodeWithTag("live-monitor-back").assertDoesNotExist()
-    }
-
-    @Test
-    @Requirement("R-1007")
-    fun `R_1007 openLiveMonitor lands directly on LiveMonitorScreen, the openLevelMeter contract mirrored`() {
-        runBlocking { db.sessionDao().insert(session()) }
-        CaptureState.capturing("S1")
-
-        composeTestRule.setContent {
-            OrtTheme { CaptureStatusContent(context = context, sessionId = "S1", openLiveMonitor = true) }
-        }
-
-        composeTestRule.waitUntilTagExists("live-monitor-back")
-        composeTestRule.onNodeWithTag("live-monitor-back").assertExists()
-        composeTestRule.onNodeWithTag("capture-status-title").assertDoesNotExist()
-    }
-
-    @Test
-    @Requirement("R-1007")
-    fun `R_1007 Full log on LiveMonitorScreen invokes the caller's onOpenFullLog`() {
-        runBlocking { db.sessionDao().insert(session()) }
-        CaptureState.capturing("S1")
-        var openedFullLog = false
-
-        composeTestRule.setContent {
-            OrtTheme {
-                CaptureStatusContent(
-                    context = context,
-                    sessionId = "S1",
-                    openLiveMonitor = true,
-                    onOpenFullLog = { openedFullLog = true },
-                )
-            }
-        }
-
-        composeTestRule.waitUntilTagExists("live-monitor-full-log")
-        composeTestRule.onNodeWithTag("live-monitor-full-log").performClick()
-        assertTrue(openedFullLog)
-    }
-
     /**
      * Register R-1051 (halt, constitution I/IV): before this fix, this composable's own initial
      * `remember` value was `idleCaptureStatus()` directly — a real "Not capturing" claim — so a
@@ -373,7 +311,44 @@ class CaptureStatusContentTest {
         composeTestRule.onNodeWithText("Not capturing", substring = true).assertDoesNotExist()
 
         composeTestRule.mainClock.autoAdvance = true
-        composeTestRule.waitUntilTagExists("capture-status-title")
+        composeTestRule.waitUntilTagExists("capture-title")
         composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("D40", "FR-STO-3e", "AC-160", "N08")
+    fun `N08 the over-audio warning is visible without a tap once the real budget is exceeded`() {
+        runBlocking { db.sessionDao().insert(session()) }
+        CaptureState.capturing("S1")
+        settingsStore().audioBudgetGb = 1
+        val audioDir = java.io.File(context.filesDir, "audio/S1")
+        audioDir.mkdirs()
+        RandomAccessFile(java.io.File(audioDir, "over.flac"), "rw").use { it.setLength(1_100_000_000L) }
+
+        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "S1") } }
+
+        composeTestRule.waitUntilTextExists("Over budget")
+        composeTestRule.onNodeWithText("Over budget", substring = true).assertExists()
+    }
+
+    @Test
+    @Requirement("D39", "FR-STO-3f", "AC-158", "AC-159", "N08")
+    fun `N08 the archive disclosure states its real on-off state beside the control that changes it`() {
+        runBlocking { db.sessionDao().insert(session()) }
+        CaptureState.capturing("S1")
+
+        composeTestRule.setContent { OrtTheme { CaptureStatusContent(context = context, sessionId = "S1") } }
+
+        composeTestRule.waitUntilTagExists(CAPTURE_ARCHIVE_TOGGLE_TEST_TAG)
+        composeTestRule.onNodeWithTag(CAPTURE_ARCHIVE_TOGGLE_TEST_TAG).assertExists()
+        // AC-158/159: the rate — measured or, before anything is measured, D39's estimate,
+        // visibly labelled as one — sits on the exact same line as the on/off state, beside the
+        // control that changes it, never on a second screen. [CaptureScreenTest] proves the toggle
+        // itself flips the rendered on/off state directly, with no polling cadence in the way; this
+        // test's own job is only that the real, polled facts reach the screen at all.
+        val rateConfig = composeTestRule.onNodeWithTag(CAPTURE_ARCHIVE_RATE_TEST_TAG).fetchSemanticsNode().config
+        val rateText = rateConfig.getOrNull(SemanticsProperties.Text)?.joinToString(" ") { it.text }.orEmpty()
+        assertTrue(rateText.contains("estimated"))
+        assertTrue(rateText.startsWith("on"))
     }
 }
