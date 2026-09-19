@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (build plan P24: automatic thread grouping after Pass B)
 
-### (commit hash pending) — P24: automatic thread grouping after Pass B (FR-SPK-5, AC-163..165)
+### 2add470f — P24: automatic thread grouping after Pass B (FR-SPK-5, AC-163..165)
 
 **Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/threading/**` package (production and its
 behavioural fake), plus one added call and one new default constructor parameter in
