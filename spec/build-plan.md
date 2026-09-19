@@ -642,7 +642,7 @@ free.
   is green in CI; recaptured by the tour at 1.0/2.0 for `Now`, `Capture`, `Recordings`,
   Transmission Detail and any screen with a failure banner.
 
-- [ ] **P27 · Third-party licence notices screen** *(`:app` — a new Settings screen)* — NFR-6d,
+- [x] **P27 · Third-party licence notices screen** *(`:app` — a new Settings screen)* — NFR-6d,
   AC-167.
 
   **Read first:** NFR-6d, AC-167, FR-AST-14's own notices clause (Gemma's redistribution

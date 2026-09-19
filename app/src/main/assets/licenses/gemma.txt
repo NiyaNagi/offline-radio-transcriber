@@ -1,0 +1,27 @@
+Gemma 3 1B — Notice (NFR-6d, FR-AST-14)
+
+This app bundles Gemma 3 1B (int4, LiteRT/MediaPipe format), used for tier-3 on-device prose
+digest generation. Gemma is not open source; it is distributed under Google's Gemma Terms of Use.
+
+Required notice (Gemma Terms of Use §"Distribution — Notice"), verbatim:
+
+    "Gemma is provided under and subject to the Gemma Terms of Use found at
+    ai.google.dev/gemma/terms"
+
+Use restrictions passed through to you, the operator, as the Gemma Terms of Use require of anyone
+redistributing Gemma or a Model Derivative:
+
+  - You must not use Gemma for any of the restricted uses set out in the Gemma Prohibited Use
+    Policy (incorporated by reference into the Gemma Terms of Use).
+  - You must not use Gemma in violation of applicable laws and regulations.
+  - If you yourself distribute Gemma or a derivative of it further, you must in turn (a) give
+    recipients a copy of the full Gemma Terms of Use, (b) carry this same notice, and (c) mark any
+    files you changed with a prominent notice that you changed them.
+
+This is a summary of the redistribution and use-restriction obligations that apply to this build;
+it is not the full agreement. Read the complete, current Gemma Terms of Use and Prohibited Use
+Policy at:
+
+    https://ai.google.dev/gemma/terms
+
+Model: Gemma3-1B-IT (int4), from google/litert-community/Gemma3-1B-IT. Copyright Google LLC.

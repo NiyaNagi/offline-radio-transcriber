@@ -185,4 +185,63 @@ class SettingsContentTest {
 
         composeTestRule.onNodeWithTag(FIELD_REPORT_TOGGLE_SCREEN_FRAMES_TEST_TAG).assertIsOff()
     }
+
+    /**
+     * P27 (NFR-6d, AC-167): end-to-end through the real [SettingsContent] wiring — from the Settings
+     * root, under "About" (where `SettingsRootScreen`'s own appended row lives), to the real
+     * [SettingsLicensesScreen], and into one notice's own full text. Never touches `:net` anywhere
+     * on this path — the screen reads only `Context.assets`.
+     */
+    @Test
+    @Requirement("AC-167")
+    fun `AC_167 Settings root to About's Licences row opens the real licence-notices screen`() {
+        composeTestRule.setContent { OrtTheme { SettingsContent(context = context, onDrawer = {}) } }
+        val licencesRowDescription = "Licences. Third-party notices · read offline"
+        composeTestRule.waitUntil(ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS) {
+            runCatching { composeTestRule.onNodeWithContentDescription(licencesRowDescription).assertExists() }
+                .isSuccess
+        }
+
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription(licencesRowDescription))
+        composeTestRule.onNodeWithContentDescription(licencesRowDescription).performClick()
+
+        composeTestRule.waitUntilTextExists("Third-party licences")
+        composeTestRule.onNodeWithText("Third-party licences").assertExists()
+        // Every Settings sub-screen carries the "‹ Settings" back chevron (`TourStepsTest`'s own
+        // generic check for every `settingsScreen` drill-in relies on this too) — proven here for
+        // real, not merely asserted by that generic check.
+        composeTestRule.onNodeWithContentDescription("Back to Settings").assertExists()
+    }
+
+    @Test
+    @Requirement("AC-167")
+    fun `AC_167 initialScreen LICENSES lands directly on the licence-notices screen`() {
+        composeTestRule.setContent {
+            OrtTheme { SettingsContent(context = context, onDrawer = {}, initialScreen = SettingsScreenId.LICENSES) }
+        }
+
+        composeTestRule.waitUntilTextExists("Third-party licences")
+        composeTestRule.onNodeWithText("Third-party licences").assertExists()
+        composeTestRule.onNodeWithText("RECORDS").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("AC-167")
+    fun `AC_167 tapping a notice opens its full, real licence text, readable without touching net`() {
+        composeTestRule.setContent {
+            OrtTheme { SettingsContent(context = context, onDrawer = {}, initialScreen = SettingsScreenId.LICENSES) }
+        }
+        val whisperRowDescription = "Whisper tiny.en. MIT License"
+        composeTestRule.waitUntil(ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS) {
+            runCatching { composeTestRule.onNodeWithContentDescription(whisperRowDescription).assertExists() }
+                .isSuccess
+        }
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasContentDescription(whisperRowDescription))
+
+        composeTestRule.onNodeWithContentDescription(whisperRowDescription).performClick()
+
+        composeTestRule.waitUntilTextExists("Copyright (c) 2022 OpenAI")
+        composeTestRule.onNodeWithText("Copyright (c) 2022 OpenAI", substring = true).assertExists()
+        composeTestRule.onNodeWithContentDescription("Back to Licences").assertExists()
+    }
 }
