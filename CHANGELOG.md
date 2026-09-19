@@ -32,6 +32,52 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
+
+### 57b69260 — build plan: add P22-P32 (Waves G-K) for the D42-D50 governance backlog
+
+**Scope:** documentation only — `spec/build-plan.md`. No Kotlin, Gradle, resources or Python
+product code touched.
+
+**Requirements/ACs:** plans work against D43 (FR-AST-10..12, AC-166, AC-184..189), D43/D44
+(FR-AST-13..14, AC-190..191), D45 (FR-SPK-5's amendment note, the `CorrectionScope` relabel),
+D50/Q22 (FR-SEG-10's UI half), D42/D48/D49 (FR-ANL-1..14, AC-172..183), FR-SPK-5/27/28
+(AC-163..165, automatic thread grouping), FR-UI-5/AC-168 and register R-1006/R-1074/R-1079/
+R-1080/R-1012 (defects), NFR-6d/AC-167 (licence notices), FR-EXP-7/FR-STO-6/FR-STO-9/AC-170..171
+(export and restore), FR-ALR-1..6/AC-192..197 (live alerts), FR-A11Y-1..6 (accessibility). No ids
+established yet — these are unbuilt prompts, not landed requirements.
+
+**What changed:** Added eleven build-plan prompts, P22-P32, grouped into five waves (G-K) after
+Wave F, covering the backlog the 2026-09-19 governance session's nine decisions (D42-D50) opened:
+setup completing to a real READY gate with model download (P22), the model manifest/mirror and
+`full`/`play` build variants (P23), automatic thread grouping finally writing `threadId` after
+Pass B (P24), the D50 VAD-fallback disclosure surfacing FR-SEG-10 data that already exists but
+has never reached a screen (P25), the R-1006 playback-on-navigation reversal plus four small
+defects and one known-red test (P26), the third-party licence notices screen (P27), the full
+analytics channel — `:telemetry`, `:net`'s uploader, `:app`'s tier toggles and setup step, and
+`tools/analytics/` (P28), the D45 "same voice" → "same callsign" relabel plus
+`CatalogDao.allVoiceprints()` (P29), export completion — POTA wiring, the share sheet, and
+restore from a save bundle (P30), live alerts (P31), and a final accessibility pass (P32). Every
+prompt follows the P1-P21 format: Read first, Constitution Check citations, Owns, Must not touch,
+Tests first named for their AC/FR ids, Ships with it (fakes), Done when — including tour/register
+evidence for anything touching a screen, per constitution VIII. Wave boundaries were derived from
+real file collisions found by reading the actual source: `TransmissionDetailScreen.kt` (P26 vs.
+P29), and `SettingsViewData.kt`/`SettingsContent.kt`/`SettingsRootScreen.kt` — the `SettingsScreenId`
+router three of these new screens all extend (P27, P28, P30, P31 each get their own wave for
+exactly this reason). A "Wave order" paragraph explains the dependency shape; a closing note
+records that the hardware protocol (H1-H15) and the labelled validation hour stay manual.
+
+**Verified:** `python tools/spec-check/spec_check.py` prints `OK`. No code changes to build or
+test — this session touched only `spec/build-plan.md` and this file.
+
+**Left open / not done:** the eleven prompts themselves — this commit only writes the plan.
+Two judgement calls a future builder must make explicitly and record, not silently: whether
+AC-168's playback-stops-on-navigation also covers a same-screen switch to a different over (P26,
+reconcile against `Detail-Playback.dc.html`), and where the restore surface lives — a new
+`SettingsBackupScreen` or a section of `SettingsStorageScreen` (P30).
+
+---
+
 ## 2026-09-19 (governance and spec amendment session: constitution 2.0.0, D42-D50, Q18/Q19/Q22 closed)
 
 ### d58ed8fd — governance: constitution 2.0.0 - Principle V redefined to Audio Is Processed Only On The Device; D42-D50 recorded; Q18/Q19/Q22 closed
