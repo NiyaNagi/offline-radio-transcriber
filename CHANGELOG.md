@@ -32,6 +32,113 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (governance and spec amendment session: constitution 2.0.0, D42-D50, Q18/Q19/Q22 closed)
+
+### d58ed8fd — governance: constitution 2.0.0 - Principle V redefined to Audio Is Processed Only On The Device; D42-D50 recorded; Q18/Q19/Q22 closed
+
+**Scope:** documentation only — `.specify/memory/constitution.md`, `AGENTS.md`, `RELEASES.md`,
+`spec/functional-spec.md`, `spec/open-questions.md`, `spec/technical-design.md`,
+`results/coverage-matrix.md`. No Kotlin, Gradle, resources or Python product code touched.
+
+**Requirements/ACs:** D42–D50 (new decisions, spec §3); §16 traceability rows for each; new
+§7.13d FR-ANL-1..14 (the analytics channel); FR-OBS-5 and NFR-6 amended; FR-AST-3 amended,
+FR-AST-10..14 added; FR-SPK-5 and the persistent-voice-identity subsection amended with a D45
+deferral note; FR-STO-9, FR-EXP-7, NFR-6d added; new §7.19 FR-ALR-1..6; AC-163..197 added;
+AC-136/138/139 amended; Q18, Q19 (→ D49) and Q22 (→ D50) closed in `spec/open-questions.md`.
+
+**What changed:** The product owner made nine decisions in a single 2026-09-19 session, resolved
+here on the record per the constitution's own Scope And Precedence rule (raise a conflict,
+amend the spec, record the decision — never resolve it silently in code):
+
+- **D42 redefines constitution Principle V** from "Nothing Leaves The Device Except By A
+  Declared Channel" to "Audio Is Processed Only On The Device" — a **MAJOR** governance bump
+  (1.3.0 → 2.0.0), because a principle is redefined, not merely extended. All audio processing
+  (capture, segmentation, ASR, lexicon, identity, digest) is confirmed to stay on the phone; a
+  fourth declared outbound channel, **analytics**, is added in three tiers (tier 1 on by default
+  and turnable off — crash/ANR, usage, performance, capture uptime, the setup funnel, aggregate
+  quality stats, no transcript/callsign/name/station-knowledge/location; tiers 2 and 3 opt-in —
+  transcripts+callsigns, then audio+corrected-transcript). Specified in new §7.13d, FR-ANL-1..14:
+  closed field lists per tier, a provenance envelope on every event, upload only outside capture
+  through a new `:net` capability token kind (`AnalyticsUpload`, technical design §16), erasure by
+  install-id reset, a separate `field` fold that never mixes with `dev` or touches `eval`, and a
+  bounded queue that never blocks capture. The only permitted privacy claim is now fixed verbatim
+  ("Your audio is processed only on your phone and is never uploaded unless you choose to
+  share it."); a bare "no audio leaves the device" claim is explicitly forbidden. FR-OBS-5 and
+  NFR-6 amended in the open, prior text kept and annotated, following the house style already
+  used for FR-OBS-5/D25/D37/D38.
+- **D43/D44** move model distribution onto two build variants: `full` (everything bundled,
+  published on GitHub, D35's original promise) and `play` (a slim AAB that downloads missing
+  models during setup via the existing `ModelAcquisition` path — resumable, sha256-verified,
+  atomic rename, foreground WorkManager, Wi-Fi-only default). Setup's MODELS step reaches a hard
+  READY gate (every required model installed and verified, plus the mic/level check) before
+  capture is offered; the battery-exemption step keeps recurring until the heartbeat proves
+  survival, never trusting the OS's own exemption flag alone. Downloaded models come from GitHub
+  Release assets under a versioned tag (`models-v1`), pinned by URL/sha256/size in
+  `bundled-assets.json`; Gemma's redistribution notices travel with the mirror. New FR-AST-10..14;
+  FR-AST-3 and AC-136/138/139 amended with visible notes rather than silent rewrites.
+- **D45** defers `:identity` (the persistent voice library, D28) to post-1.0. The UI's
+  "same voice" correction-scope label is corrected to "same callsign", which is what
+  `CorrectionPolling.kt` has always actually matched on (`voiceprintId` is always null; it falls
+  back to `stationId`). FR-SPK-11..26 are marked deferred with a visible note, not deleted.
+  RELEASES.md's `## Unreleased` section is corrected in the same change: v0.1.1's notes
+  overclaimed both automatic thread grouping and voice-based correction propagation.
+- **D46** fixes M4's fork timing: 1.0 ships text-level resolution only (no Pass C); Pass C's
+  fate is decided by a dev-fold measurement after 1.0's labelled validation hour (Q2), not by a
+  release-date deadline.
+- **D47**: 1.0 launches free, no billing; any future billing needs its own `:net` token-kind
+  amendment first.
+- **D48** fixes the analytics destination: a self-hosted HTTPS ingest endpoint, configured at
+  build time by `ORT_ANALYTICS_ENDPOINT` (unset ⇒ events queue locally, nothing sent); a
+  reference ingest server and DuckDB tooling ship under `tools/analytics/` (not built in this
+  session — this is a spec-only change); no third-party analytics/crash SDK with its own HTTP
+  stack; raw analytics data is git-excluded like `research/market/`; deleting an install id
+  purges its rows.
+- **D49 closes Q18 and Q19**: the field-report destination moves to a private repository before
+  public launch (FR-OBS-10's visibility guard stays regardless); an uploaded bundle's retention
+  is 90 days.
+- **D50 closes Q22**: when the Silero VAD is missing and capture falls back to the energy VAD,
+  the fallback is disclosed on the live bar and recorded on the session, never silent.
+
+Also added, per the same session's requirements list: FR-STO-9 (a save-bundle restore round-trips
+sessions/corrections/audio, shows conflicts, deletes nothing quietly); FR-EXP-7 (share a digest,
+thread transcript or over clip through the Android share sheet, user-initiated only, no automatic
+attachment of station knowledge/names/location); NFR-6d (a real, navigable third-party licence
+notices screen for Gemma, Whisper, sherpa-onnx, ONNX Runtime, Silero and other bundled
+libraries); an AC that the NFR-6c jurisdiction notice appears once at first run before capture can
+start; a new §7.19 FR-ALR-1..6 (live alerts — watched callsign/keyword/frequency, local
+notifications only, fired after Pass B, capture never waits on them, a callsign alert always
+names its attribution state and never presents `INFERRED` as heard), promoted from §1.5's
+out-of-scope table with a visible amendment note; an amendment note on FR-SPK-5 stating that
+automatic thread grouping was unbuilt as of v0.1.1, with new ACs for a QSO, a detected net and
+scanner activity threading automatically; an AC that POTA export is reachable from
+Settings > Export; and an AC that navigating away from a playing transmission stops playback
+(FR-UI-5, register R-1006). AC-163..197 (35 new criteria) added across new/extended §14
+subsections; §16 gained ten new traceability rows (D42–D50). `spec/technical-design.md` gained a
+new `:telemetry` module (depends on `:core` only; forbidden edge both ways against `:capture-*`)
+and the `AnalyticsUpload` `:net` capability token kind in §16.
+
+**Verified:** `python tools/spec-check/spec_check.py` → `spec-check: OK` (all 8 checks pass: AC
+ids contiguous and unique through AC-197; no dangling FR/AC/NFR/CON/Q reference; every decision
+Dn has a §16 traceability row; every requirement group has ≥1 criterion; every criterion names a
+requirement; closed questions map to decisions and open ones do not; no mojibake/tabs; no
+unresolved merge-conflict markers). `./gradlew coverageMatrix --offline` → `BUILD SUCCESSFUL in
+21s`, regenerated `results/coverage-matrix.md` (485 → 548 requirement ids; 278 still covered,
+unchanged, since no test code exists yet for the new ids — expected in a docs-only change).
+`./gradlew coverageMatrixCheck --offline`, run as a separate invocation per the standing
+instruction (together they trip Gradle validation) → `BUILD SUCCESSFUL in 3s`,
+`coverageMatrixCheck: up to date (278 covered of 548)`.
+
+**Left open / not done:** this entry is a follow-up commit rather than part of `d58ed8fd` itself,
+because this project's changelog header names the commit's own hash, which cannot be known before
+the commit exists — the same situation `f4c22b2f` resolved for `1c7b9347`, and resolved the same
+way here. The P22+ build-plan prompts that implement FR-ANL, FR-AST-10..14, FR-ALR and everything
+else recorded here are explicitly out of scope for this session (another session owns
+`spec/build-plan.md`); a privacy policy for analytics tiers 2 and 3 is still needed before public
+launch (D48); Q16 (piloting the labelling protocol) and Q2 (recording the validation hour) remain
+open and untouched by this change.
+
+---
+
 ## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
 
 ### 1c7b9347 — WPCAP fix: restore N08's own live bar and Full log entry point, broken by the first merge pass
