@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
 
-### (pending) — build plan: add P22-P32 (Waves G-K) for the D42-D50 governance backlog
+### 57b69260 — build plan: add P22-P32 (Waves G-K) for the D42-D50 governance backlog
 
 **Scope:** documentation only — `spec/build-plan.md`. No Kotlin, Gradle, resources or Python
 product code touched.
