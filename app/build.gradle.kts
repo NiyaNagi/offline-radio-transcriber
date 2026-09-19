@@ -107,6 +107,14 @@ dependencies {
     // the Settings LLM toggle reads engine state through the :llm-api contract (FR-DIG-3b).
     implementation(project(":rig"))
     implementation(project(":llm-api"))
+    // P22 (D43, FR-AST-10..12, AC-184): app/src/main/kotlin/org/ort/app/work/ModelDownloadWorker.kt
+    // extends androidx.work.CoroutineWorker and calls WorkManager directly -- :pipeline already
+    // carries this dependency (ReprocessWorker/ProseDigestRunner) but only as `implementation`,
+    // which Gradle does not expose transitively to this module. NOTE: this file (app/build.gradle.kts)
+    // is P23's own ownership for the wave (product flavors); this one line is P22's minimal,
+    // unavoidable addition to keep :app's main source set compiling at all -- flagged for the
+    // lead/P23 merge rather than silently landed.
+    implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.core.ktx)
     // :data's Room types (OrtDatabase, its DAOs) are used directly by StatusActivity/
     // TransmissionListActivity's real-data polling (v0 smoke test — see RealCaptureService's doc

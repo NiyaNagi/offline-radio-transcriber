@@ -14,6 +14,7 @@ import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.Description
@@ -72,6 +73,10 @@ class SetupActivityTest {
         DebugRigLinkPortOverride.clear()
         DebugRigLinkPortOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
         SetupActivity.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        // P22 (AC-189): the same belt-and-suspenders reset for this package's own overnight-
+        // survival test seam.
+        DebugOvernightSurvivalOverride.clear()
+        DebugOvernightSurvivalOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
     }
 
     private fun clearPrefs() {
@@ -104,6 +109,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
@@ -128,6 +134,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .apply()
         deny(Manifest.permission.RECORD_AUDIO)
@@ -137,13 +144,54 @@ class SetupActivityTest {
         }
     }
 
+    // --- P22: SetupStep.JURISDICTION_NOTICE (NFR-6c, AC-166) ---------------------------------
+
+    @Test
+    fun `AC_166 welcome seen but the jurisdiction notice not yet seen lands on JurisdictionNotice`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .apply()
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.JURISDICTION_NOTICE, activity.currentStepForTest) }
+        }
+    }
+
+    @Test
+    fun `AC_166 tapping I understand records it seen and proceeds past the notice`() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .apply()
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.JURISDICTION_NOTICE, activity.currentStepForTest)
+                activity.onContinueJurisdictionNotice()
+                assertEquals(SetupStep.MODE, activity.currentStepForTest)
+            }
+        }
+        val seen = ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .getBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, false)
+        assertTrue("the notice must be recorded seen so it never reappears on the next launch", seen)
+    }
+
     // --- D33 (WPD): SetupStep.MODE is the very first content gate ------------------------------
 
     @Test
     fun `D33 welcome seen but no capture mode chosen lands on Mode, before any permission`() {
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
+            .apply()
         deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
@@ -157,7 +205,10 @@ class SetupActivityTest {
     fun `AC_127_local_microphone_mode_completes_onboarding_end_to_end`() {
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
+            .apply()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
@@ -180,7 +231,10 @@ class SetupActivityTest {
     fun `AC_127_usb_radio_mode_presets_usb_serial_and_never_asks_for_bluetooth`() {
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
+            .apply()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
@@ -205,7 +259,10 @@ class SetupActivityTest {
     fun `AC_127_bluetooth_radio_mode_inserts_the_nearby_devices_step_after_microphone`() {
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
+            .apply()
         grant(Manifest.permission.RECORD_AUDIO)
         deny(Manifest.permission.POST_NOTIFICATIONS)
         deny(Manifest.permission.BLUETOOTH_CONNECT)
@@ -232,6 +289,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.BLUETOOTH_RADIO.name)
             .apply()
         grant(Manifest.permission.RECORD_AUDIO)
@@ -260,6 +318,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
         prefs.edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
@@ -267,6 +326,11 @@ class SetupActivityTest {
             .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_RADIO_CHOICE, RadioChoice.NONE.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true)
+            // P22 (AC-189): not this test's own concern -- without this, reconcileOvernightSurvival()
+            // would reset KEY_OVERNIGHT_SEEN back to false (real evidence is genuinely absent in a
+            // fresh Robolectric :data instance) and this "hands back immediately" case would resume
+            // on Overnight instead.
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, true)
             .apply()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
@@ -287,6 +351,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
         prefs.edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_MIC_REQUESTED, true)
             .apply()
@@ -312,7 +377,10 @@ class SetupActivityTest {
         storeEverySetupGateExceptComplete()
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit().putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true).apply()
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, true)
+            .apply()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         val context = ApplicationProvider.getApplicationContext<Application>()
@@ -346,7 +414,10 @@ class SetupActivityTest {
         storeEverySetupGateExceptComplete()
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit().putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true).apply()
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, true)
+            .apply()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         val context = ApplicationProvider.getApplicationContext<Application>()
@@ -435,7 +506,10 @@ class SetupActivityTest {
     fun `E2_E09 choosing a rig pre-selects the mode preset transport when the rig supports it`() {
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).apply()
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
+            .apply()
         grant(Manifest.permission.RECORD_AUDIO)
         deny(Manifest.permission.POST_NOTIFICATIONS)
         deny(Manifest.permission.BLUETOOTH_CONNECT)
@@ -469,6 +543,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
@@ -527,6 +602,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
@@ -573,6 +649,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
@@ -645,6 +722,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.BLUETOOTH_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "wired-1")
@@ -802,6 +880,7 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.BLUETOOTH_RADIO.name)
             .apply()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
@@ -1275,6 +1354,86 @@ class SetupActivityTest {
         rule.apply(statement, description).evaluate()
         check(heightPx >= 0) { "welcomeTitleHeightPx never measured a real height" }
         return heightPx
+    }
+
+    // --- P22: AC-189 -- the battery-exemption step recurs until the heartbeat proves survival ----
+
+    /** Every gate [storeEverySetupGateExceptComplete] sets, plus [SharedPreferencesSetupStore
+     * .KEY_SETUP_COMPLETE] itself — the device has already finished setup once before. */
+    private fun storeSetupAlreadyComplete() {
+        storeEverySetupGateExceptComplete()
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true)
+            .apply()
+    }
+
+    @Test
+    fun `AC_189 unproven survival resets overnightStepSeen so a fresh launch resumes on Overnight again`() {
+        storeSetupAlreadyComplete()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.OVERNIGHT, activity.currentStepForTest) }
+        }
+        val survivalProven = ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, false)
+        assertFalse("still unproven -- this run must not fabricate the fact", survivalProven)
+    }
+
+    @Test
+    fun `AC_189 proven survival latches true and this already-complete flow hands straight back to MainActivity`() {
+        storeSetupAlreadyComplete()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = true))
+
+        // Every other gate is already satisfied, so once survival is proven too this activity
+        // finishes itself inside onCreate (refreshStep() -> handBackToMainActivity()) -- the same
+        // shape the pre-existing "everything already complete" test above documents.
+        ActivityScenario.launch(SetupActivity::class.java).use {
+            val app = ApplicationProvider.getApplicationContext<Application>()
+            val next = shadowOf(app).nextStartedActivity
+            assertEquals(MainActivity::class.java.name, next?.component?.className)
+        }
+        val survivalProven = ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, false)
+        assertTrue("real evidence must latch the fact so it is never re-checked once proven", survivalProven)
+    }
+
+    /**
+     * Discriminates [reconcileOvernightSurvival]'s own "reset, do not loop" design from the naive
+     * always-block shape this file's own report warns against: [SetupStore.overnightStepSeen] is
+     * reset only once, in `onCreate`, before this activity's first [refreshStep] — so once the
+     * operator acts on [SetupStep.OVERNIGHT] again this launch (`Skip for now`), every other gate
+     * in this already-complete flow (set by [storeSetupAlreadyComplete]) is satisfied too, and
+     * `stepFor` hands straight back to `MainActivity` rather than re-showing Overnight a second
+     * time within the same activity instance. A regression to the naive "always block while
+     * unproven" shape would instead recompute [SetupStep.OVERNIGHT] again right here, so the
+     * activity would never reach `isFinishing`.
+     */
+    @Test
+    fun `AC_189 skipping Overnight again within the same launch hands back to MainActivity, no loop`() {
+        storeSetupAlreadyComplete()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.OVERNIGHT, activity.currentStepForTest)
+                activity.onSkipOvernight()
+                assertTrue(
+                    "a loop would leave this activity still showing Overnight, never finishing",
+                    activity.isFinishing,
+                )
+            }
+        }
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val next = shadowOf(app).nextStartedActivity
+        assertEquals(MainActivity::class.java.name, next?.component?.className)
     }
 
     private companion object {

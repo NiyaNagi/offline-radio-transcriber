@@ -282,6 +282,33 @@ public data class TruncatedAsset(public val onDiskBytes: Long, public val expect
 
 public data class ModelsViewState(val rows: List<ModelRowViewState>, val requeuedMessage: String? = null)
 
+/**
+ * P22 (D43, FR-AST-10..12): exactly the rows the setup MODELS step must still fetch before READY
+ * can be reached — a tier-eligible row that is genuinely not [ModelCatalogEntry.bundled] and not
+ * yet [ModelRowStatus.INSTALLED]. A bundled asset is never "missing" here even if its own row
+ * somehow reads [ModelRowStatus.NOT_INSTALLED] ([org.ort.app.assets.BundledAssetInstaller]'s own
+ * job to land it, not this step's to download it), and a tier-ineligible row is never demanded
+ * either (FR-AST-3a: stored, never loaded, so never worth blocking setup over). [ModelId
+ * .LLM_GEMMA3_1B] is excluded for the identical reason [ReadyScreen.kt]'s own `modelsRow` already
+ * carves it out (R-862, AC-138): it is the one optional, tier-3-only asset, and a `play`-variant
+ * build that has not fetched it yet must not be held at the MODELS step over it.
+ */
+public fun ModelsViewState.rowsRequiringDownload(): List<ModelRowViewState> = rows
+    .filterNot { it.id == ModelId.LLM_GEMMA3_1B }
+    .filter { it.tierEligible && !it.bundled && it.status != ModelRowStatus.INSTALLED }
+
+/**
+ * P22: the setup MODELS screen's own row set — every downloadable, tier-required asset
+ * [rowsRequiringDownload] would ever demand, but **not** filtered by current install status, so a
+ * row that finishes downloading mid-step keeps showing (as installed) rather than disappearing
+ * from the list the operator is watching. The two functions share the same "downloadable and
+ * tier-required" predicate deliberately — a row [rowsRequiringDownload] would gate READY on is
+ * always a row this one shows too, and vice versa once installed.
+ */
+public fun ModelsViewState.rowsForSetupModelsStep(): List<ModelRowViewState> = rows
+    .filterNot { it.id == ModelId.LLM_GEMMA3_1B }
+    .filter { it.tierEligible && !it.bundled }
+
 public sealed interface ModelActionResult {
     public data class Success(public val requeuedCount: Int) : ModelActionResult
     public data class Failure(public val reason: String) : ModelActionResult

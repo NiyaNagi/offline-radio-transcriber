@@ -34,6 +34,126 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
 
+### PENDING — P22: setup completes everything (D43, FR-AST-10..12)
+
+**Scope:** `:app` — `ui/setup/**` (new `JurisdictionNoticeScreen.kt`, `ModelsSetupScreen.kt`,
+`OvernightSurvival.kt`; edits to `SetupStep.kt`, `SetupStateMachine.kt`, `SetupStore.kt`,
+`ReadyScreen.kt`, `SetupActivity.kt`), `ui/data/ModelsViewData.kt` (two new pure extension
+functions), a new `work/ModelDownloadWorker.kt`. Also: `app/src/main/AndroidManifest.xml` (the
+explicitly granted foreground-service declaration and its permissions) and one additive line in
+`app/build.gradle.kts` (`implementation(libs.androidx.work.runtime.ktx)`) — the latter is outside
+this unit's owned-files list but was unavoidable to make `:app`'s main source set compile at all
+once a real `androidx.work.CoroutineWorker` is added to it; flagged here for the lead, since
+`app/build.gradle.kts` is P23's own ownership this wave.
+
+**Requirements/ACs:** D43, FR-AST-10, FR-AST-11, FR-AST-12, NFR-6c; AC-166, AC-184, AC-185,
+AC-186, AC-187, AC-188, AC-189, AC-190 (the `full`-variant non-regression half — see Left open for
+AC-190's `play`-variant half, which needs P23). Constitution I (an attribution/state without its
+backing fact is a bug — the Overnight row's `ok` no longer reads the OS's own diagnostic-only
+`isIgnoringBatteryOptimizations()` flag), IV (liveness/survival proven by evidence, never that
+API), VII (the READY gate is a structural, type-level fold of two independent facts).
+
+**What changed:**
+- `SetupStep` gains `JURISDICTION_NOTICE` (right after `WELCOME`) and `MODELS` (right before
+  `READY`); both share an existing step-indicator segment rather than renumbering every other
+  stage, since no artboard exists yet for either screen (`design/**` is outside this unit's file
+  ownership).
+- `SetupStateMachine.stepFor` gains two gates: `!jurisdictionNoticeSeen -> JURISDICTION_NOTICE`
+  (AC-166) and, immediately before `READY`, `!requiredModelsInstalled -> MODELS` (AC-184, AC-188 —
+  this combines with the pre-existing `levelInBand` gate earlier in the same function, so READY
+  now requires both, together, exactly as AC-188 asks). `SetupSnapshot` gains
+  `jurisdictionNoticeSeen` (a real `SetupStore` preference) and `requiredModelsInstalled` (not a
+  store preference — `SetupStore.snapshot()` defaults it `true`, since the store alone cannot know
+  the installed-asset state; `SetupActivity.currentSnapshot()` is the one place that overrides it
+  with the real, freshly read fact from `ModelsController`).
+- `ModelsViewData.kt` gains two pure extension functions on `ModelsViewState`:
+  `rowsRequiringDownload()` (a downloadable, tier-required, not-yet-installed row — what gates
+  READY) and `rowsForSetupModelsStep()` (the same predicate without the install-status filter, so
+  the MODELS screen keeps showing a row once it finishes downloading instead of it vanishing).
+  Both exclude the gated, tier-3-only Gemma model, matching `ReadyScreen.kt`'s pre-existing
+  `modelsRow` carve-out (R-862/AC-138).
+- `work/ModelDownloadWorker.kt` (new): a foreground `CoroutineWorker` (AC-184) that calls the
+  existing, unmodified `ModelsController.download()` — never reimplementing
+  `:net`'s `ModelAcquisition` fetch/resume/checksum/atomic-rename path. Wi-Fi-only by default,
+  overridable per download via a `WorkManager` `Constraints.setRequiredNetworkType` on the
+  enqueued request (AC-187). A checksum-mismatch failure (`ModelActionResult.Failure` whose reason
+  contains "checksum mismatch" — `ModelAcquisition.verifyAndInstall`'s own wording) is reported as
+  `Result.retry()`, never `Result.failure()` or `Result.success()` (AC-186). `uniqueWorkName(id)`
+  is one unique work name per model, `ExistingWorkPolicy.KEEP` (a second tap no-ops onto the
+  running attempt). `observe`/`currentSnapshot` read `WorkInfo` directly into a closed
+  `ModelDownloadSnapshot` sealed interface (`Downloading`/`Succeeded`/`Failed`/`NotRunning`) —
+  never a second, drifting progress model.
+- `OvernightSurvival.kt` (new): `OvernightSurvivalChecker`/`RealOvernightSurvivalChecker` (reads
+  `:data`'s real `session` table — a session that ended cleanly, `TerminationReason.USER`, and
+  lasted at least 15 minutes counts as evidence the process was not killed mid-run; a documented
+  heuristic, not a spec-mandated number), `FakeOvernightSurvivalChecker`, and
+  `DebugOvernightSurvivalOverride` (the same debug-seam shape `DebugRigLinkPortOverride` already
+  establishes for this package). `OvernightSurvivalState` bundles the live, diagnostic-only OS
+  flag with the real, latched `overnightSurvivalProven` fact for `ReadyScreen.kt`'s own row.
+- `ReadyScreen.kt`: `readyRowsFor`'s `batteryExempt: Boolean` parameter is replaced by
+  `overnightState: OvernightSurvivalState`; the Overnight row's `ok`/`statusText`/`actionLabel` are
+  now driven only by `overnightState.survivalProven` — the OS's own exemption flag is used for the
+  row's wording only ("Battery exemption granted/skipped"), never to satisfy the gate (AC-189).
+- `SetupActivity.kt`: `reconcileOvernightSurvival()` runs once in `onCreate`, before the first
+  `refreshStep()`/`tryOpenAtRequestedStep()` — a no-op unless setup has already completed once and
+  survival is not yet proven. If real evidence exists, it latches `overnightSurvivalProven = true`
+  permanently; otherwise it resets `overnightStepSeen = false` so `stepFor`'s own unchanged "not
+  yet seen" gate shows `OVERNIGHT` again on this fresh launch, without looping within the same
+  activity instance (the reset runs once, in `onCreate`, not on every `refreshStep`). New
+  `RenderModels()` composable, new `onContinueJurisdictionNotice()`, `JURISDICTION_NOTICE`/`MODELS`
+  branches in the `RenderStep()` dispatch (now `@Suppress("CyclomaticComplexMethod")`, matching
+  `SetupStateMachine.stepFor`'s own precedent for a flat per-step dispatch).
+
+**Known, deliberate limitation (recorded, not silently accepted):** `MainActivity.kt`'s own
+`isComplete()` fast path is unchanged — it does not check `overnightSurvivalProven` — because
+`MainActivityTest.kt`'s existing `R_080 setup complete and permitted starts capture and launches
+the reader directly` test (outside this unit's ownership) depends on that fast path skipping
+`SetupActivity` once `setupComplete && captureIsPermitted`. Wiring `overnightSurvivalProven` into
+that check would be needed for AC-189's "every relevant subsequent launch" to hold literally on a
+cold app launch when every other gate is already satisfied; as landed, the recurrence is proven at
+the `SetupActivity` level (every time Setup's own walk runs, for any reason: a revoked permission,
+`ReadyScreen`'s own "Fix"/"Change" entry points, the debug `EXTRA_STEP` seam) but does not itself
+force `MainActivity` to re-enter Setup purely to recheck survival. Needs either a grant to touch
+`MainActivity.kt`/`MainActivityTest.kt` or a dedicated follow-up session that owns them.
+
+**Verified:** `./gradlew :app:compileDebugKotlin` and `:app:compileDebugUnitTestKotlin` both green.
+`./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.ui.data.*"
+--tests "org.ort.app.work.*"` — 962 tests passing, 0 failed (includes 31 tests in the five new
+files: `OvernightSurvivalTest`, `ModelDownloadWorkerTest`, `JurisdictionNoticeScreenTest`,
+`ModelsSetupScreenTest`, `ModelsViewStateRowsRequiringDownloadTest`). `./gradlew :app:ktlintCheck`
+and `:app:detekt` both green. Discrimination (constitution II) shown for six key changes by
+reverting the production line, re-running the narrow test, watching it fail for the stated reason,
+then restoring and re-confirming green: the `JURISDICTION_NOTICE` gate in `stepFor`
+(`SetupStateMachineTest`), the `MODELS`/`requiredModelsInstalled` gate in `stepFor`
+(`SetupStateMachineTest`), the Overnight row's `ok` now reading `survivalProven` instead of the OS
+flag (`ReadyRowsForTest`), the checksum-mismatch-to-retry mapping in `ModelDownloadWorker`
+(`ModelDownloadWorkerTest`, which also incidentally re-confirmed AC-184/185/187 pass with the
+production mapping restored), and the `overnightStepSeen` reset in
+`SetupActivity.reconcileOvernightSurvival` (`SetupActivityTest`, two of the three new AC-189
+activity-level tests fail without it).
+
+**Left open / not done:**
+- AC-190's `play`-variant half (a fresh install with no models bundled reaching MODELS and
+  downloading) is not exercisable yet — every entry in the committed `bundled-assets.json` ships
+  `bundled = true` until P23 lands the manifest/mirror and the two build variants. `MODELS`'s own
+  gate, worker, and screen are built and tested against fixture `ModelFetchSpec`s
+  (`ModelDownloadWorkerTest`) and fixture `ModelRowViewState`s (`ModelsViewStateRowsRequiringDownloadTest`,
+  `ModelsSetupScreenTest`), not a real non-bundled catalog entry.
+- The `MainActivity.kt`/`MainActivityTest.kt` gap above.
+- No artboard exists for `JurisdictionNoticeScreen`/`ModelsSetupScreen` — built to this package's
+  own `SetupScaffold` shape; constitution VIII's visual re-verification (tour capture at 1.0/2.0,
+  comparison against an artboard) cannot run until the design inventory adds one, which is outside
+  `design/**`'s ownership for this unit. Robolectric layout tests at `w390dp-h844dp-420dpi` with
+  `@GraphicsMode(NATIVE)` are included for both new screens as the interim check.
+- The screenshot tour itself was not run (this session had no emulator) — per the lead's own
+  capture-after-merge convention; scenario/tour step ids for `setup/jurisdiction-notice` and
+  `setup/models` are not yet added to the tour's own step catalogue (outside this unit's ownership
+  of `tools/ui-audit/`).
+- The 15-minute overnight-survival threshold is a documented heuristic (`OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS`),
+  not a measured or spec-mandated figure.
+
+---
+
 ### 57b69260 — build plan: add P22-P32 (Waves G-K) for the D42-D50 governance backlog
 
 **Scope:** documentation only — `spec/build-plan.md`. No Kotlin, Gradle, resources or Python

@@ -56,6 +56,7 @@ class SetupActivityVerifyOverrideTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")

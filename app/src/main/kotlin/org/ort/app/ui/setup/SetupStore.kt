@@ -29,6 +29,10 @@ import org.ort.core.capture.RigTransportKind
 @Suppress("TooManyFunctions")
 public interface SetupStore {
     public var welcomeSeen: Boolean
+
+    /** P22 (NFR-6c, AC-166) — the jurisdiction/legality notice, shown exactly once on first run,
+     * right after [welcomeSeen]. */
+    public var jurisdictionNoticeSeen: Boolean
     public var micRequested: Boolean
     public var notificationsSkipped: Boolean
     public var selectedInputId: String?
@@ -80,9 +84,24 @@ public interface SetupStore {
      * [org.ort.core.capture.CaptureModePresets.presetsFor] proposed for [captureMode] (FR-CAP-9). */
     public var modeOverriddenRig: Boolean
 
-    /** The immutable view [SetupStateMachine.stepFor] decides against. */
+    /**
+     * P22 (AC-189, constitution IV): whether the heartbeat has ever proven this device survived a
+     * backgrounded run — `overnightStepSeen` alone (the OS's `isIgnoringBatteryOptimizations()`
+     * exemption flag included) must never satisfy that proof; only real session evidence
+     * ([OvernightSurvivalChecker]) may set this, and once true it stays true (AC-189's own
+     * "until"). See [SetupActivity]'s own `reconcileOvernightSurvival` for the one real writer.
+     */
+    public var overnightSurvivalProven: Boolean
+
+    /** The immutable view [SetupStateMachine.stepFor] decides against.
+     *
+     * [SetupSnapshot.requiredModelsInstalled] is the one field this store cannot itself answer —
+     * see that field's own doc comment — so it defaults `true` here (nothing this store alone can
+     * see is blocking) and the real caller overrides it with the freshly read fact.
+     */
     public fun snapshot(): SetupSnapshot = SetupSnapshot(
         welcomeSeen = welcomeSeen,
+        jurisdictionNoticeSeen = jurisdictionNoticeSeen,
         captureMode = captureMode,
         bluetoothPermissionDeclined = bluetoothPermissionDeclined,
         notificationsSkipped = notificationsSkipped,
@@ -93,6 +112,7 @@ public interface SetupStore {
         radioChoice = radioChoice,
         rigTransport = rigTransport,
         rigBluetoothVerified = rigBluetoothVerified,
+        requiredModelsInstalled = true,
         setupComplete = setupComplete,
     )
 
@@ -116,6 +136,7 @@ public interface SetupStore {
 public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) : SetupStore {
 
     override var welcomeSeen: Boolean by BooleanPref(KEY_WELCOME_SEEN, default = false)
+    override var jurisdictionNoticeSeen: Boolean by BooleanPref(KEY_JURISDICTION_NOTICE_SEEN, default = false)
     override var micRequested: Boolean by BooleanPref(KEY_MIC_REQUESTED, default = false)
     override var notificationsSkipped: Boolean by BooleanPref(KEY_NOTIFICATIONS_SKIPPED, default = false)
     override var selectedInputId: String? by StringPref(KEY_SELECTED_INPUT_ID)
@@ -137,6 +158,7 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
     override var rigBluetoothVerified: Boolean by BooleanPref(KEY_RIG_BLUETOOTH_VERIFIED, default = false)
     override var modeOverriddenAudio: Boolean by BooleanPref(KEY_MODE_OVERRIDDEN_AUDIO, default = false)
     override var modeOverriddenRig: Boolean by BooleanPref(KEY_MODE_OVERRIDDEN_RIG, default = false)
+    override var overnightSurvivalProven: Boolean by BooleanPref(KEY_OVERNIGHT_SURVIVAL_PROVEN, default = false)
 
     private inner class BooleanPref(val key: String, val default: Boolean) :
         kotlin.properties.ReadWriteProperty<Any?, Boolean> {
@@ -210,6 +232,8 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
         public const val KEY_RIG_BLUETOOTH_VERIFIED: String = "rig_bluetooth_verified"
         public const val KEY_MODE_OVERRIDDEN_AUDIO: String = "mode_overridden_audio"
         public const val KEY_MODE_OVERRIDDEN_RIG: String = "mode_overridden_rig"
+        public const val KEY_JURISDICTION_NOTICE_SEEN: String = "jurisdiction_notice_seen"
+        public const val KEY_OVERNIGHT_SURVIVAL_PROVEN: String = "overnight_survival_proven"
     }
 }
 
@@ -221,6 +245,7 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
 @Suppress("LongParameterList")
 public class InMemorySetupStore(
     override var welcomeSeen: Boolean = false,
+    override var jurisdictionNoticeSeen: Boolean = false,
     override var micRequested: Boolean = false,
     override var notificationsSkipped: Boolean = false,
     override var selectedInputId: String? = null,
@@ -242,4 +267,5 @@ public class InMemorySetupStore(
     override var rigBluetoothVerified: Boolean = false,
     override var modeOverriddenAudio: Boolean = false,
     override var modeOverriddenRig: Boolean = false,
+    override var overnightSurvivalProven: Boolean = false,
 ) : SetupStore

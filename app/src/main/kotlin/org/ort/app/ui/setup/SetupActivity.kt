@@ -1,6 +1,7 @@
 package org.ort.app.ui.setup
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -17,6 +18,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
@@ -24,20 +26,27 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.runBlocking
 import org.ort.app.BuildConfig
 import org.ort.app.MainActivity
 import org.ort.app.fieldreport.wiring.FieldReportAppWiring
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelsController
+import org.ort.app.ui.data.rowsForSetupModelsStep
+import org.ort.app.ui.data.rowsRequiringDownload
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.settings.SettingsPolling
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.app.work.ModelDownloadSnapshot
+import org.ort.app.work.ModelDownloadWorker
 import org.ort.capture.android.AndroidAudioIo
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.CaptureModePresets
+import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.rig.CaptureConfigurationStore
@@ -294,6 +303,7 @@ public class SetupActivity : ComponentActivity() {
         audioIo = AndroidAudioIo(this)
         selectedInputId = store.selectedInputId
         selectedInputLabel = store.selectedInputLabel
+        reconcileOvernightSurvival()
 
         val fontScaleOverride = intent?.takeIf { it.hasExtra(EXTRA_FONT_SCALE) }?.getFloatExtra(EXTRA_FONT_SCALE, 1f)
         setContent {
@@ -327,12 +337,58 @@ public class SetupActivity : ComponentActivity() {
     private fun tryOpenAtRequestedStep(requestedStepName: String?): Boolean {
         val requested = requestedStepName?.let { name -> SetupStep.entries.firstOrNull { it.name == name } }
             ?: return false
-        val naturalNext = SetupStateMachine.stepFor(currentPermissionsState(), micPermanentlyDenied(), store.snapshot())
+        val naturalNext = SetupStateMachine.stepFor(
+            currentPermissionsState(),
+            micPermanentlyDenied(),
+            currentSnapshot(),
+        )
         if (naturalNext != null && requested.ordinal > naturalNext.ordinal) return false
         step = requested
         if (requested == SetupStep.INPUT && inputRoutes.isEmpty()) refreshInputRoutes()
         if (requested == SetupStep.RIG_TRANSPORT) applyPresetRigTransportIfUnselected()
         return true
+    }
+
+    /**
+     * P22 (FR-AST-10..12, AC-188): [store.snapshot] alone cannot know what the manifest or the
+     * installed-asset state currently is (that field's own doc comment) — this is the one place
+     * that reads the real [ModelsController] state and folds it in before ever handing a snapshot
+     * to [SetupStateMachine.stepFor]. Called from both [refreshStep] and [tryOpenAtRequestedStep],
+     * so neither can drift from the other about what "required models installed" means.
+     */
+    private fun currentSnapshot(): SetupSnapshot {
+        val modelsState = ModelsController.currentState(this)
+        return store.snapshot().copy(requiredModelsInstalled = modelsState.rowsRequiringDownload().isEmpty())
+    }
+
+    /**
+     * P22 (AC-189, constitution IV): reconciles [SetupStore.overnightSurvivalProven] against real
+     * session evidence, once, before the first [tryOpenAtRequestedStep]/[refreshStep] call runs —
+     * synchronous [runBlocking] bridge from this non-suspend call site, the same established
+     * pattern [RoomActiveLexiconStore.current] already uses for a one-shot `:data` read. A no-op
+     * unless setup has already completed once and survival is not yet proven (nothing to reconcile
+     * on a fresh install, and nothing left to prove once it already latched true).
+     *
+     * While still unproven, [SetupStore.overnightStepSeen] is reset so [SetupStateMachine.stepFor]'s
+     * own ordinary, *unchanged* "not yet seen" gate shows [SetupStep.OVERNIGHT] again on this fresh
+     * launch — resetting the flag, not the gate, means [onOpenBatterySetting]/[onSkipOvernight]
+     * still only need to fire once per launch to let the rest of this already-complete flow proceed
+     * normally, with no risk of looping back to [SetupStep.OVERNIGHT] again within the same launch.
+     *
+     * This reruns Setup's own walk whenever [SetupActivity] is entered for any reason — it does
+     * **not** force `MainActivity`'s already-permitted fast path to reopen Setup purely to recheck
+     * survival, which is `MainActivity.kt`'s own file, outside this unit's ownership; see this
+     * package's own report for that open item.
+     */
+    private fun reconcileOvernightSurvival() {
+        if (!store.setupComplete || store.overnightSurvivalProven) return
+        val checker = DebugOvernightSurvivalOverride.activeOverride
+            ?: RealOvernightSurvivalChecker(OrtDatabase.create(applicationContext).sessionDao())
+        if (runBlocking { checker.hasProvenSurvival() }) {
+            store.overnightSurvivalProven = true
+        } else {
+            store.overnightStepSeen = false
+        }
     }
 
     /**
@@ -382,7 +438,7 @@ public class SetupActivity : ComponentActivity() {
      */
     private fun refreshStep(pushCurrent: Boolean = false) {
         val permissions = currentPermissionsState()
-        val next = SetupStateMachine.stepFor(permissions, micPermanentlyDenied(), store.snapshot())
+        val next = SetupStateMachine.stepFor(permissions, micPermanentlyDenied(), currentSnapshot())
         if (next == null) {
             store.setupComplete = true
             handBackToMainActivity()
@@ -413,6 +469,13 @@ public class SetupActivity : ComponentActivity() {
 
     internal fun onBegin() {
         store.welcomeSeen = true
+        refreshStep(pushCurrent = true)
+    }
+
+    // --- P22 Jurisdiction notice (NFR-6c, AC-166) ------------------------------------------------
+
+    internal fun onContinueJurisdictionNotice() {
+        store.jurisdictionNoticeSeen = true
         refreshStep(pushCurrent = true)
     }
 
@@ -956,11 +1019,16 @@ public class SetupActivity : ComponentActivity() {
      * top-level one) so it can read this activity's own state directly, the same way
      * `MainActivity`'s `setContent` block did before WP9. Each multi-line branch is its own small
      * private composable below, both to stay under detekt's complexity threshold and because each
-     * one (VERIFY, LEVEL especially) has a real reason to be read on its own. */
+     * one (VERIFY, LEVEL especially) has a real reason to be read on its own. P22 adds two more
+     * branches (JURISDICTION_NOTICE, MODELS), pushing this past detekt's default threshold — the
+     * same judgement call [SetupStateMachine.stepFor] already makes for the identical reason
+     * (a flat per-step dispatch, not a method that grew complex by accident). */
+    @Suppress("CyclomaticComplexMethod")
     @Composable
     private fun RenderStep() {
         when (step) {
             SetupStep.WELCOME -> WelcomeScreen(onBegin = ::onBegin)
+            SetupStep.JURISDICTION_NOTICE -> JurisdictionNoticeScreen(onContinue = ::onContinueJurisdictionNotice)
             SetupStep.MODE -> ModeScreen(onChoose = ::onChooseMode)
             SetupStep.MICROPHONE -> MicrophoneScreen(onAllow = ::requestRecordAudio, onBack = ::onBack)
             SetupStep.MICROPHONE_DENIED -> MicrophoneDeniedScreen(
@@ -988,6 +1056,7 @@ public class SetupActivity : ComponentActivity() {
             )
             SetupStep.RIG_BLUETOOTH -> RenderRigBluetooth()
             SetupStep.RADIO_VERIFIED -> RenderRadioVerified()
+            SetupStep.MODELS -> RenderModels()
             SetupStep.READY -> RenderReady()
             null -> {}
         }
@@ -1240,9 +1309,88 @@ public class SetupActivity : ComponentActivity() {
             onChangeMode = { step = SetupStep.MODE },
         )
         val modelsState = ModelsController.currentState(this)
-        val rows = readyRowsFor(store, batteryExempt(), rigStatusSnapshot, modelsState, actions)
+        // AC-189: never the OS's own exemption flag alone -- see OvernightSurvivalState's own doc
+        // comment.
+        val overnightState = OvernightSurvivalState(
+            batteryExemptDiagnostic = batteryExempt(),
+            survivalProven = store.overnightSurvivalProven,
+        )
+        val rows = readyRowsFor(store, overnightState, rigStatusSnapshot, modelsState, actions)
         ReadyScreen(state = ReadyViewState(rows), onStartCapture = ::onStartCapture)
     }
+
+    /** P22 (D43, FR-AST-10..12) — `SetupStep.MODELS`: whatever the detected tier requires that
+     * this build did not bundle ([ModelsViewState.rowsRequiringDownload]), each row's real
+     * download state read from [ModelDownloadWorker.observe]/[ModelDownloadWorker.currentSnapshot]
+     * on a plain poll (matching this class's own [LEVEL_STATUS_POLL_INTERVAL_MILLIS] convention),
+     * never a second, drifting progress model. `Continue` re-runs [refreshStep] exactly like every
+     * other forward action in this class — [SetupStateMachine.stepFor]'s own `requiredModelsInstalled`
+     * gate is the one true authority on whether this step is actually done. */
+    @Composable
+    private fun RenderModels() {
+        var wifiOnly by remember { mutableStateOf(true) }
+        var rows by remember { mutableStateOf(initialModelsSetupRows(this)) }
+        LaunchedEffect(Unit) {
+            while (true) {
+                rows = refreshedModelsSetupRows(this@SetupActivity)
+                delay(LEVEL_STATUS_POLL_INTERVAL_MILLIS)
+            }
+        }
+        ModelsSetupScreen(
+            state = ModelsSetupViewState(rows = rows, wifiOnly = wifiOnly),
+            onDownload = { id -> ModelDownloadWorker.start(this, id, wifiOnly) },
+            onToggleWifiOnly = { wifiOnly = it },
+            onContinue = { refreshStep(pushCurrent = true) },
+        )
+    }
+
+    /** The MODELS step's first, synchronous paint — no `WorkManager` read needed for the very
+     * first frame (nothing can be mid-download before this screen has ever been shown this
+     * process), so this is a plain [ModelsController] read: every downloadable, tier-required
+     * row is [ModelDownloadRowStatus.INSTALLED] if it already is, [ModelDownloadRowStatus.PENDING]
+     * otherwise. [refreshedModelsSetupRows] is what layers real `WorkManager` state on top from
+     * the first poll onward. */
+    private fun initialModelsSetupRows(context: Context): List<ModelDownloadRowViewState> =
+        ModelsController.currentState(context).rowsForSetupModelsStep().map { row ->
+            ModelDownloadRowViewState(
+                id = row.id,
+                label = row.label,
+                sizeBytes = row.sizeBytes ?: 0L,
+                status = if (row.status == ModelRowStatus.INSTALLED) {
+                    ModelDownloadRowStatus.INSTALLED
+                } else {
+                    ModelDownloadRowStatus.PENDING
+                },
+            )
+        }
+
+    /** [ModelDownloadWorker.currentSnapshot] layered onto [ModelsController]'s own real installed
+     * state — installed always wins outright (a row `WorkManager` never heard of, because it was
+     * bundled to begin with or side-loaded, must still read as done); otherwise this is exactly
+     * what the operator's last [ModelDownloadWorker.start]/[org.ort.app.ui.setup.SetupActivity]
+     * poll actually found. */
+    private suspend fun refreshedModelsSetupRows(context: Context): List<ModelDownloadRowViewState> =
+        ModelsController.currentState(context).rowsForSetupModelsStep().map { row ->
+            val sizeBytes = row.sizeBytes ?: 0L
+            if (row.status == ModelRowStatus.INSTALLED) {
+                ModelDownloadRowViewState(row.id, row.label, sizeBytes, ModelDownloadRowStatus.INSTALLED)
+            } else {
+                when (val snapshot = ModelDownloadWorker.currentSnapshot(context, row.id)) {
+                    is ModelDownloadSnapshot.Downloading ->
+                        ModelDownloadRowViewState(row.id, row.label, sizeBytes, ModelDownloadRowStatus.DOWNLOADING)
+                    is ModelDownloadSnapshot.Failed ->
+                        ModelDownloadRowViewState(
+                            row.id,
+                            row.label,
+                            sizeBytes,
+                            ModelDownloadRowStatus.FAILED,
+                            snapshot.reason,
+                        )
+                    ModelDownloadSnapshot.Succeeded, ModelDownloadSnapshot.NotRunning, null ->
+                        ModelDownloadRowViewState(row.id, row.label, sizeBytes, ModelDownloadRowStatus.PENDING)
+                }
+            }
+        }
 
     /** S09b's per-transport sub-line (`Setup-Rig-Transport.dc.html`) — the preset case names it
      * generically ("preset by your mode") since S09b has no knowledge of the specific mode's own

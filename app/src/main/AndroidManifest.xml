@@ -30,6 +30,13 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
 
+    <!-- P22 (D43, FR-AST-10..12, AC-184): the setup MODELS step's model download runs as a
+         foreground WorkManager job (org.ort.app.work.ModelDownloadWorker), which needs
+         FOREGROUND_SERVICE unconditionally and, from API 34, the specific service-type permission
+         matching the ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC that class declares. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <application
         android:name=".OrtApplication"
         android:allowBackup="false"
@@ -65,5 +72,16 @@
              `StatusActivity` carried the second copy of the fabricated-shed-signal bug fixed
              here. -->
         <activity android:name=".ui.ReaderActivity" android:exported="false" />
+
+        <!-- P22 (D43, FR-AST-10..12, AC-184): declares the foreground-service type for
+             WorkManager's own SystemForegroundService, which org.ort.app.work.ModelDownloadWorker
+             calls into via CoroutineWorker.setForeground, required from API 34 (Android 14),
+             which refuses an undeclared foreground-service type at startForeground() time. `merge`
+             combines with whatever type another WorkManager-using module's own manifest already
+             contributes, rather than one overwriting the other. -->
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
     </application>
 </manifest>
