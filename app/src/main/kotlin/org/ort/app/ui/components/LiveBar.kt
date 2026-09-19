@@ -68,6 +68,10 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
         // E2-G02 (N01b, FR-CAP-3a): the room-audio mark is content, not decoration — it belongs in
         // the bar's own composed description too, not only its visible glyph+text.
         if (state.localMicrophone) append(", room")
+        // D50 (Q22, FR-SEG-10): the fallback VAD's own disclosure belongs in the composed
+        // description too, not only its visible glyph+text — "never silent" applies to a screen
+        // reader exactly as much as to the visible bar.
+        if (state.vadFallback) append(", energy VAD fallback")
     }
 
     // R-910/R-911 (register, halt): a stable marker every instance of this composable carries,
@@ -122,6 +126,14 @@ public fun LiveBar(state: LiveBarViewState, onClick: () -> Unit, modifier: Modif
                 if (state.localMicrophone) {
                     RoomAudioMark(modifier = Modifier.padding(end = OrtSpacing.xs).testTag("live-bar-room-mark"))
                 }
+                // D50 (Q22, FR-SEG-10): the fallback VAD's own live disclosure — never silent while
+                // it lasts. Placed after the room-audio mark, before the label, the same slot that
+                // mark occupies for the identical reason (additive context, not a competing state).
+                if (state.vadFallback) {
+                    VadFallbackMark(
+                        modifier = Modifier.padding(end = OrtSpacing.xs).testTag("live-bar-vad-fallback-mark"),
+                    )
+                }
                 Text(
                     text = state.label,
                     style = OrtType.textAction.copy(fontWeight = FontWeight.Medium),
@@ -150,6 +162,31 @@ private fun RoomAudioMark(modifier: Modifier = Modifier) {
             modifier = Modifier.size(12.dp),
         )
         Text(text = "room", style = OrtType.chip, color = OrtColors.textDim)
+    }
+}
+
+/**
+ * D50 (Q22, FR-SEG-10, AC-162): the fallback energy VAD's own live disclosure — a warning glyph
+ * ([OrtIcons.gapWarn], already this codebase's shape for "something is degraded", shape-distinct
+ * from [RoomAudioMark]'s mic glyph per constitution VII's "never colour alone" floor) plus the
+ * words "Energy VAD", so a segment boundary being cut by the unspecified fallback is disclosed for
+ * as long as it lasts, not only discoverable afterwards in the record (the durable half of this
+ * same disclosure is [org.ort.app.ui.recordings.RecordingSessionHeaderViewState.vadDetectorLabel]).
+ */
+@Composable
+private fun VadFallbackMark(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = OrtIcons.gapWarn,
+            contentDescription = null,
+            tint = OrtColors.accentAmberDim,
+            modifier = Modifier.size(12.dp),
+        )
+        Text(text = "Energy VAD", style = OrtType.chip, color = OrtColors.accentAmberDim)
     }
 }
 
@@ -241,4 +278,10 @@ public data class LiveBarViewState(
      * bar every destination shares carries the persistent room-audio mark, never per-screen. `false`
      * (every caller before this existed) renders exactly as before. */
     val localMicrophone: Boolean = false,
+    /** D50 (Q22, FR-SEG-10, AC-162): `true` exactly when the active session's segment boundaries
+     * are currently being cut by the fallback energy VAD rather than one FR-SEG-1 names (Silero,
+     * TEN-VAD) — the live half of the disclosure Q22 requires ("never silent"); the session's own
+     * durable record is [org.ort.app.ui.recordings.RecordingSessionHeaderViewState.vadDetectorLabel].
+     * `false` (every caller before this existed) renders exactly as before — additive. */
+    val vadFallback: Boolean = false,
 )

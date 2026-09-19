@@ -104,6 +104,16 @@ public data class RecordingSessionHeaderViewState(
      * session this fact was never tracked for (constitution I: honest omission, never guessed). */
     public val modeLabel: String?,
     public val countsLabel: String,
+    /**
+     * D50 (Q22, FR-SEG-10, AC-162): the durable half of the disclosure — which voice-activity
+     * detector produced this session's segment boundaries, named for every session (not only a
+     * fallback one), so the fact survives after the live bar's own chip disappears at session end.
+     * Sourced from [org.ort.data.entity.SessionEntity.vadDetector] alone — never re-derived from a
+     * transmission (that column is denormalized onto the session row for exactly this reason, see
+     * its own kdoc) — and never a guess: an [org.ort.core.capture.VadDetectorKind.UNKNOWN]
+     * pre-migration row reads as "not recorded", never a fabricated "Silero VAD" (constitution I).
+     */
+    public val vadDetectorLabel: String,
 )
 
 /** RC02's Delete action (`SessionAudioTarget.BOTH` — the artboard offers one Delete, not a
