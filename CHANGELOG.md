@@ -116,6 +116,82 @@ or a log line is a genuine follow-up. `ThreadGroupingConfig`'s 10-minute default
 leaves the real numbers open pending the labelled validation hour. `ThreadEntity.digestText` is
 never written by this unit (unrelated to threading; `ThreadDigestSource`/`ProseDigestGenerator` own
 it). No device/emulator run — Robolectric only, per this session's scope (no emulator).
+## 2026-09-19 (P25: VAD fallback disclosure, D50/Q22/FR-SEG-10/AC-162)
+
+### 386b8313 — P25: VAD fallback disclosure — the live bar chip and the session's own durable record
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/components/LiveBar.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/LiveBarPolling.kt`,
+`app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionScreen.kt` and
+`RecordingSessionViewStateMapper.kt` (this unit's own "owns" list), plus two sibling files in the
+same package this unit's feature is inert without —
+`app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionViewData.kt` (holds
+`RecordingSessionHeaderViewState`, the type the mapper populates) and `RecordingSessionPolling.kt`
+(the real reader that wires `SessionEntity.vadDetector`, already loaded there, into the mapper
+input) — and their paired test files.
+
+**Requirements/ACs:** D50 (Q22 closed), FR-SEG-10 (the UI half — the data layer half was already
+built and tested), AC-162.
+
+**What changed:** D50 closes Q22: when Silero/TEN-VAD is unavailable and capture falls back to
+the RMS-energy VAD, that fact is now disclosed on the live bar and recorded on the session, never
+silently — both halves already existed in the database (`SessionEntity.vadDetector`,
+`TransmissionEntity.vadDetector`, the `vad_stats` diagnostics line) but had never reached a
+screen. Added `LiveBarViewState.vadFallback: Boolean` (default `false`, additive) and a
+shape-distinct amber warning-glyph-plus-"Energy VAD" mark (`VadFallbackMark`) shown on the live
+bar whenever the active session's recorded `VadDetectorKind` does not conform to FR-SEG-1
+(`LiveBarPolling.vadFallbackFor`, a direct read of `SessionEntity.vadDetector` via the existing
+`SessionDao.getById`, gated through the already-existing `VadDetectorKind.conformsToFrSeg1`
+extension — no new `:data` query, no `:capture-*`/`:asr-*` dependency added). Added a durable
+`RecordingSessionHeaderViewState.vadDetectorLabel: String` line (rendered as "Segmentation: "
+plus the label) on the session-review screen, naming the real detector for every session —
+"Silero VAD", "TEN-VAD", "Energy VAD (fallback)", or the honest "not recorded" for a
+pre-schema-v14 row (never a fabricated default, constitution I) — computed once in
+`RecordingSessionViewStateMapper` from
+`SessionEntity.vadDetector` alone, the same source the live chip reads, so the two halves can
+never disagree about the same session. Also fixed one pre-existing
+`RecordingSessionScreenTest` click test (`the Log link fires the session-scoped log callback`)
+that the header's new line pushed below the default scroll position in Robolectric — added
+`.performScrollTo()`, the same pattern this file's own lower-row click tests already use;
+confirmed against `main` before the header change that this test passed unmodified there, so the
+scroll requirement is a genuine, caused-by-this-change effect, not a pre-existing flake.
+
+**Verified:** `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.components.LiveBarTest"
+--tests "org.ort.app.ui.components.LiveBarLayoutTest" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.ui.recordings.RecordingSessionScreenTest"
+--tests "org.ort.app.ui.recordings.RecordingSessionScreenLayoutTest" --tests
+"org.ort.app.ui.recordings.RecordingSessionViewStateMapperTest" --rerun-tasks` → `BUILD
+SUCCESSFUL`, all green, including new Robolectric layout tests at `w390dp-h844dp-420dpi` for the
+live bar (font scale 1.0/2.0, chip vs. room-audio-mark vs. label bounds asserted, no overlap/no
+clipping) and for the session header's new line against the counts line above it. Also ran
+`:app:testDebugUnitTest --tests "org.ort.app.ui.recordings.RecordingSessionPollingTest"` (the
+sibling file's own existing test suite) → green, unaffected. Discrimination shown by hand for the
+two load-bearing production changes: reverted `LiveBarPolling.vadFallbackFor` to `return false`
+— the two D50 live-bar tests (including the cross-check test) failed for the right reason, then
+passed again once restored; reverted `RecordingSessionViewStateMapper.vadDetectorLabel` to always
+return `"Silero VAD"` — three of the four `AC_162` mapper tests failed for the right reason (the
+Silero-only case still passed, as expected), then passed again once restored. `./gradlew
+ktlintCheck` → `BUILD SUCCESSFUL` (one line-length/argument-wrapping violation each in the new
+`LiveBarLayoutTest.kt` and the extended `LiveBarPollingTest.kt`/`LiveBar.kt` fixed via
+`ktlintTestSourceSetFormat`/manual wrap, then reconfirmed clean). `./gradlew detekt` → `BUILD
+SUCCESSFUL`.
+
+**Left open / not done:** no debug scenario or tour step was added to show the fallback state —
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (4,100+ lines), its `ScenarioFixtures.kt`
+companion, `tools/ui-audit/tour.json`/`sets.json` and `TourIdsTest`/`TourParityTest` are large,
+heavily cross-referenced files this unit does not own and several concurrent P22-P32 builders may
+also be touching; adding a scenario here risked a merge collision or a parity-test break outside
+this unit's own verifiable surface. The minimal addition needed: one new name in
+`Scenarios.NAMES` (e.g. `"vad-fallback"`), a matching `when` branch in `Scenarios.load` inserting
+a `ScenarioFixtures.session(...)` row with `vadDetector = VadDetectorKind.ENERGY` (or a raw
+`SessionEntity` if `ScenarioFixtures.session()` is extended with a `vadDetector` parameter first)
+plus `ScenarioFixtures.markCapturing`, a `republishFacets` branch calling
+`ScenarioFixtures.republishCapturing`, and one tour step over `Now`/the session's own
+`Recording-Session` screen. Per this session's own instructions, the emulator was not run and the
+tour was not captured — the lead captures both screens at font scale 1.0/2.0 after merge, per
+constitution VIII, once the scenario above (or an equivalent) exists to drive it. The
+`spec/build-plan.md` P25 checkbox is deliberately left unchecked: this unit's own "Done when"
+requires the tour capture, which has not happened yet.
 
 ---
 

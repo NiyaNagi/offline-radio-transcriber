@@ -28,12 +28,13 @@ class RecordingSessionScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private fun header() = RecordingSessionHeaderViewState(
+    private fun header(vadDetectorLabel: String = "Silero VAD") = RecordingSessionHeaderViewState(
         dateLabel = "Wed 10 Sep",
         timeRangeLabel = "21:48 – 06:12",
         durationLabel = "8 h 24 m",
         modeLabel = "local microphone · room audio",
         countsLabel = "41 overs · 9 stations · 1 gap · 3 failed",
+        vadDetectorLabel = vadDetectorLabel,
     )
 
     private fun coverage() = RecordingSessionCoverageViewState(
@@ -101,15 +102,18 @@ class RecordingSessionScreenTest {
         archiveState = archiveState,
     )
 
-    private fun state(rows: List<RecordingSessionRow> = listOf(resolvedOver()), deleteFreesBytes: Long = 610_000_000L) =
-        RecordingSessionViewState(
-            sessionId = "S1",
-            header = header(),
-            coverage = coverage(),
-            rows = rows,
-            deleteFreesBytes = deleteFreesBytes,
-            exportAvailable = true,
-        )
+    private fun state(
+        rows: List<RecordingSessionRow> = listOf(resolvedOver()),
+        deleteFreesBytes: Long = 610_000_000L,
+        vadDetectorLabel: String = "Silero VAD",
+    ) = RecordingSessionViewState(
+        sessionId = "S1",
+        header = header(vadDetectorLabel),
+        coverage = coverage(),
+        rows = rows,
+        deleteFreesBytes = deleteFreesBytes,
+        exportAvailable = true,
+    )
 
     @Test
     @Requirement("R-1051")
@@ -132,6 +136,54 @@ class RecordingSessionScreenTest {
         // present too -- without it, a tour step's own scroll (which runs before this screen's real
         // data has necessarily landed) can find nothing to scroll and never retries once it does.
         composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertIsDisplayed()
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // D50 (Q22 closed, FR-SEG-10, AC-162): the session's own durable segmentation-detector line —
+    // shown for every session, not only a fallback one, and surviving after the live bar's own chip
+    // (LiveBar's own D50 half) disappears at session end.
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `AC_162 the session record names the fallback Energy VAD when that produced its boundaries`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RecordingSessionScreen(
+                    state = state(vadDetectorLabel = "Energy VAD (fallback)"),
+                    playingOverId = null,
+                    isPlaying = false,
+                    actions = RecordingSessionActions(),
+                    deleteSheet = RecordingSessionDeleteState.Idle,
+                    exportSheet = RecordingSessionExportState.Idle,
+                    labelSheet = null,
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag(RECORDING_SESSION_VAD_DETECTOR_TEST_TAG)
+            .assertIsDisplayed()
+            .assertTextContains("Energy VAD (fallback)", substring = true)
+    }
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `AC_162 the session record names a conforming detector too, not only the fallback case`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RecordingSessionScreen(
+                    state = state(vadDetectorLabel = "Silero VAD"),
+                    playingOverId = null,
+                    isPlaying = false,
+                    actions = RecordingSessionActions(),
+                    deleteSheet = RecordingSessionDeleteState.Idle,
+                    exportSheet = RecordingSessionExportState.Idle,
+                    labelSheet = null,
+                )
+            }
+        }
+        composeTestRule.onNodeWithTag(RECORDING_SESSION_VAD_DETECTOR_TEST_TAG)
+            .assertIsDisplayed()
+            .assertTextContains("Silero VAD", substring = true)
     }
 
     @Test
@@ -516,7 +568,12 @@ class RecordingSessionScreenTest {
                 )
             }
         }
-        composeTestRule.onNodeWithTag(RECORDING_SESSION_OPEN_LOG_TEST_TAG).performClick()
+        // D50 (Q22, FR-SEG-10): the header now carries one more line (the segmentation-detector
+        // record), pushing this tile further down the scrollable column than before — scrolled to
+        // explicitly, the same discipline this file's own row-level click tests already use
+        // (`rc02-play-T1`, `rc02-label-T1`), rather than relying on it happening to still be
+        // reachable at the default scroll position.
+        composeTestRule.onNodeWithTag(RECORDING_SESSION_OPEN_LOG_TEST_TAG).performScrollTo().performClick()
         assert(openedLog) { "the Log link did not fire onOpenLog" }
     }
 

@@ -7,6 +7,7 @@ import org.ort.core.AttributionState
 import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
 import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.TransmissionEntity
@@ -46,6 +47,10 @@ public data class RecordingSessionMapperInput(
     /** `null` on a pre-schema-v7 session this fact was never tracked for (constitution I: honest
      * omission, never guessed). */
     public val captureMode: CaptureMode?,
+    /** D50 (Q22, FR-SEG-10, AC-162): [org.ort.data.entity.SessionEntity.vadDetector] — read once by
+     * the caller and passed straight through (this object stays a plain function of already-resolved
+     * data, never a database client). */
+    public val vadDetector: VadDetectorKind,
     public val overs: List<RecordingSessionOverInput>,
     public val gaps: List<CaptureGapEntity>,
     public val failedCount: Int,
@@ -134,6 +139,7 @@ public object RecordingSessionViewStateMapper {
                 durationLabel = hoursMinutesLabel(durationMillis),
                 modeLabel = input.captureMode?.let { modeLabel(it) },
                 countsLabel = countsLabel(overs.size, input.stationCount, input.gaps.size, input.failedCount),
+                vadDetectorLabel = vadDetectorLabel(input.vadDetector),
             ),
             coverage = coverage,
             rows = rows,
@@ -146,6 +152,21 @@ public object RecordingSessionViewStateMapper {
         "${mode.operatorLabel.lowercase(Locale.US)} · room audio"
     } else {
         mode.operatorLabel.lowercase(Locale.US)
+    }
+
+    /**
+     * D50 (Q22, FR-SEG-10, AC-162): names the real detector regardless of which one produced this
+     * session's boundaries — never only the fallback case — sourced from [VadDetectorKind] alone,
+     * never re-derived from a transmission (see [RecordingSessionMapperInput.vadDetector]'s own
+     * kdoc). [VadDetectorKind.UNKNOWN] (a pre-schema-v14 row) reads as "not recorded", the honest
+     * omission this codebase's other pre-migration columns already use — never a fabricated
+     * "Silero VAD" (constitution I).
+     */
+    private fun vadDetectorLabel(detector: VadDetectorKind): String = when (detector) {
+        VadDetectorKind.SILERO -> "Silero VAD"
+        VadDetectorKind.TEN_VAD -> "TEN-VAD"
+        VadDetectorKind.ENERGY -> "Energy VAD (fallback)"
+        VadDetectorKind.UNKNOWN -> "not recorded"
     }
 
     private fun countsLabel(overCount: Int, stationCount: Int, gapCount: Int, failedCount: Int): String = buildString {

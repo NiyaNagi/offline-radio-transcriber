@@ -11,6 +11,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
@@ -48,6 +49,10 @@ class RecordingSessionScreenLayoutTest {
         durationLabel = "8 h 24 m",
         modeLabel = "local microphone · room audio",
         countsLabel = "41 overs · 9 stations · 1 gap · 3 failed",
+        // D50 (Q22, FR-SEG-10): the fallback's own longer copy is the shape most likely to collide
+        // with the counts line above it at font scale 2.0 — chosen deliberately, not the shorter
+        // "Silero VAD" case, for this layout test's own purpose.
+        vadDetectorLabel = "Energy VAD (fallback)",
     )
 
     private fun coverage() = RecordingSessionCoverageViewState(
@@ -190,6 +195,46 @@ class RecordingSessionScreenLayoutTest {
     fun `RC02 content stays visible above a bounded transport bar at 390dp font scale 2_0`() {
         setContent(fontScale = 2f)
         assertBarBoundedAndBelowContent(maxBarHeight = 76.dp)
+    }
+
+    /**
+     * D50 (Q22, FR-SEG-10, AC-162): the new durable segmentation-detector line this round adds to
+     * the header — asserted here as real, measured bounds (never a pixel comparison) at both font
+     * scales the tour exercises, since AGENTS.md working agreement item 7 requires a layout test
+     * for any row/column change under `*Content`/`*ViewState` files at this exact device qualifier.
+     */
+    private fun assertVadDetectorLineBelowCountsLineAndUnclipped() {
+        val counts = composeTestRule.onNodeWithText(header().countsLabel, useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val vadDetectorLine = composeTestRule.onNodeWithTag(RECORDING_SESSION_VAD_DETECTOR_TEST_TAG)
+            .getUnclippedBoundsInRoot()
+        assertTrue(
+            "expected the D50 segmentation line (top=${vadDetectorLine.top}) to sit below the counts " +
+                "line (bottom=${counts.bottom}), never overlapping it",
+            vadDetectorLine.top >= counts.bottom,
+        )
+        val width = vadDetectorLine.right - vadDetectorLine.left
+        assertTrue(
+            "expected the D50 segmentation line to render with a real, non-zero width " +
+                "(never clipped to nothing), got $width",
+            width > 0.dp,
+        )
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `AC_162 the segmentation line sits below the counts line, never overlapping, at font scale 1_0`() {
+        setContent(fontScale = 1f)
+        assertVadDetectorLineBelowCountsLineAndUnclipped()
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `AC_162 the segmentation line sits below the counts line, never overlapping, at font scale 2_0`() {
+        setContent(fontScale = 2f)
+        assertVadDetectorLineBelowCountsLineAndUnclipped()
     }
 
     @Test

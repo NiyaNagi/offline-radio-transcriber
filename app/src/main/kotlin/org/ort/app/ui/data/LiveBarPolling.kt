@@ -7,6 +7,7 @@ import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailurePresentation
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.core.capture.conformsToFrSeg1
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.TranscriptPass
 import org.ort.pipeline.capture.CaptureState
@@ -63,7 +64,29 @@ public object LiveBarPolling {
             // persistent room-audio mark whenever the current session's mode is genuinely
             // LOCAL_MICROPHONE — never per-destination logic, so every screen agrees.
             localMicrophone = routeFacts.isLocalMicrophone,
+            // D50 (Q22, FR-SEG-10): disclosed regardless of any failure override above — an
+            // independent, additive fact, not a competing "reason" in toneAndLabel()'s own priority
+            // order.
+            vadFallback = vadFallbackFor(context, sessionId),
         )
+    }
+
+    /**
+     * D50 (Q22, FR-SEG-10, AC-162): the live half of the disclosure — `true` exactly when the
+     * active session's own recorded [org.ort.core.capture.VadDetectorKind] does not conform to
+     * FR-SEG-1 (the fallback energy VAD, or — defensively — an unrecorded/`UNKNOWN` value; a live
+     * session always resolves a real detector before its row is ever inserted
+     * (`RealCaptureService.resolveVad`), so `UNKNOWN` should never actually reach here, but this
+     * reads the exact same column [org.ort.app.ui.recordings.RecordingSessionViewStateMapper] does
+     * rather than assuming it can only ever be one of two values — never a silent false negative,
+     * constitution I). `false` for no session id, or a session id that does not (yet) exist — never
+     * a fabricated disclosure.
+     */
+    internal suspend fun vadFallbackFor(context: Context, sessionId: String?): Boolean {
+        if (sessionId == null) return false
+        val db = OrtDatabase.create(context.applicationContext)
+        val detector = db.sessionDao().getById(sessionId)?.vadDetector ?: return false
+        return !detector.conformsToFrSeg1
     }
 
     /** R-836 (register, design, `Fail-Bluetooth-Audio.dc.html`): "no audio — reconnecting to

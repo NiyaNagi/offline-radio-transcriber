@@ -18,6 +18,7 @@ import org.ort.app.ui.failures.UsbViewState
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
 import org.ort.pipeline.capture.CaptureState
@@ -316,18 +317,20 @@ class LiveBarPollingTest {
     // E2-G02 (N01b, FR-CAP-3a): the persistent room-audio mark, from the session's own v7 columns.
     // -----------------------------------------------------------------------------------------
 
-    private fun session(id: String, captureMode: String?) = SessionEntity(
-        id = id,
-        startedAt = 0L,
-        endedAt = null,
-        profileId = null,
-        deviceTier = null,
-        appVersion = "test",
-        terminationReason = null,
-        sourceId = null,
-        schemaVersion = OrtDatabase.SCHEMA_VERSION,
-        captureMode = captureMode,
-    )
+    private fun session(id: String, captureMode: String?, vadDetector: VadDetectorKind = VadDetectorKind.UNKNOWN) =
+        SessionEntity(
+            id = id,
+            startedAt = 0L,
+            endedAt = null,
+            profileId = null,
+            deviceTier = null,
+            appVersion = "test",
+            terminationReason = null,
+            sourceId = null,
+            schemaVersion = OrtDatabase.SCHEMA_VERSION,
+            captureMode = captureMode,
+            vadDetector = vadDetector,
+        )
 
     // checklist row E2-G02 (N01b's persistent room-audio disclosure).
     @Test
@@ -352,6 +355,94 @@ class LiveBarPollingTest {
         val state = LiveBarPolling.current(context, "RADIO-1")
 
         assertEquals(false, state.localMicrophone)
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // D50 (Q22 closed, FR-SEG-10, AC-162): the live half of the disclosure — never silent while
+    // capture continues on the fallback energy VAD.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `D50 a live session on the fallback energy VAD discloses it on the live bar`() = runTest {
+        val db = OrtDatabase.create(context)
+        db.sessionDao().insert(session("FALLBACK-1", captureMode = null, vadDetector = VadDetectorKind.ENERGY))
+        CaptureState.capturing("FALLBACK-1")
+
+        val state = LiveBarPolling.current(context, "FALLBACK-1")
+
+        assertEquals(true, state.vadFallback)
+    }
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `D50 a live session on the FR-SEG-1 Silero detector never shows the fallback disclosure`() = runTest {
+        val db = OrtDatabase.create(context)
+        db.sessionDao().insert(session("SILERO-1", captureMode = null, vadDetector = VadDetectorKind.SILERO))
+        CaptureState.capturing("SILERO-1")
+
+        val state = LiveBarPolling.current(context, "SILERO-1")
+
+        assertEquals(false, state.vadFallback)
+    }
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `D50 a live session on TEN-VAD also never shows the fallback disclosure`() = runTest {
+        val db = OrtDatabase.create(context)
+        db.sessionDao().insert(session("TENVAD-1", captureMode = null, vadDetector = VadDetectorKind.TEN_VAD))
+        CaptureState.capturing("TENVAD-1")
+
+        val state = LiveBarPolling.current(context, "TENVAD-1")
+
+        assertEquals(false, state.vadFallback)
+    }
+
+    @Test
+    @Requirement("D50", "constitution I")
+    fun `D50 no session id never discloses a fallback, never a fabricated warning`() = runTest {
+        CaptureState.capturing("s1")
+
+        val state = LiveBarPolling.current(context, null)
+
+        assertEquals(false, state.vadFallback)
+    }
+
+    /**
+     * D50's own "tests first" clause: the live chip and the session's own durable record must never
+     * disagree about the same session — driven from one fixture, one real [SessionEntity] row, into
+     * both [LiveBarPolling.current] (the live half) and
+     * [org.ort.app.ui.recordings.RecordingSessionViewStateMapper.map] (the durable half).
+     */
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `D50 the live chip and the session's own durable record never disagree for the same session`() = runTest {
+        val db = OrtDatabase.create(context)
+        db.sessionDao().insert(session("BOTH-1", captureMode = null, vadDetector = VadDetectorKind.ENERGY))
+        CaptureState.capturing("BOTH-1")
+
+        val liveState = LiveBarPolling.current(context, "BOTH-1")
+        val entity = db.sessionDao().getById("BOTH-1")!!
+        val mapped = org.ort.app.ui.recordings.RecordingSessionViewStateMapper.map(
+            org.ort.app.ui.recordings.RecordingSessionMapperInput(
+                sessionId = "BOTH-1",
+                startedAtMillis = 0L,
+                endedAtMillis = null,
+                captureMode = null,
+                vadDetector = entity.vadDetector,
+                overs = emptyList(),
+                gaps = emptyList(),
+                failedCount = 0,
+                stationCount = 0,
+                deleteFreesBytes = 0L,
+                exportAvailable = true,
+                playingTransmissionId = null,
+                nowMillis = 0L,
+            ),
+        )
+
+        assertEquals(true, liveState.vadFallback)
+        assertEquals("Energy VAD (fallback)", mapped.header.vadDetectorLabel)
     }
 
     // checklist row E2-G05 (F23's live-bar label).
