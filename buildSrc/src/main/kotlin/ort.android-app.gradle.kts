@@ -5,6 +5,8 @@ import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.ort.gradle.BundledAssetCatalogRenderer
 import org.ort.gradle.BundledAssetManifest
+import org.ort.gradle.BundledAssetPackaging
+import org.ort.gradle.BundledAssetPackagingGuardTask
 import org.ort.gradle.FetchBundledAssetsTask
 import org.ort.gradle.FetchSherpaNativeTask
 import org.ort.gradle.NativeLibraryPackagingGuardTask
@@ -122,11 +124,17 @@ extensions.configure<org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtensi
 //    reads the manifest's own committed text ([BundledAssetCatalogRenderer], buildSrc — extracted
 //    there, not left as script-local functions, so it is directly unit-tested).
 //  - `fetchBundledAssets` ([FetchBundledAssetsTask]) does the real network fetch, verification and
-//    packaging into `src/main/assets/bundled/` (gitignored) — the thing that actually needs
-//    HF_TOKEN and needs to run exactly once per verified asset, cached at
-//    `$GRADLE_USER_HOME/ort-bundled-assets/` across worktrees. **`full`-flavor only** (below):
-//    `play` bundles nothing (FR-AST-13), so its assemble/merge-assets tasks never need this at
-//    all, and a `play` build/test needs neither HF_TOKEN nor the escape hatch.
+//    packaging into [BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH] — the `full` flavor's OWN
+//    source set, `src/full/assets/bundled/` (gitignored), not the shared `src/main/` — the thing
+//    that actually needs HF_TOKEN and needs to run exactly once per verified asset, cached at
+//    `$GRADLE_USER_HOME/ort-bundled-assets/` across worktrees. **`full`-flavor only**, and now
+//    structurally so (P24 fix, register, Wave G batch gate, FR-AST-13, AC-190): before this fix the
+//    destination was `src/main/assets/bundled/`, which every flavor inherits, so `play` (which is
+//    supposed to bundle nothing) packaged the identical 628 MB `full` did the moment both had ever
+//    been fetched on the same machine — AGP only merges a flavor's own `src/<flavor>/assets/` into
+//    that flavor's own variants, so `play`'s own assemble/merge-assets tasks now cannot see this
+//    directory at all, regardless of what has been fetched previously on this machine. See
+//    [BundledAssetPackaging]'s own KDoc for the full account.
 //
 // `assembleFullDebug`/`assembleFullRelease` (and therefore `build`, which reaches every variant's
 // assemble) depend on `fetchBundledAssets` so a shipping `full` artifact is never produced without
@@ -192,9 +200,10 @@ tasks.matching { it.name.contains("Ktlint", ignoreCase = true) || it.name.contai
 
 val fetchBundledAssets = tasks.register<FetchBundledAssetsTask>("fetchBundledAssets") {
     group = "build"
-    description = "Fetches, verifies and packages every bundled asset into src/main/assets/bundled (WPG, FR-AST-3)."
+    description = "Fetches, verifies and packages every bundled asset into the full flavor's own " +
+        "${BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH} (WPG, FR-AST-3, FR-AST-13, AC-190)."
     manifestFile.set(bundledAssetManifestFile)
-    assetsOutputDir.set(layout.projectDirectory.dir("src/main/assets/bundled"))
+    assetsOutputDir.set(layout.projectDirectory.dir(BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH))
     cacheRoot.set(layout.dir(providers.provider { gradle.gradleUserHomeDir.resolve("ort-bundled-assets") }))
     hfToken.set(providers.environmentVariable("HF_TOKEN"))
     // The one local-development escape hatch (never set by CI — see .github/workflows and
@@ -205,6 +214,35 @@ val fetchBundledAssets = tasks.register<FetchBundledAssetsTask>("fetchBundledAss
             .orElse(providers.environmentVariable("ORT_ALLOW_MISSING_BUNDLED_ASSETS").map { it == "1" })
             .orElse(false),
     )
+}
+
+// P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): a developer checkout that built `full`
+// before this fix landed may still have real fetched bytes sitting at
+// [BundledAssetPackaging.LEGACY_ASSETS_RELATIVE_PATH] (`src/main/assets/bundled/`) — gitignored, so
+// invisible to `git status`, but still read by AGP as an implicit input of *every* flavor's own
+// asset merge, since it sits under the shared main source set. That is the exact defect this fix
+// closes, so a stale copy left over from before the fix must not silently defeat it. Wired ahead of
+// every merge-assets task for BOTH flavors (below), not just `full`'s — a `play`-only checkout that
+// never runs `fetchBundledAssets` again must still get the stale directory removed once.
+val cleanupLegacyBundledAssets = tasks.register("cleanupLegacyBundledAssets") {
+    group = "build"
+    description = "Deletes a stale app/${BundledAssetPackaging.LEGACY_ASSETS_RELATIVE_PATH}/ left " +
+        "over from before this fix moved fetchBundledAssets' output to the full flavor's own " +
+        "source set (P24 fix, FR-AST-13, AC-190)."
+    // Deliberately no declared outputs/up-to-date check: this is a cheap existence check plus,
+    // at most once per checkout, a directory delete — not worth the complexity of caching a task
+    // whose job is to make a stale directory NOT exist.
+    doLast {
+        val legacy = layout.projectDirectory.dir(BundledAssetPackaging.LEGACY_ASSETS_RELATIVE_PATH).asFile
+        if (legacy.exists()) {
+            logger.lifecycle("cleanupLegacyBundledAssets: removing stale $legacy — see this task's own description.")
+            legacy.deleteRecursively()
+        }
+    }
+}
+
+tasks.matching { it.name.contains("merge") && it.name.contains("Assets") }.configureEach {
+    dependsOn(cleanupLegacyBundledAssets)
 }
 
 // D44 (FR-AST-14): publishes the assets `fetchBundledAssets` has already fetched and verified to
@@ -232,7 +270,8 @@ tasks.matching { it.name == "assembleFullDebug" || it.name == "assembleFullRelea
 }
 
 // CI regression (register, 2026-09-11, commit 8a8e8ea1): a fresh checkout has no
-// `app/src/main/assets/bundled/` (gitignored) and `:app:testFullDebugUnitTest` never pulled
+// `app/src/full/assets/bundled/` (gitignored — P24 fix moved this from `src/main/`, see
+// [BundledAssetPackaging]'s own KDoc) and `:app:testFullDebugUnitTest` never pulled
 // `fetchBundledAssets` into its own task graph — the assembleFullDebug/assembleFullRelease
 // `dependsOn` above only helps when one of *those* is also requested, and the broad `mustRunAfter`
 // sweep below deliberately excludes `UnitTest`-named tasks, so a plain `:app:testFullDebugUnitTest`
@@ -316,8 +355,41 @@ val verifySherpaNativeLibrariesPackaged = tasks.register<NativeLibraryPackagingG
 
 tasks.named("check") { dependsOn(verifySherpaNativeLibrariesPackaged) }
 
-// `app/src/main/assets/bundled/` (fetchBundledAssets' own output) is an *implicit* input to a
-// whole family of AGP-internal tasks that read the main variant's assets directly — not just
+// P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): [BundledAssetPackagingGuardTask]'s own
+// KDoc explains why, unlike verifySherpaNativeLibrariesPackaged above, this guard is deliberately
+// NOT scoped to one flavor's APK — the whole point of this fix is that `full` and `play` must
+// differ here, so both are checked, with `expectBundled` set the opposite way. Neither adds a real
+// assemble to the graph: `./gradlew build` already assembles every variant's debug and release APK
+// (that is exactly how this defect's own build-report reproduced — `compressFullReleaseAssets` and
+// `compressPlayReleaseAssets` running concurrently), so this only adds a cheap zip-entry scan after
+// an APK the gate was already producing.
+val verifyFullBundledAssetPackagingBoundary = tasks.register<BundledAssetPackagingGuardTask>(
+    "verifyFullBundledAssetPackagingBoundary",
+) {
+    group = "verification"
+    description = "Fails unless the full-flavor debug APK actually bundles every asset " +
+        "(FR-AST-3, FR-AST-13, AC-190)."
+    apkFile.set(layout.buildDirectory.file("outputs/apk/full/debug/app-full-debug.apk"))
+    expectBundled.set(true)
+    dependsOn("assembleFullDebug")
+}
+
+val verifyPlayBundledAssetPackagingBoundary = tasks.register<BundledAssetPackagingGuardTask>(
+    "verifyPlayBundledAssetPackagingBoundary",
+) {
+    group = "verification"
+    description = "Fails if the play-flavor debug APK bundles any model asset (FR-AST-13, AC-190)."
+    apkFile.set(layout.buildDirectory.file("outputs/apk/play/debug/app-play-debug.apk"))
+    expectBundled.set(false)
+    dependsOn("assemblePlayDebug")
+}
+
+tasks.named("check") {
+    dependsOn(verifyFullBundledAssetPackagingBoundary, verifyPlayBundledAssetPackagingBoundary)
+}
+
+// `app/src/full/assets/bundled/` (fetchBundledAssets' own output, P24 fix) is an *implicit* input
+// to a whole family of AGP-internal tasks that read the full-flavor variant's assets directly — not just
 // `mergeDebugAssets`/`mergeReleaseAssets`, but also lint's own model-writer tasks
 // (`generateDebugLintReportModel` and siblings), found by actually running the full `build` task
 // and reading what Gradle's own task-validation named next, rather than guessed up front. Running

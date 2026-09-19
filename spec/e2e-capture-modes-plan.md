@@ -154,7 +154,9 @@ repository is gated `auto`, so the task reads `HF_TOKEN` and fails with a one-li
 it is absent; **never** silently skips the entry). `tiny.en-tokens.txt` has no published digest
 (`ModelsViewData.kt` records why): the task pins the digest of the file it fetched the first time
 into the manifest, marked `trust-on-first-fetch`, so every later build verifies against it.
-Packaged under `app/src/main/assets/bundled/` (gitignored, generated). `BundledAssetInstaller`
+Packaged under `app/src/full/assets/bundled/` (gitignored, generated — the `full` flavor's own
+source set since the P24 fix, FR-AST-13/AC-190: `play` must be structurally unable to bundle these
+assets, not merely conventionally unlikely to). `BundledAssetInstaller`
 runs on first launch: copies each asset to the exact path the locators read, verifies the sha256
 again (FR-AST-3b — provenance is not integrity), writes the `.sha256` marker
 `ModelAcquisition` writes, and reports a stated, recoverable state on failure (AC-137) — never

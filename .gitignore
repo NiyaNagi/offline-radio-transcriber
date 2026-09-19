@@ -41,6 +41,15 @@ venv/
 # fetchBundledAssets Gradle task (buildSrc/FetchBundledAssetsTask.kt) from bundled-assets.json —
 # that manifest is the source-controlled fact; these hundreds of megabytes of binaries, and the
 # generated manifest.json describing what actually landed here, are not.
+#
+# P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): this now lives under the `full`
+# flavor's OWN source set, `app/src/full/assets/bundled/`, not the shared `app/src/main/` every
+# flavor inherits — moving it out of `src/main/` is what makes `play` structurally incapable of
+# packaging these assets (constitution VII). See buildSrc's `BundledAssetPackaging` object for the
+# full account. The old path is also still ignored below in case a pre-fix checkout left it behind
+# (the build's own `cleanupLegacyBundledAssets` task deletes it, but a plain `git status` should
+# never show it as untracked either).
+/app/src/full/assets/bundled/
 /app/src/main/assets/bundled/
 
 # R-1001 (register): sherpa-onnx's Android native libraries are fetched and verified by the

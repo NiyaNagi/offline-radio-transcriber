@@ -313,4 +313,95 @@ class PlatformGuardsTest {
 
         assertThrows(org.gradle.api.GradleException::class.java) { task.check() }
     }
+
+    // ---- P24 fix (register, Wave G batch gate, FR-AST-13, AC-190) — `play` must never bundle any
+    // model asset, `full` must bundle every one. Like R-1001 above, this reads a real packaged
+    // APK's zip entries rather than a declared coordinate: nothing about bundled-assets.json or
+    // either flavor's build.gradle.kts config says which physical directory fetchBundledAssets
+    // actually wrote its output to — that is exactly how the defect (`play` packaging the identical
+    // 628 MB `full` did) escaped every existing declared-artifact check in this file. ----------
+
+    @Test
+    fun `FR_AST_13 AC_190 the full variant with bundled assets present is not reported`() {
+        val entries = setOf(
+            "classes.dex",
+            "assets/bundled/manifest.json",
+            "assets/bundled/models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx",
+        )
+        assertTrue(PlatformGuards.bundledAssetPackagingViolations(entries, expectBundled = true).isEmpty())
+    }
+
+    @Test
+    fun `FR_AST_13 AC_190 discrimination — the full variant with no bundled assets at all is reported`() {
+        val entries = setOf("classes.dex", "assets/licenses/whisper.txt")
+        val violations = PlatformGuards.bundledAssetPackagingViolations(entries, expectBundled = true)
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("FR-AST-3"))
+    }
+
+    @Test
+    fun `FR_AST_13 AC_190 the play variant with no bundled assets is not reported`() {
+        val entries = setOf("classes.dex", "assets/licenses/whisper.txt")
+        assertTrue(PlatformGuards.bundledAssetPackagingViolations(entries, expectBundled = false).isEmpty())
+    }
+
+    @Test
+    fun `FR_AST_13 AC_190 discrimination — the play variant with a bundled model asset is reported by its exact path`() {
+        // This is the Wave G batch gate's own defect, reproduced directly: `play`'s packaged APK
+        // carrying the same assets/bundled/ entries `full` does.
+        val entries = setOf(
+            "classes.dex",
+            "assets/bundled/manifest.json",
+            "assets/bundled/models/llm/gemma3-1b-it-int4.task",
+        )
+        val violations = PlatformGuards.bundledAssetPackagingViolations(entries, expectBundled = false)
+        assertEquals(2, violations.size)
+        assertEquals(
+            setOf("assets/bundled/manifest.json", "assets/bundled/models/llm/gemma3-1b-it-int4.task"),
+            violations.map { it.path }.toSet(),
+        )
+        assertTrue(violations.all { it.reason.contains("FR-AST-13") })
+    }
+
+    // ---- BundledAssetPackagingGuardTask — the Gradle task itself, real-APK end to end -------------
+
+    @Test
+    fun `AC discrimination — the full guard task passes a real APK that bundles assets`(@TempDir dir: File) {
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create(
+            "verifyFullBundledAssetPackagingBoundary",
+            BundledAssetPackagingGuardTask::class.java,
+        )
+        task.apkFile.set(writeZip(dir, listOf("classes.dex", "assets/bundled/manifest.json")))
+        task.expectBundled.set(true)
+
+        task.check() // must not throw
+    }
+
+    @Test
+    fun `AC discrimination — the play guard task fails a real APK that bundles assets`(@TempDir dir: File) {
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create(
+            "verifyPlayBundledAssetPackagingBoundary",
+            BundledAssetPackagingGuardTask::class.java,
+        )
+        task.apkFile.set(writeZip(dir, listOf("classes.dex", "assets/bundled/manifest.json")))
+        task.expectBundled.set(false)
+
+        val thrown = assertThrows(org.gradle.api.GradleException::class.java) { task.check() }
+        assertTrue(thrown.message!!.contains("assets/bundled/manifest.json"))
+    }
+
+    @Test
+    fun `AC discrimination — the play guard task passes a real APK with no bundled assets`(@TempDir dir: File) {
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create(
+            "verifyPlayBundledAssetPackagingBoundary",
+            BundledAssetPackagingGuardTask::class.java,
+        )
+        task.apkFile.set(writeZip(dir, listOf("classes.dex", "assets/licenses/whisper.txt")))
+        task.expectBundled.set(false)
+
+        task.check() // must not throw
+    }
 }

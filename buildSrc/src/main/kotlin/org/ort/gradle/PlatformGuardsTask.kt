@@ -5,6 +5,7 @@ import org.gradle.api.GradleException
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.Optional
@@ -129,6 +130,53 @@ abstract class NativeLibraryPackagingGuardTask : DefaultTask() {
         logger.lifecycle(
             "verifySherpaNativeLibrariesPackaged: OK — ${apk.path} contains every required native " +
                 "library for every required ABI (register R-1001).",
+        )
+    }
+}
+
+/**
+ * P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): reads a real packaged debug APK per
+ * flavor to prove [PlatformGuards.bundledAssetPackagingViolations]'s boundary actually holds —
+ * `full` bundles every asset, `play` bundles none — the same real-artifact-not-declared-coordinate
+ * shape [NativeLibraryPackagingGuardTask] established for R-1001. Unlike that task, this one is
+ * NOT symmetric across flavors by design: it exists precisely because `full` and `play` MUST
+ * differ here, so `ort.android-app.gradle.kts` registers one instance per flavor with
+ * [expectBundled] set the opposite way and wires both into `:app:check` — checking only one
+ * variant's APK would prove nothing about the boundary the other side of this fix depends on.
+ */
+abstract class BundledAssetPackagingGuardTask : DefaultTask() {
+
+    /** The packaged APK to inspect — a real build output, not a declared input, same as
+     * [NativeLibraryPackagingGuardTask.apkFile]. */
+    @get:InputFile
+    abstract val apkFile: RegularFileProperty
+
+    /** `true` for the `full`-flavor instance, `false` for the `play`-flavor instance — see this
+     * class's own KDoc for why both are registered rather than one shared task. */
+    @get:Input
+    abstract val expectBundled: Property<Boolean>
+
+    @TaskAction
+    fun check() {
+        val apk = apkFile.get().asFile
+        val entryPaths: Set<String> = ZipFile(apk).use { zip ->
+            zip.entries().asSequence().map { it.name }.toSet()
+        }
+        val violations = PlatformGuards.bundledAssetPackagingViolations(entryPaths, expectBundled.get())
+        if (violations.isNotEmpty()) {
+            throw GradleException(
+                buildString {
+                    appendLine(
+                        "Bundled-asset packaging boundary violation(s) — FR-AST-13, AC-190, checked ${apk.path}:",
+                    )
+                    violations.forEach { appendLine("  ${it.path}   (${it.reason})") }
+                },
+            )
+        }
+        logger.lifecycle(
+            "verifyBundledAssetPackagingBoundary: OK — ${apk.path} " +
+                (if (expectBundled.get()) "bundles" else "does not bundle") +
+                " model assets as expected for this flavor (FR-AST-13, AC-190).",
         )
     }
 }

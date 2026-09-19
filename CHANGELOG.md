@@ -59,6 +59,120 @@ in a comment (prose only, no task reference).
 
 ## 2026-09-19 (build plan P24: automatic thread grouping after Pass B)
 
+### 978c3627 — P24 fix: `play` is now structurally incapable of bundling assets (FR-AST-13, AC-190)
+
+**Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/FetchBundledAssetsTask.kt` (new
+`BundledAssetPackaging` object), `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt` (new
+`bundledAssetPackagingViolations`), `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuardsTask.kt`
+(new `BundledAssetPackagingGuardTask`), `buildSrc/src/main/kotlin/ort.android-app.gradle.kts`
+(fetch destination, `cleanupLegacyBundledAssets`, two new `:app:check`-wired guard tasks),
+`.gitignore`, `README.md`, `docs/debug-fix-session-prompt.md`, `spec/e2e-capture-modes-plan.md`.
+Tests under `buildSrc/src/test/kotlin/org/ort/gradle/FetchBundledAssetsTaskTest.kt` and
+`PlatformGuardsTest.kt`. No `:app` product-code file touched — this is a build-wiring fix.
+
+**Requirements/ACs:** FR-AST-13, AC-190, FR-AST-3 (amended), D43. Constitution VII (Boundaries Are
+Structural, Not Conventional).
+
+**What changed:** the Wave G batch gate found that P23's `play` flavor, meant to bundle no models
+(FR-AST-13), actually did: `FetchBundledAssetsTask` wrote every verified asset to
+`app/src/main/assets/bundled/` — the **shared main source set every flavor inherits** — so once
+both flavors had ever been fetched on one machine, `play`'s own `mergePlayDebugAssets`/
+`mergePlayReleaseAssets` picked up the identical 628 MB `full` did, purely because both flavors
+compile the same main source set. Two consequences on the lead's machine: AC-190 was not actually
+met (a `play` build there silently shipped every model), and the full gate
+(`dependencyRules platformGuards build`) died with `Java heap space` — building four variants under
+`org.gradle.parallel=true` meant `compressFullReleaseAssets` and `compressPlayReleaseAssets` both
+compressed 628 MB concurrently at `-Xmx4g`.
+
+Fixed structurally, not conventionally:
+
+- `BundledAssetPackaging` (new, `FetchBundledAssetsTask.kt`) names the destination as a constant,
+  `ASSETS_OUTPUT_RELATIVE_PATH = "src/full/assets/bundled"` — the `full` flavor's **own** source
+  set. AGP only ever merges a flavor's own `src/<flavor>/assets/` into that flavor's own variants,
+  never into a sibling's, so `play`'s merge/lint/assemble tasks now cannot see this directory at
+  all, regardless of what has ever been fetched on the machine. `ort.android-app.gradle.kts` wires
+  `fetchBundledAssets.assetsOutputDir` from this constant instead of the old literal string. The
+  runtime path inside the APK is unchanged (`assets/bundled/...`) — an APK's asset root has no
+  notion of which source set an entry came from, so `BundledAssetInstaller`/`ModelFileVerifier`
+  needed no changes at all. P22's `BundledAssetCatalogRenderer` (which already renders
+  `bundled=false` for `play`'s generated catalog) was not touched — it was already correct; the
+  defect was purely in where the fetch task's physical output landed.
+- `cleanupLegacyBundledAssets` (new task, `ort.android-app.gradle.kts`): deletes a stale
+  `app/src/main/assets/bundled/` (`BundledAssetPackaging.LEGACY_ASSETS_RELATIVE_PATH`) left over on
+  a developer machine from before this fix — gitignored, so invisible to `git status`, but still an
+  implicit input of every flavor's own asset merge as long as it sits under the shared main source
+  set. Wired ahead of every `merge*Assets` task for **both** flavors, so a `play`-only checkout that
+  never runs `fetchBundledAssets` again still gets it removed once. Confirmed removed on this
+  machine's own pre-existing stale checkout by the real build below.
+- `PlatformGuards.bundledAssetPackagingViolations` + `BundledAssetPackagingGuardTask` (new,
+  `PlatformGuards.kt`/`PlatformGuardsTask.kt`): reads a real packaged APK's zip entries (like
+  `missingNativeLibraryViolations`/`NativeLibraryPackagingGuardTask` already does for R-1001) and
+  fails if `full`'s debug APK contains zero `assets/bundled/` entries, or if `play`'s contains any.
+  Unlike the R-1001 guard (deliberately checked on `full` only, since native-library packaging is
+  flavor-symmetric), this one is registered once per flavor with `expectBundled` set the opposite
+  way — checking only one flavor's APK would prove nothing about the asymmetry this fix depends on.
+  Both wired into `:app:check`, adding no new assemble to the graph: `./gradlew build` already
+  assembles every variant (that is exactly how this defect's own build report reproduced it).
+- `.gitignore`, `README.md`, `docs/debug-fix-session-prompt.md`,
+  `spec/e2e-capture-modes-plan.md`: updated every reference to the old
+  `app/src/main/assets/bundled/` path to the new `app/src/full/assets/bundled/` one.
+
+**Verified:**
+- `.\gradlew.bat -p buildSrc test` — 12 actionable tasks, `BUILD SUCCESSFUL`; the two new test
+  classes' additions (7 in `PlatformGuardsTest`, 2 in `FetchBundledAssetsTaskTest`) all pass.
+  Discrimination: temporarily reverting `BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH` to the
+  old `"src/main/assets/bundled"` value failed exactly the new destination-path test
+  (`FetchBundledAssetsTaskTest`, `AssertionFailedError` at the expected line) with every other test
+  still green; restored and re-ran green (18/18, 28/28 in the two touched classes).
+- Real build, this machine, `HF_TOKEN` set (no escape hatch): `.\gradlew.bat :app:assembleFullDebug`
+  then `:app:assemblePlayDebug`, both `BUILD SUCCESSFUL`. Measured directly:
+  - `app-full-debug.apk`: 575.76 MB (603,726,487 bytes).
+  - `app-play-debug.apk`: 126.84 MB (132,997,810 bytes) — down from packaging the identical ~628 MB
+    `full` did before this fix on this machine.
+  - `app/build/intermediates/assets/fullDebug/mergeFullDebugAssets/`: 628.46 MB, including
+    `bundled/models/` at 628.41 MB (Gemma 3 1B 528.97 MB, whisper `tiny.en` 98.83 MB, Silero VAD
+    0.61 MB).
+  - `app/build/intermediates/assets/playDebug/mergePlayDebugAssets/`: 0.05 MB — `licenses/` and
+    `lexicon-corrupt/` only, **zero** `bundled/` entries.
+  - `app/src/main/assets/bundled/` confirmed absent after both assembles — this machine had a real
+    stale copy from before the fix; `cleanupLegacyBundledAssets` removed it (visible in both
+    builds' own task lists).
+  - `.\gradlew.bat :app:verifyFullBundledAssetPackagingBoundary --rerun` and
+    `:app:verifyPlayBundledAssetPackagingBoundary --rerun` against the real APKs above: both
+    `BUILD SUCCESSFUL`, log lines confirm `full` "bundles model assets as expected" and `play`
+    "does not bundle model assets as expected".
+  - `.\gradlew.bat ktlintCheck detekt` — `BUILD SUCCESSFUL` (174 actionable tasks for ktlint, 20
+    modules' `detekt` for the second invocation; no violations).
+  - Full gate `.\gradlew.bat dependencyRules platformGuards build` — `dependencyRules`/
+    `platformGuards` both `OK`; `BUILD FAILED in 18m 13s` at `:app:testFullDebugUnitTest` (2571
+    tests completed, 12 failed). **Not caused by this fix**: every failure is in
+    `WpiScenariosTest`/`ScenariosTest` (`app/src/test/kotlin/org/ort/app/debug/`), asserting
+    `SetupStateMachine.stepFor` resumes at a deeper step (`MODE`, `RIG_TRANSPORT`, `READY`, …) but
+    getting `JURISDICTION_NOTICE` instead — `SetupStateMachine.kt:86`'s new P22 gate
+    (`if (!snapshot.jurisdictionNoticeSeen) return SetupStep.JURISDICTION_NOTICE`, landed by the
+    Wave G merge this session started from, D43/NFR-6c/FR-AST-10..12) added a step these scenario
+    fixtures do not seed past. This fix touches no file under `app/src/**` at all (see Scope
+    above), so it cannot be the cause; confirmed no heap exhaustion this run either (the original
+    batch-gate failure mode) — 2571 tests actually ran to completion this time, which the
+    play-side fix's own 126.84 MB measurement above already made likely. Left for the lead to
+    route to whoever owns `app/src/main/kotlin/org/ort/app/ui/setup/**` and
+    `app/src/test/kotlin/org/ort/app/debug/**` (outside this package's ownership — a builder that
+    needs a file outside its package stops and reports, AGENTS.md "Roles in a session").
+
+**Left open / not done:** the full gate (`dependencyRules platformGuards build`) does not reach
+`BUILD SUCCESSFUL` — blocked by the pre-existing, unrelated `JURISDICTION_NOTICE` scenario-fixture
+regression described above, not by anything in this fix's own scope. This fix's own structural
+guarantee was verified directly against the real APKs instead (`verifyFullBundledAssetPackagingBoundary`/
+`verifyPlayBundledAssetPackagingBoundary --rerun`, both `BUILD SUCCESSFUL`, logged "bundles"/"does
+not bundle" as expected) and by the merged-asset-directory measurement above. No heap-derivation
+was needed — the play variant's own merged assets measured 0.05 MB, nowhere near heap pressure at
+`-Xmx4g` even compressed concurrently with `full`'s 628 MB. `verifySherpaNativeLibrariesPackaged`
+(R-1001) was deliberately left untouched: sherpa-onnx's native `.so` libraries are not named in
+`bundled-assets.json`, ship in every variant intentionally (they are the JNI engine, not model
+weights), and remain under the shared `src/main/jniLibs/` — confirmed both `full` and `play` still
+package them via their own `merge(Full|Play)(Debug|Release)JniLibFolders` wiring, unchanged by this
+fix.
+
 ### 2add470f — P24: automatic thread grouping after Pass B (FR-SPK-5, AC-163..165)
 
 **Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/threading/**` package (production and its
