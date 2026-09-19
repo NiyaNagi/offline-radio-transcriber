@@ -502,8 +502,16 @@ free.
   every push — say so if that's the design); the privacy-policy and Data-Safety docs exist and
   name the FR-ANL-14 sentence verbatim where they make a privacy claim at all.
 
-- [ ] **P24 · Automatic thread grouping after Pass B** *(new `:pipeline` threading package)* —
-  D45's own note names this as the thing v0.1.1 overclaimed; FR-SPK-5, AC-163..165.
+- [x] **P24 · Automatic thread grouping after Pass B** *(new `:pipeline` threading package)* —
+  D45's own note names this as the thing v0.1.1 overclaimed; FR-SPK-5, AC-163..165. Done
+  2026-09-19: `pipeline/.../threading/**` (`ThreadGrouper`, `ThreadKindClassifier`,
+  `ThreadGroupingCoordinator`, `RoomThreadRepository`, `FakeThreadRepository`) plus one call added
+  to `DataPassBResultSink.record`. AC-163..165 hold end to end against a real in-memory
+  `OrtDatabase` (`DataPassBResultSinkThreadingTest`); the two writes no DAO method covers
+  (`transmission.threadId`, extending an existing `thread` row) go through `org.ort.data.execRaw`
+  (an existing, already-public `:data` primitive) rather than a new DAO method, since `:data` was
+  not in this unit's Owns list. `ThreadKindSource.USER` has no `:app` writer yet (left open); the
+  gap threshold and net-detection numbers are documented provisional defaults pending Q16.
 
   **Read first:** FR-SPK-5 (amended, this session) and its "Amendment, this session" note in
   full, FR-SPK-27..28 (net detection, advisory only), AC-163..165; `pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`
