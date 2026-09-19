@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (P27: third-party licence notices screen)
 
-### (pending — recorded in a follow-up commit once this one exists) — P27: third-party licence notices screen (NFR-6d, AC-167)
+### 42d3332c — P27: third-party licence notices screen (NFR-6d, AC-167)
 
 **Scope:** `:app` — a new `ui/settings/SettingsLicensesScreen.kt`; one new `SettingsScreenId` entry
 in `ui/settings/SettingsViewData.kt`; one new router branch in `ui/settings/SettingsContent.kt`; one
