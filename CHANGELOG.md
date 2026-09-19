@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
 
-### PENDING — P22: setup completes everything (D43, FR-AST-10..12)
+### ccd6b061 — P22: setup completes everything (D43, FR-AST-10..12)
 
 **Scope:** `:app` — `ui/setup/**` (new `JurisdictionNoticeScreen.kt`, `ModelsSetupScreen.kt`,
 `OvernightSurvival.kt`; edits to `SetupStep.kt`, `SetupStateMachine.kt`, `SetupStore.kt`,
