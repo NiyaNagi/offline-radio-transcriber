@@ -600,18 +600,23 @@ private fun PlaybackSection(
      * composable slot) left the `AudioTrack` running with no control left on screen able to reach
      * it.
      *
-     * C10 (`design/canvas/Transport-Bar.dc.html`) REVERSES that fix: "the bar owns playback ...
-     * leaving a screen never stops the audio; × or the end of the over does." The
-     * `DisposableEffect(detail.id) { onDispose { player.stop() } }` this function used to have
-     * *was* the stop-on-leave this reverses — removed outright, not merely narrowed, because both
-     * of the shapes it used to cover (a genuine navigate-away, and a same-screen switch to a
-     * different over's detail before that over's own play control is ever tapped) are now cases
-     * the artboard requires playback to survive. What still stops playback is unchanged: reaching
-     * the over's own recorded end (the poll loop just below, untouched) and the transport bar's
-     * own `×` (`TransportBarTest.kt`, C10's own suite) — neither lives in this screen any more,
-     * because the bar, not the screen, now owns the decision (`TransportPlaybackController`).
-     * `PlaybackControlDetailScreenTest.kt`'s own two replaced tests assert the opposite of what
-     * they asserted before this round; its third (end-of-track) is untouched and still passes.
+     * C10 (`design/canvas/Transport-Bar.dc.html`) REVERSED that fix: "the bar owns playback." The
+     * `DisposableEffect(detail.id) { onDispose { player.stop() } }` this function used to have was
+     * the stop-on-leave that removed — removed outright, not merely narrowed, because C10 wanted
+     * both of the shapes it used to cover (a genuine navigate-away, and a same-screen switch to a
+     * different over's detail) to survive at this, the per-screen, layer.
+     *
+     * **AC-168 (build-plan P26) restores stop-on-leave for both shapes — one level up, in
+     * `OrtNavHost.kt`'s `NavHostBody`, not here.** This function still has no `DisposableEffect` of
+     * its own and still never decides when to stop playback; `PlaybackControlDetailScreenTest.kt`'s
+     * two C10-era tests (composing this screen alone, with no nav host) still correctly assert
+     * `stopCallCount == 0` for both shapes, because *this screen in isolation* still never stops
+     * anything on its own — only the nav host wrapping it now does, once the transmission drill-in
+     * it is showing genuinely closes or moves to a different over
+     * (`org.ort.app.ui.navigation.shouldStopPlaybackOnTransmissionLeave`'s own doc comment has the
+     * decision and its rationale). What still stops playback unchanged here: reaching the over's
+     * own recorded end (the poll loop just below) and the transport bar's own `×`
+     * (`TransportBarTest.kt`, C10's own suite).
      */
 
     LaunchedEffect(detail.id, playing) {

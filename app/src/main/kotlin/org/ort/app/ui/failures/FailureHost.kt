@@ -3,6 +3,7 @@
 package org.ort.app.ui.failures
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -387,7 +388,22 @@ private fun BoxScope.BannerOverlay(
         // children sharing the same rectangle — see this function's own kdoc for exactly why that
         // used to paint the hint directly over the scrolled content's own last visible line.
         val scrollState = rememberScrollState()
-        Column(modifier = Modifier.fillMaxWidth()) {
+        // Register R-1080: [org.ort.app.ui.components.Banner]'s own border (`Feedback.kt`, wrapping
+        // its title/body/action `Row` at that Row's real, unclipped height) is what the operator
+        // reads as "the banner's frame" — correct on its own whenever the content fits, but the
+        // moment it does not (`scrollState.canScrollForward`), `verticalScroll` below clips that
+        // border's own bottom edge along with the content past it, so only the top and side lines
+        // ever paint; the hint pill R-1077 placed right after then floats below a shape that never
+        // closes. Rather than reach into `Banner` (owned elsewhere, and correct for the un-clipped
+        // case it alone still handles), this closes the same rounded rectangle one level up, around
+        // the scroll box *and* the hint together, in the hint's own amber — but only while the hint
+        // itself is showing, so the ordinary, unclipped case never grows a second, redundant frame.
+        val closingBorder = if (scrollState.canScrollForward) {
+            Modifier.border(1.dp, OrtColors.bannerAmberBorder, RoundedCornerShape(8.dp))
+        } else {
+            Modifier
+        }
+        Column(modifier = Modifier.fillMaxWidth().then(closingBorder).testTag("failure-banner-closing-border")) {
             Box(
                 modifier = Modifier
                     // R-1077: the hint `Row` below (unweighted, measured first by `Column`) claims

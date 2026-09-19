@@ -5,11 +5,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
 /**
- * C10 (`design/canvas/Transport-Bar.dc.html`): playback state hoisted above any one screen, so it
- * survives navigation — "the bar owns playback ... leaving a screen never stops the audio; × or
- * the end of the over does" (this reverses R-1006's stop-on-leave, `TransmissionDetailScreen.kt`'s
- * own former `DisposableEffect(detail.id) { onDispose { player.stop() } }`).
+ * C10 (`design/canvas/Transport-Bar.dc.html`): playback state hoisted above any one screen — "the
+ * bar owns playback" (this reverses R-1006's original stop-on-leave,
+ * `TransmissionDetailScreen.kt`'s own former `DisposableEffect(detail.id) { onDispose {
+ * player.stop() } }`, which lived at the per-screen layer).
  *
+ * **AC-168 (build-plan P26) restores stop-on-leave — at the nav-host/transport-bar layer this
+ * time, not here and not the per-screen layer.** This class still never decides *when* to stop on
+ * its own; that decision lives in `OrtNavHost.kt`'s `NavHostBody` (see
+ * [org.ort.app.ui.navigation.shouldStopPlaybackOnTransmissionLeave]'s own doc comment for exactly
+ * which navigations now call [stop] and why), which calls the same [stop] every other caller
+ * already does. What survives unconditionally is narrower than the sentence above once suggested:
+ * a poll tick, a pause/resume, backgrounding the app without navigating within it — never a
+ * genuine leave of the transmission's own detail screen.
+ *
+
  * There is exactly one [TransmissionAudioPlayer] instance for the whole app lifetime
  * (`OrtNavHost.kt`'s own doc comment); this wraps it *in place*, delegating every
  * [TransmissionAudioPlayer] method so every existing call site that already types its `player`
