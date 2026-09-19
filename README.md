@@ -75,13 +75,18 @@ edge — it is not a convention, it is enforced (constitution VII).
 
 D35/D36 (functional spec §7.15, FR-AST-3): every asset the app can use — the ASR models, the VAD,
 and the Gemma 3 1B language model behind the prose digest — ships **inside the installed
-artifact**. There is no first-run download and no network dependency between installing the app
-and capturing with it (AC-136). `bundled-assets.json` (repo root) is the single source of truth:
-`buildSrc`'s `fetchBundledAssets` Gradle task reads it, fetches each asset once into a cache shared
-across worktrees (`$GRADLE_USER_HOME/ort-bundled-assets/`, never re-downloaded per checkout),
-verifies its sha256, and packages the verified bytes into `app/src/main/assets/bundled/`
-(gitignored — only the manifest is a source file). `assembleDebug`/`assembleRelease` — and
-therefore `build` — depend on this task.
+artifact** on the `full` build variant. There is no first-run download and no network dependency
+between installing `full` and capturing with it (AC-136). `bundled-assets.json` (repo root) is the
+single source of truth: `buildSrc`'s `fetchBundledAssets` Gradle task reads it, fetches each asset
+once into a cache shared across worktrees (`$GRADLE_USER_HOME/ort-bundled-assets/`, never
+re-downloaded per checkout), verifies its sha256, and packages the verified bytes into
+`app/src/full/assets/bundled/` (gitignored — only the manifest is a source file). This is
+deliberately the `full` flavor's **own** source set, not the shared `app/src/main/` every flavor
+inherits — a `play` variant (FR-AST-13, D43) bundles nothing and downloads each model during setup
+instead, and putting the fetched bytes under `src/main/` would make that a convention rather than a
+structural guarantee (constitution VII). `assembleFullDebug`/`assembleFullRelease` — and therefore
+`build` — depend on this task; `play`'s own assemble/merge-assets tasks cannot see this directory
+at all.
 
 **Gemma 3 1B is gated** on HuggingFace: accept its licence at
 <https://huggingface.co/litert-community/Gemma3-1B-IT>, generate an access token at

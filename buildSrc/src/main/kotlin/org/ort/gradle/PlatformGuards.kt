@@ -25,6 +25,13 @@ object PlatformGuards {
     data class DependencyViolation(val module: String, val coordinate: String, val reason: String)
     data class ManifestViolation(val module: String, val reason: String)
     data class NativeLibraryViolation(val path: String, val reason: String)
+    data class BundledAssetPackagingViolation(val path: String, val reason: String)
+
+    /** Every packaged-APK entry this file's bundled-asset guard treats as "a bundled model asset
+     * shipped" — matches where [FetchBundledAssetsTask] actually writes inside the APK
+     * (`assets/<destination>`, and `assets/bundled/manifest.json` alongside it), regardless of
+     * which flavor's own source set the entry came from at build time. */
+    const val BUNDLED_ASSETS_APK_PREFIX: String = "assets/bundled/"
 
     /** R-1001's own required set — kept as defaults here so [NativeLibraryPackagingGuardTask] and
      * this file's tests share one definition of "what WPJ ships" rather than each hardcoding it. */
@@ -162,4 +169,47 @@ object PlatformGuards {
                 )
             }
             .sortedBy { it.path }
+
+    /**
+     * P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): the boundary check proving the
+     * defect this fix closes stays closed — like [missingNativeLibraryViolations], this reads a
+     * real packaged APK's entry paths rather than a declared coordinate, because the defect (the
+     * `play` flavor packaging the identical 628 MB `full` does) is invisible to every
+     * declared-artifact check in this file: nothing about `bundled-assets.json` or the flavor's own
+     * `build.gradle.kts` config says which physical directory the fetch task actually wrote to.
+     *
+     * [expectBundled] is `true` for the `full` variant (FR-AST-3 — every asset ships inside the
+     * installed artifact, so at least one `assets/bundled/` entry must be present; zero would mean
+     * `fetchBundledAssets` never ran or its output never reached the APK) and `false` for `play`
+     * (FR-AST-13 — nothing named in the manifest may ship; every model downloads during setup
+     * instead, AC-190). Reports every offending entry by name so a regression is diagnosable from
+     * the failure message alone, the same discipline [missingNativeLibraryViolations] follows.
+     */
+    fun bundledAssetPackagingViolations(
+        apkEntryPaths: Set<String>,
+        expectBundled: Boolean,
+    ): List<BundledAssetPackagingViolation> {
+        val bundledEntries = apkEntryPaths.filter { it.startsWith(BUNDLED_ASSETS_APK_PREFIX) }
+        return if (expectBundled) {
+            if (bundledEntries.isEmpty()) {
+                listOf(
+                    BundledAssetPackagingViolation(
+                        BUNDLED_ASSETS_APK_PREFIX,
+                        "the full variant's packaged APK contains no $BUNDLED_ASSETS_APK_PREFIX entries — " +
+                            "fetchBundledAssets did not run, or its output never reached the APK (FR-AST-3)",
+                    ),
+                )
+            } else {
+                emptyList()
+            }
+        } else {
+            bundledEntries.sorted().map { path ->
+                BundledAssetPackagingViolation(
+                    path,
+                    "the play variant's packaged APK must not bundle any model asset, but contains $path — " +
+                        "every model must download during setup instead (FR-AST-13, AC-190)",
+                )
+            }
+        }
+    }
 }

@@ -21,6 +21,35 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class FetchBundledAssetsTaskTest {
 
+    // ---- BundledAssetPackaging — P24 fix (register, Wave G batch gate, FR-AST-13, AC-190) -------
+
+    /**
+     * The destination [BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH] names is what
+     * `ort.android-app.gradle.kts` actually wires into `fetchBundledAssets.assetsOutputDir` — this
+     * is the one line that decides whether `play` can see these bytes at all, since AGP only merges
+     * a flavor's own `src/<flavor>/assets/` into that flavor's own variants. A revert of the P24 fix
+     * (back to the shared `src/main/assets/bundled/` every flavor inherits — the defect the Wave G
+     * batch gate found: `play` packaging the identical 628 MB `full` does) fails this test.
+     */
+    @Test
+    fun `P24 fix -- the fetch destination is the full flavor's own source set, never the shared main one`() {
+        assertEquals("src/full/assets/bundled", BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH)
+        assertTrue(
+            BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH.startsWith("src/full/"),
+            "must be under the full flavor's own source set, not a shared one",
+        )
+        assertFalse(
+            BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH.startsWith("src/main/"),
+            "must never be the shared main source set every flavor inherits -- that is the exact " +
+                "defect this fix closes",
+        )
+    }
+
+    @Test
+    fun `P24 fix -- the legacy path this fix moves away from is the shared main source set`() {
+        assertEquals("src/main/assets/bundled", BundledAssetPackaging.LEGACY_ASSETS_RELATIVE_PATH)
+    }
+
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 

@@ -15,13 +15,43 @@ import java.io.File
 import java.security.MessageDigest
 
 /**
+ * P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): where [BundledAssetFetcher]'s verified
+ * bytes land, expressed as named constants rather than a string Gradle wiring and cleanup logic
+ * could silently drift apart on. Before this fix, [FetchBundledAssetsTask] wrote to
+ * [LEGACY_ASSETS_RELATIVE_PATH] — `app/src/main/assets/bundled/`, the **shared main source set**
+ * every flavor inherits — so the `play` flavor (which is supposed to bundle nothing, FR-AST-13)
+ * packaged the identical 628 MB `full` does the moment both had ever been fetched on the same
+ * machine. AGP only ever merges a flavor's own `src/<flavor>/assets/` into that flavor's own
+ * variants, never into a sibling flavor's, so moving the destination to [ASSETS_OUTPUT_RELATIVE_PATH]
+ * — the `full` flavor's own source set — makes `play` structurally incapable of carrying these
+ * assets (constitution VII), rather than relying on the convention that nobody fetches them for a
+ * `play`-only checkout. The runtime path inside the APK is unaffected either way: an APK's
+ * `assets/` root has no notion of which source set an entry came from, so
+ * `org.ort.app.assets.BundledAssetInstaller`/`ModelFileVerifier` keep reading `bundled/...`
+ * unchanged.
+ */
+object BundledAssetPackaging {
+    /** `app/src/full/assets/bundled/` — gitignored; recreated by every run of `fetchBundledAssets`.
+     * Relative to `:app`'s project directory, matching how `ort.android-app.gradle.kts` resolves it. */
+    const val ASSETS_OUTPUT_RELATIVE_PATH: String = "src/full/assets/bundled"
+
+    /** The pre-fix location, `app/src/main/assets/bundled/` — a developer checkout that built `full`
+     * before this fix landed may still have real fetched bytes sitting here, invisible to `git status`
+     * (gitignored) but still read by AGP as an implicit input of *every* flavor's own asset merge,
+     * which is the exact defect this fix closes. `ort.android-app.gradle.kts`'s
+     * `cleanupLegacyBundledAssets` task deletes it before any variant's assets are merged. */
+    const val LEGACY_ASSETS_RELATIVE_PATH: String = "src/main/assets/bundled"
+}
+
+/**
  * WPG (`spec/e2e-capture-modes-plan.md`, FR-AST-3/3a/3b, D35/D36): fetches every asset named in
  * the root `bundled-assets.json` manifest **once**, into a cache shared across worktrees
  * (`$GRADLE_USER_HOME/ort-bundled-assets/`, never `build/` — these are hundreds of megabytes and
  * a fresh worktree must not re-download them), verifies each against its pinned sha256, and
- * copies the verified bytes into `app/src/main/assets/bundled/` (gitignored — the manifest, not
- * the binaries, is the source-controlled fact) alongside a generated `bundled/manifest.json` the
- * app's own `org.ort.app.assets.BundledAssetInstaller` reads at first launch.
+ * copies the verified bytes into [BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH] (gitignored —
+ * the manifest, not the binaries, is the source-controlled fact) alongside a generated
+ * `bundled/manifest.json` the app's own `org.ort.app.assets.BundledAssetInstaller` reads at first
+ * launch.
  *
  * This task is a thin Gradle wrapper — every real decision lives in [BundledAssetFetcher], a plain
  * class with no Gradle types in its signature, so it can be unit-tested directly (matching this
@@ -36,7 +66,9 @@ abstract class FetchBundledAssetsTask : DefaultTask() {
     @get:InputFile
     abstract val manifestFile: RegularFileProperty
 
-    /** `app/src/main/assets/bundled/` — gitignored; recreated by every run of this task. */
+    /** [BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH] — gitignored; recreated by every run of
+     * this task. The `full` flavor's own source set (P24 fix) — see [BundledAssetPackaging]'s own
+     * KDoc for why. */
     @get:OutputDirectory
     abstract val assetsOutputDir: DirectoryProperty
 
