@@ -115,10 +115,9 @@ AC-191 (holds).
 - `./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.ui.data.ModelCatalogTest" --tests "org.ort.app.assets.*"`
   — green, confirming P22's existing `ModelCatalog`/`BundledAssetInstaller` tests are unaffected by
   the new generated fields (they default-read as before).
-- The full `:app:testFullDebugUnitTest`/`:app:smokeTestFullDebugUnitTest` suite was started in this
-  session to confirm no regression across the ~1200+ existing `:app` tests; see this session's own
-  report for its result once it finished (a long-running suite, not re-quoted here to keep this
-  entry stable regardless of exactly when it completed).
+- `./gradlew :app:testFullDebugUnitTest :app:smokeTestFullDebugUnitTest -PortAllowMissingBundledAssets=true`
+  — green, 2662 tests, zero failures, `BUILD SUCCESSFUL in 19m 40s`: no regression from this unit
+  across the existing `:app` suite.
 
 **Left open / not done:**
 - **AC-190's runtime half** (installing each variant and comparing its setup flow — `full` never
