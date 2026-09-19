@@ -32,6 +32,93 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (build plan P24: automatic thread grouping after Pass B)
+
+### 2add470f — P24: automatic thread grouping after Pass B (FR-SPK-5, AC-163..165)
+
+**Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/threading/**` package (production and its
+behavioural fake), plus one added call and one new default constructor parameter in
+`pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`. Tests under
+`pipeline/src/test/kotlin/org/ort/pipeline/threading/**`. No `:data`, `:app`, `:capture-*` or
+`:segment` file touched.
+
+**Requirements/ACs:** FR-SPK-5 (its "Amendment, this session" note — v0.1.1 overclaimed automatic
+threading; it was unbuilt), FR-SPK-27, FR-SPK-28, AC-163, AC-164, AC-165. Constitution III (runs
+after Pass B closes a transmission, never re-segments), IV (`:capture-*` boundary untouched), I
+(every join/split decision carries an inspectable [`ThreadJoinReason`]).
+
+**What changed:** `RealCaptureService` has inserted every over with `threadId = null` since it was
+written, and nothing in production ever assigned one — `RELEASES.md`'s `## Unreleased` correction
+about v0.1.1 overclaiming automatic threading is now true rather than aspirational. This unit adds:
+
+- `ThreadGrouper` (pure, total): frequency continuity plus inter-transmission gap decide whether a
+  closed transmission joins the most recent matching transmission's thread or starts a new one —
+  same frequency, or FR-SPK-5's own stated exception (the Rig Module reporting the same channel
+  under a different frequency), within a configurable gap (`ThreadGroupingConfig`, default 10
+  minutes — a documented, provisional placeholder; `spec/open-questions.md` Q16 leaves the real
+  number open). An unlistened capture gap (`capture_gap` rows, FR-RUN-12) between two overs breaks
+  continuity outright, whatever the wall-clock arithmetic alone would have allowed, and both
+  frequencies being genuinely unknown (local-microphone capture) falls back to gap-only continuity
+  rather than refusing to group at all.
+- `ThreadKindClassifier` (pure): FR-SPK-27's net heuristic — a dominant voice/callsign present in
+  ≥40% of ≥5 transmissions alongside ≥3 distinct others — labels a thread `NET`; otherwise 2
+  distinct voices is `QSO`, 3+ is `SCANNER`, fewer is `UNKNOWN`. FR-SPK-28: advisory only, never
+  changes whether `ThreadGrouper` joins a transmission; a thread already `NET` stays `NET`
+  regardless of later evidence, and a user-set marking (`ThreadKindSource.USER`) is never
+  overwritten automatically (no `:app` caller sets that yet — this is the data-layer half only).
+- `ThreadGroupingCoordinator`, the one production entry point `DataPassBResultSink.record` now
+  calls, unconditionally, as its last line, for every Pass B outcome (Accepted, Rejected, and
+  Failed alike) — reads a transmission's own row fresh through `ThreadRepository`, decides, and
+  writes. Idempotent per transmission: a transmission that already carries a `threadId` is a
+  no-op, so a Failed attempt's later retry cannot double-count a transmission's own participation.
+- `RoomThreadRepository`, the real `ThreadRepository`. Two writes it needs — stamping
+  `transmission.threadId` and extending an existing `thread` row's `endedAt`/
+  `transmissionCount`/`participantStationIds`/`participantOrder`/`kind` — have no generated DAO
+  method today (`TransmissionDao`/`CatalogDao` are both `@Insert`-only for these). Rather than add
+  one (`:data` is not in this unit's Owns list), both go through `org.ort.data.execRaw` — the
+  general raw-statement escape hatch `:data` already publishes for exactly this: "the rare caller
+  ... that genuinely does need to run a raw statement Room's own generated DAOs cannot express."
+  No `:data` file changed. Every other read (`TransmissionDao.getById`/`.listBySession`,
+  `CaptureGapDao.listBySession`, `CatalogDao.getThread`/`.insert(ThreadEntity)`,
+  `Converters.fromStringList`) is an existing, already-public `:data` surface.
+- `FakeThreadRepository`, the behavioural fake (constitution II) — a plain in-memory session with
+  no Room/Robolectric dependency, scriptable with `TransmissionClosure`s and capture-gap windows,
+  every call recorded.
+- A dual-receive rig's two bands are handled structurally, not as a special case: `priorContextFor`
+  finds the most recent *matching-frequency* transmission in the session, not merely the most
+  recent one, so interleaved transmissions on two bands each build their own thread chain.
+
+**Verified:** `./gradlew :pipeline:testDebugUnitTest` — green, including four new suites
+(`ThreadGrouperTest` 9 tests, `ThreadKindClassifierTest` 7, `ThreadGroupingCoordinatorTest` 8
+against the fake, `DataPassBResultSinkThreadingTest` 7 end-to-end against a real in-memory
+`OrtDatabase` — the tape AC-163/164/165 ask for) and the pre-existing `DataPassBResultSinkTest` (11
+tests, unaffected by the new default constructor parameter). `./gradlew ktlintCheck detekt` —
+green. `./gradlew dependencyRules` — green (no new module edge; `:pipeline/threading` reaches only
+`:core`/`:data`, both already permitted from `:pipeline`). Discrimination, per constitution II —
+reverted each production change in turn, watched the exact expected test(s) fail for the stated
+reason, and no others, then restored: the `DataPassBResultSink.record` wiring line (all 7
+end-to-end tests failed with a `null` `threadId`), `ThreadGrouper`'s gap-exceeded branch (the one
+gap test at each of the three layers — pure, fake-backed coordinator, real end-to-end — failed,
+nothing else), `ThreadKindClassifier`'s net detection (the two `NET`-classification tests failed,
+`FR_SPK_28`'s "stays net" test correctly unaffected since it short-circuits before that check), and
+`RoomThreadRepository`'s frequency/channel matching (only the interleaved-frequency end-to-end test
+failed; the coordinator-level interleaved test was unaffected, correctly isolating the real
+repository's own logic from the fake's).
+
+**Left open / not done:** `ThreadEntity`/`ThreadKind`/`ThreadKindSource` have no UI writer for a
+user to set or clear a net marking yet — `ThreadKindClassifier`'s `USER`-source guard is real code
+with no caller (`:app` work, out of this unit's scope). `ThreadJoinReason` is not persisted or
+logged anywhere durable — `:data`'s schema has no column for it (no migration, per this unit's
+Must-not-touch) and `DiagnosticsLog.kt` is outside this unit's Owns list, so "why" a thread joined
+lives only in the in-memory decision object today; a future session wiring it into a durable record
+or a log line is a genuine follow-up. `ThreadGroupingConfig`'s 10-minute default gap and
+`ThreadKindClassifier`'s net thresholds are documented placeholders — `spec/open-questions.md` Q16
+leaves the real numbers open pending the labelled validation hour. `ThreadEntity.digestText` is
+never written by this unit (unrelated to threading; `ThreadDigestSource`/`ProseDigestGenerator` own
+it). No device/emulator run — Robolectric only, per this session's scope (no emulator).
+
+---
+
 ## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
 
 ### 58d656c4 — P23: download manifest, model mirror and the two build variants

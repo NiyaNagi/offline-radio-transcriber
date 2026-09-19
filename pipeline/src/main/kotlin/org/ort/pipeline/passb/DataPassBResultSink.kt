@@ -13,6 +13,8 @@ import org.ort.data.entity.TranscriptPass
 import org.ort.data.inWriteTransaction
 import org.ort.lexicon.PhoneticLattice
 import org.ort.lexicon.SlotDetail
+import org.ort.pipeline.threading.RoomThreadRepository
+import org.ort.pipeline.threading.ThreadGroupingCoordinator
 
 /**
  * The real [PassBResultSink] (build-plan P12, defect 3): `PassB`'s own doc comment names
@@ -57,8 +59,16 @@ import org.ort.lexicon.SlotDetail
  *   [PassBOutcome.Accepted] and [PassBOutcome.Rejected] — see
  *   [org.ort.data.entity.TransmissionEntity.processedTier]'s own doc comment for why `Failed` must
  *   leave it untouched (a transmission that did not genuinely run at this tier stays eligible).
+ *
+ * **Build-plan P24 (FR-SPK-5, AC-163..165):** [threadGrouper] runs, unconditionally, as the very
+ * last step of [record] — automatic thread grouping happens **after** Pass B closes a
+ * transmission, off the capture path, whatever [result]'s own outcome was (see [threadGrouper]'s
+ * own kdoc for why a [PassBOutcome.Failed] retry is harmless rather than double-counted).
  */
-public class DataPassBResultSink(private val db: OrtDatabase) : PassBResultSink {
+public class DataPassBResultSink(
+    private val db: OrtDatabase,
+    private val threadGrouper: ThreadGroupingCoordinator = ThreadGroupingCoordinator(RoomThreadRepository(db)),
+) : PassBResultSink {
 
     override suspend fun record(result: PassBResult): Unit = db.inWriteTransaction {
         // R-1032: unconditional -- the provider a pass ran on is known the moment it ran, whatever
@@ -102,6 +112,7 @@ public class DataPassBResultSink(private val db: OrtDatabase) : PassBResultSink 
         }
         persistLattice(result)
         persistCandidates(result)
+        threadGrouper.onTransmissionClosed(result.transmissionId)
     }
 
     /** [PassBResult.lattice] is non-null exactly when Pass B produced one (see its own doc
