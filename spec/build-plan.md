@@ -424,7 +424,9 @@ free.
 
 **Wave G — six mutually disjoint units. Needs only Wave F.**
 
-- [ ] **P22 · Setup completes everything** *(`:app` — `ui/setup/**`, `ui/data/ModelsViewData.kt`,
+- [x] **P22 · Setup completes everything** — done 2026-09-19 (see CHANGELOG's own entry for the
+  commit hash, the `MainActivity.kt` gap left open, and the AC-190 play-variant half deferred to
+  P23) *(`:app` — `ui/setup/**`, `ui/data/ModelsViewData.kt`,
   a new WorkManager job)* — D43, FR-AST-10..12.
 
   **Read first:** `spec/functional-spec.md` FR-AST-3 (amended), FR-AST-10..12, NFR-6, NFR-6c,

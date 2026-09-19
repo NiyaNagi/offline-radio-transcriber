@@ -30,10 +30,13 @@ class ReadyRowsForTest {
 
     private fun rows(
         store: SetupStore = InMemorySetupStore(),
-        batteryExempt: Boolean = false,
+        overnightState: OvernightSurvivalState = OvernightSurvivalState(
+            batteryExemptDiagnostic = false,
+            survivalProven = false,
+        ),
         rigStatus: RigStatus.State = RigStatus.State.Absent,
         modelsState: ModelsViewState = ModelsViewState(emptyList()),
-    ) = readyRowsFor(store, batteryExempt, rigStatus, modelsState, noOpActions)
+    ) = readyRowsFor(store, overnightState, rigStatus, modelsState, noOpActions)
 
     // --- D33/E2-E13: the new leading Mode row ----------------------------------------------------
 
@@ -90,7 +93,13 @@ class ReadyRowsForTest {
             onChangeMode = { changed = true },
         )
         val store = InMemorySetupStore(captureMode = CaptureMode.USB_RADIO)
-        val row = readyRowsFor(store, false, RigStatus.State.Absent, ModelsViewState(emptyList()), actions)
+        val row = readyRowsFor(
+            store,
+            OvernightSurvivalState(batteryExemptDiagnostic = false, survivalProven = false),
+            RigStatus.State.Absent,
+            ModelsViewState(emptyList()),
+            actions,
+        )
             .first { it.label == "Mode" }
 
         assertEquals("Change", row.actionLabel)
@@ -118,14 +127,28 @@ class ReadyRowsForTest {
         assertEquals(null, row.actionLabel)
     }
 
+    /** AC-189 (constitution IV): superseded by the pair below — the OS's own exemption flag alone
+     * must never satisfy this row's `ok` any more; only heartbeat/session-derived survival may. */
     @Test
-    fun `R_083 overnight row reflects the live battery-exemption reading, not a stored flag`() {
-        val exempt = rows(batteryExempt = true).first { it.label == "Overnight" }
-        val notExempt = rows(batteryExempt = false).first { it.label == "Overnight" }
+    fun `AC_189 overnight row ok reflects heartbeat-proven survival, never the OS exemption flag alone`() {
+        val provenButNotExempt = rows(
+            overnightState = OvernightSurvivalState(batteryExemptDiagnostic = false, survivalProven = true),
+        ).first { it.label == "Overnight" }
+        val exemptButNotProven = rows(
+            overnightState = OvernightSurvivalState(batteryExemptDiagnostic = true, survivalProven = false),
+        ).first { it.label == "Overnight" }
 
-        assertTrue(exempt.ok)
-        assertFalse(notExempt.ok)
-        assertEquals("Fix", notExempt.actionLabel)
+        assertTrue(
+            provenButNotExempt.ok,
+            "heartbeat-proven survival must read ok even when the OS never reports the exemption granted",
+        )
+        assertFalse(
+            exemptButNotProven.ok,
+            "the OS reporting the exemption already granted must never satisfy this gate by itself",
+        )
+        assertEquals("Fix", exemptButNotProven.actionLabel)
+        assertEquals("Battery exemption granted", exemptButNotProven.value)
+        assertEquals("Battery exemption skipped", provenButNotExempt.value)
     }
 
     @Test
@@ -176,7 +199,13 @@ class ReadyRowsForTest {
             onChangeMode = {},
         )
         val store = InMemorySetupStore(radioChoice = RadioChoice.NONE, manualFrequencyHz = 145_230_000L)
-        val row = readyRowsFor(store, false, RigStatus.State.Absent, ModelsViewState(emptyList()), actions)
+        val row = readyRowsFor(
+            store,
+            OvernightSurvivalState(batteryExemptDiagnostic = false, survivalProven = false),
+            RigStatus.State.Absent,
+            ModelsViewState(emptyList()),
+            actions,
+        )
             .first { it.label == "Radio" }
 
         assertEquals("Change", row.actionLabel)
@@ -316,7 +345,13 @@ class ReadyRowsForTest {
             listOf(band),
             verification = RigVerification.Full,
         )
-        val row = readyRowsFor(store, false, connected, ModelsViewState(emptyList()), actions)
+        val row = readyRowsFor(
+            store,
+            OvernightSurvivalState(batteryExemptDiagnostic = false, survivalProven = false),
+            connected,
+            ModelsViewState(emptyList()),
+            actions,
+        )
             .first { it.label == "Radio" }
 
         assertEquals("verified", row.statusText)
