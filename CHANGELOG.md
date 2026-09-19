@@ -32,6 +32,150 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (P26: playback stops on navigation, plus small defects — R-1074 blocked)
+
+### 684c3abf — P26 · playback stops on navigation (AC-168), plus R-1079/R-1080/R-1012 — R-1074 not closed, needs files outside this unit's ownership
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`,
+`.../ui/audio/TransportPlaybackController.kt`, `.../ui/screens/TransmissionDetailScreen.kt`,
+`.../ui/screens/CaptureScreen.kt`, `.../ui/recordings/RecordingsScreen.kt`,
+`.../ui/failures/FailureHost.kt`, `asr-sherpa/.../real/RealSherpaDecoder.kt` (KDoc only), plus
+each file's sibling test(s) (three new: `PlaybackStopsOnNavigationTest.kt`,
+`ShouldStopPlaybackOnTransmissionLeaveTest.kt`, `BannerClosingBorderTest.kt`; three extended:
+`PlaybackControlDetailScreenTest.kt`, `RecordingsScreenTest.kt`, `CaptureScreenTest.kt`).
+
+**Requirements/ACs:** AC-168, R-1006 (close); R-1079, R-1080, R-1012 (close); R-1074 (**not**
+closed — see "Left open").
+
+**What changed:**
+- **AC-168/R-1006.** Restores "navigating away from a transmission detail view while its clip
+  plays stops playback, and returning does not auto-resume" — reversed by C10's transport-bar
+  work ("the bar owns playback") — this time at the transport-bar/nav-host layer
+  (`OrtNavHost.kt`'s `NavHostBody`), not the per-screen layer R-1006 originally fixed it at
+  (`TransmissionDetailScreen.kt`'s own former `DisposableEffect(detail.id) { onDispose {
+  player.stop() } }`). A new `DisposableEffect(ids.transmissionId)` calls a new pure decision
+  function, `shouldStopPlaybackOnTransmissionLeave(leftTransmissionId, loadedTransmissionId)`,
+  from `onDispose` — fires synchronously the instant the transmission drill-in stops being the
+  value it was keyed on, before the next frame, so a fast double-navigation cannot race a
+  still-playing clip past its own stop. **Decision, recorded explicitly per the build plan's own
+  instruction** (this reverses a deliberate prior decision — do not silently re-reverse without
+  saying so): `design/canvas/Detail-Playback.dc.html` draws no distinction at all between closing
+  the drill-in outright and a same-screen switch to a different over's own detail
+  (`TransmissionDetailScreen.kt`'s inferred-explanation link, `onOpenTransmission`) — its only
+  note is about scrubbing — so there is no artboard basis to let the same-screen-switch case
+  survive; both are treated as a genuine leave, the simpler and more conservative reading, and
+  the one that matches what R-1006's own operator report was about. `TransportPlaybackController
+  .kt` and `TransmissionDetailScreen.kt`'s own doc comments corrected to say what still survives
+  unconditionally (a poll tick, pause/resume, backgrounding without in-app navigation) versus
+  what now stops (a genuine leave) and exactly where that decision now lives. "Returning does not
+  auto-resume" was already structurally guaranteed by `TransportPlaybackController.stop()`'s
+  existing full-reset behaviour and `PlaybackSection`'s existing `initialPlaybackState` seed —
+  proven directly by a new test rather than re-derived.
+- **R-1079.** `RecordingsScreen.kt`'s `OverAudioBudgetRow`/`ArchiveBudgetRow` and
+  `CaptureScreen.kt`'s `CaptureOverAudioRow`/`CaptureArchiveRow` now format their own "used" byte
+  count with `recordingSessionByteLabel` (`ui/recordings/RecordingSessionViewStateMapper.kt`,
+  R-1068's adaptive B/KB/MB/GB formatter, reused rather than re-derived) instead of
+  `Long.toGigabyteLabel()`, which rounded any non-zero archive/over-audio figure under 0.05 GB to
+  "0.0 GB" — reading as empty for real, retained audio on both N08 Capture and RC01 Recordings,
+  the same defect R-1068 already fixed for RC02's own card.
+- **R-1080.** `FailureHost.kt`'s `BannerOverlay` now closes a new rounded-rect border
+  (`failure-banner-closing-border`) around the scroll box *and* the scroll-hint chevron together,
+  in the hint's own amber (`OrtColors.bannerAmberBorder`), whenever
+  `scrollState.canScrollForward` is true. Root cause: `Banner`'s own border (`ui/components
+  /Feedback.kt`, outside this unit's ownership) wraps its title/body/action `Row` at that Row's
+  real, unclipped height — correct on its own whenever the content fits, but the moment R-1077's
+  layout needs to scroll, `Modifier.verticalScroll` clips that border's own bottom edge along
+  with the content past it, so only the top/side lines ever painted and R-1077's hint pill
+  floated below a shape that never closed. Only drawn while the hint itself shows, so the
+  ordinary, unclipped case never grows a second, redundant frame.
+- **R-1012.** Corrected `RealSherpaDecoder.kt`'s KDoc, which falsely claimed "Nothing in
+  `:pipeline` or `:app` constructs this class yet" — `:pipeline`'s
+  `RealAsrEngineProvider.provide()` (`AsrEngineProvisioning.kt`) has constructed it by default
+  since it existed, whenever `AsrModelLocator.locate` finds all three model files and
+  `ModelFileVerifier` passes them. KDoc only, no behaviour change, per the build plan's own
+  instruction for this row.
+- `ImproveDestinationStatePreservationTest`'s known-red status (missing
+  `WorkManagerTestInitHelper` init) was already fixed on `main` by a concurrent session
+  (`239f9dec`, present after this unit's own `git merge main`) before this unit started work —
+  confirmed green here; no further change was needed or made.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.navigation.*" --tests
+  "org.ort.app.ui.screens.PlaybackControlDetailScreenTest" --tests
+  "org.ort.app.ui.screens.CaptureScreenTest" --tests
+  "org.ort.app.ui.screens.CaptureScreenBoundsTest" --tests
+  "org.ort.app.ui.recordings.RecordingsScreenTest" --tests
+  "org.ort.app.ui.failures.BannerClosingBorderTest" --tests
+  "org.ort.app.ui.failures.BannerChevronClearanceTest"` — 78 tests, all green, including
+  `ImproveDestinationStatePreservationTest`.
+- `./gradlew :app:smokeTestDebugUnitTest --rerun` — green (3m 27s; run since this unit touches
+  `OrtNavHost.kt`).
+- `./gradlew ktlintCheck detekt` — both green.
+- **Discrimination (constitution II), each reverted then restored:** AC-168 — neutralised
+  `shouldStopPlaybackOnTransmissionLeave`'s call in `NavHostBody`
+  (`if (false && shouldStopPlaybackOnTransmissionLeave(...))`);
+  `PlaybackStopsOnNavigationTest` failed (`expected:<1> but was:<0>`). R-1079 — reverted
+  `OverAudioBudgetRow` to `state.usedBytes.toGigabyteLabel()`;
+  `RecordingsScreenTest`'s `R_1079` test failed (`Expected '2' nodes but found '1'`, the
+  remaining node reading "0.0 GB"). R-1080 — reverted `BannerOverlay`'s `Column` to its pre-fix
+  `Modifier.fillMaxWidth()` with no `closingBorder`/tag; `BannerClosingBorderTest` failed
+  (`could not find any node that satisfies: TestTag = 'failure-banner-closing-border'`) — noted
+  honestly in that test's own doc comment: this discriminates the structural wiring, not the
+  drawn pixel itself, since `captureToImage()` is documented elsewhere in this suite
+  (`OrtThemeTest.kt`) as unusable in this sandbox (hangs resolving native graphics with no
+  network egress); the actual visual close is the tour/device capture's job, per constitution
+  VIII.
+
+**Left open / not done:**
+- **R-1074 is not closed.** The register asks that Now's live session chart
+  (`NowViewStateMapper.active` in `app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt` →
+  `ActivityPatternMapper.buildSessionElapsedPattern` in the owned `ActivityPattern.kt`) never
+  show more not-listening time than a real gap contains, while keeping R-1041's tap-a-bar Log
+  filter working. Investigated in depth: a per-clock-hour bucket carrying one three-state enum
+  cannot bound the overstatement honestly for a gap that does not fill a whole hour — marking
+  the hour NOT_LISTENING overstates (a 22-minute gap can read as up to ~118 minutes hatched
+  across up to two bucket edges); not marking it at all fabricates a "was listening" claim FR
+  -RUN-12/constitution IV forbid. The only sound fix mirrors R-1069's own precedent for DG04's
+  session-review coverage bar exactly: real-gap-boundary segments
+  (`org.ort.app.ui.digest.SessionCoverageMapper.buildSegments`, already built and reusable) fed
+  through `ActivityPatternChart`'s existing `segmentWeights` parameter (also already built), with
+  a tapped segment's own real `[start, end)` millis used in place of `hourFilterWindow`'s
+  fixed-hour-index arithmetic. That requires changing `NowViewStateMapper.active`/
+  `hourFilterWindow` in `app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt` and the
+  `ActivityPatternChart`/`onBarClick` wiring in
+  `app/src/main/kotlin/org/ort/app/ui/screens/NowScreen.kt` — **neither file is in P26's owned
+  list** (only `NowContent.kt` and `ActivityPattern.kt` are), and per this session's own explicit
+  instruction ("touch only the files P26 owns; if you need another file, stop and report it")
+  this stops here rather than expanding scope unilaterally. Flagged for the lead to route — a
+  small, well-scoped follow-up prompt touching those two files (or an amendment to P26's own
+  Owns list), reusing the two building blocks named above rather than re-deriving them.
+- `ActivityPatternMapper.buildSessionElapsedPattern`'s own doc comment (in the owned
+  `ActivityPattern.kt`) still describes the R-1074 defect as already-fixed R-913 behaviour ("Now's
+  own live chart ... and a past session's own coverage bar ... both call [this], so neither
+  disagrees") — that claim is already stale today regardless of this session's own work
+  (`DigestPolling.sessionDetail` calls `SessionCoverageMapper.buildSegments` instead, per
+  R-1069's own landed fix) and will need updating in whichever change finally closes R-1074.
+- `RecordingSessionViewStateMapper.kt`'s own doc comment on `recordingSessionByteLabel` ("this is
+  RC02's own sheets and tiles only ... never used for RC01's own multi-gigabyte device-wide
+  budgets") is now inaccurate — R-1079 reuses it for RC01 (`RecordingsScreen.kt`) and N08
+  (`CaptureScreen.kt`) too. Not fixed here: that file (`ui/recordings
+  /RecordingSessionViewStateMapper.kt`) is outside P26's owned list, distinct from the owned
+  `RecordingsScreen.kt`/`RecordingsViewData.kt` — flagged for whoever next touches it.
+- No tour re-capture run in this session — explicitly out of scope per this session's own
+  instruction; the lead captures after merge. Tour steps that show these changes: `overnight
+  /N08-capture` and `recordings-budget-exceeded/N08-capture` (R-1079); `RC01-recordings` and
+  `recordings-budget-exceeded/RC01-recordings` (R-1079); `level-low/F03-level-low-now` at font
+  scale 2.0, and any capture that forces the banner to scroll (R-1080); `overnight/N01-now` once
+  R-1074 lands (no visual change from this session's own work alone). AC-168 has no static
+  screenshot that proves it — it is a navigation behaviour, evidenced by
+  `PlaybackStopsOnNavigationTest` instead, not a screen capture.
+- AC-168's same-screen-switch decision (survive vs. stop, decided: stop) is recorded in this
+  entry and in `shouldStopPlaybackOnTransmissionLeave`'s own doc comment (`OrtNavHost.kt`) —
+  **not** in `results/ui-audit/register.md`, which this session was explicitly told not to edit;
+  the lead should carry this decision into the R-1006 register row when it is judged.
+
+---
+
 ## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
 
 ### 57b69260 — build plan: add P22-P32 (Waves G-K) for the D42-D50 governance backlog
