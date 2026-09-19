@@ -34,6 +34,124 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
 
+### pending — P23: download manifest, model mirror and the two build variants
+
+*(commit hash recorded in a follow-up entry once it exists — see this repo's own established
+pattern, e.g. `0cd5cea0` recording `57b69260` below.)*
+
+**Scope:** `buildSrc/**` (`BundledAssetCatalogRenderer`, `ModelMirrorPublisher`,
+`PublishModelMirrorTask`, `PlatformGuards`/`PlatformGuardsTask` extended, `FetchBundledAssetsTask`
+extended, `ort.android-app.gradle.kts`), `bundled-assets.json`, `app/build.gradle.kts`,
+`.github/workflows/release.yml`, `docs/privacy-policy.md`, `docs/play-data-safety.md`,
+`docs/fgs-type-declaration.md`, `spec/build-plan.md` (checklist).
+
+**Requirements/ACs:** D43, D44, FR-AST-13, FR-AST-14, AC-190 (partial — see Left open),
+AC-191 (holds).
+
+**What changed:**
+- **Two build variants.** `app/build.gradle.kts` now declares product flavors `full` (default,
+  bundles every asset, byte-for-byte today's behaviour, D35/FR-AST-3) and `play` (bundles nothing
+  named in `bundled-assets.json`; downloads at setup instead, FR-AST-13). `ort.android-app.gradle.kts`
+  scopes `fetchBundledAssets` (the HF_TOKEN-needing, network-fetching task) to the `full` flavor's
+  own `assembleFullDebug`/`assembleFullRelease`/`mergeFullDebugAssets`/`mergeFullReleaseAssets`
+  tasks only, by exact name — `play`'s own tests and bundle build need neither HF_TOKEN nor the
+  `-PortAllowMissingBundledAssets` escape hatch at all (verified: `:app:assemblePlayDebug` and
+  `:app:testPlayDebugUnitTest` both run clean with no token, no escape hatch, and no
+  `fetchBundledAssets` invocation in the task graph). `fetchSherpaNativeLibraries` (the native
+  ASR/VAD JNI libraries) is wired to both flavors — every variant needs the code, only `full` needs
+  the model weights bundled.
+- **Per-flavor generated catalog.** The `renderCatalogKotlin`/`kotlinString`/`kotlinFieldLine`
+  functions, previously script-local in `ort.android-app.gradle.kts` and therefore untestable, are
+  extracted to `buildSrc/src/main/kotlin/org/ort/gradle/BundledAssetCatalogRenderer.kt` — a plain,
+  unit-tested object. `generateFullBundledAssetCatalog`/`generatePlayBundledAssetCatalog` (replacing
+  the old single `generateBundledAssetCatalog`) each render `GeneratedBundledAssetManifest.kt` into
+  their own flavor's Kotlin source set (`afterEvaluate`, since AGP's flavor source sets do not exist
+  until `app/build.gradle.kts`'s own `productFlavors` block has run — this precompiled script
+  plugin's top-level code runs first). `GeneratedBundledAssetEntry` gained two fields: `bundled`
+  (`true` for every `full` entry, `false` for every `play` entry) and `downloadUrl` (blank when
+  bundled, the manifest's own `mirrorUrl` otherwise). **`ModelsViewData.kt`'s `ModelCatalog` mapping
+  does not yet read either new field** — that is P22's own file (parallel unit, not owned here);
+  today both flavors' `ModelCatalog.entries` still report `bundled = true` regardless, since that
+  default is hardcoded at the mapping's own call site.
+- **Model mirror (D44).** `bundled-assets.json` gained a pinned `mirrorUrl` per entry (the
+  `models-v1` GitHub Release asset URL on this repository, distinct from each entry's build-time
+  source `url`) and is now kept sorted by `id` (`BundledAssetManifestDeterminismTest`). A new
+  `PublishModelMirrorTask`/`ModelMirrorPublisher` pair uploads every asset `fetchBundledAssets`
+  already fetched and verified to the `models-v1` release, idempotently (skips a name+size match,
+  never re-hashes the remote asset — `gh` exposes no remote checksum). Registered as
+  `:app:publishModelMirror`, wired into `release.yml` only on a real `v*.*.*` tag, never on a plain
+  push to `main`. Never touches `HF_TOKEN`.
+- **FGS type declaration guard.** `PlatformGuards.fgsTypeDeclarationViolations` (wired into
+  `PlatformGuardsTask`/`./gradlew platformGuards`) fails the build if any module's manifest declares
+  a `FOREGROUND_SERVICE_<TYPE>` permission with no matching `android:foregroundServiceType` on a
+  `<service>` in that same manifest — a declared-artifact check, like every other guard in that
+  file. Confirmed clean against the real repo (`:capture-android`'s `CaptureService`).
+- **Play-readiness docs.** `docs/privacy-policy.md` (states the three FR-ANL tiers and the FR-ANL-14
+  sentence verbatim), `docs/play-data-safety.md` (a per-category answer sheet for the Play Console
+  Data Safety form), `docs/fgs-type-declaration.md` (the FGS type checklist and per-type
+  justification text).
+
+**Verified:**
+- `./gradlew -p buildSrc test` — 100% green (every new test class:
+  `BundledAssetCatalogRendererTest`, `ModelMirrorPublisherTest`, `BundledAssetManifestMirrorFieldsTest`,
+  `BundledAssetManifestDeterminismTest`, plus the extended `PlatformGuardsTest`/
+  `FetchBundledAssetsTaskTest`).
+- Discrimination shown by hand for the key decisions (reverted, watched red, restored, watched
+  green): `PlatformGuards.fgsTypeDeclarationViolations` (gutted to `emptyList()`), the
+  `ModelMirrorPublisher.plan` skip-by-size branch (forced to always skip), and
+  `BundledAssetCatalogRenderer.render`'s `bundled`/`downloadUrl` fields (forced to `true`/`""`
+  regardless of the flavor argument) — each failed the tests that exist specifically to catch it,
+  then passed again once restored.
+- `./gradlew :app:assembleFullDebug -PortAllowMissingBundledAssets=true` — green, 5/5 fixture assets
+  packaged (escape hatch, no `HF_TOKEN` in this sandbox).
+- `./gradlew :app:assemblePlayDebug` — green, **no `HF_TOKEN`, no escape hatch, no
+  `fetchBundledAssets` invocation at all** — `app/build/outputs/apk/play/debug/app-play-debug.apk`,
+  ~133 MB (vs. the `full` variant's measured ~611 MB installed size, R18/`results/e2e-audit/
+  installed-size.md` — this build carries no model weights).
+- `./gradlew :app:bundlePlayRelease` — green — `app/build/outputs/bundle/playRelease/app-play-release.aab`.
+- `./gradlew :app:verifySherpaNativeLibrariesPackaged` — green against the `full` flavor's own
+  debug APK at its new path (`app/build/outputs/apk/full/debug/app-full-debug.apk`).
+- `./gradlew ktlintCheck` and `./gradlew detekt` — both green across every module, including the
+  regenerated per-flavor catalogs.
+- `./gradlew dependencyRules platformGuards` — both green; `platformGuards`'s own log line now
+  names the FGS check explicitly.
+- `./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.ui.data.ModelCatalogTest" --tests "org.ort.app.assets.*"`
+  — green, confirming P22's existing `ModelCatalog`/`BundledAssetInstaller` tests are unaffected by
+  the new generated fields (they default-read as before).
+- The full `:app:testFullDebugUnitTest`/`:app:smokeTestFullDebugUnitTest` suite was started in this
+  session to confirm no regression across the ~1200+ existing `:app` tests; see this session's own
+  report for its result once it finished (a long-running suite, not re-quoted here to keep this
+  entry stable regardless of exactly when it completed).
+
+**Left open / not done:**
+- **AC-190's runtime half** (installing each variant and comparing its setup flow — `full` never
+  reaches a download step, `play` does) is not verified here: it needs P22's `ui/setup`/
+  `ModelsViewData.kt` work, running in parallel and not owned by this unit, to actually read the new
+  `bundled`/`downloadUrl` fields. This unit only proves the two flavors' generated catalogs disagree
+  correctly — not yet that anything downstream acts on the disagreement.
+- **`verifySherpaNativeLibrariesPackaged` (R-1001) checks only the `full` flavor's own debug APK**,
+  not `play`'s — both flavors share identical native-library wiring, so the risk is not
+  flavor-specific, but this was a deliberate scope cut (doubling this guard's own build cost to
+  re-prove an identical packaging step), not a proven equivalence.
+- **A real `models-v1` release/mirror run is unverified** — `PublishModelMirrorTask`'s `gh`
+  invocations are exercised only through `ModelMirrorPublisher`'s pure decision logic in this
+  session (no real GitHub Release exists to test against); the first real release tag pushed after
+  this lands is the first genuine proof.
+- **Three callers outside this unit's ownership are now broken and were not fixed here** (see this
+  session's own report for the exact diff each needs):
+  - `.github/workflows/ci.yml`'s `android` job — `:app:testDebugUnitTest` now fails outright
+    ("ambiguous... Candidates are: 'testFullDebugUnitTest', 'testPlayDebugUnitTest'"), and
+    `:app:assembleDebug`'s own APK now lands at `app/build/outputs/apk/full/debug/app-full-debug.apk`,
+    not `app/build/outputs/apk/debug/app-debug.apk` (the AAPT badging check and the
+    `actions/upload-artifact` step both read the old path).
+  - `.github/workflows/emulator.yml` — `:app:connectedDebugAndroidTest` is now ambiguous the same
+    way.
+  - `tools/ui-audit/install.ps1` — `:app:assembleDebug` still runs (now building both flavors,
+    wasting time) but its `Get-ChildItem app\build\outputs\apk\debug` glob finds nothing, since that
+    directory no longer exists.
+  - (Lower-severity, prose only, not verified to break anything executable) `RELEASING.md`,
+    `README.md` and `docs/ui-fix-session-prompt.md` still describe the pre-flavor task names.
+
 ### 57b69260 — build plan: add P22-P32 (Waves G-K) for the D42-D50 governance backlog
 
 **Scope:** documentation only — `spec/build-plan.md`. No Kotlin, Gradle, resources or Python
