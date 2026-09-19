@@ -72,6 +72,22 @@ public fun SettingsRootScreen(
                         subLine = row.subLine,
                     )
                 }
+                // P27 (NFR-6d, AC-167): the one new row this unit's file-ownership map allows here —
+                // `SettingsPolling.root` (unowned this unit) builds every other row dynamically;
+                // this one is fully static (a bundled asset list, no live state to poll), so it is
+                // appended directly to the "About" section's own rows rather than added to that
+                // file. Placed here, not in `SettingsAboutScreen.kt` (also unowned this unit), so the
+                // licence-notices screen is reachable straight from the Settings root, one tap below
+                // "Offline radio transcriber" — the same section a reader already looks in for
+                // "Licences" (`Settings-About.dc.html`'s own row, still shown there as a plain fact).
+                if (section.label == "About") {
+                    NavRow(
+                        rowTitle = "Licences",
+                        onClick = { onOpen(SettingsScreenId.LICENSES) },
+                        icon = iconFor(SettingsScreenId.LICENSES),
+                        subLine = "Third-party notices · read offline",
+                    )
+                }
             }
         }
     }
@@ -109,6 +125,9 @@ internal fun iconFor(screen: SettingsScreenId): ImageVector = when (screen) {
     // row (and seeded directly for the tour) — it never appears as its own row in this root list,
     // so this branch exists only to keep `iconFor` exhaustive over `SettingsScreenId`'s closed set.
     SettingsScreenId.MODE -> SettingsInputAndLevelIcon
+    // P27: no bespoke glyph exists for this row either — reuses the same TIER/ABOUT fallback rather
+    // than inventing one in a file (`OrtIcons.kt`) this unit does not own.
+    SettingsScreenId.LICENSES -> OrtIcons.settings
 }
 
 /** A tinted status dot for a settings sub-screen row (`Settings-Capture`/`Settings-Rig`'s green/

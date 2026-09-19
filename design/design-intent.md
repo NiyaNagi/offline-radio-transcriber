@@ -207,6 +207,7 @@ phone, improve it at home.
 | CF08 | `Settings-Contribute.dc.html` | Corpus contribution consent. States exactly what never leaves the device | **FR-CON-1..8, constitution III** | Per-category consent. Nothing on by default | drawn + built |
 | CF09 | `Settings-Diagnostics.dc.html` | Diagnostic bundle contents, shown before it is produced | FR-OBS-1..5a | `Preview bundle`. `Save` | drawn + built — **accepted deviation**: `Preview` is an in-app listing of the bundle entries with real sizes rather than opening each file in an external reader (R-137); `Save` writes the real zip through the system file picker |
 | CF10 | `Settings-About.dc.html` | Version, build, licences, the offline promise | — | — | drawn + built — **accepted deviation**: no ONNX Runtime or usb-serial-for-android version lines — the runtime ships inside sherpa-onnx and the serial library is not a dependency of this build (R-138) |
+| CF12 | `Settings-Licenses.dc.html` | Third-party licence notices — every bundled model and library with a notice obligation, each reachable and fully readable offline | **NFR-6d, AC-167**, FR-AST-14 | Each row → its own full licence text, in place. `Back` returns to the list | drawn + built (P27) |
 
 ---
 

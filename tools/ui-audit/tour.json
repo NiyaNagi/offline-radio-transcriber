@@ -129,6 +129,8 @@
     { "id": "overnight/CF08-settings-contribute", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CONTRIBUTE" } },
     { "id": "overnight/CF09-settings-diagnostics", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "DIAGNOSTICS" } },
     { "id": "overnight/CF10-settings-about", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ABOUT" } },
+    { "id": "overnight/CF12-settings-licenses", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "LICENSES" } },
+    { "id": "overnight/CF12-settings-licenses@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "LICENSES" }, "fontScale": 2.0 },
 
     { "id": "overnight/D01-confirmed", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "confirmed" } },
     { "id": "overnight/D02-inferred", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "inferred" } },

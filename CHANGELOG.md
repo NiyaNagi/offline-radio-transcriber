@@ -32,6 +32,76 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (P27: third-party licence notices screen)
+
+### (pending — recorded in a follow-up commit once this one exists) — P27: third-party licence notices screen (NFR-6d, AC-167)
+
+**Scope:** `:app` — a new `ui/settings/SettingsLicensesScreen.kt`; one new `SettingsScreenId` entry
+in `ui/settings/SettingsViewData.kt`; one new router branch in `ui/settings/SettingsContent.kt`; one
+new row appended in `ui/settings/SettingsRootScreen.kt`; nine bundled licence-text assets under
+`app/src/main/assets/licenses/`; test additions in `SettingsRootScreenTest.kt`/`SettingsContentTest.kt`
+plus three new test files. Also `tools/ui-audit/tour.json` (two new steps), `design/design-intent.md`
+(a new CF12 row) and a new artboard, `design/canvas/Settings-Licenses.dc.html`.
+
+**Requirements/ACs:** NFR-6d, AC-167, FR-AST-14's notices clause.
+
+**What changed:** A real, navigable Settings > Licences screen. `SettingsRootScreen` appends a
+static "Licences" row immediately after the "About" section's own row — that row is not one of
+`SettingsPolling.root`'s dynamic sections (this unit does not own `SettingsPolling.kt`), so it is a
+literal addition inside the one file this unit's own file-ownership map names for a "row". The
+screen lists nine bundled dependencies — Gemma 3 1B, Whisper tiny.en, sherpa-onnx, ONNX Runtime,
+Silero VAD, MediaPipe, usb-serial-for-android, AndroidX and Kotlin — each verified against its own
+published licence source (below); tapping one opens its full text, read from a bundled app asset via
+`Context.assets` only, never `:net`. `BundledLicenceNotices.BUNDLED_ASSET_NOTICES` maps every
+`bundled-assets.json` id to the notice covering it, and a new `SettingsLicensesCoverageTest` walks the
+real, generated `org.ort.app.assets.GeneratedBundledAssetManifest` against that map, so a future
+model shipped with no matching notice entry fails a test rather than shipping silently. Added tour
+steps `overnight/CF12-settings-licenses` and its `@2x` variant, a `CF12` design-intent row, and a new
+artboard (`Settings-Licenses.dc.html`, since none existed for this screen before).
+
+Licence verified per component, from the dependency's own published licence source, not guessed:
+- **Gemma 3 1B** — Gemma Terms of Use (`ai.google.dev/gemma/terms`); the notice sentence and the
+  use-restriction pass-through are quoted from that agreement's own redistribution clause.
+- **Whisper tiny.en** — MIT, verbatim from `github.com/openai/whisper`'s own `LICENSE` (Copyright (c)
+  2022 OpenAI).
+- **sherpa-onnx** — Apache License 2.0, from `github.com/k2-fsa/sherpa-onnx`'s own `LICENSE`.
+- **ONNX Runtime** — MIT, from `github.com/microsoft/onnxruntime`'s own `LICENSE` (bundled inside
+  sherpa-onnx's own Android release tarball per `sherpa-native.json`, not a separate Gradle
+  dependency of this build).
+- **Silero VAD** — MIT, from `github.com/snakers4/silero-vad`'s own `LICENSE` (Copyright
+  2020-present, Silero Team).
+- **MediaPipe** — Apache License 2.0, from `github.com/google-ai-edge/mediapipe`'s own `LICENSE` — a
+  real `:llm-mediapipe` dependency (`com.google.mediapipe:tasks-genai`).
+- **usb-serial-for-android** — MIT, verbatim from `github.com/mik3y/usb-serial-for-android`'s own
+  `LICENSE.txt` (Copyright (c) 2011-2013 Google Inc., Copyright (c) 2013 Mike Wakerly) — a real
+  `:rig-usb` dependency (confirmed by reading `rig-usb/build.gradle.kts`; `Settings-About.dc.html`'s
+  own CF10 row's "not a dependency of this build" note is stale as of WPB/P19).
+- **AndroidX** and **Kotlin** — both Apache License 2.0, the standard notice for the AndroidX/Jetpack
+  libraries and the Kotlin standard library this build actually links.
+
+Hilt/Dagger, named in `AGENTS.md`'s own stack list, is deliberately **not** listed: a repo-wide
+search (`grep -ri hilt`/`dagger`) found no module that actually depends on it — a notice for a
+library this build does not ship would itself be a constitution I violation.
+
+**Verified:** `.\gradlew.bat :app:ktlintCheck :app:detekt` green. `.\gradlew.bat :app:testDebugUnitTest
+--tests "org.ort.app.ui.settings.*"` green — every pre-existing test in the package plus this unit's
+additions (`SettingsLicensesScreenTest`, `SettingsLicensesCoverageTest`, `SettingsLicensesScreenLayoutTest`,
+and new cases in `SettingsRootScreenTest`/`SettingsContentTest`), 28 new/changed tests total. Two key
+tests shown to discriminate: `SettingsLicensesCoverageTest`'s coverage test — reverted (dropped the
+`LLM_GEMMA3_1B` mapping), confirmed red with `AssertionError: ... missing: [LLM_GEMMA3_1B]`, then
+restored and green; the root-to-Licences navigation tests in `SettingsRootScreenTest`/
+`SettingsContentTest` — reverted (disabled the row-append `if`), confirmed both red, then restored
+and green.
+
+**Left open / not done:** the tour itself was not run against an emulator/device this session (out of
+scope per this unit's own instructions) — the two new `tour.json` steps are untested against a real
+capture. The new artboard is a first draft, not lead-reviewed against the register. `python
+tools/spec-check/spec_check.py` was not re-run this session; worth confirming before merge, since a
+new NFR-6d/AC-167 citation and a new design-intent row were added. Hilt/Dagger's absence is
+deliberate, not an oversight — revisit if it is ever actually added as a real dependency.
+
+---
+
 ## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
 
 ### 57b69260 — build plan: add P22-P32 (Waves G-K) for the D42-D50 governance backlog
