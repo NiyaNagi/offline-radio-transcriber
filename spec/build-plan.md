@@ -399,6 +399,454 @@ The prompts below are the summaries; the plan is authoritative where they differ
   overs; CF04's toggle disables and releases; the digest with the engine off is byte-identical to
   today's; `dependencyRules` still forbids `:capture-*` → `:llm-*`.
 
+**Wave G through K — the 2026-09-19 governance session's backlog (D42-D50).** *Added 2026-09-19,
+after constitution 2.0.0 and the matching spec amendment (commit `d58ed8fd`, merged `2c17934a`)
+landed nine decisions in one sitting: setup must actually finish (D43), models need a real
+distribution story (D43/D44), the voice-correction copy has been lying since v0.1.1 (D45),
+analytics exists now (D42/D48), and live alerts are promoted off the backlog. None of this depends
+on M4's fork — it is orthogonal build-plan debt the governance session surfaced, not new product
+scope invented here.* **Read first, every unit:** `.specify/memory/constitution.md` 2.0.0
+(Principles I, V, VII, VIII bind almost everything below), `AGENTS.md`'s "Rules that are not
+negotiable", and `spec/functional-spec.md` D42-D50 in §3, plus each unit's own citations below.
+
+**Wave order.** Five waves, eleven units, P22-P32. **Wave G** (P22-P27, six units) is mutually
+disjoint and needs only Wave F. **Waves H-K exist because a hot file is already spoken for
+earlier in the sequence, not because of any functional dependency**: `TransmissionDetailScreen.kt`
+goes to P26 in Wave G, so P29's relabelling (which also touches it) waits for Wave H.
+`SettingsViewData.kt` (the `SettingsScreenId` enum), `SettingsContent.kt` (the router) and
+`SettingsRootScreen.kt` (the menu) are claimed once per wave — P27 in G, P28 in H, P30 in I, P31 in
+J — because every one of the four screens they add (licence notices, analytics tiers, export/
+restore, alerts) needs a row, an enum case and a router branch in those same three files, and a
+builder adding a case cannot be concurrent with another builder adding a different case to the
+same `when`. **Wave K** (P32, accessibility) touches nearly every screen in the app by nature, so
+it is alone, last, and needs every screen change above already landed. Within a wave, order is
+free.
+
+**Wave G — six mutually disjoint units. Needs only Wave F.**
+
+- [ ] **P22 · Setup completes everything** *(`:app` — `ui/setup/**`, `ui/data/ModelsViewData.kt`,
+  a new WorkManager job)* — D43, FR-AST-10..12.
+
+  **Read first:** `spec/functional-spec.md` FR-AST-3 (amended), FR-AST-10..12, NFR-6, NFR-6c,
+  AC-184..190; `app/src/main/kotlin/org/ort/app/ui/setup/SetupStateMachine.kt`,
+  `SetupStep.kt`, `ReadyScreen.kt`, `OvernightScreen.kt`; `net/src/main/kotlin/org/ort/net/ModelAcquisition.kt`
+  (P18's fetch/verify/atomic-rename primitives — do not reimplement them); `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt`
+  (`ModelsController.download()`, already wired for the Settings > Assets screen, per P18's
+  follow-up). Constitution I (READY must not lie), IV (background survival), V (Wi-Fi-only,
+  no network during capture), VII (the gate is structural).
+
+  **Owns:** `app/src/main/kotlin/org/ort/app/ui/setup/**` (a new `MODELS` `SetupStep`, a new
+  jurisdiction/consent notice step for NFR-6c, the `ReadyScreen.kt` hard gate, `OvernightScreen.kt`'s
+  heartbeat-based return), `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (extend
+  `ModelsController.download()`'s existing call path for the setup step; do not change its
+  Settings-screen behaviour), a new `app/src/main/kotlin/org/ort/app/work/ModelDownloadWorker.kt`
+  (foreground `WorkManager` job, Wi-Fi-only by default, per-download override). **Must not touch:**
+  `ui/settings/**`, `ui/navigation/OrtNavHost.kt`, `:net`'s public API (call it, do not change it),
+  `:pipeline`.
+
+  **Tests first:** `AC_184` the MODELS step downloads a missing required model through
+  `ModelAcquisition` as a foreground `WorkManager` job; `AC_185` a killed-and-relaunched download
+  resumes rather than restarting; `AC_186` a sha256 mismatch rejects and re-queues, never
+  activates; `AC_187` Wi-Fi-only by default, overridable per download; `AC_188` READY is
+  unreachable while any required model is missing/unverified **or** the mic/level check has not
+  passed — both conditions, together; `AC_189` the battery-exemption step recurs on every launch
+  until the heartbeat proves survival, even when the OS reports the exemption already granted;
+  `AC_166` the jurisdiction/consent notice shows exactly once, on first run, and blocks capture
+  until dismissed.
+
+  **Ships with it:** a fake `ModelDownloadWorker`/`WorkInfo` source so `ReadyScreen`'s gate is
+  tested without a real `WorkManager` test harness dependency on every run.
+
+  **Done when:** AC-166, AC-184..189 hold; a fresh install with networking disabled on the `full`
+  variant still reaches READY (nothing here narrows P20's guarantee); this touches no `*Screen`/
+  `*Content`/`*ViewState` outside `ui/setup/**`, so the visual re-verification (constitution VIII)
+  is scoped to the setup tour steps only — capture them at 1.0 and 2.0.
+
+- [ ] **P23 · Download manifest, model mirror and the two build variants** *(`buildSrc`,
+  `bundled-assets.json`, `app/build.gradle.kts`, `.github/workflows/release.yml`, `docs/`)* —
+  D43, D44, FR-AST-13, FR-AST-14.
+
+  **Read first:** FR-AST-13, FR-AST-14, D43, D44; `buildSrc/src/main/kotlin/ort.android-app.gradle.kts`
+  (`generateBundledAssetCatalog`, `fetchBundledAssets`) and `buildSrc/src/main/kotlin/org/ort/gradle/FetchBundledAssetsTask.kt`
+  — the existing build-time bundling path this unit extends, not replaces; `bundled-assets.json`'s
+  own top-of-file `note` block, which already states the URL/sha256/size/destination/tiers/gated
+  shape FR-AST-14 wants for the mirror too. Constitution V, VII.
+
+  **Owns:** `buildSrc/**` (a new mirror-publish task, e.g. `PublishModelMirrorTask`, alongside the
+  existing `FetchBundledAssetsTask`), `bundled-assets.json` (extended per-entry with whatever the
+  `play`-variant download URL needs — the mirror's own `models-v1` release asset URL, distinct
+  from each entry's existing build-time source URL), `app/build.gradle.kts` (two product flavors,
+  `full` and `play`), `.github/workflows/release.yml` (a step that uploads the asset set to a
+  `models-v1` tag on this repository), new `docs/privacy-policy.md` and a Play Data Safety answer
+  sheet (`docs/play-data-safety.md`), an FGS-type-declaration check in
+  `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt`. **Must not touch:** any file under
+  `app/src/main/kotlin/org/ort/app/ui/**`, `app/src/main/AndroidManifest.xml` (use flavor source
+  sets — `app/src/full/`, `app/src/play/` — if a variant genuinely needs a manifest difference),
+  `:net`.
+
+  **Tests first:** a `buildSrc` unit test that the `play` flavor's generated catalog carries a
+  download URL and sha256 per required-tier model while the `full` flavor's does not need one
+  (both still carry the build-time bundling fields); `AC_190` installing each variant and
+  comparing its setup flow — `full` never reaches a model-download step, `play` does; `AC_191` a
+  manifest entry's sha256 mismatch against the actually-downloaded bytes is rejected; a
+  `dependencyRules`-style guard (or a `buildSrc` test) that `bundled-assets.json` stays
+  byte-sorted/deterministic (constitution: generated files must be byte-identical wherever
+  generated).
+
+  **Ships with it:** nothing model-bearing — this is distribution plumbing. A fixture-sized
+  `bundled-assets.json` fixture for the `buildSrc` tests, per "no unit test reads a real bundled
+  model."
+
+  **Done when:** AC-190, AC-191 hold; two build variants exist and both build in CI; the
+  `models-v1` mirror step is wired into `release.yml` (may run only on an actual release tag, not
+  every push — say so if that's the design); the privacy-policy and Data-Safety docs exist and
+  name the FR-ANL-14 sentence verbatim where they make a privacy claim at all.
+
+- [ ] **P24 · Automatic thread grouping after Pass B** *(new `:pipeline` threading package)* —
+  D45's own note names this as the thing v0.1.1 overclaimed; FR-SPK-5, AC-163..165.
+
+  **Read first:** FR-SPK-5 (amended, this session) and its "Amendment, this session" note in
+  full, FR-SPK-27..28 (net detection, advisory only), AC-163..165; `pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`
+  (where a transmission's Pass B closure is already recorded — the integration point) and
+  `data/src/main/kotlin/org/ort/data/entity/CatalogEntities.kt`'s `ThreadEntity` (already has
+  `kind`; `Transmission.threadId` already exists and is always `null` today — this unit is the
+  first thing that ever writes it). Constitution III (this runs after Pass B closes a
+  transmission, never re-segments, never touches audio), IV (`:capture-*` boundary).
+
+  **Owns:** a new `pipeline/src/main/kotlin/org/ort/pipeline/threading/**` package (frequency
+  continuity + inter-transmission gap grouping, net-sequence detection per FR-SPK-27, scanner-
+  activity grouping), one narrow, named integration point in
+  `pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`: a single call to the
+  new grouper immediately after a transmission's Pass B result is recorded, passing frequency,
+  timestamp and rig-channel-continuity — no other line in that file. **Must not touch:**
+  `:capture-*`, `:segment` (Principle III — thread grouping is not segmentation and must not
+  become a second place boundaries are decided), `:data`'s schema (no migration — `threadId` and
+  `Thread.kind` already exist), `:app`.
+
+  **Tests first:** `AC_163` an ordinary two-station QSO threads automatically into one `Thread`
+  record end to end against a tape containing one; `AC_164` a detected net's check-in sequence
+  threads into one `Thread` marked `net`, and the thread exists **whether or not** the net marking
+  is ever set or cleared (FR-SPK-28 — marking is advisory, never structural); `AC_165` scanner
+  activity on one channel over a sustained period threads automatically, and grouping runs
+  **immediately after Pass B closes each transmission**, not waiting on a transcript — assert this
+  by grouping a transmission whose Pass B (transcript) never completes and confirming it still
+  joins its thread by frequency/gap alone.
+
+  **Ships with it:** a scriptable fake transmission-closure feed (reuses `:testing`'s existing
+  clock injection, FR-TST-2) so gap-threshold behaviour is tested without wall-clock waits.
+
+  **Done when:** AC-163..165 hold; `RELEASES.md`'s `## Unreleased` correction (already recorded in
+  the governance commit) is now true rather than aspirational; `dependencyRules` still shows no
+  `:pipeline/threading` edge into `:capture-*` or `:segment`.
+
+- [ ] **P25 · VAD fallback disclosure** *(`:app` — `LiveBar.kt`, `LiveBarPolling.kt`, a session
+  record)* — D50, Q22 closed, FR-SEG-10.
+
+  **Read first:** D50, FR-SEG-10 (already built at the data layer — `core/src/main/kotlin/org/ort/core/capture/VadDetectorKind.kt`,
+  `TransmissionEntity`/`SessionEntity`'s existing fields, `pipeline/src/main/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLog.kt`'s
+  `vad_stats` line, all already tested per `RealSegmentSinkTest`/`RealCaptureServiceTest`), AC-162
+  (the data-layer AC this session's UI half was never built for). This unit is UI-only: the
+  detector identity already reaches the database and the debug dump; it has never reached a
+  screen. Constitution I (a fallback used silently is exactly the thing Uncertainty Is Content
+  forbids).
+
+  **Owns:** `app/src/main/kotlin/org/ort/app/ui/components/LiveBar.kt` and
+  `app/src/main/kotlin/org/ort/app/ui/data/LiveBarPolling.kt` (a chip, shape-distinct per
+  constitution VII's accessibility floor, shown whenever the active session's VAD detector is not
+  the FR-SEG-1 one), `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionScreen.kt` and
+  `RecordingSessionViewStateMapper.kt` (a durable per-session line naming which detector produced
+  that session's boundaries — the "session record" the disclosure survives to, not only a live
+  chip that disappears when the session ends). **Must not touch:** `ui/navigation/OrtNavHost.kt`,
+  `ui/screens/TransmissionDetailScreen.kt`, `ui/settings/**`.
+
+  **Tests first:** a live session using the fallback detector shows the chip; a live session using
+  the FR-SEG-1 detector does not; the session review screen names the real detector for a past
+  session regardless of which one produced it, sourced from the existing `vad_stats`/entity
+  fields, never a guess; the chip and the session line never disagree for the same session in a
+  test that drives both from one fixture.
+
+  **Done when:** the disclosure is visible live and after the fact, from data this build already
+  records; captured again by the tour at 1.0/2.0 for `Now` and the session-review screen
+  (constitution VIII — this touches `*Content`/`*ViewState` files).
+
+- [ ] **P26 · Playback stops on navigation, plus five small defects** *(`:app` — navigation,
+  transport bar, several screens; `:asr-sherpa` KDoc)* — R-1006, AC-168, R-1074, R-1079, R-1080,
+  R-1012, and the known-red `ImproveDestinationStatePreservationTest`.
+
+  **Read first:** AC-168 and FR-UI-5; `results/ui-audit/register.md` rows R-1006 (open — note its
+  own history: fixed once as a per-screen `DisposableEffect`, then **deliberately reversed** by
+  the C10 transport-bar work so playback survives navigation — AC-168 now asks for the original
+  behaviour back, at the transport-bar layer this time, not the per-screen layer that no longer
+  owns playback), R-1074, R-1079, R-1080, R-1012; `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`'s
+  `resolveTransportBarState`; `CHANGELOG.md`'s 2026-09-12 WPUI entries for exactly what the
+  reversal changed and why. Constitution VIII (screenshot over test), II (discrimination).
+
+  **Owns:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`,
+  `app/src/main/kotlin/org/ort/app/ui/components/TransportBar.kt`,
+  `app/src/main/kotlin/org/ort/app/ui/audio/TransportPlaybackController.kt`,
+  `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt`,
+  `app/src/main/kotlin/org/ort/app/ui/audio/RealTransmissionAudioPlayer.kt` (R-1006/AC-168);
+  `app/src/main/kotlin/org/ort/app/ui/screens/NowContent.kt` and
+  `app/src/main/kotlin/org/ort/app/ui/data/ActivityPattern.kt` (R-1074 — reuse `SessionCoverageMapper`'s
+  real-gap-boundary fix from R-1069, do not re-derive it); `app/src/main/kotlin/org/ort/app/ui/screens/CaptureScreen.kt`
+  and `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingsScreen.kt`/`RecordingsViewData.kt`
+  (R-1079 — reuse R-1068's adaptive-unit formatter); `app/src/main/kotlin/org/ort/app/ui/failures/FailureHost.kt`
+  and `FailureBanners.kt` (R-1080); `asr-sherpa/src/main/kotlin/org/ort/asrsherpa/real/RealSherpaDecoder.kt`
+  (R-1012 — KDoc correction only, no behaviour change); the `ImproveDestinationStatePreservationTest`
+  suite under `app/src/test/kotlin/org/ort/app/ui/navigation/` (add `WorkManagerTestInitHelper`
+  initialisation). **Must not touch:** `ui/settings/**`, `ui/setup/**`.
+
+  **Tests first:** `AC_168` navigating away from a transmission detail view while its clip plays
+  stops playback, and returning does not auto-resume — written to discriminate against the C10
+  transport-bar behaviour specifically (fail with the bar's current "survives navigation" logic,
+  pass once it stops on a genuine leave); a same-screen switch to a different over's detail is
+  distinguished from a genuine leave if the artboard still wants that case to survive (check
+  `design/canvas/Detail-Playback.dc.html` before assuming AC-168 wants both); a 22-minute gap in a
+  3-hour `Now` session never hatches more than 22 minutes of the bar (R-1074); an archive/recording
+  card with a small non-zero byte count never rounds to `0.0 GB` (R-1079); the failure banner's
+  border closes on all four sides with the collapse chevron present (R-1080);
+  `ImproveDestinationStatePreservationTest` passes with `WorkManagerTestInitHelper` initialised in
+  its harness (show it red without the init, green with it — constitution II).
+
+  **Ships with it:** nothing new — every fake this touches already exists.
+
+  **Done when:** AC-168 holds and is reconciled with whatever `Detail-Playback.dc.html` actually
+  shows for the same-screen-switch case (**decide this explicitly and record it in the register
+  row**, since it reverses a deliberate prior decision — do not silently re-reverse without
+  saying so); R-1074/1079/1080/1012 close on evidence; `ImproveDestinationStatePreservationTest`
+  is green in CI; recaptured by the tour at 1.0/2.0 for `Now`, `Capture`, `Recordings`,
+  Transmission Detail and any screen with a failure banner.
+
+- [ ] **P27 · Third-party licence notices screen** *(`:app` — a new Settings screen)* — NFR-6d,
+  AC-167.
+
+  **Read first:** NFR-6d, AC-167, FR-AST-14's own notices clause (Gemma's redistribution
+  requirement in particular); `app/src/main/kotlin/org/ort/app/ui/settings/SettingsRootScreen.kt`,
+  `SettingsContent.kt`, `SettingsViewData.kt` (the `SettingsScreenId` enum this adds exactly one
+  case to). Constitution V (NFR-6b licensing), VII.
+
+  **Owns:** a new `app/src/main/kotlin/org/ort/app/ui/settings/SettingsLicensesScreen.kt`, **one**
+  new `SettingsScreenId` entry in `SettingsViewData.kt`, **one** new row in
+  `SettingsRootScreen.kt`, **one** new `when` branch in `SettingsContent.kt` — this is the narrow,
+  named integration point every other Settings-adding unit this wave-set also gets; touch nothing
+  else in those three files. Bundled licence text for Gemma, Whisper, sherpa-onnx, ONNX Runtime,
+  Silero and any other bundled component with a notice obligation, stored as app assets reachable
+  offline. **Must not touch:** any other `SettingsScreenId` case, `OrtNavHost.kt` (Settings
+  sub-screens route through `SettingsContent.kt`'s own router, not the nav host).
+
+  **Tests first:** `AC_167` the licence-notices screen lists Gemma, Whisper, sherpa-onnx, ONNX
+  Runtime and Silero, each reachable and its full text readable, with the device's network
+  disabled (a Robolectric/instrumented test that airplane-modes or simply never touches `:net`).
+
+  **Done when:** AC-167 holds; recaptured by the tour at 1.0/2.0; the register's design inventory
+  gains this screen if `design/design-intent.md` does not already list one for it (Principle
+  VIII's "every screen in the inventory must have an artboard" — draw one first if it is missing).
+
+**Wave H — needs Wave G** (`TransmissionDetailScreen.kt` released by P26; the Settings hot files
+released by P27; P22's setup steps released for P28 to extend).
+
+- [ ] **P28 · Analytics — `:telemetry`, `:net`'s uploader, `:app`'s tiers, and the ingest tooling**
+  *(new `:telemetry`, `:net`, `:app` Settings/setup/crash-capture, `tools/analytics/`)* — D42,
+  D48, D49, FR-ANL-1..14, AC-172..183. Needs Wave G (P26/P27 must have released
+  `TransmissionDetailScreen.kt` and the Settings hot files first).
+
+  **Read first:** the whole of §7.13d FR-ANL-1..14, D42, D48, D49 (private destination before
+  public launch, 90-day retention), AC-172..183; `spec/technical-design.md`'s `:telemetry` module
+  entry and dependency table (§2, already amended: `:telemetry` depends on `:core` only, and
+  `:capture-*` ↔ `:telemetry` is a forbidden edge both ways); `net/src/main/kotlin/org/ort/net/NetCapability.kt`
+  (the two existing token kinds — this adds a third); `settings.gradle.kts` (this module does not
+  exist yet — add it). Constitution V (this is the fourth declared channel), VI (provenance),
+  VII (structural boundary — `:capture-*` must never see `:telemetry`).
+
+  **Owns:** `settings.gradle.kts` (add `:telemetry`), a new `:telemetry` module in full (event
+  schema per tier's closed field list, provenance envelope per FR-ANL-8, a bounded on-device
+  queue), `net/src/main/kotlin/org/ort/net/NetCapability.kt` (add `AnalyticsUpload`) and a new
+  `net/src/main/kotlin/org/ort/net/analytics/**` uploader gated on `ORT_ANALYTICS_ENDPOINT` (absent
+  means queue-only, per D48's self-hosted/build-configured destination), `buildSrc`'s
+  `DependencyRulesTask`/`ModuleGraph` (register `:telemetry`'s allowed edges and the forbidden
+  `:capture-*` edge both ways), `app/build.gradle.kts` (add the `:telemetry` dependency to `:app`),
+  `app/src/main/kotlin/org/ort/app/OrtApplication.kt` (crash/ANR capture wiring, queue start-up —
+  the one unit this wave-set that touches this file), a new
+  `app/src/main/kotlin/org/ort/app/ui/settings/SettingsAnalyticsScreen.kt` plus **one** new
+  `SettingsScreenId` case / row / router branch (this wave's turn at that integration point — see
+  P27's note), a new setup step offering tiers 2 and 3 in `app/src/main/kotlin/org/ort/app/ui/setup/SetupStep.kt`/`SetupStateMachine.kt`
+  (extending P22's now-landed MODELS/consent steps, not conflicting with them since P22 is already
+  merged), `tools/analytics/**` in Python (reference ingest server writing NDJSON, a DuckDB
+  loader, named queries, a report generator, `field`-fold separation, its own pytest suite, a CI
+  job, `.gitignore` entries for raw data). **Must not touch:** `:capture-*` in either direction,
+  `TransmissionDetailScreen.kt`, any other `SettingsScreenId` case.
+
+  **Tests first:** `AC_172` tier 1's exact field set uploads by default with no transcript/
+  callsign/name/station-knowledge/location; `AC_173`/`AC_174` tiers 2/3 off means their fields
+  never appear queued or uploaded; `AC_175` no tier combination ever carries a name, station
+  knowledge or sub-grid-square location; `AC_176` a payload is reproduced bit-for-bit by
+  recomputing from stored records, never a live entity serialisation; `AC_177` no analytics
+  network call during an active capture session (packet capture, alongside AC-59/AC-146);
+  `AC_178` the full FR-ANL-8 provenance envelope on every event; `AC_179` three toggles, each
+  matching FR-ANL-2..4's own language, tier 2/3 off takes effect immediately; `AC_180` setup
+  explains tier 1 and offers 2/3 unchecked, declining leaves everything else working; `AC_181`
+  install-id reset purges the destination's rows for the old id; `AC_182` rows land only in the
+  `field` fold; `AC_183` the bounded queue drops oldest-first with no measurable capture impact.
+
+  **Ships with it:** a `FakeAnalyticsUploader` that can be told to fail, queue, or drop (constitution
+  II); `tools/analytics/`'s own fixture NDJSON for its pytest suite.
+
+  **Done when:** AC-172..183 hold; `dependencyRules` shows `:telemetry` with no edge to or from
+  `:capture-*`; `tools/analytics/`'s CI job is green; the private-destination-before-public-launch
+  condition from D49 is recorded as a release gate somewhere reachable (RELEASING.md or the
+  release workflow itself), not just in this prompt.
+
+- [ ] **P29 · D45 relabel — "same voice" becomes "same callsign"; `CatalogDao.allVoiceprints()`**
+  *(`:app` correction UI, `:data`)* — D45, FR-SPK-5's own amendment note.
+
+  **Read first:** the D45 amendment note under "Persistent voice identity (D28)" and the note
+  under FR-SPK-5/FR-SPK-7 in full; `app/src/main/kotlin/org/ort/app/ui/data/CorrectionPolling.kt`'s
+  `CorrectionScope.EVERY_OVER_SAME_VOICE` and every call site (`TransmissionDetailScreen.kt`,
+  `app/src/main/kotlin/org/ort/app/ui/screens/CorrectionSheet.kt`); `data/src/main/kotlin/org/ort/data/dao/CatalogDao.kt`;
+  `app/src/main/kotlin/org/ort/app/fieldreport/bundle/VoiceprintEmbeddingsProducer.kt`'s own
+  documented gap ("cannot reach a voiceprint never bound to a station because `:data` has no query
+  for it" — register R-1010's "left open" note). Constitution I (never assert a claim the data
+  cannot back — the UI has been describing voice-based propagation it does not do).
+
+  **Owns:** `app/src/main/kotlin/org/ort/app/ui/data/CorrectionPolling.kt` (rename/relabel the
+  scope and its user-facing copy to "every over with the same callsign," matching what it actually
+  does), `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt` and
+  `CorrectionSheet.kt` (the copy sites, not the playback logic P26 already changed — coordinate by
+  reading P26's landed diff first, since this is a later wave), `data/src/main/kotlin/org/ort/data/dao/CatalogDao.kt`
+  (add `allVoiceprints()`), `app/src/main/kotlin/org/ort/app/fieldreport/bundle/VoiceprintEmbeddingsProducer.kt`
+  (use the new query to reach an unbound voiceprint). **Must not touch:** `ui/navigation/**`,
+  `ui/settings/**`, the playback/transport-bar code P26 owns.
+
+  **Tests first:** every user-facing string that says "voice" in the correction-scope context now
+  says "callsign," asserted on the real string content this once (constitution II's usual
+  "never assert on prose" applies to *wording a designer might change*, not to a factual claim
+  about *what propagates* — this test asserts the latter: no user-facing text implies voice-based
+  propagation where callsign-based propagation is what runs); `CatalogDao.allVoiceprints()`
+  returns every voiceprint including ones with no `boundStationId`; `VoiceprintEmbeddingsProducer`
+  now includes a previously-unreachable unbound voiceprint in its output.
+
+  **Done when:** no UI surface describes "same voice" propagation; `allVoiceprints()` is real and
+  used; recaptured by the tour wherever the correction sheet is reachable.
+
+**Wave I — needs Wave H** (the Settings hot files released by P28).
+
+- [ ] **P30 · Export completion — POTA, the share sheet, and restore** *(`:app` export/backup,
+  `:pipeline` export, `AndroidManifest.xml`)* — FR-EXP-7, FR-STO-6, FR-STO-9, AC-170, AC-171.
+  Needs Wave H (the Settings hot files pass to this unit next).
+
+  **Read first:** FR-EXP-7, FR-STO-6, FR-STO-9, AC-170, AC-171; `app/src/main/kotlin/org/ort/app/export/ExportCoordinator.kt`
+  (`buildPotaActivity` already exists and is unwired — do not rewrite it, wire it),
+  `pipeline/src/main/kotlin/org/ort/pipeline/export/PotaActivityExportWriter.kt`,
+  `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt` (`ExportFileFormat`'s
+  closed enum — POTA needs a new case or its own action, matching the artboard);
+  `app/src/main/kotlin/org/ort/app/diagnostics/localsave/LocalSaveBundleBuilder.kt` (the existing
+  *diagnostics* save/write path — FR-STO-6's full database-and-audio bundle is a different thing
+  with a different purpose and must not be confused with it or built by extending it). Constitution
+  III ("nothing is deleted quietly" — a restore conflict is shown, never auto-resolved).
+
+  **Owns:** `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt` (POTA wiring,
+  the share-sheet action for a digest/thread transcript/single over's audio), a new
+  `app/src/main/kotlin/org/ort/app/backup/**` package (`BackupBundleBuilder`/`BackupRestoreCoordinator`
+  — FR-STO-6's full database+audio export and FR-STO-9's restore, genuinely new, not a rename of
+  `LocalSaveBundleBuilder`), a new `SettingsBackupScreen.kt` (or a Restore action inside
+  `SettingsStorageScreen.kt` — pick one and say why), **one** new `SettingsScreenId` case/row/
+  router branch if a new screen is added, `app/src/main/AndroidManifest.xml` (a `FileProvider`
+  entry — none exists today), a new `res/xml/file_paths.xml`. **Must not touch:** `ExportCoordinator.kt`'s
+  existing ADIF/CSV/JSON/text paths beyond adding the POTA call, `LocalSaveBundleBuilder.kt`,
+  any other `SettingsScreenId` case.
+
+  **Tests first:** `AC_171` a digest, a thread transcript and a single over's audio clip each
+  share via the platform share sheet through the new `FileProvider`, and the shared file carries
+  no user-supplied station name, station-knowledge field or location beyond what the transcript
+  text itself already contains; a POTA export produces the same writer output
+  `PotaActivityExportWriter` already tests in isolation, now reachable from the screen;
+  `AC_170` restoring a bundle reproduces every session, correction and audio file from the source
+  device; a record conflicting with one already on the restoring device is shown to the operator,
+  never auto-merged or overwritten; nothing already present is deleted by a restore — and a
+  round-trip test (export from a seeded database, restore into an empty one, compare) proves it
+  rather than asserting each half separately.
+
+  **Ships with it:** a fake `FileProvider`-backed share target for the instrumented/Robolectric
+  test, and a fixture "conflicting record" pair for the restore test.
+
+  **Done when:** AC-170, AC-171 hold; the round-trip test passes; recaptured by the tour for
+  Settings > Export and the new restore surface at 1.0/2.0.
+
+**Wave J — needs Wave I** (the Settings hot files released by P30).
+
+- [ ] **P31 · Live alerts** *(new `:pipeline` alerts package, `:app` Settings)* — FR-ALR-1..6,
+  AC-192..197. Needs Wave I (the Settings hot files pass to this unit next).
+
+  **Read first:** §7.19 FR-ALR-1..6 in full, AC-192..197; `pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`
+  (the same Pass B closure point P24 already hooks — alerts fire from Pass B results, never a
+  Pass A partial, per FR-ALR-3); `app/src/main/kotlin/org/ort/app/ui/settings/SettingsRootScreen.kt`,
+  `SettingsContent.kt`, `SettingsViewData.kt`. Constitution IV (capture never waits on alert
+  evaluation), I (an `INFERRED` match must never read as heard).
+
+  **Owns:** a new `pipeline/src/main/kotlin/org/ort/pipeline/alerts/**` package (watch definitions
+  — callsign/keyword/frequency — matching against a resolved Pass B/D result, local notification
+  dispatch, its own notification channel created lazily on first use), a second narrow integration
+  point in `DataPassBResultSink.kt` (one call to the alert matcher after a transmission's
+  attribution is recorded — coordinate with P24's own call in the same file, both additive, not
+  overlapping lines), a new `app/src/main/kotlin/org/ort/app/ui/settings/SettingsAlertsScreen.kt`
+  plus **one** new `SettingsScreenId` case/row/router branch. **Must not touch:** `:capture-*`,
+  `app/src/main/kotlin/org/ort/app/OrtApplication.kt` (register the channel from inside the alerts
+  package itself, not the Application class), any other `SettingsScreenId` case.
+
+  **Tests first:** `AC_192` add/edit/delete a callsign, keyword and frequency watch from Settings;
+  `AC_193` no watch, match or firing event is ever transmitted off the device (packet capture
+  across a session firing all three kinds); `AC_194` a matching Pass A partial never fires an
+  alert, and a transmission later corrected away from the watched value at Pass B never does
+  either; `AC_195` capture is measurably unaffected while alert evaluation is stalled or slow —
+  no added pass-queue latency, no dropped audio; `AC_196` a `CONFIRMED` match's notification and
+  an `INFERRED` match's notification are visibly and textually distinct, and the `INFERRED` one
+  never states or implies the callsign was heard in that transmission; `AC_197` every watch is
+  visible and manageable from one screen.
+
+  **Ships with it:** a fake notification dispatcher so `AC_192`/`AC_196`/`AC_197` are testable off
+  a real Android `NotificationManager`, and a stalled-alert-matcher fake for `AC_195`.
+
+  **Done when:** AC-192..197 hold; `dependencyRules` shows no `:pipeline/alerts` edge into
+  `:capture-*`; recaptured by the tour for the new Settings screen.
+
+**Wave K — needs Waves G-J** (every screen this wave-set touched must already be in its final
+shape before an accessibility pass sweeps it).
+
+- [ ] **P32 · Accessibility pass — WCAG 2.2 AA, FR-A11Y** *(`:app`, every screen)* — FR-A11Y-1..6.
+  Last, deliberately, after every other screen change in this wave-set has landed.
+
+  **Read first:** FR-A11Y-1..6, constitution VII's accessibility-floor bullet, constitution
+  VIII in full (the device-dump discipline — "accessibility is judged on a device, never from the
+  test tree"); `results/ui-audit/register.md` for every still-open `polish`/accessibility-flavoured
+  row (R-1073's pattern — a shared component's touch target under 44dp affecting 29+ screens — is
+  the shape to look for first, since one component fix closes many rows at once).
+
+  **Owns:** content descriptions and touch-target fixes across `app/src/main/kotlin/org/ort/app/ui/**`
+  wherever `uiautomator` evidence shows a gap — this is the one unit in this wave-set allowed to
+  touch many screens at once, precisely because it runs after everything else and nothing after it
+  competes for the same lines. **Must not touch:** `:pipeline`, `:data`, `:net`, `:telemetry` — this
+  is a UI-surface-only pass.
+
+  **Tests first:** a `uiautomator` dump of each of the main reading screens (Now, Log, Detail,
+  Search, Settings root, and every screen this wave-set added: Licences, Analytics, Alerts,
+  Export/Restore) showing every interactive element with a real accessible name and a ≥44dp target;
+  TalkBack reading order asserted for the same screens (an ordered list of node labels, not a
+  screenshot); contrast checked against WCAG 2.2 AA for text and the four attribution-state
+  markers together (not just each marker in isolation — this is where a marker can pass alone and
+  fail beside its own label).
+
+  **Done when:** every screen this wave-set touched, plus the pre-existing main reading screens,
+  has current `uiautomator` evidence in the register; no interactive element lacks a content
+  description; nothing is below the 44dp floor; recaptured by the tour at 1.0 and 2.0 with the
+  device dumps attached to the register rows, per constitution VIII ("a test that passes is not
+  that evidence").
+
+**Manual, not a builder session (yours).** The hardware protocol H1-H15 and the labelled
+validation hour / dev-fold M3 measurement (`results/e2e-audit/checklist.md`,
+`docs/reference/labelling-protocol.md`) stay the operator's — no session here can drive a real
+TH-D75A or label a real tape unattended. Revisit after Wave G-K lands, since P22-P23 change what
+setup and model acquisition look like on the device H1-H15 exercises.
+
 **After the fork.** M6 identity and voice library · M7 rig · M8 streaming · M9 digest, station
 knowledge, contribution · M10 tiers and reprocessing · M11 reference levers. **Deliberately not
 decomposed** — M4 can delete Pass C, which changes what several of them contain. (M5 was on this
