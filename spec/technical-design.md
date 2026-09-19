@@ -68,7 +68,10 @@ Gradle multi-module, Kotlin, JVM toolchain 17, `compileSdk` current, `minSdk` 26
 :llm-api         [JVM]  on-device LLM contract — rescoring, digest prose, fakes   ← PURE
 :llm-mediapipe   [AND]  MediaPipe LLM Inference implementation (D36, FR-AST-3a)
 :pipeline        [AND]  pass orchestration, shed controller, tier detector, reprocess engine
-:net             [AND]  the ONLY module allowed an HTTP client. Asset download, QRZ (opt-in)
+:telemetry       [AND]  analytics event schema and on-device queue (D42, FR-ANL-1..14). Never
+                        depends on, and is never depended on by, `:capture-*`
+:net             [AND]  the ONLY module allowed an HTTP client. Asset download, QRZ (opt-in),
+                        analytics upload (D48, outside capture only)
 :eval            [JVM]  evaluation harness, corpus manifest, metrics, reliability diagrams  ← PURE
 :testing         [JVM]  fakes, fixtures, corpus loaders, deterministic seeds
 :app             [AND]  Compose UI, navigation, settings, onboarding, Hilt graph
@@ -78,7 +81,7 @@ The `-api` / `-impl` split exists for one reason: **the evaluation harness must 
 complete pipeline on a desktop JVM** (AC-35, AC-89). sherpa-onnx ships JVM bindings with
 native libraries for both desktop and Android, so `:asr-sherpa` is genuinely one code path;
 only `:capture-android`, `:rig-usb`, `:rig-bluetooth`, `:data`, `:llm-mediapipe`, `:pipeline`,
-`:net` and `:app` are Android-only.
+`:telemetry`, `:net` and `:app` are Android-only.
 The harness composes `:capture-api` (WAV source) + `:segment` + `:asr-sherpa` + `:lexicon` +
 `:identity` and never touches the Android modules.
 
@@ -97,8 +100,9 @@ build on violation):
 | `:llm-mediapipe` | `:core`, `:llm-api` |
 | `:data` | `:core` |
 | `:net` | `:core` |
-| `:pipeline` | `:core`, `:onnx`, `:capture-*`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:rig*`, `:data`, `:llm-api`, `:llm-mediapipe` |
-| `:app` | `:pipeline`, `:data`, `:net`, `:rig`, `:llm-api`, UI-facing APIs |
+| `:telemetry` | `:core` |
+| `:pipeline` | `:core`, `:onnx`, `:capture-*`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:rig*`, `:data`, `:llm-api`, `:llm-mediapipe`, `:telemetry` |
+| `:app` | `:pipeline`, `:data`, `:net`, `:telemetry`, `:rig`, `:llm-api`, UI-facing APIs |
 | `:eval` | `:core`, `:onnx`, `:capture-api`, `:segment`, `:asr-*`, `:lexicon`, `:identity`, `:rig`, `:llm-api`, `:testing` |
 
 `:onnx` exists because `:segment` cannot compile without it. Silero VAD arrives through
@@ -108,7 +112,10 @@ depend on `:asr-sherpa` also keeps rule 2 clean: VAD is not ASR, and capture-sid
 must not drag a transcription engine into its dependency graph.
 
 The forbidden edges that matter: `:capture-*` → `:asr-*` (rule 2), **anything → `:net` except
-`:app`** (rule 5), and `:lexicon` / `:eval` / `:core` → anything Android (rule 3).
+`:app`** (rule 5), `:lexicon` / `:eval` / `:core` → anything Android (rule 3), and — new with
+`:telemetry` (D42) — `:capture-*` → `:telemetry`: analytics is exactly the kind of thing capture
+must never block on or feed directly. `:pipeline` and `:app` are the modules that touch both
+`:capture-*` and `:telemetry`, and only after a pass has already closed.
 
 **Wave F (D34/D36, WP0') extends both named rules.** Rule 2 now also forbids `:capture-*` →
 `:llm-api` / `:llm-mediapipe`: an on-device LLM is inference exactly as much as ASR, the
@@ -1103,17 +1110,19 @@ NFR-6 and FR-OBS-5 are enforced structurally, not by policy:
    build otherwise (§2).
 2. No analytics, telemetry or crash-reporting dependency exists in any build variant,
    including debug. A build check greps the merged dependency graph for a denylist.
-3. Every `:net` entry point requires a **capability token**, and there are exactly two kinds:
-   `UserInitiated`, mintable only from a UI action (lexicon download, export, QRZ), and
-   `ContributionGrant`, mintable only while contribution is enabled **and** no capture session
-   is active (FR-CON-2). Neither is reachable from `:capture-*` or from pass execution in
-   `:pipeline`, so **"the capture and processing paths make no network call" remains a
-   type-level property**.
+3. Every `:net` entry point requires a **capability token**, and there are exactly three kinds:
+   `UserInitiated`, mintable only from a UI action (lexicon or model download, export, the share
+   sheet, QRZ), `ContributionGrant`, mintable only while contribution is enabled **and** no
+   capture session is active (FR-CON-2), and — new for D42/D48 — `AnalyticsUpload`, mintable only
+   while no capture session is active, regardless of which tiers are enabled (FR-ANL-7). None of
+   the three is reachable from `:capture-*` or from pass execution in `:pipeline`, so **"the
+   capture and processing paths make no network call" remains a type-level property**.
 
    *Draft 1.1 had only `UserInitiated`, which D25's automatic contribution contradicted
    outright. Splitting the token rather than relaxing the rule preserves the guarantee AC-59
    actually tests, and makes "never during capture" a compile-time shape instead of a runtime
-   check someone can forget.*
+   check someone can forget. `AnalyticsUpload` follows the same shape as `ContributionGrant`
+   rather than inventing a fourth pattern.*
 4. **Voiceprints, embeddings, station knowledge and user-supplied names are excluded from every
    outbound payload** (FR-SPK-20, FR-SPK-25, FR-DIG-13). Enforced by the contribution payload
    being *recomputed* from the FR-CON-3 closed set rather than serialised from an entity graph —

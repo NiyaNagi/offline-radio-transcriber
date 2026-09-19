@@ -37,27 +37,38 @@ labels are excluded from every outbound path.
 showed that the code then continues capture on an unspecified energy VAD. **FR-SEG-10** now requires
 every segment to record which detector cut it, and **Q22** asks whether capture should continue on
 such a detector at all, and how loudly the operator is told.
+
+**2026-09-19 update.** The product owner closed three questions in one session: **Q18 and Q19 by
+D49** — the field-report destination moves to a private repository before public launch, and an
+uploaded bundle's retention is 90 days — and **Q22 by D50** — the energy-VAD fallback is disclosed
+on the live bar and recorded on the session, never silent. The same session redefined
+constitution Principle V (**D42**, MAJOR bump to 2.0.0) to permit a tiered, closed-field analytics
+channel; moved model download into setup for a new slim `play` build variant (**D43, D44**);
+deferred the persistent voice library to post-1.0 (**D45**); fixed M4's fork timing to a
+post-1.0 dev-fold measurement (**D46**); confirmed 1.0 ships free (**D47**); and fixed the
+analytics destination as self-hosted and build-configured (**D48**). See spec §3 for all eight.
 ## Status, 7 September 2026 — the register is nearly empty
 
-**Closed:** Q3–Q11, Q13, Q14, Q15 and Q17, recorded as D19–D32 in spec §3. Q1 is closed but for
-three hardware verifications (VID/PID, command terminator, whether `AI` pushes `BY`) — see
-[`../docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md). **Q12 is settled by
-rule**: a reference-tier lever that does not measure on the eval fold is deleted, not disabled.
+**Closed:** Q3–Q11, Q13, Q14, Q15, Q17, Q18, Q19 and Q22, recorded as D19–D32, D49 and D50 in
+spec §3. Q1 is closed but for three hardware verifications (VID/PID, command terminator, whether
+`AI` pushes `BY`) — see [`../docs/reference/th-d75a-cat.md`](../docs/reference/th-d75a-cat.md).
+**Q12 is settled by rule**: a reference-tier lever that does not measure on the eval fold is
+deleted, not disabled.
 
-**Seven remain.** Two concern the same hour of audio; two more were opened by the field-report
-channel (D37, D38) and concern where it uploads to and how long what it uploads is kept; one more
-was opened when operator training labels were built, and one more when a missing VAD model turned out
-to switch capture to an unspecified detector, and one more when squelch fusion was built. Q20, opened by an audit of what `capture.log`
-actually contained against what FR-OBS-1 promised, is closed by D41:
+**Four remain.** Two concern the same hour of audio; one more was opened when operator training
+labels were built, and one more when squelch fusion was built. Q20, opened by an audit of what
+`capture.log` actually contained against what FR-OBS-1 promised, is closed by D41. **Q18 and Q19,
+opened by the field-report channel (D37, D38), are closed by D49**: the destination moves to a
+private repository before public launch, and an uploaded bundle's retention is 90 days. **Q22,
+opened when a missing VAD model turned out to switch capture to an unspecified detector, is
+closed by D50**: the fallback is disclosed on the live bar and recorded on the session, never
+silent.
 
 | # | Question | Why it is still open |
 |---|---|---|
 | **Q2** | Record the tape | Much smaller than it was — ~1 h of validation audio rather than 3–5 h of training data (§14A.3) — but it is the one thing no amount of specification substitutes for |
 | **Q16** | The labelling protocol | Gates labelling that hour. Also much smaller now: callsigns and speaker turns only |
-| **Q18** | Field-report destination | The repository is public today, by the product owner's own choice, "for now" — see D38. It closes when a gated upload happens against it, or the destination goes private, whichever comes first |
-| **Q19** | Uploaded bundle retention | Nothing yet says how long a field report survives at the destination, or who is responsible for deleting it |
 | **Q21** | May training labels leave the device? | Labels carry a third party's true callsign and a free-text note; the operator wants them for training, which may mean off-device. Excluded from every outbound path until decided |
-| **Q22** | Capture with the specified VAD unavailable | FR-SEG-1 and FR-SEG-7 cannot hold alongside constitution IV when the VAD model is missing; the code silently continues on an energy VAD. Recommended: continue, disclosed without a tap and recorded, and re-segment from the archive when possible |
 | **Q23** | Squelch fusion on the dual-band TH-D75A, and poll-only rigs | Overlapping transmissions on two bands are merged into one segment by a union rule; a rig without squelch push qualifies only if it polls within 250 ms. Neither was specified |
 
 Everything else that could be decided on paper has been decided. **Q14 stays closed**: the
@@ -522,7 +533,7 @@ cheapest possible insurance on the project's most expensive irreversible artifac
 
 ---
 
-### Q18 — Field-report destination · owner: product
+### Q18 — Field-report destination · **CLOSED** · owner: product
 
 **Question.** The field-report channel (D37) uploads to
 `github.com/NiyaNagi/offline-radio-transcriber`, verified public. Does that stay the
@@ -548,9 +559,16 @@ repository, before field reports are used for anything beyond this initial test.
 R19; this does not block building the client, only its routine use with the audio, voiceprint or
 screen-frame categories on.
 
+**Answer — D49.** The recommendation is taken: the destination moves to a **private repository
+before public launch**, and the destination becomes **build-configurable** rather than a literal
+constant, so which repository a build points at is a build-time decision, not a code change. The
+FR-OBS-10 visibility guard stays regardless of which repository is configured — a private
+destination removes the exposure R19 describes, but the guard is not withdrawn on the strength of
+that alone, since a build could still be misconfigured to point at a public one.
+
 ---
 
-### Q19 — Uploaded bundle retention · owner: product
+### Q19 — Uploaded bundle retention · **CLOSED** · owner: product
 
 **Question.** Once a field-report bundle reaches the destination repository, how long does it
 stay there, and who is responsible for removing it?
@@ -566,6 +584,11 @@ voiceprint is exactly the kind of thing FR-CON-5's guarantee exists for elsewher
 at minimum, whether an uploaded bundle is deleted once the defect it documents is closed, and
 whether that deletion is manual or scheduled. Until decided, treat every uploaded bundle as
 retained indefinitely at the destination.
+
+**Answer — D49.** **90 days.** Simpler than tying deletion to when the defect it documents
+closes, which would require tracking that link for every bundle; a fixed window needs no such
+bookkeeping and still bounds how long an uploaded recording, voiceprint or screen frame survives
+at the destination.
 
 ---
 
@@ -597,7 +620,7 @@ requirement should assume per-band segments.
 
 ---
 
-### Q22 — May capture continue when the specified VAD is unavailable? · owner: product
+### Q22 — May capture continue when the specified VAD is unavailable? · **CLOSED** · owner: product
 
 **Question.** FR-SEG-1 requires segmentation by Silero VAD (or TEN-VAD). When that model is
 unavailable, the code substitutes an RMS-energy VAD (`RealCaptureService.buildSegmenter`, register
@@ -625,6 +648,12 @@ CON-SEG-1's gap, and it is on by default, so a night cut by the fallback is usua
 than lost - provided every affected segment is marked, which FR-SEG-10 requires under any answer.
 Until decided, capture continues as it does today, FR-SEG-10 applies, and no requirement or acceptance
 criterion should assume either a loud disclosure or a stop.
+
+**Answer — D50.** Option (b), as recommended: capture continues on the fallback, and the fact
+that it is doing so is **disclosed on the live bar and recorded on the session, never silent**
+(Principle I). This is the disclosure half FR-SEG-10 always needed alongside its recording half —
+FR-SEG-10 already names which detector cut a segment; D50 is what makes that fact visible to the
+operator while it is happening, not only discoverable afterwards in the record.
 
 ---
 ### Q21 — May operator training labels ever leave the device? · owner: product
