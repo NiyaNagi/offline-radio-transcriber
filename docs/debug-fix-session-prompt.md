@@ -184,8 +184,8 @@ in single-quoted here-strings with no double quotes. A builder never touches the
 checklists, `results/ui-audit/` captures or memory; it reports and the lead files. Follow-up
 rounds go back to the same agent with `SendMessage` — its context is intact.
 
-Builders run scoped tests (`:app:testDebugUnitTest --tests '<package>.*'` plus lint,
-`dependencyRules platformGuards`, `assembleDebug`) and then the full gate before reporting.
+Builders run scoped tests (`:app:testFullDebugUnitTest --tests '<package>.*'` plus lint,
+`dependencyRules platformGuards`, `assembleFullDebug`) and then the full gate before reporting.
 
 ### Merging
 

@@ -60,8 +60,8 @@ missing it.
    that point, which should be empty right after step 2).
 7. **The workflow then**: checks out the tag, runs the same test-and-assemble gate CI runs
    (`:data:testDebugUnitTest :net:testDebugUnitTest :rig-usb:testDebugUnitTest
-   :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
-   :app:assembleDebug dependencyRules`), runs `python tools/release_notes.py vX.Y.Z` to build
+   :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testFullDebugUnitTest
+   :app:assembleFullDebug dependencyRules`), runs `python tools/release_notes.py vX.Y.Z` to build
    the notes, and calls `gh release create vX.Y.Z` with the debug APK attached and those notes
    as the body. It does not touch the rolling `latest-build` release on a tag push.
 

@@ -87,8 +87,8 @@ python tools\spec-check\spec_check.py
 .\gradlew.bat coverageMatrixCheck        # separate invocation; together they trip Gradle validation
 ```
 
-Builders run scoped tests only (`:app:testDebugUnitTest --tests '<package>.*'` plus lint,
-`dependencyRules platformGuards`, `assembleDebug`). Nobody runs `gradlew --stop`: the daemon is
+Builders run scoped tests only (`:app:testFullDebugUnitTest --tests '<package>.*'` plus lint,
+`dependencyRules platformGuards`, `assembleFullDebug`). Nobody runs `gradlew --stop`: the daemon is
 shared across worktrees and stopping it kills every in-flight build.
 
 A local pass proves one operating system, one locale and one machine size. **Push often** so CI is

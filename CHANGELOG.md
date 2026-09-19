@@ -32,6 +32,31 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19
+
+### lead integration — the renamed flavor tasks' callers, outside any Wave G unit's ownership
+
+**Scope:** `.github/workflows/ci.yml`, `.github/workflows/emulator.yml`,
+`tools/ui-audit/install.ps1`, `RELEASING.md`, `README.md`,
+`docs/ui-fix-session-prompt.md`, `docs/debug-fix-session-prompt.md`.
+**Requirements/ACs:** none new — this is the integration half of P23 (D43, FR-AST-13).
+**What changed:** P23's product flavors renamed `:app:assembleDebug` → `assembleFullDebug`,
+`:app:testDebugUnitTest` → `testFullDebugUnitTest` (no plain aggregate survives — the
+unqualified name is now ambiguous and fails), `connectedDebugAndroidTest` →
+`connectedFullDebugAndroidTest`, and moved the APK to
+`app/build/outputs/apk/full/debug/app-full-debug.apk`. P23 owned neither the workflows nor the
+install script and correctly reported them rather than reaching outside its unit; the lead made
+the matching edits here so the next push does not turn CI red on a name that no longer exists.
+The CI job now also assembles only `full` rather than the aggregate, so it does not build the
+`play` variant it never uses. Prose references in the release and session docs were corrected in
+the same pass.
+**Verified:** the task names and the APK path are the ones P23's own build registered and
+measured (`:app:assembleFullDebug`, `:app:assemblePlayDebug`, `:app:testFullDebugUnitTest`
+— 2662 tests green in its run). The hosted proof is the next CI and Release run on the pushed
+commit; until then these files are checked by reading, not by execution.
+**Left open:** `.github/workflows/release.yml` line 100 still describes the pre-flavor APK path
+in a comment (prose only, no task reference).
+
 ## 2026-09-19 (build plan P24: automatic thread grouping after Pass B)
 
 ### 2add470f — P24: automatic thread grouping after Pass B (FR-SPK-5, AC-163..165)

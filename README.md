@@ -80,7 +80,7 @@ and capturing with it (AC-136). `bundled-assets.json` (repo root) is the single 
 `buildSrc`'s `fetchBundledAssets` Gradle task reads it, fetches each asset once into a cache shared
 across worktrees (`$GRADLE_USER_HOME/ort-bundled-assets/`, never re-downloaded per checkout),
 verifies its sha256, and packages the verified bytes into `app/src/main/assets/bundled/`
-(gitignored — only the manifest is a source file). `assembleDebug`/`assembleRelease` — and
+(gitignored — only the manifest is a source file). `assembleFullDebug`/`assembleFullRelease` — and
 therefore `build` — depend on this task.
 
 **Gemma 3 1B is gated** on HuggingFace: accept its licence at
