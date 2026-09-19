@@ -6,11 +6,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
+import org.ort.app.ui.audio.TransportPlaybackController
 import org.ort.app.ui.data.DetailViewStateMapper
 import org.ort.app.ui.data.InspectionViewState
 import org.ort.app.ui.data.TransmissionDetailViewState
@@ -28,16 +30,23 @@ import org.robolectric.RobolectricTestRunner
  * own R-242/R-153 doc comments already document for `RejectedDetailScreenTest.kt`/
  * `PassFailureDetailScreenTest.kt`).
  *
- * **C10 (`design/canvas/Transport-Bar.dc.html`) reverses this row's own original fix.** The
- * artboard's own rule: "the bar owns playback... leaving a screen never stops the audio; × or the
- * end of the over does." The `DisposableEffect(detail.id) { onDispose { player.stop() } }` this
- * row originally added is exactly what "leaving a screen" meant here — a back navigation, or (as
- * the second test below covered) a drill-in reusing the same composable slot for a different over
- * — so both of that fix's own tests are replaced below with the opposite assertion: playback
- * survives both kinds of navigation. What still stops it is unchanged and still tested further
- * down this file: reaching the recorded end of the over, and (in `TransportBarTest.kt`, C10's own
- * suite) the bar's own `×`. `TransportPlaybackController` (`ui/audio/`) is what now owns the
- * stop-on-leave decision instead of this screen — see that class's own doc comment.
+ * **C10 (`design/canvas/Transport-Bar.dc.html`) reversed this row's own original fix.** The
+ * `DisposableEffect(detail.id) { onDispose { player.stop() } }` this row originally added is
+ * exactly what "leaving a screen" meant here — a back navigation, or (as the second test below
+ * covers) a drill-in reusing the same composable slot for a different over — so both of that fix's
+ * own tests were replaced with the opposite assertion: at *this composable, alone, with no nav
+ * host wrapping it*, playback survives both kinds of navigation.
+ *
+ * **AC-168 (build-plan P26) restores stop-on-leave for both shapes — one level up, at the
+ * transport-bar/nav-host layer, not here.** Both tests below stay exactly as they are: this screen
+ * in isolation still never calls `stop()` on its own for either shape, so `stopCallCount == 0`
+ * remains correct here. What changed is that `OrtNavHost.kt`'s `NavHostBody` now stops the shared
+ * player itself once the transmission drill-in it is showing genuinely closes or moves to a
+ * different over — proven in
+ * `org.ort.app.ui.navigation.PlaybackStopsOnNavigationTest` (`shouldStopPlaybackOnTransmissionLeave`
+ * has the decision and its rationale), not in this file. What still stops it independently of all
+ * of that is unchanged and still tested further down this file: reaching the recorded end of the
+ * over, and (in `TransportBarTest.kt`, C10's own suite) the bar's own `×`.
  */
 @RunWith(RobolectricTestRunner::class)
 class PlaybackControlDetailScreenTest {
@@ -141,5 +150,28 @@ class PlaybackControlDetailScreenTest {
 
         composeTestRule.onNodeWithContentDescription("Play retained audio").assertExists()
         composeTestRule.onNodeWithContentDescription("Pause").assertDoesNotExist()
+    }
+
+    /**
+     * AC-168's other half — "returning does not auto-resume" — proven at the exact seam
+     * [PlaybackSection] uses to seed its own local state on (re)composition:
+     * [initialPlaybackState]. Once `OrtNavHost.kt`'s own `NavHostBody` calls
+     * [TransportPlaybackController.stop] on a genuine leave (`shouldStopPlaybackOnTransmissionLeave`,
+     * that file's own doc comment), [TransportPlaybackController.loadedTransmissionId] is `null`
+     * again — so a screen reopened for the same transmission id after that reads exactly as fresh
+     * as one that was never played, never a stale "still playing" seed.
+     */
+    @Test
+    fun `AC_168 initialPlaybackState after a genuine leave's stop reads fresh, never auto-resumed`() {
+        val player = FakeTransmissionAudioPlayer()
+        val controller = TransportPlaybackController(player)
+        runBlocking { controller.play("TX1") }
+
+        // The exact call `shouldStopPlaybackOnTransmissionLeave` triggers at the nav-host layer.
+        controller.stop()
+
+        val (playing, position) = initialPlaybackState(controller, "TX1")
+        assertEquals(false, playing)
+        assertEquals(0f, position)
     }
 }

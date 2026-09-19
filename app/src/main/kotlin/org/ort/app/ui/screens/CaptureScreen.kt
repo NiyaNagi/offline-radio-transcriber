@@ -34,7 +34,7 @@ import org.ort.app.ui.data.CaptureStorageViewState
 import org.ort.app.ui.data.KeyValueFacts
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.data.LiveMonitorOversViewState
-import org.ort.app.ui.navigation.toGigabyteLabel
+import org.ort.app.ui.recordings.recordingSessionByteLabel
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -288,7 +288,9 @@ internal fun CaptureStorageSection(
 
 @Composable
 private fun CaptureOverAudioRow(state: CaptureOverAudioViewState, modifier: Modifier = Modifier) {
-    val usedLabel = state.usedBytes.toGigabyteLabel()
+    // R-1079: a small non-zero size must never round to "0.0 GB" — the same adaptive B/KB/MB/GB
+    // formatter R-1068 already gave Recording-Session's own equivalent card.
+    val usedLabel = recordingSessionByteLabel(state.usedBytes)
     val budgetLabel = state.budgetGb?.let { "$it GB" }
     Column(modifier = modifier.testTag(CAPTURE_OVER_AUDIO_ROW_TEST_TAG)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
@@ -325,7 +327,8 @@ private fun CaptureOverAudioRow(state: CaptureOverAudioViewState, modifier: Modi
 
 @Composable
 private fun CaptureArchiveRow(state: CaptureArchiveViewState, onTurnOff: () -> Unit, modifier: Modifier = Modifier) {
-    val usedLabel = state.usedBytes.toGigabyteLabel()
+    // R-1079: same reasoning as [CaptureOverAudioRow] above.
+    val usedLabel = recordingSessionByteLabel(state.usedBytes)
     Column(modifier = modifier.testTag(CAPTURE_ARCHIVE_ROW_TEST_TAG)) {
         Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
             Text(

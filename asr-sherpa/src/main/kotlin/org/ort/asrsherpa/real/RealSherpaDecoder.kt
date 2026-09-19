@@ -21,12 +21,19 @@ import org.ort.asrsherpa.SherpaDecoder
  * at least one real implementation behind it, exercised by
  * `RealSherpaDecoderRealModelTest` (gated — see that file and `asr-sherpa/README.md`).
  *
- * **Not wired into [org.ort.asrsherpa.SherpaAsrEngine] by any production entry point.** Nothing
- * in `:pipeline` or `:app` constructs this class yet — asset installation/activation for a real
- * Whisper model (FR-ASR-8, FR-AST-2) and the `ModelDescriptor`/`AssetRef` plumbing that would
- * pick concrete encoder/decoder/tokens paths at runtime are out of this task's scope (see this
- * commit's CHANGELOG entry). This class is constructed directly, from explicit file paths, by
- * the gated real-model test only.
+ * **Register R-1012 (correction — this doc comment previously claimed the opposite): this class
+ * IS wired into [org.ort.asrsherpa.SherpaAsrEngine] by a real production entry point.**
+ * `:pipeline`'s `org.ort.pipeline.passb.RealAsrEngineProvider.provide()` constructs it directly
+ * (its own `nativeLoader` default) whenever [org.ort.pipeline.passb.AsrModelLocator.locate] finds
+ * all three model files under app-private storage and [org.ort.core.assets.ModelFileVerifier]
+ * passes every one of them — a stale comment here is exactly how R-1001 (this decoder never
+ * actually decoding on-device transcription) went unnoticed for as long as it did. What genuinely
+ * remains out of scope is only *getting the model files there in the first place*: asset
+ * installation/activation for a real Whisper model (FR-ASR-8, FR-AST-2) still fetches nothing
+ * automatically (see `RealAsrEngineProvider`'s own class doc and this task's original CHANGELOG
+ * entry) — an operator or a test must place the three files under
+ * `AsrModelLocator.modelsDir(filesDir)` themselves. The gated real-model test still constructs
+ * this class directly, from explicit file paths, independent of that provider.
  *
  * @param encoderOnnxPath path to the Whisper encoder `.onnx` file.
  * @param decoderOnnxPath path to the Whisper decoder `.onnx` file.
