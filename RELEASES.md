@@ -30,6 +30,20 @@ Nothing user-facing yet. Changes since v0.1.1 are internal: the project's bindin
 test plan now describe how the interface is checked against its designs, and there is a written
 procedure for continuing that work from real device testing.
 
+### Correction
+
+v0.1.1's notes below overclaimed two things that did not actually work as described in that
+build. Neither has shipped code changed yet — this correction is to the record, so the wording in
+the app catches up in a following release:
+
+- **"Groups related transmissions into threads automatically"** — conversations were not, in
+  fact, grouped into threads automatically in that build. Automatic thread grouping is specified
+  and is planned, but it wasn't built as of v0.1.1.
+- **"Apply that correction to every other past transmission recognized as the same voice"** —
+  there is no voice-recognition library in the app yet. What the correction actually applies to
+  is every other transmission with the **same callsign**, not the same voice. Real voice-based
+  correction is planned for after the app's first full release.
+
 ---
 
 ## v0.1.1 — 2026-09-09

@@ -114,7 +114,7 @@ determines whether the product is useful.
 | **Morse / CW decoding** | A different signal-processing problem from speech — tone detection, adaptive speed tracking and timing analysis, not ASR. It shares the app's capture, storage, threading and reader surfaces but none of its transcription stack | **v2.** A natural fit for this product: CW is the other half of amateur voice traffic, callsigns are its dominant payload, and the same callsign grammar and priors (FR-LEX-7..9) apply to a decoded CW string unchanged. Nothing in v1 forecloses it — a decoded CW transmission is a Transmission with a different pass that produced its transcript |
 | Transmit / logging back to the radio | Different product | Never |
 | Multi-device sync | On-device only by decision | v3 |
-| **Live alerts** — notify on a watched callsign, a frequency waking up, or a keyword | Deferred by product owner. The product is retrospective in v1: it records, you read later | **v2.** Nothing in v1 may foreclose it — Pass D already produces the callsign a watchlist would match on, so this is a matching rule and a notification, not an architecture change |
+| ~~**Live alerts** — notify on a watched callsign, a frequency waking up, or a keyword~~ **Promoted to v1, this session** | Was deferred by product owner as retrospective-only for v1. Promoted because Pass D already produces the callsign, keyword and frequency a watchlist would match on, exactly as this row's own "Revisit" column always argued | **See §7.19 FR-ALR-1..6.** A matching rule and a local notification, fired after Pass B, never blocking capture |
 | **Scanner channel identity** — channel names in place of frequencies, threading on channel | Deferred by product owner with the SDS150 rig module. Audio-only scanner capture works in v1, logged by frequency | **v2** with the SDS150 module. `channelName` stays in the Transmission entity (Q4) so this is not a migration later |
 | On-device LLM digest **as a required feature** | Optional, not required for the product to work. FR-DIG-3 is Must **only where the tier and the user's setting both enable it**, and the product ships complete with it absent — see FR-DIG-3a | v2 for the default-on case |
 
@@ -186,6 +186,15 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D39 | **Reversed: the continuous archive (FR-SEG-9) defaults ON, budgeted at 60 GB.** This **amends Q14**, whose recorded answer was "yes, and keep it always available… Default off; budgeted under D26." The mechanism and its budget-not-time-limit shape (D26) are unchanged; only the default flips. | Product owner direction: they want the raw audio for model training and no longer consider the storage cost a reason to keep it off by default. The cost, stated rather than sold: at 16 kHz mono, **FLAC is 50–60% of PCM's 115.2 MB/hour** (FR-STO-2a), so continuous capture costs **~58–69 MB per wall-clock hour**, about **0.5 GB per 8-hour night**, and **~15 GB per month** of nightly use — against the 60 GB budget that is roughly four months of nightly use before anything is pruned. See FR-STO-3d for what pruning does when the budget is reached, and Q14 for the amendment note in place |
 | D40 | **Reaching the over-audio budget warns loudly and deletes nothing.** Capture continues past it; only genuine device storage exhaustion stops capture, and it does so loudly (FR-STO-4, constitution IV). The operator frees space by deleting sessions themselves. This **withdraws** FR-STO-3a's opt-in automatic-pruning option for the **over-audio** budget specifically — the option is unaffected for the continuous archive (FR-STO-3d). | Product owner, closing register R-1037: FR-STO-3, FR-STO-3a and the new FR-STO-3d each specified something about pruning except the one budget nobody had been asked about — what happens when *over* audio, not the archive, fills. Over audio is the evidence behind every transcript and correction (FR-REP-4); none of it disappears without the operator choosing it. The stated cost of that guarantee: without a pruning option, a full over-audio budget is a **sustained warning** the operator must act on, not a one-time notice — see FR-STO-3e |
 | D41 | **Per-transmission VAD statistics are built, not narrowed away.** Q20 closes on its second option: FR-OBS-1 is amended to specify exactly what a `vad_stats` line records, at one line per closed segment, accepted or rejected, and the debug dump carries the same statistics. | Product owner direction: "making sure I have great debugging data." A 12-minute field session produced a 202-byte `capture.log` holding two route lines and no evidence at all about how its eight overs were segmented — so a missed, split or truncated over could not be diagnosed from anything the device sent back. The segmenter already computed a per-frame VAD decision and the level meter already estimated a noise floor; both were thrown away. The cost, stated: ~106 KB for a 400-over night inside the existing 2 MiB rotation, and because the dump reads the statistics back out of `capture.log` rather than a database column, a dump taken after roughly 8,000 transmissions since the last rotation carries only the most recent generation. See FR-OBS-1 (amended), AC-161, Q20 |
+| D42 | **Principle V is redefined: "Audio Is Processed Only On The Device."** All audio processing — capture, segmentation, ASR, lexicon, identity, digest — runs on the phone; no audio, and no inference over audio or its transcripts, runs in the cloud. The capture and processing paths still make no network call (NFR-6's core guarantee and AC-59 are unchanged), and only `:net` may link an HTTP client (Principle VII, unchanged). A **fourth declared outbound channel, analytics**, is added in three tiers: **tier 1**, on by default and turnable off — crash traces, ANRs, usage and feature events, per-pass latency and real-time factor, capture uptime and heartbeat gaps, the setup funnel including model-download outcomes, and aggregate transcript-quality statistics (correction rate by field, confidence/attribution-state mix, unresolved-callsign rate, VAD-fallback rate) — carrying no transcript text, callsign, name, station knowledge or location; **tier 2**, opt-in — transcript text and callsigns, including (ASR hypothesis, correction) pairs; **tier 3**, opt-in — retained over audio with its corrected transcript. User-supplied names, station knowledge and location finer than a grid square stay in **no** tier. Every payload is recomputed from a closed field list per tier, never serialised from an entity; uploads queue and send through `:net` only while capture is not running; every event carries a provenance envelope; and field data lands in its own `field` fold, never mixed with `dev` or `eval`. The only permitted privacy claim, verbatim: *"Your audio is processed only on your phone and is never uploaded unless you choose to share it."* A bare "no audio leaves the device" is now false and forbidden — contribution, field reports and tier 3 can carry audio by the user's own choice. | Constitution **MAJOR** bump, 1.3.0 → 2.0.0 — this redefines Principle V rather than extending it. The product owner wants usage and quality telemetry to steer 1.0 without reopening what makes the product defensible: audio and what it contains stay on-device by default, and everything else is opt-in, closed-field and provenance-stamped. Amends FR-OBS-5, NFR-6 and the constitution's Principle V bullets and rationale; the third-party-consent reasoning that justified the old absolute carries forward unchanged, now attached to why tiers 2 and 3 default off. See FR-ANL-1..14 (new §7.13d) |
+| D43 | **Setup downloads any model that isn't bundled.** Models are still bundled when the build carries them; a missing or unbundled model downloads during setup over the existing `ModelAcquisition` path — resumable, sha256-verified, atomic rename — as a foreground WorkManager job, Wi-Fi-only by default. "No network between install and capture" (D35) becomes **"no network during capture."** Setup cannot complete without capture-readiness: **READY is a hard gate** — every model the detected tier needs installed and verified, and the mic/level check passed — and the battery-exemption step keeps recurring until the heartbeat (FR-SVC-5b) proves the app survives backgrounding, not merely until the OS reports the exemption granted. **Two build variants**: `full`, bundling everything, published on GitHub; `play`, a slim AAB whose models download during setup. | Amends D35/FR-AST-3, which mandated one variant with everything bundled and no first-run network dependency at all. Product owner direction, taken with the conflict stated: a single bundled artifact was affordable while distributing off GitHub, but a Play-Store-sized AAB is not, and D35's own R18/FR-AST-3a already flagged the install-size cost as the thing to revisit once a real distribution channel forced the question. Everything D35 protected — offline capture, no network in the capture path — still holds; only the install-time promise narrows to match where the app is actually distributed. See FR-AST-10..14 |
+| D44 | **Model mirror.** Downloaded models come from GitHub Release assets on the project repository under a versioned tag (`models-v1`); each entry is pinned by URL, sha256 and size in `bundled-assets.json`. Gemma is redistributed with the notices and use restrictions its own terms require. | Gives D43's downloads a fixed, versioned, integrity-checked source rather than an ad hoc URL, and keeps the manifest — already the source of truth for bundled assets (FR-AST-1) — the source of truth for downloaded ones too. See FR-AST-14 |
+| D45 | **`:identity` (the voice library, D28) is out of 1.0.** The "every over by the same voice" correction scope is relabelled in the UI as **"every over with the same callsign,"** which is what it actually does today — `CorrectionPolling.kt` falls back to `stationId` because `voiceprintId` is always null. D28 is **deferred, not deleted**: FR-SPK's voice-library requirements (FR-SPK-11..26) are marked deferred to post-1.0 with a visible note, and RELEASES.md's claims about voice propagation and automatic threading are corrected in this change. | Product owner direction, closing the gap between what v0.1.1's release notes claimed and what the code does — the voice library was never built, so a "same voice" correction has always been a same-callsign correction, and calling it otherwise in the UI would be exactly the silent-guess failure Principle I exists to prevent. Shipping the honest label now costs nothing D28 will not still deliver later |
+| D46 | **M4 fork timing.** 1.0 ships with **text-level resolution only** — Pass B text into Pass D — no audio-level lexicon matching (Pass C). Pass C stays a research track, decided by a **dev-fold measurement after 1.0's labelled validation hour** (Q2). Nothing Pass-C-dependent is built before that measurement. | Product owner direction. R3/M4 already named this fork ("if audio-level resolution does not beat text-level, Pass C is deleted") but left its timing open against 1.0; this fixes the timing without prejudging the outcome — the measurement, not the release date, still decides Pass C's fate |
+| D47 | **1.0 launches free, with no billing.** Any future billing needs its own `:net` token-kind amendment before it can exist. | Product owner direction. Keeps the network-capability-token structure (technical design §16) as the one place a monetisation feature would have to declare itself, rather than a payment SDK arriving through a side door |
+| D48 | **Analytics destination.** A self-hosted HTTPS ingest endpoint, configured at build time by `ORT_ANALYTICS_ENDPOINT` (a Gradle property or environment variable); unset, events queue locally and nothing is sent. The repo ships a reference ingest server and DuckDB analysis tooling under `tools/analytics/`. **No third-party analytics or crash SDK that links its own HTTP stack.** Raw analytics data and reports are never committed — git-excluded like `research/market/`. Deleting an install id purges its rows (GDPR erasure). Tiers 2 and 3 need a privacy policy before public launch. | Product owner direction, taken to keep D42's analytics channel inside the same structural guarantee as everything else in Principle VII: `:net` is still the only module that can reach it, the endpoint is still a build-time declaration rather than a vendor SDK with its own transport, and self-hosting is what makes the erasure guarantee (FR-ANL-11) actually enforceable rather than a request made of a third party |
+| D49 | **Q18 and Q19 close.** The field-report destination (D37/D38) moves to a **private repository before public launch**; the destination becomes build-configurable, and the visibility guard (FR-OBS-10) stays regardless. **Retention of an uploaded bundle is 90 days.** | Closes the two questions D37/D38 opened. The private-repository move discharges Q18's named trigger from the product side rather than waiting for an accidental public upload to discharge it from the risk side (R19); the 90-day figure answers Q19, which had no answer at all |
+| D50 | **Q22 closes.** When the Silero VAD is missing and capture falls back to the energy VAD, the fallback is **disclosed on the live bar and recorded on the session, never silent** (Principle I). | Closes Q22 on its own recommended option (b): the continuous archive (on by default, D39) already makes a night cut by the fallback usually recoverable, provided every affected segment is marked — which FR-SEG-10 already requires. This makes the *disclosure* itself, not only the record, non-negotiable |
 
 ---
 
@@ -890,6 +899,15 @@ marking them `INFERRED` with the cluster similarity as confidence.
 inter-transmission gap, with a configurable gap threshold. A frequency change ends a thread
 unless the Rig Module indicates the same channel.
 
+> **Amendment, this session.** This requirement specifies *automatic* thread grouping and always
+> has. As of `v0.1.1` it was **unbuilt**: transmissions were not automatically grouped into
+> Threads in the shipped app, and RELEASES.md's v0.1.1 notes overclaimed it (corrected in this
+> change — see `RELEASES.md` `## Unreleased`). Automatic grouping SHALL run **after Pass B**
+> closes each transmission — threading needs a transmission's frequency and closure, not its
+> transcript, so it does not wait on Pass D — and SHALL cover, without operator action: an
+> ordinary two-station QSO, a detected net's check-in sequence (FR-SPK-27), and a period of
+> scanner activity on one channel. See AC-185..187.
+
 **FR-SPK-6 (M)** — Exploit the FCC §97.119 identification requirement: a Voiceprint active in
 an amateur thread SHALL be expected to acquire a `CONFIRMED` callsign within a configurable
 window (default 10 minutes). Failure to do so is a signal to lower cluster confidence, not
@@ -937,7 +955,15 @@ actually wants from a net, and it exports cleanly (FR-EXP-2).
 > of a weekly net is exactly the kind of station that enrols quickly, so the dominant voice is
 > often already named before the net starts.
 
-#### Persistent voice identity (D28)
+#### Persistent voice identity (D28) — **deferred to post-1.0 (D45)**
+
+> **D45 defers this subsection, FR-SPK-11..26, to post-1.0. It is deferred, not deleted**: the
+> voice library was never built, `:identity`'s cross-session enrolment does not exist in the
+> shipped app, and `CorrectionPolling.kt` falls back to `stationId` because `voiceprintId` is
+> always null — so a correction described as "apply to every over by the same voice" has always
+> actually applied to every over with the same callsign. The UI SHALL say **"every over with the
+> same callsign,"** matching what it does, until D28 ships. FR-SPK-1..10 and FR-SPK-27..30 are
+> unaffected — within-session clustering and net detection do not depend on a persistent library.
 
 FR-SPK-1..10 associate a callsign with a voice **within a session**. FR-SPK-9 then deliberately
 forgets it: confidence decays and cross-day identity requires re-confirmation. The consequence
@@ -1245,6 +1271,12 @@ storage.
 **FR-STO-8 (M)** — All storage SHALL be app-private by default. No media-store exposure of
 captured audio without explicit user action.
 
+**FR-STO-9 (M)** — Restoring a save bundle (FR-STO-6) SHALL **round-trip sessions, corrections
+and audio** without silently merging: a record on the restoring device that conflicts with one
+in the bundle SHALL be **shown to the operator** for a choice, never resolved automatically in
+either direction. Nothing already on the device SHALL be deleted as a side effect of a restore
+(P9, constitution III's "nothing is deleted quietly").
+
 ### 7.8 FR-UI · Reader and search
 
 **FR-UI-1 (M)** — **Live view**: a running list of transmissions as they occur, newest
@@ -1422,6 +1454,13 @@ conservative log.
 **FR-EXP-6 (C)** — QRZ lookup enrichment when a network is available, as an explicitly
 online, explicitly optional action. Never in the capture path.
 
+**FR-EXP-7 (M)** — The operator SHALL be able to **share a digest, a thread transcript, or a
+single over's audio clip** through the platform share sheet (`ACTION_SEND` via a `FileProvider`),
+**user-initiated only** — never automatic, never scheduled. Station knowledge, user-supplied
+names and location SHALL NOT be attached to a shared item beyond what the shared content itself
+already carries by construction (a transcript's own words); no metadata field naming any of the
+three SHALL be added to the shared file or its share-sheet metadata.
+
 ### 7.11 FR-SVC · Background execution
 
 **FR-SVC-1 (M)** — Run capture in a foreground service of type `microphone`, started from a
@@ -1516,19 +1555,19 @@ ground-truth annotations, for building the evaluation set.
 > interesting — but it is a **v1 feature, not an M0 prerequisite**. It lands in M5 with the
 > reader, where correction UI already exists and is most of the same surface.
 
-**FR-OBS-5 (M)** — There SHALL be **no analytics, telemetry or crash reporting**, in any build.
-Diagnostics leave the device only when the user exports a bundle (FR-OBS-3) **or invokes the
-field-report upload** (FR-OBS-9, D37).
+**FR-OBS-5 (M)** — *(Amended by D42.)* There SHALL be **no telemetry or crash reporting that is
+not the declared analytics channel below**, in any build. Diagnostics leave the device only when
+the user exports a bundle (FR-OBS-3), **invokes the field-report upload** (FR-OBS-9, D37), or
+**an analytics event uploads under §7.13d** (FR-ANL-1..14, D42).
 
-> *Draft 3.3 amends this a second time. It previously read "Diagnostics leave only when the user
-> exports a bundle (FR-OBS-3)". Draft 3.2 had already carved out the corpus contribution channel
-> as a separate, automatic exception (FR-OBS-5a); this draft adds a second, explicit, per-upload
-> exception. The operator taps one button, sees exactly what a bundle contains, and only then
-> does it leave — straight to a GitHub repository rather than to local storage. That is still
-> user-initiated in a way the corpus channel is not, but it is a new outbound destination and it
-> can carry categories, retained over audio and voiceprint embeddings, that FR-OBS-3's exported
-> bundle never could, so it earns its own named carve-out rather than being folded silently into
-> "exports a bundle".*
+> *Draft 3.3 amended this to carve out the field-report channel. This later change amends it a
+> third time and for the first time changes the word "analytics" itself, which every prior draft
+> used absolutely: "no analytics, telemetry or crash reporting, in any build" is no longer true,
+> because D42 redefines Principle V to permit exactly one analytics channel, closed-field,
+> tiered, and off by default for anything beyond tier 1. What survives from every prior draft is
+> the shape of the guarantee, not its old wording: nothing leaves the device except through a
+> **declared** channel, named in this spec, never a vendor SDK with its own undeclared telemetry
+> (constitution VII, D48). See FR-ANL-1..14.*
 
 **FR-OBS-5a (M)** — The first exception is the **corpus contribution channel** (FR-CON-1..8,
 D25), which is off unless the user turns it on, carries only what §7.13a defines, and is
@@ -1541,6 +1580,12 @@ the product previously made without qualification.*
 > first exception" here, in the open, rather than being quietly rewritten, because D37 adds a
 > second: the field-report channel (FR-OBS-6..12), which is manual and per-upload rather than
 > automatic, but is a second declared destination outside FR-OBS-3 all the same.*
+>
+> *D42 adds a third: the analytics channel (§7.13d, FR-ANL-1..14), tiered, off by default beyond
+> tier 1, and — unlike the first two — able to run automatically once tier 1 is accepted, the
+> same way corpus contribution already can once enabled (FR-CON-2). All three remain closed,
+> documented sets recomputed from a field list, never a free-form export of whatever a table
+> happens to contain.*
 
 ### 7.13a FR-CON · Corpus contribution (D25)
 
@@ -1702,6 +1747,80 @@ build-time literal and never a placeholder value that happens to look like real 
 version genuinely cannot be determined, the field SHALL record an explicit `unknown` rather than
 a guess.
 
+### 7.13d FR-ANL · Analytics (D42, D48)
+
+D42 redefines Principle V and adds one declared outbound channel where FR-OBS-5 previously
+allowed none. This is that channel's specification, and every clause below exists because a
+telemetry channel is exactly the kind of thing that grows a field quietly unless its content is
+closed by name rather than by intention.
+
+**FR-ANL-1 (M)** — Analytics SHALL exist in **exactly three tiers**, each a closed, documented
+field list, never an open schema a future change can extend without a spec amendment. **Tier 1
+is on by default and can be turned off. Tiers 2 and 3 are opt-in**, off until the operator turns
+each on individually.
+
+**FR-ANL-2 (M)** — **Tier 1's closed field list**: crash traces and ANRs; usage and feature
+events (which screens and actions were used, not their content); performance (per-pass latency,
+real-time factor); capture uptime and heartbeat gaps (NFR-8); the setup funnel, including
+model-download outcomes (FR-AST-11); and aggregate transcript-quality statistics — correction
+rate by field, confidence and attribution-state mix, unresolved-callsign rate, VAD-fallback rate
+(FR-SEG-10). Tier 1 SHALL NOT contain transcript text, a callsign, a user-supplied name, station
+knowledge or location of any precision.
+
+**FR-ANL-3 (M)** — **Tier 2's closed field list**, opt-in: transcript text and callsigns,
+including `(ASR hypothesis, user correction)` pairs. While tier 2 is off, no field in this list
+SHALL appear in any uploaded or queued event.
+
+**FR-ANL-4 (M)** — **Tier 3's closed field list**, opt-in: retained over audio together with its
+corrected transcript. While tier 3 is off, no audio SHALL appear in any uploaded or queued event.
+
+**FR-ANL-5 (M)** — **User-supplied names, station knowledge, and location finer than a grid
+square are in no tier.** No combination of tiers, however permissive, SHALL cause any of the
+three to leave the device through this channel (FR-SPK-25, FR-DIG-13, FR-LEX-24).
+
+**FR-ANL-6 (M)** — Every analytics payload SHALL be **recomputed from its tier's closed field
+list**, never serialised from an entity graph, so a column added to a table cannot leak into a
+payload by being added (the same discipline FR-CON-3's contribution payload and FR-OBS-8's
+field-report ungated set already hold).
+
+**FR-ANL-7 (M)** — Analytics events SHALL be **queued on-device and sent by `:net` only while no
+capture session is active**, mirroring FR-CON-2's rule for contribution. A queued event SHALL
+NEVER trigger a network call during capture, verified alongside AC-59.
+
+**FR-ANL-8 (M)** — Every event SHALL carry a **provenance envelope**: a resettable random
+install id, the session and over ids it concerns, the app version and build hash, the model ids
+and their sha256, the execution provider, the device model, SoC and detected tier, the capture
+mode (D33), the rig module, the band, and the schema version. This is constitution VI applied to
+a fourth outbound channel: no analytics number is evidence without knowing what produced it.
+
+**FR-ANL-9 (M)** — Settings SHALL expose **three toggles, one per tier**, each stating in plain
+language what that tier sends when on, consistent with FR-ANL-2..4's field lists. Turning a tier
+off SHALL take effect immediately for every event not yet sent.
+
+**FR-ANL-10 (M)** — Setup SHALL include a step that **explains tier 1** in the same terms as
+FR-ANL-9 and **offers tiers 2 and 3** as an explicit choice, neither pre-checked. Declining
+SHALL leave every other function fully working, the same guarantee FR-CON-1 already makes for
+contribution.
+
+**FR-ANL-11 (M)** — The operator SHALL be able to **reset the install id**, and doing so SHALL
+purge every row at the destination previously associated with the old id (erasure by
+install-id reset, D48).
+
+**FR-ANL-12 (M)** — Analytics data collected in the field SHALL form its own **`field` fold**
+(constitution VI), which SHALL NEVER be mixed with `dev` and SHALL NEVER touch `eval`. A number
+drawn from field analytics SHALL state that fold explicitly, the same discipline every other
+reported number already carries.
+
+**FR-ANL-13 (M)** — The on-device analytics queue SHALL be **bounded** in count and bytes. When
+full, the oldest queued event SHALL be dropped, never blocking, slowing, or otherwise affecting
+capture (FR-RUN-1's guarantee extended to this channel).
+
+**FR-ANL-14 (M)** — Any public description of this product's privacy behaviour SHALL use, where
+a single-sentence claim is wanted, exactly: **"Your audio is processed only on your phone and is
+never uploaded unless you choose to share it."** A bare claim that no audio ever leaves the
+device SHALL NOT be made — it is false the moment contribution, a field report, or tier 3 is
+enabled by the operator's own choice.
+
 ### 7.14 FR-RUN · Runtime architecture
 
 The single most important structural constraint, and it was implicit in draft 2:
@@ -1826,18 +1945,24 @@ with a common lifecycle: install, verify, activate, roll back, remove.
 **FR-AST-2 (M)** — Every asset SHALL be integrity-verified (checksum, and size and format
 validation) before activation. A failed verification SHALL leave the previous version active.
 
-**FR-AST-3 (M)** — *(Amended by D35; previously these assets were downloadable on demand.)*
-**Every asset the app can use SHALL ship inside the installed artifact** — ASR models at every
-tier, the VAD, speaker embeddings, the Pass C acoustic model, the LLM (D36), lexicon data and
-calibration parameters. There SHALL be **one build variant**, no first-run download, and no
-network dependency of any kind between installing the app and capturing with it. A fresh install
-on a device that has never had a network connection SHALL reach full capability for its detected
-tier.
+**FR-AST-3 (M)** — *(Amended by D35, then by D43; previously these assets were downloadable on
+demand, then D35 required every asset bundled in one variant.)* **Every asset the build carries
+SHALL ship inside the installed artifact** — ASR models at every tier, the VAD, speaker
+embeddings, the Pass C acoustic model, the LLM (D36), lexicon data and calibration parameters. On
+the `full` variant this is every asset the app can use, exactly as D35 required, and a fresh
+install on a device that has never had a network connection SHALL reach full capability for its
+detected tier with no download. On the `play` variant (D43, FR-AST-13), a model the build does
+not carry SHALL be downloaded during setup (FR-AST-10..12) rather than bundled; nothing else
+about this requirement changes for either variant — asset lifecycle, integrity verification and
+per-tier loading are identical once a model is installed, regardless of how it arrived.
 
 > This is the requirement that makes "entirely offline" true at the moment it is most likely to
 > be false. An app that must fetch a 900 MB model before it can transcribe is one whose central
 > promise is deferred to a network — and the operator most likely to want this product is the one
-> setting it up somewhere without one.
+> setting it up somewhere without one. **D43 narrows this from an install-time guarantee to a
+> capture-time one** on the `play` variant specifically: the promise that survives on every
+> variant is "no network during capture," not "no network before capture" — see FR-AST-13 for why
+> a second variant was accepted rather than relaxing this further.
 
 **FR-AST-3a (M)** — **The size cost is accepted and bounded, not ignored.** The install carries
 assets for tiers the device may never enter (R18). Consequently: the installed size SHALL be
@@ -1885,6 +2010,42 @@ reports orphaned files and dangling references in both directions.
 **FR-AST-9 (S)** — Where NPU execution requires per-chipset compiled binaries (FR-ACC), those
 are assets under this section, selected at runtime by detected chipset, with the CPU model as
 the always-present fallback.
+
+#### Model acquisition and the setup gate (D43, D44)
+
+**FR-AST-10 (M)** — Setup SHALL include a **MODELS step** that compares the detected tier's
+required assets against what the build carries and what is already installed, and downloads
+whatever is missing. Each downloadable entry SHALL be named in a **manifest** —
+`bundled-assets.json` — pinned by URL, sha256 and size (D44), the same manifest FR-AST-14
+specifies for the mirror itself.
+
+**FR-AST-11 (M)** — Downloads SHALL run through the existing `ModelAcquisition` path:
+**resumable** across an interruption, **sha256-verified** before activation (FR-AST-2), and
+installed by **atomic rename** so a partial file can never reach the final path. Each download
+SHALL run as a **foreground WorkManager job** and SHALL default to **Wi-Fi-only**, overridable
+by the operator per download. A checksum mismatch SHALL reject the file and re-queue the
+download rather than activating it.
+
+**FR-AST-12 (M)** — **READY is a hard gate.** Setup SHALL NOT report the device ready to capture
+until every model the detected tier requires is installed and verified (FR-AST-11, FR-AST-2)
+**and** the microphone/level check (FR-CAP onboarding) has passed. Where the reference device's
+background-execution risk applies (NFR-8, FR-SVC-5a), the **battery-exemption step SHALL keep
+recurring** on every relevant launch until the heartbeat proves the app survives backgrounding
+(FR-SVC-5b) — the OS reporting the exemption granted SHALL NOT satisfy this gate by itself,
+exactly as FR-SVC-5b already forbids trusting that API alone.
+
+**FR-AST-13 (M)** — There SHALL be **two build variants**: `full`, which bundles every asset per
+FR-AST-3 and is published on GitHub, and `play`, a slim AAB whose models download during setup
+per FR-AST-10..12. This **reverses D35's "one variant"** for the reason D35's own R18 named: a
+Play-Store-sized artifact cannot carry everything the `full` variant does. Every other guarantee
+in this section — integrity verification, per-tier loading discipline (FR-AST-3a), asset
+lifecycle (FR-AST-1) — applies identically to both variants.
+
+**FR-AST-14 (M)** — Downloaded models SHALL come from **GitHub Release assets on this project's
+own repository, under a versioned tag** (`models-v1`). Each manifest entry SHALL pin its **URL,
+sha256 and size**; a file that does not match its pinned sha256 SHALL be rejected (FR-AST-11).
+Where a model's own licence requires redistribution notices or use restrictions — Gemma among
+them — the mirror SHALL carry those notices and the notices-screen (NFR-6d) SHALL name them.
 
 ### 7.16 FR-PLT · Platform integration
 
@@ -1965,6 +2126,35 @@ hardcoded, and date, time, number and frequency formatting SHALL be locale-aware
 **FR-A11Y-6 (M)** — The **phonetic alphabet variant set is content, not localization**, and
 SHALL be extensible independently of app language. Regional and legacy variants must be
 addable without a translation pass.
+
+### 7.19 FR-ALR · Live alerts
+
+**Promoted from the v2 backlog in this session** (§1.5 previously deferred this outright). Pass D
+already produces the callsign, keyword match and frequency a watchlist would match on, so this is
+a matching rule and a local notification, never an architecture change — exactly as §1.5 always
+said it would be.
+
+**FR-ALR-1 (M)** — The operator SHALL be able to define a watch on a **callsign, a keyword, or a
+frequency**, managed from Settings — add, edit and delete.
+
+**FR-ALR-2 (M)** — Alerts SHALL be **local notifications only**. No alert definition, match, or
+firing event SHALL be transmitted off the device by this feature.
+
+**FR-ALR-3 (M)** — An alert SHALL fire only after **Pass B** resolves a transmission that
+matches a watch — never from a Pass A partial alone, which is provisional and not yet the
+record.
+
+**FR-ALR-4 (M)** — **Capture SHALL NEVER wait on alert evaluation or delivery** (constitution IV,
+FR-RUN-1's guarantee extended to this feature). A hung or slow notification path SHALL NOT delay
+the pass queue.
+
+**FR-ALR-5 (M)** — A fired notification SHALL show the **attribution confidence state** of the
+match it names (§4.1). A callsign watch's notification SHALL **name its attribution state
+explicitly** and SHALL NEVER present an `INFERRED` match as though the callsign were heard
+(mirrors FR-UI-4 and FR-EXP-4's discipline, applied to a new surface).
+
+**FR-ALR-6 (M)** — The operator SHALL be able to review and manage every watched callsign,
+keyword and frequency in one place, matching FR-SPK-16's discipline for the voice library.
 
 ---
 
@@ -2232,16 +2422,23 @@ be fully functional with no accelerator present.
 
 ### 10.6 Privacy and legal
 
-**NFR-6 (M)** — **No network access in the capture or processing path**, ever. Outside those
-paths, network is used only for (a) explicitly user-initiated actions — lexicon download, QRZ
-enrichment, export — and (b) the corpus contribution channel (FR-CON-1..8, D25), which is off
-until enabled, never runs during active capture, and carries only the closed set in FR-CON-3.
+**NFR-6 (M)** — *(Amended by D42.)* **No network access in the capture or processing path**,
+ever — "no network between install and capture" (D35) narrows to "no network **during**
+capture" (D43), but capture and processing themselves remain permanently network-free. Outside
+those paths, network is used only for (a) explicitly user-initiated actions — lexicon download,
+model download (FR-AST-11), QRZ enrichment, export, the share sheet (FR-EXP-7) — (b) the corpus
+contribution channel (FR-CON-1..8, D25), off until enabled, never during active capture, carrying
+only the closed set in FR-CON-3, (c) the field-report channel (FR-OBS-6..12, D37/D38), and (d)
+the analytics channel (§7.13d, FR-ANL-1..14, D42/D48), off beyond tier 1 by default, never during
+active capture. All four are declared, closed-field channels through `:net` alone (Principle
+VII); none is a vendor SDK with its own transport.
 
-> *Draft 3.2 amends this. It previously read "network is used only for explicitly user-initiated
-> actions", which D25's automatic contribution contradicts outright. The guarantee that survives
-> — and the one AC-59 tests — is narrower and more precise than the old wording: **the capture
-> and processing paths make no network calls at all.** What changed is that a background upload
-> may now happen outside them, with the user's prior consent.*
+> *Draft 3.2 amended this once already, for D25's automatic contribution. This later change
+> amends it again for D42/D43: the guarantee AC-59 and AC-146 test — **the capture and processing
+> paths make no network calls at all** — is unchanged and remains absolute. What changes is the
+> list of declared channels permitted outside those paths, which now numbers four instead of two,
+> and the install-time promise, which now depends on the build variant (`full` bundles
+> everything; `play` downloads at setup, D43).*
 
 **NFR-6a (M)** — All data app-private by default.
 
@@ -2250,6 +2447,12 @@ compatible with both open-source distribution and eventual Play Store release (D
 
 **NFR-6c (S)** — Surface a jurisdiction notice on first run regarding the legality of
 recording radio transmissions, which varies by locality.
+
+**NFR-6d (S)** — Provide a real, navigable **third-party licence notices screen**, reachable
+from Settings, listing every bundled third-party model and library requiring attribution —
+Gemma, Whisper, sherpa-onnx, ONNX Runtime, Silero, and any other bundled component with its own
+notice obligation — each with its licence text or notice reachable **offline**, without leaving
+the app.
 
 ### 10.7 Reference and floor devices (D19)
 
@@ -2550,6 +2753,14 @@ Input to the test plan. Grouped by what a test would have to establish.
 - **AC-123** A detected net is marked, displayed as a check-in list, and **threaded identically
   to an undetected one** — clearing the marking changes presentation only, never the record
   (FR-SPK-27, FR-SPK-28, FR-SPK-30).
+- **AC-163** An ordinary two-station QSO threads **automatically**, with no operator action, into
+  one Thread record, verified end to end against a tape containing one (FR-SPK-5).
+- **AC-164** A detected net's check-in sequence threads **automatically** into one Thread record
+  marked `net`, without operator action, and the thread exists whether or not the net marking is
+  ever set or cleared (FR-SPK-5, FR-SPK-27, FR-SPK-28).
+- **AC-165** Scanner activity on one channel across a sustained period threads **automatically**
+  into one Thread record, without operator action, and thread grouping runs immediately after
+  Pass B closes each transmission rather than waiting on a transcript (FR-SPK-5).
 
 ### 14.5 Rig interface
 
@@ -2674,6 +2885,14 @@ Input to the test plan. Grouped by what a test would have to establish.
   simulated colour-vision deficiency (FR-A11Y-1).
 - **AC-63** The log view is navigable and comprehensible via screen reader, and renders without
   clipping at maximum system font scale (FR-A11Y-2, FR-A11Y-3).
+- **AC-166** The jurisdiction and consent notice (NFR-6c) is shown **exactly once, on first
+  run**, and capture cannot start until it has been dismissed (NFR-6c).
+- **AC-167** Settings exposes a licence-notices screen listing Gemma, Whisper, sherpa-onnx, ONNX
+  Runtime, Silero and every other bundled library with a notice obligation, each reachable and
+  readable **without a network connection** (NFR-6d).
+- **AC-168** Navigating away from a transmission's detail view while its audio clip is playing
+  **stops playback**; returning to it does not resume from where it left off without the operator
+  tapping play again, verified against the R-1006 reproduction (FR-UI-5).
 
 ### 14.8d Segmentation quality
 
@@ -2807,6 +3026,17 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
 - **AC-33** An `INFERRED` attribution exports with its state; a confirmed-only export omits
   it entirely (FR-EXP-4, FR-EXP-5).
 - **AC-34** ADIF export imports cleanly into standard logging software.
+- **AC-169** The POTA-relevant export (FR-EXP-3) is reachable from **Settings > Export** in the
+  same navigation path as the other export formats, verified by reaching it without leaving
+  Settings (FR-EXP-3).
+- **AC-170** Restoring a save bundle reproduces every session, correction and audio file present
+  on the source device; a record that conflicts with one already on the restoring device is
+  **shown to the operator** rather than silently merged or overwritten, and nothing already
+  present is deleted by the restore (FR-STO-9, FR-STO-6).
+- **AC-171** A digest, a thread transcript and a single over's audio clip each share successfully
+  through the Android share sheet via a `FileProvider`; inspecting the shared file finds no
+  user-supplied station name, station-knowledge field or location field beyond what the shared
+  transcript text itself already contains verbatim (FR-EXP-7).
 
 ### 14.10 Evaluation harness
 
@@ -2872,14 +3102,29 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
 - **AC-136** A fresh install on a device with **networking disabled at the OS level** reaches
   full capability for its detected tier — capture, every pass that tier runs, lexicon resolution
   and the deterministic digest — with no download and no degraded-asset state (FR-AST-3).
+
+  > **Amended by D43.** This holds unchanged on the **`full`** variant. On the **`play`** variant
+  > it does not — a device with no network cannot pass the FR-AST-12 READY gate until its
+  > missing models are downloaded, which is the accepted cost of the smaller artifact (FR-AST-13).
+  > See AC-175..182.
 - **AC-137** Every bundled asset is integrity-verified before activation, and a deliberately
   corrupted bundled asset fails verification and leaves the app in a stated, recoverable state
   rather than activating (FR-AST-2, FR-AST-3b).
 - **AC-138** On a T0 device, tier-ineligible bundled models — the LLM among them — are present
   on disk and **never loaded**, verified by measured resident memory against the T0 budget
   (FR-AST-3a, FR-DIG-3b, FR-TIER-8).
+
+  > **Amended by D43.** On the `play` variant, a tier-ineligible model is never **downloaded** in
+  > the first place (FR-AST-10 compares against the detected tier before fetching), so this
+  > criterion's "present on disk, never loaded" clause applies to the `full` variant as written;
+  > the `play` variant satisfies the same intent by not installing what it would not load.
 - **AC-139** Bundled asset storage is excluded from the operator's retention budget and is shown
   separately in settings (FR-AST-3a, FR-STO-3).
+
+  > **Amended by D43.** A model downloaded at setup on the `play` variant receives the same
+  > treatment once installed — excluded from the retention budget, shown separately in settings —
+  > because FR-AST-3's amendment makes no distinction between a bundled and a downloaded asset
+  > once it is on disk and verified.
 - **AC-140** The deterministic digest generates completely with the LLM **disabled**, covering
   the same content AC-84 requires, and disabling the LLM releases its resident memory
   (FR-DIG-3a, FR-DIG-3b).
@@ -2930,6 +3175,82 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
   never the literal `"smoke-test"` or any other placeholder, with an explicit `unknown` recorded
   where the version genuinely cannot be read, verified against the R-1031 reproduction
   (FR-OBS-14).
+
+### 14.15 Analytics (D42, D48)
+
+- **AC-172** Tier 1's exact field set (FR-ANL-2) uploads by default, and inspecting a captured
+  tier-1 event finds no transcript text, callsign, user-supplied name, station knowledge or
+  location of any precision (FR-ANL-1, FR-ANL-2).
+- **AC-173** With tier 2 off, no event uploaded or queued contains transcript text or a callsign;
+  once turned on, only the FR-ANL-3 closed field list appears (FR-ANL-3, FR-ANL-9).
+- **AC-174** With tier 3 off, no event uploaded or queued contains audio; once turned on, only
+  retained over audio with its corrected transcript appears, per FR-ANL-4 (FR-ANL-4, FR-ANL-9).
+- **AC-175** No analytics event of any tier, in any combination of tiers, carries a user-supplied
+  name, station knowledge, or location finer than a grid square, verified across all three tiers
+  simultaneously enabled (FR-ANL-5).
+- **AC-176** An analytics payload is reproduced bit-for-bit by recomputing it from stored records
+  against its tier's closed field list; it is never a live serialisation of an entity graph
+  (FR-ANL-6).
+- **AC-177** No analytics network call occurs while a capture session is active; queued events
+  transmit only after capture ends, verified by packet capture alongside AC-59 and AC-146
+  (FR-ANL-7, NFR-6).
+- **AC-178** Every uploaded event carries the full FR-ANL-8 provenance envelope — install id,
+  session/over ids, app version and build hash, model ids and sha256, execution provider, device
+  model, SoC and detected tier, capture mode, rig module, band, and schema version — verified by
+  inspecting a captured event (FR-ANL-8).
+- **AC-179** Settings shows three toggles, each stating what its tier sends in terms matching
+  FR-ANL-2..4, and turning tier 2 or tier 3 off takes effect immediately for events not yet sent
+  (FR-ANL-9).
+- **AC-180** Setup explains tier 1 and offers tiers 2 and 3 as an explicit, unchecked choice;
+  declining both leaves every other function fully working (FR-ANL-10).
+- **AC-181** Resetting the install id purges every row previously associated with the old id at
+  the configured destination (FR-ANL-11).
+- **AC-182** Analytics rows land only in the `field` fold and never appear tagged `dev` or `eval`,
+  verified by inspecting the fold tag on ingested rows (FR-ANL-12, constitution VI).
+- **AC-183** The analytics queue is bounded; once full, the oldest queued event is dropped and
+  capture is measurably unaffected — no added latency, no dropped audio (FR-ANL-13, FR-RUN-1).
+
+### 14.16 Model acquisition and the setup gate (D43, D44)
+
+- **AC-184** On the `play` variant with a required model missing, setup's MODELS step downloads
+  it via `ModelAcquisition` — resumable, sha256-verified, installed by atomic rename — as a
+  foreground WorkManager job (FR-AST-10, FR-AST-11).
+- **AC-185** A download interrupted mid-transfer resumes from its partial state rather than
+  restarting from zero, verified by killing the process mid-download and relaunching (FR-AST-11).
+- **AC-186** A downloaded model whose bytes fail sha256 verification is rejected and re-queued
+  for download rather than activated (FR-AST-11, FR-AST-2).
+- **AC-187** Model download defaults to **Wi-Fi-only** and does not proceed on a metered
+  connection unless the operator explicitly overrides it for that download (FR-AST-11).
+- **AC-188** Setup cannot reach READY while any model the detected tier requires is missing or
+  unverified, or while the microphone/level check has not passed; reaching READY requires both
+  conditions satisfied together (FR-AST-12).
+- **AC-189** The battery-exemption onboarding step reappears on every relevant subsequent launch
+  until the heartbeat (FR-SVC-5b) proves the app survived a backgrounded run, even where the OS
+  reports the exemption already granted (FR-AST-12, FR-SVC-5b).
+- **AC-190** The `full` variant installs with every asset bundled and never reaches a model
+  download step; the `play` variant installs without those models and downloads them during
+  setup — verified by installing each variant and comparing its setup flow (FR-AST-13).
+- **AC-191** A downloaded model's manifest entry names its URL, sha256 and size in
+  `bundled-assets.json`, matches the file actually downloaded, and a file whose computed sha256
+  disagrees with its manifest entry is rejected (FR-AST-14, D44).
+
+### 14.17 Live alerts (FR-ALR)
+
+- **AC-192** A watch on a callsign, a keyword, and a frequency can each be added, edited and
+  deleted from Settings (FR-ALR-1, FR-ALR-6).
+- **AC-193** No alert definition, match, or firing event is ever transmitted off the device,
+  verified by packet capture across a session that fires at least one alert of each kind
+  (FR-ALR-2).
+- **AC-194** An alert fires only after Pass B resolves a matching transmission; a Pass A partial
+  that would match never fires one, verified by a partial that is later corrected away from the
+  watched value at Pass B (FR-ALR-3).
+- **AC-195** Capture continues unaffected while alert evaluation is artificially stalled or slow —
+  no added latency to the pass queue, no dropped audio (FR-ALR-4, FR-RUN-1).
+- **AC-196** A fired notification for a `CONFIRMED` match and one for an `INFERRED` match are
+  visibly and textually distinct, and the `INFERRED` notification never states or implies the
+  callsign was heard in that transmission (FR-ALR-5).
+- **AC-197** Every watched callsign, keyword and frequency is visible and manageable from one
+  screen (FR-ALR-6).
 
 ---
 
@@ -3286,6 +3607,15 @@ product; all of them are what make the reference experience world-class.
 | D36 LLM bundled, still post-hoc | FR-DIG-3a, FR-DIG-3b, D5 (untouched), FR-AST-3, R18, AC-138, AC-140 |
 | D37 Field-report channel exists | FR-OBS-5 (amended), FR-OBS-5a (amended), FR-OBS-6..12, AC-141..149 |
 | D38 Field report may include audio/voiceprints, default off | FR-SPK-20 (amended), FR-OBS-9, FR-OBS-10, R19, Q18, AC-144..149 |
+| D42 Principle V redefined; analytics channel added | FR-ANL-1..14, FR-OBS-5 (amended), FR-OBS-5a (amended), NFR-6 (amended), AC-163..183 |
+| D43 Setup downloads any model not bundled; two build variants | FR-AST-3 (amended), FR-AST-10..13, AC-136 (amended), AC-138 (amended), AC-139 (amended), AC-184..190 |
+| D44 Model mirror on GitHub Releases, pinned by sha256 | FR-AST-14, AC-191 |
+| D45 Voice library (D28) deferred to post-1.0 | FR-SPK-11..26 (deferred), RELEASES.md correction |
+| D46 M4 fork timing fixed to a post-1.0 dev-fold measurement | R3, M4, Q2 |
+| D47 1.0 launches free, no billing | technical design §16 (token kinds) |
+| D48 Analytics destination: self-hosted, build-configured | FR-ANL-7, FR-ANL-11, D42 |
+| D49 Q18/Q19 close: private destination before public launch, 90-day retention | Q18, Q19, R19 |
+| D50 Q22 closes: fallback VAD disclosed, never silent | Q22, FR-SEG-10 |
 
 Requirement groups added in drafts 3 and 3.2, mapped to the goal or property they serve:
 
@@ -3299,6 +3629,11 @@ Requirement groups added in drafts 3 and 3.2, mapped to the goal or property the
 | FR-SEG-7..9, CON-SEG-1 | D8, AC-39 — the precondition cross-tier reprocessing assumed |
 | FR-STO-2a..c, CON-STO-1 | D4, FR-REP-4 — the retained audio must still support the passes |
 | FR-OBS-13..14 | Constitution VI, FR-REP-2, FR-ACC-5 — the same "no number without its provenance" obligation, restated because a live pass and a real session both skipped it in practice (R-1031, R-1032, R-1033) |
+| FR-ANL-1..14 | D42, D48, constitution VII — the fourth declared outbound channel, closed-field and tiered, with the same provenance discipline FR-OBS-13..14 already holds |
+| FR-AST-10..14 | D43, D44 — model acquisition and the setup gate, once "everything bundled" (D35) stopped being true on every variant |
+| FR-STO-9 | P9 — restore gets the same "nothing deleted quietly" guarantee export already has |
+| FR-EXP-7 | G2, G3 — the share sheet, user-initiated only |
+| FR-ALR-1..6 | §1.5's own "nothing in v1 may foreclose it" — promoted once Pass D already produced everything a watch needs |
 
 ---
 

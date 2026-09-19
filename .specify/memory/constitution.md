@@ -1,6 +1,47 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 1.3.0 → 2.0.0
+
+Bump rationale (2.0.0, MAJOR): Principle V is redefined, not extended. Its title changes from
+  "Nothing Leaves The Device Except By A Declared Channel" to "Audio Is Processed Only On The
+  Device," and its scope narrows from "nothing leaves except through a declared channel" to
+  "audio and its processing stay on-device; everything else is a declared channel" — a fourth
+  channel, analytics, is added in three tiers, on by default only for a closed, audio-free field
+  list. Distilled from the product owner's 2026-09-19 session: a request for usage and quality
+  telemetry to steer 1.0 collided with the same principle D25 and D37/D38 had already amended
+  twice, and this time the shape of the guarantee itself had to change, not only its exception
+  list. Resolved on the record as D42, alongside eight further decisions from the same session
+  (D43–D50) covering model distribution, the voice library's deferral to post-1.0, M4's fork
+  timing, monetisation, the analytics destination, and the closure of Q18, Q19 and Q22. No other
+  principle removed or redefined.
+
+Documents updated in the same change:
+  ✅ spec/functional-spec.md — new decisions D42–D50 in §3; the preamble's "entirely offline"
+       restated as "audio processing is entirely on-device"; FR-OBS-5 and NFR-6 amended with
+       visible notes carrying Principle V's new shape; new §7.13d (FR-ANL-1..14, the analytics
+       channel); FR-AST-3 amended and FR-AST-10..14 added (D43, D44, the setup download path and
+       the two build variants); FR-SPK-5 and the persistent-voice-identity subsection amended
+       with visible deferral notes (D45); FR-STO-9 (restore), FR-EXP-7 (share sheet) and NFR-6d
+       (licence notices) added; new §7.19 FR-ANL/FR-ALR-1..6 (live alerts, promoted from the
+       v1.5 out-of-scope table); new acceptance criteria AC-163..197 across five new or extended
+       §14 subsections; §16 traceability rows for D42–D50; §1.5's out-of-scope table amended for
+       live alerts.
+  ✅ spec/open-questions.md — Q18, Q19 and Q22 closed, mapped to D49 (Q18, Q19) and D50 (Q22);
+       the status table and its count updated from seven questions remaining to four.
+  ✅ AGENTS.md — the constitution version reference; the "What this is" wording; the
+       non-negotiable rules list (the voiceprints/names bullet restated for the tiered analytics
+       shape, a new "no cloud processing of audio" line, and the one permitted privacy claim
+       quoted verbatim); a new line naming the analytics tiers.
+  ✅ spec/technical-design.md — a new `:telemetry` module in the module list and dependency
+       table (depends on `:core` only; forbidden in either direction against `:capture-*`); §16
+       gains the `:net` analytics capability token kind alongside `UserInitiated` and
+       `ContributionGrant`.
+  ✅ RELEASES.md — `## Unreleased` gains a plain-language correction: v0.1.1's release notes
+       overclaimed automatic threading and voice-based correction propagation; neither worked as
+       described, and both are corrected here rather than left standing.
+
+-- prior --
 Version change: 1.2.0 → 1.3.0
 
 Bump rationale (1.3.0, MINOR): a new declared outbound channel — Principle V's "exactly two
@@ -119,8 +160,9 @@ Follow-up TODOs:
 # Offline Radio Transcriber Constitution
 
 This project builds an Android application that transcribes amateur and scanner radio traffic
-entirely offline and resolves callsigns by matching a lexicon against the audio itself. It is
-built by one person with heavy AI assistance (D18), against an unusually complete specification.
+with **all audio processing entirely on the device** and resolves callsigns by matching a
+lexicon against the audio itself. It is built by one person with heavy AI assistance (D18),
+against an unusually complete specification.
 
 These principles are derived from decisions already made and recorded. They are **binding on
 every change**, including changes made by an AI agent, and they exist because this product's
@@ -236,33 +278,52 @@ inversion true rather than aspirational. AC-39 is only satisfiable because of it
 **Rationale:** R5 is the top risk and the product is worthless if a night's capture silently
 did not happen.
 
-### V. Nothing Leaves The Device Except By A Declared Channel
+### V. Audio Is Processed Only On The Device
 
-- **The capture and processing paths make no network call, ever** (NFR-6). Enforced by module
-  boundary and by capability token, not by policy.
-- **There are exactly three outbound channels**: user-initiated actions (asset download, export,
-  QRZ), the corpus contribution channel, off until enabled and never running during capture
-  (FR-CON-1, FR-CON-2), and the field-report channel, an operator-triggered, per-upload path to a
-  GitHub repository that shows its contents before every send and never runs during capture
-  (FR-OBS-6..12, D37).
-- **No analytics, telemetry or crash reporting**, in any build (FR-OBS-5).
-- **Three categories never leave the device at all**: user-supplied names (FR-SPK-25), station
-  knowledge (FR-DIG-13), and location finer than a grid square (FR-LEX-24). **A fourth —
-  voiceprints and embeddings — is no longer absolute** (FR-SPK-20, amended by D38): they may
-  leave only through the field-report channel, per-category, defaulting off, named by file and
-  real size before every upload, and refused outright against a public destination unless the
-  operator has explicitly turned off the guard (FR-OBS-9, FR-OBS-10). What now guarantees the
-  user's control is that opt-in and that guard, not device confinement. The contribution payload
-  is still **recomputed from a closed field list**, never serialised from an entity graph, so a
-  new column cannot leak by being added.
+*Redefined at 2.0.0 (D42). Previously "Nothing Leaves The Device Except By A Declared Channel" —*
+*the shape below carries that principle's discipline forward but the guarantee itself narrows:*
+*audio and its processing are absolute; everything else is a declared, closed-field channel.*
+
+- **All audio processing runs on the phone**: capture, segmentation, ASR, lexicon, identity,
+  digest. No audio, and no inference over audio or its transcripts, runs in the cloud, ever.
+- **The capture and processing paths still make no network call, ever** (NFR-6). Enforced by
+  module boundary and by capability token, not by policy.
+- **Only `:net` may link an HTTP client** (Principle VII). Every outbound channel, analytics
+  included, is structurally incapable of reaching the network from anywhere else.
+- **There are exactly four declared outbound channels**: user-initiated actions (asset or model
+  download, export, the share sheet, QRZ), the corpus contribution channel, off until enabled and
+  never running during capture (FR-CON-1, FR-CON-2), the field-report channel, an
+  operator-triggered, per-upload path that shows its contents before every send and never runs
+  during capture (FR-OBS-6..12, D37), and the **analytics channel** (FR-ANL-1..14, D42, D48) —
+  tiered, on by default only for a closed, audio-free field list, opt-in and off by default for
+  everything else, never running during capture.
+- **Three categories are in no channel and no tier at all**: user-supplied names (FR-SPK-25),
+  station knowledge (FR-DIG-13), and location finer than a grid square (FR-LEX-24). **A
+  fourth — voiceprints and embeddings — is no longer absolute** (FR-SPK-20, amended by D38): they
+  may leave only through the field-report channel, per-category, defaulting off, named by file
+  and real size before every upload, and refused outright against a public destination unless the
+  operator has explicitly turned off the guard (FR-OBS-9, FR-OBS-10). What guarantees the user's
+  control there is that opt-in and that guard, not device confinement. **Every outbound
+  payload — contribution, field report, or analytics — is recomputed from a closed field list**,
+  never serialised from an entity graph, so a new column cannot leak by being added.
 - **Contributed audio is never published** (D31). Derived artifacts may be.
+- **The one permitted privacy claim, verbatim** (FR-ANL-14): *"Your audio is processed only on
+  your phone and is never uploaded unless you choose to share it."* A bare "no audio leaves the
+  device" is forbidden — contribution, a field report, and analytics tier 3 can all carry audio
+  by the operator's own choice, and a claim that ignores that is false the moment any of them is
+  turned on.
 
-**Rationale:** The product records identifiable third parties who did not consent. The
-device-local guarantee is what made that defensible for every prior channel, and it is why
-FR-SPK-20 was load-bearing rather than precautionary: the moment a change proposed giving
-voiceprints an outbound path, that same load-bearing clause required the default to move to
-explicit opt-in in the same change. D38 is that change; R19 records what remains true — a public
-destination and an operator willing to turn the guard off is still a way for this to go wrong.
+**Rationale:** The product records identifiable third parties who did not consent, and now also
+carries a usage-analytics channel whose whole value depends on being trusted rather than merely
+promised. Device confinement of audio and its content is the guarantee that makes both
+defensible: it is why FR-SPK-20 was load-bearing rather than precautionary — the moment a change
+proposed giving voiceprints an outbound path, that same load-bearing clause required the default
+to move to explicit opt-in in the same change (D38) — and it is why D42 did not simply add
+analytics as a fifth exception to the old absolute. An outbound channel that is closed-field,
+tiered, opt-in beyond a harmless default, and provenance-stamped is a declared channel in the
+sense this principle has always meant the phrase; a channel that could grow silently would not
+be, whatever it was called. R19 records what remains true regardless: a public destination and an
+operator willing to turn a guard off is still a way for any of this to go wrong.
 
 ### VI. Measurement Discipline
 
@@ -409,4 +470,4 @@ found this way, and almost none of them by reading code.
 - **Outstanding.** None. *(Resolved 2026-09-07: the repository now carries an `Apache-2.0`
   `LICENSE`, chosen for the explicit patent grant and the Play Store path — D11, build-plan P1.)*
 
-**Version**: 1.3.0 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-12
+**Version**: 2.0.0 | **Ratified**: 2026-09-07 | **Last Amended**: 2026-09-19

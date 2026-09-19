@@ -5,14 +5,17 @@ Guidance for AI coding agents working in this repository. Follows the
 Codex, Gemini CLI, Windsurf, Aider and others.
 
 **Read [`.specify/memory/constitution.md`](.specify/memory/constitution.md) first.** It is
-binding, it is short, currently at version 1.3.0, and it exists because this product's
+binding, it is short, currently at version 2.0.0, and it exists because this product's
 characteristic failures are silent.
 
 ## What this is
 
-An Android application that transcribes amateur and scanner radio traffic **entirely offline**,
-resolves callsigns by matching a lexicon **against the audio signal** rather than the transcript,
-groups transmissions into conversations, and presents a searchable log and a digest.
+An Android application that transcribes amateur and scanner radio traffic with **all audio
+processing on the device**, resolves callsigns by matching a lexicon **against the audio
+signal** rather than the transcript, groups transmissions into conversations, and presents a
+searchable log and a digest. A tiered, closed-field **analytics** channel exists for usage and
+quality telemetry (tier 1, on by default) and, opt-in, transcripts/callsigns (tier 2) and audio
+(tier 3) — see "Rules that are not negotiable" below.
 
 **Status (2026-09-12): build plan P1–P21 landed; `v0.1.1` released; every push to `main`
 republishes the rolling `latest-build` pre-release with every model bundled.** The interface was
@@ -122,11 +125,23 @@ constitution with its reasoning.
 - **`:capture-*` must never depend on `:asr-*`, `:lexicon` or `:identity`.** Capture cannot
   block on inference. The build enforces this; do not "temporarily" add the edge.
 - **Only `:net` may link an HTTP client.** No network in the capture or processing path, ever.
-- **User-supplied names, station knowledge and precise location never leave the device** — not
-  in a contribution, a diagnostic bundle or a backup. **Voiceprints and embeddings almost never
-  do**: the one exception is the field-report channel, per-category, defaulting off, named by
-  file and real size before every upload, and refused against a public destination unless a
-  visible Settings switch has been explicitly turned off (FR-SPK-20, FR-OBS-9, FR-OBS-10, D38).
+- **No cloud processing of audio, ever.** Capture, segmentation, ASR, lexicon, identity and
+  digest all run on the phone (constitution V, D42). The one permitted privacy claim, verbatim:
+  "Your audio is processed only on your phone and is never uploaded unless you choose to share
+  it." A bare "no audio leaves the device" is false and forbidden — contribution, a field report
+  and analytics tier 3 can all carry audio by the operator's own choice.
+- **User-supplied names, station knowledge and precise location never leave the device, in any
+  tier or channel** — not in a contribution, a diagnostic bundle, a backup, or any analytics
+  tier. **Voiceprints and embeddings almost never do**: the one exception is the field-report
+  channel, per-category, defaulting off, named by file and real size before every upload, and
+  refused against a public destination unless a visible Settings switch has been explicitly
+  turned off (FR-SPK-20, FR-OBS-9, FR-OBS-10, D38).
+- **Analytics is tiered, closed-field, and mostly opt-in.** Tier 1 (usage, crashes, performance,
+  aggregate quality stats — no transcript, callsign, name, station knowledge or location) is on
+  by default and can be turned off; tier 2 (transcript text and callsigns) and tier 3 (audio with
+  its corrected transcript) are opt-in and off by default. Every payload is recomputed from its
+  tier's closed field list, never serialised from an entity, and nothing uploads during capture
+  (FR-ANL-1..14, D42, D48).
 - **An attribution without its confidence state is a bug**, at the data layer, not just the UI.
 - **`CONFIRMED` means heard in *this* transmission.** Never promote a voice match to it.
 - **The segmenter must not accept a tier.** Segmentation is the one decision reprocessing
