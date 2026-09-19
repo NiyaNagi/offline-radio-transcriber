@@ -34,10 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
 
-### pending — P23: download manifest, model mirror and the two build variants
-
-*(commit hash recorded in a follow-up entry once it exists — see this repo's own established
-pattern, e.g. `0cd5cea0` recording `57b69260` below.)*
+### 58d656c4 — P23: download manifest, model mirror and the two build variants
 
 **Scope:** `buildSrc/**` (`BundledAssetCatalogRenderer`, `ModelMirrorPublisher`,
 `PublishModelMirrorTask`, `PlatformGuards`/`PlatformGuardsTask` extended, `FetchBundledAssetsTask`
