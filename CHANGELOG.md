@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (build plan P24: automatic thread grouping after Pass B)
 
-### <pending — recorded in the immediately following commit> — P24 fix: `play` is now structurally incapable of bundling assets (FR-AST-13, AC-190)
+### 978c3627 — P24 fix: `play` is now structurally incapable of bundling assets (FR-AST-13, AC-190)
 
 **Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/FetchBundledAssetsTask.kt` (new
 `BundledAssetPackaging` object), `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt` (new
