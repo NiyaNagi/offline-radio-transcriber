@@ -1,6 +1,7 @@
 name: Release
 
-# Two release shapes:
+# Two release shapes, both built from the `full` variant (FR-AST-13 — every asset bundled, exactly
+# today's behaviour, D35/FR-AST-3):
 #  - a rolling "latest-build" prerelease, republished on every push to main, so there is always
 #    exactly one stable link for "download the current build" without cutting a version. Its
 #    notes are RELEASES.md's own "## Unreleased" section (tools/release_notes.py with no
@@ -11,6 +12,16 @@ name: Release
 # RELEASES.md's own header for why release notes come from it and not from CHANGELOG.md (that
 # file stays the dense, per-commit engineering log AGENTS.md requires), and RELEASING.md for the
 # procedure that keeps RELEASES.md current.
+#
+# P23 (FR-AST-13, D44) added two things, deliberately isolated from the shape above:
+#  - a second job, `build-play-variant`, that unit-tests and bundles the `play` AAB (nothing
+#    bundled — its setup downloads models from the models-v1 mirror instead) on every run this
+#    workflow already runs on. A separate job, not a step in `build-and-release`: a `play`
+#    regression must be visible, but must never block the `full` variant's own release/latest-build
+#    publish path, which is this workflow's actual product for the operator.
+#  - a `models-v1` mirror-publish step inside `build-and-release`, gated to real release tags only
+#    (`v*.*.*`) — the mirror is meant to move only when a numbered version is cut, not on every push
+#    to `main`, so it stays a small, deliberate set of uploads rather than a rewrite on every commit.
 on:
   push:
     branches: [main]
@@ -30,7 +41,7 @@ env:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    # WPG (spec/e2e-capture-modes-plan.md, FR-AST-3, D35/D36): assembleDebug depends on
+    # WPG (spec/e2e-capture-modes-plan.md, FR-AST-3, D35/D36): assembleFullDebug depends on
     # fetchBundledAssets, which needs HF_TOKEN for the gated Gemma 3 1B model — a shipped release
     # is never built with the -PortAllowMissingBundledAssets escape hatch (AC-136).
     env:
@@ -47,12 +58,15 @@ jobs:
 
       # Same gate as CI's `android` job (ci.yml) — a release is only ever cut from a build that
       # passed its own Android unit tests and the dependency-boundary check, not just "compiled".
-      - name: verify and assemble the debug APK
+      # P23: `testDebugUnitTest`/`assembleDebug` renamed `testFullDebugUnitTest`/`assembleFullDebug`
+      # once the `full`/`play` product flavors existed — this step still builds only the `full`
+      # variant, exactly as it always has.
+      - name: verify and assemble the full variant's debug APK
         run: >-
           ./gradlew
           :data:testDebugUnitTest :net:testDebugUnitTest :rig-usb:testDebugUnitTest
-          :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
-          :app:assembleDebug dependencyRules
+          :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testFullDebugUnitTest
+          :app:assembleFullDebug dependencyRules
 
       # A release that fails its own tests must leave behind enough to diagnose it. Without this,
       # a failure's console log carries only the first of a multi-cause exception's stacks, and the
@@ -82,6 +96,8 @@ jobs:
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
+      # P23: the APK's own output path gained a `full/` flavor segment once product flavors
+      # existed (`app/build/outputs/apk/debug/app-debug.apk` before this unit).
       - name: publish the rolling "latest build" prerelease
         if: github.ref == 'refs/heads/main'
         env:
@@ -89,7 +105,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release delete latest-build --yes --cleanup-tag || true
-          gh release create latest-build app/build/outputs/apk/debug/app-debug.apk \
+          gh release create latest-build app/build/outputs/apk/full/debug/app-full-debug.apk \
             --repo "${{ github.repository }}" \
             --title "Latest build (${{ steps.sha.outputs.short }})" \
             --notes-file release-notes.md \
@@ -101,7 +117,75 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" app/build/outputs/apk/debug/app-debug.apk \
+          gh release create "${{ github.ref_name }}" app/build/outputs/apk/full/debug/app-full-debug.apk \
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             --notes-file release-notes.md
+
+      # D44 (FR-AST-14): mirrors every verified bundled asset to the `models-v1` GitHub Release so
+      # the `play` variant's setup step has something to download. Release tags only — see this
+      # file's own top comment for why every push to `main` does not also do this. Idempotent
+      # (`PublishModelMirrorTask`/`ModelMirrorPublisher`): safe to run again on a re-tagged or
+      # re-run release. Never touches `HF_TOKEN` — `gh` authenticates with `GH_TOKEN` here, same as
+      # the publish steps above.
+      - name: create the models-v1 release, if it does not exist yet
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view models-v1 --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create models-v1 \
+              --repo "${{ github.repository }}" \
+              --title "Model mirror (models-v1)" \
+              --notes "Verified model assets mirrored here for the play build variant's setup downloads (D44, FR-AST-14). This is not a release of the app itself — see docs/privacy-policy.md and spec/functional-spec.md §7.15 for what downloads and why." \
+              --prerelease \
+              --target "$GITHUB_SHA"
+
+      - name: publish verified model assets to the models-v1 mirror (D44, FR-AST-14)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew :app:publishModelMirror
+
+  build-play-variant:
+    name: build the play variant (FR-AST-13)
+    runs-on: ubuntu-latest
+    # No HF_TOKEN here at all — the whole point of this variant (P23): it bundles nothing named in
+    # bundled-assets.json, so neither its tests nor its bundle build ever touch fetchBundledAssets.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: unit test and bundle the play variant
+        run: ./gradlew :app:testPlayDebugUnitTest :app:bundlePlayRelease dependencyRules
+
+      - name: keep the test reports even when the build failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-test-reports-${{ github.run_id }}
+          path: |
+            app/build/reports/tests/**
+            app/build/test-results/**
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Kept as a workflow artifact, not a GitHub Release asset: an AAB is not sideloadable (only
+      # `bundletool`/Play Console can install from one), so attaching it to a download page the
+      # operator finds meant for the `full` variant's APK would be actively misleading. This is
+      # here so the AAB can be inspected or pulled for a manual Play Console upload without
+      # rebuilding it locally.
+      - name: upload the play release AAB for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-play-release-aab-${{ github.run_id }}
+          path: app/build/outputs/bundle/playRelease/app-play-release.aab
+          retention-days: 30
+          if-no-files-found: error

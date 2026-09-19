@@ -34,22 +34,27 @@ abstract class PlatformGuardsTask : DefaultTask() {
         val httpClient = PlatformGuards.httpClientViolations(deps)
         val internet = PlatformGuards.internetPermissionViolations(manifests)
         val missingInternet = PlatformGuards.missingInternetPermissionViolations(manifests)
+        val fgsTypes = PlatformGuards.fgsTypeDeclarationViolations(manifests)
 
         logger.lifecycle(
             "platformGuards: checked ${deps.size} modules' external dependencies and " +
                 "${manifests.size} manifests — no analytics/telemetry SDK, no HTTP client outside :net, " +
-                "android.permission.INTERNET declared by :net and only :net " +
-                "(FR-OBS-5, NFR-6, AC-59, audit F-008).",
+                "android.permission.INTERNET declared by :net and only :net, every declared " +
+                "FOREGROUND_SERVICE_<TYPE> permission has a matching foregroundServiceType " +
+                "(FR-OBS-5, NFR-6, AC-59, audit F-008, P23 Play-readiness).",
         )
 
-        if (telemetry.isNotEmpty() || httpClient.isNotEmpty() || internet.isNotEmpty() || missingInternet.isNotEmpty()) {
+        if (telemetry.isNotEmpty() || httpClient.isNotEmpty() || internet.isNotEmpty() ||
+            missingInternet.isNotEmpty() || fgsTypes.isNotEmpty()
+        ) {
             throw GradleException(
                 buildString {
-                    appendLine("Platform guard violation(s) — audit F-008/F-027:")
+                    appendLine("Platform guard violation(s) — audit F-008/F-027, P23:")
                     telemetry.forEach { appendLine("  ${it.module} -> ${it.coordinate}   (${it.reason})") }
                     httpClient.forEach { appendLine("  ${it.module} -> ${it.coordinate}   (${it.reason})") }
                     internet.forEach { appendLine("  ${it.module}   (${it.reason})") }
                     missingInternet.forEach { appendLine("  ${it.module}   (${it.reason})") }
+                    fgsTypes.forEach { appendLine("  ${it.module}   (${it.reason})") }
                     appendLine()
                     appendLine(
                         "This is a declared-artifact check, not a runtime traffic capture — it proves " +

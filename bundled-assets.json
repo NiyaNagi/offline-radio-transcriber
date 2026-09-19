@@ -27,19 +27,21 @@
     "gated: true means the source repository requires accepting a licence on HuggingFace and an",
     "Authorization: Bearer <HF_TOKEN> header to fetch — FetchBundledAssetsTask fails the build",
     "naming the one-line fix when HF_TOKEN is absent for such an entry, unless the local-dev-only",
-    "escape hatch is set (see that task's doc comment)."
+    "escape hatch is set (see that task's doc comment).",
+    "",
+    "mirrorUrl (P23, FR-AST-14/D44) is this entry's own asset URL on the 'models-v1' GitHub Release",
+    "on this project's own repository — distinct from url (the build-time source, HuggingFace or",
+    "k2-fsa/sherpa-onnx). buildSrc's PublishModelMirrorTask (run from .github/workflows/release.yml,",
+    "release tags only) uploads the exact bytes FetchBundledAssetsTask already verified against sha256",
+    "to this URL, idempotently. The 'play' build variant's generated catalog (BundledAssetCatalogRenderer)",
+    "downloads from mirrorUrl instead of bundling the asset (FR-AST-13); the 'full' variant ignores it",
+    "entirely and bundles from url as it always has (D35, FR-AST-3).",
+    "",
+    "Entries are kept sorted by id (constitution: generated/derived files must be byte-identical —",
+    "BundledAssetManifestDeterminismTest enforces this for the hand-authored order too, so a future",
+    "edit that appends out of order fails the buildSrc test suite rather than drifting silently)."
   ],
   "assets": [
-    {
-      "id": "ASR_ENCODER",
-      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-encoder.int8.onnx",
-      "sha256": "0ce578b827c94a961aacb8fa14b02f096504b337e5c94be37c36238cbe3e8bc6",
-      "sizeBytes": 12937772,
-      "destination": "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx",
-      "tiers": ["T0", "T1", "T2", "T3"],
-      "licence": "MIT (OpenAI Whisper weights, sherpa-onnx ONNX export)",
-      "gated": false
-    },
     {
       "id": "ASR_DECODER",
       "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-decoder.int8.onnx",
@@ -48,7 +50,19 @@
       "destination": "models/whisper-tiny-en-int8/tiny.en-decoder.int8.onnx",
       "tiers": ["T0", "T1", "T2", "T3"],
       "licence": "MIT (OpenAI Whisper weights, sherpa-onnx ONNX export)",
-      "gated": false
+      "gated": false,
+      "mirrorUrl": "https://github.com/NiyaNagi/offline-radio-transcriber/releases/download/models-v1/tiny.en-decoder.int8.onnx"
+    },
+    {
+      "id": "ASR_ENCODER",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-tiny.en/resolve/main/tiny.en-encoder.int8.onnx",
+      "sha256": "0ce578b827c94a961aacb8fa14b02f096504b337e5c94be37c36238cbe3e8bc6",
+      "sizeBytes": 12937772,
+      "destination": "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx",
+      "tiers": ["T0", "T1", "T2", "T3"],
+      "licence": "MIT (OpenAI Whisper weights, sherpa-onnx ONNX export)",
+      "gated": false,
+      "mirrorUrl": "https://github.com/NiyaNagi/offline-radio-transcriber/releases/download/models-v1/tiny.en-encoder.int8.onnx"
     },
     {
       "id": "ASR_TOKENS",
@@ -59,17 +73,8 @@
       "destination": "models/whisper-tiny-en-int8/tiny.en-tokens.txt",
       "tiers": ["T0", "T1", "T2", "T3"],
       "licence": "MIT (OpenAI Whisper weights, sherpa-onnx ONNX export)",
-      "gated": false
-    },
-    {
-      "id": "VAD",
-      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
-      "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
-      "sizeBytes": 643854,
-      "destination": "models/silero-vad/silero_vad.onnx",
-      "tiers": ["T0", "T1", "T2", "T3"],
-      "licence": "MIT (Silero VAD)",
-      "gated": false
+      "gated": false,
+      "mirrorUrl": "https://github.com/NiyaNagi/offline-radio-transcriber/releases/download/models-v1/tiny.en-tokens.txt"
     },
     {
       "id": "LLM_GEMMA3_1B",
@@ -79,7 +84,19 @@
       "destination": "models/llm/gemma3-1b-it-int4.task",
       "tiers": ["T3"],
       "licence": "gemma",
-      "gated": true
+      "gated": true,
+      "mirrorUrl": "https://github.com/NiyaNagi/offline-radio-transcriber/releases/download/models-v1/gemma3-1b-it-int4.task"
+    },
+    {
+      "id": "VAD",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+      "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "sizeBytes": 643854,
+      "destination": "models/silero-vad/silero_vad.onnx",
+      "tiers": ["T0", "T1", "T2", "T3"],
+      "licence": "MIT (Silero VAD)",
+      "gated": false,
+      "mirrorUrl": "https://github.com/NiyaNagi/offline-radio-transcriber/releases/download/models-v1/silero_vad.onnx"
     }
   ]
 }

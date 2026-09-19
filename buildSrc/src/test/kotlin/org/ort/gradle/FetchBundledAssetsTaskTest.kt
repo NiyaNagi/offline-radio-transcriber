@@ -57,7 +57,8 @@ class FetchBundledAssetsTaskTest {
                   "destination": "models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx",
                   "tiers": ["T0", "T1", "T2", "T3"],
                   "licence": "MIT",
-                  "gated": false
+                  "gated": false,
+                  "mirrorUrl": "https://example.invalid/mirror/encoder.onnx"
                 },
                 {
                   "id": "LLM_GEMMA3_1B",
@@ -67,7 +68,8 @@ class FetchBundledAssetsTaskTest {
                   "destination": "models/llm/gemma3-1b-it-int4.task",
                   "tiers": ["T3"],
                   "licence": "gemma",
-                  "gated": true
+                  "gated": true,
+                  "mirrorUrl": "https://example.invalid/mirror/gemma.task"
                 }
               ]
             }
@@ -80,6 +82,7 @@ class FetchBundledAssetsTaskTest {
         assertEquals(12_937_772L, encoder.sizeBytes)
         assertEquals(listOf("T0", "T1", "T2", "T3"), encoder.tiers)
         assertFalse(encoder.gated)
+        assertEquals("https://example.invalid/mirror/encoder.onnx", encoder.mirrorUrl)
         val gemma = entries.first { it.id == "LLM_GEMMA3_1B" }
         assertTrue(gemma.gated)
         assertEquals(listOf("T3"), gemma.tiers)

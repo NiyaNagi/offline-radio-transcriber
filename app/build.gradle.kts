@@ -20,6 +20,25 @@ val gitShortCommitProvider = providers.exec {
 extensions.configure<BaseAppModuleExtension> {
     testOptions { unitTests.isIncludeAndroidResources = true }
 
+    // P23 (FR-AST-13, D43): the two build variants. `full` bundles every asset and is exactly
+    // today's behaviour (D35, FR-AST-3) — the GitHub/sideload build. `play` is a slim AAB that
+    // bundles nothing named in bundled-assets.json; its setup MODELS step downloads each one from
+    // the models-v1 mirror instead (FR-AST-10..12, D44). One dimension, since a build only ever
+    // varies along this one axis today — AGP requires naming a dimension once there is more than
+    // one flavor, even a single one. `full` first (and therefore AGP's own default flavor) so an
+    // unqualified variant reference in tooling that predates flavors — a stray `assembleDebug`
+    // invoked interactively, `./gradlew tasks` output, an IDE run configuration — resolves to the
+    // one whose behaviour is identical to before this unit, not to `play`.
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("full") {
+            dimension = "distribution"
+        }
+        create("play") {
+            dimension = "distribution"
+        }
+    }
+
     // R-1001 (register): `:asr-sherpa/build.gradle.kts` now scopes the Windows-x64 sherpa-onnx
     // native jar `testRuntimeOnly`, which already keeps it off this module's own runtime/packaging
     // classpath structurally (see that file's own comment for why that is the real fix, verified
@@ -89,7 +108,10 @@ extensions.configure<BaseAppModuleExtension> {
 // debug-only symbol for the first time — found by actually running `./gradlew build`, not by
 // inspection. No release artifact consumes this task's output; disabled here for the identical
 // reason its sibling already is.
-tasks.matching { it.name == "compileReleaseUnitTestKotlin" }.configureEach { enabled = false }
+// P23: matches both flavors' own release-variant compile task now (`compileReleaseUnitTestKotlin`
+// before flavors existed).
+val compileReleaseUnitTestKotlinTaskName = Regex("compile(Full|Play)ReleaseUnitTestKotlin")
+tasks.matching { compileReleaseUnitTestKotlinTaskName.matches(it.name) }.configureEach { enabled = false }
 
 // build-plan P8 adds the capture status surface and permissions flow (plain Android views —
 // Compose is not yet wired into ort.android-app.gradle.kts, and pulling it in is out of this
@@ -193,7 +215,13 @@ dependencies {
 // list reaches one of those real, recurring polls; isolating the whole set here (rather than
 // re-bisecting each remaining crossing one at a time against a suite that takes minutes per attempt)
 // is the same proven fix applied to every known instance of one root cause at once.
-val composeIdlePoisoningSmokeTestDebugUnitTest = tasks.register<Test>("smokeTestDebugUnitTest") {
+// P23: extracted into a function, called once per build flavor below (`registerComposePoisonSmokeTestTask`)
+// — `full` and `play` compile the identical `app/src/test/kotlin` source set, so the exact same
+// class-level poisoning this whole block documents applies to both flavors' own debug unit test
+// task (`test<Flavor>DebugUnitTest`, `testDebugUnitTest` before flavors existed) equally. The
+// comments below predate flavors and still say "testDebugUnitTest"/"smokeTestDebugUnitTest" in a
+// few places — read those as "whichever flavor's variant is running", not literally that task name.
+fun registerComposePoisonSmokeTestTask(taskName: String) = tasks.register<Test>(taskName) {
     group = "verification"
     description = "Runs the test classes already confirmed (or, by the same shape, suspected) to " +
         "poison later Compose tests' idle checking when they share a JVM with testDebugUnitTest's " +
@@ -302,7 +330,12 @@ val composeIdlePoisoningSmokeTestDebugUnitTest = tasks.register<Test>("smokeTest
     forkEvery = 1
 }
 
-// `afterEvaluate`, not immediate: `testDebugUnitTest` is AGP's own task (registered by the
+val composeIdlePoisoningSmokeTestFullDebugUnitTest =
+    registerComposePoisonSmokeTestTask("smokeTestFullDebugUnitTest")
+val composeIdlePoisoningSmokeTestPlayDebugUnitTest =
+    registerComposePoisonSmokeTestTask("smokeTestPlayDebugUnitTest")
+
+// `afterEvaluate`, not immediate: `test<Flavor>DebugUnitTest` is AGP's own task (registered by the
 // `com.android.application` plugin `ort.android-app` applies), and AGP does not create it until
 // its own variant-configuration callbacks run — this script's own top level runs first and a plain
 // `tasks.named("testDebugUnitTest")` at that point fails with "Task ... not found" (found by
@@ -313,8 +346,12 @@ val composeIdlePoisoningSmokeTestDebugUnitTest = tasks.register<Test>("smokeTest
 // writing this) are copied wholesale into the new task, rather than reimplemented, so it is
 // genuinely "the same type/config" and not a same-looking task that silently can't find its own
 // resources; `testDebugUnitTest` itself is also excluded here, once it is guaranteed to exist.
-afterEvaluate {
-    val debugUnitTest = tasks.withType<Test>().named("testDebugUnitTest").get()
+// P23: extracted so the identical mitigation applies to both flavors' own `test<Flavor>DebugUnitTest`
+// — see `registerComposePoisonSmokeTestTask`'s own comment above for why the same class-level
+// poisoning applies equally to `full` and `play` (both compile the one shared `app/src/test/kotlin`
+// source set). Everything below predates flavors and still says "testDebugUnitTest" in prose; read
+// it as "whichever flavor's variant this call is applied to".
+fun applyComposeIdlePoisonMitigations(debugUnitTest: Test, smokeTask: TaskProvider<Test>) {
     debugUnitTest.exclude("**/ReaderActivityDestinationSmokeTest*")
     debugUnitTest.exclude("**/SessionsContentTest*")
     debugUnitTest.exclude("**/NowContentTest*")
@@ -405,7 +442,7 @@ afterEvaluate {
     val availableCpuCount = Runtime.getRuntime().availableProcessors()
     debugUnitTest.forkEvery = (availableCpuCount / 4).coerceIn(1, 12).toLong()
     debugUnitTest.maxHeapSize = "2g"
-    composeIdlePoisoningSmokeTestDebugUnitTest.configure {
+    smokeTask.configure {
         testClassesDirs = debugUnitTest.testClassesDirs
         classpath = debugUnitTest.classpath
         jvmArgumentProviders.addAll(debugUnitTest.jvmArgumentProviders)
@@ -413,5 +450,27 @@ afterEvaluate {
     }
 }
 
-tasks.named("check") { dependsOn(composeIdlePoisoningSmokeTestDebugUnitTest) }
-tasks.named("build") { dependsOn(composeIdlePoisoningSmokeTestDebugUnitTest) }
+// `afterEvaluate`, not immediate: `test<Flavor>DebugUnitTest` is AGP's own task (registered by the
+// `com.android.application` plugin `ort.android-app` applies), and AGP does not create it until its
+// own variant-configuration callbacks run — this script's own top level runs first and a plain
+// `tasks.named("testFullDebugUnitTest")` at that point fails with "Task ... not found" (found by
+// actually running this, not by inspection, back when there was only one flavor's worth of this
+// task to name). `afterEvaluate` is the standard, documented point AGP's own tasks are guaranteed
+// to exist, for both flavors regardless of which script declared which flavor.
+afterEvaluate {
+    applyComposeIdlePoisonMitigations(
+        tasks.withType<Test>().named("testFullDebugUnitTest").get(),
+        composeIdlePoisoningSmokeTestFullDebugUnitTest,
+    )
+    applyComposeIdlePoisonMitigations(
+        tasks.withType<Test>().named("testPlayDebugUnitTest").get(),
+        composeIdlePoisoningSmokeTestPlayDebugUnitTest,
+    )
+}
+
+tasks.named("check") {
+    dependsOn(composeIdlePoisoningSmokeTestFullDebugUnitTest, composeIdlePoisoningSmokeTestPlayDebugUnitTest)
+}
+tasks.named("build") {
+    dependsOn(composeIdlePoisoningSmokeTestFullDebugUnitTest, composeIdlePoisoningSmokeTestPlayDebugUnitTest)
+}

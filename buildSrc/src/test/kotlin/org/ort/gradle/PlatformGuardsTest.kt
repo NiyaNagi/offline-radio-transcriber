@@ -99,6 +99,98 @@ class PlatformGuardsTest {
         assertEquals(":net", violations.single().module)
     }
 
+    // ---- P23 (Play-readiness) — a declared FOREGROUND_SERVICE_<TYPE> permission needs a matching
+    // android:foregroundServiceType on some <service> in the same module's manifest -------------
+
+    @Test
+    fun `P23 a microphone FGS permission with a matching service type is not reported`() {
+        val manifests = mapOf(
+            ":capture-android" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+                    <application>
+                        <service android:name=".CaptureService" android:foregroundServiceType="microphone" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        assertTrue(PlatformGuards.fgsTypeDeclarationViolations(manifests).isEmpty())
+    }
+
+    @Test
+    fun `P23 a declared FGS permission with no matching service type is reported`() {
+        val manifests = mapOf(
+            ":capture-android" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+                    <application>
+                        <service android:name=".CaptureService" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        val violations = PlatformGuards.fgsTypeDeclarationViolations(manifests)
+        assertEquals(1, violations.size)
+        assertEquals(":capture-android", violations.single().module)
+        assertTrue(violations.single().reason.contains("microphone"))
+    }
+
+    @Test
+    fun `P23 no FGS permission declared at all is not reported`() {
+        val manifests = mapOf(":core" to "<manifest />")
+        assertTrue(PlatformGuards.fgsTypeDeclarationViolations(manifests).isEmpty())
+    }
+
+    @Test
+    fun `P23 a dataSync FGS permission is checked independently of microphone`() {
+        val manifests = mapOf(
+            ":pipeline" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+                    <application>
+                        <service android:name=".ReprocessService" android:foregroundServiceType="dataSync" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        assertTrue(PlatformGuards.fgsTypeDeclarationViolations(manifests).isEmpty())
+    }
+
+    @Test
+    fun `P23 a service type value that only partially matches as a substring is not fooled`() {
+        // "dataSync" must not be satisfied by a type value where it is merely a substring of a
+        // longer, unrelated token with no word boundary around it (e.g. a typo'd custom value) —
+        // only a real, word-bounded "dataSync" (optionally pipe-separated with another type, the
+        // real multi-type manifest syntax) counts.
+        val manifests = mapOf(
+            ":pipeline" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+                    <application>
+                        <service android:name=".X" android:foregroundServiceType="xdataSyncy" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        val violations = PlatformGuards.fgsTypeDeclarationViolations(manifests)
+        assertEquals(1, violations.size)
+    }
+
+    @Test
+    fun `P23 a real multi-type pipe-separated value is recognised`() {
+        val manifests = mapOf(
+            ":pipeline" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+                    <application>
+                        <service android:name=".X" android:foregroundServiceType="camera|dataSync" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        assertTrue(PlatformGuards.fgsTypeDeclarationViolations(manifests).isEmpty())
+    }
+
     // ---- R-1001 — the packaged APK must really contain the sherpa-onnx native libraries ---------
     // Unlike every check above, this one reads a real build artifact (the APK's own zip entries),
     // not a declared coordinate or manifest string — see PlatformGuards's own KDoc update and this

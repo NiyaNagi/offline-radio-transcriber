@@ -31,6 +31,15 @@ object PlatformGuards {
     val REQUIRED_NATIVE_LIBRARY_ABIS: List<String> = listOf("arm64-v8a", "x86_64")
     val REQUIRED_NATIVE_LIBRARY_FILES: List<String> = listOf("libsherpa-onnx-jni.so", "libonnxruntime.so")
 
+    /** P23 (Play-readiness): every `FOREGROUND_SERVICE_<TYPE>` permission this project declares
+     * anywhere, mapped to the `android:foregroundServiceType` value Play expects a declaring
+     * `<service>` to carry — see [fgsTypeDeclarationViolations]'s own KDoc and
+     * `docs/fgs-type-declaration.md`, which this map must stay in sync with. */
+    val FGS_PERMISSION_TO_TYPE: Map<String, String> = mapOf(
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE" to "microphone",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC" to "dataSync",
+    )
+
     /** FR-OBS-5 — no analytics/telemetry/crash-reporting dependency in any module, ever. */
     fun telemetryViolations(dependenciesByModule: Map<String, Set<String>>): List<DependencyViolation> =
         dependenciesByModule.flatMap { (module, coordinates) ->
@@ -88,6 +97,37 @@ object PlatformGuards {
             )
         }
     }
+
+    /**
+     * P23 (Play-readiness, `docs/fgs-type-declaration.md`): a manifest that declares a
+     * `FOREGROUND_SERVICE_<TYPE>` permission ([FGS_PERMISSION_TO_TYPE]) SHALL also carry at least
+     * one `<service>` with a matching `android:foregroundServiceType` — Play's own review reads
+     * the permission and the declared type together, and a permission with no matching type is
+     * exactly the kind of mismatch a store listing gets rejected for. Declared-artifact only, like
+     * every other check in this file (this file's own class KDoc): it proves the manifest names
+     * agree, not that the service is ever actually started with that type at runtime —
+     * `:capture-android`'s own `CaptureServiceTest` already covers that narrower, real claim for
+     * the one service this project ships today.
+     */
+    fun fgsTypeDeclarationViolations(manifestTextByModule: Map<String, String>): List<ManifestViolation> =
+        manifestTextByModule.flatMap { (module, text) ->
+            FGS_PERMISSION_TO_TYPE.entries.mapNotNull { (permission, type) ->
+                if (!text.contains(permission)) return@mapNotNull null
+                val typeDeclared = Regex(
+                    "android:foregroundServiceType\\s*=\\s*\"[^\"]*\\b${Regex.escape(type)}\\b[^\"]*\"",
+                ).containsMatchIn(text)
+                if (typeDeclared) {
+                    null
+                } else {
+                    ManifestViolation(
+                        module,
+                        "declares $permission but no <service> carries " +
+                            "android:foregroundServiceType=\"$type\" (Play FGS type declaration, " +
+                            "docs/fgs-type-declaration.md)",
+                    )
+                }
+            }
+        }.sortedWith(compareBy({ it.module }, { it.reason }))
 
     /**
      * R-1001 (register — every real transmission failed Pass B with `dlopen failed: library

@@ -462,7 +462,24 @@ free.
   `*Content`/`*ViewState` outside `ui/setup/**`, so the visual re-verification (constitution VIII)
   is scoped to the setup tour steps only — capture them at 1.0 and 2.0.
 
-- [ ] **P23 · Download manifest, model mirror and the two build variants** *(`buildSrc`,
+- [x] **P23 · Download manifest, model mirror and the two build variants** — done 2026-09-19: the
+  `full`/`play` product flavors exist and both build (`assembleFullDebug`, `assemblePlayDebug`,
+  `bundlePlayRelease`, all verified locally); `bundled-assets.json` carries a pinned `mirrorUrl`
+  per entry and the generated per-flavor catalog carries `bundled`/`downloadUrl`
+  (`BundledAssetCatalogRenderer`, tested); `PublishModelMirrorTask`/`ModelMirrorPublisher`
+  (idempotent by name+size, tested) is wired into `release.yml` on release tags only; the FGS-type
+  guard, privacy policy, Data Safety sheet and FGS checklist exist. **AC-190's runtime half
+  (installing each variant and comparing its setup flow) is NOT verified here** — it needs P22's
+  `ui/setup`/`ModelsViewData.kt` work (parallel, not owned by this unit) to read the new
+  `bundled`/`downloadUrl` fields at all; today both flavors' `ModelCatalog.entries` still report
+  every entry `bundled = true` regardless of flavor, since that mapping lives in the file P22 owns.
+  `verifySherpaNativeLibrariesPackaged` (R-1001) was rescoped to the `full` flavor's own debug
+  APK only, not re-proven against `play`'s. **Three callers outside this unit's ownership are now
+  broken and were not fixed here** — `.github/workflows/ci.yml`'s `android` job
+  (`:app:testDebugUnitTest` is now ambiguous; `:app:assembleDebug`'s own output path changed),
+  `.github/workflows/emulator.yml` (`:app:connectedDebugAndroidTest` is now ambiguous), and
+  `tools/ui-audit/install.ps1` (`:app:assembleDebug`'s APK now lands under `apk/full/debug/`, not
+  `apk/debug/`) — see this unit's own session report for the exact fix each needs *(`buildSrc`,
   `bundled-assets.json`, `app/build.gradle.kts`, `.github/workflows/release.yml`, `docs/`)* —
   D43, D44, FR-AST-13, FR-AST-14.
 

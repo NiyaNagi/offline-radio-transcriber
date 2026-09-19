@@ -250,6 +250,14 @@ object BundledAssetManifest {
         val tiers: List<String>,
         val licence: String,
         val gated: Boolean,
+        /** FR-AST-14/D44 (P23): this entry's own asset URL on the `models-v1` GitHub Release
+         * mirror — distinct from [url], the build-time source [FetchBundledAssetsTask] fetches
+         * from. The `play` variant's generated catalog ([BundledAssetCatalogRenderer]) downloads
+         * from this URL instead of bundling the asset; [PublishModelMirrorTask] is what puts the
+         * verified bytes there in the first place. Defaults to `""` only for hand-built test
+         * fixtures that do not exercise the mirror — every entry in the committed manifest carries
+         * a real value (`BundledAssetManifestMirrorFieldsTest`). */
+        val mirrorUrl: String = "",
     )
 
     /** One entry as [BundledAssetFetcher] actually resolved it — [sha256] is the real, verified
@@ -276,6 +284,7 @@ object BundledAssetManifest {
                     tiers = obj.stringArray("tiers"),
                     licence = obj.string("licence"),
                     gated = obj.bool("gated"),
+                    mirrorUrl = obj.string("mirrorUrl"),
                 )
             }
         }
@@ -331,8 +340,11 @@ object BundledAssetManifest {
     private fun jsonString(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     /** The minimal JSON reader — object/array/string/number/bool/null, nothing else, sufficient
-     * for this manifest's own shape (see this file's class-level KDoc). */
-    private object Json {
+     * for this manifest's own shape (see this file's class-level KDoc). `internal`, not `private`:
+     * [ModelMirrorPublisher] (P23, D44) reuses it to parse `gh release view --json assets`'
+     * identically narrow shape rather than hand-rolling a second parser for one more flat,
+     * single-level JSON payload. */
+    internal object Json {
         sealed interface JValue
         data class JObject(val fields: Map<String, JValue>) : JValue
         data class JArray(val items: List<JValue>) : JValue
