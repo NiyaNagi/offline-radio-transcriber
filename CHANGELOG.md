@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (P22 batch-gate regression fix, the P25 vad-fallback scenario, and S01a/S11a artboards)
 
-### <pending> — jurisdiction-notice resumption fixed at the fixture; P25's vad-fallback scenario built; S01a/S11a given artboards, a real-rows MODELS scenario and tour steps
+### 21e22471 — jurisdiction-notice resumption fixed at the fixture; P25's vad-fallback scenario built; S01a/S11a given artboards, a real-rows MODELS scenario and tour steps
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**` (`SetupStateMachine.kt`'s kdoc,
 `SetupActivity.kt`'s MODELS-step row functions, new `DebugModelsSetupOverride.kt`),
