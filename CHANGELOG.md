@@ -32,6 +32,80 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (P32 gate fix: `CheckboxRow`/`ToggleRow`'s content-description fix regressed six consumer tests; corrected)
+
+### 90a4f331 — P32 gate fix · `CheckboxRow`/`ToggleRow` carry a real content description without erasing descendant text or state
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Controls.kt` and its tests
+(`app/src/test/kotlin/org/ort/app/ui/components/ControlsTest.kt`, new
+`app/src/test/kotlin/org/ort/app/ui/components/ToggleCheckboxSemanticsTest.kt`).
+
+**Requirements/ACs:** FR-A11Y-2, constitution VIII (a passing unit test is not device evidence;
+a device dump that disagrees with another device dump is not settled either — see "What
+changed").
+
+**What changed:** the P32 commit merged to `main` (`0b7efcde`/`1b949082`) fixed `CheckboxRow` and
+`ToggleRow`'s missing content description with `clearAndSetSemantics`, redeclaring only
+`toggleableState`/`role`/the click action alongside a single combined `contentDescription`/`text`
+string. That broke the batch gate: `LogFilterSheetTest.R_042` (x2), `SearchFiltersSheetTest.R_061`
+(x1 of 2)/`R_500`/`R_064`, `ModelsScreenProseDigestTest.E2_F05` (x1 of 2) — six tests that query
+a row's own `label` and `count` as *independently exact-matched* `onNodeWithText` nodes on the
+default merged tree, which a single combined string can never satisfy. This session fixed it in
+two rounds, both verified by experiment rather than assumed:
+
+1. **First correction: a plain `Modifier.semantics(mergeDescendants = true)` merge boundary**
+   instead of `clearAndSetSemantics` — this fixed all six gate tests (descendant `Text` merges up
+   automatically, so `onNodeWithText("Confirmed")`/`onNodeWithText("291")` both still match) and
+   passed the existing `ControlsTest.R_380` check. **But a fresh `uiautomator` dump of Settings >
+   Analytics on `ort_audit_a11y` showed the identical, still-empty `content-desc=""` (and
+   `text=""`) this whole unit started from** — on this Compose/device combination, a merge
+   boundary that only *adds* `contentDescription` beside automatically-merged descendant `Text` is
+   not reliably exported to the real `AccessibilityNodeInfo` tree, the same device-vs-Robolectric
+   gap this file's own `NavRow`/`TextAction` doc comments already document for a button (their own
+   fix for it, `clearAndSetSemantics`, was written for exactly this), just not previously proven
+   true for a checkbox/toggle's own merge boundary until measured here. This first correction was
+   **not committed** — caught before landing by the on-device re-check the coordinator asked for.
+2. **Second, landed correction: `clearAndSetSemantics`, kept — but with an explicit, multi-entry
+   `SemanticsProperties.Text` list** (`listOf(AnnotatedString(label), AnnotatedString(subLine),
+   AnnotatedString(count))`, present entries only) instead of the single-string `text =
+   AnnotatedString(description)` convenience setter every button in this file uses. This is the
+   one change from the original, gate-breaking fix: `contentDescription`/`toggleableState`/`role`/
+   the click action are declared exactly as before (device-verified to work), and the `Text`
+   property is now multiple independent entries rather than one combined string, so
+   `onNodeWithText` can still match `label` and `count` exactly, on the default merged tree, the
+   same way they matched before `CheckboxRow`/`ToggleRow` ever carried a description at all.
+
+**Verified:**
+- The six named tests, individually, all now pass:
+  `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.components.*" --tests
+  "org.ort.app.ui.screens.LogFilterSheetTest" --tests
+  "org.ort.app.ui.screens.ModelsScreenProseDigestTest" --tests
+  "org.ort.app.ui.screens.SearchFiltersSheetTest"` — all green.
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.*"` — full tree, green, no
+  failures (the exact command and scope the coordinator asked for).
+- `.\gradlew.bat ktlintCheck detekt` — both green (`ToggleCheckboxSemanticsTest.kt` split out of
+  `ControlsTest.kt` for the same `LargeClass` reason `HeaderTouchTargetTest.kt` was split out of
+  `RowsTest.kt` in the original P32 commit).
+- New `ToggleCheckboxSemanticsTest.P32 a checkbox and a toggle each expose their label,
+  description and checked state on the same node` shown to discriminate **both** regression
+  directions by experiment: reverted to a bare `.toggleable()` (the original bug) it fails on the
+  missing `ContentDescription`; reverted to `clearAndSetSemantics` with no explicit `Text`/
+  `toggleableState` (a minimal version of the first, gate-breaking attempt) it fails on the
+  `ToggleableState` assertion. Restored, passes.
+- **Device evidence, both rounds** (own AVD `ort_audit_a11y`, port 5560, `overnight` scenario,
+  `install.ps1 -Clear`): round 1 (plain merge) dumped `content-desc=""` on all three Analytics
+  tier toggles — the regression that sent this fix back for a second round. Round 2 (the landed
+  fix) dumps a real `content-desc` naming each tier and its consequence on the same node, checked
+  state intact, on **two independent screens** using the shared components — Settings > Analytics
+  (`ToggleRow` x3) and Settings > Export (`CheckboxRow` x5, e.g. *"Log with attributions and their
+  state. the state travels with every callsign — an export without it would be a lie..."*).
+
+**Left open / not done:** P32 itself remains a partial pass — see the original entry above and
+`spec/build-plan.md`'s own P32 checklist note. This entry only fixes the gate regression that
+entry's own fix caused; it does not extend P32's screen coverage.
+
+---
+
 ## 2026-09-20 (R-1043 follow-up: a gate-flake diagnosis session — one discriminated fix, two reports that would not reproduce)
 
 ### fb461f61 — R-1043 follow-up · `TransmissionDetailContentTest`'s three "type a callsign" flows now wait for the revealed field explicitly, closing an implicit-idle-wait gap; `SettingsCaptureScreenTest`/`BluetoothPermissionScreenTest`'s reported `AppNotIdleException` and `:data`'s reported `SQLITE_CANTOPEN` did not reproduce and are left open, named

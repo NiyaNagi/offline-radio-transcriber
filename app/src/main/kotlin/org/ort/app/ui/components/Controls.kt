@@ -43,6 +43,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
@@ -670,14 +671,47 @@ private fun RadioDot(selected: Boolean, modifier: Modifier = Modifier) {
 
 /** guide §6.11: 16dp checkbox, 4px radius, `accent/green` fill + `accent/on-green` check when on.
  *
- * P32 (FR-A11Y-2, the R-380/R-381 pattern this package's own `NavRow`/`TextAction`/`FilterChip`
- * already carry, `ControlsTest`'s own doc comment on that pattern's device finding): a plain
- * `.toggleable(...)` alone never carried [label] onto its own clickable node — real-device
- * uiautomator evidence this pass (Settings > Analytics' three toggles, the same shape this row
- * shares) showed exactly the empty `content-desc=""` that finding already describes. Fixed the
- * same way every other interactive row in this file was: `clearAndSetSemantics`, redeclaring
- * everything `.toggleable()` used to supply on its own (`toggleableState`, `role`, the click
- * action) alongside the description `.toggleable()` never carried.
+ * P32 (FR-A11Y-2): a plain `.toggleable(...)` alone never carried [label] onto its own clickable
+ * node — real-device uiautomator evidence (Settings > Analytics' three toggles, the same shape
+ * this row shares) showed exactly an empty `content-desc=""`.
+ *
+ * **Two things this file's own usual button fix (`clearAndSetSemantics`, e.g.
+ * [NavRow]/[TextAction]/[FilterChip]) and the more obvious alternative (a plain
+ * `Modifier.semantics(mergeDescendants = true)`) each get half right, found by experiment against
+ * both the gate and a real device in turn — neither alone is correct here:**
+ *
+ * - A **first attempt used `clearAndSetSemantics`** and broke the gate
+ *   (`LogFilterSheetTest.R_042`, `SearchFiltersSheetTest.R_061/R_500/R_064`): it wipes every
+ *   descendant's own semantics from the *merged* tree, not only their default contribution to
+ *   this node's own description — so [label] and [count], each its own separately-queried `Text`
+ *   today (`onNodeWithText("Confirmed")`, `onNodeWithText("291")`, both exact, both on the
+ *   default merged tree), stopped being reachable outside `useUnmergedTree`. A button's own child
+ *   `Text` has no such external contract — nothing outside [PrimaryButton] itself needs to find
+ *   its label as an independent node — which is exactly the difference `clearAndSetSemantics`
+ *   cannot see.
+ * - A **second attempt used a plain `Modifier.semantics(mergeDescendants = true)`** instead
+ *   (keeping every descendant's own `Text` merging up automatically, which does satisfy the gate)
+ *   — but a fresh `uiautomator` dump of the same Settings > Analytics toggles on a real device
+ *   (`ort_audit_a11y`) showed the *identical* `content-desc=""` **and** `text=""` this whole unit
+ *   started from: on this Compose/device combination a merge boundary that only *adds*
+ *   `contentDescription` alongside automatically-merged descendant `Text` is not reliably
+ *   exported to the real `AccessibilityNodeInfo` tree at all — the exact device-vs-Robolectric gap
+ *   this file's own `NavRow`/`TextAction` doc comments already document for a button
+ *   (`clearAndSetSemantics` was *their* fix for precisely this), just not previously proven true
+ *   for a checkbox/toggle's own merge boundary until measured here.
+ *
+ * The fix is `clearAndSetSemantics` **and** an explicit, multi-entry `Text` list — not the
+ * single-string convenience `text = AnnotatedString(...)` setter every button here uses (which
+ * only ever holds one value), but the underlying `SemanticsProperties.Text` key set directly to
+ * `listOf(label, subLine, count)` (each already its own `AnnotatedString`, present entries only).
+ * This keeps [label] and [count] independently exact-matchable by `onNodeWithText` on the default
+ * merged tree — the gate's own requirement — while `contentDescription` and `toggleableState` are
+ * still declared explicitly (the working half of the first attempt), giving a real, non-empty
+ * `content-desc` on-device the same way every other `clearAndSetSemantics` row in this file does.
+ * Device-verified (`ort_audit_a11y`, this unit's own follow-up): Settings > Analytics' tier
+ * toggles dump a real `content-desc` naming the tier and its consequence, `checked`/`checkable`
+ * unaffected, with `onNodeWithText("Confirmed")`/`onNodeWithText("291")` both still exact-matching
+ * on the default tree.
  */
 @Composable
 public fun CheckboxRow(
@@ -698,8 +732,15 @@ public fun CheckboxRow(
             .toggleable(value = checked, onValueChange = onCheckedChange, role = Role.Checkbox)
             .clearAndSetSemantics {
                 contentDescription = description
-                // R-380 correction (WP2, gate-blocking) — see `NavRow`'s own doc comment above.
-                text = AnnotatedString(description)
+                // Not `text = AnnotatedString(description)` (every button in this file's own
+                // single-value convenience setter) — see this composable's own doc comment: this
+                // row's label and count must stay independently exact-matchable by real callers,
+                // which a single combined string cannot be.
+                this[SemanticsProperties.Text] = buildList {
+                    add(AnnotatedString(label))
+                    subLine?.let { add(AnnotatedString(it)) }
+                    count?.let { add(AnnotatedString(it)) }
+                }
                 toggleableState = ToggleableState(checked)
                 role = Role.Checkbox
                 onClick(label = null) {
@@ -749,11 +790,14 @@ private fun CheckboxBox(checked: Boolean, modifier: Modifier = Modifier) {
 /** guide §6.11: 42x24 pill, `accent/green` + `accent/on-green` knob when on, `bg/chip` +
  * `text/signal` knob when off. A toggle carries its consequence as [subLine].
  *
- * P32 (FR-A11Y-2, the R-380/R-381 pattern — see [CheckboxRow]'s own doc comment for the full
- * finding, real-device uiautomator evidence this pass, and why this needs `clearAndSetSemantics`
- * rather than a plain `.toggleable()`): every settings toggle in the app uses this composable — the
- * three Analytics tiers, Alerts' master switch, and any future one — so this one fix carries to
- * every screen that uses it. */
+ * P32 (FR-A11Y-2 — see [CheckboxRow]'s own doc comment for the full finding: a first
+ * `clearAndSetSemantics`-alone attempt broke the gate (`ModelsScreenProseDigestTest.E2_F05` found
+ * it here specifically), a second, plain `Modifier.semantics(mergeDescendants = true)` attempt
+ * passed the gate but dumped an identical, still-empty real-device `content-desc`/`text` — the
+ * fix landed is `clearAndSetSemantics` with an explicit, multi-entry `SemanticsProperties.Text`
+ * list rather than the single-string convenience setter). Every settings toggle in the app uses
+ * this composable — the three Analytics tiers, Alerts' master switch, and any future one — so
+ * this one fix carries to every screen that uses it. */
 @Composable
 public fun ToggleRow(
     label: String,
@@ -770,8 +814,13 @@ public fun ToggleRow(
             .toggleable(value = checked, onValueChange = onCheckedChange, role = Role.Switch)
             .clearAndSetSemantics {
                 contentDescription = description
-                // R-380 correction (WP2, gate-blocking) — see `NavRow`'s own doc comment.
-                text = AnnotatedString(description)
+                // Not `text = AnnotatedString(description)` — see [CheckboxRow]'s own doc
+                // comment: an explicit, multi-entry list keeps [label] independently
+                // exact-matchable by real callers (`ModelsScreenProseDigestTest.E2_F05`).
+                this[SemanticsProperties.Text] = buildList {
+                    add(AnnotatedString(label))
+                    subLine?.let { add(AnnotatedString(it)) }
+                }
                 toggleableState = ToggleableState(checked)
                 role = Role.Switch
                 onClick(label = null) {
