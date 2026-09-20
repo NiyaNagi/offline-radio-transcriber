@@ -1,5 +1,6 @@
 package org.ort.app.debug.tour
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -147,6 +148,26 @@ class TourSpecTest {
         } catch (expected: IllegalArgumentException) {
             // expected
         }
+    }
+
+    /** R-1083 (register): `tools\ui-audit\tour.ps1` stamps every spec it pushes with a fresh run
+     * id (a GUID) so [ScreenshotTourActivity] can carry it onto every manifest line, including the
+     * trailing `done` marker — the script then refuses to accept a `done` line whose `runId` does
+     * not match the one it just pushed, which is what makes a stale, previous-run manifest unable
+     * to satisfy the poll (see `tour.ps1`'s own doc comment for the full account). This is the
+     * on-device half of that contract: the spec's own optional top-level `runId` field parses. */
+    @Test
+    fun `R_1083_RUN_ID a spec naming a runId parses it onto TourSpec`() {
+        val json = """{"runId":"a1b2c3","steps":[{"id":"x","scenario":"empty","destination":"NOW"}]}"""
+        val spec = TourSpec.parse(json)
+        assertEquals("a1b2c3", spec.runId)
+    }
+
+    @Test
+    fun `R_1083_RUN_ID_ABSENT a spec naming no runId parses to null, never a placeholder`() {
+        val json = """{"steps":[{"id":"x","scenario":"empty","destination":"NOW"}]}"""
+        val spec = TourSpec.parse(json)
+        assertEquals(null, spec.runId)
     }
 
     @Test

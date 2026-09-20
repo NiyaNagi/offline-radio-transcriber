@@ -167,18 +167,33 @@ public data class TourStep(
     }
 }
 
-/** The parsed contents of `tools/ui-audit/tour.json` — a flat, ordered list of [TourStep]s. */
-public data class TourSpec(public val steps: List<TourStep>) {
+/** The parsed contents of `tools/ui-audit/tour.json` (or, on device, the filtered spec `tour.ps1`
+ * pushes for one invocation) — a flat, ordered list of [TourStep]s, plus an optional [runId].
+ *
+ * [runId] (R-1083, register — the tour's stale-manifest false green): `tour.ps1` generates a fresh
+ * id (a GUID) for every invocation and writes it into the spec it pushes alongside `steps`;
+ * [ScreenshotTourActivity] reads it back here and hands it to [TourRunner], which stamps it onto
+ * every manifest line the run writes, including the trailing `done` marker
+ * ([appendManifestDone]). The script then refuses to treat a `done` line as *its own* run's result
+ * unless its `runId` matches — the fix for a poll that used to accept whichever manifest happened
+ * to be on disk (a previous run's leftover, or one written by a concurrent invocation) the moment
+ * it carried a trailing `done` line at all. `null` — never a placeholder string — for `tour.json`
+ * itself (checked into the repo, never carries one) and for any other caller with no run to
+ * identify; [ScreenshotTourActivity] falls back to `"unknown"` only at the point it hands this to
+ * [TourRunner], never here. */
+public data class TourSpec(public val steps: List<TourStep>, public val runId: String? = null) {
     public companion object {
-        /** Parses `{"steps": [...]}`. Throws [org.json.JSONException] on malformed JSON and
-         * [IllegalArgumentException] on a structurally invalid step (see [TourStep]'s own `init`) —
-         * both are programmer/spec-authoring errors, never something a tour run should catch and
-         * limp past the way a per-step capture failure is. */
+        /** Parses `{"steps": [...], "runId": "..."}` (`runId` optional). Throws
+         * [org.json.JSONException] on malformed JSON and [IllegalArgumentException] on a
+         * structurally invalid step (see [TourStep]'s own `init`) — both are
+         * programmer/spec-authoring errors, never something a tour run should catch and limp past
+         * the way a per-step capture failure is. */
         public fun parse(json: String): TourSpec {
             val root = JSONObject(json)
             val stepsArray: JSONArray = root.getJSONArray("steps")
             val steps = (0 until stepsArray.length()).map { index -> parseStep(stepsArray.getJSONObject(index)) }
-            return TourSpec(steps)
+            val runId = root.optString("runId").takeIf { it.isNotEmpty() }
+            return TourSpec(steps, runId)
         }
 
         private fun parseStep(obj: JSONObject): TourStep {

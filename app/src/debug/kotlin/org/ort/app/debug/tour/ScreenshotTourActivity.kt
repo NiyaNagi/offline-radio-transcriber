@@ -183,6 +183,10 @@ public class ScreenshotTourActivity : ComponentActivity() {
         val specJson = readSpecJson()
         val outputDir = File(filesDir, TOUR_OUTPUT_DIR_NAME)
         if (specJson == null) {
+            // R-1083: no spec at all means no run genuinely started — this is not `tour.ps1`'s own
+            // invocation (it always pushes one first), so there is no run id to carry either; the
+            // "unknown" default is honest here, never a fabricated id a script could match against.
+            outputDir.deleteRecursively()
             outputDir.mkdirs()
             appendManifestDone(File(outputDir, "manifest.json"), total = 0, ok = 0, errors = 0)
             return
@@ -191,7 +195,18 @@ public class ScreenshotTourActivity : ComponentActivity() {
         val renderer = TourStepRenderer { step, sessionId ->
             if (step.setup != null) renderSetupStep(step) else renderDestinationStep(step, sessionId)
         }
-        TourRunner(applicationContext, renderer, outputDir, apkHash = BuildConfig.GIT_SHORT_COMMIT).run(spec)
+        TourRunner(
+            applicationContext,
+            renderer,
+            outputDir,
+            apkHash = BuildConfig.GIT_SHORT_COMMIT,
+            // R-1083 (register): the id `tour.ps1` generated for *this* invocation and wrote into
+            // the spec it pushed ([TourSpec.runId]) — carried through so every manifest line this
+            // run writes, including the trailing `done` marker, lets the script tell this run's own
+            // result apart from a previous run's leftover manifest. `"unknown"` only for a spec
+            // pushed by something other than `tour.ps1` itself (which always names one).
+            runId = spec.runId ?: "unknown",
+        ).run(spec)
     }
 
     /**

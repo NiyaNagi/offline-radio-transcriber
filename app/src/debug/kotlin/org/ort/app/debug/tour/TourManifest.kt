@@ -23,6 +23,14 @@ public data class TourManifestEntry(
      * container ([TourAccessibilityScroll.ScrollOutcome.NothingToScroll]). `null` for every ordinary
      * step, `ok`-and-error-message are otherwise unaffected by this field. */
     public val note: String? = null,
+    /** R-1083 (register, the tour's stale-manifest false green): the id `tour.ps1` generated for
+     * *this* invocation and wrote into the spec it pushed ([TourSpec.runId]) — carried onto every
+     * manifest line [TourRunner] writes for the run, including the trailing `done` marker
+     * ([appendManifestDone]), so the script's poll can refuse a `done` line that belongs to a
+     * different (typically the previous) run rather than trusting "a `done` line exists" alone.
+     * `"unknown"` default so a caller with no run id to carry (a direct [ScreenshotTourActivity]
+     * launch outside `tour.ps1`, or an existing test) still produces a well-formed entry. */
+    public val runId: String = "unknown",
 ) {
     public fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -35,6 +43,7 @@ public data class TourManifestEntry(
         put("errorMessage", errorMessage ?: JSONObject.NULL)
         put("apkHash", apkHash)
         put("note", note ?: JSONObject.NULL)
+        put("runId", runId)
     }
 
     public companion object {
@@ -46,6 +55,7 @@ public data class TourManifestEntry(
             height: Int,
             apkHash: String,
             note: String? = null,
+            runId: String = "unknown",
         ): TourManifestEntry = TourManifestEntry(
             id,
             scenario,
@@ -57,6 +67,7 @@ public data class TourManifestEntry(
             errorMessage = null,
             apkHash = apkHash,
             note = note,
+            runId = runId,
         )
 
         public fun failure(
@@ -65,6 +76,7 @@ public data class TourManifestEntry(
             fontScale: Float,
             message: String,
             apkHash: String,
+            runId: String = "unknown",
         ): TourManifestEntry = TourManifestEntry(
             id,
             scenario,
@@ -75,6 +87,7 @@ public data class TourManifestEntry(
             ok = false,
             errorMessage = message,
             apkHash = apkHash,
+            runId = runId,
         )
 
         public fun fromJson(obj: JSONObject): TourManifestEntry {
@@ -91,6 +104,7 @@ public data class TourManifestEntry(
                 errorMessage = obj.optString("errorMessage").takeIf { hasError },
                 apkHash = obj.optString("apkHash", "unknown"),
                 note = obj.optString("note").takeIf { hasNote },
+                runId = obj.optString("runId", "unknown"),
             )
         }
     }
@@ -107,8 +121,12 @@ public fun appendManifestEntry(file: File, entry: TourManifestEntry) {
 }
 
 /** The final line `tour.ps1` polls for — see that script's own doc comment for why a done marker
- * is needed alongside "the Activity finished". */
-public fun appendManifestDone(file: File, total: Int, ok: Int, errors: Int) {
+ * is needed alongside "the Activity finished". [runId] (R-1083): the same id every step entry in
+ * this run carried ([TourManifestEntry.runId]) — `tour.ps1` matches this against the id it
+ * generated for its own invocation before ever treating this line as *its* result, which is what
+ * makes a previous run's leftover `done` line (or one written by a concurrent invocation) unable
+ * to satisfy the poll. `"unknown"` default for the same reason [TourManifestEntry.runId]'s is. */
+public fun appendManifestDone(file: File, total: Int, ok: Int, errors: Int, runId: String = "unknown") {
     file.parentFile?.mkdirs()
     val line = JSONObject().apply {
         put("done", true)
@@ -116,6 +134,7 @@ public fun appendManifestDone(file: File, total: Int, ok: Int, errors: Int) {
         put("ok", ok)
         put("errors", errors)
         put("finishedAt", Instant.now().toString())
+        put("runId", runId)
     }
     file.appendText(line.toString() + "\n")
 }

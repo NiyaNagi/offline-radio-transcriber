@@ -2353,16 +2353,34 @@ public object Scenarios {
      * real [ModelId] entries with their real catalog sizes (`ModelCatalog.entry(id).sizeBytes`), so
      * the board's byte figures are genuine even though the "needs downloading" fact itself is
      * asserted directly for this capture, not derived.
+     *
+     * **R-1084 (register): this used to leave every gate after [SetupStore.captureMode] unset.**
+     * The tour reaches S11a by a cold `SetupActivity.EXTRA_STEP = MODELS` launch
+     * (`ScreenshotTourActivity.renderSetupStep`), honored by
+     * [org.ort.app.ui.setup.SetupActivity.tryOpenAtRequestedStep] only when [SetupStep.MODELS]'s
+     * own ordinal sits at or before the store's *natural* resume point
+     * ([SetupStateMachine.stepFor] against [org.ort.app.ui.setup.SetupActivity.currentSnapshot]) —
+     * with only `welcomeSeen`/`jurisdictionNoticeSeen`/`captureMode` set, that point was
+     * [SetupStep.INPUT], well *before* `MODELS`, so the request was silently denied and the tour
+     * fell back to the ordinary resume flow (`observed step 'INPUT'`, the register's exact
+     * finding). [org.ort.app.ui.data.ModelsController] reports every model bundled on the `full`
+     * variant this scenario runs under regardless, so `requiredModelsInstalled` is always `true`
+     * and the *natural* point can itself never be `MODELS` — the same shape `setup-verified`
+     * already has for [SetupStep.VERIFY] (also never returned by `stepFor`, also reached only
+     * because its own ordinal precedes the natural `READY`). Seeded here exactly the way
+     * [setupVerified]/[setupRadio] already reach *their* own later steps — level, overnight and a
+     * radio choice all resolved — so the natural point becomes [SetupStep.READY], comfortably
+     * after `MODELS`, and the request is honored.
      */
     private fun setupModels(context: Context): LoadResult {
-        val prefs = context.applicationContext.getSharedPreferences(
-            SharedPreferencesSetupStore.PREFS_NAME,
-            Context.MODE_PRIVATE,
-        )
-        val store = SharedPreferencesSetupStore(prefs)
-        store.welcomeSeen = true
-        store.jurisdictionNoticeSeen = true
-        store.captureMode = CaptureMode.USB_RADIO
+        val store = verifiedInputStore(context)
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.NONE
+        store.rigTransport = RigTransportKind.USB_SERIAL
+        store.manualFrequencyHz = 145_230_000L
+        store.setupComplete = false
         republishSetupModelsFacets()
         return LoadResult(0, 0, null)
     }
