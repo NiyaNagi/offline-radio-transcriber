@@ -355,13 +355,14 @@ class SettingsPollingTest {
     @Test
     fun `R_915 the root Models-and-lexicon row names the real installed components, not a bare count`(): Unit =
         runTest {
-            // The same real install path `R_443_clean_install_groups` (`ModelsScreenTest.kt`)
-            // already relies on — a genuinely fresh Robolectric context's own real app assets,
-            // never a synthetic row list standing in for either half.
-            org.ort.app.assets.BundledAssetInstaller.installAll(
-                context.filesDir,
-                org.ort.app.assets.AndroidBundledAssetSource(context),
-            )
+            // D43/FR-AST-13 (play-flavor follow-up): the real `BundledAssetInstaller` path
+            // this test used to drive only ever installs anything on the `full` flavor (`play` has
+            // no `bundled/manifest.json` asset to install from at all, P23) — this test's own real
+            // concern is [SettingsPolling.root]'s summarisation once models genuinely are installed,
+            // not which mechanism put them there, so it uses the flavor-agnostic debug fixture that
+            // reproduces `ModelsController`'s own "genuinely installed" shape (real declared size,
+            // real checksum marker — see that fixture's own kdoc) on both flavors alike.
+            org.ort.app.debug.ScenarioFixtures.installEveryModelFixtureAtRealSize(context)
             val root = SettingsPolling.root(context, InMemorySettingsStore())
             val modelsRow = root.sections.flatMap { it.rows }.single { it.screen == SettingsScreenId.ASSETS }
             assert(modelsRow.subLine.contains("Whisper tiny.en")) {

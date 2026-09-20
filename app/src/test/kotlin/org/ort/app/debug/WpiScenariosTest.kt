@@ -19,6 +19,7 @@ import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetState
 import org.ort.app.permissions.PermissionsState
+import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelsController
@@ -1037,6 +1038,22 @@ class WpiScenariosTest {
     private val nonGatedModelIds = ModelId.entries.filter { it != ModelId.LLM_GEMMA3_1B }
 
     /**
+     * D43/FR-AST-13 (play-flavor unit-test follow-up): whether this compiled flavor's own
+     * catalog ships every asset inside the artifact ([ModelCatalogEntry.bundled] `true`, the `full`
+     * variant) or defers every one of them to the setup-time download (`false`, `play`) — the same
+     * real, sourced, per-entry fact [org.ort.app.ui.data.ModelCatalogTest]'s own
+     * `D43 every catalog entry's bundled flag agrees with...` already establishes structurally
+     * holds together across the whole catalog. `assets-bundled`/`asset-corrupt`/`tier0-llm-stored`
+     * (below) all drive [Scenarios.installRealBundledAssets] ->
+     * [org.ort.app.assets.BundledAssetInstaller.installAll], which reads this build's own packaged
+     * `bundled/manifest.json` **asset** — genuinely, structurally absent on `play`
+     * (`ort.android-app.gradle.kts`'s own comment: "`play` never merges the bundled assets at all",
+     * P23) — so the three tests below assert the opposite, but equally real, per-flavor fact rather
+     * than assuming `full`'s.
+     */
+    private val thisFlavorBundlesAssets = ModelCatalog.entries.all { it.bundled }
+
+    /**
      * R-841/R-842/R-843 (halt): asserts [ModelsController.currentState] itself — the exact read path
      * `Settings-Assets`/S12's Models row use — not merely a file on disk, so this test would have
      * caught the original bug (a genuinely installed file whose marker still failed
@@ -1055,35 +1072,57 @@ class WpiScenariosTest {
      * circuit), so this costs nothing extra.
      */
     @Test
-    @Requirement("FR-AST-3", "FR-AST-3b", "AC-137", "R-841", "R-807")
+    @Requirement("FR-AST-3", "FR-AST-3b", "AC-137", "R-841", "R-807", "D43", "FR-AST-13")
     fun `R_841_assets-bundled reports every non-gated entry INSTALLED through ModelsController`() = runTest {
         Scenarios.load(context, "assets-bundled")
 
         val rows = ModelsController.currentState(context).rows.associateBy { it.id }
+        // D43/FR-AST-13: `full` genuinely bundles and installs every non-gated entry; `play`
+        // structurally never packages a bundled/manifest.json asset to install from at all (see
+        // thisFlavorBundlesAssets's own kdoc) -- both facts are real, so both are asserted, per
+        // flavor, rather than assuming `full`'s.
+        val expectedStatus = if (thisFlavorBundlesAssets) ModelRowStatus.INSTALLED else ModelRowStatus.NOT_INSTALLED
         nonGatedModelIds.forEach { id ->
             assertEquals(
-                "$id must read INSTALLED through the real ModelsController",
-                ModelRowStatus.INSTALLED,
+                "$id must read $expectedStatus through the real ModelsController " +
+                    "(thisFlavorBundlesAssets=$thisFlavorBundlesAssets)",
+                expectedStatus,
                 rows.getValue(id).status,
             )
         }
-        val gatedResult = BundledAssetInstaller.installAll(context.filesDir, AndroidBundledAssetSource(context))
-            .first { it.id == ModelId.LLM_GEMMA3_1B.name }
-        val expectedGatedStatus = if (gatedResult is BundledAssetState.NotBundledInThisBuild) {
-            ModelRowStatus.NOT_INSTALLED
+        if (thisFlavorBundlesAssets) {
+            val gatedResult = BundledAssetInstaller.installAll(context.filesDir, AndroidBundledAssetSource(context))
+                .first { it.id == ModelId.LLM_GEMMA3_1B.name }
+            val expectedGatedStatus = if (gatedResult is BundledAssetState.NotBundledInThisBuild) {
+                ModelRowStatus.NOT_INSTALLED
+            } else {
+                ModelRowStatus.INSTALLED
+            }
+            assertEquals(
+                "expected ${ModelId.LLM_GEMMA3_1B} to read $expectedGatedStatus given this build's own " +
+                    "packaged-manifest state ($gatedResult) -- honest either way, never hard-coded",
+                expectedGatedStatus,
+                rows.getValue(ModelId.LLM_GEMMA3_1B).status,
+            )
         } else {
-            ModelRowStatus.INSTALLED
+            // `play` never packages a bundled/manifest.json asset at all -- installAll's own result
+            // names the whole build (a single Failed("*", ...) sentinel), never a per-entry fact, so
+            // the gated LLM reads exactly as honestly NOT_INSTALLED as every other entry above.
+            val results = BundledAssetInstaller.installAll(context.filesDir, AndroidBundledAssetSource(context))
+                .filterIsInstance<BundledAssetState.Failed>()
+            assertTrue(
+                "expected play's own real installer to report no bundled manifest at all, got $results",
+                results.singleOrNull()?.id == "*",
+            )
+            assertEquals(
+                ModelRowStatus.NOT_INSTALLED,
+                rows.getValue(ModelId.LLM_GEMMA3_1B).status,
+            )
         }
-        assertEquals(
-            "expected ${ModelId.LLM_GEMMA3_1B} to read $expectedGatedStatus given this build's own " +
-                "packaged-manifest state ($gatedResult) -- honest either way, never hard-coded",
-            expectedGatedStatus,
-            rows.getValue(ModelId.LLM_GEMMA3_1B).status,
-        )
     }
 
     @Test
-    @Requirement("FR-AST-3b", "AC-137", "R-841")
+    @Requirement("FR-AST-3b", "AC-137", "R-841", "D43", "FR-AST-13")
     fun `R_841_asset-corrupt reports ASR_ENCODER Failed, every other non-gated entry Installed`() = runTest {
         Scenarios.load(context, "asset-corrupt")
 
@@ -1093,8 +1132,18 @@ class WpiScenariosTest {
             ModelRowStatus.NOT_INSTALLED,
             rows.getValue(ModelId.ASR_ENCODER).status,
         )
+        // D43/FR-AST-13: on `full` the corruption is real and isolated -- every other entry still
+        // installs for real. On `play` there is no bundled/manifest.json asset to install (or
+        // corrupt) at all -- see thisFlavorBundlesAssets's own kdoc -- so every entry, ASR_ENCODER
+        // included, honestly reads NOT_INSTALLED, corrupted or not.
+        val expectedOtherStatus =
+            if (thisFlavorBundlesAssets) ModelRowStatus.INSTALLED else ModelRowStatus.NOT_INSTALLED
         nonGatedModelIds.filter { it != ModelId.ASR_ENCODER }.forEach { id ->
-            assertEquals("$id must still read INSTALLED", ModelRowStatus.INSTALLED, rows.getValue(id).status)
+            assertEquals(
+                "$id must read $expectedOtherStatus (thisFlavorBundlesAssets=$thisFlavorBundlesAssets)",
+                expectedOtherStatus,
+                rows.getValue(id).status,
+            )
         }
     }
 
@@ -1161,20 +1210,25 @@ class WpiScenariosTest {
      * scenarios.
      */
     @Test
-    @Requirement("FR-AST-3", "FR-AST-3b", "AC-137", "R-865")
+    @Requirement("FR-AST-3", "FR-AST-3b", "AC-137", "R-865", "D43", "FR-AST-13")
     fun `R_865_tier0-llm-stored installs its four non-gated entries through the real installer`() = runTest {
         Scenarios.load(context, "tier0-llm-stored")
 
         val rows = ModelsController.currentState(context).rows.associateBy { it.id }
+        // D43/FR-AST-13: `full` genuinely installs the four non-gated entries through the real
+        // installer; `play` has no bundled/manifest.json asset to install through at all (see
+        // thisFlavorBundlesAssets's own kdoc), so they honestly read NOT_INSTALLED there instead --
+        // both real, per-flavor facts.
+        val expectedStatus = if (thisFlavorBundlesAssets) ModelRowStatus.INSTALLED else ModelRowStatus.NOT_INSTALLED
         nonGatedModelIds.forEach { id ->
             val row = rows.getValue(id)
             assertEquals(
-                "$id must read INSTALLED through the real ModelsController",
-                ModelRowStatus.INSTALLED,
+                "$id must read $expectedStatus (thisFlavorBundlesAssets=$thisFlavorBundlesAssets)",
+                expectedStatus,
                 row.status,
             )
             assertNotEquals(
-                "$id must be the real installed asset's own size, not installModelFixture's 64-byte placeholder",
+                "$id must never be installModelFixture's 64-byte placeholder size",
                 64L,
                 row.sizeBytes,
             )

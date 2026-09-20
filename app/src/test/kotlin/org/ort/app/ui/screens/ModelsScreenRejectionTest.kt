@@ -3,12 +3,16 @@ package org.ort.app.ui.screens
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.core.app.ApplicationProvider
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetSource
+import org.ort.app.assets.BundledAssetState
+import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelsController
 import org.ort.app.ui.theme.OrtTheme
@@ -54,14 +58,33 @@ class ModelsScreenRejectionTest {
     }
 
     @Test
-    @Requirement("FR-AST-4")
+    @Requirement("FR-AST-4", "D43", "FR-AST-13")
     fun `R_934 a genuinely corrupted part reads the real rejection sentence, not plain not-yet-verified`() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val corruptAssetPath = "bundled/models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx"
-        BundledAssetInstaller.installAll(context.filesDir, corruptingSource(context, corruptAssetPath))
+        val installResult = BundledAssetInstaller.installAll(
+            context.filesDir,
+            corruptingSource(context, corruptAssetPath),
+        )
         val state = ModelsController.currentState(context)
-
         val encoderRow = state.rows.first { it.id == ModelId.ASR_ENCODER }
+
+        if (!ModelCatalog.entry(ModelId.ASR_ENCODER).bundled) {
+            // D43/FR-AST-13: `play` never packages a real bundled asset to corrupt in the first
+            // place -- there is no `bundled/manifest.json` asset at all (P23), so installAll's own
+            // real result names the whole build with one honest sentinel, never a per-entry
+            // rejection, and no row can ever fabricate one from a byte that was never fetched.
+            assertTrue(
+                "expected play's own real installer to report no bundled manifest at all, got $installResult",
+                installResult.singleOrNull() is BundledAssetState.Failed,
+            )
+            assertNull(
+                "play never installs anything to corrupt -- no row should ever carry a rejection",
+                encoderRow.lastRejection,
+            )
+            return
+        }
+
         val rejection = encoderRow.lastRejection
         check(rejection != null) {
             "test setup failed to reproduce a real rejection — installAll's own result: $encoderRow"

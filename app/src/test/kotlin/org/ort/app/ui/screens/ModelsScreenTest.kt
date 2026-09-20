@@ -20,6 +20,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.data.ModelId
 import org.ort.app.ui.data.ModelRowStatus
 import org.ort.app.ui.data.ModelRowViewState
@@ -461,10 +462,18 @@ class ModelsScreenTest {
         // `NOT_INSTALLED` on a clean install means the installer has not verified it yet this
         // launch — never "not installed", which D35 makes an operator-owed-action claim that is
         // untrue for a bundled asset.
+        // D43/FR-AST-13 (play-flavor follow-up): on `play` no entry is bundled at all (D43), so the
+        // honest lead phrase is plain "not installed" (`notInstalledLeadFor`'s own `else` branch) —
+        // this reads the real, per-flavor fact from the compiled ModelCatalog rather than assuming
+        // `full`'s "not yet verified on this launch".
+        val expectedLead = if (ModelCatalog.entry(ModelId.ASR_ENCODER).bundled) {
+            "not yet verified on this launch"
+        } else {
+            "not installed"
+        }
         composeTestRule
             .onNodeWithContentDescription(
-                "Whisper tiny.en (speech to text) not installed. not yet verified on this launch · " +
-                    "3 of 3 parts missing",
+                "Whisper tiny.en (speech to text) not installed. $expectedLead · 3 of 3 parts missing",
             )
             .assertExists()
         composeTestRule

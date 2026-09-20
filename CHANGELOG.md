@@ -32,6 +32,87 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (play-flavor unit-test follow-up: 16 fixtures made to state their own preconditions)
+
+### <pending> — `:app`'s test fixtures state the READY/MODELS gate and the real-bundling precondition explicitly, so `testPlayDebugUnitTest` is green on both flavors
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/ScenarioFixtures.kt` (new
+`installEveryModelFixtureAtRealSize`), `app/src/test/kotlin/org/ort/app/ui/setup/SetupActivityTest.kt`,
+`app/src/test/kotlin/org/ort/app/debug/WpiScenariosTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/screens/ModelsScreenRejectionTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/settings/SettingsPollingTest.kt`. No `app/src/main/**` file
+touched — every fix stayed inside this unit's owned files.
+
+**Requirements/ACs:** D43, FR-AST-10..14, AC-184..190.
+
+**What changed:** P28b (merged onto `main` just before this session) made `ModelCatalog.entries`
+read the real per-flavor `bundled`/`downloadUrl` fields instead of hardcoding `bundled = true` — on
+`play` no model is bundled (FR-AST-13), which is correct, new behaviour, and it made 16 tests fail
+under `:app:testPlayDebugUnitTest` across six suites (`SetupActivityTest`, `SetupScaffoldTest`,
+`WpiScenariosTest`, `ModelsScreenTest`, `ModelsScreenRejectionTest`, `SettingsPollingTest`) because
+their fixtures either assumed every model was already installed, or drove a mechanism
+(`BundledAssetInstaller`'s real install path) that only exists at all on `full`. Each was resolved
+on its own merits rather than papered over:
+
+- **The MODELS/READY gate (`SetupActivity`/`SetupScaffoldTest`, 10 tests):** `SetupStateMachine
+  .stepFor`'s READY gate has read a real `requiredModelsInstalled` fact since P22 — vacuously true
+  on `full` (every entry bundled) and never previously stated by any fixture, so `play`'s honest
+  "nothing installed yet" tripped it for the first time. `storeEverySetupGateExceptComplete()` and
+  three standalone tests (`R_344`, `R_1005c`, the bare `R_080` "every gate satisfied" case) now
+  call a new debug fixture that genuinely installs every model, on either flavor. `SetupScaffoldTest`
+  and two more `SetupActivityTest` cases (`R_125`, `R_941`, `R_1014`) failed only as
+  `UncaughtExceptionsBeforeTest` contamination from an earlier test in the same JVM fork landing on
+  `SetupStep.MODELS` unexpectedly — fixed as a side effect, confirmed by the discrimination test
+  below.
+- **`ScenarioFixtures.installEveryModelFixtureAtRealSize`** (new): the existing
+  `installEveryModelFixture`'s fixed 64-byte placeholder cannot stand in for "genuinely installed"
+  any more — since R-865, `ModelsController.currentState` compares the on-disk length against
+  `ModelCatalogEntry.sizeBytes` (the manifest's real declared size, present in both flavors' compiled
+  catalogs) and reports a mismatched placeholder as `TruncatedAsset`, never `INSTALLED`. The new
+  helper writes each destination as a *sparse* file (`RandomAccessFile.setLength` — the identical
+  technique `Scenarios.recordingsBudgetExceeded` already uses) at its real declared size, plus the
+  matching checksum marker, so every row verifies exactly as a real install would, on either flavor,
+  at near-zero cost.
+- **`WpiScenariosTest`'s `assets-bundled`/`asset-corrupt`/`tier0-llm-stored` (3 tests):** these
+  scenarios drive the real `BundledAssetInstaller` against this build's own packaged
+  `bundled/manifest.json` **asset** — structurally, permanently absent on `play`
+  (`ort.android-app.gradle.kts`'s own comment: "`play` never merges the bundled assets at all", P23).
+  This is not a stale fixture but a genuinely flavor-dependent fact, so each test now asserts the
+  real, per-flavor expectation — derived from `ModelCatalog.entries.all { it.bundled }`, the same
+  structural signal `ModelCatalogTest` already established — rather than assuming `full`'s "every
+  entry installs".
+- **`ModelsScreenRejectionTest`'s `R_934` corrupted-part test:** the identical real-installer
+  dependency — corrupting one byte of a real bundled asset is impossible on `play` since none
+  exists. Branched to assert the honest absence (`installAll`'s single `Failed("*", ...)` sentinel,
+  no fabricated `lastRejection`) on `play`, unchanged on `full`.
+- **`ModelsScreenTest`'s `R_443_clean_install_groups`:** asserted the bundled-only "not yet verified
+  on this launch" wording unconditionally; now reads the real per-flavor lead phrase from
+  `ModelCatalog.entry(ASR_ENCODER).bundled` (on `play` the honest text is plain "not installed",
+  `notInstalledLeadFor`'s own `else` branch — no production code changed).
+- **`SettingsPollingTest`'s `R_915` "names the real installed components" test:** this test's real
+  concern is `SettingsPolling.root`'s summarisation once models genuinely are installed, not which
+  mechanism put them there — swapped its `full`-only `BundledAssetInstaller.installAll` call for the
+  new flavor-agnostic `installEveryModelFixtureAtRealSize` fixture instead of asserting a
+  flavor-dependent fact this test was never about.
+
+**Verified:**
+- `.\gradlew.bat :app:testPlayDebugUnitTest` — was 16 failures across 6 suites, now green (full run,
+  ~13 min).
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests <the 6 touched suites>` — 182/182 passing,
+  confirming `full` is unaffected (1m47s).
+- Discrimination (constitution II): reverting the new
+  `installEveryModelFixtureAtRealSize` call in `storeEverySetupGateExceptComplete()` reproduces 6 of
+  the original `SetupActivityTest` failures on `play` (including the three
+  `UncaughtExceptionsBeforeTest` contamination cases, confirming their root cause); forcing
+  `WpiScenariosTest`'s `thisFlavorBundlesAssets` to `true` on `play` reproduces the original 3
+  failures there. Both reverted before this change was reported done.
+- Full local gate: `.\gradlew.bat dependencyRules platformGuards build` — **green, 34m 58s wall
+  time.**
+
+**Left open / not done:** none — every test discussed above is green on both flavors, no production
+code changed, and the full gate is green.
+
 ## 2026-09-19 (P28b: the `play`-variant model catalog wired to the real generated manifest)
 
 ### c4618000 — ModelCatalog reads `bundled`/`downloadUrl` from the generated per-flavor manifest instead of hardcoding `bundled = true`
