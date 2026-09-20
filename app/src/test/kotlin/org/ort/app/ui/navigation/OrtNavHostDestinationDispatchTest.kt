@@ -28,6 +28,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.CaptureState
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -94,6 +95,27 @@ class OrtNavHostDestinationDispatchTest {
      * `ImproveContentReattachTest`, and (round 1) `ReaderActivityDestinationSmokeTest` each already
      * carry this identical setup.
      */
+    /**
+     * R-1043 follow-up (register): several tests below drive `OrtNavHost` with a real, non-null
+     * `sessionId` that names no row this JVM fork has ever inserted (`"r262-live-bar-session"` and
+     * siblings) — `FailureHost`'s own polling `LaunchedEffect` and `OrtNavHost`'s own live-bar poll
+     * (`LiveBarPolling.current`) both gate a real `OrtDatabase.create(...)` open behind exactly that
+     * "is `sessionId` non-null" check, and that open (WAL setup, hand-written schema, `runBlocking`)
+     * is a genuine, unbounded one-time disk-I/O cost the first time any test in this fork asks for
+     * one — trivial on an idle machine, not necessarily on a hosted runner that had just finished
+     * packaging ~600 MB of assets (the real mechanism behind `BannerClosingBorderTest`'s Release-only
+     * `R_1080` failure, root-caused in full there). Pre-warming it here, once, outside every test's
+     * own timed `waitUntil`, means that cost is already paid by the time any of them composes
+     * anything — never inside the window the wait is supposed to be measuring — without changing any
+     * test's own `sessionId` value (several of them, e.g. `R_910`'s "stale host session id" case, are
+     * deliberately testing what happens when it differs from `CaptureState`'s own, and must keep
+     * doing exactly that).
+     */
+    @Before
+    fun prewarmDatabase() {
+        OrtDatabase.create(ApplicationProvider.getApplicationContext())
+    }
+
     @Before
     fun initWorkManager() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()

@@ -85,21 +85,34 @@ class BannerClosingBorderTest {
         CaptureState.capturing(sessionId)
         armTooQuietBanner()
 
+        // R-1043 (this task, following the identical fix already proven in `FailureHostTest`'s own
+        // `R_300`/`R_883`): the real Release-runner failure was never this test's own assertions —
+        // it was `FailureHost`'s polling `LaunchedEffect` (`FailureSignalsPolling.current`) lazily
+        // opening a real `OrtDatabase` (WAL setup, hand-written schema, `runBlocking`) the first
+        // time any test in this JVM fork asks for a *non-null* `sessionId`, a one-time cost that is
+        // ordinarily trivial but was not on a hosted runner that had just finished packaging ~600 MB
+        // of assets. `FailureMapper.map`'s own Level branch (`armTooQuietBanner`'s scenario) never
+        // reads `sessionStartedAtMillis`/`sessionTransmissionCount`/`newestGap` — the fields that
+        // `sessionId` guards inside `FailureSignalsPolling.current` — so it was never load-bearing
+        // for this test either. `sessionId = null` here (kept for `CaptureState.capturing` above,
+        // an in-memory holder with no I/O) skips every Room query, leaving the poll loop's first
+        // iteration fully synchronous, and `mainClock.autoAdvance = false` plus one explicit
+        // `advanceTimeByFrame()` replaces the wall-clock `waitUntil` with a single bounded virtual
+        // frame — a state-keyed wait, not a longer guess at the same cliff.
+        composeTestRule.mainClock.autoAdvance = false
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
                 OrtTheme {
                     // Same forced-short viewport `BannerChevronClearanceTest` uses to guarantee the
                     // banner caps and scrolls — the one shape this register row is about.
                     Box(modifier = Modifier.requiredSize(390.dp, 400.dp)) {
-                        FailureHost(sessionId = sessionId, content = { })
+                        FailureHost(sessionId = null, content = { })
                     }
                 }
             }
         }
-
-        composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("failure-banner-scroll-hint").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeTestRule.mainClock.advanceTimeByFrame()
+        composeTestRule.waitForIdle()
 
         val closingBorder = composeTestRule.onNodeWithTag("failure-banner-closing-border").getUnclippedBoundsInRoot()
         val scrollContent = composeTestRule.onNodeWithTag("failure-banner-scroll-content").getUnclippedBoundsInRoot()
@@ -126,21 +139,24 @@ class BannerClosingBorderTest {
         CaptureState.capturing(sessionId)
         armTooQuietBanner()
 
+        // R-1043 (this task): see the sibling test's own comment above — `sessionId = null` here
+        // (the CI/Release failure's real mechanism: a lazily-opened real `OrtDatabase` behind a
+        // non-null session id, not the 2-second poll interval itself) plus a single bounded virtual
+        // frame in place of the wall-clock `waitUntil`.
+        composeTestRule.mainClock.autoAdvance = false
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 1f)) {
                 OrtTheme {
                     // The tour AVD's own real height — plenty of room for `Fail-Level`'s short body
                     // at font scale 1.0, so the banner never needs to scroll and the hint never shows.
                     Box(modifier = Modifier.requiredSize(390.dp, 844.dp)) {
-                        FailureHost(sessionId = sessionId, content = { })
+                        FailureHost(sessionId = null, content = { })
                     }
                 }
             }
         }
-
-        composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("failure-banner-overlay").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeTestRule.mainClock.advanceTimeByFrame()
+        composeTestRule.waitForIdle()
         composeTestRule.onAllNodesWithTag("failure-banner-scroll-hint").assertCountEquals(0)
         // The closing-border Column always exists (its own bounds still meaningful to a reader
         // relying on this test for the non-scrolling shape) — bounds equal the scroll content's own
