@@ -18,8 +18,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import org.ort.app.ui.components.PrimaryButton
@@ -115,14 +119,28 @@ private fun MainTier(
     val others = candidates.filterNot { it.callsign == currentCallsign }
     SectionHeader(label = "The resolver's other candidates")
     others.forEach { candidate ->
+        // R-1090 (FR-A11Y-2, the R-380 pattern this package's own `NavRow`/`LogRow` doc comments
+        // already establish): a plain, trailing `semantics(mergeDescendants = true) { ... }` does
+        // not reliably keep this node's own `contentDescription` on the *clickable* node itself
+        // once real child content (this row's own `Text`s) sits beneath it — confirmed on a real
+        // device for every other row in this package that used to carry this exact shape.
+        // `clearAndSetSemantics`, redeclaring `role` and the click action alongside the composed
+        // description, is the fix already established everywhere else.
+        val description = "Correct to ${candidate.callsign}, ${candidate.scoreLabel}"
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 44.dp)
                 .clickable(role = Role.Button, onClick = { onPick(candidate.callsign) })
                 .padding(vertical = OrtSpacing.sm)
-                .semantics(mergeDescendants = true) {
-                    contentDescription = "Correct to ${candidate.callsign}, ${candidate.scoreLabel}"
+                .clearAndSetSemantics {
+                    contentDescription = description
+                    text = AnnotatedString(description)
+                    role = Role.Button
+                    onClick(label = null) {
+                        onPick(candidate.callsign)
+                        true
+                    }
                 },
         ) {
             Text(text = candidate.callsign, style = OrtType.callsignRow, color = OrtColors.textHigh)
@@ -194,15 +212,23 @@ private fun SearchTier(
 @Composable
 private fun StationSearchResultRow(row: StationSearchRow, query: String, onClick: () -> Unit) {
     val name = row.userName
+    // R-1090: the same `clearAndSetSemantics` fix as `MainTier`'s candidate row above — see that
+    // row's own doc comment for the real-device finding this corrects.
+    val description = "Correct to ${row.stationId}" + (name?.let { ", $it" } ?: "") + ", ${row.evidence}"
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(vertical = OrtSpacing.sm)
-            .semantics(mergeDescendants = true) {
-                contentDescription = "Correct to ${row.stationId}" +
-                    (name?.let { ", $it" } ?: "") + ", ${row.evidence}"
+            .clearAndSetSemantics {
+                contentDescription = description
+                text = AnnotatedString(description)
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
             },
     ) {
         // Match highlighting: the typed query, where it prefixes the result, in `accent/green`

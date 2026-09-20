@@ -22,8 +22,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.Badge
@@ -216,13 +220,31 @@ private fun DigestProseCard(card: DigestProseCardViewState, onReadOvers: () -> U
 
 @Composable
 private fun DigestRow(item: DigestItemViewState, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    // R-1090 (FR-A11Y-2, the R-380/CheckboxRow pattern — see `ui/components/Controls.kt`'s own doc
+    // comment): a plain, trailing `semantics(mergeDescendants = true) { contentDescription = ... }`
+    // does not reliably export this node's own description once real child content sits beneath
+    // it. `clearAndSetSemantics` with an explicit `Text` entry per line keeps [item]'s headline/
+    // sub-line independently exact-matchable while still exporting a real `contentDescription`
+    // on-device.
+    val description = "${item.headline}. ${item.subLine}"
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(vertical = OrtSpacing.sm)
-            .semantics(mergeDescendants = true) { contentDescription = "${item.headline}. ${item.subLine}" },
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = listOf(
+                    AnnotatedString(item.headline),
+                    AnnotatedString(item.subLine),
+                )
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
     ) {
         DigestDot(ambiguous = item.ambiguousTone, modifier = Modifier.padding(top = 5.dp, end = OrtSpacing.sm))
         Column {

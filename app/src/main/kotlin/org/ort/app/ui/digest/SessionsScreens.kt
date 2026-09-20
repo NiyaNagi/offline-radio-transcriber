@@ -19,8 +19,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.ActivityPatternChart
 import org.ort.app.ui.components.Badge
@@ -120,6 +124,12 @@ private fun sessionRowSummary(session: SessionRowViewState): String = buildStrin
 
 @Composable
 private fun SessionRow(session: SessionRowViewState, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    // R-1090 (FR-A11Y-2, the R-380/CheckboxRow pattern — see `ui/components/Controls.kt`'s own doc
+    // comment): a plain, trailing `semantics(mergeDescendants = true) { contentDescription = ... }`
+    // does not reliably export this node's own description once real child content sits beneath
+    // it. `clearAndSetSemantics` with an explicit `Text` entry keeps [session]'s own label
+    // independently exact-matchable (this screen's own tests query it by text) while still
+    // exporting a real `contentDescription` on-device.
     val description = "${session.label}. ${sessionRowSummary(session)}"
     Row(
         modifier = modifier
@@ -127,7 +137,15 @@ private fun SessionRow(session: SessionRowViewState, onClick: () -> Unit, modifi
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(vertical = OrtSpacing.sm)
-            .semantics(mergeDescendants = true) { contentDescription = description },
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = listOf(AnnotatedString(session.label))
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {

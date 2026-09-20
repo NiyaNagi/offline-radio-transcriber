@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,9 +22,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.ActivityPatternChart
@@ -168,11 +174,37 @@ private fun StationRow(entry: StationListEntryViewState, onOpen: (String) -> Uni
         append(", $lastHeard")
         entry.badge?.let { append(", ${badgeLabel(it)}") }
     }
+    // R-1090 (FR-A11Y-2, device-confirmed on `ort_audit_a11y2`): a real `uiautomator` dump of this
+    // exact row showed the identical "empty-label clickable parent, labelled non-clickable child"
+    // shape the R-380/CheckboxRow pattern already found broken elsewhere in this app (see
+    // `ui/components/Controls.kt`'s own doc comment) — the clickable node's own `content-desc` was
+    // empty, with [description] carried only by a separate, non-clickable virtual node beside it.
+    // The same dump also measured this row's real height at 88px on this 420dpi device (33.5dp),
+    // under FR-A11Y-2's 44dp floor — this row never had a `heightIn` at all. `heightIn(min = 44.dp)`
+    // plus `clearAndSetSemantics` (an explicit, multi-entry `Text` list so [entry]'s callsign/
+    // count/given-name/badge/last-heard stay independently exact-matchable, the same shape
+    // [CheckboxRow] established) fixes both.
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .testTag("station-row-${entry.stationId}")
             .clickable(role = Role.Button, onClick = { onOpen(entry.stationId) })
-            .semantics(mergeDescendants = true) { contentDescription = description }
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = buildList {
+                    add(AnnotatedString(entry.label))
+                    add(AnnotatedString(entry.countContext.ifBlank { "${entry.transmissionCount} overs" }))
+                    entry.givenName?.let { add(AnnotatedString(it)) }
+                    entry.badge?.let { add(AnnotatedString(badgeLabel(it))) }
+                    add(AnnotatedString(entry.lastHeardLabel ?: "—"))
+                }
+                role = Role.Button
+                onClick(label = null) {
+                    onOpen(entry.stationId)
+                    true
+                }
+            }
             .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -394,13 +426,32 @@ private fun RecentOverRow(
     onOpen: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // R-1090 (FR-A11Y-2, the R-380/CheckboxRow pattern — see `ui/components/Controls.kt`'s own doc
+    // comment): this row had no `heightIn` floor at all (a genuine touch-target violation the same
+    // shape R-1073 already fixed elsewhere) and its trailing `semantics(mergeDescendants = true)`
+    // does not reliably export the description once real child content sits beneath it.
+    // `clearAndSetSemantics` with an explicit `Text` entry per piece keeps [entry]'s transcript
+    // independently exact-matchable (this screen's own tests scroll to and assert it by text).
     val description = "${entry.timeLabel}, ${entry.frequencyLabel}, ${entry.transcriptText}"
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(min = 44.dp)
             .testTag("recent-over-${entry.id}")
             .clickable(role = Role.Button, onClickLabel = "Open this over", onClick = { onOpen(entry.id) })
-            .semantics(mergeDescendants = true) { contentDescription = description }
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = listOf(
+                    AnnotatedString(entry.timeLabel),
+                    AnnotatedString(entry.frequencyLabel),
+                    AnnotatedString(entry.transcriptText),
+                )
+                role = Role.Button
+                onClick(label = "Open this over") {
+                    onOpen(entry.id)
+                    true
+                }
+            }
             .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
     ) {
         // R-270 (register, design, V5 pass 2 @8d1456f, cf. R-205): a fixed `width` cannot grow for

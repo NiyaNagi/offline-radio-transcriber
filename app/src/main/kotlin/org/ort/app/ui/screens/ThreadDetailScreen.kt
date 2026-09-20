@@ -19,7 +19,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -163,12 +167,31 @@ private fun HowAttributedCard(lines: List<ThreadAttributionExplanationLine>, mod
 @Composable
 private fun ThreadDetailOverRow(over: ThreadDetailOverViewState, onOpen: () -> Unit, onOpenSource: (String) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
+        // R-1090 (FR-A11Y-2, the R-380/CheckboxRow pattern — see `ui/components/Controls.kt`'s own
+        // doc comment for the real-device finding this corrects): a plain, trailing
+        // `semantics(mergeDescendants = true) { contentDescription = ... }` does not reliably
+        // export this node's own description once real child content (the marker and transcript)
+        // sits beneath it. `clearAndSetSemantics` with an explicit `Text` entry per piece keeps
+        // [over]'s transcript independently exact-matchable (this screen's own tests click it by
+        // text) while still exporting a real `contentDescription` on-device.
+        val overDescription = "${over.timeLabel}. ${over.transcript}"
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 44.dp)
                 .clickable(role = Role.Button, onClick = onOpen)
-                .semantics(mergeDescendants = true) { contentDescription = "${over.timeLabel}. ${over.transcript}" },
+                .clearAndSetSemantics {
+                    contentDescription = overDescription
+                    this[SemanticsProperties.Text] = listOf(
+                        AnnotatedString(over.timeLabel),
+                        AnnotatedString(over.transcript),
+                    )
+                    role = Role.Button
+                    onClick(label = null) {
+                        onOpen()
+                        true
+                    }
+                },
         ) {
             Text(
                 text = over.timeLabel,

@@ -167,15 +167,26 @@ private fun LiveMonitorTopBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
     ) {
-        Icon(
-            imageVector = OrtIcons.back,
-            contentDescription = "Back to Capture",
-            tint = OrtColors.textIcon,
+        // R-1090 (FR-A11Y-2, the R-1073 pattern — `ui/components/Rows.kt`'s `HeaderTouchTargetIcon`
+        // doc comment): `.clickable` sat directly on this 21dp glyph's own `Modifier.size(...)`, the
+        // identical under-the-floor shape R-1073 already fixed on every screen using the shared
+        // `ScreenHeader`/`DrillInHeader` — this screen draws its own back icon rather than using
+        // either, so it never got that fix. An outer, real 44dp `Box` carries the floor and the
+        // `clickable`; the icon inside keeps its own, unchanged 21dp size.
+        Box(
             modifier = Modifier
-                .size(21.dp)
+                .size(44.dp)
                 .clickable(role = Role.Button, onClickLabel = "Back to Capture", onClick = onBack)
                 .testTag("live-monitor-back"),
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = OrtIcons.back,
+                contentDescription = "Back to Capture",
+                tint = OrtColors.textIcon,
+                modifier = Modifier.size(21.dp),
+            )
+        }
         Text(text = "Live", style = OrtType.bodyProse, color = OrtColors.textIcon)
         Spacer(modifier = Modifier.weight(1f))
         if (haltActionLabel != null) {

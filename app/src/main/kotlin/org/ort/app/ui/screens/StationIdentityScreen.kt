@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,9 +34,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.ActionBar
@@ -598,9 +606,17 @@ private fun SplitOverRow(
     }
     val description = "${over.timeLabel}, ${over.transcriptText}, $stateWord" +
         if (over.corrected) ", corrected" else ""
+    // R-1090 (FR-A11Y-2, the R-380/CheckboxRow pattern — see `ui/components/Controls.kt`'s own doc
+    // comment): no `heightIn` floor at all (a genuine touch-target violation) and a trailing
+    // `semantics(mergeDescendants = true)` that does not reliably export the description once real
+    // child content sits beneath it. The checkbox `Role` also carried no `toggleableState` at all,
+    // so a screen reader could announce this as a checkbox but never say checked/unchecked.
+    // `clearAndSetSemantics` fixes all three; the anchor row (no `onToggle` at all) stays
+    // non-interactive but still gets a real, explicit description.
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(min = 44.dp)
             .testTag("split-over-${over.transmissionId}")
             .then(
                 if (over.isAnchor) {
@@ -609,7 +625,21 @@ private fun SplitOverRow(
                     Modifier.clickable(role = Role.Checkbox, onClickLabel = stateWord, onClick = onToggle)
                 },
             )
-            .semantics(mergeDescendants = true) { contentDescription = description }
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = listOf(
+                    AnnotatedString(over.timeLabel),
+                    AnnotatedString(over.transcriptText),
+                )
+                if (!over.isAnchor) {
+                    role = Role.Checkbox
+                    toggleableState = ToggleableState(checked)
+                    onClick(label = stateWord) {
+                        onToggle()
+                        true
+                    }
+                }
+            }
             .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
         verticalAlignment = Alignment.Top,
     ) {

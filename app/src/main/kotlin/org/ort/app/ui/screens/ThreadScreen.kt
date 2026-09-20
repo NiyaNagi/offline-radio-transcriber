@@ -21,8 +21,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.AttributionRow
 import org.ort.app.ui.components.Badge
@@ -140,7 +144,28 @@ internal fun ThreadCard(card: ThreadCardViewState, onClick: () -> Unit, modifier
             .background(if (card.ambiguous) OrtColors.bgRowAmbiguous else Color.Transparent)
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) { contentDescription = description },
+            // R-1090 (FR-A11Y-2, the R-380/CheckboxRow pattern — see `ui/components/Controls.kt`'s
+            // own doc comment for the real-device finding this corrects): a plain, trailing
+            // `semantics(mergeDescendants = true) { contentDescription = ... }` does not reliably
+            // export this node's own description to a real device's `AccessibilityNodeInfo` tree
+            // once real child content sits beneath it. `clearAndSetSemantics` with an explicit,
+            // multi-entry `Text` list keeps [card]'s timeLabel/titleText/metaText/badge
+            // independently exact-matchable by `onNodeWithText` (this screen's own test suite
+            // already relies on that) while still exporting a real `contentDescription` on-device.
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = buildList {
+                    add(AnnotatedString(card.timeLabel))
+                    add(AnnotatedString(card.titleText))
+                    add(AnnotatedString(card.metaText))
+                    if (card.isNew) add(AnnotatedString("NEW"))
+                }
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
     ) {
         BoxWithConstraints(
             modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.md),
@@ -278,7 +303,20 @@ private fun FrequencyMeanwhileRow(entry: FrequencyMeanwhileEntry, onClick: () ->
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
-            .semantics(mergeDescendants = true) { contentDescription = description },
+            // R-1090: the same `clearAndSetSemantics` fix as [ThreadCard] above — see that
+            // composable's own doc comment for the real-device finding this corrects.
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = listOf(
+                    AnnotatedString(entry.frequencyLabel),
+                    AnnotatedString("$overs · $stations heard"),
+                )
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.md),
     ) {
