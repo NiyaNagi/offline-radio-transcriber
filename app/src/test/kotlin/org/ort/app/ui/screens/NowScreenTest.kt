@@ -28,15 +28,20 @@ import org.ort.app.ui.components.LiveBarTone
 import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.data.CanGetBetterRow
 import org.ort.app.ui.data.EarlierNightRow
+import org.ort.app.ui.data.HourActivityState
 import org.ort.app.ui.data.MissingModelFacts
 import org.ort.app.ui.data.NowStationRow
 import org.ort.app.ui.data.NowStationsSection
 import org.ort.app.ui.data.NowViewState
+import org.ort.app.ui.digest.SessionCoverageSegment
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.app.ui.theme.OrtType
 import org.ort.core.AttributionState
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import kotlin.math.abs
 
 /**
  * The "Now" home (ui-conformance-plan WP4, R-030/R-033/R-036/R-037; `Main.dc.html`,
@@ -448,14 +453,16 @@ class NowScreenTest {
 
     @Test
     @Requirement("R-1041")
-    fun `R_1041 tapping a real bar with heardCount invokes onOpenHour with the real hour window`() {
+    fun `R_1041 tapping a bar invokes onOpenHour with that segment's own real window`() {
+        // R-1074: the window a tap opens is no longer re-derived from a fabricated whole clock
+        // hour (`hourFilterWindow`, removed) — it is the exact `[fromMillis, toMillis]`
+        // `NowViewStateMapper.active` itself computed for that segment (`activitySegmentWindows`),
+        // carried straight through.
         var openedFrom: Long? = null
         var openedTo: Long? = null
         val state = activeState(overCount = 1).copy(
-            activityPattern = listOf(
-                org.ort.app.ui.data.HourActivityBucket(0, org.ort.app.ui.data.HourActivityState.HEARD, 1),
-            ),
-            sessionStartedAtUtc = 1_000L,
+            activityPattern = listOf(SessionCoverageSegment(0f, 1f, HourActivityState.HEARD, 1)),
+            activitySegmentWindows = listOf(1_000L to 1_000L + 3_600_000L - 1),
         )
         composeTestRule.setContent {
             OrtTheme {
@@ -471,22 +478,109 @@ class NowScreenTest {
 
         composeTestRule.onNodeWithTag("activity-bar-0").performClick()
 
-        assert(openedFrom == 1_000L) { "expected the real session start, got $openedFrom" }
-        assert(openedTo == 1_000L + 3_600_000L - 1) { "expected the real hour's own inclusive end, got $openedTo" }
+        assert(openedFrom == 1_000L) { "expected the segment's own real start, got $openedFrom" }
+        assert(openedTo == 1_000L + 3_600_000L - 1) { "expected the segment's own inclusive end, got $openedTo" }
     }
 
     @Test
     @Requirement("R-1041")
-    fun `R_1041 no sessionStartedAtUtc means the chart's own bar carries no click action at all`() {
+    fun `R_1041 no activitySegmentWindows means the chart's own bar carries no click action at all`() {
         val state = activeState(overCount = 1).copy(
             activityPattern = listOf(
                 org.ort.app.ui.data.HourActivityBucket(0, org.ort.app.ui.data.HourActivityState.HEARD, 1),
             ),
-            sessionStartedAtUtc = null,
+            activitySegmentWindows = emptyList(),
         )
         composeTestRule.setContent { OrtTheme { NowScreen(state = state, onOpenHour = { _, _ -> }) } }
 
         composeTestRule.onNodeWithTag("activity-bar-0", useUnmergedTree = true).assertHasNoClickAction()
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // R-1074 (register, halt, constitution I): the chart's own bars are sized from each segment's
+    // real fraction of the session's span, never an equal whole-hour share — a Robolectric bounds
+    // test on the real composable, per AGENTS.md item 7 / constitution VIII, at the tour's own
+    // width with native graphics, at font scale 1.0 and 2.0 (a bar's width comes from
+    // `Modifier.weight`, which font scale does not itself change, but this proves it directly
+    // rather than assuming so).
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1074")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1074 the live chart's own bars are sized from each segment's real fraction, fontscale 1_0`() {
+        assertSegmentBarsMatchRealFractions(fontScale = 1f)
+    }
+
+    @Test
+    @Requirement("R-1074")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1074 the live chart's own bars are sized from each segment's real fraction, fontscale 2_0`() {
+        assertSegmentBarsMatchRealFractions(fontScale = 2f)
+    }
+
+    private fun assertSegmentBarsMatchRealFractions(fontScale: Float) {
+        // The register's own repro, scaled the same way SessionsScreensTest's R-1069 bounds test
+        // scales it: a 180-minute session, 100 min HEARD, a 22-minute gap, 58 min HEARD — every
+        // segment's expected width unmistakably different from an equal one-third share (60/180
+        // each), which is what the pre-fix whole-hour-bucket code would have rendered instead.
+        val state = activeState(overCount = 1).copy(
+            activityPattern = listOf(
+                SessionCoverageSegment(0f, 100f / 180f, HourActivityState.HEARD, heardCount = 1),
+                SessionCoverageSegment(100f / 180f, 122f / 180f, HourActivityState.NOT_LISTENING, heardCount = 0),
+                SessionCoverageSegment(122f / 180f, 1f, HourActivityState.HEARD, heardCount = 1),
+            ),
+            activitySegmentWeights = listOf(100f / 180f, 22f / 180f, 58f / 180f),
+        )
+
+        composeTestRule.setContent {
+            CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
+                OrtTheme { NowScreen(state = state) }
+            }
+        }
+
+        val bar0 = composeTestRule.onNodeWithTag("activity-bar-0", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val bar1 = composeTestRule.onNodeWithTag("activity-bar-1", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val bar2 = composeTestRule.onNodeWithTag("activity-bar-2", useUnmergedTree = true).getUnclippedBoundsInRoot()
+        val (width0Px, width1Px, width2Px) = with(composeTestRule.density) {
+            Triple((bar0.right - bar0.left).toPx(), (bar1.right - bar1.left).toPx(), (bar2.right - bar2.left).toPx())
+        }
+        val barGapPx = with(composeTestRule.density) { 1.5.dp.toPx() }
+        val totalContentPx = width0Px + width1Px + width2Px + 2 * barGapPx
+
+        assertBarWidthMatchesFraction(width0Px, totalContentPx, 100f / 180f, "bar 0")
+        assertBarWidthMatchesFraction(width1Px, totalContentPx, 22f / 180f, "bar 1 (the gap)")
+        assertBarWidthMatchesFraction(width2Px, totalContentPx, 58f / 180f, "bar 2")
+        // The old bug's own shape, disproved directly: the gap bar must be narrower than either
+        // listening bar, never one-third of the row the way three equal whole-hour buckets would
+        // render for this exact case.
+        assertTrue(
+            "expected the gap bar ($width1Px px) to be narrower than bar 0 ($width0Px px) at font " +
+                "scale $fontScale — an equal-width bucket would make them the same",
+            width1Px < width0Px,
+        )
+    }
+
+    private fun assertBarWidthMatchesFraction(
+        actualPx: Float,
+        totalContentPx: Float,
+        expectedFraction: Float,
+        label: String,
+    ) {
+        val expectedPx = totalContentPx * expectedFraction
+        // Compose's own `Modifier.weight` distributes an integer pixel budget across weighted
+        // children (floor-per-item, remainder to the last), so a few px of slop from that rounding
+        // alone is expected — this floor is still an order of magnitude tighter than the ~200px
+        // (well over half the whole bar) the pre-fix equal-third-share code would have been off by
+        // for this exact case, which is the discrimination this test exists to prove.
+        val tolerancePx = 6f
+        assertTrue(
+            "expected $label's own width (~$expectedPx px) to be within $tolerancePx px of its real " +
+                "fraction $expectedFraction of the content width ($totalContentPx px), got $actualPx px",
+            abs(actualPx - expectedPx) <= tolerancePx,
+        )
     }
 
     @Test

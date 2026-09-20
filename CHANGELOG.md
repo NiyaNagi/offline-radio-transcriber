@@ -98,6 +98,81 @@ their artboards:
 No other setup board's indicator or colour changed in this unit.
 
 ---
+## 2026-09-20 (R-1074: `Now`'s live-session chart stops hatching a whole hour for a real 22-minute gap)
+
+### 98ecc1ca — R-1074 · `Now`'s live chart reuses `SessionCoverageMapper.buildSegments`, ending whole-clock-hour hatching
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/ActivityPattern.kt` (kdoc only — no behaviour change),
+`app/src/main/kotlin/org/ort/app/ui/screens/NowScreen.kt`, and their tests
+(`app/src/test/kotlin/org/ort/app/ui/data/NowViewStateMapperTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/screens/NowScreenTest.kt`).
+
+**Requirements/ACs:** R-1074 (closed by this commit, pending the lead's visual re-verification —
+see "Left open"); R-1041 (tap-a-bar filter preserved, re-verified with new tests); R-1069 (reused
+directly, not re-implemented); constitution I, VIII.
+
+**What changed:** register R-1074 (the same defect R-1069 already fixed on `Session.dc.html`'s own
+coverage bar, filed against `Now` because P26 could not reach `NowViewState.kt`/`NowScreen.kt`,
+outside that unit's ownership): `NowViewStateMapper.active` bucketed a live session into whole
+*clock* hours (`ActivityPatternMapper.buildSessionElapsedPattern`) and hatched a bucket
+`NOT_LISTENING` the instant any real gap merely touched it — a 22-minute gap could paint up to two
+whole hours deaf. `active` now calls `SessionCoverageMapper.buildSegments` (R-1069's own
+gap-boundary-accurate segmentation) instead, exactly as `DigestPolling.sessionDetail` already does
+for the session-review coverage bar — no third implementation of this logic. `NowViewState.Active
+.activityPattern` changed type from `List<HourActivityBucket>` to `List<ActivityBucket>` to carry
+`SessionCoverageSegment`s directly; two new fields, `activitySegmentWeights`
+(`SessionCoverageSegment.asChartWeights()`, passed straight to `ActivityPatternChart`'s existing
+`segmentWeights` parameter) and `activitySegmentWindows` (each segment's own real
+`[fromMillis, toMillis]`, reconstructed from its `fractionStart`/`fractionEnd` against the
+session's real span), replace `hourFilterWindow` (removed — it inverted a fabricated whole-hour
+grid that no longer exists). **Decision recorded per the register's own explicit ask**: rather than
+overlay real gap position/width on still-whole-hour bars (keeping hour taps), bars are now split at
+real gap boundaries and R-1041's tap opens each segment's own real window
+(`NowScreen`'s `onBarClick`, gated on `activitySegmentWindows` being non-empty rather than
+`sessionStartedAtUtc`) — chosen because it reuses `SessionCoverageMapper.buildSegments` and
+`ActivityPatternChart`'s existing `segmentWeights` machinery in full (both already built for
+exactly this shape by R-1069) rather than adding a new gap-overlay renderer to
+`ActivityPatternChart`, which would itself have been a second, drawing-side re-implementation of
+gap positioning. `ActivityPatternMapper.buildSessionElapsedPattern`'s own kdoc (`ActivityPattern
+.kt`) corrected: it no longer claims to be "the one shared helper" both `Now` and
+`DigestPolling.sessionDetail` call (R-1069 already made that false for the second; this commit
+makes it false for the first too) — the function is kept, unused by any production caller, as the
+superseded predecessor of `SessionCoverageMapper.buildSegments`.
+
+**Verified:** `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.data.*" --tests
+"org.ort.app.ui.screens.*" --tests "org.ort.app.ui.components.*"` — green, including two new
+`R_1074` mapper tests (the register's own 22-minute-gap-in-a-3-hour-session case: not-listening
+time never exceeds the real gap, within a documented float-round-trip tolerance; `activityPattern`
+carries real `SessionCoverageSegment`s, never re-deriving a whole-hour shape), two rewritten
+`R_1041` screen tests (a tap opens the segment's own real window; no `activitySegmentWindows` means
+no click action), and two new `R_1074` Robolectric bounds tests at `w390dp-h844dp-420dpi`, font
+scale 1.0 and 2.0 (native graphics, mirroring `SessionsScreensTest`'s own R-1069 bounds test),
+proving the gap bar renders narrower than an equal one-third share rather than trusting the mapper
+test alone to catch a drawing error. `.\gradlew.bat ktlintCheck detekt` — green.
+
+**Left open / not done:**
+- **The visual re-verification this fix's own diff requires (constitution VIII, AGENTS.md item 7)
+  was not run** — no emulator was used, per this unit's own instructions. At minimum
+  `overnight/N01-now` and `overnight/N01-now@2x` need re-capture and comparison against
+  `design/canvas/Main.dc.html`; `overnight-live/N01-now-live(+@2x)`, `bt-audio-dropped/F23-now
+  (+@2x, +@2x-end)`, `gap-call/F15-gap-call-now` and `rig-bt-lost/F09-rig-bt-lost-now(+@2x,
+  +@2x-end)` are the other `destination: NOW` tour ids most likely to carry a real capture gap and
+  so show a materially different bar shape; every other `destination: NOW` id reaches the same
+  changed code path and should be swept too, at the lead's discretion.
+- **`design/canvas/Main.dc.html` was deliberately not changed.** Its illustrative chart still draws
+  17 equal-`flex-grow` bars, one fully hatched — the same static, not-to-real-fraction style
+  `design/canvas/Session.dc.html` still uses today even though R-1069 already moved that screen's
+  real render to variable-width segments. Matching that precedent, this commit leaves the artboard
+  as-is; the lead may disagree once real captures are in hand.
+- Two comments outside this unit's ownership are now stale and were not corrected here per the
+  build plan's ownership boundary: `SessionCoverageMapper.kt`'s own kdoc and `DigestPolling.kt`'s
+  `sessionDetail` comment both still say `buildSessionElapsedPattern` is "still correct and
+  unchanged for `Now`'s own live chart" — flagged to the lead separately.
+- `ActivityPatternMapper.buildSessionElapsedPattern` itself is left in place, now dead code with no
+  production caller and no direct test, since deleting a public function was outside this unit's
+  explicit scope ("correct its kdoc"); a future caller must not reach for it without first asking
+  why `SessionCoverageMapper.buildSegments` does not already serve it (now stated in its own kdoc).
 
 ## 2026-09-20 (P32 gate fix: `CheckboxRow`/`ToggleRow`'s content-description fix regressed six consumer tests; corrected)
 

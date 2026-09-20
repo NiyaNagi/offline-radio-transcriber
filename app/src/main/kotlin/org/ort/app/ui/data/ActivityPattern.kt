@@ -459,11 +459,23 @@ public object ActivityPatternMapper {
      * [buildPattern]'s own honest "never captured at all reads as not-listening" rule, which reads
      * as almost the whole chart hatched for a session that ran continuously with no real gap at
      * all. This instead buckets by *elapsed* hour within [window]'s own real span — only as many
-     * bars as the session actually ran, each [HourActivityState.NOT_LISTENING] only when a *real*,
-     * recorded gap actually covers it, never because nothing was heard. The one shared helper
-     * `Now`'s own live chart ([NowViewStateMapper.active]) and a past session's own coverage bar
-     * (`DigestPolling.sessionDetail`) both call, so neither disagrees with the other about what
-     * "listening" means for the same session (R-913's own halt).
+     * bars as the session actually ran.
+     *
+     * **R-1074 (register, halt, constitution I): this function's own whole-*clock*-hour bucketing
+     * is a second copy of the exact defect R-1069 fixed for `DigestPolling.sessionDetail`.** A
+     * bucket here still hatches [HourActivityState.NOT_LISTENING] the instant *any* real gap merely
+     * overlaps it, so a 22-minute gap straddling an hour boundary still paints up to two whole
+     * hours deaf — the same "hatches almost the whole window" shape, just at a coarser (hour, not
+     * day) grain than [buildPattern]'s own bug above. R-1069 already replaced this function, for
+     * `DigestPolling.sessionDetail`, with [org.ort.app.ui.digest.SessionCoverageMapper.buildSegments]'s
+     * real, gap-boundary-accurate segments (never quantized to a clock hour); R-1074 does the same
+     * for the other caller an earlier version of this doc comment named as this function's own,
+     * `Now`'s own live chart ([NowViewStateMapper.active]). **Neither production caller reaches
+     * this function any more** — it is kept only as the superseded elapsed-hour predecessor of
+     * [org.ort.app.ui.digest.SessionCoverageMapper.buildSegments], not as a "still correct" shared
+     * helper the way that earlier doc comment claimed. Do not add a new caller without first asking
+     * why [org.ort.app.ui.digest.SessionCoverageMapper.buildSegments]'s segment representation does
+     * not already serve it.
      */
     public fun buildSessionElapsedPattern(
         window: SessionWindow,

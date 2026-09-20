@@ -383,12 +383,149 @@ class NowViewStateMapperTest {
         assertEquals(12_345L, view.sessionStartedAtUtc)
     }
 
+    // -------------------------------------------------------------------------------------------
+    // R-1074 (register, halt, constitution I): the chart must never show more not-listening time
+    // than the gaps actually contain. Before this fix, `active` bucketed the session into whole
+    // *clock* hours (`ActivityPatternMapper.buildSessionElapsedPattern`) and hatched a bucket the
+    // instant any real gap merely touched it — the same false picture R-1069 already removed from
+    // `Session.dc.html`'s own coverage bar, by reusing `SessionCoverageMapper.buildSegments` and
+    // `ActivityPatternChart`'s `segmentWeights`. This proves R-1074 gives `Now` the identical fix
+    // rather than a third implementation, and that the R-1041 tap filter now opens each segment's
+    // own real window instead of a fabricated hour.
+    // -------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("R-1074")
+    fun `R_1074 a 22-minute gap in a three-hour session never renders more than 22 minutes not-listening`() {
+        // The register's own repro (shared with R-1069's SessionCoverageMapperTest): a 180-minute
+        // session, one real 22-minute gap starting 40 minutes in. The pre-fix whole-hour-bucket
+        // code hatched two of three hours (120 minutes) as not-listening for this exact shape.
+        val minute = 60_000L
+        val sessionStart = 0L
+        val gapStart = 40 * minute
+        val gapEnd = gapStart + 22 * minute
+        val sessionEnd = 180 * minute
+        val view = NowViewStateMapper.active(
+            details = listOf(
+                detail("TX1", Attribution.confirmed("W7NPC", 0.9), startedAtUtcMillis = 10 * minute),
+                detail("TX2", Attribution.confirmed("W7NPC", 0.9), startedAtUtcMillis = 150 * minute),
+            ),
+            gaps = listOf(GapWindow(startedAt = gapStart, endedAt = gapEnd)),
+            sessionStartedAtUtc = sessionStart,
+            sessionEndedAtUtc = sessionEnd,
+            nowMillis = sessionEnd,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+
+        val notListeningMillis = view.activityPattern
+            .filter { it.state == HourActivityState.NOT_LISTENING }
+            .sumOf { bucket ->
+                val segment = bucket as org.ort.app.ui.digest.SessionCoverageSegment
+                ((segment.fractionEnd - segment.fractionStart) * (sessionEnd - sessionStart)).toLong()
+            }
+
+        assertTrue(
+            notListeningMillis <= 22 * minute + FRACTION_ROUND_TRIP_TOLERANCE_MILLIS,
+            "expected at most the real 22-minute gap's own not-listening time, got ${notListeningMillis}ms " +
+                "(the pre-fix whole-hour-bucket code would have produced up to 120 minutes for this exact case)",
+        )
+        assertTrue(
+            notListeningMillis >= 22 * minute - FRACTION_ROUND_TRIP_TOLERANCE_MILLIS,
+            "expected the real 22-minute gap's own not-listening time, not a shrunk one, got ${notListeningMillis}ms",
+        )
+    }
+
+    @Test
+    @Requirement("R-1074")
+    fun `R_1074 activityPattern reuses SessionCoverageSegment, never re-deriving a whole-hour shape`() {
+        val minute = 60_000L
+        val view = NowViewStateMapper.active(
+            details = emptyList(),
+            gaps = listOf(GapWindow(startedAt = 40 * minute, endedAt = 62 * minute)),
+            sessionStartedAtUtc = 0L,
+            sessionEndedAtUtc = 180 * minute,
+            nowMillis = 180 * minute,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+
+        // Listening, gap, listening — three real segments, never 3 whole-hour buckets that happen
+        // to share the same count by coincidence (the shape asserted below rules that out).
+        assertEquals(3, view.activityPattern.size)
+        assertTrue(view.activityPattern.all { it is org.ort.app.ui.digest.SessionCoverageSegment })
+        assertEquals(3, view.activitySegmentWeights.size)
+        assertEquals(3, view.activitySegmentWindows.size)
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1041 (N01, `LogFilterOrigin.Now`): the chart bar's own tap, now opening each segment's own
+    // real window (R-1074) rather than a fabricated whole clock hour (`hourFilterWindow`, removed).
+    // -------------------------------------------------------------------------------------------
+
     @Test
     @Requirement("R-1041")
-    fun `R_1041 hourFilterWindow returns the exact hour a bucket index was folded from`() {
+    fun `R_1041 activitySegmentWindows carries each segment's own real span, not a fabricated hour`() {
+        val minute = 60_000L
         val sessionStart = 1_000L
-        val (from, to) = hourFilterWindow(sessionStartedAtUtc = sessionStart, index = 2)
-        assertEquals(sessionStart + 2 * 3_600_000L, from)
-        assertEquals(sessionStart + 3 * 3_600_000L - 1, to)
+        val gapStart = sessionStart + 40 * minute
+        val gapEnd = gapStart + 22 * minute
+        val sessionEnd = sessionStart + 180 * minute
+        val view = NowViewStateMapper.active(
+            details = listOf(
+                detail("TX1", Attribution.confirmed("W7NPC", 0.9), startedAtUtcMillis = 10 * minute + sessionStart),
+            ),
+            gaps = listOf(GapWindow(startedAt = gapStart, endedAt = gapEnd)),
+            sessionStartedAtUtc = sessionStart,
+            sessionEndedAtUtc = sessionEnd,
+            nowMillis = sessionEnd,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+
+        assertEquals(3, view.activitySegmentWindows.size)
+        val (from0, to0) = view.activitySegmentWindows[0]
+        // The real listening span before the gap: [sessionStart, gapStart) — never a whole clock
+        // hour, which for this session (starting at 1_000L) would not even align to gapStart at all.
+        assertEquals(sessionStart, from0)
+        assertTrue(
+            Math.abs(to0 - (gapStart - 1)) <= FRACTION_ROUND_TRIP_TOLERANCE_MILLIS,
+            "expected the segment's own real end (~${gapStart - 1}), got $to0",
+        )
+    }
+
+    @Test
+    @Requirement("R-1041")
+    fun `R_1041 an active state with no real span carries no segment windows at all`() {
+        val view = NowViewStateMapper.active(
+            details = emptyList(),
+            gaps = emptyList(),
+            sessionStartedAtUtc = 0L,
+            sessionEndedAtUtc = null,
+            nowMillis = 0L,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertTrue(view.activitySegmentWindows.isEmpty())
+    }
+
+    private companion object {
+        /**
+         * [org.ort.app.ui.digest.SessionCoverageSegment]'s own fractions are `Float`, so turning
+         * one back into an absolute millisecond (R-1074's `activitySegmentWindows`) carries a
+         * sub-millisecond-per-hour rounding error inherent to that representation, not a bug of
+         * this reconstruction — this floor is many orders of magnitude tighter than the up-to-an-
+         * hour error the pre-fix whole-hour-bucket code produced, which is the only thing this
+         * suite needs to discriminate.
+         */
+        const val FRACTION_ROUND_TRIP_TOLERANCE_MILLIS = 50L
     }
 }
