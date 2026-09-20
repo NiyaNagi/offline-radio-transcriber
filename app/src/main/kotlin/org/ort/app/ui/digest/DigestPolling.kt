@@ -541,12 +541,23 @@ public object DigestPolling {
         )
     }
 
+    /**
+     * Voice-match overclaim sweep (2026-09-20), flagged as its own follow-up rather than fixed in
+     * that sweep (outside its `ui/data`/`ui/screens` ownership): "no voice matched" names a
+     * mechanism — a voice matcher that ran and failed to find a match — that no production code
+     * path in this build has ever run. `:identity` is an empty stub, `voiceprintId` is `null` on
+     * every transmission `RealCaptureService` writes, and the resolver never returns `INFERRED`
+     * itself (only a human correction does — `CorrectionDao.applyCorrectedAttribution`), so an
+     * `UNKNOWN` over was never checked against a voice at all; it simply had no callsign and
+     * nothing else resolved it, the same honest fact `DetailViewStateMapper.bodyFor`'s own
+     * `AttributionState.UNKNOWN` branch now states.
+     */
     private fun unidentifiedVoicesItem(transmissions: List<TransmissionEntity>): DigestNotKnownItemViewState? {
         val unknown = transmissions.count { it.attributionState == AttributionState.UNKNOWN }
         if (unknown == 0) return null
         return DigestNotKnownItemViewState(
             headline = "${Plurals.count(unknown, "over")} from unidentified voices",
-            subLine = "no callsign heard, no voice matched — they stay findable",
+            subLine = "no callsign heard, and nothing else resolved it — they stay findable",
         )
     }
 

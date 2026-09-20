@@ -31,6 +31,7 @@ class RecordingSessionViewStateMapperTest {
         val stationId: String? = null,
         val state: AttributionState = if (stationId != null) AttributionState.CONFIRMED else AttributionState.UNKNOWN,
         val sourceTransmissionId: String? = null,
+        val corrected: Boolean = false,
     )
 
     /** [over]'s own processing-outcome facts, bundled for the same reason as [OverAttribution]. */
@@ -73,6 +74,7 @@ class RecordingSessionViewStateMapperTest {
         utcOffsetMinutes = 0,
         calibrationId = null,
         executionProvider = null,
+        corrected = attribution.corrected,
     )
 
     private fun over(
@@ -155,6 +157,40 @@ class RecordingSessionViewStateMapperTest {
         assertEquals("W7NPC", row.callsign)
         assertEquals("this is a test", row.transcript)
         assertEquals(AttributionState.CONFIRMED.name.lowercase(), row.attributionStateLabel)
+    }
+
+    /**
+     * Register (this session, consolidation regression net): `CorrectionDao
+     * .applyCorrectedAttribution` always writes `attributionState = INFERRED` with
+     * `attributionConfidence = NULL`. This file's own `attributionFrom` already checked
+     * `entity.corrected` first before this session (it never had the downgrade-to-UNKNOWN bug
+     * `ReaderPolling.kt`/`LiveMonitorViewData.kt` did) — this test locks that behaviour now that
+     * the reconstruction moved to the shared `ReaderTransmissionViewStateMapper.attributionFrom`,
+     * so a future change to the shared function cannot silently regress this screen.
+     */
+    @Test
+    @Requirement("FR-SPK-7")
+    fun `a corrected resolved over carries its real corrected callsign, never UNKNOWN`() {
+        val state = RecordingSessionViewStateMapper.map(
+            input(
+                overs = listOf(
+                    over(
+                        "T1",
+                        startedAtUtc = 0L,
+                        attribution = OverAttribution(
+                            stationId = "KA7LWH",
+                            state = AttributionState.INFERRED,
+                            corrected = true,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val row = state.rows.single() as RecordingSessionRow.Over
+        assertEquals(AttributionState.INFERRED, row.attribution?.state)
+        assertEquals("KA7LWH", row.attribution?.stationId)
+        assertTrue(row.attribution?.corrected == true)
+        assertEquals("KA7LWH", row.callsign)
     }
 
     @Test

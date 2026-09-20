@@ -12,11 +12,8 @@ import org.ort.app.status.StatusViewStateMapper
 import org.ort.app.ui.navigation.DrawerBadgeViewState
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
-import org.ort.core.Attribution
-import org.ort.core.AttributionState
 import org.ort.core.SystemClock
 import org.ort.core.Tier
-import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
 import org.ort.data.OrtDatabase
@@ -488,7 +485,7 @@ public object ReaderPolling {
             frequencyHz = entity.frequencyHz,
             durationMs = entity.durationMs,
             signalStrength = entity.signalStrength,
-            attribution = attributionFrom(entity),
+            attribution = ReaderTransmissionViewStateMapper.attributionFrom(entity),
             currentTranscriptText = current?.text,
             supersededTranscriptTexts = superseded,
             hasAudio = audioFile.isFile,
@@ -528,35 +525,16 @@ public object ReaderPolling {
         return withContext(Dispatchers.Default) { lexiconLookup.search(q, limit) }
     }
 
-    /**
-     * Reconstructs the type-safe [Attribution] the constitution requires (Principle I) from the
-     * entity's raw columns. Falls back to [Attribution.unknown] rather than throwing if a
-     * `CONFIRMED`/`INFERRED` row is ever missing the station or confidence its own factory
-     * requires — a display concern must never crash the reader over a data inconsistency it did
-     * not cause, but it must also never *invent* a station that was not actually written.
-     */
-    private fun attributionFrom(entity: TransmissionEntity): Attribution {
-        val stationId = entity.stationId
-        val confidence = entity.attributionConfidence
-        return when (entity.attributionState) {
-            AttributionState.CONFIRMED ->
-                if (stationId != null && confidence != null) {
-                    Attribution.confirmed(stationId, confidence)
-                } else {
-                    Attribution.unknown()
-                }
-
-            AttributionState.INFERRED ->
-                if (stationId != null && confidence != null) {
-                    Attribution.inferred(stationId, confidence, sourceId(entity))
-                } else {
-                    Attribution.unknown()
-                }
-
-            AttributionState.AMBIGUOUS -> Attribution.ambiguous()
-            AttributionState.UNKNOWN -> Attribution.unknown()
-        }
-    }
+    // Register R-1041-class (this session): the entity->Attribution reconstruction that used to
+    // live here as a private `attributionFrom` moved to
+    // [ReaderTransmissionViewStateMapper.attributionFrom] (`TransmissionDetail.kt`, same package) —
+    // the one place it is now shared with `LogViewData`, `LiveMonitorViewData` and
+    // `RecordingSessionViewStateMapper`. See that function's own doc comment for why a correction
+    // is checked first and why it is `INFERRED`/no-confidence, never `CONFIRMED`. This file's own
+    // former private copy silently downgraded every corrected transmission to `Attribution.unknown`
+    // — the shared function no longer does, so `ThreadPolling` (`ThreadViewData.kt`, which reads
+    // through [currentTransmissionDetails]) and `SearchPolling` (`SearchViewData.kt`, which reads
+    // through [detailFromEntity]) are fixed by this same change, with no edit of their own needed.
 
     // R-round-two coordinator note: listStationSummaries/listFrequencySummaries/stationDetail/
     // frequencyDetail (and the activityPatternForEverySession/dayOfWeekPatternForEverySession/
@@ -564,9 +542,6 @@ public object ReaderPolling {
     // them) moved to WP8's own `ui/data/StationPolling.kt`, which now owns every "every session"
     // read — removed here rather than left as dead/duplicated code (WP3 confirmed nothing in the
     // nav host still calls the copies that used to live in this file).
-
-    private fun sourceId(entity: TransmissionEntity): TransmissionId? =
-        entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }
 
     private fun statusRepository(context: Context): CaptureStatusRepository {
         val heartbeatStore = FileHeartbeatStore(File(context.filesDir, "heartbeat.txt"))

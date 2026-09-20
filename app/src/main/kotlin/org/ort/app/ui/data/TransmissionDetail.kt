@@ -1,8 +1,11 @@
 package org.ort.app.ui.data
 
 import org.ort.core.Attribution
+import org.ort.core.AttributionState
+import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
 import org.ort.data.entity.TranscriptPass
+import org.ort.data.entity.TransmissionEntity
 import java.util.Locale
 
 /**
@@ -227,6 +230,73 @@ public object ReaderTransmissionViewStateMapper {
         val seconds = totalSeconds % 60
         return "%02d:%02d:%02d".format(Locale.ROOT, hours, minutes, seconds)
     }
+
+    /**
+     * The single reconstruction of a type-safe [Attribution] (constitution I) from a
+     * [TransmissionEntity]'s raw attribution columns — the one place
+     * [org.ort.app.ui.data.ReaderPolling], [org.ort.app.ui.data.LogViewData],
+     * [org.ort.app.ui.data.LiveMonitorViewData] and
+     * [org.ort.app.ui.recordings.RecordingSessionViewStateMapper] now share, replacing four
+     * independent copies of the identical function that had drifted: two (`LogViewData`,
+     * `RecordingSessionViewStateMapper`) already carried the fix below (found and applied to each,
+     * separately, on 2026-09-13); `ReaderPolling` and `LiveMonitorViewData` did not, so every
+     * corrected transmission read as `UNKNOWN` on the reader/detail path (and therefore on
+     * `org.ort.app.ui.data.ThreadPolling`, which reads through `ReaderPolling`, and on
+     * `org.ort.app.ui.data.SearchPolling`, which reads through the same `detailFromEntity`) and on
+     * the Live Monitor, even though the Log and a Recording Session already showed it correctly.
+     * `org.ort.app.ui.data.CorrectionPolling.currentAttribution` patches the identical bug for the
+     * one Detail-screen call site that reads it directly rather than through any of these four.
+     *
+     * **A human correction is checked first, and wins.**
+     * [org.ort.data.dao.CorrectionDao.applyCorrectedAttribution] — the *only* write path a
+     * correction ever takes — unconditionally writes `attributionState = INFERRED` with
+     * `attributionConfidence = NULL`. The state-based branch below requires a non-null confidence
+     * for `INFERRED`, so without this upfront check every corrected row would downgrade to
+     * [Attribution.unknown], discarding the real, just-written [TransmissionEntity.stationId] the
+     * moment it reached any of these screens — the exact bug this function closes.
+     *
+     * **Why a correction is `INFERRED`, never `CONFIRMED`, and carries no confidence**
+     * (FR-SPK-13, constitution I): `CONFIRMED` means the callsign was heard and resolved *in this
+     * transmission*. A correction is a human's after-the-fact judgement — typed, or picked from a
+     * candidate list — and the callsign need not have been audible in this particular over at all,
+     * so it may never be promoted to `CONFIRMED` regardless of how certain the operator is. There is
+     * also no calibrated probability for "a human said so": [Attribution.confidence] is populated
+     * only where one was actually computed, so a correction carries `null`, exactly as
+     * [Attribution.withCorrection] already encodes.
+     *
+     * Falls back to [Attribution.unknown] for an *uncorrected* row, rather than throwing, if a
+     * `CONFIRMED`/`INFERRED` state is ever missing the station or confidence its own factory
+     * requires — a display concern must never crash a reader over a data inconsistency it did not
+     * cause, but it must also never invent a station that was not actually written.
+     */
+    public fun attributionFrom(entity: TransmissionEntity): Attribution {
+        val stationId = entity.stationId
+        if (entity.corrected && stationId != null) {
+            return Attribution.unknown().withCorrection(stationId)
+        }
+        val confidence = entity.attributionConfidence
+        return when (entity.attributionState) {
+            AttributionState.CONFIRMED ->
+                if (stationId != null && confidence != null) {
+                    Attribution.confirmed(stationId, confidence)
+                } else {
+                    Attribution.unknown()
+                }
+
+            AttributionState.INFERRED ->
+                if (stationId != null && confidence != null) {
+                    Attribution.inferred(stationId, confidence, sourceId(entity))
+                } else {
+                    Attribution.unknown()
+                }
+
+            AttributionState.AMBIGUOUS -> Attribution.ambiguous()
+            AttributionState.UNKNOWN -> Attribution.unknown()
+        }
+    }
+
+    private fun sourceId(entity: TransmissionEntity): TransmissionId? =
+        entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }
 }
 
 // NowSummaryViewState/NowSummaryMapper moved to ui/data/NowSummaryMapper.kt — WP4's own file per

@@ -32,6 +32,7 @@ class LiveMonitorViewDataTest {
         attributionConfidence: Double? = null,
         attributionSourceTransmissionId: String? = null,
         frequencyHz: Long? = 145_230_000L,
+        corrected: Boolean = false,
     ) = TransmissionEntity(
         id = id,
         sessionId = "S1",
@@ -59,6 +60,7 @@ class LiveMonitorViewDataTest {
         utcOffsetMinutes = 0,
         calibrationId = null,
         executionProvider = null,
+        corrected = corrected,
     )
 
     // -- rowFor: the seven real states --------------------------------------------------------
@@ -179,6 +181,40 @@ class LiveMonitorViewDataTest {
 
         val resolved = row as? LiveMonitorOverRow.Resolved
         assertEquals("04:58:31", resolved?.inferredFromLabel)
+    }
+
+    /**
+     * Register (this session): `CorrectionDao.applyCorrectedAttribution` always writes
+     * `attributionState = INFERRED` with `attributionConfidence = NULL` — this file's own former
+     * private `attributionFrom` required a non-null confidence for every INFERRED row, so a
+     * corrected transmission (real `corrected = true`, real `stationId`, `attributionConfidence =
+     * null`, exactly what that write path produces) silently downgraded to `Attribution.unknown()`
+     * on the Live Monitor, discarding the operator's own just-applied correction.
+     */
+    @Test
+    @Requirement("FR-SPK-7")
+    fun `a corrected COMPLETE entity renders Resolved with its real callsign, never UNKNOWN`() {
+        val row = LiveMonitorOversMapper.rowFor(
+            entity = entity(
+                attributionState = AttributionState.INFERRED,
+                stationId = "KA7LWH",
+                attributionConfidence = null,
+                corrected = true,
+            ),
+            currentPass = TranscriptPass.B,
+            currentText = "that's correct, KA seven Lima Whiskey Hotel",
+            aheadCount = 0,
+            failedAttemptCount = null,
+            tierLabel = null,
+            sourceTimeLabel = null,
+        )
+
+        val resolved = row as? LiveMonitorOverRow.Resolved
+        assertTrue("expected Resolved, got $row", resolved != null)
+        assertEquals(AttributionState.INFERRED, resolved!!.attribution.state)
+        assertEquals("KA7LWH", resolved.attribution.stationId)
+        assertTrue(resolved.attribution.corrected)
+        assertEquals("KA7LWH", resolved.callsign)
     }
 
     @Test

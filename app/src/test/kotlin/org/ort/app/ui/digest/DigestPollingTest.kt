@@ -1002,6 +1002,26 @@ class DigestPollingTest {
         assert(!item.headline.contains("(s)")) { "got '${item.headline}'" }
     }
 
+    /**
+     * Voice-match overclaim sweep follow-up (register, this session): "no voice matched" named a
+     * mechanism — a voice matcher that ran and failed — that no production path in this build has
+     * ever run (`:identity` is an empty stub, `voiceprintId` is `null` on every transmission
+     * `RealCaptureService` writes). An UNKNOWN over was never checked against a voice at all.
+     */
+    @Test
+    fun `an unidentified-voice item never claims a voice match this build cannot make`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", state = AttributionState.UNKNOWN))
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val item = digest.notKnown.single { it.headline.contains("unidentified voices") }
+        assert(!item.subLine.contains("voice", ignoreCase = true)) { "got '${item.subLine}'" }
+        assert(item.subLine == "no callsign heard, and nothing else resolved it — they stay findable") {
+            "got '${item.subLine}'"
+        }
+    }
+
     @Test
     @Requirement("R-1072")
     fun `R_1072 a station first heard with exactly one over this session reads singular`(): Unit = runTest {

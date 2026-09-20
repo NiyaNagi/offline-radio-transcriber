@@ -4,10 +4,8 @@ import android.content.Context
 import org.ort.app.ui.components.LogRowBadge
 import org.ort.app.ui.components.LogRowPartial
 import org.ort.app.ui.components.LogRowViewState
-import org.ort.core.Attribution
 import org.ort.core.AttributionState
 import org.ort.core.SystemClock
-import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CaptureGapCause
@@ -1065,7 +1063,7 @@ public object LogPolling {
             frequencyHz = entity.frequencyHz,
             durationMs = entity.durationMs,
             signalStrength = entity.signalStrength,
-            attribution = attributionFrom(entity),
+            attribution = ReaderTransmissionViewStateMapper.attributionFrom(entity),
             currentTranscriptText = current?.text,
             supersededTranscriptTexts = superseded,
             hasAudio = audioFile.isFile,
@@ -1081,45 +1079,11 @@ public object LogPolling {
         )
     }
 
-    /**
-     * Duplicated from `ReaderPolling` deliberately (see file doc comment) — that function is
-     * private there.
-     *
-     * R-1041 (D11, register): [entity.corrected] is checked first, the same real, structural
-     * signal [org.ort.app.ui.data.CorrectionPolling.currentAttribution] already keys off for the
-     * detail screen (that function's own R-189 doc comment) — every real correction
-     * ([org.ort.core.Attribution.withCorrection]) writes `INFERRED` with a `NULL` confidence
-     * (there is no calibrated number for "a human said so"), which the state-based branch below
-     * would otherwise downgrade to [Attribution.unknown], discarding the real, just-written
-     * `stationId` the moment a corrected row reached the Log — not just Undo, and not just the
-     * detail screen this bug was first found on.
-     */
-    private fun attributionFrom(entity: TransmissionEntity): Attribution {
-        val stationId = entity.stationId
-        if (entity.corrected && stationId != null) {
-            return Attribution.unknown().withCorrection(stationId)
-        }
-        val confidence = entity.attributionConfidence
-        return when (entity.attributionState) {
-            AttributionState.CONFIRMED ->
-                if (stationId != null && confidence != null) {
-                    Attribution.confirmed(stationId, confidence)
-                } else {
-                    Attribution.unknown()
-                }
-
-            AttributionState.INFERRED ->
-                if (stationId != null && confidence != null) {
-                    Attribution.inferred(stationId, confidence, sourceId(entity))
-                } else {
-                    Attribution.unknown()
-                }
-
-            AttributionState.AMBIGUOUS -> Attribution.ambiguous()
-            AttributionState.UNKNOWN -> Attribution.unknown()
-        }
-    }
-
-    private fun sourceId(entity: TransmissionEntity): TransmissionId? =
-        entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }
+    // Register R-1041-class (this session): this file's own former private `attributionFrom` copy
+    // (a deliberate duplicate of `ReaderPolling`'s own private copy, per this function's former doc
+    // comment) already checked `entity.corrected` first — R-1041's own fix, D11 — so it did not
+    // carry the downgrade-to-UNKNOWN bug `ReaderPolling`'s and `LiveMonitorViewData`'s copies did.
+    // All four now share one implementation: [ReaderTransmissionViewStateMapper.attributionFrom]
+    // (`TransmissionDetail.kt`, same package; see its own doc comment for why a correction is
+    // `INFERRED`/no-confidence, never `CONFIRMED`).
 }
