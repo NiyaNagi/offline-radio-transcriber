@@ -34,6 +34,94 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P28 follow-up: the analytics channel finally emits — instrumentation for every tier-1 event and the tier-2 correction pair)
 
+### \<pending\> — R-1085 follow-up · the consent screen states D48's honest fact, and `isAnr` stops asserting a measurement that was never taken
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/AnalyticsConsentScreen.kt` and its wiring in
+`SetupActivity.kt`; a new `app/src/main/kotlin/org/ort/app/analytics/CrashPayloads.kt` and its
+call site in `OrtApplication.kt`; `telemetry/src/main/kotlin/org/ort/telemetry/AnalyticsPayload.kt`
+(`AnalyticsTier1Payload.Crash.isAnr`); `tools/analytics/queries.py` and `report.py`. Matching tests
+in `app/src/test/kotlin/org/ort/app/ui/setup/AnalyticsConsentScreenTest.kt` (new),
+`app/src/test/kotlin/org/ort/app/analytics/CrashPayloadsTest.kt` (new),
+`telemetry/src/test/kotlin/org/ort/telemetry/AnalyticsFieldVocabularyTest.kt`,
+`telemetry/src/test/kotlin/org/ort/telemetry/AnalyticsEventCodecTest.kt`,
+`tools/analytics/tests/test_queries.py` and `test_report.py`.
+
+**Requirements/ACs:** R-1085 (register), constitution I (Principle I; also 2.0.0's redefined
+Principle V), D42, D48, FR-ANL-2, FR-ANL-9, FR-ANL-11, AC-180.
+
+**What changed:**
+- **R-1085.** `AnalyticsConsentScreen` (S11b, the setup step where the operator first decides on
+  tiers 2 and 3) took no `destinationConfigured` parameter at all and could only ever imply the two
+  toggles share data, while in this build nothing leaves the device whatever the operator chooses —
+  the same defect class as overstating a claim, just in the other direction (Principle I).
+  `design/canvas/Setup-Analytics-Consent.dc.html` (already on `main`) draws the fix: a disclosure
+  box below the tier-1 paragraph, styled to that artboard's own tokens (`OrtColors.bgCard`,
+  `RoundedCornerShape(10.dp)`, 14×11dp padding, `OrtType.cardBody`/`OrtColors.textFaint` — all
+  already-existing tokens that happen to equal the artboard's own oklch/px values exactly, so no
+  new token was needed), rendering the identical unconfigured-state sentence
+  `SettingsAnalyticsScreen` already renders one screen away, plus the artboard's own added clause
+  ("...whatever you choose below") that ties it to the toggles directly beneath it. The screen now
+  takes `destinationConfigured: Boolean`, wired in `SetupActivity.kt` from
+  `AnalyticsAppWiring.isDestinationConfigured()` — the same D48 fact `SettingsAnalyticsPolling`
+  already reads. The two screens can no longer disagree about what "on" means.
+- **The `isAnr` field.** The instrumentation builder reported `isAnr` hardcoded `false` in the tier
+  1 crash payload with no ANR-detection mechanism anywhere in the codebase — a field that always
+  reports `false` is "never measured" wearing a default, not "measured, and not an ANR," and would
+  have skewed any crash analysis run against `tools/analytics`. **Decision: represented as
+  unknown/absent (`Boolean?`), not built as a real watchdog.** A main-thread watchdog was
+  considered (D42/D48 do not forbid it, and it needs no new dependency — `android.os.Handler`/
+  `Looper` are already used elsewhere in `:app`), but a trustworthy implementation needs either a
+  device-timed background thread (not reliably unit-testable without real timing, and this session
+  has no emulator) or a fragile "throw across a thread into the existing crash handler" trick; the
+  absent-value fix is unconditionally correct, is exactly what constitution I already prescribes
+  ("a value the system could not measure is written as absent, never as a default" —
+  `AnalyticsProvenance.sessionId`/`overId`/`captureMode`/`rigModule`/`band` already use this same
+  discipline), and is fully testable today. `AnalyticsTier1Payload.Crash.isAnr` is now `Boolean?`
+  (Kotlin compiles this to boxed `java.lang.Boolean`, not the primitive `boolean` a non-null
+  `Boolean` would use — a type-level guarantee, not a convention, per constitution VII). The crash
+  payload itself moved out of `OrtApplication.onCreate`'s inline construction (untestable — that
+  whole method body never runs under Robolectric) into a new pure function,
+  `CrashPayloads.fromUncaughtException`, which always writes `isAnr = null` and is directly unit
+  tested. `AnalyticsEventCodec` round-trips a `null` `isAnr` as a real JSON `null`, never
+  substituting `false`. On the Python side, `tools/analytics/queries.py` gained
+  `crash_anr_breakdown`, reading `isAnr`'s three real states (`true`/`false`/`null`) via
+  `json_extract` rather than folding `null` into `false`, and `report.py` gained a "Crashes by ANR
+  state" section reporting `unmeasured` as its own count. Neither `loader.py` nor `ingest.py`
+  needed a code change — DuckDB's NDJSON auto-inference and the ingest server's schema-agnostic
+  JSON handling already pass a `null` field through untouched; this was verified with new tests
+  rather than assumed.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.analytics.*"` —
+  BUILD SUCCESSFUL, all tests green including the three new `AnalyticsConsentScreenTest` cases and
+  the three new `CrashPayloadsTest` cases.
+- `.\gradlew.bat :telemetry:test` — BUILD SUCCESSFUL, including the new
+  `FR_ANL_2_isAnr is nullable...` vocabulary test and the new
+  `FR_ANL_2_a crash payload with an unmeasured isAnr round-trips as null, not false` codec test.
+- `python -m pytest tools/analytics -q` — 36 passed, including three new `crash_anr_breakdown`
+  tests and the updated report assertions.
+- `.\gradlew.bat ktlintCheck detekt` — BUILD SUCCESSFUL.
+- **Discrimination (constitution II), both fixes shown to fail for the right reason then pass
+  again:** reverted `CrashPayloads.fromUncaughtException`'s `isAnr = null` back to `isAnr = false`
+  — `CrashPayloadsTest` failed 2/3 with `expected: <null> but was: <false>`; restored, green again.
+  Removed the new disclosure `Text` from `AnalyticsConsentScreen` — all three new
+  `AnalyticsConsentScreenTest` cases failed with `Failed: assertExists`; restored, green again.
+- Not run: the full gate (`dependencyRules platformGuards build`), the emulator/tour capture, and
+  `gh run watch` — out of this unit's scope per its own brief; the session lead captures
+  `setup-analytics-consent/S11b-analytics-consent` at font scale 1.0 and 2.0 against the artboard
+  and judges/closes R-1085 (constitution VIII: a builder's report is not that evidence).
+
+**Left open / not done:**
+- R-1085 stays `open` in the register — only the lead edits that file, and per constitution VIII a
+  screen is not `closed` until a fresh capture is compared against its artboard; this entry is the
+  builder's report the lead's sweep consumes.
+- No real ANR detection exists yet. If a future session wants one, this entry's own reasoning above
+  (testability under Robolectric, no device in this session) is the argument to revisit, not a
+  closed door — `isAnr: Boolean?` already gives it a place to report a genuine `true`/`false`
+  without another payload-shape change.
+- `crash_anr_breakdown`/the new report section are read-only additions; no existing query or report
+  line was renumbered or removed.
+
 ### c91d43e9 — P28 follow-up · the analytics channel now actually records something
 
 **Scope:** new call-site helpers under `app/src/main/kotlin/org/ort/app/analytics/**`

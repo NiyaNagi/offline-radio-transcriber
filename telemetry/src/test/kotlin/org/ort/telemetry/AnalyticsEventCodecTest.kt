@@ -57,4 +57,38 @@ class AnalyticsEventCodecTest {
             AnalyticsEventCodec.encode(eventB),
         )
     }
+
+    /**
+     * FR-ANL-2, constitution I: `isAnr` reports "not measured" as `null`, never a default. This
+     * round-trips it through the exact wire codec `tools/analytics`' reference ingest server reads,
+     * and separately proves the encoded line carries a real `null` on the wire rather than the
+     * codec silently substituting `false` for it — the two are different claims and this codec must
+     * never conflate them.
+     */
+    @Test
+    @Requirement("FR-ANL-2")
+    fun `FR_ANL_2_a crash payload with an unmeasured isAnr round-trips as null, not false`() {
+        val event = AnalyticsEventFactory.tier1(
+            provenance(),
+            AnalyticsTier1Payload.Crash(
+                exceptionClass = "java.lang.IllegalStateException",
+                stackTrace = "java.lang.IllegalStateException: boom",
+                isAnr = null,
+                threadName = "main",
+            ),
+        )
+
+        val encoded = AnalyticsEventCodec.encode(event)
+        val decoded = AnalyticsEventCodec.decode(encoded)
+
+        assertEquals(event, decoded)
+        org.junit.jupiter.api.Assertions.assertTrue(
+            encoded.contains("\"isAnr\":null"),
+            "expected the wire form to carry a real null, not a substituted default: $encoded",
+        )
+        org.junit.jupiter.api.Assertions.assertFalse(
+            encoded.contains("\"isAnr\":false"),
+            "an unmeasured isAnr must never be encoded as false: $encoded",
+        )
+    }
 }

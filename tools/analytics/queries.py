@@ -46,6 +46,37 @@ def crash_free_sessions(con: duckdb.DuckDBPyConnection) -> dict:
     return {"total_sessions": total, "crashed_sessions": crashed, "crash_free_rate": rate}
 
 
+def crash_anr_breakdown(con: duckdb.DuckDBPyConnection) -> dict:
+    """FR-ANL-2, constitution I: `tier1_crash`'s `isAnr` is a genuine tri-state on the wire --
+    `true` (a measured ANR), `false` (a measured non-ANR crash), or `null` ("no ANR-detection
+    mechanism ran" -- `:app`'s `CrashPayloads.fromUncaughtException` writes `null` for every event
+    this build has ever produced, since none exists yet). This reads that state back with the
+    identical three-way split rather than folding `null` into `false` -- doing so would report
+    every one of today's crashes as a measured "not an ANR," which is not what happened.
+
+    Uses ``json_extract`` (this module's own top doc comment explains why) so a directory with no
+    ``tier1_crash`` events at all -- or one where every crash row happens to omit ``isAnr``
+    entirely -- reads back as an honest zero in every bucket rather than failing to bind.
+    """
+    rows = con.execute(
+        "SELECT json_extract(to_json(payload), '$.isAnr') FROM events "
+        "WHERE payload.payloadType = 'tier1_crash'",
+    ).fetchall()
+    anr = not_anr = unmeasured = 0
+    for (raw,) in rows:
+        if raw is None or raw == "null":
+            unmeasured += 1
+        elif raw == "true":
+            anr += 1
+        elif raw == "false":
+            not_anr += 1
+        else:
+            # A malformed or unrecognised value is not a confirmed measurement either -- counted
+            # as unmeasured rather than silently treated as `false` (constitution I).
+            unmeasured += 1
+    return {"anr": anr, "not_anr": not_anr, "unmeasured": unmeasured, "total": len(rows)}
+
+
 def setup_funnel(con: duckdb.DuckDBPyConnection) -> list[tuple[str, str, int]]:
     """FR-AST-11: setup-funnel outcomes by step, most granular first — the report generator rolls
     this up further; this query stays a plain count so nothing about how "success" is defined is

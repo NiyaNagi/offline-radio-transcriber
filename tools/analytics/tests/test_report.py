@@ -20,6 +20,11 @@ def test_report_contains_every_section_with_real_numbers():
     assert "# Analytics report (field fold)" in text
     assert "## Crash-free sessions" in text
     assert "crash-free rate: 0.500" in text
+    assert "## Crashes by ANR state" in text
+    # The fixture's one tier1_crash row carries `"isAnr": false` (constitution I: a measured
+    # non-ANR crash, not the same thing as "unmeasured") -- see `queries.crash_anr_breakdown`.
+    assert "confirmed not an ANR: 1" in text
+    assert "unmeasured (no ANR-detection ran): 0" in text
     assert "## Setup funnel" in text
     assert "MODELS / SUCCESS: 1" in text
     assert "## Real-time factor by pass" in text
@@ -51,6 +56,7 @@ def test_report_states_honest_empty_sections_when_nothing_is_loaded(tmp_path):
 
     text = report.generate_report(con)
 
+    assert "no crash events in this fold" in text
     assert "no setup-funnel events" in text
     assert "no performance events" in text
     assert "no quality-stats events" in text

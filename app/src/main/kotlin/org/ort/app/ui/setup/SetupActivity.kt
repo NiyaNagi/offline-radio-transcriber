@@ -1102,6 +1102,7 @@ public class SetupActivity : ComponentActivity() {
         AnalyticsConsentScreen(
             tier2Enabled = tier2,
             tier3Enabled = tier3,
+            destinationConfigured = org.ort.app.analytics.AnalyticsAppWiring.isDestinationConfigured(),
             onToggleTier2 = {
                 controller.setTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_2, it)
                 tier2 = it
