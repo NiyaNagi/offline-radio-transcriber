@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a secret-driven release key and a configurable signing-stability guard)
 
-### (pending — see next commit) — debug-fix session · sign published artifacts from GitHub Actions secrets, never a committed key, and pin the certificate only where a stable key is expected
+### da4237b5 — debug-fix session · sign published artifacts from GitHub Actions secrets, never a committed key, and pin the certificate only where a stable key is expected
 
 **Scope:** `.github/workflows/release.yml`, `buildSrc/build.gradle.kts`,
 `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt`,
