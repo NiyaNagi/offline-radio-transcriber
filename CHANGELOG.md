@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (R-1098/R-1099: a thread's join reason is now inspectable, and a corrected attribution has one reconstruction, not two)
 
-### <pending> — R-1098 persists `ThreadJoinReason` on the transmission row; R-1099 unifies `CorrectionPolling.currentAttribution` with `attributionFrom` and seeds a corrected transmission on Live Monitor and Threads
+### e69c5979 — R-1098 persists `ThreadJoinReason` on the transmission row; R-1099 unifies `CorrectionPolling.currentAttribution` with `attributionFrom` and seeds a corrected transmission on Live Monitor and Threads
 
 **Scope:** `data/src/main/kotlin/org/ort/data/entity/CatalogEntities.kt` (new `ThreadJoinReason`
 enum), `data/src/main/kotlin/org/ort/data/entity/TransmissionEntity.kt` (new
