@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding: 16px 20px 2px; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Settings</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Backup and restore</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px; line-height: 1.4;">A device-to-device transfer — a file you save yourself and restore onto another phone, or this one after a reinstall.</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="lbl">In the backup</div>
+    <div style="padding: 6px 20px 0;">
+      <div style="font-size: 12.5px; color: oklch(0.86 0.006 250); line-height: 1.5;">Sessions, overs, their current transcripts, and every correction you've made, plus the retained audio for each over.</div>
+      <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; margin-top: 6px;">Not yet in the backup: the station catalog, voiceprints, threads, digests and superseded transcript history — real, separate future work.</div>
+    </div>
+
+    <div class="lbl">Save a backup</div>
+    <div style="padding: 4px 20px 0;"><div class="m" style="font-size: 11.5px; color: oklch(0.58 0.008 250);">6 sessions · 214 overs · 3 corrections · 200 audio files · 1.2 GB</div></div>
+    <div style="margin: 10px 20px 0; display: flex; align-items: center; justify-content: center; height: 44px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Save backup</div></div>
+
+    <div class="lbl" style="padding-top: 20px;">Restore from a backup</div>
+    <div style="padding: 4px 20px 0;"><div style="font-size: 12px; color: oklch(0.58 0.008 250); line-height: 1.5;">Nothing already on this device is ever deleted or overwritten by a restore — a record that already exists here is shown to you, not merged.</div></div>
+    <div style="margin: 10px 20px 0; display: flex; align-items: center; justify-content: center; height: 44px; background: oklch(0.195 0.009 250); border-radius: 8px; border: 1px solid oklch(0.30 0.010 250);"><div style="font-size: 15px; font-weight: 500; color: oklch(0.86 0.006 250);">Choose a backup file</div></div>
+
+    <div style="margin: 16px 20px 0; background: oklch(0.195 0.009 250); border-radius: 10px; padding: 13px 16px;">
+      <div style="font-size: 12.5px; color: oklch(0.86 0.006 250); line-height: 1.5;">2 sessions, 214 overs, 3 corrections and 200 audio files will be added.</div>
+      <div style="font-size: 11.5px; color: oklch(0.74 0.14 70); line-height: 1.5; margin-top: 6px;">1 session, 4 overs, 0 corrections and 4 audio files already exist on this device and will be left exactly as they are.</div>
+      <div style="display: flex; gap: 9px; margin-top: 12px;">
+        <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 40px; border: 1px solid oklch(0.30 0.010 250); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.86 0.006 250);">Cancel</div></div>
+        <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 40px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.16 0.01 150);">Restore</div></div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

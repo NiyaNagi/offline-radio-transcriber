@@ -33,6 +33,8 @@ import org.ort.app.diagnostics.localsave.LocalSaveCategoryId
 import org.ort.app.diagnostics.localsave.LocalSavePreview
 import org.ort.app.export.ExportCoordinator
 import org.ort.app.export.ExportRequest
+import org.ort.app.export.ExportRequestScope
+import org.ort.app.export.ShareCoordinator
 import org.ort.app.fieldreport.bundle.FieldReportBundleBuilder
 import org.ort.app.fieldreport.bundle.FieldReportBundlePreview
 import org.ort.app.fieldreport.bundle.FieldReportGatedCategory
@@ -269,6 +271,10 @@ private fun SettingsSubScreen(
             onBack = onBack,
             modifier = modifier,
         )
+
+        // P30 (FR-STO-6, FR-STO-9): this wave's own turn at the same narrow integration point
+        // P27/P28's branches above document.
+        SettingsScreenId.BACKUP -> SettingsBackupSubScreen(context = context, onBack = onBack, modifier = modifier)
     }
 }
 
@@ -553,6 +559,9 @@ private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifi
     // `SettingsDiagnosticsSubScreen`'s own `saveConfirmationLabel` already relies on for its
     // sibling SAF flow.
     var pendingExportRequest by remember { mutableStateOf<ExportRequest?>(null) }
+    // P30 (AC-169): the identical pending-value idiom, one launcher over for the POTA action —
+    // `buildPotaActivity` takes a scope, not a whole [ExportRequest].
+    var pendingPotaScope by remember { mutableStateOf<ExportRequestScope?>(null) }
 
     val saveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("*/*"),
@@ -586,6 +595,22 @@ private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifi
         }
     }
 
+    // P30 (FR-EXP-3, AC-169): the identical SAF `CreateDocument` pattern as [saveLauncher], its own
+    // launcher because the MIME type genuinely differs (POTA is always real CSV, never `*/*`).
+    val potaSaveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/csv"),
+    ) { uri ->
+        val potaScope = pendingPotaScope
+        if (uri == null || potaScope == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(ioDispatcher) {
+                val bytes = ExportCoordinator.buildPotaActivity(context, potaScope)
+                context.contentResolver.openOutputStream(uri)?.use { out -> out.write(bytes) }
+            }
+            withContext(Dispatchers.Main.immediate) { realFileName(context, uri) }
+        }
+    }
+
     val state = exportState
     if (state != null) {
         SettingsExportScreen(
@@ -595,10 +620,217 @@ private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifi
                 pendingExportRequest = request
                 saveLauncher.launch(ExportCoordinator.suggestedFileName(request))
             },
+            shareActions = SettingsExportShareActions(
+                onExportPota = { potaScope ->
+                    pendingPotaScope = potaScope
+                    potaSaveLauncher.launch(ExportCoordinator.suggestedPotaFileName(potaScope))
+                },
+                onShareDigest = {
+                    scope.launch { shareFile(context, ShareCoordinator.buildDigestShareFile(context)) }
+                },
+                onShareThreadTranscript = {
+                    scope.launch { shareFile(context, ShareCoordinator.buildThreadTranscriptShareFile(context)) }
+                },
+                onShareOverAudio = {
+                    scope.launch { shareFile(context, ShareCoordinator.resolveOverAudioShareFile(context)) }
+                },
+            ),
             modifier = modifier,
         )
     } else {
         LoadingSettings(modifier = modifier)
+    }
+}
+
+/**
+ * Test-only seam for [shareFile]'s own [androidx.core.content.FileProvider.getUriForFile] call —
+ * every production caller keeps the real default. Exists because the *real* `FileProvider`'s own
+ * root-matching cannot be exercised reliably under this Windows/Robolectric combination (a known,
+ * environment-specific path-canonicalisation gap, not a real-device concern — confirmed against
+ * the merged manifest and the packaged `res/xml/file_paths.xml`, both correct); this is exactly
+ * the "a fake `FileProvider`-backed share target for the instrumented/Robolectric test" build-plan
+ * P30 itself asks this unit to ship. A Robolectric/instrumented test supplies a fake here that
+ * still returns a `content://<authority>/...` shaped [android.net.Uri], so the real assertions
+ * that matter (the intent's action, type, flags, and the authority the real manifest declares)
+ * stay meaningful without depending on the real path-matching this environment cannot prove.
+ */
+internal var shareUriResolverForTest: ((Context, String, java.io.File) -> android.net.Uri)? = null
+
+/** FR-EXP-7's own `FileProvider`/`ACTION_SEND` wiring — the one place this round's file-ownership
+ * map puts it (`SettingsExportScreen.kt`'s own kdoc names "the share-sheet action" as that
+ * screen's to own; the actual [Intent]/[android.net.Uri] construction lives here because building
+ * one needs Android platform APIs [org.ort.app.export.ShareCoordinator] deliberately has none of —
+ * that object has no Android UI dependency, only [Context] for real IO).
+ *
+ * [share] is `null` exactly when [org.ort.app.export.ShareCoordinator] found nothing to share yet
+ * (no session, no thread, no retained audio) — handled by simply not opening a chooser, logged
+ * rather than silently swallowed; a share action is user-initiated and discretionary, not a
+ * data-integrity claim a missing result could misstate (constitution I still applies to what *is*
+ * shared, never to whether an optional convenience action happened to find something this time).
+ */
+private fun shareFile(context: Context, share: org.ort.app.export.ShareFile?) {
+    if (share == null) {
+        android.util.Log.i("SettingsContent", "share tapped but ShareCoordinator found nothing to share yet")
+        return
+    }
+    val authority = "${context.packageName}.fileprovider"
+    val resolveUri = shareUriResolverForTest ?: androidx.core.content.FileProvider::getUriForFile
+    val uri = resolveUri(context, authority, share.file)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = share.mimeType
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, share.suggestedName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+}
+
+/**
+ * P30 (FR-STO-6, FR-STO-9). The full backup-and-restore flow: `Save backup` is the identical SAF
+ * `CreateDocument` pattern every sibling flow in this file already uses; restore is deliberately
+ * two steps — `Choose a backup file` only ever produces a [org.ort.app.backup.BackupRestorePlan]
+ * (nothing written), and `Restore` applies exactly that plan, never a freshly re-decided one (the
+ * same "preview and write are the same producer" discipline this file's own export/diagnostics
+ * flows already hold). A picked document is copied into app-private cache storage first (the
+ * identical reason [org.ort.app.ui.settings.ModelsContent]'s own `copyPickedFileToCache` already
+ * does this for a sideloaded model/lexicon file): [java.util.zip.ZipFile] needs random-access
+ * seeking a raw content [android.net.Uri] stream cannot always give, and both `analyze` and
+ * `apply` need to read the same bytes twice.
+ */
+@Composable
+private fun SettingsBackupSubScreen(context: Context, onBack: () -> Unit, modifier: Modifier) {
+    val scope = rememberCoroutineScope()
+    val ioDispatcher = LocalSettingsSaveIoDispatcher.current
+    var preview by remember { mutableStateOf<SettingsBackupPreviewViewState?>(null) }
+    var restorePlan by remember { mutableStateOf<org.ort.app.backup.BackupRestorePlan?>(null) }
+    var restoreSummary by remember { mutableStateOf<String?>(null) }
+    var pendingRestoreFile by remember { mutableStateOf<java.io.File?>(null) }
+
+    suspend fun refreshPreview() {
+        val real = org.ort.app.backup.BackupBundleBuilder.preview(context)
+        withContext(Dispatchers.Main.immediate) {
+            preview = SettingsBackupPreviewViewState(
+                sessionCount = real.sessionCount,
+                transmissionCount = real.transmissionCount,
+                correctionCount = real.correctionCount,
+                audioFileCount = real.audioFileCount,
+                sizeLabel = formatBackupSize(real.totalSizeBytes),
+            )
+        }
+    }
+
+    LaunchedEffect(Unit) { withContext(ioDispatcher) { refreshPreview() } }
+
+    val saveBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/zip"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            withContext(ioDispatcher) {
+                context.contentResolver.openOutputStream(uri)?.use { out ->
+                    org.ort.app.backup.BackupBundleBuilder.write(context, out)
+                }
+            }
+        }
+    }
+
+    val pickRestoreFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val plan = withContext(ioDispatcher) {
+                val dest = java.io.File(context.cacheDir, "restore-pending.zip")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
+                pendingRestoreFile = dest
+                org.ort.app.backup.BackupRestoreCoordinator.analyze(context, dest)
+            }
+            withContext(Dispatchers.Main.immediate) { restorePlan = plan }
+        }
+    }
+
+    val state = preview
+    if (state != null) {
+        SettingsBackupScreen(
+            state = SettingsBackupViewState(
+                preview = state,
+                restorePlan = restorePlan?.toViewState(),
+                restoreSummary = restoreSummary,
+            ),
+            onBack = onBack,
+            actions = SettingsBackupActions(
+                onSaveBackup = {
+                    saveBackupLauncher.launch(org.ort.app.backup.BackupBundleBuilder.suggestedFileName())
+                },
+                onPickRestoreFile = { pickRestoreFileLauncher.launch(arrayOf("application/zip", "*/*")) },
+                onCancelRestore = {
+                    restorePlan = null
+                    pendingRestoreFile = null
+                },
+                onConfirmRestore = {
+                    val plan = restorePlan
+                    val file = pendingRestoreFile
+                    if (plan != null && file != null) {
+                        scope.launch {
+                            val result = withContext(ioDispatcher) {
+                                org.ort.app.backup.BackupRestoreCoordinator.apply(context, file, plan)
+                            }
+                            withContext(Dispatchers.Main.immediate) {
+                                restoreSummary = result.toSummary()
+                                restorePlan = null
+                                pendingRestoreFile = null
+                            }
+                            withContext(ioDispatcher) { refreshPreview() }
+                        }
+                    }
+                },
+            ),
+            modifier = modifier,
+        )
+    } else {
+        LoadingSettings(modifier = modifier)
+    }
+}
+
+private fun org.ort.app.backup.BackupRestorePlan.toViewState(): SettingsRestorePlanViewState =
+    SettingsRestorePlanViewState(
+        sessionsToAddCount = sessionsToAdd.size,
+        sessionConflictCount = sessionConflicts.size,
+        transmissionsToAddCount = transmissionsToAdd.size,
+        transmissionConflictCount = transmissionConflicts.size,
+        correctionsToAddCount = correctionsToAdd.size,
+        correctionConflictCount = correctionConflicts.size,
+        audioToAddCount = audioEntriesToAdd.size,
+        audioConflictCount = audioConflicts.size,
+        hasConflicts = hasConflicts,
+    )
+
+private fun org.ort.app.backup.BackupRestoreResult.toSummary(): String = buildString {
+    append("Added $sessionsAdded sessions, $transmissionsAdded overs, $correctionsAdded corrections ")
+    append("and $audioFilesAdded audio files.")
+    val skipped = sessionsSkipped + transmissionsSkipped + correctionsSkipped + audioFilesSkipped
+    if (skipped > 0) {
+        append(
+            " $sessionsSkipped sessions, $transmissionsSkipped overs, $correctionsSkipped corrections " +
+                "and $audioFilesSkipped audio files already existed on this device and were left alone.",
+        )
+    }
+}
+
+/** `184 KB`/`1.2 GB` — the same threshold/precision idiom this package's own
+ * `SettingsExportScreen.kt#formatExportSize`/`SettingsContent.kt#formatFieldReportSize` already
+ * use for a real, computed byte count; not shared code (each is a `private` top-level function in
+ * its own file, per Kotlin's own file-scoped visibility) but the identical rule, so the same
+ * number reads the same way everywhere in Settings. */
+private fun formatBackupSize(bytes: Long): String {
+    val gb = bytes / 1_000_000_000.0
+    val mb = bytes / 1_000_000.0
+    val kb = bytes / 1_000.0
+    return when {
+        gb >= 1.0 -> "%.1f GB".format(java.util.Locale.ROOT, gb)
+        mb >= 1.0 -> "%.1f MB".format(java.util.Locale.ROOT, mb)
+        else -> "%.0f KB".format(java.util.Locale.ROOT, kb)
     }
 }
 

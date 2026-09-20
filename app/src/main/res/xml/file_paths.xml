@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    P30 (FR-EXP-7): the paths the share-sheet FileProvider (AndroidManifest.xml) may expose.
+
+    `over-audio` exposes the real, already-retained `filesDir/audio/...` layout directly (see
+    `org.ort.data.entity.TransmissionEntity.audioPath()`) — an over's audio clip is shared straight
+    from where it already lives, never copied first.
+
+    `shared` exposes `cacheDir/share/`, the one directory `org.ort.app.export.ShareCoordinator`
+    writes a generated digest or thread-transcript text file into before sharing it — see that
+    object's own kdoc.
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <files-path name="over-audio" path="audio/" />
+    <cache-path name="shared" path="share/" />
+</paths>

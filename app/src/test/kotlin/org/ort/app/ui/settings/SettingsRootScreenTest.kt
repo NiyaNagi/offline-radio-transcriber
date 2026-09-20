@@ -98,13 +98,17 @@ class SettingsRootScreenTest {
         // fallback, for the identical "no bespoke glyph, `OrtIcons.kt` outside this unit's own
         // ownership" reason TIER/ABOUT already are. ANALYTICS (P28) deliberately reuses
         // CONTRIBUTE's own `OrtIcons.lock` — both are privacy-consent screens, the same reasoning
-        // CONTRIBUTE's own `iconFor` branch already states, not an unrelated placeholder.
+        // CONTRIBUTE's own `iconFor` branch already states, not an unrelated placeholder. BACKUP
+        // (P30) deliberately reuses EXPORT's own `OrtIcons.export` — the closest existing concept
+        // (a file the operator saves themselves) — for the identical "no bespoke glyph, OrtIcons.kt
+        // outside this unit's own ownership" reason.
         val fallbacks = setOf(
             SettingsScreenId.TIER,
             SettingsScreenId.ABOUT,
             SettingsScreenId.MODE,
             SettingsScreenId.LICENSES,
             SettingsScreenId.ANALYTICS,
+            SettingsScreenId.BACKUP,
         )
         val distinctExcludingFallbacks = icons.filterKeys { it !in fallbacks }
         assert(distinctExcludingFallbacks.values.toSet().size == distinctExcludingFallbacks.size) {
@@ -174,5 +178,48 @@ class SettingsRootScreenTest {
 
         composeTestRule.onNodeWithContentDescription("Licences. Third-party notices · read offline")
             .assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-STO-6")
+    fun `P30 a Backup and restore row is appended after the Records section and opens BACKUP`() {
+        val stateWithRecords = SettingsRootViewState(
+            sections = listOf(
+                SettingsSectionViewState(
+                    label = "Records",
+                    rows = listOf(SettingsRowViewState("Export", "real subtitle", SettingsScreenId.EXPORT)),
+                ),
+            ),
+        )
+        var opened: SettingsScreenId? = null
+        composeTestRule.setContent {
+            OrtTheme { SettingsRootScreen(state = stateWithRecords, onDrawer = {}, onOpen = { opened = it }) }
+        }
+
+        val backupRowDescription = "Backup and restore. A device-to-device transfer · sessions, overs and audio"
+        composeTestRule.onNodeWithContentDescription(backupRowDescription).assertExists()
+        composeTestRule.onNodeWithContentDescription(backupRowDescription).performClick()
+
+        assert(opened == SettingsScreenId.BACKUP) { "expected BACKUP, got $opened" }
+    }
+
+    @Test
+    @Requirement("FR-STO-6")
+    fun `P30 no Backup and restore row is appended to a section that is not Records`() {
+        val stateWithoutRecords = SettingsRootViewState(
+            sections = listOf(
+                SettingsSectionViewState(
+                    label = "Capture",
+                    rows = listOf(SettingsRowViewState("Input and level", "verified", SettingsScreenId.CAPTURE)),
+                ),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme { SettingsRootScreen(state = stateWithoutRecords, onDrawer = {}, onOpen = {}) }
+        }
+
+        composeTestRule.onNodeWithContentDescription(
+            "Backup and restore. A device-to-device transfer · sessions, overs and audio",
+        ).assertDoesNotExist()
     }
 }

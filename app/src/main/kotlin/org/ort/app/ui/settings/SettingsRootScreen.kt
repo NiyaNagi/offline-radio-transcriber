@@ -88,6 +88,17 @@ public fun SettingsRootScreen(
                         subLine = "Third-party notices · read offline",
                     )
                 }
+                // P30 (FR-STO-6, FR-STO-9): the backup/restore screen's own row, appended to
+                // "Records" beside Export the same static way P27/P28 appended their own rows —
+                // this screen id is not one of SettingsPolling.root's dynamic sections either.
+                if (section.label == "Records") {
+                    NavRow(
+                        rowTitle = "Backup and restore",
+                        onClick = { onOpen(SettingsScreenId.BACKUP) },
+                        icon = iconFor(SettingsScreenId.BACKUP),
+                        subLine = "A device-to-device transfer · sessions, overs and audio",
+                    )
+                }
                 // P28 (D42, FR-ANL-1..14): the analytics tiers screen's own row, appended to
                 // "Privacy" the same static way P27 appended Licences to "About" above — this
                 // screen id is not one of SettingsPolling.root's dynamic sections either.
@@ -143,6 +154,10 @@ internal fun iconFor(screen: SettingsScreenId): ImageVector = when (screen) {
     // for the identical reason (no bespoke analytics glyph exists, and OrtIcons.kt is outside this
     // unit's own file ownership).
     SettingsScreenId.ANALYTICS -> OrtIcons.lock
+    // P30: no bespoke backup/restore glyph exists either — reuses OrtIcons.export, the closest
+    // existing concept (a file the operator saves themselves), for the identical "OrtIcons.kt is
+    // outside this unit's own file ownership" reason as LICENSES/ANALYTICS above.
+    SettingsScreenId.BACKUP -> OrtIcons.export
 }
 
 /** A tinted status dot for a settings sub-screen row (`Settings-Capture`/`Settings-Rig`'s green/

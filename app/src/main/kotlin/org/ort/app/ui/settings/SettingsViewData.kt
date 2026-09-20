@@ -1,6 +1,7 @@
 package org.ort.app.ui.settings
 
 import org.ort.app.diagnostics.localsave.LocalSaveCategoryId
+import org.ort.app.export.ExportRequestScope
 import org.ort.app.fieldreport.bundle.FieldReportGatedCategory
 import org.ort.core.capture.CaptureMode
 
@@ -36,6 +37,14 @@ public enum class SettingsScreenId {
      * established for [LICENSES]: `SettingsRootScreen`'s own row for this is a static addition to
      * the "Privacy" section, not a [SettingsPolling.root] dynamic row. */
     ANALYTICS,
+
+    /** P30 (FR-STO-6, FR-STO-9, AC-170): the full database-and-audio backup and restore screen —
+     * [org.ort.app.ui.settings.SettingsBackupScreen]. A new, dedicated screen rather than a
+     * restore action folded into `SettingsStorageScreen.kt` — see that screen's own kdoc for why.
+     * Follows the identical static-row-append pattern P27/P28 established for [LICENSES]/
+     * [ANALYTICS]: appended to the "Records" section, beside Export, not a [SettingsPolling.root]
+     * dynamic row. */
+    BACKUP,
 }
 
 public data class SettingsRowViewState(val label: String, val subLine: String, val screen: SettingsScreenId)
@@ -250,6 +259,70 @@ public data class SettingsExportViewState(
     val tonightSpanLabel: String,
     val allSessionCount: Int,
     val allOverCount: Int,
+)
+
+/** P30 (FR-EXP-3, FR-EXP-7): [SettingsExportScreen]'s own POTA and share-sheet callbacks, bundled
+ * together for the identical detekt `LongParameterList` reason [SettingsCaptureToggleActions]
+ * already exists for — lives here, not in `SettingsExportScreen.kt`, for the identical
+ * `MatchingDeclarationName` reason that file's own kdoc states: that file's one top-level
+ * declaration is the `SettingsExportScreen` function itself. */
+public data class SettingsExportShareActions(
+    val onExportPota: (ExportRequestScope) -> Unit = {},
+    val onShareDigest: () -> Unit = {},
+    val onShareThreadTranscript: () -> Unit = {},
+    val onShareOverAudio: () -> Unit = {},
+)
+
+/** P30 (FR-STO-6, FR-STO-9): [SettingsBackupScreen]'s own action bundle — kept together for the
+ * identical detekt `LongParameterList` reason [SettingsCaptureToggleActions]/[LocalSaveActions]
+ * already exist for, and lives here rather than in `SettingsBackupScreen.kt` for the identical
+ * `MatchingDeclarationName` reason [SettingsExportShareActions] above states. */
+public data class SettingsBackupActions(
+    val onSaveBackup: () -> Unit = {},
+    val onPickRestoreFile: () -> Unit = {},
+    val onConfirmRestore: () -> Unit = {},
+    val onCancelRestore: () -> Unit = {},
+)
+
+/** P30 (FR-STO-6): [org.ort.app.backup.BackupPreview] reshaped for the screen — the real counts
+ * and byte total `Save backup` is about to write, computed by the same producer the write itself
+ * uses (`Save backup`'s own real handler in `SettingsContent.kt`), never a second, independently-
+ * scoped estimate. [sizeLabel] is already formatted (`184 KB`/`1.4 MB`), matching every sibling
+ * size label already in this package. */
+public data class SettingsBackupPreviewViewState(
+    val sessionCount: Int,
+    val transmissionCount: Int,
+    val correctionCount: Int,
+    val audioFileCount: Int,
+    val sizeLabel: String,
+)
+
+/** P30 (FR-STO-9, AC-170): one line of what a picked restore bundle *would* do — real counts from
+ * a [org.ort.app.backup.BackupRestorePlan], reshaped for display. [hasConflicts] mirrors that
+ * plan's own field so the screen never re-derives "any conflicts at all" a second way. */
+public data class SettingsRestorePlanViewState(
+    val sessionsToAddCount: Int,
+    val sessionConflictCount: Int,
+    val transmissionsToAddCount: Int,
+    val transmissionConflictCount: Int,
+    val correctionsToAddCount: Int,
+    val correctionConflictCount: Int,
+    val audioToAddCount: Int,
+    val audioConflictCount: Int,
+    val hasConflicts: Boolean,
+)
+
+/** P30's own state for [org.ort.app.ui.settings.SettingsBackupScreen]. [preview] is `null` only
+ * while the real, async [SettingsBackupPreviewViewState] load is still resolving (the same
+ * absent-signal shape every other async load in this package already uses — never a fabricated
+ * zero). [restorePlan] is `null` until a bundle has been picked and analyzed; [restoreSummary] is
+ * `null` until a restore has actually been applied, and holds the real added/skipped counts
+ * [org.ort.app.backup.BackupRestoreResult] reports — never re-derived from [restorePlan] a second
+ * way, since a restore may be applied against a device that changed between analyze and apply. */
+public data class SettingsBackupViewState(
+    val preview: SettingsBackupPreviewViewState?,
+    val restorePlan: SettingsRestorePlanViewState? = null,
+    val restoreSummary: String? = null,
 )
 
 /** P28 (D42, FR-ANL-1..14): [SettingsAnalyticsScreen]'s own state — [installIdLabel] is a

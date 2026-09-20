@@ -766,7 +766,7 @@ released by P27; P22's setup steps released for P28 to extend).
 
 **Wave I — needs Wave H** (the Settings hot files released by P28).
 
-- [ ] **P30 · Export completion — POTA, the share sheet, and restore** *(`:app` export/backup,
+- [x] **P30 · Export completion — POTA, the share sheet, and restore** *(`:app` export/backup,
   `:pipeline` export, `AndroidManifest.xml`)* — FR-EXP-7, FR-STO-6, FR-STO-9, AC-170, AC-171.
   Needs Wave H (the Settings hot files pass to this unit next).
 

@@ -577,4 +577,50 @@ class ExportCoordinatorTest {
             ).substringAfterLast('.'),
         )
     }
+
+    // -----------------------------------------------------------------------------------------
+    // P30, AC-169: buildPotaActivity existed and was tested in isolation
+    // (PotaActivityExportWriterTest) but had no caller anywhere — these tests are what makes it
+    // reachable, wiring it through the exact same scoped-records read every other format uses.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    fun `AC_169 suggestedPotaFileName carries the real csv extension and the real scope word`() {
+        assertTrue(
+            ExportCoordinator.suggestedPotaFileName(ExportRequestScope.TONIGHT).let {
+                it.startsWith("ort-pota-tonight-") && it.endsWith(".csv")
+            },
+        )
+        assertTrue(
+            ExportCoordinator.suggestedPotaFileName(ExportRequestScope.EVERYTHING).let {
+                it.startsWith("ort-pota-all-") && it.endsWith(".csv")
+            },
+        )
+    }
+
+    @Test
+    fun `AC_169 previewPotaCount counts one row per park reference, matching buildPotaActivity exactly`() = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.catalogDao().insert(station("ST1", "KI7ABC", potaRefs = listOf("K-1234", "K-5678")))
+        db.transmissionDao().insert(
+            transmission("T1", "S1", AttributionState.CONFIRMED, stationId = "ST1", attributionConfidence = 0.9),
+        )
+        db.sessionDao().insert(session("S2", startedAt = 0L))
+        db.transmissionDao().insert(transmission("T2", "S1", AttributionState.UNKNOWN))
+
+        val count = ExportCoordinator.previewPotaCount(context, ExportRequestScope.EVERYTHING)
+        val csv = ExportCoordinator.buildPotaActivity(context, ExportRequestScope.EVERYTHING).toString(Charsets.UTF_8)
+        val realRowCount = csv.lines().filter { it.isNotBlank() }.size - 1 // minus the header row
+
+        assertEquals(2, count)
+        assertEquals(realRowCount, count)
+    }
+
+    @Test
+    fun `AC_169 previewPotaCount is honestly zero when nothing heard names a park reference`() = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        db.transmissionDao().insert(transmission("T1", "S1", AttributionState.UNKNOWN))
+
+        assertEquals(0, ExportCoordinator.previewPotaCount(context, ExportRequestScope.EVERYTHING))
+    }
 }
