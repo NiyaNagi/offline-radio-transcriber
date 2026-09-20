@@ -19,6 +19,8 @@ import org.ort.core.AttributionState
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.CaptureGapCause
+import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.AsrAvailability
@@ -158,13 +160,37 @@ class NowContentTest {
         composeTestRule.onNodeWithText("Room audio", substring = true).assertExists()
     }
 
+    // R-1074 (register, halt, constitution I): before that fix, `Now`'s chart bucketed a session
+    // into whole *clock* hours and a tap opened exactly `[sessionStart, sessionStart + 1h)` no
+    // matter what the session's own real gaps were. R-1074 replaced that with
+    // `SessionCoverageMapper.buildSegments`'s real, gap-boundary-accurate segments (R-1069's own
+    // fix, reused) — a tap now opens the *segment's own real span*, never a fabricated hour. This
+    // test still proves the real DB-to-tap-to-callback wiring (its own original purpose), updated
+    // to assert the contract R-1074 actually establishes: bar 0 here is the real listening segment
+    // *before* a real, recorded gap, so its own real end is the gap's own real start — a value that
+    // would be wildly wrong (short by nearly 59 minutes) under the old whole-hour contract, and is
+    // fully deterministic (unlike the session's still-live, `SystemClock`-derived "now") because it
+    // comes from a fixed, already-recorded gap row rather than the still-running session's open end.
     @Test
     @Requirement("R-1041")
-    fun `R_1041 tapping the chart's first bar opens the Log filtered to that real hour, via the real read path`() {
+    fun `R_1041 a tapped bar opens the Log filtered to its own real segment window, real read path`() {
         val sessionStart = SystemClock.wallMillis() - 3_600_000L
+        val gapStart = sessionStart + 10_000L
+        val gapEnd = sessionStart + 20_000L
         runBlocking {
             db.sessionDao().insert(session("HOUR-1").copy(startedAt = sessionStart))
-            db.transmissionDao().insert(transmission("HOUR-1-tx1", "HOUR-1", sessionStart + 1_000L))
+            // Inside the real listening segment bar 0 is: before the gap, well after session start.
+            db.transmissionDao().insert(transmission("HOUR-1-tx1", "HOUR-1", sessionStart + 5_000L))
+            db.captureGapDao().insert(
+                CaptureGapEntity(
+                    id = "HOUR-1-G1",
+                    sessionId = "HOUR-1",
+                    startedAt = gapStart,
+                    endedAt = gapEnd,
+                    cause = CaptureGapCause.INTERRUPTION,
+                    recoveredAutomatically = true,
+                ),
+            )
         }
         CaptureState.capturing("HOUR-1")
 
@@ -188,9 +214,24 @@ class NowContentTest {
         composeTestRule.waitUntilTextExists("1 over")
         composeTestRule.onNodeWithTag("activity-bar-0").performClick()
 
+        // R-1074: the segment's own real start and end — never `sessionStart + 1h` (the old,
+        // fabricated whole-hour window), and never left open to "now" either, since a real gap
+        // closes this segment off well before the still-live session's own open end.
         assert(openedFrom == sessionStart) { "expected the real session start ($sessionStart), got $openedFrom" }
-        assert(openedTo == sessionStart + 3_600_000L - 1) {
-            "expected the real hour's own inclusive end, got $openedTo"
+        assert(openedTo != null) { "expected a real window, got none — the bar carried no click action" }
+        // A small float-fraction-round-trip tolerance (see `NowViewStateMapper.segmentRealWindows`'s
+        // own kdoc) — many orders of magnitude tighter than the ~59-minute error the old whole-hour
+        // contract would have produced for this exact case.
+        val toleranceMillis = 50L
+        assert(Math.abs(openedTo!! - (gapStart - 1)) <= toleranceMillis) {
+            "expected the segment's own real end, the real gap's own start minus one (${gapStart - 1}), " +
+                "got $openedTo — the old whole-hour contract would have produced ${sessionStart + 3_600_000L - 1}"
+        }
+        // R-1041's own point: the window must actually contain the tapped-over's real timestamp.
+        val transmissionAt = sessionStart + 5_000L
+        assert(transmissionAt in openedFrom!!..openedTo!!) {
+            "expected the tapped over's own timestamp ($transmissionAt) to fall inside the opened " +
+                "window [$openedFrom, $openedTo] — a tap that does not land on its own overs is useless"
         }
     }
 

@@ -98,6 +98,85 @@ their artboards:
 No other setup board's indicator or colour changed in this unit.
 
 ---
+## 2026-09-20 (R-1074 gate fix: the batch gate's own smoke suite still asserted the old whole-hour tap contract)
+
+### 5be40cd7 — R-1074 gate fix · `NowContentTest`'s R-1041 smoke test updated for the segment-window tap contract
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/screens/NowContentTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/data/NowViewStateMapperTest.kt` (one existing R-1041 test
+strengthened, no new file).
+
+**Requirements/ACs:** R-1074 (the fix below it, `ebf5a7c5`, is the one this closes on evidence —
+`./gradlew dependencyRules platformGuards build` is green now); R-1041 (**contract recorded as
+changed** — see "What changed"); constitution I, VIII.
+
+**What changed:** `./gradlew dependencyRules platformGuards build` failed in
+`:app:smokeTestFullDebugUnitTest` after `ebf5a7c5` merged —
+`NowContentTest.R_1041 tapping the chart's first bar opens the Log filtered to that real hour, via
+the real read path` asserted `openedTo == sessionStart + 3_600_000L - 1`, the old fabricated
+whole-hour contract `ebf5a7c5` deliberately replaced. This test lives in the smoke source set
+(`registerComposePoisonSmokeTestTask` in `app/build.gradle.kts` `include`s it and
+`debugUnitTest.exclude`s it from the ordinary `test<Flavor>DebugUnitTest` task, for the unrelated
+Compose-idle-poisoning reason documented at that block's own kdoc), so it never ran under this
+unit's own targeted `--tests "org.ort.app.ui.screens.*"` verification and the gap was found only by
+the full gate.
+
+**R-1041's own tap contract changed, plainly stated for a reader of this log alone:** before
+`ebf5a7c5`, tapping a bar opened the Log filtered to the whole *clock hour* that bar's index
+represented, `[sessionStart + N*1h, sessionStart + (N+1)*1h)`, regardless of the session's real
+gaps. After `ebf5a7c5`, tapping a bar opens the Log filtered to that bar's own real coverage
+*segment* window — its own real `[fromMillis, toMillis]` span between two real gap boundaries (or
+session start/end), which can be far shorter or longer than an hour and never straddles a real gap.
+This is more honest (a segment's own real window can never claim to cover time the segment did not
+actually span) and is what R-1074 asked for; it is recorded here as a deliberate, not incidental,
+behaviour change.
+
+Fixed by rewriting the test's own fixture and assertions, not the production code: `HOUR-1`'s
+session now also records one real, 10-second `CaptureGapEntity` (`GapPersister`-shaped, `cause =
+INTERRUPTION`) starting 10 seconds after session start, with its one transmission 5 seconds in
+(before the gap). Bar 0 is therefore the real listening segment `[sessionStart, gapStart)` — its
+own real end is the *gap's own real start*, a value fixed by a real, already-recorded DB row rather
+than the session's still-open, `SystemClock`-derived "now" (the session itself is still live,
+`endedAt = null`, matching the test's own "real read path" purpose), so the assertion stays fully
+deterministic without asserting an exact wall-clock value. Renamed to `R_1041 a tapped bar opens the
+Log filtered to its own real segment window, real read path` since "that real hour" no longer
+describes what the app does. Added an explicit assertion (R-1041's own point, restated because
+R-1074 changed *how* it is satisfied): the opened window actually contains the tapped-over's own
+real timestamp —
+added to both this smoke test and the pure-mapper `NowViewStateMapperTest.R_1041
+activitySegmentWindows carries each segment's own real span, not a fabricated hour` test, which
+previously checked the window's bounds but not that a real over actually falls inside it.
+
+**Full smoke/other-suite survey (point 3 of this task): exactly one other test outside
+`org.ort.app.ui.data|screens|components`'s own targeted run was affected — `NowContentTest`'s own
+R-1041 test above, found only by running the actual gate.** Checked, and found nothing further
+stale, in: every other class the smoke task's own `include(...)` list names
+(`ReaderActivityDestinationSmokeTest`, `SessionsContentTest`, `CaptureStatusContentTest`,
+`LogContentBackHandlerTest`, `LogAndThreadContentActivityTest`, `FailureHostTest`, `NavSeedTest`,
+`OrtNavHostDestinationDispatchTest`, `ReaderAccessibilityTest`, `LevelMeterScreenTest`,
+`FrequencyScreenTest`, `SearchContentBackHandlerTest`, `SearchContentTest`,
+`StationDetailContentTest`, `StationsContentTest`, `FrequencyDetailContentTest`,
+`TransmissionDetailContentTest` — none reference `hourFilterWindow`, `NowViewState.Active`,
+`activitySegmentWindows`, `onOpenHour` or `NowContent`); and a whole-repository grep for
+`hourFilterWindow`/`buildSessionElapsedPattern`/`NowViewState.Active`/`activitySegmentWindows`,
+which turns up only comments (this unit's own corrected ones, the two already flagged separately as
+stale in `SessionCoverageMapper.kt`/`DigestPolling.kt`, and unrelated `CHANGELOG.md`/register
+history) — no other production or test code references the removed function or field.
+`FrequencyScreenTest` does use `HourActivityBucket`, confirmed unrelated: it is
+`FrequencyDetailViewState`'s own 24-hour-of-day pattern from `ActivityPatternMapper.buildPattern`,
+never touched by this fix.
+
+**Verified:** `.\gradlew.bat :app:smokeTestFullDebugUnitTest` green in full (18 classes, including
+the fixed `NowContentTest`); `.\gradlew.bat :app:testFullDebugUnitTest --tests
+"org.ort.app.ui.data.*" --tests "org.ort.app.ui.screens.*" --tests "org.ort.app.ui.components.*"`
+green; `.\gradlew.bat ktlintCheck detekt` green.
+
+**Left open / not done:** everything `ebf5a7c5`'s own entry already left open (the visual
+re-verification, `design/canvas/Main.dc.html` left unchanged, the two stale comments in
+`SessionCoverageMapper.kt`/`DigestPolling.kt` flagged separately, `buildSessionElapsedPattern` kept
+as dead code) is unchanged by this gate fix and still applies.
+
+---
 ## 2026-09-20 (R-1074: `Now`'s live-session chart stops hatching a whole hour for a real 22-minute gap)
 
 ### ebf5a7c5 — R-1074 · `Now`'s live chart reuses `SessionCoverageMapper.buildSegments`, ending whole-clock-hour hatching

@@ -475,10 +475,9 @@ class NowViewStateMapperTest {
         val gapStart = sessionStart + 40 * minute
         val gapEnd = gapStart + 22 * minute
         val sessionEnd = sessionStart + 180 * minute
+        val transmissionAt = 10 * minute + sessionStart
         val view = NowViewStateMapper.active(
-            details = listOf(
-                detail("TX1", Attribution.confirmed("W7NPC", 0.9), startedAtUtcMillis = 10 * minute + sessionStart),
-            ),
+            details = listOf(detail("TX1", Attribution.confirmed("W7NPC", 0.9), startedAtUtcMillis = transmissionAt)),
             gaps = listOf(GapWindow(startedAt = gapStart, endedAt = gapEnd)),
             sessionStartedAtUtc = sessionStart,
             sessionEndedAtUtc = sessionEnd,
@@ -497,6 +496,14 @@ class NowViewStateMapperTest {
         assertTrue(
             Math.abs(to0 - (gapStart - 1)) <= FRACTION_ROUND_TRIP_TOLERANCE_MILLIS,
             "expected the segment's own real end (~${gapStart - 1}), got $to0",
+        )
+        // R-1041's own point (raised again when R-1074 changed the tap contract from an hour to a
+        // segment window): a tap that does not land on its own overs is useless — the window a real
+        // tap on this bar would open must actually contain the transmission that made it HEARD.
+        assertTrue(
+            transmissionAt in from0..to0,
+            "expected the tapped-over's own timestamp ($transmissionAt) inside the opened window " +
+                "[$from0, $to0]",
         )
     }
 
