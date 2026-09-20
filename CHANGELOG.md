@@ -34,6 +34,108 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P31: live alerts — a watched callsign, keyword or frequency fires a local notification after Pass B)
 
+### e773b36d — P31 gate fix · `AndroidAlertNotificationDispatcher.dispatch` now honours `canDeliver()` with a lint-visible `POST_NOTIFICATIONS` guard instead of posting blind
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/alerts/AlertNotificationDispatcher.kt`,
+`pipeline/src/main/AndroidManifest.xml`, and their tests
+(`pipeline/src/test/kotlin/org/ort/pipeline/alerts/AndroidAlertNotificationDispatcherTest.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/alerts/AlertEvaluationCoordinatorTest.kt` — the latter's
+anonymous `AlertNotificationDispatcher` in the `AC_195` test updated for the interface's new return
+type only, no behavioural change).
+
+**Requirements/ACs:** FR-ALR-2 ("handle a denied POST_NOTIFICATIONS honestly", functional spec
+§7.19); constitution I (an outcome without its true state is a bug — a `dispatch()` that cannot
+report whether it delivered is exactly that); constitution VII (the guard is now a type-level
+contract — `dispatch(): Boolean` — not a comment asking a caller to remember to check `canDeliver()`
+first).
+
+**What changed:**
+- **The lead's batch gate (`dependencyRules platformGuards build`) was red on `:pipeline:lintDebug`**:
+  `NotificationManagerCompat.notify` (line 45, pre-fix) was called with no guard at all, tripping
+  lint's `MissingPermission` check for `android.permission.POST_NOTIFICATIONS`. This was a genuine
+  defect, not lint noise: the unit already exposed `canDeliver()` (backed by
+  `NotificationManagerCompat.areNotificationsEnabled()`) but `dispatch()` never consulted it, so a
+  watch that matched after the operator skipped the setup-flow notification permission (or later
+  revoked it) silently produced nothing — the Settings screen's own amber "Alerts cannot fire"
+  banner and the dispatcher's actual behaviour disagreed.
+- **`AlertNotificationDispatcher.dispatch(firing): Boolean`** (was `Unit`) — `true` means a
+  notification was actually posted, `false` means the platform made delivery impossible; a caller
+  MUST NOT treat `false` as "it fired." `AndroidAlertNotificationDispatcher.dispatch` now: (1) checks
+  `canDeliver()` first and returns `false` immediately if it can't, honouring the concept the class
+  already exposed but never used at its own call site; (2) on API 33+
+  (`Build.VERSION_CODES.TIRAMISU`), also calls `ContextCompat.checkSelfPermission(context,
+  Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED` and returns `false`
+  if denied, *before* building the notification or touching the channel. Below API 33 that check is
+  skipped outright — `POST_NOTIFICATIONS` is not a runtime permission there, so there is nothing to
+  request or deny.
+- **Why two checks, not one:** `canDeliver()`'s own `areNotificationsEnabled()` is correct at
+  runtime (it already folds in the API-33+ permission state and the older app-level notification
+  toggle) but is an opaque method call as far as lint's `MissingPermission` data-flow analysis is
+  concerned — lint cannot trace through a differently-named method to discharge
+  `NotificationManagerCompat.notify`'s own `@RequiresPermission` obligation, however logically
+  equivalent. The explicit `checkSelfPermission` call is the literal guard lint needs at the call
+  site; it is not a second opinion offered for its own sake, and in practice it is expected to agree
+  with `canDeliver()` whenever both run on API 33+.
+- **`pipeline/src/main/AndroidManifest.xml` now declares `<uses-permission
+  android:name="android.permission.POST_NOTIFICATIONS" />`.** Checked, not assumed: without it,
+  lint reported the permission *missing outright* even with the runtime guard in place (confirmed by
+  removing the guard first and observing the message change from "Missing permissions required by
+  NotificationManagerCompat.notify" to the distinct "Call requires permission which may be rejected
+  by user" once the manifest line was added — the second message is exactly the one a
+  `checkSelfPermission` guard resolves). `:app`'s own merged manifest already carries this
+  permission transitively via `capture-android`'s `AndroidManifest.xml` (unchanged, pre-existing),
+  so this is not a new runtime request surface for the shipped app — it only makes `:pipeline`'s own
+  `lintDebug` task, which does not merge permissions from sibling library dependencies for this
+  check, aware of the permission its own code now guards.
+- **Confirmed against the actual compiled annotation, not assumed from documentation:** decompiled
+  `androidx.core:core:1.13.1`'s `NotificationManagerCompat.notify` via `javap -v` — its
+  `@RequiresPermission` carries no `conditional` element, so lint treats it as an ordinary revocable
+  permission requirement (manifest declaration *and* a traceable runtime guard), not the
+  "conditional, guard-optional" shape some documentation describes for this API.
+- **`FakeAlertNotificationDispatcher.dispatch`** now mirrors this: when `setDeliverable(false)`, it
+  records nothing and returns `false`, instead of the pre-fix behaviour of unconditionally recording
+  the firing regardless of the `deliverable` flag — the fake was itself pretending alerts fired that
+  its own `canDeliver()` said could not have.
+- `AlertEvaluationCoordinator.dispatchCoalesced` still calls `dispatcher.dispatch(firing)` and does
+  not (yet) branch on the new return value — no requirement in this session's scope asked for that,
+  and no existing behaviour needed it (coalescing state tracks *matches*, not deliveries). Left as a
+  natural extension point, noted below.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:lintDebug` — before: FAILED, `MissingPermission` on
+  `AlertNotificationDispatcher.kt`'s `notify()` call. After: BUILD SUCCESSFUL.
+- `.\gradlew.bat :pipeline:testDebugUnitTest` — BUILD SUCCESSFUL, all 6 cases in
+  `AndroidAlertNotificationDispatcherTest` (including the two new ones) and all of
+  `AlertEvaluationCoordinatorTest` green; no other `:pipeline` suite affected.
+- `.\gradlew.bat ktlintCheck` and `.\gradlew.bat detekt` — both green across every module (the
+  guard's line length needed a local `postNotificationsDenied` boolean to stay under ktlint's
+  120-column rule; reflowing it did not change lint's ability to trace the check).
+- **Discriminating (constitution II):** two new tests, `FR_ALR_2 dispatch reports not delivered and
+  posts nothing when POST_NOTIFICATIONS is denied` and its `..._is_granted` counterpart, both
+  `@Config(sdk = [33])` and driven via `Shadows.shadowOf(context).denyPermissions`/`grantPermissions`
+  (the same pattern `AndroidBluetoothLinkPermissionTest` already established for
+  `BLUETOOTH_CONNECT`). The guard was reverted to a plain, unconditional `notify()` call and the
+  denial test re-run: it failed with `a denied POST_NOTIFICATIONS must never be reported as
+  delivered` (the granted test and every pre-existing case stayed green, since Robolectric's default
+  shadow reports notifications enabled regardless of the specific runtime-permission grant). The fix
+  was restored and both tests re-ran green.
+
+**Left open / not done:**
+- **`AlertEvaluationCoordinator` does not branch on `dispatch()`'s new return value.** Nothing in
+  FR-ALR-2/FR-ALR-6 asks the coordinator itself to change behaviour on a denied delivery (the
+  Settings screen's own amber banner, driven by `AlertsAppWiring.notificationsPermissionGranted`, is
+  the existing and sufficient surface for that) — this is noted as a natural extension point if a
+  future session decides the coordinator should, for example, stop counting an undelivered match
+  toward its coalescing window.
+- **Device verification not run** — no emulator/device in this session; the guard's actual effect
+  on a real API 33+ device with the permission genuinely denied via the system prompt is unverified
+  beyond Robolectric's shadow simulation, the same limitation the P31 build report and the
+  `c1196a1d` entry below both already recorded for this subsystem.
+- **The tour was not re-run** — this change touches no `app/src/main/kotlin/org/ort/app/ui/**`,
+  `app/src/main/res/**`, `design/**`, debug-scenario/tour-step file, or `*Content`/`*Screen`/
+  `*ViewState`/`*ViewData`/`*Mapper` file under `:app`; constitution VIII's diff-triggered visual
+  re-verification does not apply.
+
 ### c1196a1d — P31 wiring · `PassBFactory`/`RealCaptureService` now hand a real `AlertEvaluationCoordinator` to Pass B's closure point, so a matching watch can actually fire on a device
 
 **Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/passb/PassBFactory.kt`,
