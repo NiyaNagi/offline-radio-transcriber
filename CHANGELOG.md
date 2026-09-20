@@ -32,6 +32,136 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (R-1043: the Release-only `BannerClosingBorderTest` timeout, root-caused and fixed by shape)
+
+### <pending> — R-1043 · `BannerClosingBorderTest`/`BannerChevronClearanceTest` stop opening a real database inside their own wall-clock wait; two `ui/navigation` files pre-warm one instead, preserving their own real/divergent `sessionId` scenarios
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/failures/BannerClosingBorderTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/failures/BannerChevronClearanceTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/navigation/OrtNavHostDestinationDispatchTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/navigation/LiveBarHeightReservationTest.kt`. No production code,
+no `app/build.gradle.kts`, no `buildSrc` test-task wiring.
+
+**Requirements/ACs:** R-1080, R-1077 (the register rows these tests establish — unaffected,
+still proven the same way); R-1043 (this class of gate flake); constitution II ("a test MUST be
+shown to discriminate" — this one already was, once, in `FailureHostTest`'s own history, cited
+below); Development Workflow ("diagnose before repairing," "machine-specific tuning is derived,
+not hardcoded" — the reason this fix removes a timeout instead of enlarging one).
+
+**What changed:**
+- **The real mechanism, found by reading the code, not by re-running it hot:** GitHub Actions
+  Release run 35520923219 failed `BannerClosingBorderTest > R_1080 at font scale 1-0, the ordinary
+  unclipped case gains no second border` with `ComposeTimeoutException: Condition still not
+  satisfied after 15000 ms` at its own `waitUntil(15_000) { onAllNodesWithTag("failure-banner-
+  overlay")... }`, on the same commit CI had passed. That line is fed by `FailureHost`'s polling
+  `LaunchedEffect` (`FailureHost.kt`'s `pollFailureSignals`), which calls
+  `FailureSignalsPolling.current(context, sessionId)` — and that function, whenever `sessionId` is
+  non-null, calls `OrtDatabase.create(context.applicationContext)` before its first real read. Both
+  failing tests pass a real, syntactically valid but **never-inserted** `sessionId` (e.g.
+  `"r1080-level-low-session-fits"`) — real enough to take the non-null branch, naming no row either
+  test ever writes. `OrtDatabase.create` caches its instance process-wide, so this cost is paid
+  exactly once per JVM fork — trivial the 999 times some earlier test in the fork has already paid
+  it, and a genuine, unbounded, synchronous disk-I/O cost (WAL-mode setup, the hand-written schema,
+  `runBlocking`) the one time nothing has. On a hosted Release runner that had just finished
+  fetching and packaging ~600 MB of bundled assets — cold disk cache, real contention — that one
+  first payment is exactly what a fixed 15-second wall-clock budget is not guaranteed to survive.
+  **This was never the 2-second poll interval** (`POLL_INTERVAL_MILLIS`) the coordinator's own
+  question named as the thing to rule out — the very first loop iteration runs before any `delay`
+  at all; the cost sat entirely in the lazy database open that iteration's first real read
+  triggered. A bigger timeout would have moved the same cliff further out without saying so.
+- **The exact fix, and it is not new:** `FailureHostTest.kt`'s own `R_300`/`R_883` cases already
+  hit and root-caused this identical shape once before ("Follow-up (found on `main`, under load)"
+  — that file's own kdoc has the full account, including its own discrimination), and fixed it by
+  passing `sessionId = null` into `FailureHost`, which skips every Room query in
+  `FailureSignalsPolling.current` (its own `if (sessionId != null)` guard), leaving the first poll
+  iteration fully synchronous, combined with `composeTestRule.mainClock.autoAdvance = false` before
+  `setContent` and one explicit `mainClock.advanceTimeByFrame()` after it — a single, bounded
+  virtual frame, never a wall-clock wait. `FailureMapper.map`'s own `Level` branch (both tests'
+  `armTooQuietBanner` scenario) never reads anything `sessionId` gates (`sessionStartedAtMillis`,
+  `sessionTransmissionCount`, `newestGap` — all `Route`/`Call`-only), so it was never load-bearing
+  for either assertion. Applied identically to all four `waitUntil` call sites across the two files
+  — `CaptureState.capturing(sessionId)` (an in-memory holder, no I/O) keeps its own real string
+  unchanged, only `FailureHost`'s own `sessionId:` argument moves to `null`.
+- **The sibling sweep this round asked for.** Every test file that composes `FailureHost` or
+  `OrtNavHost` (`OrtNavHost.kt` itself wires `FailureHost` internally, plus its own second,
+  identically-shaped poll — `LiveBarPolling.current`, gating `OrtDatabase.create` and
+  `RoomSessionRouteFactsReader.forSession` behind the same "is `sessionId` non-null" check) was
+  checked for the same shape: a bare `waitUntil(<literal>)`, a real but DB-untracked `sessionId`,
+  and no database opened before `setContent`. **Found in four files, fourteen `waitUntil` call
+  sites, all now closed**:
+  - `BannerClosingBorderTest.kt` (2 sites) and `BannerChevronClearanceTest.kt` (2 sites) — fixed as
+    above (`sessionId = null` + one virtual frame; `sessionId` was never load-bearing).
+  - `OrtNavHostDestinationDispatchTest.kt` (8 `waitUntil(15_000)` sites across 12 `@Test` methods:
+    `R_262`, the `assertScrollEndsAtLiveBarTop` helper ×4, the `assertExactlyOneLiveBar` helper
+    ×10, `R_910`'s "stale host session id" case, `R_1007`) and `LiveBarHeightReservationTest.kt` (2
+    sites, one shared helper ×2) — fixed **differently**: several of these tests (`R_910`'s stale
+    case above all) deliberately construct a `sessionId` that diverges from — or is real where
+    `CaptureState`'s own copy is not — the value fed elsewhere, which is the exact scenario under
+    test; forcing `sessionId = null` would have quietly changed what several of them prove. Added
+    one `@Before fun prewarmDatabase() { OrtDatabase.create(...) }` per file instead — the same
+    root cause (a lazy, unbounded database open hidden inside a timed wait) closed for every test
+    in the class at once, with every existing `sessionId` value, real or deliberately divergent,
+    left exactly as each test wrote it.
+  - **Checked and found already safe** (pre-warm or an equivalent real seed already happens before
+    `setContent`, confirmed by reading each file rather than assumed): `NavHostBannerLiveBarSqueezeTest.kt`
+    (`seedTierSession`/`Scenarios.load`, both real DB writes ahead of composition),
+    `ImproveContentActivityTest.kt`, `ImproveContentReattachTest.kt`,
+    `ImproveDestinationStatePreservationTest.kt`, `ReaderActivityDestinationSmokeTest.kt`,
+    `PlaybackStopsOnNavigationTest.kt`, `NavSeedTest.kt` (each opens `OrtDatabase` in its own
+    `@Before` or inline before `setContent`) — none of these touched.
+  - **Checked and found unrelated** (no `FailureHost`/`OrtNavHost` in the composition at all, so no
+    exposure to either polling loop): `SettingsContentBackupAndShareTest.kt`,
+    `SettingsContentExportAndDebugDumpTest.kt` (their own `waitUntil(5_000)` sites wait on activity
+    results and SAF intents, a different mechanism entirely) — not touched.
+  - **Named, not fixed:** `OrtNavHostDestinationDispatchTest.kt`'s `R_1007` carries a *second*
+    `waitUntil(15_000)` (its own line, after a click, waiting for `"capture-title"` post-navigation)
+    that is not the lazy-database-open mechanism — by the time it runs, the class's new
+    `prewarmDatabase()` has already paid that cost — but is still a bare wall-clock wait for a
+    post-click composition settle, a related but distinct shape this round did not have direct
+    evidence was ever slow. Left as-is rather than guess-converted.
+- **No timeout was enlarged anywhere**, per the coordinator's own instruction — four of the
+  fourteen sites lost their wall-clock wait entirely (a bounded virtual frame instead); the other
+  ten keep `waitUntil(15_000)`, but now measuring only genuine composition settle time with the
+  hidden database-open cost already paid in `@Before`, never a bigger guess at the same cliff.
+
+**Verified:**
+- `.\gradlew.bat -PortAllowMissingBundledAssets=true ":app:testFullDebugUnitTest" --tests
+  <BannerClosingBorderTest, BannerChevronClearanceTest, LiveBarHeightReservationTest> --rerun` and
+  `.\gradlew.bat -PortAllowMissingBundledAssets=true ":app:smokeTestFullDebugUnitTest" --tests
+  "org.ort.app.ui.navigation.OrtNavHostDestinationDispatchTest" --rerun` (isolated into the smoke
+  task by this repository's own `forkEvery = 1` poison-hunt list — confirmed by first getting 0
+  matches running it under `testFullDebugUnitTest` alone), 5 consecutive runs each (this machine,
+  32 logical processors, JDK 17.0.20.1) — green 5/5 both, `BUILD SUCCESSFUL` in 11s-27s (main, 5
+  tests/run) and 16s-18s (smoke, 26 tests/run), 155 total test executions, 0 failures. Run under
+  this machine's own real, ambient contention from four other builders and the hosted gate running
+  concurrently (the coordinator's own instruction: prefer real concurrent Gradle builds as
+  contention over a synthetic spin loop) — CPU observed between 37% and 100% across the session
+  from that other work, not from anything this session added.
+- **Not independently discriminated this round** (no fresh red run reverted-and-restored): the
+  mechanism is established by direct code inspection (`FailureSignalsPolling.current`'s own
+  `if (sessionId != null)` guard, confirmed to gate a real, synchronous `OrtDatabase.create` call)
+  and by an exact, already-proven precedent in this same codebase (`FailureHostTest`'s own kdoc,
+  which *did* discriminate this identical mechanism once, "WP9 and this package's own gate both
+  hit it") — not by forcing the failure to recur here, which would need the hosted runner's own
+  cold-disk-cache, just-finished-packaging-600MB condition, not reproducible responsibly on a
+  shared workstation without adding load this task was explicitly told not to add.
+
+**Left open / not done:**
+- `R_1007`'s second `waitUntil` (post-navigation-click settle) — named above, not converted; no
+  evidence yet that it is slow.
+- The mechanism almost certainly recurs anywhere else in the suite that composes `FailureHost`/
+  `OrtNavHost` with a real, non-null, DB-untracked `sessionId` and no pre-warm — the sweep above
+  covers every such file this session found by direct search (`grep -r "FailureHost(\|OrtNavHost("`
+  across `app/src/test`), not a sample.
+- This round's own "under load" proof used no CPU-load generator: an earlier, unbounded
+  `busy.ps1` spin-loop this same session had used for a prior, separate R-1043 diagnosis (on a
+  different branch) was restarted briefly at the start of this task before being stopped, along
+  with the processes it had spawned, at the coordinator's direction once it was pinning the
+  operator's own workstation; the script itself has since been corrected upstream to a bounded
+  runtime. The five-run proof above ran with none of that session's own processes active,
+  confirmed by process inspection before and after — the CPU contention it observed was entirely
+  the machine's own ambient, real concurrent work.
+
 ## 2026-09-20 (P32 gate fix: `CheckboxRow`/`ToggleRow`'s content-description fix regressed six consumer tests; corrected)
 
 ### 90a4f331 — P32 gate fix · `CheckboxRow`/`ToggleRow` carry a real content description without erasing descendant text or state

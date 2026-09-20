@@ -91,6 +91,16 @@ class BannerChevronClearanceTest {
         CaptureState.capturing(sessionId)
         armTooQuietBanner()
 
+        // R-1043 (register): the same shape as `BannerClosingBorderTest`'s own two cases, root-
+        // caused there in full — a Release-runner-only failure traced to `FailureHost`'s polling
+        // `LaunchedEffect` (`FailureSignalsPolling.current`) lazily opening a real `OrtDatabase`
+        // (WAL setup, hand-written schema, `runBlocking`) the first time a test asks for a non-null
+        // `sessionId`, not the 2-second poll interval itself. `FailureMapper.map`'s Level branch
+        // (this test's own `armTooQuietBanner` scenario) never reads anything `sessionId` gates in
+        // `FailureSignalsPolling.current`, so it was never load-bearing here either — `sessionId =
+        // null` (kept for `CaptureState.capturing` above, an in-memory holder with no I/O) skips
+        // every Room query, and a single bounded virtual frame replaces both wall-clock waits.
+        composeTestRule.mainClock.autoAdvance = false
         composeTestRule.setContent {
             CompositionLocalProvider(
                 LocalDensity provides Density(density = 1f, fontScale = 2f),
@@ -105,18 +115,13 @@ class BannerChevronClearanceTest {
                     // own wrapped body needs at 2.0) forces the banner to cap and scroll — the
                     // shape this register row is actually about.
                     Box(modifier = Modifier.requiredSize(390.dp, 400.dp)) {
-                        FailureHost(sessionId = sessionId, content = { })
+                        FailureHost(sessionId = null, content = { })
                     }
                 }
             }
         }
-
-        composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("failure-banner-overlay").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.waitUntil(15_000) {
-            composeTestRule.onAllNodesWithTag("failure-banner-scroll-hint").fetchSemanticsNodes().isNotEmpty()
-        }
+        composeTestRule.mainClock.advanceTimeByFrame()
+        composeTestRule.waitForIdle()
 
         // The scroll box's own bottom edge — not the overlay's — is what actually decides which of
         // the body text's many wrapped lines is the last one *visually rendered* before the cut

@@ -8,8 +8,10 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.Density
+import androidx.test.core.app.ApplicationProvider
 import org.junit.After
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -18,6 +20,7 @@ import org.ort.app.ui.failures.FailurePresentation
 import org.ort.app.ui.failures.StorageTimelineStage
 import org.ort.app.ui.failures.StorageWarningViewState
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.CaptureState
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -56,6 +59,17 @@ class LiveBarHeightReservationTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    /** R-1043 follow-up (register): both cases below drive `OrtNavHost` with a real, non-null,
+     * never-inserted `sessionId` — `FailureHost`'s and `OrtNavHost`'s own live-bar poll both open a
+     * real `OrtDatabase` the first time anything asks for one with a non-null session id, a genuine
+     * one-time disk-I/O cost that is trivial on an idle machine but not necessarily on a hosted
+     * runner under load — root-caused in full at `BannerClosingBorderTest`'s own `R_1080` comment.
+     * Pre-warming here means that cost never lands inside either `waitUntil` below. */
+    @Before
+    fun prewarmDatabase() {
+        OrtDatabase.create(ApplicationProvider.getApplicationContext())
+    }
 
     @After
     fun tearDown() {
