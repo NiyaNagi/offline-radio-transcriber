@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (R-1090 accessibility sweep, second half: the screens P32 never reached)
 
-### (pending) — R-1090 · the screens P32's accessibility sweep never reached: correction sheet, Search, Threads, Stations, Digest, Recordings, Capture and Settings' Export/Backup
+### b9d916e8 — R-1090 · the screens P32's accessibility sweep never reached: correction sheet, Search, Threads, Stations, Digest, Recordings, Capture and Settings' Export/Backup
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/CorrectionSheet.kt`, `SearchScreen.kt`,
 `ThreadScreen.kt`, `ThreadDetailScreen.kt`, `StationScreen.kt`, `StationIdentityScreen.kt`,
