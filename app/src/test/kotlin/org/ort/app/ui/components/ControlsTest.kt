@@ -220,6 +220,10 @@ class ControlsTest {
         }
     }
 
+    // P32's CheckboxRow/ToggleRow semantics-regression guard moved to
+    // `ToggleCheckboxSemanticsTest.kt` — detekt's own `LargeClass` finding, once this file grew
+    // past a reasonable size (the same reason `HeaderTouchTargetTest.kt` exists as its own file).
+
     @Test
     fun `a disabled text action carries text_disabled and does not fire its click`() {
         var clicked = false
