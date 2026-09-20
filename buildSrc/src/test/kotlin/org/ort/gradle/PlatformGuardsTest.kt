@@ -314,6 +314,250 @@ class PlatformGuardsTest {
         assertThrows(org.gradle.api.GradleException::class.java) { task.check() }
     }
 
+    // ---- Signing-stability guard — debug-fix session, 2026-09-19 (reworked after coordinator ---
+    // review: no keystore may be committed to this public repository) ---------------------------
+    // Operator report, currently released build: install fails on-device with "App not installed.
+    // Package appears to be invalid." The published `latest-build` APK (commit 152a9283) was
+    // downloaded via `gh release download`, hash-verified byte for byte against the release
+    // asset, and installed successfully via `adb install` AND `pm install` from a local file on
+    // three real Android package-manager instances (API 34 x86_64; genuine Android 16/API 36 at
+    // both 4 KB and 16 KB page size) — so the artifact itself is not structurally invalid, not
+    // Zip64, correctly zipaligned, and validly v2-signed.
+    //
+    // Root cause found by direct reproduction, not inference: `release.yml` used to sign with
+    // AGP's own auto-generated `~/.android/debug.keystore` — freshly created on every GitHub
+    // Actions run, since the runner is a new VM each time and nothing seeded or cached it.
+    // Downloading `v0.1.1` and a `latest-build` and running `apksigner verify --print-certs` on
+    // both showed two *different* certificate SHA-256 digests for the same `org.ort.app` package.
+    // Resigning a published APK's own bytes with a second, different debug-style key and
+    // installing it over the first with `adb install -r` on a real device reproduces
+    // `INSTALL_FAILED_UPDATE_INCOMPATIBLE: ... signatures do not match` — exactly the situation
+    // any operator hits updating from a previously installed build to a new one. Stock Android's
+    // own Package Installer does not give this failure a distinct message on many OS/OEM builds;
+    // it falls back to the same generic "Package appears to be invalid" text
+    // INSTALL_FAILED_INVALID_APK/INSTALL_PARSE_FAILED_* produce, so the operator's report and this
+    // mechanism are consistent — the reproduction above rules out the artifact being literally
+    // malformed, leaving signing-key instability as the mechanism this test suite guards against.
+    //
+    // The fix's first version pinned a constant certificate computed from a keystore checked into
+    // the repository — rejected on review (a public repo must never carry a private signing key).
+    // [PlatformGuards.signingStabilityViolations] now takes the expected digest as a plain nullable
+    // parameter with an explicit [enforceExpectedCertificate] switch, so a local build (which never
+    // passes a real pin, and is never signed with one) cannot fail this check — only `release.yml`,
+    // which does both, can.
+    @Test
+    fun `signing-stability guard — enforcement off means a mismatched or absent pin never fails a build`() {
+        assertTrue(
+            PlatformGuards.signingStabilityViolations(
+                verified = true,
+                hasV2OrV3Scheme = true,
+                certificateSha256 = "whatever-a-local-machines-own-debug-key-produces",
+                expectedCertificateSha256 = null,
+                enforceExpectedCertificate = false,
+            ).isEmpty(),
+            "a plain local build (AGP's own per-machine debug key, no enforcement requested) must never fail here",
+        )
+    }
+
+    @Test
+    fun `signing-stability guard — enforcement on with no pin configured yet is reported, naming what to do`() {
+        val violations = PlatformGuards.signingStabilityViolations(
+            verified = true,
+            hasV2OrV3Scheme = true,
+            certificateSha256 = "abc123",
+            expectedCertificateSha256 = null,
+            enforceExpectedCertificate = true,
+        )
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("release-certificate.sha256"))
+        assertTrue(violations.single().reason.contains("UNSET"))
+    }
+
+    @Test
+    fun `signing-stability guard — enforcement on with a blank pin is treated the same as unconfigured`() {
+        val violations = PlatformGuards.signingStabilityViolations(
+            verified = true,
+            hasV2OrV3Scheme = true,
+            certificateSha256 = "abc123",
+            expectedCertificateSha256 = "   ",
+            enforceExpectedCertificate = true,
+        )
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("no digest is configured"))
+    }
+
+    @Test
+    fun `signing-stability guard — enforcement on with a matching certificate is not reported`() {
+        assertTrue(
+            PlatformGuards.signingStabilityViolations(
+                verified = true,
+                hasV2OrV3Scheme = true,
+                certificateSha256 = "abc123",
+                expectedCertificateSha256 = "ABC123",
+                enforceExpectedCertificate = true,
+            ).isEmpty(),
+            "the comparison must be case-insensitive",
+        )
+    }
+
+    @Test
+    fun `signing-stability guard — apksig reporting unverified is reported regardless of enforcement`() {
+        val violations = PlatformGuards.signingStabilityViolations(
+            verified = false,
+            hasV2OrV3Scheme = true,
+            certificateSha256 = "abc123",
+            expectedCertificateSha256 = null,
+            enforceExpectedCertificate = false,
+        )
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("not installably signed"))
+    }
+
+    @Test
+    fun `signing-stability guard — no v2 or v3 scheme is reported regardless of enforcement (v1-only or unsigned fails on minSdk 26)`() {
+        val violations = PlatformGuards.signingStabilityViolations(
+            verified = true,
+            hasV2OrV3Scheme = false,
+            certificateSha256 = "abc123",
+            expectedCertificateSha256 = null,
+            enforceExpectedCertificate = false,
+        )
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("v2/v3"))
+    }
+
+    @Test
+    fun `signing-stability guard — enforcement on with no readable certificate is reported`() {
+        val violations = PlatformGuards.signingStabilityViolations(
+            verified = true,
+            hasV2OrV3Scheme = true,
+            certificateSha256 = null,
+            expectedCertificateSha256 = "abc123",
+            enforceExpectedCertificate = true,
+        )
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("no signer certificate"))
+    }
+
+    @Test
+    fun `signing-stability guard discrimination — a certificate that drifted from the pin is reported by both digests`() {
+        val violations = PlatformGuards.signingStabilityViolations(
+            verified = true,
+            hasV2OrV3Scheme = true,
+            certificateSha256 = "deadbeef",
+            expectedCertificateSha256 = "cafef00d",
+            enforceExpectedCertificate = true,
+        )
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("deadbeef"))
+        assertTrue(violations.single().reason.contains("cafef00d"))
+    }
+
+    // ---- SigningStabilityGuardTask — reads a real APK's real signature, via apksig ------------
+    // No checked-in keystore exists any more (the whole point of this rework) — each test below
+    // generates its own throwaway keystore with `keytool` (every environment building this project
+    // already has one under JAVA_HOME/bin), signs a tiny real zip with apksig's own `ApkSigner`,
+    // and reads the *real* certificate digest straight from the keystore for the assertion, the
+    // same value `SigningStabilityGuardTask` itself computes from the signed APK via apksig.
+
+    private fun generateKeystore(dir: File, alias: String, password: String, name: String = "$alias.keystore"): File {
+        val keystore = File(dir, name)
+        val javaHome = System.getProperty("java.home")
+        val keytool = File(javaHome, if (System.getProperty("os.name").startsWith("Windows")) "bin/keytool.exe" else "bin/keytool")
+        val proc = ProcessBuilder(
+            keytool.path, "-genkeypair", "-keystore", keystore.path, "-storetype", "PKCS12",
+            "-storepass", password, "-alias", alias, "-keypass", password,
+            "-keyalg", "RSA", "-keysize", "2048", "-validity", "3650", "-dname", "CN=$alias",
+        ).redirectErrorStream(true).start()
+        proc.inputStream.readBytes()
+        check(proc.waitFor() == 0) { "keytool failed generating $keystore" }
+        return keystore
+    }
+
+    private fun certificateSha256Of(keystore: File, alias: String, password: String): String {
+        val ks = java.security.KeyStore.getInstance("PKCS12")
+        java.io.FileInputStream(keystore).use { ks.load(it, password.toCharArray()) }
+        val certificate = ks.getCertificate(alias) as java.security.cert.X509Certificate
+        return java.security.MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
+            .joinToString("") { "%02x".format(it) }
+    }
+
+    private fun signWithKeystore(apk: File, keystore: File, alias: String, password: String, outDir: File): File {
+        val ks = java.security.KeyStore.getInstance("PKCS12")
+        java.io.FileInputStream(keystore).use { ks.load(it, password.toCharArray()) }
+        val privateKey = ks.getKey(alias, password.toCharArray()) as java.security.PrivateKey
+        val certChain = ks.getCertificateChain(alias).map { it as java.security.cert.X509Certificate }
+        val signerConfig = com.android.apksig.ApkSigner.SignerConfig.Builder(alias, privateKey, certChain).build()
+        val signed = File(outDir, "signed-${apk.name}")
+        com.android.apksig.ApkSigner.Builder(listOf(signerConfig))
+            .setInputApk(apk)
+            .setOutputApk(signed)
+            // The test fixture is a plain zip, not a real APK with an AndroidManifest.xml apksig
+            // could read a minSdkVersion from — same reason `app/build.gradle.kts`'s real
+            // `minSdk 26` matters here: this project only ever ships minSdk 26, so v2 signing
+            // (available since API 24) always applies, matching the real assembled APK's own
+            // signing config exactly (`ort.android-app.gradle.kts`'s `defaultConfig.minSdk = 26`).
+            .setMinSdkVersion(26)
+            .build()
+            .sign()
+        return signed
+    }
+
+    private fun tinyZip(dir: File, name: String = "unsigned.zip"): File {
+        val file = File(dir, name)
+        ZipOutputStream(file.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("classes.dex"))
+            zip.write(byteArrayOf(1, 2, 3))
+            zip.closeEntry()
+            // apksig's ApkVerifier requires an "AndroidManifest.xml" entry to *exist* even when
+            // both platform-version bounds are pinned explicitly (confirmed directly: it throws
+            // ApkFormatException("Missing AndroidManifest.xml") otherwise) — but does not parse
+            // its content in that case, only in the unset-bounds path this task never takes (real
+            // minSdk is always known and pinned — `ort.android-app.gradle.kts`'s own
+            // `defaultConfig.minSdk = 26`). Confirmed directly (standalone apksig repro, outside
+            // Gradle/JUnit entirely) that garbage bytes here verify identically to a real manifest.
+            zip.putNextEntry(ZipEntry("AndroidManifest.xml"))
+            zip.write(byteArrayOf(0xAA.toByte(), 0xBB.toByte(), 0xCC.toByte(), 0xDD.toByte()))
+            zip.closeEntry()
+        }
+        return file
+    }
+
+    @Test
+    fun `AC discrimination — the task never fails a real APK when enforcement is off, whatever the pin says`(
+        @TempDir dir: File,
+    ) {
+        val keystore = generateKeystore(dir, "local-debug", "local-debug")
+        val signed = signWithKeystore(tinyZip(dir), keystore, "local-debug", "local-debug", dir)
+
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create("verifyReleaseSigningStability", SigningStabilityGuardTask::class.java)
+        task.apkFile.set(signed)
+        // Deliberately NOT setting enforceExpectedCertificate (its convention is false) and
+        // deliberately setting a pin that does NOT match this build's own certificate — the exact
+        // shape of a plain local `assembleFullDebug` once a real pin is configured for CI.
+        task.pinnedCertificateSha256.set("not-this-builds-certificate-at-all")
+
+        task.check() // must not throw
+    }
+
+    @Test
+    fun `AC discrimination — the task accepts a real APK whose certificate matches the enforced pin`(
+        @TempDir dir: File,
+    ) {
+        val keystore = generateKeystore(dir, "release-key", "release-pass")
+        val digest = certificateSha256Of(keystore, "release-key", "release-pass")
+        val signed = signWithKeystore(tinyZip(dir), keystore, "release-key", "release-pass", dir)
+
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create("verifyReleaseSigningStability", SigningStabilityGuardTask::class.java)
+        task.apkFile.set(signed)
+        task.pinnedCertificateSha256.set(digest)
+        task.enforceExpectedCertificate.set(true)
+
+        task.check() // must not throw
+    }
+
     // ---- P24 fix (register, Wave G batch gate, FR-AST-13, AC-190) — `play` must never bundle any
     // model asset, `full` must bundle every one. Like R-1001 above, this reads a real packaged
     // APK's zip entries rather than a declared coordinate: nothing about bundled-assets.json or
@@ -376,6 +620,27 @@ class PlatformGuardsTest {
         task.expectBundled.set(true)
 
         task.check() // must not throw
+    }
+
+    @Test
+    fun `AC discrimination — the task fails a real APK whose certificate does not match the enforced pin`(
+        @TempDir dir: File,
+    ) {
+        // A second, different self-signed key — models exactly the register's own reproduction: a
+        // different CI run's freshly auto-generated debug.keystore, or (post-rework) a release
+        // build whose certificate has genuinely drifted from the pinned digest.
+        val keystore = generateKeystore(dir, "release-key", "release-pass")
+        val otherKeystore = generateKeystore(dir, "other-key", "other-pass")
+        val pinnedDigest = certificateSha256Of(keystore, "release-key", "release-pass")
+        val signed = signWithKeystore(tinyZip(dir), otherKeystore, "other-key", "other-pass", dir)
+
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create("verifyReleaseSigningStability", SigningStabilityGuardTask::class.java)
+        task.apkFile.set(signed)
+        task.pinnedCertificateSha256.set(pinnedDigest)
+        task.enforceExpectedCertificate.set(true)
+
+        assertThrows(org.gradle.api.GradleException::class.java) { task.check() }
     }
 
     @Test

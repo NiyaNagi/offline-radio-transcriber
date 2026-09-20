@@ -32,6 +32,91 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a secret-driven release key and a configurable signing-stability guard)
+
+### da4237b5 — debug-fix session · sign published artifacts from GitHub Actions secrets, never a committed key, and pin the certificate only where a stable key is expected
+
+**Scope:** `.github/workflows/release.yml`, `buildSrc/build.gradle.kts`,
+`buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt`,
+`buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuardsTask.kt`,
+`buildSrc/src/main/kotlin/ort.android-app.gradle.kts`,
+`buildSrc/signing/release-certificate.sha256` (new — a checked-in digest, not a key),
+`buildSrc/src/test/kotlin/org/ort/gradle/PlatformGuardsTest.kt`, `RELEASING.md`.
+**Requirements/ACs:** none pre-existing name this; the register row this session files is the
+record. Constitution VII ("guarantees expressed as types where possible... a rule a person must
+remember is a rule that will eventually be forgotten") and constitution V's own spirit (nothing
+that would let a stranger impersonate this project leaves this repository) are what this session
+followed, alongside Development Workflow's debugging loop.
+**What changed:** this entry supersedes an earlier same-day commit on this branch that checked a
+signing keystore into the repository — rejected on review before merge: a public repository must
+never carry a private signing key, since anyone could then sign an APK Android accepts as an
+update to the real one, defeating the entire fix. Reworked before merging to `main`:
+1. **Reproduction and root cause stand as originally found** (see this session's first commit,
+   superseded here only in its fix): the published `latest-build`/`v0.1.1` APKs are structurally
+   valid — hash-verified, correctly zipaligned, no Zip64, v2-signed, install cleanly via `adb
+   install`/`pm install` on API 34 and genuine Android 16 (API 36, both page sizes) — but
+   `release.yml` signed with AGP's own auto-generated `~/.android/debug.keystore`, fresh on every
+   GitHub Actions run, so `v0.1.1` and `latest-build` carry two different certificates for the same
+   `org.ort.app` package (confirmed with `apksigner verify --print-certs` on both). Resigning a
+   published APK's own bytes with a second key and installing it over the first reproduces
+   `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, which most on-device Package Installers show as the same
+   generic "Package appears to be invalid" text a malformed APK produces.
+2. **The key now lives only as GitHub Actions secrets.** `release.yml`'s `build-and-release` job
+   decodes `ORT_RELEASE_KEYSTORE_BASE64` to a temp file under `$RUNNER_TEMP` at run time, passes it
+   and its three companion secrets (`ORT_RELEASE_KEYSTORE_PASSWORD`, `ORT_RELEASE_KEY_ALIAS`,
+   `ORT_RELEASE_KEY_PASSWORD`) to Gradle as environment variables for the one step that assembles
+   the published `full`-flavor debug APK, and deletes the temp file in an `if: always()` cleanup
+   step. Nothing is echoed; GitHub's own log masking covers the values regardless.
+   `ort.android-app.gradle.kts` reads those four environment variables and only creates/applies a
+   `release` `signingConfig` when they are present — a plain local `assembleFullDebug` (none of
+   these variables set) still gets AGP's own per-machine debug key exactly as before this session,
+   deliberately: a local developer build must never behave differently for lacking a secret only
+   CI holds.
+3. **Secret absent is handled loudly, on purpose.** If `ORT_RELEASE_KEYSTORE_BASE64` is unset (a
+   fork before its owner configures it, or upstream before the operator's one-time setup), the
+   `build-and-release` job **fails** with a `::error::` annotation and a job-summary explanation
+   rather than publishing anything — chosen over "publish an unsigned/locally-signed artifact
+   anyway" because publishing under a fresh ephemeral key is exactly the bug this session closes;
+   a red Release run is the loud, honest signal that nothing new went out, not a silent repeat.
+4. **The structural guard now enforces only where a stable key is actually expected.**
+   `PlatformGuards.signingStabilityViolations` takes `expectedCertificateSha256` as a plain
+   nullable parameter (no source-code constant — the first version's mistake) and a new
+   `enforceExpectedCertificate` switch; `SigningStabilityGuardTask` (`:app:verifyReleaseSigningStability`,
+   wired into `:app:check`) always checks the packaged `full`-flavor debug APK is verifiably
+   v2/v3-signed, but only compares its certificate against the pin when invoked with
+   `-PortEnforcePinnedReleaseSigning=true` — `release.yml` alone, right after building with the
+   injected secrets. The pin itself is configurable, not hardcoded: `buildSrc/signing/
+   release-certificate.sha256` (checked in, starts at the literal placeholder `UNSET`) or the
+   `ortReleaseCertificateSha256` Gradle property, read by `ort.android-app.gradle.kts` and passed
+   into the task. Enforcing with the pin still `UNSET` is itself a violation, naming exactly what
+   to paste in and where.
+5. **`RELEASING.md`'s "Signing" section rewritten** with the exact `keytool` command to generate
+   the release keystore, the exact `gh secret set` commands for all four secrets, where to read the
+   resulting certificate's SHA-256 digest and paste it into `release-certificate.sha256`, and the
+   one-time cost stated plainly: anyone with `org.ort.app` already installed under the old
+   ephemeral certificate must uninstall once before a build signed with the new key will install
+   over it.
+**Verified:**
+- `./gradlew -p buildSrc test` — `PlatformGuardsTest`, `BUILD SUCCESSFUL`; covers
+  `signingStabilityViolations` with enforcement on and off (a mismatched or absent pin never fails
+  when enforcement is off; an unconfigured `UNSET` pin fails loudly when enforcement is on; a
+  matching digest passes case-insensitively; a genuine mismatch is reported by both digests) and
+  `SigningStabilityGuardTask` end to end against real APKs signed with `keytool`-generated
+  throwaway keystores (never a checked-in one): passes with enforcement off regardless of the pin,
+  passes with enforcement on and a matching pin, fails with enforcement on and a different key.
+- **Discrimination, shown directly**: each new test asserted against the pre-rework behaviour first
+  (compile/assert failure without `enforceExpectedCertificate`/nullable-pin support), then against
+  the implemented guard, per this project's own TDD discipline.
+**Left open / not done:**
+- The operator has not yet generated the release keystore or set the four secrets — until they do,
+  every push to `main` will fail `build-and-release` at the "secrets missing" step by design (see
+  point 3 above); `RELEASING.md`'s "Signing" section is the one-pass setup that unblocks it.
+- `buildSrc/signing/release-certificate.sha256` still reads `UNSET` — the operator pastes the real
+  digest in once the keystore exists, per `RELEASING.md`.
+- Not tested on the operator's exact hardware (Android 16 on real arm64 silicon) — verified on a
+  genuine Android 16 (API 36) emulator at both 4 KB and 16 KB page size, the closest proxy
+  available on this machine, same limitation as the superseded commit.
+
 ## 2026-09-19 (P28b: the `play`-variant model catalog wired to the real generated manifest)
 
 ### c4618000 — ModelCatalog reads `bundled`/`downloadUrl` from the generated per-flavor manifest instead of hardcoding `bundled = true`

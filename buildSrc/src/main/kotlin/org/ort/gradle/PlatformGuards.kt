@@ -4,11 +4,16 @@ package org.ort.gradle
  * Pure logic behind the `platformGuards` task (audit F-027). Kept separate from Gradle types so
  * it can be unit-tested, same pattern as [ModuleGraph] and [CoverageMatrix].
  *
- * Every check here is a **declared-artifact** proxy — a dependency coordinate or a manifest
+ * Most checks here are a **declared-artifact** proxy — a dependency coordinate or a manifest
  * string — never a runtime observation. None of them proves a build made no network call, or
  * that no telemetry SDK actually reported anything; they prove only that the *building blocks*
  * for doing so are (or are not) present in the source tree. Say so wherever a result is reported
- * (constitution VI — never claim more than a number's provenance supports).
+ * (constitution VI — never claim more than a number's provenance supports). Three exceptions read
+ * a real build artifact instead of a declared one: [missingNativeLibraryViolations] (R-1001, the
+ * packaged APK's own zip entries), [bundledAssetPackagingViolations] (P24 fix, FR-AST-13, the same
+ * zip entries checked for a different property), and [signingStabilityViolations] (debug-fix
+ * session 2026-09-19, the packaged APK's own signer certificate) — see each one's own KDoc for why
+ * a declared coordinate cannot catch what they catch.
  */
 object PlatformGuards {
 
@@ -25,6 +30,7 @@ object PlatformGuards {
     data class DependencyViolation(val module: String, val coordinate: String, val reason: String)
     data class ManifestViolation(val module: String, val reason: String)
     data class NativeLibraryViolation(val path: String, val reason: String)
+    data class SigningViolation(val reason: String)
     data class BundledAssetPackagingViolation(val path: String, val reason: String)
 
     /** Every packaged-APK entry this file's bundled-asset guard treats as "a bundled model asset
@@ -169,6 +175,84 @@ object PlatformGuards {
                 )
             }
             .sortedBy { it.path }
+
+    /**
+     * Debug-fix session (2026-09-19) — operator report on the currently released build: install
+     * fails on-device with "App not installed. Package appears to be invalid." Reproduction (see
+     * [SigningStabilityGuardTask]'s own KDoc) ruled out the artifact being literally malformed —
+     * the published bytes, hash-verified against the release asset, install cleanly via both
+     * `adb install` and `pm install` on three real Android package-manager instances, including
+     * genuine Android 16 (API 36) at 16 KB page size. What *is* real: `.github/workflows/
+     * release.yml` used to sign with AGP's own freshly auto-generated `~/.android/debug.keystore`
+     * on every CI run — confirmed directly by downloading two different published releases
+     * (`v0.1.1` and a `latest-build`) and finding two different certificate SHA-256 digests for
+     * the same `org.ort.app` package, and by resigning a published APK's own bytes with a second
+     * key and reproducing `INSTALL_FAILED_UPDATE_INCOMPATIBLE` installing it over the first on a
+     * real device. Stock Android's own Package Installer does not give that failure a distinct
+     * message on every OS/OEM build; it is well documented to fall back to the same generic
+     * "Package appears to be invalid" text INSTALL_FAILED_INVALID_APK/INSTALL_PARSE_FAILED_*
+     * produce — indistinguishable to an operator from a genuinely corrupt APK, which is why this
+     * was reported and investigated as one.
+     *
+     * **A first version of this fix pinned a constant here, computed from a keystore checked into
+     * the repository.** Rejected on review: this repository is public, and a published private key
+     * would let anyone sign an APK Android accepts as an update to the real one. There is
+     * deliberately no constant in this file any more — [expectedCertificateSha256] is a plain
+     * parameter with no source-code default, supplied by the caller
+     * ([SigningStabilityGuardTask], wired in `ort.android-app.gradle.kts`) from a checked-in digest
+     * file (`buildSrc/signing/release-certificate.sha256`, starting at the placeholder `UNSET`) or
+     * the `ortReleaseCertificateSha256` Gradle property — see RELEASING.md's "Signing" section for
+     * exactly what the operator generates and pastes in once the real key exists.
+     *
+     * [enforceExpectedCertificate] keeps this guard from failing a plain local `assembleFullDebug`,
+     * which AGP signs with its own per-machine debug key that has no reason to match the pin: only
+     * `release.yml`, right after building with the injected release-signing secrets, passes
+     * `-PortEnforcePinnedReleaseSigning=true`. The `verified`/`hasV2OrV3Scheme` checks below are
+     * NOT gated by it — a build that ships unsigned or v1-only is a real defect in any context.
+     */
+    fun signingStabilityViolations(
+        verified: Boolean,
+        hasV2OrV3Scheme: Boolean,
+        certificateSha256: String?,
+        expectedCertificateSha256: String?,
+        enforceExpectedCertificate: Boolean,
+    ): List<SigningViolation> {
+        val violations = mutableListOf<SigningViolation>()
+        if (!verified) {
+            violations += SigningViolation(
+                "apksig could not verify the packaged APK's signature — it is not installably signed",
+            )
+        }
+        if (!hasV2OrV3Scheme) {
+            violations += SigningViolation(
+                "no v2/v3 signature scheme present — minSdk 26 and Android 11+ require at least v2 " +
+                    "to install",
+            )
+        }
+        if (enforceExpectedCertificate) {
+            when {
+                expectedCertificateSha256.isNullOrBlank() ->
+                    violations += SigningViolation(
+                        "pinned certificate enforcement was requested (-PortEnforcePinnedReleaseSigning=true) " +
+                            "but no digest is configured — paste the real release keystore's certificate " +
+                            "SHA-256 digest into buildSrc/signing/release-certificate.sha256, replacing " +
+                            "UNSET (RELEASING.md's \"Signing\" section has the exact steps)",
+                    )
+                certificateSha256 == null ->
+                    violations += SigningViolation("no signer certificate could be read from the packaged APK")
+                !certificateSha256.equals(expectedCertificateSha256, ignoreCase = true) ->
+                    violations += SigningViolation(
+                        "signing certificate is $certificateSha256, pinned is $expectedCertificateSha256 — " +
+                            "every published artifact must share one certificate (RELEASING.md) or an " +
+                            "operator updating from a previously installed build hits " +
+                            "INSTALL_FAILED_UPDATE_INCOMPATIBLE, which the on-device installer shows as " +
+                            "\"Package appears to be invalid\" rather than as a signature-mismatch message " +
+                            "(register, debug-fix session 2026-09-19)",
+                    )
+            }
+        }
+        return violations
+    }
 
     /**
      * P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): the boundary check proving the

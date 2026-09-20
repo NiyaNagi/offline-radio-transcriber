@@ -10,8 +10,10 @@ import org.ort.gradle.BundledAssetPackagingGuardTask
 import org.ort.gradle.FetchBundledAssetsTask
 import org.ort.gradle.FetchSherpaNativeTask
 import org.ort.gradle.NativeLibraryPackagingGuardTask
+import org.ort.gradle.PlatformGuards
 import org.ort.gradle.PublishModelMirrorTask
 import org.ort.gradle.SherpaNativeManifest
+import org.ort.gradle.SigningStabilityGuardTask
 import java.io.File
 
 plugins {
@@ -60,6 +62,47 @@ extensions.configure<BaseAppModuleExtension> {
         buildConfigField("String", "FIELD_REPORT_TOKEN", "\"\"")
     }
 
+    // Debug-fix session (2026-09-19, operator report: "App not installed. Package appears to be
+    // invalid."): root cause was AGP's own auto-generated `~/.android/debug.keystore`, freshly
+    // created on every GitHub Actions run because the runner is a new VM each time — confirmed
+    // directly: `apksigner verify --print-certs` on the published `v0.1.1` and a `latest-build`
+    // reported two different certificate SHA-256 digests for the same `org.ort.app` package, and
+    // resigning a published APK's own bytes with a second key and installing it over the first on
+    // a real device reproduced `INSTALL_FAILED_UPDATE_INCOMPATIBLE`.
+    //
+    // **A first version of this fix checked a signing keystore into the repository.** Rejected on
+    // review: this repository is public, and a published private key would let anyone sign an APK
+    // Android accepts as an update to the real one — the opposite of the guarantee this fix
+    // exists to provide. The key now lives ONLY as GitHub Actions secrets
+    // (`ORT_RELEASE_KEYSTORE_BASE64` and its three companions — see RELEASING.md's "Signing"
+    // section for how the operator generates and sets them), decoded to a temp file by
+    // `release.yml` at run time and never committed, printed, or cached. This build script reads
+    // that temp file's path and the passwords/alias from environment variables `release.yml` sets
+    // for the one step that assembles the published artifact — exactly the same pattern this file
+    // already uses for `HF_TOKEN` and `ORT_FIELD_REPORT_TOKEN` below.
+    //
+    // A **plain local `assembleFullDebug`** (no such environment variables set) gets AGP's own
+    // default, per-machine debug keystore, exactly as before this session — this is deliberate
+    // (coordinator direction): a local developer build must never fail or behave differently for
+    // lacking a secret only CI holds. Only `verifyReleaseSigningStability` below, and only when
+    // explicitly told to enforce the pin (`-PortEnforcePinnedReleaseSigning=true`, `release.yml`
+    // only), cares whether the certificate actually matches.
+    val releaseSigningStoreFile = providers.environmentVariable("ORT_RELEASE_SIGNING_STORE_FILE")
+    val releaseSigningStorePassword = providers.environmentVariable("ORT_RELEASE_SIGNING_STORE_PASSWORD")
+    val releaseSigningKeyAlias = providers.environmentVariable("ORT_RELEASE_SIGNING_KEY_ALIAS")
+    val releaseSigningKeyPassword = providers.environmentVariable("ORT_RELEASE_SIGNING_KEY_PASSWORD")
+
+    if (releaseSigningStoreFile.isPresent) {
+        signingConfigs {
+            create("release") {
+                storeFile = File(releaseSigningStoreFile.get())
+                storePassword = releaseSigningStorePassword.orNull
+                keyAlias = releaseSigningKeyAlias.orNull
+                keyPassword = releaseSigningKeyPassword.orNull
+            }
+        }
+    }
+
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
@@ -82,6 +125,11 @@ extensions.configure<BaseAppModuleExtension> {
                 "FIELD_REPORT_TOKEN",
                 "\"${providers.environmentVariable("ORT_FIELD_REPORT_TOKEN").getOrElse("")}\"",
             )
+            // See this block's own top-of-file comment: only present when release.yml has decoded
+            // the release-signing secrets into the environment; absent for every local build.
+            if (releaseSigningStoreFile.isPresent) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -355,6 +403,61 @@ val verifySherpaNativeLibrariesPackaged = tasks.register<NativeLibraryPackagingG
 
 tasks.named("check") { dependsOn(verifySherpaNativeLibrariesPackaged) }
 
+// Debug-fix session (2026-09-19, reworked after coordinator review): the signing-stability half of
+// the same fix verifySherpaNativeLibrariesPackaged models above (an assembled-APK guard, not a
+// declared-coordinate one) — see PlatformGuards.signingStabilityViolations's own KDoc for the full
+// defect account. Targets the `full`-flavor debug APK, the one artifact `release.yml` actually
+// publishes (same path verifySherpaNativeLibrariesPackaged already checks, above).
+//
+// This does NOT fail a plain local `assembleFullDebug`: `enforceExpectedCertificate` defaults to
+// `false` unless the invocation explicitly passes `-PortEnforcePinnedReleaseSigning=true`
+// (release.yml only, right after it has built with the injected release-signing secrets) — a
+// local build, signed with AGP's own per-machine debug key, is expected to differ from the pin
+// and must not break the build for that. What IS always checked, in every invocation: the APK is
+// actually verifiably signed with at least a v2 scheme — a build that ships unsigned or v1-only
+// is a real defect on any machine, not just CI's.
+//
+// The expected digest itself is deliberately NOT a source constant (a first version of this fix
+// hardcoded one derived from a keystore that got checked into the repository — rejected on review:
+// a public repo must never carry a private signing key). It is read from
+// [releaseCertificateDigestFile] — checked in, starts at the literal placeholder `UNSET` — or
+// overridden by the `ortReleaseCertificateSha256` Gradle property, so the operator can configure it
+// without touching build logic once the real key exists. See RELEASING.md's "Signing" section for
+// exactly what to generate and paste in.
+val releaseCertificateDigestFile = rootProject.layout.projectDirectory
+    .file("buildSrc/signing/release-certificate.sha256")
+
+fun readPinnedCertificateDigest(): String? {
+    val file = releaseCertificateDigestFile.asFile
+    if (!file.exists()) return null
+    val configured = file.readLines()
+        .map { it.substringBefore('#').trim() }
+        .firstOrNull { it.isNotEmpty() }
+    return configured?.takeUnless { it.equals("UNSET", ignoreCase = true) }
+}
+
+val verifyReleaseSigningStability = tasks.register<SigningStabilityGuardTask>(
+    "verifyReleaseSigningStability",
+) {
+    group = "verification"
+    description = "Fails if the packaged full-flavor debug APK is not installably signed, and, " +
+        "when -PortEnforcePinnedReleaseSigning=true, if its certificate has drifted from the " +
+        "pinned digest in buildSrc/signing/release-certificate.sha256 (debug-fix session " +
+        "2026-09-19; release.yml only — see RELEASING.md)."
+    apkFile.set(layout.buildDirectory.file("outputs/apk/full/debug/app-full-debug.apk"))
+    pinnedCertificateSha256.set(
+        providers.gradleProperty("ortReleaseCertificateSha256").orElse(
+            provider { readPinnedCertificateDigest() ?: "" },
+        ).map { it.ifBlank { null } },
+    )
+    enforceExpectedCertificate.set(
+        providers.gradleProperty("ortEnforcePinnedReleaseSigning").map { it.toBoolean() }.orElse(false),
+    )
+    dependsOn("assembleFullDebug")
+}
+
+tasks.named("check") { dependsOn(verifyReleaseSigningStability) }
+
 // P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): [BundledAssetPackagingGuardTask]'s own
 // KDoc explains why, unlike verifySherpaNativeLibrariesPackaged above, this guard is deliberately
 // NOT scoped to one flavor's APK — the whole point of this fix is that `full` and `play` must
@@ -389,8 +492,8 @@ tasks.named("check") {
 }
 
 // `app/src/full/assets/bundled/` (fetchBundledAssets' own output, P24 fix) is an *implicit* input
-// to a whole family of AGP-internal tasks that read the full-flavor variant's assets directly — not just
-// `mergeDebugAssets`/`mergeReleaseAssets`, but also lint's own model-writer tasks
+// to a whole family of AGP-internal tasks that read the full-flavor variant's assets directly — not
+// just `mergeDebugAssets`/`mergeReleaseAssets`, but also lint's own model-writer tasks
 // (`generateDebugLintReportModel` and siblings), found by actually running the full `build` task
 // and reading what Gradle's own task-validation named next, rather than guessed up front. Running
 // any of them in the same build as `fetchBundledAssets` with no declared relationship trips
