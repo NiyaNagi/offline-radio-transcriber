@@ -732,7 +732,7 @@ released by P27; P22's setup steps released for P28 to extend).
   condition from D49 is recorded as a release gate somewhere reachable (RELEASING.md or the
   release workflow itself), not just in this prompt.
 
-- [ ] **P29 · D45 relabel — "same voice" becomes "same callsign"; `CatalogDao.allVoiceprints()`**
+- [x] **P29 · D45 relabel — "same voice" becomes "same callsign"; `CatalogDao.allVoiceprints()`**
   *(`:app` correction UI, `:data`)* — D45, FR-SPK-5's own amendment note.
 
   **Read first:** the D45 amendment note under "Persistent voice identity (D28)" and the note

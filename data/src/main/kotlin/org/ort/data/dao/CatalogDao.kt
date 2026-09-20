@@ -49,6 +49,18 @@ public interface CatalogDao {
     @Query("SELECT * FROM voiceprint WHERE boundStationId = :stationId")
     public suspend fun voiceprintsForStation(stationId: String): List<VoiceprintEntity>
 
+    /**
+     * D45: every voiceprint row, bound or not — the "every voiceprint" query
+     * [org.ort.app.fieldreport.bundle.VoiceprintEmbeddingsProducer] previously had no way to make,
+     * so a voiceprint never bound to a station ([VoiceprintEntity.boundStationId] `== null`) was
+     * silently unreachable by walking [voiceprintsForStation] over every known station — that walk
+     * can, by construction, never find a row with no station at all. Closes the gap
+     * [VoiceprintEmbeddingsProducer]'s own doc comment named as real follow-up work (register
+     * R-1010).
+     */
+    @Query("SELECT * FROM voiceprint")
+    public suspend fun allVoiceprints(): List<VoiceprintEntity>
+
     @Insert
     public suspend fun insert(entity: ThreadEntity)
 

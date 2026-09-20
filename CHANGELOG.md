@@ -32,6 +32,73 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (P29: D45 relabel — "same voice" becomes "same callsign"; `CatalogDao.allVoiceprints()`)
+
+### <pending> — P29: the correction-scope UI stops claiming a voice match it never makes; `CatalogDao.allVoiceprints()` closes the field-report gap for unbound voiceprints
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/CorrectionPolling.kt` (`CorrectionScope`),
+`app/src/main/kotlin/org/ort/app/ui/screens/CorrectionSheet.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailContent.kt` (enum/param call sites
+only), `app/src/main/kotlin/org/ort/app/fieldreport/bundle/VoiceprintEmbeddingsProducer.kt`,
+`data/src/main/kotlin/org/ort/data/dao/CatalogDao.kt`, and the tests under `app/src/test/**` and
+`data/src/test/**` for each.
+**Requirements/ACs:** D45, FR-SPK-5's own amendment note, FR-SPK-20, FR-OBS-9.
+**What changed:**
+1. `CorrectionScope.EVERY_OVER_SAME_VOICE` renamed to `EVERY_OVER_SAME_CALLSIGN` everywhere it
+   appears (`CorrectionPolling.kt`, `CorrectionSheet.kt`, `TransmissionDetailContent.kt`, and every
+   test referencing it). `voiceprintId` is `null` on every transmission `RealCaptureService.kt`
+   ever writes, and `:identity`'s cross-session enrolment does not exist, so this scope has always
+   actually propagated by `stationId` — callsign, not voice. D45 defers the voice library
+   (FR-SPK-11..26) past 1.0 and requires the UI to say what it does.
+2. `CorrectionSheet.kt`'s Tier C radio row now reads "Every over with the same callsign" (was
+   "Every over matched to this voice"); the Tier B helper text under "A station heard before" no
+   longer says naming a station "tells the matcher this voice is theirs" (implying a working voice
+   matcher that has no production caller) — it now says naming one "corrects every other over
+   currently sharing this over's callsign," which is what `applyCorrection` actually does. The
+   file's class doc comment and `CorrectionPolling.kt`'s "Propagation scope" doc comment were
+   rewritten to state the gap plainly rather than repeat the artboard's stale wording uncorrected.
+3. `CatalogDao.allVoiceprints()` added (`SELECT * FROM voiceprint`, no `WHERE`) — the "every
+   voiceprint" query `VoiceprintEmbeddingsProducer.kt`'s own doc comment named as missing (register
+   R-1010). `VoiceprintEmbeddingsProducer.loadVoiceprints` now calls it directly instead of walking
+   every known station via `ActivityDao.listStations()` + `CatalogDao.voiceprintsForStation`, a walk
+   that could never reach a voiceprint with `boundStationId == null` by construction. A voiceprint
+   never bound to a station is now included in a field-report upload, matching what the FR-OBS-9
+   consent screen already names before every upload.
+**Verified:**
+`./gradlew :data:testDebugUnitTest --tests "org.ort.data.dao.CatalogDaoTest"`,
+`./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.fieldreport.bundle.VoiceprintEmbeddingsProducerTest" --tests "org.ort.app.ui.screens.CorrectionSheetTest" --tests "org.ort.app.ui.data.CorrectionPollingTest" --tests "org.ort.app.ui.screens.TransmissionDetailContentTest" --tests "org.ort.app.ui.screens.PropagatedScreenTest" --tests "org.ort.app.diagnostics.localsave.LocalSaveBundleBuilderTest"` —
+all green. `./gradlew ktlintCheck detekt` — green, whole project. Each new/changed assertion shown
+to discriminate: `CatalogDao.allVoiceprints()` removed → `CatalogDaoTest` fails to compile for the
+right reason, restored → passes; `VoiceprintEmbeddingsProducer.loadVoiceprints` reverted to the old
+station-walk → both its new/changed tests fail with `expected:<1> but was:<0>`, restored → pass;
+`CorrectionSheet.kt`'s radio label reverted to "Every over matched to this voice" → both the new
+D45 tests in `CorrectionSheetTest.kt` fail for the right reason (one can't find the new label to
+click, the other finds the old label `assertDoesNotExist` was told not to expect), restored → pass.
+Full gate, emulator and tour not run this session, per this unit's own instructions.
+**Left open / not done:**
+- `TransmissionDetailScreen.kt`'s separate `buildInferredExplanationText` ("Not heard in this over.
+  Matched by voice to `<time>`, where the callsign was heard clearly.", R-423/R-053) implies the
+  same kind of voice-match claim, and by the functional spec's own definition INFERRED-with-source
+  "is attributed by voiceprint cluster match — the only mechanism it documents"
+  (`ThreadGroupingMapper.reasoningFor`'s own doc comment quotes it) — but nowhere in `:pipeline`'s
+  `passb/CallsignResolver.kt` or `PassB.kt` does production code ever construct an `Attribution`
+  with a non-null `sourceTransmissionId`, so this sentence looks to be equally unreachable in
+  production today. This is the same class of overclaim as this unit's own finding, in a different
+  subsystem (Pass B / attribution, not correction propagation) and outside this unit's Owns list
+  (`:pipeline`, `:identity`, `TransmissionDetailScreen.kt`'s non-correction-scope copy). Reported
+  for the lead's own investigation and routing, not fixed here.
+- `design/canvas/Detail-Correct-C.dc.html` still draws both the old radio-row label ("Every over
+  matched to this voice") and the Tier C amber warning ("...cannot feed the priors or the voice
+  match") verbatim — outside this unit's Owns list to edit. The radio-row label was changed in code
+  anyway per D45's explicit mandate (the functional spec's own amendment note overrides the stale
+  artboard), which leaves a code/artboard mismatch for whoever owns `design/canvas/**` to close.
+  The amber-warning phrase was left unchanged, matching the artboard, since it names an internal
+  mechanism (`applyCorrection`'s real, tested, currently production-unreachable voiceprint-rebind
+  branch) rather than the propagation-scope naming D45 targets — flagged rather than judged, since
+  changing it would also require an artboard change this unit cannot make.
+- Tour ids for the lead to recapture at font scale 1.0 and 2.0: wherever `Detail-Correct-C.dc.html`
+  (Tier C's typed-callsign sheet, the "Apply to" radio choice) is reachable in the canonical tour.
+
 ## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a secret-driven release key and a configurable signing-stability guard)
 
 ### da4237b5 — debug-fix session · sign published artifacts from GitHub Actions secrets, never a committed key, and pin the certificate only where a stable key is expected

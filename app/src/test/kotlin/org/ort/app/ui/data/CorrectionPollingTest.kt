@@ -172,7 +172,7 @@ class CorrectionPollingTest {
     }
 
     @Test
-    fun `R_052 EVERY_OVER_SAME_VOICE propagates to every transmission sharing the voiceprint`(): Unit = runTest {
+    fun `R_052 EVERY_OVER_SAME_CALLSIGN propagates to every transmission sharing the voiceprint`(): Unit = runTest {
         db.sessionDao().insert(session())
         db.transmissionDao().insert(transmission("TX1", voiceprintId = "V1"))
         db.transmissionDao().insert(transmission("TX2", voiceprintId = "V1"))
@@ -181,7 +181,7 @@ class CorrectionPollingTest {
         val outcome = CorrectionPolling.applyCorrection(
             context,
             request("TX1", "K7LWH", "KA7LWH"),
-            CorrectionScope.EVERY_OVER_SAME_VOICE,
+            CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
         )
 
         assertEquals(2, outcome.overCount)
@@ -200,7 +200,7 @@ class CorrectionPollingTest {
         val outcome = CorrectionPolling.applyCorrection(
             context,
             request("TX1", "K7LWH", "KA7LWH"),
-            CorrectionScope.EVERY_OVER_SAME_VOICE,
+            CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
         )
 
         assertEquals(2, outcome.overCount)
@@ -242,7 +242,7 @@ class CorrectionPollingTest {
         val outcome = CorrectionPolling.applyCorrection(
             context,
             request("TX1", "K7LWH", "KA7LWH", tier = CorrectionTier.PICK_CANDIDATE),
-            CorrectionScope.EVERY_OVER_SAME_VOICE,
+            CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
         )
 
         // The voiceprint now belongs to the corrected station...
@@ -275,7 +275,7 @@ class CorrectionPollingTest {
         val outcome = CorrectionPolling.applyCorrection(
             context,
             request("TX1", "K7LWH", "N0CALL", tier = CorrectionTier.FREE_TEXT),
-            CorrectionScope.EVERY_OVER_SAME_VOICE,
+            CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
         )
 
         assertFalse(outcome.voiceprintReassigned)
@@ -317,7 +317,7 @@ class CorrectionPollingTest {
         val outcome = CorrectionPolling.applyCorrection(
             context,
             request("TX1", "K7LWH", "KA7LWH"),
-            CorrectionScope.EVERY_OVER_SAME_VOICE,
+            CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
         )
 
         CorrectionPolling.undoAll(context, outcome, atMillis = 700L)
@@ -350,7 +350,7 @@ class CorrectionPollingTest {
         val outcome = CorrectionPolling.applyCorrection(
             context,
             request("TX1", "K7LWH", "KA7LWH"),
-            CorrectionScope.EVERY_OVER_SAME_VOICE,
+            CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
         )
 
         // Real, not placeholder: exactly the propagation's own blast radius, exactly two named
@@ -374,7 +374,7 @@ class CorrectionPollingTest {
         val outcome = CorrectionPolling.applyCorrection(
             context,
             request("TX1", "K7LWH", "KA7LWH"),
-            CorrectionScope.EVERY_OVER_SAME_VOICE,
+            CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
         )
 
         CorrectionPolling.undoAll(context, outcome, atMillis = 600L)
@@ -422,7 +422,7 @@ class CorrectionPollingTest {
         db.transmissionDao().insert(transmission("TX2", voiceprintId = "V1"))
         db.transmissionDao().insert(transmission("TX3", voiceprintId = "V2"))
 
-        val count = CorrectionPolling.affectedOverCount(context, "TX1", CorrectionScope.EVERY_OVER_SAME_VOICE)
+        val count = CorrectionPolling.affectedOverCount(context, "TX1", CorrectionScope.EVERY_OVER_SAME_CALLSIGN)
 
         assertEquals(2, count)
     }

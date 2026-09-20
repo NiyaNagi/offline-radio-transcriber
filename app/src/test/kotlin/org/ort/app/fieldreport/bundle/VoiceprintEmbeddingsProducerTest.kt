@@ -81,13 +81,22 @@ class VoiceprintEmbeddingsProducerTest {
         assertTrue(Base64.getDecoder().decode(entry.getString("embeddingBase64")).contentEquals(embedding))
     }
 
+    /**
+     * D45: `CatalogDao.allVoiceprints()` closes the gap this test used to document (register
+     * R-1010) — a voiceprint never bound to a station is no longer silently dropped from the
+     * upload, so it must appear here just like a bound one.
+     */
     @Test
-    fun `a voiceprint never bound to any station is honestly absent, not fabricated`() = runTest {
-        db.catalogDao().insert(voiceprint("V2", byteArrayOf(9), boundStationId = null))
+    fun `D45 a voiceprint never bound to any station is now reachable, not silently dropped`() = runTest {
+        val embedding = byteArrayOf(9)
+        db.catalogDao().insert(voiceprint("V2", embedding, boundStationId = null))
 
         val bytes = VoiceprintEmbeddingsProducer.produce(context)
         val array = JSONObject(String(bytes, Charsets.UTF_8)).getJSONArray("voiceprints")
-        assertEquals(0, array.length())
+        assertEquals(1, array.length())
+        val entry = array.getJSONObject(0)
+        assertEquals("V2", entry.getString("id"))
+        assertTrue(Base64.getDecoder().decode(entry.getString("embeddingBase64")).contentEquals(embedding))
     }
 
     @Test
@@ -107,10 +116,11 @@ class VoiceprintEmbeddingsProducerTest {
         assertEquals(0, VoiceprintEmbeddingsProducer.count(context))
     }
 
+    /** D45: the unbound voiceprint is now counted too — see the `produce`-side test above. */
     @Test
-    fun `WPDUMP count is zero when the only voiceprint is never bound to a station`() = runTest {
+    fun `D45 WPDUMP count is one when the only voiceprint is never bound to a station`() = runTest {
         db.catalogDao().insert(voiceprint("V2", byteArrayOf(9), boundStationId = null))
-        assertEquals(0, VoiceprintEmbeddingsProducer.count(context))
+        assertEquals(1, VoiceprintEmbeddingsProducer.count(context))
     }
 
     @Test

@@ -40,7 +40,7 @@ class CorrectionSheetTest {
                         RankedCandidateViewState("KA7LWH", "score 4.4", chosen = false),
                         RankedCandidateViewState("K7LVH", "score 3.1", chosen = false),
                     ),
-                    everyOverSameVoiceCount = 6,
+                    everyOverSameCallsignCount = 6,
                     onSearchStations = noStations,
                     onApply = { callsign, tier, scope -> applied = Triple(callsign, tier, scope) },
                     onDismiss = {},
@@ -50,7 +50,7 @@ class CorrectionSheetTest {
 
         composeTestRule.onNodeWithContentDescription("Correct to KA7LWH", substring = true).performClick()
 
-        assert(applied == Triple("KA7LWH", CorrectionTier.PICK_CANDIDATE, CorrectionScope.EVERY_OVER_SAME_VOICE)) {
+        assert(applied == Triple("KA7LWH", CorrectionTier.PICK_CANDIDATE, CorrectionScope.EVERY_OVER_SAME_CALLSIGN)) {
             "got $applied"
         }
     }
@@ -71,7 +71,7 @@ class CorrectionSheetTest {
                 CorrectionSheet(
                     currentCallsign = "K7LWH",
                     candidates = emptyList(),
-                    everyOverSameVoiceCount = 1,
+                    everyOverSameCallsignCount = 1,
                     onSearchStations = { query ->
                         searched = query
                         StationSearchOutcome(
@@ -104,7 +104,7 @@ class CorrectionSheetTest {
         composeTestRule.onNodeWithContentDescription("Correct to K9ZZZ", substring = true).performClick()
 
         assert(searched == "K9")
-        assert(applied == Triple("K9ZZZ", CorrectionTier.SEARCH_LEXICON, CorrectionScope.EVERY_OVER_SAME_VOICE))
+        assert(applied == Triple("K9ZZZ", CorrectionTier.SEARCH_LEXICON, CorrectionScope.EVERY_OVER_SAME_CALLSIGN))
     }
 
     @Test
@@ -114,7 +114,7 @@ class CorrectionSheetTest {
                 CorrectionSheet(
                     currentCallsign = "K7LWH",
                     candidates = emptyList(),
-                    everyOverSameVoiceCount = 1,
+                    everyOverSameCallsignCount = 1,
                     onSearchStations = noStations,
                     onApply = { _, _, _ -> },
                     onDismiss = {},
@@ -137,7 +137,7 @@ class CorrectionSheetTest {
                 CorrectionSheet(
                     currentCallsign = "K7LWH",
                     candidates = emptyList(),
-                    everyOverSameVoiceCount = 6,
+                    everyOverSameCallsignCount = 6,
                     onSearchStations = noStations,
                     onApply = { callsign, tier, scope -> applied = Triple(callsign, tier, scope) },
                     onDismiss = {},
@@ -152,15 +152,22 @@ class CorrectionSheetTest {
         assert(applied == Triple("N0CALL", CorrectionTier.FREE_TEXT, CorrectionScope.THIS_OVER_ONLY)) { "got $applied" }
     }
 
+    /**
+     * D45: the radio row's own label is the user-facing assertion this relabel is about — it must
+     * say "callsign," never "voice," because `voiceprintId` is null on every transmission this
+     * build writes and the scope has always actually matched by callsign (see [CorrectionScope]'s
+     * own doc comment). Asserted on the real string content this once, per constitution II's own
+     * carve-out for "a factual claim about what propagates" rather than prose a designer owns.
+     */
     @Test
-    fun `R_058 the every-over-same-voice option is chooseable and carries the real count`() {
+    fun `D45 R_058 the every-over-same-callsign option is chooseable and carries the real count`() {
         var applied: Triple<String, CorrectionTier, CorrectionScope>? = null
         composeTestRule.setContent {
             OrtTheme {
                 CorrectionSheet(
                     currentCallsign = "K7LWH",
                     candidates = emptyList(),
-                    everyOverSameVoiceCount = 6,
+                    everyOverSameCallsignCount = 6,
                     onSearchStations = noStations,
                     onApply = { callsign, tier, scope -> applied = Triple(callsign, tier, scope) },
                     onDismiss = {},
@@ -170,9 +177,30 @@ class CorrectionSheetTest {
 
         composeTestRule.onNodeWithText("Type a callsign").performClick()
         composeTestRule.onNodeWithContentDescription("Typed callsign").performTextInput("N0CALL")
-        composeTestRule.onNodeWithText("Every over matched to this voice").performClick()
+        composeTestRule.onNodeWithText("Every over with the same callsign").performClick()
         composeTestRule.onNodeWithText("Save unverified correction").performClick()
 
-        assert(applied?.third == CorrectionScope.EVERY_OVER_SAME_VOICE) { "got $applied" }
+        assert(applied?.third == CorrectionScope.EVERY_OVER_SAME_CALLSIGN) { "got $applied" }
+    }
+
+    /** D45: no surface in this sheet may say "voice" where the propagation is callsign-based. */
+    @Test
+    fun `D45 no correction-scope copy in this sheet says voice`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                CorrectionSheet(
+                    currentCallsign = "K7LWH",
+                    candidates = emptyList(),
+                    everyOverSameCallsignCount = 6,
+                    onSearchStations = noStations,
+                    onApply = { _, _, _ -> },
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Type a callsign").performClick()
+        composeTestRule.onNodeWithText("Every over matched to this voice").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Every over with the same callsign").assertExists()
     }
 }
