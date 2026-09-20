@@ -57,3 +57,7 @@ venv/
 # sherpa-native.json — that manifest is the source-controlled fact; the extracted .so files are
 # not, same rule as app/src/main/assets/bundled/ above.
 /app/src/main/jniLibs/
+
+# Local capture evidence the register rows cite by path; never committed (constitution VIII:
+# only a full canonical tour replaces results/ui-audit/).
+scratchpad/
