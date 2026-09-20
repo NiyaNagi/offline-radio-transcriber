@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (P29: D45 relabel — "same voice" becomes "same callsign"; `CatalogDao.allVoiceprints()`)
 
-### <pending> — P29: the correction-scope UI stops claiming a voice match it never makes; `CatalogDao.allVoiceprints()` closes the field-report gap for unbound voiceprints
+### c9d2a599 — P29: the correction-scope UI stops claiming a voice match it never makes; `CatalogDao.allVoiceprints()` closes the field-report gap for unbound voiceprints
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/CorrectionPolling.kt` (`CorrectionScope`),
 `app/src/main/kotlin/org/ort/app/ui/screens/CorrectionSheet.kt`,
