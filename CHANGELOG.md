@@ -55,7 +55,8 @@ router branch); `app/src/main/kotlin/org/ort/app/ui/setup/` (`SetupStep.ANALYTIC
 render branch, `AnalyticsConsentScreen.kt` new); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
 and `app/src/test/kotlin/org/ort/app/ui/setup/{SetupActivityTest,SetupStateMachineTest}.kt` (the
 new gate's fixture seeding — the identical regression P22 already documented, fixed the same way a
-third time); new `tools/analytics/` (Python: `ingest.py`, `server.py`, `loader.py`, `queries.py`,
+third time); `app/src/debug/kotlin/org/ort/app/debug/tour/SetupStepIds.kt` (S-id `S11b`),
+`tools/ui-audit/tour.json` (the new setup and Settings tour steps); new `tools/analytics/` (Python: `ingest.py`, `server.py`, `loader.py`, `queries.py`,
 `report.py`, `cli.py`, `pyproject.toml`, `tests/`); `.github/workflows/ci.yml` (the `analytics`
 job); `.gitignore` (raw analytics data/reports never committed); `RELEASING.md` (D49's
 private-destination-before-public-launch condition, recorded as a release gate).
@@ -133,7 +134,9 @@ private-destination-before-public-launch condition, recorded as a release gate).
   `ANALYTICS_CONSENT` gate (the identical regression shape P22's own `jurisdictionNoticeSeen` fix
   already documents, found by actually running the suite, not by inspection) and one
   `SettingsRootScreenTest` icon-reuse assertion (ANALYTICS deliberately reuses CONTRIBUTE's own
-  `OrtIcons.lock`).
+  `OrtIcons.lock`); a second run after adding the debug scenario/tour steps below caught and fixed
+  a real `UninitializedPropertyAccessException` in `SettingsAnalyticsSubScreen`
+  (`org.ort.app.debug.tour.TourStepsTest`'s `R_TOUR_STEPS`).
 - `./gradlew ktlintCheck detekt` — green across the whole project (fixed one detekt `LongMethod`
   by extracting `SettingsAnalyticsSubScreen` out of `SettingsSubScreen`, one `UnusedPrivateProperty`
   in a net test, and ran `ktlintFormat` for the rest).
@@ -149,9 +152,19 @@ private-destination-before-public-launch condition, recorded as a release gate).
   Settings/setup surfaces are complete and ready to receive events; wiring individual screens and
   `:pipeline` passes to emit them is follow-on work for the units that own those files.
 - **No artboard exists yet** for `SettingsAnalyticsScreen`/`AnalyticsConsentScreen` (Constitution
-  VIII) — needs drawing and a tour capture at font scale 1.0/2.0 before this can be marked visually
-  verified; scenario/tour ids to add: a debug scenario that resumes setup at `ANALYTICS_CONSENT`,
-  and a `Settings/Analytics` tour step reachable from the root's new Privacy-section row.
+  VIII) — needs drawing before either can be marked visually verified. The debug scenario and tour
+  steps to capture both screens are already added (see Scope): scenario `setup-analytics-consent`
+  (`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, S-id `S11b` registered in
+  `app/src/debug/kotlin/org/ort/app/debug/tour/SetupStepIds.kt`) for `ANALYTICS_CONSENT`, and tour
+  ids `setup-analytics-consent/S11b-analytics-consent` (+ `@2x`/`@2x-end`) and
+  `overnight/CF13-settings-analytics` (+ `@2x`/`@2x-end`) in `tools/ui-audit/tour.json` for both
+  screens — the lead's tour run will capture them as soon as an artboard exists to compare
+  against. Running the real tour test caught a genuine bug the moment these steps were wired in:
+  `SettingsAnalyticsSubScreen` read `AnalyticsAppWiring.controller` (a `lateinit var`) before
+  `configureOnce` had ever run on a cold destination-only entry (`OrtApplication.onCreate` never
+  runs under Robolectric), throwing `UninitializedPropertyAccessException` — fixed by calling
+  `configureOnce` explicitly at the top of that composable; `TourStepsTest`'s
+  `R_TOUR_STEPS` test is what caught it.
   `SettingsAnalyticsScreenTest`'s own toggle-state assertions (`assertIsOn`/`assertIsOff`) were
   found flaky under this suite's shared Robolectric semantics tree in a way this session did not
   fully root-cause (an identical `onNodeWithText` selector resolved for `.assertExists()` in one

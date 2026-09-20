@@ -215,6 +215,9 @@ public object Scenarios {
         // not-yet-installed model would show. See [setupModels]'s own doc comment for the real
         // production gap ([DebugModelsSetupOverride]'s own kdoc) this scenario stands in for.
         "setup-models",
+        // P28 (D42, FR-ANL-10, AC-180) — the analytics-consent step (S11b) needs a base that
+        // resumes exactly there. See [setupAnalyticsConsent]'s own doc comment.
+        "setup-analytics-consent",
         "clock-dst",
         "usb-permission",
         "interrupted-pass",
@@ -337,6 +340,7 @@ public object Scenarios {
             "setup-radio" -> setupRadio(context)
             "setup-verified-local-mic" -> setupVerifiedLocalMic(context)
             "setup-models" -> setupModels(context)
+            "setup-analytics-consent" -> setupAnalyticsConsent(context)
             "clock-dst" -> clockDst(context, db)
             "usb-permission" -> usbPermission(context, db)
             "interrupted-pass" -> interruptedPass(context, db)
@@ -2391,6 +2395,24 @@ public object Scenarios {
                 ),
             ),
         )
+    }
+
+    /**
+     * `setup-analytics-consent` — P28 (D42, FR-ANL-10, AC-180): a base that resumes exactly on
+     * [org.ort.app.ui.setup.SetupStep.ANALYTICS_CONSENT] (S11b) — every earlier gate satisfied via
+     * [verifiedInputStore] (which itself sets `analyticsConsentSeen = true` for every *other*
+     * scenario built on it), overridden back to `false` here so
+     * [org.ort.app.ui.setup.SetupStateMachine.stepFor] halts on this step instead of proceeding to
+     * `READY`.
+     */
+    private fun setupAnalyticsConsent(context: Context): LoadResult {
+        val store = verifiedInputStore(context)
+        store.levelInBand = true
+        store.levelPeakDbfs = -14.0
+        store.overnightStepSeen = true
+        store.radioChoice = RadioChoice.NONE
+        store.analyticsConsentSeen = false
+        return LoadResult(0, 0, null)
     }
 
     /**

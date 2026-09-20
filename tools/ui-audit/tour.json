@@ -132,6 +132,9 @@
     { "id": "overnight/CF10-settings-about", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ABOUT" } },
     { "id": "overnight/CF12-settings-licenses", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "LICENSES" } },
     { "id": "overnight/CF12-settings-licenses@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "LICENSES" }, "fontScale": 2.0 },
+    { "id": "overnight/CF13-settings-analytics", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ANALYTICS" } },
+    { "id": "overnight/CF13-settings-analytics@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ANALYTICS" }, "fontScale": 2.0 },
+    { "id": "overnight/CF13-settings-analytics@2x-end", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ANALYTICS" }, "fontScale": 2.0, "scroll": "end" },
 
     { "id": "overnight/D01-confirmed", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "confirmed" } },
     { "id": "overnight/D02-inferred", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "inferred" } },
@@ -169,6 +172,7 @@
 
     { "id": "setup-mode/S01a-jurisdiction", "setup": "S01a", "scenario": "setup-mode" },
     { "id": "setup-models/S11a-models", "setup": "S11a", "scenario": "setup-models" },
+    { "id": "setup-analytics-consent/S11b-analytics-consent", "setup": "S11b", "scenario": "setup-analytics-consent" },
     { "id": "setup-verified/S01-welcome", "setup": "S01", "scenario": "setup-verified" },
     { "id": "setup-verified/S02-mic", "setup": "S02", "scenario": "setup-verified" },
     { "id": "setup-verified/S03-notify", "setup": "S03", "scenario": "setup-verified" },
@@ -183,6 +187,7 @@
 
     { "id": "setup-mode/S01a-jurisdiction@2x", "setup": "S01a", "scenario": "setup-mode", "fontScale": 2.0 },
     { "id": "setup-models/S11a-models@2x", "setup": "S11a", "scenario": "setup-models", "fontScale": 2.0 },
+    { "id": "setup-analytics-consent/S11b-analytics-consent@2x", "setup": "S11b", "scenario": "setup-analytics-consent", "fontScale": 2.0 },
     { "id": "setup-verified/S01-welcome@2x", "setup": "S01", "scenario": "setup-verified", "fontScale": 2.0 },
     { "id": "setup-verified/S03-notify@2x", "setup": "S03", "scenario": "setup-verified", "fontScale": 2.0 },
     { "id": "setup-verified/S04-input@2x", "setup": "S04", "scenario": "setup-verified", "fontScale": 2.0 },
@@ -194,6 +199,7 @@
 
     { "id": "setup-mode/S01a-jurisdiction@2x-end", "setup": "S01a", "scenario": "setup-mode", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-models/S11a-models@2x-end", "setup": "S11a", "scenario": "setup-models", "fontScale": 2.0, "scroll": "end" },
+    { "id": "setup-analytics-consent/S11b-analytics-consent@2x-end", "setup": "S11b", "scenario": "setup-analytics-consent", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-verified/S01-welcome@2x-end", "setup": "S01", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-verified/S03-notify@2x-end", "setup": "S03", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-verified/S04-input@2x-end", "setup": "S04", "scenario": "setup-verified", "fontScale": 2.0, "scroll": "end" },
