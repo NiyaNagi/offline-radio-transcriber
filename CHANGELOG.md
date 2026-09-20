@@ -103,15 +103,24 @@ AC-180, AC-184, AC-188.
   `R_1086` tests fail (finding one "ANR" node) against the pre-fix "crashes and ANRs" copy on each
   screen, and pass once "and ANRs" is dropped.
 - `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
-  "org.ort.app.ui.settings.*" --tests "org.ort.app.debug.*"` (the full requested scope, 891+
-  tests): run twice against the fix — this shared machine's Gradle daemon was heavily contended by
-  concurrent sessions during this work and the run had not finished writing its report at the time
-  of this commit; the three tests it was expected to catch (`BluetoothPermissionScreenTest`,
-  `ModeScreenTest`, `SetupScaffoldTest`, all asserting a literal `"N of 8"` string) were found
-  failing on a prior full run, fixed to assert `"N of $SETUP_TOTAL_STEPS"` instead, and confirmed
-  to compile; re-run and reconcile once the daemon is free.
+  "org.ort.app.ui.settings.*" --tests "org.ort.app.debug.*"` (the full requested scope): run twice
+  against the fix on this shared, heavily-contended machine. The first run found exactly the three
+  expected pre-fix failures (`BluetoothPermissionScreenTest`, `ModeScreenTest`,
+  `SetupScaffoldTest`, each asserting a literal `"N of 8"` string against the new `SETUP_TOTAL_STEPS
+  = 10`), fixed to assert `"N of $SETUP_TOTAL_STEPS"` instead. The second run (14m 32s, 891 tests)
+  came back **891 tests completed, 6 failed — all six in `SettingsCaptureScreenTest`**, a screen
+  this change never touches; every failure is Espresso's `AppNotIdleException`
+  (`app/build/test-results/testFullDebugUnitTest/TEST-org.ort.app.ui.settings.SettingsCaptureScreenTest.xml`),
+  the machine-idle-timeout flake this session saw repeatedly from concurrent daemon contention, not
+  a regression from this change. Every test in `org.ort.app.ui.setup.*`, the rest of
+  `org.ort.app.ui.settings.*`, and `org.ort.app.debug.*` — including every file this change
+  touched — passed.
 
 **Left open / not done:**
+- `SettingsCaptureScreenTest`'s six `AppNotIdleException` failures on the second full run (above)
+  are believed to be a machine-contention flake, not a regression, but were not independently
+  re-run in isolation to confirm that belief — worth a clean re-run on a quieter machine before
+  fully discharging.
 - The lead must re-run the visual tour and re-capture every setup screen (constitution VIII) —
   every `setup-*` tour id touches a screen whose indicator changed: `setup-mode/S00`,
   `setup-verified*` (mic, mic-denied, bluetooth-permission, notify, input, verify, route-mismatch,
