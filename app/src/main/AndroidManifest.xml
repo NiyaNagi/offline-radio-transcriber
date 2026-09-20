@@ -83,5 +83,22 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+
+        <!-- P30 (FR-EXP-7): the share sheet's own FileProvider — ACTION_SEND needs a content://
+             Uri, never a file:// one (Android refuses the latter across app boundaries from API
+             24 on). Not exported: only this app's own share-sheet code (SettingsContent.kt) ever
+             resolves a Uri through it, and grantUriPermissions is what lets the *receiving* app
+             (whatever the operator picks in the chooser) read that one file without a broader
+             grant. `${applicationId}` resolves to org.ort.app for both build flavors (neither
+             applies an id suffix). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

@@ -140,6 +140,15 @@ public fun SettingsExportScreen(
     previewCount: suspend (Context, ExportRequest) -> ExportCountPreview = ExportCoordinator::previewCount,
     previewSizeBytes: suspend (Context, ExportRequest) -> Long = ExportCoordinator::previewSizeBytes,
     suggestedFileName: (ExportRequest) -> String = { ExportCoordinator.suggestedFileName(it) },
+    // P30 (FR-EXP-3, FR-EXP-7): `buildPotaActivity` already existed and was unit-tested but had no
+    // caller anywhere — wired in beside the four format chips, as its own action rather than a
+    // fifth [ExportFileFormat] chip (see that enum's own kdoc for why: POTA is "not one of the
+    // four format chips — a distinct export"). The three share-sheet actions are user-initiated
+    // only — see [org.ort.app.export.ShareCoordinator]'s own kdoc for exactly what "the most
+    // recent" means for each and why (this screen is reached from Settings, not from inside an
+    // already-open digest/thread/detail screen). Bundled into one action holder for the detekt
+    // `LongParameterList` reason [SettingsExportShareActions]'s own kdoc states.
+    shareActions: SettingsExportShareActions = SettingsExportShareActions(),
 ) {
     var scope by remember { mutableStateOf(ExportScope.TONIGHT) }
     var format by remember { mutableStateOf(ExportFileFormat.ADIF) }
@@ -215,7 +224,8 @@ public fun SettingsExportScreen(
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
             Text(text = "Export", style = OrtType.screenTitle, color = OrtColors.textHigh)
             Text(
-                text = "A file you save yourself. The app has nowhere to send it.",
+                text = "Save a file yourself, or share one through your phone's share sheet — " +
+                    "user-initiated only, never automatic.",
                 style = OrtType.subtitle,
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
@@ -227,6 +237,11 @@ public fun SettingsExportScreen(
                 onIncludeTranscriptsChange = { includeTranscripts = it },
             )
             ExportFormatSection(format = format, onFormatChange = { format = it })
+            ExportPotaSection(
+                enabled = scope != ExportScope.RANGE,
+                onExportPota = { shareActions.onExportPota(scope.toRequestScope()) },
+            )
+            ExportShareSection(shareActions)
 
             ExportFooter(
                 scope = scope,
@@ -375,6 +390,89 @@ private fun ExportFormatSection(format: ExportFileFormat, onFormatChange: (Expor
         color = OrtColors.textDim,
         modifier = Modifier.padding(top = OrtSpacing.xs),
     )
+}
+
+/**
+ * P30 (FR-EXP-3, AC-169). A distinct action, not a fifth [ExportFileFormat] chip — see
+ * [SettingsExportScreen]'s own call site for why. Disabled while `A range of nights` is selected,
+ * the identical honest reason `Save file` disables for the same scope
+ * ([ExportScope]'s own kdoc — no [ExportRequestScope] exists for it).
+ */
+@Composable
+private fun ExportPotaSection(enabled: Boolean, onExportPota: () -> Unit) {
+    SectionHeader(label = "POTA", modifier = Modifier.padding(top = OrtSpacing.md))
+    Text(
+        text = "Parks on the Air activity for the scope above — park reference, station, " +
+            "frequency and time, one row per park reference heard.",
+        style = OrtType.subLine,
+        color = OrtColors.textDim,
+        modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
+    )
+    val bg = if (enabled) OrtColors.bgCard else OrtColors.bgChip
+    val fg = if (enabled) OrtColors.textBody else OrtColors.textDisabled
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .requiredHeightIn(min = 44.dp)
+            .background(bg, RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, role = Role.Button, onClick = onExportPota)
+            .padding(horizontal = OrtSpacing.md)
+            .testTag("export-pota-button"),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(text = "Export POTA activity", style = OrtType.control, color = fg)
+    }
+}
+
+/**
+ * P30 (FR-EXP-7). Three share-sheet actions — a digest, a thread transcript, a single over's
+ * audio clip — each user-initiated only, each disabled by nothing here (a tap that finds nothing
+ * to share yet is handled honestly one layer up, in `SettingsContent.kt`'s own real handler —
+ * see [org.ort.app.export.ShareCoordinator]'s own kdoc: every builder there answers `null` rather
+ * than fabricating an empty file).
+ */
+@Composable
+private fun ExportShareSection(shareActions: SettingsExportShareActions) {
+    SectionHeader(label = "Share", modifier = Modifier.padding(top = OrtSpacing.md))
+    Text(
+        text = "Through your phone's own share sheet — the most recent digest, thread and over's " +
+            "audio. Never automatic; nothing is sent until you choose where.",
+        style = OrtType.subLine,
+        color = OrtColors.textDim,
+        modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
+    )
+    ShareRow(
+        label = "Share the most recent digest",
+        onClick = shareActions.onShareDigest,
+        testTag = "share-digest-button",
+    )
+    ShareRow(
+        label = "Share the most recent thread transcript",
+        onClick = shareActions.onShareThreadTranscript,
+        testTag = "share-thread-button",
+    )
+    ShareRow(
+        label = "Share the most recent over's audio",
+        onClick = shareActions.onShareOverAudio,
+        testTag = "share-audio-button",
+    )
+}
+
+@Composable
+private fun ShareRow(label: String, onClick: () -> Unit, testTag: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .requiredHeightIn(min = 44.dp)
+            .background(OrtColors.bgCard, RoundedCornerShape(8.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = OrtSpacing.md)
+            .testTag(testTag)
+            .padding(vertical = OrtSpacing.xs),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(text = label, style = OrtType.control, color = OrtColors.textBody)
+    }
 }
 
 /** The promise banner, the `RANGE`-only honest `FailedState`, the R-1035 count preview, and the

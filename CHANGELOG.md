@@ -32,6 +32,127 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (P30: export completion — POTA reachable, the share sheet, and restore)
+
+### P30 — Export completion: POTA wired in, the FR-EXP-7 share sheet, and a genuinely new backup/restore capability for FR-STO-6/FR-STO-9
+
+**Scope:** `app/src/main/kotlin/org/ort/app/backup/**` (new package: `BackupRecordCodecs.kt`,
+`BackupBundleBuilder.kt`, `BackupRestoreCoordinator.kt`), `app/src/main/kotlin/org/ort/app/export/ExportCoordinator.kt`
+(POTA naming/preview functions added, existing ADIF/CSV/JSON/text paths untouched),
+`app/src/main/kotlin/org/ort/app/export/ShareCoordinator.kt` (new), `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt`
+(POTA + Share sections), `SettingsBackupScreen.kt` (new), `SettingsViewData.kt` (`BACKUP` enum
+case, its view states, `SettingsExportShareActions`/`SettingsBackupActions`), `SettingsRootScreen.kt`
+(row + icon), `SettingsContent.kt` (all real wiring: SAF launchers, `FileProvider`/`ACTION_SEND`),
+`app/src/main/AndroidManifest.xml` (a `FileProvider`, none existed before), `app/src/main/res/xml/file_paths.xml`
+(new); `design/canvas/Settings-Backup.dc.html` (new artboard, CF14), `design/canvas/Settings-Export.dc.html`
+(POTA/Share sections added to match), `design/design-intent.md` (CF14 row); `tools/ui-audit/tour.json`
+(three new `CF14-settings-backup` steps at 1.0/2.0/2.0-end); matching tests under
+`app/src/test/kotlin/org/ort/app/{backup,export}/**` and `.../ui/settings/**`.
+
+**Requirements/ACs:** FR-EXP-3, FR-EXP-7, FR-STO-6, FR-STO-9, AC-169, AC-170, AC-171; constitution
+III (nothing deleted or merged quietly — a restore conflict is shown, never auto-resolved),
+constitution V (the closed-field-list discipline extended to the share sheet).
+
+**What changed:**
+
+1. **POTA is reachable (AC-169).** `ExportCoordinator.buildPotaActivity` existed and was
+   unit-tested but had zero callers. Added `suggestedPotaFileName`/`previewPotaCount` (new
+   functions; the four existing format writers/`suggestedFileName` untouched) and wired a new
+   "POTA" section into `SettingsExportScreen` — a distinct action, not a fifth `ExportFileFormat`
+   chip, per that enum's own kdoc ("not one of the four format chips — a distinct export").
+   `SettingsContent.kt`'s `SettingsExportSubScreen` gained a second SAF `CreateDocument("text/csv")`
+   launcher.
+2. **The share sheet (FR-EXP-7).** New `org.ort.app.export.ShareCoordinator`: three functions
+   (`buildDigestShareFile`/`buildThreadTranscriptShareFile`/`resolveOverAudioShareFile`), each
+   built from a closed field list of `TransmissionEntity`/`TranscriptEntity`/`SessionEntity`
+   columns only — never `StationEntity.userName`/`.notes`/`.spokenGrids`/`.frequenciesHeard`,
+   never `OperatorLocationEntity`, never a voiceprint — and each honestly `null` when there is
+   nothing to share yet. "The most recent" (session/thread/transmission) because this round wires
+   the share sheet from Settings, not from an already-open digest/thread/detail screen — a
+   contextual "share this one" action is real, separate future work. `SettingsContent.kt` builds
+   the actual `ACTION_SEND` intent via a new `FileProvider` (`AndroidManifest.xml` had none before)
+   and `Intent.createChooser`.
+3. **Backup and restore (FR-STO-6, FR-STO-9, AC-170) — genuinely new, not an extension of
+   `LocalSaveBundleBuilder`** (that object writes rendered, scrubbed diagnostics for a human
+   reader; this one writes the real rows so a device can get its log back). `BackupRecordCodecs.kt`
+   round-trips every field of `SessionEntity`/`TransmissionEntity`/`TranscriptEntity` (current
+   version only)/`CorrectionEntity` through `org.json` (already on the classpath via
+   `DebugDumpBuilder`, no new dependency) — deliberately these four tables only; the station
+   catalog, voiceprints, threads, and superseded transcript history are **not yet** in the bundle,
+   a stated limitation surfaced on the screen itself ("Not yet in the backup: ..."), not a silent
+   gap. `BackupBundleBuilder` writes a zip (JSON entries + `STORED` FLAC audio entries, streamed,
+   never held whole in memory) to a caller's `OutputStream`; `BackupRestoreCoordinator.analyze`
+   reads a bundle and the live database and produces a `BackupRestorePlan` — nothing written yet —
+   partitioning every session/transmission/correction/audio entry into "to add" or "conflict" by
+   id/path; `apply` performs exactly that plan.
+   **The conflict rule:** a record already present on the restoring device (same id, or an audio
+   file already on disk at the computed path) is a conflict — `apply` never inserts or overwrites
+   it, the device's own row is left exactly as it was, and the operator sees the conflict counts
+   (session/transmission/correction/audio, each named) before confirming. This is *not* a
+   per-record "keep mine / take theirs" picker — the device always wins a conflict, and the
+   operator always sees the count first — a real, separate surface future work could add.
+   `SettingsBackupScreen` (new, `SettingsScreenId.BACKUP`) is a dedicated screen, not a restore
+   action folded into `SettingsStorageScreen.kt` (unowned this round, and a paired export+restore
+   capability with its own disclosure/conflict surface is more than one row).
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.settings.*" --tests "org.ort.app.export.*" --tests "org.ort.app.backup.*" -PortAllowMissingBundledAssets=true` —
+  green (BUILD SUCCESSFUL), including the round-trip centrepiece
+  (`BackupRestoreCoordinatorTest`: export a populated bundle, restore into an empty device, and a
+  restore against a non-empty device with a genuine conflict — all three pass) and the AC-171
+  closed-field-list test (`ShareCoordinatorTest`, a station seeded with every forbidden field,
+  none reach the shared bytes).
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.debug.tour.*"` — green, including
+  `TourStepsTest` (every declared step, now including the three new `CF14-settings-backup` ones,
+  lands on the screen it claims to) and `TourSpecTest`/`ScreenshotTourTest`.
+- `.\gradlew.bat ktlintCheck` and `.\gradlew.bat detekt` — both green across the whole repo (fixed
+  along the way: a `LongParameterList`/`LongMethod` on `SettingsExportScreen` by bundling the four
+  new callbacks into `SettingsExportShareActions`, and a `MatchingDeclarationName` on
+  `SettingsBackupScreen.kt` by moving `SettingsBackupActions` into `SettingsViewData.kt` — the
+  identical, already-established reason `SettingsCaptureToggleActions`/`LocalSaveActions` live
+  there instead of their own screen files).
+- The round-trip test's own conflict-rule assertion was shown to discriminate: reverting `apply`
+  to also insert `sessionConflicts` (simulating "silently overwrite/merge a conflict") makes the
+  conflict test fail with a real `UNIQUE constraint failed: session.id` exception; restoring the
+  real code makes it pass again.
+- A real, environment-specific finding along the way: two on-disk, differently-named `OrtDatabase`
+  instances opened back-to-back in one Robolectric/Windows test process reproducibly hit
+  `SQLITE_CANTOPEN` on the second open whenever the first had already been written to (not a
+  production concern — a real device only ever has one database) — worked around by giving
+  `BackupBundleBuilder`/`BackupRestoreCoordinator` an internal `databaseName` parameter and, in
+  `BackupRestoreCoordinatorTest`, building bundle fixtures directly with the codecs instead of via
+  a second live database. Separately, the real `FileProvider` could not be exercised reliably
+  under this same Windows/Robolectric combination (a path-canonicalisation gap, confirmed against
+  the correctly-merged manifest and packaged `file_paths.xml`) — `SettingsContent.kt` gained
+  `shareUriResolverForTest`, a production-inert seam (`null` in every real build) so
+  `SettingsContentBackupAndShareTest` can supply a fake `FileProvider`-backed target, exactly what
+  this unit's own prompt anticipated shipping.
+
+**Left open / not done:**
+- The backup bundle carries four tables (sessions, transmissions, current transcripts,
+  corrections) plus retained audio, not the whole schema — the station catalog, voiceprints,
+  threads, lattice/candidate detail, the work queue, calibration, assets, prior adjustments, prose
+  summaries and transmission labels are not yet round-tripped. Stated on the screen itself and in
+  `BackupRecordCodecs.kt`'s own kdoc, not a silent gap.
+- Restore's conflict rule is coarse (device always wins, shown before proceeding) rather than a
+  per-record "keep mine / take theirs" picker — a real, separate surface.
+- The share sheet always shares "the most recent" digest/thread/over, never a specific one already
+  open on screen — a contextual share action from the Digest/Thread/Detail screens themselves is
+  real, separate future work outside this unit's file-ownership map.
+- No device capture was run (explicitly out of scope for this unit — no emulator). The lead's own
+  visual re-verification against `Settings-Export.dc.html`/`Settings-Backup.dc.html` at 1.0/2.0,
+  scrolled to the end, is the next step per constitution VIII; the tour steps
+  (`overnight/CF07-settings-export{,@2x,@2x-end}`, `overnight/CF14-settings-backup{,@2x,@2x-end}`)
+  are in place for it.
+- `SettingsAnalyticsScreen` (P28, tour id `CF13`) still has no artboard — a pre-existing gap this
+  unit did not introduce, noted in `design-intent.md`'s own CF14 row rather than silently ignored,
+  and out of this unit's ownership to fix.
+- `android:dataExtractionRules` is still absent from `AndroidManifest.xml` despite technical
+  design §12.4 calling for one — a pre-existing gap, unrelated to this unit's own `FileProvider`
+  addition, not fixed here.
+
+---
+
 ## 2026-09-20 (correction-attribution consolidation: a corrected transmission stops reading UNKNOWN on the Log, Live Monitor, a Recording Session and Threads)
 
 ### WPATTR — the corrected-attribution downgrade the voice-match sweep flagged as data loss, not wording, fixed once, and the last digest overclaim it inventoried but did not own

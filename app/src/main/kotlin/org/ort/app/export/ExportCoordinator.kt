@@ -177,6 +177,33 @@ public object ExportCoordinator {
             PotaActivityExportWriter.write(scopedRecords(context, scope)).toByteArray(Charsets.UTF_8)
         }
 
+    /** P30 (AC-169): a distinct suggested name for the POTA-relevant export — never
+     * [suggestedFileName], which is keyed on [ExportFileFormat] and [buildPotaActivity] does not
+     * take one (POTA is "not one of the four format chips", this file's own [ExportFileFormat]
+     * kdoc). `ort-pota-<scope>-<UTC timestamp>.csv` — the same stamp/scope-word shape, the real
+     * `.csv` extension [org.ort.pipeline.export.PotaActivityExportWriter] actually writes. */
+    public fun suggestedPotaFileName(scope: ExportRequestScope, now: Instant = Instant.now()): String {
+        val scopeWord = when (scope) {
+            ExportRequestScope.TONIGHT -> "tonight"
+            ExportRequestScope.EVERYTHING -> "all"
+        }
+        return "ort-pota-$scopeWord-${FILE_STAMP.format(now)}.csv"
+    }
+
+    /**
+     * P30 (AC-169, constitution I): how many POTA-relevant rows [buildPotaActivity] would
+     * actually write for [scope] — one row per park reference named by a scoped over
+     * ([org.ort.pipeline.export.PotaActivityExportWriter]'s own "one row per park reference, never
+     * a single row silently naming only the first"), so the screen can say "0 park activations"
+     * honestly rather than showing a button with no idea whether it does anything. Reads the same
+     * [scopedRecords] every other preview and the real write already use — never a second,
+     * independently-scoped count.
+     */
+    public suspend fun previewPotaCount(context: Context, scope: ExportRequestScope): Int =
+        withContext(Dispatchers.IO) {
+            scopedRecords(context, scope).sumOf { it.potaRefs.size }
+        }
+
     private suspend fun scopedRecords(context: Context, scope: ExportRequestScope): List<ExportOverRecord> {
         val db = OrtDatabase.create(context.applicationContext)
         val sessions = db.sessionDao().listAll()
