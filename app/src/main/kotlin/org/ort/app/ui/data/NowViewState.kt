@@ -1,5 +1,8 @@
 package org.ort.app.ui.data
 
+import org.ort.app.ui.digest.SessionCoverageMapper
+import org.ort.app.ui.digest.SessionCoverageSegment
+import org.ort.app.ui.digest.asChartWeights
 import org.ort.core.AttributionState
 import java.util.Locale
 
@@ -51,7 +54,17 @@ public sealed interface NowViewState {
         val sessionTitle: String,
         val summaryLabel: String,
         val overCount: Int,
-        val activityPattern: List<HourActivityBucket>,
+        /**
+         * R-1074 (register, halt, constitution I): this session's own real-time coverage segments
+         * ([SessionCoverageMapper.buildSegments]) — the same gap-boundary-accurate shape R-1069
+         * already gave `Session.dc.html`'s own coverage bar, reused here rather than
+         * [ActivityPatternMapper.buildSessionElapsedPattern]'s whole-*clock*-hour buckets, which
+         * used to hatch an entire hour as not-listening the instant any real gap merely touched it
+         * (a 22-minute gap painting up to two hours deaf — see that function's own kdoc).
+         * [activitySegmentWeights] is the matching per-element render width; [activitySegmentWindows]
+         * is the matching per-element real tap window (R-1041, below).
+         */
+        val activityPattern: List<ActivityBucket>,
         val axisStartLabel: String?,
         val axisEndLabel: String?,
         val notListeningLabel: String?,
@@ -63,36 +76,33 @@ public sealed interface NowViewState {
          * gates the persistent room-audio disclosure chip under the title. `false` (every caller
          * before this existed) renders exactly as before. */
         val isLocalMicrophone: Boolean = false,
-        /** R-1041 (N01, `LogFilterOrigin.Now`): this session's own real start instant — the same
-         * value [activityPattern] was itself bucketed from
-         * ([org.ort.app.ui.data.ActivityPatternMapper.buildSessionElapsedPattern]'s own `window
-         * .startedAtUtc`) — carried through so a tapped bar can be turned back into the real
-         * `[from, to)` millis window that produced it (`hourFilterWindow`, below), never
-         * re-derived or guessed. `null` (every caller before this existed, and the legacy bridge
-         * below) disables the chart's own tap affordance rather than opening a fabricated window.
+        /** R-1041 (N01, `LogFilterOrigin.Now`): this session's own real start instant, kept as the
+         * plain fact it always was. No longer used to re-derive a tap window itself (R-1074's
+         * `activitySegmentWindows`, below, now carries each segment's own real window directly —
+         * `hourFilterWindow`, which used to invert this against a fabricated whole-hour grid, is
+         * gone). `null` (every caller before this existed, and the legacy bridge below) means the
+         * session's real start is not known.
          */
         val sessionStartedAtUtc: Long? = null,
+        /**
+         * R-1074/R-1069: [activityPattern]'s own real per-segment render width
+         * ([SessionCoverageSegment.asChartWeights]), never re-derived — passed straight through to
+         * [org.ort.app.ui.components.ActivityPatternChart]'s `segmentWeights`. Empty (every caller
+         * before this existed, and the legacy bridge below) renders every bar sharing the row
+         * equally, [ActivityPatternChart]'s own default.
+         */
+        val activitySegmentWeights: List<Float> = emptyList(),
+        /**
+         * R-1074/R-1041: the real `[fromMillis, toMillis]` (inclusive) window each [activityPattern]
+         * element (by index) actually spans — computed once, here, from the same
+         * [SessionCoverageSegment] fractions the chart itself renders, so a tapped bar never
+         * re-derives a window from a fabricated whole-hour grid (the R-1074 defect this replaces).
+         * Empty (every caller before this existed, and the legacy bridge below) disables the
+         * chart's own tap affordance rather than opening a fabricated window.
+         */
+        val activitySegmentWindows: List<Pair<Long, Long>> = emptyList(),
     ) : NowViewState
 }
-
-/**
- * R-1041: the real `[fromMillis, toMillis]` window [ActivityPatternMapper.buildSessionElapsedPattern]
- * bucketed for elapsed-hour [index] of a session started at [sessionStartedAtUtc] — the inverse of
- * that function's own `bucketStart = window.startedAtUtc + hourIndex * HOUR_MILLIS` arithmetic,
- * kept in exact sync with it (both literal `3_600_000L`, the well-known millis-per-hour constant,
- * never re-derived from a different unit). `toMillis` is inclusive (`bucketStart + HOUR_MILLIS - 1`)
- * to match [org.ort.app.ui.data.LogItemsMapper]'s own `matchesTime`, which reads
- * `startedAtUtcMillis <= toMillis`.
- */
-public fun hourFilterWindow(sessionStartedAtUtc: Long, index: Int): Pair<Long, Long> {
-    val bucketStart = sessionStartedAtUtc + index * HOUR_MILLIS_FOR_FILTER
-    return bucketStart to (bucketStart + HOUR_MILLIS_FOR_FILTER - 1)
-}
-
-/** [hourFilterWindow]'s own millis-per-hour constant — kept local to this small, pure function
- * rather than exposing [ActivityPatternMapper]'s private one, since the two are never required to
- * be the same declaration, only the same well-known value. */
-private const val HOUR_MILLIS_FOR_FILTER = 3_600_000L
 
 /** `Now-Idle.dc.html`'s "Earlier nights" row (top 3, from `sessionDao`). */
 public data class EarlierNightRow(
@@ -177,13 +187,18 @@ public object NowViewStateMapper {
             "${pluralize(overCount, "over")} · ${pluralize(stationCount, "station")}"
         }
 
-        // R-913 (register, halt): this session's own live chart and DG04's own past-session
-        // coverage bar (`DigestPolling.sessionDetail`) now derive from the same shared
-        // [ActivityPatternMapper.buildSessionElapsedPattern] — see that function's own kdoc for
-        // why [ActivityPatternMapper.buildPattern]'s 24 hour-of-day buckets are the wrong shape
-        // for one session's own short span.
-        val pattern = ActivityPatternMapper.buildSessionElapsedPattern(
-            window = SessionWindow(sessionStartedAtUtc, sessionEndedAtUtc, gaps),
+        // R-1074 (register, halt, constitution I): this session's own live chart now reuses
+        // R-1069's own real, gap-boundary-accurate segmentation
+        // ([SessionCoverageMapper.buildSegments]) instead of
+        // [ActivityPatternMapper.buildSessionElapsedPattern]'s whole-*clock*-hour buckets, which
+        // hatched an entire hour as not-listening the instant any real gap merely touched it (the
+        // register's own capture: a 22-minute gap painting two of three hours deaf) — the same
+        // false picture R-1069 already removed from `Session.dc.html`'s own coverage bar. See
+        // [ActivityPatternMapper.buildSessionElapsedPattern]'s own kdoc for why it is no longer
+        // called by either of its two original callers.
+        val window = SessionWindow(sessionStartedAtUtc, sessionEndedAtUtc, gaps)
+        val segments = SessionCoverageMapper.buildSegments(
+            window = window,
             matchingTransmissionTimestamps = details.map { it.startedAtUtcMillis },
             nowMillis = nowMillis,
         )
@@ -192,7 +207,7 @@ public object NowViewStateMapper {
             sessionTitle = sessionTitle,
             summaryLabel = summaryLabel,
             overCount = overCount,
-            activityPattern = pattern,
+            activityPattern = segments,
             // R-414: the real start/end minute, not always ":00" — see hourMinuteLabel's own use
             // elsewhere in this file. A short session (e.g. `first-session`, only minutes old) used
             // to have both ends floor to the same wall-clock hour once the minute was dropped,
@@ -205,7 +220,36 @@ public object NowViewStateMapper {
             worthKnowing = worthKnowing(details, gaps, firstHeardStationIds),
             stations = stationsSection(details),
             sessionStartedAtUtc = sessionStartedAtUtc,
+            activitySegmentWeights = segments.asChartWeights(),
+            activitySegmentWindows = segmentRealWindows(sessionStartedAtUtc, sessionEndedAtUtc, nowMillis, segments),
         )
+    }
+
+    /**
+     * R-1074/R-1041: turns each [SessionCoverageSegment]'s own `fractionStart`/`fractionEnd` back
+     * into the real `[fromMillis, toMillis]` (inclusive) window it actually spans — the same
+     * fractions [org.ort.app.ui.components.ActivityPatternChart] renders, converted back to
+     * absolute time rather than re-walked from [SessionWindow]'s gaps a second time (constitution
+     * I: one real source for a segment's position, never a second copy that could disagree with
+     * the bar it is meant to describe). `toMillis` is inclusive, matching
+     * [org.ort.app.ui.data.LogItemsMapper]'s own `matchesTime`, which reads
+     * `startedAtUtcMillis <= toMillis`. Empty whenever the session's own real span is not positive
+     * (mirrors [SessionCoverageMapper.buildSegments]'s own empty-list case for the same input).
+     */
+    private fun segmentRealWindows(
+        sessionStartedAtUtc: Long,
+        sessionEndedAtUtc: Long?,
+        nowMillis: Long,
+        segments: List<SessionCoverageSegment>,
+    ): List<Pair<Long, Long>> {
+        val sessionSpanEnd = sessionEndedAtUtc ?: nowMillis
+        val totalDurationMillis = sessionSpanEnd - sessionStartedAtUtc
+        if (totalDurationMillis <= 0) return emptyList()
+        return segments.map { segment ->
+            val from = sessionStartedAtUtc + (segment.fractionStart.toDouble() * totalDurationMillis).toLong()
+            val to = sessionStartedAtUtc + (segment.fractionEnd.toDouble() * totalDurationMillis).toLong() - 1
+            from to to
+        }
     }
 
     /** `Now-Idle.dc.html`. */

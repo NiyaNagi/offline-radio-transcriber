@@ -54,7 +54,6 @@ import org.ort.app.ui.data.NowViewState
 import org.ort.app.ui.data.NowViewStateMapper
 import org.ort.app.ui.data.WorthKnowingItem
 import org.ort.app.ui.data.WorthKnowingTone
-import org.ort.app.ui.data.hourFilterWindow
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
@@ -89,9 +88,10 @@ public fun NowScreen(
     // compiling unchanged until `OrtNavHost.kt` (out of this package's row) wires it.
     onOpenCaptureMode: () -> Unit = {},
     // R-1041 (N01, `LogFilterOrigin.Now`): `Main.dc.html`'s chart bar, real now — opens the Log
-    // filtered to the tapped bar's own `[fromMillis, toMillis]` hour window (see
-    // [org.ort.app.ui.data.hourFilterWindow]). Defaulted to a no-op so every existing caller keeps
-    // compiling unchanged until `OrtNavHost.kt` (out of this package's row) wires it.
+    // filtered to the tapped bar's own real `[fromMillis, toMillis]` window
+    // (`NowViewState.Active.activitySegmentWindows`, R-1074). Defaulted to a no-op so every
+    // existing caller keeps compiling unchanged until `OrtNavHost.kt` (out of this package's row)
+    // wires it.
     onOpenHour: (fromMillis: Long, toMillis: Long) -> Unit = { _, _ -> },
 ) {
     // R-922 (register, `bt-audio-dropped/F23-now@2x.png`): `LiveBar` below is a plain sibling of
@@ -386,7 +386,7 @@ private fun ActiveContent(
         // (UTC)" back above the chart. `title = null` is `ActivityPatternChart`'s own honest
         // no-title default; not passed at all, so a future default change is never silently undone
         // here again.
-        val sessionStartedAtUtc = state.sessionStartedAtUtc
+        val segmentWindows = state.activitySegmentWindows
         ActivityPatternChart(
             pattern = state.activityPattern,
             modifier = Modifier.padding(top = OrtSpacing.lg).testTag("now-activity-chart"),
@@ -394,14 +394,19 @@ private fun ActiveContent(
             axisStart = state.axisStartLabel,
             axisEnd = state.axisEndLabel,
             notListeningLabel = state.notListeningLabel,
-            // R-1041: only real once the session's own real start is known — every caller before
-            // this existed (and the legacy bridge, [NowViewStateMapper.legacyFrom]) leaves
-            // [NowViewState.Active.sessionStartedAtUtc] `null`, which renders the chart exactly as
-            // before, with no tap affordance at all rather than one built on a fabricated window.
-            onBarClick = sessionStartedAtUtc?.let { started ->
+            // R-1074/R-1069: [state.activityPattern] is now this session's own real coverage
+            // segments (`SessionCoverageMapper.buildSegments`), not equal-width whole-hour
+            // buckets — their own real per-segment width, never re-derived here.
+            segmentWeights = state.activitySegmentWeights.takeIf { it.isNotEmpty() },
+            // R-1041/R-1074: each bar's tap opens the real `[fromMillis, toMillis]` window that
+            // segment itself spans (`activitySegmentWindows`, computed once by
+            // [NowViewStateMapper.active]), never re-derived from a fabricated whole-hour grid.
+            // Empty (every caller before this existed, and the legacy bridge,
+            // [NowViewStateMapper.legacyFrom]) disables the tap affordance entirely, rather than
+            // opening a fabricated window.
+            onBarClick = segmentWindows.takeIf { it.isNotEmpty() }?.let { windows ->
                 { index: Int ->
-                    val (fromMillis, toMillis) = hourFilterWindow(started, index)
-                    onOpenHour(fromMillis, toMillis)
+                    windows.getOrNull(index)?.let { (fromMillis, toMillis) -> onOpenHour(fromMillis, toMillis) }
                 }
             },
         )
