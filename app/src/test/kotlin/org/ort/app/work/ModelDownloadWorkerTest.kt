@@ -31,11 +31,14 @@ import java.util.UUID
  * on the *enqueued request* ([ModelDownloadWorker.start]), not something `doWork()` itself decides
  * — proven separately below by inspecting the built request's own [androidx.work.WorkRequest].
  *
- * No real catalog entry is downloadable today (every `bundled-assets.json` entry ships
- * `bundled = true` until P23's `play` variant lands) — [specFor]/[isBundled] are the same
- * injectable seams [org.ort.app.ui.data.ModelsController.download] itself already exposes for
- * exactly this reason, used here with a fixture [ModelFetchSpec] rather than a hypothetical
- * non-bundled catalog entry.
+ * No real catalog entry compiled into **this** module's test task (`testFullDebugUnitTest`) is
+ * downloadable — the `full` flavor's own generated manifest reports every entry `bundled = true`
+ * by construction (P23/P28b) — so [specFor]/[isBundled] are the same injectable seams
+ * [org.ort.app.ui.data.ModelsController.download] itself already exposes for exactly this reason,
+ * used here with a fixture [ModelFetchSpec] rather than a hypothetical non-bundled catalog entry.
+ * (The `play` flavor's own compiled manifest genuinely has `bundled = false` entries with a real
+ * mirror URL since P28b — see `ModelCatalogTest`'s fixture-driven tests, and `ModelCatalog`'s own
+ * KDoc — but this worker-lifecycle test does not need a real one either way.)
  */
 @RunWith(RobolectricTestRunner::class)
 class ModelDownloadWorkerTest {

@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.ort.app.assets.GeneratedBundledAssetEntry
 import org.ort.testing.Requirement
 import java.io.File
 
@@ -151,11 +152,31 @@ class ModelCatalogTest {
         assertEquals("/fake-files-dir/models/llm/gemma3-1b-it-int4.task", destinationOf(ModelId.LLM_GEMMA3_1B))
     }
 
+    /**
+     * P28b (D43, FR-AST-13): this used to assert every entry is bundled, full stop — true only
+     * because [ModelCatalog.entries] hardcoded `bundled = true` regardless of flavor at the time.
+     * Running `testPlayDebugUnitTest` against the real fix immediately caught the stale assumption
+     * (`play`'s own compiled manifest genuinely reports `bundled = false`): rewritten to the
+     * structural invariant that actually holds on *both* flavors — `bundled` and a blank
+     * `downloadUrl` always agree, by construction of `BundledAssetCatalogRenderer` — rather than a
+     * hardcoded `true` this file cannot own the truth of once two flavors exist.
+     */
+    @Test
+    @Requirement("D43", "FR-AST-13", "FR-AST-14")
+    fun `D43 every catalog entry's bundled flag agrees with whether its download URL is blank`() {
+        ModelCatalog.entries.forEach { entry ->
+            assertEquals(
+                "${entry.id}: bundled=${entry.bundled} but downloadUrl='${entry.downloadUrl}' disagrees " +
+                    "-- a blank download URL must mean bundled, and vice versa",
+                entry.bundled,
+                entry.downloadUrl.isBlank(),
+            )
+        }
+    }
+
     @Test
     @Requirement("D35", "FR-AST-3")
-    fun `WPG every catalog entry reports bundled true, and the LLM is gated and tier-3-only`() {
-        ModelId.entries.forEach { id -> assertTrue("$id must be bundled", ModelCatalog.entry(id).bundled) }
-
+    fun `WPG the Gemma model is gated and tier-3-only, and VAD ships for every tier, whatever this flavor bundles`() {
         val gemma = ModelCatalog.entry(ModelId.LLM_GEMMA3_1B)
         assertTrue(gemma.gated)
         assertEquals(setOf("T3"), gemma.tiers)
@@ -164,5 +185,93 @@ class ModelCatalogTest {
         val vad = ModelCatalog.entry(ModelId.VAD)
         assertFalse(vad.gated)
         assertEquals(setOf("T0", "T1", "T2", "T3"), vad.tiers)
+    }
+
+    /**
+     * P28b (D43, D44, FR-AST-10..14, AC-184..190): before this change, [ModelCatalog.entries]
+     * ignored [GeneratedBundledAssetEntry.bundled]/[GeneratedBundledAssetEntry.downloadUrl]
+     * entirely and hardcoded [ModelCatalogEntry.bundled] to its own default, `true` — so a real
+     * `play` build (whose generated manifest carries `bundled = false` and a real mirror URL per
+     * entry) still reported every model as bundled, and [ModelsController.download] refused
+     * unconditionally. These tests drive [ModelCatalog.mapEntries] directly with a fixture
+     * [GeneratedBundledAssetEntry] list for both shapes, so they do not depend on which flavor's
+     * `GeneratedBundledAssetManifest` this test module happens to be compiled against (this class's
+     * other tests, above, exercise the real, compiled-in manifest — always `full` under
+     * `testFullDebugUnitTest`, hence always `bundled = true` there).
+     */
+    private fun generatedFixtureEntry(
+        id: String = "ASR_ENCODER",
+        bundled: Boolean,
+        downloadUrl: String = "",
+        url: String = "https://huggingface.co/o/r/resolve/main/encoder.onnx",
+    ) = GeneratedBundledAssetEntry(
+        id = id,
+        url = url,
+        sha256 = "a".repeat(64),
+        sizeBytes = 12_345L,
+        destination = "models/fixture/encoder.onnx",
+        tiers = listOf("T0"),
+        licence = "MIT",
+        gated = false,
+        bundled = bundled,
+        downloadUrl = downloadUrl,
+    )
+
+    @Test
+    @Requirement("D43", "FR-AST-13", "AC-190")
+    fun `D43 mapEntries reports a bundled fixture entry as bundled, with a blank download URL`() {
+        val mapped = ModelCatalog.mapEntries(listOf(generatedFixtureEntry(bundled = true)))
+
+        val entry = mapped.single()
+        assertTrue(entry.bundled)
+        assertEquals("", entry.downloadUrl)
+    }
+
+    @Test
+    @Requirement("D43", "D44", "FR-AST-13", "FR-AST-14")
+    fun `D43 mapEntries reports an unbundled fixture entry as not bundled, with its download URL`() {
+        val mirror = "https://github.com/o/r/releases/download/models-v1/encoder.onnx"
+
+        val mapped = ModelCatalog.mapEntries(listOf(generatedFixtureEntry(bundled = false, downloadUrl = mirror)))
+
+        val entry = mapped.single()
+        assertFalse("an unbundled entry must not report bundled", entry.bundled)
+        assertEquals(mirror, entry.downloadUrl)
+    }
+
+    @Test
+    @Requirement("D44", "FR-AST-14")
+    fun `FR_AST_14 fetchUrl uses the entry's own url when bundled, never the blank download URL`() {
+        val entry = ModelCatalog.mapEntries(listOf(generatedFixtureEntry(bundled = true))).single()
+
+        assertEquals(entry.url, entry.fetchUrl())
+    }
+
+    @Test
+    @Requirement("D44", "FR-AST-14")
+    fun `FR_AST_14 fetchUrl uses the pinned models-v1 mirror once the entry is not bundled`() {
+        val mirror = "https://github.com/o/r/releases/download/models-v1/encoder.onnx"
+        val entry = ModelCatalog.mapEntries(listOf(generatedFixtureEntry(bundled = false, downloadUrl = mirror)))
+            .single()
+
+        assertEquals(mirror, entry.fetchUrl())
+        assertFalse("must never fall back to the original provenance url once unbundled", entry.fetchUrl() == entry.url)
+    }
+
+    @Test
+    @Requirement("D43", "D44", "FR-AST-14")
+    fun `D43 mapEntries carries every other field through unchanged regardless of bundled`() {
+        for (bundled in listOf(true, false)) {
+            val downloadUrl = if (bundled) "" else "https://github.com/o/r/releases/download/models-v1/encoder.onnx"
+            val fixture = generatedFixtureEntry(bundled = bundled, downloadUrl = downloadUrl)
+            val entry = ModelCatalog.mapEntries(listOf(fixture)).single()
+
+            assertEquals(ModelId.ASR_ENCODER, entry.id)
+            assertEquals(12_345L, entry.sizeBytes)
+            assertEquals(setOf("T0"), entry.tiers)
+            assertEquals("MIT", entry.licence)
+            assertFalse(entry.gated)
+            assertTrue(entry.checksumState is ChecksumState.Known)
+        }
     }
 }

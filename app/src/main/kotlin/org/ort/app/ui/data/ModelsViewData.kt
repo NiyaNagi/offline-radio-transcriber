@@ -11,6 +11,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetRejection
+import org.ort.app.assets.GeneratedBundledAssetEntry
 import org.ort.app.assets.GeneratedBundledAssetManifest
 import org.ort.core.Outcome
 import org.ort.core.SystemClock
@@ -88,6 +89,21 @@ import java.io.File
  * verified artifact) plus a digest now internally pinned and checked on every subsequent build and
  * install (FR-AST-3b) is strictly more than "no way to verify a download at all". Adding
  * [ModelId.LLM_GEMMA3_1B] is the same WPG change (D36).
+ *
+ * **P28b follow-up (D43/D44, FR-AST-10..14): [ModelCatalogEntry.bundled] and
+ * [ModelCatalogEntry.downloadUrl] now come from [GeneratedBundledAssetManifest] too, not from a
+ * hardcoded default.** P23/P23a's `buildSrc` renderer already emits a per-flavor `bundled` and
+ * `downloadUrl` on every [GeneratedBundledAssetEntry] — `true`/blank on `full` (every asset ships
+ * inside the artifact) and `false`/the `models-v1` mirror URL on `play` (FR-AST-13) — but until
+ * this change [ModelCatalog.entries] below never read either field, so `bundled` silently fell
+ * back to [ModelCatalogEntry]'s own `true` default on *every* variant. On a real `play` build that
+ * made every model report bundled when none actually were: [ModelsController.download] refused
+ * unconditionally ("ships bundled — there is nothing to download"), the setup MODELS step
+ * ([ModelsViewState.rowsForSetupModelsStep]) never listed a row to fetch, and the READY gate
+ * ([SetupStateMachine]'s `requiredModelsInstalled`) passed with nothing installed — `play` could
+ * never reach capture. [mapEntries] is the pure mapping [ModelCatalogTest] drives directly with a
+ * fixture [GeneratedBundledAssetEntry] list for both cases, so this is provable without needing a
+ * real `play` build compiled into the test module.
  */
 public enum class ModelId(public val label: String) {
     ASR_ENCODER("Whisper tiny.en — encoder"),
@@ -131,14 +147,29 @@ public data class ModelCatalogEntry(
     val tiers: Set<String> = emptySet(),
     val licence: String = "",
     val gated: Boolean = false,
-    /** FR-AST-3 (D35): every catalog entry ships inside the installed artifact — there is no
-     * "download this first" state left. [ModelsController.download] refuses unconditionally for a
-     * bundled entry (side-load remains the real replacement path, FR-AST-1). Defaults `true`
-     * because every entry [ModelCatalog] generates today is bundled; the field exists (rather than
-     * being hardcoded at the call site) so a future non-bundled entry — the TODO at FR-AST-3a about
-     * split delivery — has somewhere honest to say so. */
+    /** FR-AST-3/FR-AST-13 (D35, D43): `true` when this entry ships inside the installed artifact
+     * (the `full` variant, every entry, per FR-AST-3) and `false` when it must be fetched during
+     * setup instead (the `play` variant, FR-AST-10..12). [ModelsController.download] refuses
+     * unconditionally for a bundled entry (side-load remains the real replacement path, FR-AST-1)
+     * and actually fetches for a non-bundled one. Sourced from [GeneratedBundledAssetEntry.bundled]
+     * — see [ModelCatalog.mapEntries] — never hardcoded here; the default of `true` only covers a
+     * [ModelCatalogEntry] built by hand (a test fixture), never a real catalog entry. */
     val bundled: Boolean = true,
-)
+    /** FR-AST-14/D44: the `models-v1` GitHub Release mirror URL to fetch this entry from once
+     * [bundled] is false — blank exactly when [bundled] is true (the `full` variant never
+     * downloads anything, AC-190). Sourced from [GeneratedBundledAssetEntry.downloadUrl]; see
+     * [fetchUrl] for the one place that picks between this and [url]. */
+    val downloadUrl: String = "",
+) {
+    /** The URL a real network fetch must hit for this entry (FR-AST-14/D44): [downloadUrl] — the
+     * pinned `models-v1` mirror — once this entry is not [bundled], or [url] (the original,
+     * provenance-only source) otherwise, since a bundled entry's [downloadUrl] is always blank and
+     * a bundled entry is never actually fetched over the network in the first place
+     * ([ModelsController.download] refuses before reaching this). The one place both
+     * [ModelCatalog.specFor] and [ModelsController]'s own `unverifiedSpecFor` read from, so neither
+     * can silently pick a different field from the other. */
+    public fun fetchUrl(): String = downloadUrl.ifBlank { url }
+}
 
 public object ModelCatalog {
 
@@ -162,18 +193,31 @@ public object ModelCatalog {
      * function invents no data of its own — so a change to the manifest is the only way to change
      * what this catalog reports.
      */
-    public val entries: List<ModelCatalogEntry> = GeneratedBundledAssetManifest.entries.map { generated ->
-        ModelCatalogEntry(
-            id = ModelId.valueOf(generated.id),
-            url = generated.url,
-            destination = { filesDir -> File(filesDir, generated.destination) },
-            checksumState = checksumStateFor(generated.sha256),
-            sizeBytes = generated.sizeBytes,
-            tiers = generated.tiers.toSet(),
-            licence = generated.licence,
-            gated = generated.gated,
-        )
-    }
+    public val entries: List<ModelCatalogEntry> = mapEntries(GeneratedBundledAssetManifest.entries)
+
+    /**
+     * P28b (D43/D44, FR-AST-10..14): the pure entry-by-entry mapping [entries] applies to whichever
+     * flavor's [GeneratedBundledAssetManifest] this module compiled against — extracted so
+     * [ModelCatalogTest] can drive both the bundled (`full`) and not-bundled-with-a-download-URL
+     * (`play`) cases from a fixture [GeneratedBundledAssetEntry] list directly, rather than
+     * depending on which flavor's test task happens to be running. `internal`, not `private`, for
+     * exactly that test call site.
+     */
+    internal fun mapEntries(generatedEntries: List<GeneratedBundledAssetEntry>): List<ModelCatalogEntry> =
+        generatedEntries.map { generated ->
+            ModelCatalogEntry(
+                id = ModelId.valueOf(generated.id),
+                url = generated.url,
+                destination = { filesDir -> File(filesDir, generated.destination) },
+                checksumState = checksumStateFor(generated.sha256),
+                sizeBytes = generated.sizeBytes,
+                tiers = generated.tiers.toSet(),
+                licence = generated.licence,
+                gated = generated.gated,
+                bundled = generated.bundled,
+                downloadUrl = generated.downloadUrl,
+            )
+        }
 
     /**
      * Matches buildSrc's `BundledAssetManifest.TRUST_ON_FIRST_FETCH` sentinel by literal value —
@@ -195,12 +239,15 @@ public object ModelCatalog {
 
     public fun entry(id: ModelId): ModelCatalogEntry = entries.first { it.id == id }
 
-    /** Null exactly when [ModelCatalogEntry.checksumState] is [ChecksumState.UnknownSideloadOnly] — see there. */
+    /** Null exactly when [ModelCatalogEntry.checksumState] is [ChecksumState.UnknownSideloadOnly] — see there.
+     * [ModelCatalogEntry.fetchUrl] (not the bare `url` field) supplies [ModelFetchSpec.url] so a
+     * `play`-variant, not-[ModelCatalogEntry.bundled] entry downloads from its pinned `models-v1`
+     * mirror (FR-AST-14/D44), never the manifest's original provenance URL. */
     public fun specFor(id: ModelId, filesDir: File): ModelFetchSpec? {
         val catalogEntry = entry(id)
         val checksum = (catalogEntry.checksumState as? ChecksumState.Known)?.checksum ?: return null
         return ModelFetchSpec(
-            url = catalogEntry.url,
+            url = catalogEntry.fetchUrl(),
             destination = catalogEntry.destination(filesDir),
             checksum = checksum,
         )
@@ -832,7 +879,7 @@ public object ModelsController {
     private fun unverifiedSpecFor(id: ModelId, filesDir: File, source: File): ModelFetchSpec {
         val catalogEntry = ModelCatalog.entry(id)
         return ModelFetchSpec(
-            url = catalogEntry.url,
+            url = catalogEntry.fetchUrl(),
             destination = catalogEntry.destination(filesDir),
             checksum = Checksum(value = sha256Of(source)),
         )

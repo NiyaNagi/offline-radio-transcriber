@@ -32,6 +32,72 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (P28b: the `play`-variant model catalog wired to the real generated manifest)
+
+### <pending> — ModelCatalog reads `bundled`/`downloadUrl` from the generated per-flavor manifest instead of hardcoding `bundled = true`
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (`ModelCatalogEntry`,
+`ModelCatalog.entries`/`mapEntries`/`specFor`, `ModelsController.unverifiedSpecFor`),
+`app/src/main/kotlin/org/ort/app/ui/setup/DebugModelsSetupOverride.kt` (kdoc only — the object
+itself is unchanged), and their tests under `app/src/test/**`.
+
+**Requirements/ACs:** D43, D44, FR-AST-10..14, AC-184..190.
+
+**What changed:** P23/P23a already made `buildSrc`'s catalog renderer emit a per-flavor `bundled`
+and `downloadUrl` on every generated `GeneratedBundledAssetEntry` (`true`/blank on `full`,
+`false`/the real `models-v1` mirror URL on `play`), and P22 already built the setup MODELS step,
+the foreground `ModelDownloadWorker`, and the READY hard gate — but `ModelCatalog.entries` never
+read either generated field: it hardcoded every `ModelCatalogEntry.bundled` to its own class
+default, `true`. P28a found the resulting gap while building the MODELS-step artboards: on a real
+`play` build every model still reported `bundled`, so `ModelsController.download()` refused
+unconditionally ("ships bundled with the app — there is nothing to download"), the MODELS step's
+`rowsForSetupModelsStep()` was always empty, and the READY gate (`SetupStateMachine`'s
+`requiredModelsInstalled`, sourced from `rowsRequiringDownload().isEmpty()`) passed with nothing
+installed — `play` could never reach capture. P28a worked around it for screenshot purposes with a
+debug-only `DebugModelsSetupOverride` rather than fixing the file, correctly, since it belonged to
+a different unit.
+
+Fixed at the source: `ModelCatalogEntry` gained a `downloadUrl: String` field (FR-AST-14/D44, the
+`models-v1` mirror, blank exactly when `bundled` is true) and a `fetchUrl()` — `downloadUrl` once
+not bundled, else the original manifest `url` (never actually fetched for a bundled entry, since
+`download()` refuses before reaching it). `ModelCatalog.entries` is now built by a new, pure,
+`internal` `mapEntries(List<GeneratedBundledAssetEntry>)` that reads `generated.bundled` and
+`generated.downloadUrl` straight through — no hardcoded default reaches a real entry any more.
+`ModelCatalog.specFor` and `ModelsController`'s own `unverifiedSpecFor` both now build
+`ModelFetchSpec.url` from `catalogEntry.fetchUrl()` rather than the bare `url` field, so a real
+`play`-variant download actually hits the pinned GitHub Release mirror (FR-AST-14), never the
+manifest's original HuggingFace/GitHub provenance URL. Every downstream consumer — `download()`'s
+`isBundled` default, `rowFor`'s `bundled` field, `rowsRequiringDownload`/`rowsForSetupModelsStep`,
+`SetupActivity`'s `RenderModels`/`initialModelsSetupRows`/`refreshedModelsSetupRows`, and
+`SetupStateMachine`'s `requiredModelsInstalled` gate — was already correctly wired by P22/P23a and
+needed no change once the one upstream field was honest; verified by reading each call site rather
+than assumed. `DebugModelsSetupOverride` is **kept, not removed**: the debug scenario tooling and
+the canonical screenshot tour both run the `full` variant, where every real entry is genuinely
+`bundled = true` and `rowsForSetupModelsStep()` is therefore always empty, so the override remains
+the only way to drive a non-empty MODELS-step capture without a real `play` build and a real
+network mirror — updated its kdoc to record that P28b closed the gap it used to describe, rather
+than leaving the doc comment naming a bug that no longer exists.
+
+Added tests (`ModelCatalogTest.kt`): `mapEntries` driven directly with a fixture
+`GeneratedBundledAssetEntry` for both the bundled (`full`-shaped) and not-bundled-with-a-mirror
+(`play`-shaped) cases, independent of which flavor's `GeneratedBundledAssetManifest` the test
+module happens to compile against; `fetchUrl()` proven to pick the original `url` when bundled and
+the mirror `downloadUrl` when not; every other field (`id`/`sizeBytes`/`tiers`/`licence`/`gated`/
+checksum) proven to carry through unchanged regardless of `bundled`. Added
+(`ModelsControllerTest.kt`) `AC_184 download refuses a bundled entry and proceeds through a real
+fetch for an unbundled one` — same id, same spec, same body, only `isBundled` differs, closing the
+loop the existing `isBundled = { false }`-seeded tests already exercised piecemeal.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.data.*" --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.work.*" --tests "org.ort.app.assets.*"` — green (every existing test in these packages still passes unchanged, plus the new ones above; `SetupStateMachineTest`'s `AC_184`/`AC_188` cases and `ModelsViewStateRowsRequiringDownloadTest`'s `AC_184` cases, both pure and untouched, continue to hold).
+- `.\gradlew.bat ktlintCheck detekt` — green, whole project.
+- Discrimination: reverted `mapEntries`'s `bundled = generated.bundled, downloadUrl = generated.downloadUrl` lines to the old hardcoded-default shape, re-ran `ModelCatalogTest` — the two new fixture-driven tests (`D43 mapEntries reports an unbundled fixture entry as not bundled...` and `FR_AST_14 fetchUrl uses the pinned models-v1 mirror...`) failed exactly as expected (`bundled` read `true` and `fetchUrl()` returned the HuggingFace source instead of the GitHub mirror); every other test in the file stayed green, confirming the fixture tests — not some unrelated break — are what catches this specific regression. Restored the fix; the same command suite went green again.
+- `.\gradlew.bat :app:testPlayDebugUnitTest` — ran the whole `:app` test suite against the `play` flavor's own compiled `GeneratedBundledAssetManifest` (every entry genuinely `bundled = false` with a real mirror `downloadUrl`). This is real, valuable proof: it is the first time this exact suite has ever run with `bundled` genuinely false, and it immediately found three of *this file's own* pre-existing tests baking in a `full`-only assumption (`ModelCatalogTest`'s and `ModelsControllerTest`'s `WPG ... bundled true ...` tests) that were only ever true because `ModelCatalog` hardcoded the value before this fix — rewritten in this same commit to the real, flavor-agnostic invariant (`bundled == downloadUrl.isBlank()`, and a row always mirrors its own catalog entry) rather than a hardcoded `true`; a fourth (`WPG download refuses ... using the real default`) now skips honestly via `org.junit.Assume` on a flavor with no genuinely bundled entry left to exercise, since `AC_184 download refuses a bundled entry and proceeds ...` already proves the same mechanism flavor-independently. After these fixes, every test in `ModelCatalogTest`/`ModelsControllerTest` passes under **both** `testFullDebugUnitTest` and `testPlayDebugUnitTest`.
+
+**Left open / not done:** this closes the data-layer gap end to end (`ModelCatalog` → `ModelsController.download`/`specFor` → the MODELS step → the READY gate), but the full `testPlayDebugUnitTest` run also surfaced a **larger, separate gap outside this fix's scope**: `SetupActivityTest.kt` (9 of 39 cases), `SetupScaffoldTest.kt` (1 of 3, an uncaught-exception bleed from the SetupActivityTest failures above it in the same fork), `debug/WpiScenariosTest.kt` (3 of 47), `ui/screens/ModelsScreenTest.kt`/`ModelsScreenRejectionTest.kt` (1 each) and `ui/settings/SettingsPollingTest.kt` (1) all carry fixtures that drive setup end to end to `READY` (or otherwise assume every model is already installed) with no MODELS-step handling at all — correct and sufficient on `full` (nothing to download, so `RenderModels` never even shows), but genuinely incomplete on `play`, where those same fixtures now correctly stop at `MODELS` instead of reaching `READY` (proof the READY gate, AC-188, is doing its real job — not a regression this fix introduced). Fixing every such fixture for a second build variant is a materially larger, separate effort than wiring one file to the manifest it should have read all along, and several of the affected files (`ui/screens/**`, `ui/settings/**`, `debug/**`) sit outside this round's owned paths entirely. Flagged as a follow-up rather than expanded into this change. Nothing here installs a real `play` build on a device or emulator either — that a `play`-variant setup flow completes end to end against the real `models-v1` GitHub Release mirror (network reachable, real bytes, real sha256) is provable only on-device or via `tools\ui-audit\install.ps1`/`tour.ps1` against a `play` build, which this round did not run (no artboard exists yet for the MODELS step at all — P22's own note — so the visual-verification trigger in `AGENTS.md` §7 does not newly apply here: no `*Content`/`*Screen`/`*ViewState`/`*ViewData`/`*Mapper` file's rendered *output* changed, only what data feeds it).
+
+---
+
 ## 2026-09-19 (P22 batch-gate regression fix, the P25 vad-fallback scenario, and S01a/S11a artboards)
 
 ### 21e22471 — jurisdiction-notice resumption fixed at the fixture; P25's vad-fallback scenario built; S01a/S11a given artboards, a real-rows MODELS scenario and tour steps
