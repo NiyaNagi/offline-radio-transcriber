@@ -98,6 +98,83 @@ Full gate, emulator and tour not run this session, per this unit's own instructi
   changing it would also require an artboard change this unit cannot make.
 - Tour ids for the lead to recapture at font scale 1.0 and 2.0: wherever `Detail-Correct-C.dc.html`
   (Tier C's typed-callsign sheet, the "Apply to" radio choice) is reachable in the canonical tour.
+## 2026-09-20 (register fix session: R-1083 the tour's stale-manifest false green, R-1084 S11a-models unreachable on `full`)
+
+### 62c00ebc — tour: R-1083 stale-manifest false green, R-1084 S11a unreachable on full
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/{ScreenshotTourActivity,TourManifest,TourRunner,TourSpec}.kt`,
+`app/src/test/kotlin/org/ort/app/debug/tour/{ScreenshotTourTest,TourSpecTest}.kt` (new cases),
+`app/src/test/kotlin/org/ort/app/ui/setup/SetupActivityModelsOverrideTest.kt` (new),
+`tools/ui-audit/tour.ps1`.
+**Requirements/ACs:** register R-1083, R-1084; AC-184..190, FR-AST-10, D43 (S11a-models);
+constitution II (strict TDD, a test shown to discriminate), VIII (the screenshot tour is the
+arbiter of visual evidence — a false green in it undermines every other finding).
+**What changed:**
+1. **R-1083.** `tools/ui-audit/tour.ps1` polled `files/tour/manifest.json` for a trailing
+   `"done": true` line with nothing clearing the previous run's copy first, so a run whose activity
+   had not yet written anything could read the *previous* run's manifest and report it as its own —
+   reproduced twice by the lead (`-Only "vad-fallback/*"` printing `steps: 2  ok: 2  errors: 0
+   elapsed: 0.1s` with no PNG at all, and a one-step `-Only` run reporting two steps belonging to
+   the prior `overnight/CF12*` run). Fixed two ways, deliberately redundant: the script now deletes
+   the on-device `files/tour` directory via `run-as` before pushing a new spec, closing the window
+   between `am start` returning and `TourRunner.run`'s own `deleteRecursively()`; and every
+   invocation is stamped with a fresh GUID (`TourSpec.runId`, new optional field) that
+   `ScreenshotTourActivity` carries through `TourRunner` onto every manifest line, including the
+   `done` marker (`TourManifestEntry.runId`, `appendManifestDone`'s new `runId` param) — the poll
+   now only accepts a `done` line whose `runId` matches the one this invocation generated, and
+   names the foreign run id it found instead of failing with a generic timeout message. The script
+   also now throws, rather than printing a quiet summary, when the manifest reports fewer step
+   results than were requested or when fewer screenshots were actually pulled than the manifest
+   claimed `ok` (the same `-Only "vad-fallback/*"` reproduction was also a false "ok: 2" with zero
+   PNGs on disk).
+2. **R-1084.** `setup-models/S11a-models*` never settled (`never settled to setup step 'MODELS' ...
+   observed step 'INPUT'`). Root cause, confirmed by reading `SetupActivity.tryOpenAtRequestedStep`
+   and `SetupStateMachine.stepFor` before changing anything: `DebugModelsSetupOverride` already
+   reaches `RenderModels` correctly (read ahead of `ModelsController`, the identical shape
+   `DebugRouteCheckOverride` already has for `VERIFY`) — the actual gap was that `Scenarios.kt`'s
+   `setup-models` scenario only set `welcomeSeen`/`jurisdictionNoticeSeen`/`captureMode`, leaving
+   the store's natural resume point at `INPUT`, well before `MODELS`'s own ordinal, so the cold
+   `EXTRA_STEP=MODELS` launch was silently denied. `MODELS` was never going to be the natural point
+   itself on `full` (every model is bundled, so `requiredModelsInstalled` is always `true`) — the
+   same shape `VERIFY` already has, also never returned by `stepFor`, also reached only because its
+   own ordinal precedes the natural `READY`. Fixed by seeding `setup-models` the same way
+   `setup-verified`/`setup-radio` already reach their own later steps (level, overnight, a radio
+   choice all resolved), so the natural point becomes `READY` and the request is honored.
+**Verified:** `SetupActivityModelsOverrideTest.R_1084` reverted (old `setupModels()` seeding)
+failed with `expected:<MODELS> but was:<INPUT>`, restored and passed.
+`ScreenshotTourTest.R_1083_RUN_ID_STAMPED`/`R_1083_STALE_RUN_ID_REPLACED` and
+`TourSpecTest.R_1083_RUN_ID`/`R_1083_RUN_ID_ABSENT` all pass; the two `ScreenshotTourTest` cases
+reverted (dropping `runId` from the `appendManifestDone` call) failed for the stated reason,
+restored and passed. `gradlew :app:testFullDebugUnitTest --tests "org.ort.app.debug.tour.*"
+--tests "org.ort.app.ui.setup.SetupActivityModelsOverrideTest"
+--tests "org.ort.app.ui.setup.SetupActivityVerifyOverrideTest"
+--tests "org.ort.app.ui.setup.SetupStateMachineTest" --tests "org.ort.app.debug.WpiScenariosTest"
+--tests "org.ort.app.debug.ScenariosTest" -PortAllowMissingBundledAssets=true` green (run both
+combined and, after one combined run showed unrelated order-dependent flakiness in
+`BluetoothPermissionScreenTest`/`SetupActivityVerifyOverrideTest` under CPU contention from a
+concurrently booted emulator, each class isolated and confirmed green alone). Manual reproduction
+on a dedicated `ort_audit_tourfix` AVD (`emulator-5560`, never touching another session's
+`ort_audit`/5554): `.\tools\ui-audit\install.ps1 -Port 5560 -Clear`, then
+`.\tools\ui-audit\tour.ps1 -Port 5560 -Only "overnight/CF12*"` (2 steps, 6.2s) immediately followed
+by `.\tools\ui-audit\tour.ps1 -Port 5560 -Only "vad-fallback/N01*"` (1 step) — the second run
+reported `steps: 1  ok: 1  errors: 0  elapsed: 3.1s` with its own manifest entry for
+`vad-fallback/N01-now-vad-fallback` and its own fresh `runId`, never the prior CF12 result;
+`.\tools\ui-audit\tour.ps1 -Port 5560 -Only "setup-models/*"` produced `steps: 3  ok: 3  errors: 0`
+and a genuine `S11a-models`/`@2x`/`@2x-end` capture of the Models board with the seeded PENDING
+(`Whisper tiny.en — encoder`, `Download`) and FAILED (`Whisper tiny.en — decoder`, `checksum did
+not match the published digest — try again`, `Retry`) rows, Wi-Fi-only toggle and a disabled
+`Continue` — the artboard comparison itself is the session lead's, per constitution VIII's
+builder/lead split.
+**Left open:** `tour.ps1`'s own runId-matching/count-check logic has no automated test (no Pester
+harness exists in this repository) — covered only by the manual reproduction above, not by CI.
+S11a's captures were taken to a scratch directory for this reproduction and are not part of the
+committed `results/ui-audit/` set — only a full canonical tour replaces that (constitution VIII);
+the register row itself is the lead's to update. Unrelated, pre-existing test-order-dependent
+flakiness in `SetupActivityVerifyOverrideTest` (passes alone, failed once in a specific combined
+run) flagged as a separate follow-up rather than fixed here, out of scope for this unit.
+
+---
 
 ## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a secret-driven release key and a configurable signing-stability guard)
 

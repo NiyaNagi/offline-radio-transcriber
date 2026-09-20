@@ -54,6 +54,12 @@ public class TourRunner(
      * see `ScreenshotTourActivity`'s construction site). `"unknown"` default so existing callers
      * (this class's own tests) need not pass one. */
     private val apkHash: String = "unknown",
+    /** R-1083 (register): the id `tour.ps1` generated for its own invocation and wrote into the
+     * spec it pushed ([TourSpec.runId]) — stamped onto every entry this run writes, including the
+     * trailing `done` marker, so the poller can tell this run's own result apart from a previous
+     * run's leftover manifest. `"unknown"` default for the same reason [apkHash]'s is — a direct
+     * launch outside `tour.ps1`, or an existing test, has no run id to carry. */
+    private val runId: String = "unknown",
 ) {
     public suspend fun run(spec: TourSpec): List<TourManifestEntry> {
         // A fresh run must not append onto a previous invocation's manifest.json (tour.ps1 can be
@@ -69,7 +75,7 @@ public class TourRunner(
             appendManifestEntry(manifestFile, entry)
         }
         val ok = entries.count { it.ok }
-        appendManifestDone(manifestFile, total = entries.size, ok = ok, errors = entries.size - ok)
+        appendManifestDone(manifestFile, total = entries.size, ok = ok, errors = entries.size - ok, runId = runId)
         return entries
     }
 
@@ -93,9 +99,10 @@ public class TourRunner(
             capture.height,
             apkHash,
             note = capture.note,
+            runId = runId,
         )
     } catch (e: Exception) {
-        TourManifestEntry.failure(step.id, step.scenario, step.fontScale, e.message ?: e.toString(), apkHash)
+        TourManifestEntry.failure(step.id, step.scenario, step.fontScale, e.message ?: e.toString(), apkHash, runId)
     }
 
     private fun writePng(bitmap: Bitmap, file: File) {

@@ -131,6 +131,45 @@ class ScreenshotTourTest {
         assertTrue(manifestEntries.single().ok)
     }
 
+    /** R-1083 (register): the stale-manifest false green relies on `tour.ps1` matching a `done`
+     * line's own `runId` against the one it just pushed — this is the device-side half of that
+     * contract: every manifest line [TourRunner] writes for a given run, including the trailing
+     * `done` marker, must carry the run's own id, never a placeholder or the previous run's. */
+    @Test
+    fun `R_1083_RUN_ID_STAMPED every manifest entry and the done line carry the run's own id`() = runTest {
+        val outputDir = File(context.filesDir, "tour-test-runid").apply { deleteRecursively() }
+        val spec = TourSpec(listOf(TourStep(id = "overnight/N01-now", scenario = "overnight", destination = "NOW")))
+        val renderer = TourStepRenderer { _, _ -> fakeCapture() }
+
+        TourRunner(context, renderer, outputDir, runId = "run-A").run(spec)
+
+        val manifestFile = File(outputDir, "manifest.json")
+        val manifestEntries = readManifestEntries(manifestFile)
+        assertEquals("run-A", manifestEntries.single().runId)
+        val lastLine = manifestFile.readLines().last { it.isNotBlank() }
+        assertEquals("run-A", JSONObject(lastLine).getString("runId"))
+    }
+
+    /** R-1083: a second, later run against the same on-device output directory (`tour.ps1` can be
+     * re-run any number of times against the same app install) must never leave the previous run's
+     * own id on the final `done` line — that is exactly the shape of manifest a stale poll could
+     * mistake for its own success. [TourRunner.run] already wipes [outputDir] first (this test
+     * would fail just the same if that regressed); this proves the *id* half of the fix
+     * specifically, independent of the file-deletion half. */
+    @Test
+    fun `R_1083_STALE_RUN_ID_REPLACED a later run's done line never carries an earlier run's own id`() = runTest {
+        val outputDir = File(context.filesDir, "tour-test-stale-runid").apply { deleteRecursively() }
+        val spec = TourSpec(listOf(TourStep(id = "overnight/N01-now", scenario = "overnight", destination = "NOW")))
+        val renderer = TourStepRenderer { _, _ -> fakeCapture() }
+
+        TourRunner(context, renderer, outputDir, runId = "run-old").run(spec)
+        TourRunner(context, renderer, outputDir, runId = "run-new").run(spec)
+
+        val manifestFile = File(outputDir, "manifest.json")
+        val lastLine = manifestFile.readLines().last { it.isNotBlank() }
+        assertEquals("run-new", JSONObject(lastLine).getString("runId"))
+    }
+
     @Test
     fun `R_TOUR_UNSUPPORTED_DRILL_IN an unsupported key records an error without invoking the renderer`() = runTest {
         val outputDir = File(context.filesDir, "tour-test-drillin").apply { deleteRecursively() }

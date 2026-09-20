@@ -49,6 +49,46 @@
   are dropped from the spec pushed to the device - the manifest and summary below only ever cover
   what was actually run.
 
+.NOTES
+  R-1083 (register): this script used to poll `files/tour/manifest.json` for a trailing `"done":
+  true` line with no guard at all against reading a *stale* one - the previous invocation's own
+  finished manifest, left on disk because nothing ever cleared it first. The lead reproduced this
+  twice in one night: `-Only "vad-fallback/*"` printed `steps: 2  ok: 2  errors: 0  elapsed: 0.1s`
+  and wrote no PNG at all (0.1s is not a real tour run - it is the time to read a file that was
+  already there), and `-Only "vad-fallback/N01*"` (one step) reported two steps, both belonging to
+  the prior `overnight/CF12*` run. A false green here is worse than a crash, because every visual
+  claim in the project (constitution VIII) rests on this script's own report being true.
+
+  Fixed two ways, deliberately redundant (belt-and-suspenders, not either/or):
+
+  1. **Clear before push.** `files/tour` (manifest and every PNG) is deleted through `run-as`
+     *before* the spec is written - the same directory `ScreenshotTourActivity`'s own
+     `TourRunner.run` clears again itself once its coroutine actually starts (that class's own
+     comment), but the gap between `am start` returning and that coroutine reaching its own
+     `deleteRecursively()` call is exactly the race the two reproductions above fell into: a cold
+     activity start is not instant, and the very first poll below runs immediately, with no prior
+     sleep. Clearing here means there is nothing stale left to read during that gap at all.
+  2. **Stamp and match a run id.** A fresh GUID is generated per invocation and written into the
+     pushed spec's own `runId` field (`TourSpec.runId`, `app/src/debug/kotlin/org/ort/app/debug/tour/TourSpec.kt`) -
+     `TourRunner` (`TourRunner.kt`) carries it onto every manifest line it writes for the run,
+     including the trailing `done` marker (`TourManifest.kt`). The poll below only accepts a
+     `done` line whose own `runId` matches the one this invocation generated; a `done` line for a
+     *different* run (the clear step failed for some reason, or two invocations somehow overlap)
+     is recognised, named in a loud failure message, and never mistaken for this run's own result.
+     This is what makes a stale-or-foreign manifest structurally unable to satisfy the poll, not
+     merely unlikely to occur in practice.
+
+  The clear step and the run-id match are both exercised by `ScreenshotTourTest`'s own
+  `R_1083_RUN_ID_STAMPED`/`R_1083_STALE_RUN_ID_REPLACED` cases (Robolectric, on-device manifest
+  plumbing) - this script's own matching/failure logic below has no equivalent automated test (no
+  Pester harness exists in this repository) and is covered only by manual reproduction: see this
+  round's own session report for the exact before/after transcripts.
+
+  Separately (same finding, third symptom): the script used to report success even when it pulled
+  fewer screenshots than the spec asked for - the `-Only "vad-fallback/*"` run above is again the
+  example, "ok: 2" while zero PNGs existed. The step-count and pulled-screenshot-count checks near
+  the end of this script now throw rather than print a warning when either falls short.
+
 .EXAMPLE
   .\tour.ps1 -Port 5554
 
@@ -84,7 +124,13 @@ if ($Only) {
 }
 Write-Output "Running $($steps.Count) of $($allSteps.Count) step(s) from $tourPath on $serial..."
 
-$filtered = [PSCustomObject]@{ steps = $steps }
+# R-1083: a fresh id for *this* invocation, carried onto every manifest line the device writes
+# (TourSpec.runId -> TourRunner -> TourManifestEntry/appendManifestDone) - see this script's own
+# .NOTES for why matching this, not just a trailing "done" line's presence, is what the poll below
+# actually needs.
+$runId = [guid]::NewGuid().ToString()
+
+$filtered = [PSCustomObject]@{ steps = $steps; runId = $runId }
 $localTempJson = Join-Path $env:TEMP "ort-tour-$Port.json"
 # Windows PowerShell 5.1's `Set-Content -Encoding utf8` writes a UTF-8 byte-order mark, which
 # survives the run-as pipe onto the device and lands as the first character of spec.json - Kotlin's
@@ -102,6 +148,18 @@ $noBomUtf8 = New-Object System.Text.UTF8Encoding $false
 # against a real device (`mkdir: Needs 1 argument` - see this script's own .DESCRIPTION). Wrapped so
 # a transient native-stderr line cannot turn into a terminating error under
 # $ErrorActionPreference = "Stop" (this file's own top-level setting).
+# R-1083: delete any previous run's manifest/PNGs *before* pushing this run's own spec - closes
+# the race this script's own .NOTES describes (ScreenshotTourActivity clears the same directory
+# itself once its coroutine starts, but that is not instant, and this script's very first poll
+# below runs with no prior sleep). Best-effort: `rm -rf` on a directory that does not exist yet
+# (a fresh install) still exits 0, and any genuine problem here (e.g. the app is not installed at
+# all) surfaces as a loud, specific failure at the spec-write step immediately below regardless.
+$clearTourDirCmd = "run-as $packageId sh -c 'rm -rf files/tour'"
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& $adb -s $serial shell $clearTourDirCmd | Out-Null
+$ErrorActionPreference = $prevEap
+
 $writeSpecCmd = "run-as $packageId sh -c 'mkdir -p files/tour && cat > files/tour/spec.json'"
 $prevEap = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
@@ -122,6 +180,10 @@ $pollCmd = "run-as $packageId sh -c " +
 $startedAt = Get-Date
 $deadline = $startedAt.AddSeconds($TimeoutSeconds)
 $done = $false
+# R-1083: the id of whichever *other* run's own "done" line was seen while waiting for this run's
+# own - kept so a timeout can name exactly what it found, rather than a generic "nothing ever
+# appeared" message that would look identical to the app never having started at all.
+$foreignRunId = $null
 while ((Get-Date) -lt $deadline) {
     # Before manifest.json exists at all, a bare `run-as ... cat` exits non-zero and writes to
     # stderr - under $ErrorActionPreference = "Stop" that becomes a terminating NativeCommandError
@@ -135,13 +197,35 @@ while ((Get-Date) -lt $deadline) {
     $ErrorActionPreference = $prevEap
     if ($manifestText) {
         $lastLine = ($manifestText -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 1)
-        if ($lastLine -match '"done"\s*:\s*true') { $done = $true; break }
+        if ($lastLine -match '"done"\s*:\s*true') {
+            # R-1083: a "done" line existing is no longer enough on its own - it must be *this*
+            # invocation's own run. A malformed/partial line (a concurrent append caught mid-write)
+            # is treated as "not yet" rather than a hard failure - the next poll tick reads the
+            # completed file.
+            $doneLine = $null
+            try { $doneLine = $lastLine | ConvertFrom-Json } catch { $doneLine = $null }
+            if ($doneLine -and $doneLine.runId -eq $runId) {
+                $done = $true
+                break
+            } elseif ($doneLine -and $doneLine.runId) {
+                $foreignRunId = $doneLine.runId
+            }
+        }
     }
     Start-Sleep -Seconds 3
 }
 if (-not $done) {
-    throw "Timed out after ${TimeoutSeconds}s waiting for the tour's manifest 'done' marker on $serial " +
-        "(files/tour/manifest.json under run-as $packageId). Check 'adb -s $serial logcat -d' for a crash."
+    if ($foreignRunId) {
+        throw "Timed out after ${TimeoutSeconds}s: files/tour/manifest.json on $serial (under run-as " +
+            "$packageId) carries a completed run for id '$foreignRunId', not the run this invocation " +
+            "started ('$runId') - a stale or foreign manifest, never this run's own result. This should " +
+            "no longer be possible after R-1083's fix (the on-device tour dir is cleared before the spec " +
+            "is pushed); if it recurs, check for a concurrent tour.ps1 invocation against the same " +
+            "emulator, or 'adb -s $serial logcat -d' for a crash right after 'am start'."
+    }
+    throw "Timed out after ${TimeoutSeconds}s waiting for the manifest 'done' marker for run '$runId' on " +
+        "$serial (files/tour/manifest.json under run-as $packageId). Check 'adb -s $serial logcat -d' for " +
+        "a crash."
 }
 $elapsed = (Get-Date) - $startedAt
 Write-Output "Tour finished in $([Math]::Round($elapsed.TotalSeconds, 1))s. Pulling screenshots..."
@@ -166,12 +250,18 @@ $lines = $manifestText -split "`n" | Where-Object { $_.Trim() -ne "" }
 # join explicitly instead, one JSONL line per manifest entry, exactly like the on-device file.
 $noBomUtf8Manifest = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($manifestDest, (($lines -join "`n") + "`n"), $noBomUtf8Manifest)
-$stepLines = $lines | Where-Object { $_ -notmatch '"done"\s*:\s*true' } | ForEach-Object { $_ | ConvertFrom-Json }
+# R-1083: `@(...)` forces array context even when exactly one step ran - without it, PowerShell
+# 5.1 unwraps a single-element pipeline result to a bare scalar, and `.Count` on that is `$null`
+# (silently blank when interpolated into a string), which made the new step-count check below
+# compare `$null -ne 1` and fail every single-step run - found by actually running a one-step
+# `-Only` tour against this fix, not by inspection.
+$stepLines = @($lines | Where-Object { $_ -notmatch '"done"\s*:\s*true' } | ForEach-Object { $_ | ConvertFrom-Json })
 $okCount = @($stepLines | Where-Object { $_.ok -eq $true }).Count
 $errorCount = @($stepLines | Where-Object { $_.ok -eq $false }).Count
 
 $okSteps = @($stepLines | Where-Object { $_.ok -eq $true })
 Write-Output "Pulling $($okSteps.Count) screenshot(s) via run-as + base64..."
+$pulledCount = 0
 foreach ($step in $okSteps) {
     $relativePath = "$($step.id).png"
     $localFile = Join-Path $outDir $relativePath.Replace("/", "\")
@@ -190,6 +280,7 @@ foreach ($step in $okSteps) {
     }
     $bytes = [Convert]::FromBase64String(($encoded -join ""))
     [System.IO.File]::WriteAllBytes($localFile, $bytes)
+    $pulledCount++
 }
 
 Write-Output ""
@@ -201,3 +292,23 @@ if ($errorCount -gt 0) {
     }
 }
 Write-Output "screenshots + tour-manifest.json written under $outDir"
+
+# R-1083 (the third symptom of the same finding): a run that produced fewer screenshots than the
+# spec asked for must fail, not print a quiet summary and exit 0 - `-Only "vad-fallback/*"`'s own
+# false-green report was "steps: 2  ok: 2  errors: 0" while zero PNGs had actually been written.
+# Two independent counts, either one enough to fail on its own:
+#   - the manifest itself must report one result per step this invocation actually requested
+#     (never fewer - a step the device silently dropped, or a stale/short manifest that slipped
+#     past the runId check above some other way);
+#   - every step the manifest reported ok must have actually been pulled to disk - a base64 pull
+#     failure above only warns, by design (one bad pull should not lose every other screenshot),
+#     so this is the one place that turns "some pulls failed" into a failed run overall.
+if ($stepLines.Count -ne $steps.Count) {
+    throw "run '$runId' reported $($stepLines.Count) step result(s) in its manifest but $($steps.Count) " +
+        "step(s) were requested from $tourPath - the device produced fewer results than asked for. " +
+        "Check 'adb -s $serial logcat -d' for a crash partway through the run."
+}
+if ($pulledCount -ne $okCount) {
+    throw "run '$runId' reported $okCount ok screenshot(s) but only $pulledCount were actually pulled to " +
+        "$outDir - see the 'could not pull' warning(s) above for which step(s) and why."
+}
