@@ -57,6 +57,20 @@ public data class SetupSnapshot(
      * — see [SetupActivity]'s own `currentSnapshot()`.
      */
     val requiredModelsInstalled: Boolean,
+    /**
+     * P28 (D42, FR-ANL-10, AC-180). `false` until [SetupStep.ANALYTICS_CONSENT] has been seen —
+     * shown exactly once, right after [requiredModelsInstalled] clears and before [setupComplete].
+     * Unlike [requiredModelsInstalled], this never blocks: [SetupStateMachine.stepFor] advances
+     * past it the moment it is `true`, whatever the operator left the two toggles at (FR-ANL-10's
+     * "declining leaves every other function fully working").
+     *
+     * **Regression, fixed at the fixture, exactly as [jurisdictionNoticeSeen]'s own doc comment
+     * already documents for its gate**: any debug scenario or test fixture that resumes at
+     * [SetupStep.READY] or claims `setupComplete = true` must also set this `true`, or `stepFor`
+     * will (correctly) route back to [SetupStep.ANALYTICS_CONSENT] — fixed in `Scenarios.kt`'s own
+     * setup-seeding functions in the same change that added this field.
+     */
+    val analyticsConsentSeen: Boolean,
     val setupComplete: Boolean,
 )
 
@@ -115,6 +129,7 @@ public object SetupStateMachine {
         // already installed reads `requiredModelsInstalled = true` from the moment SetupActivity
         // builds this snapshot, so this never adds a step to the `full` variant's existing flow.
         if (!snapshot.requiredModelsInstalled) return SetupStep.MODELS
+        if (!snapshot.analyticsConsentSeen) return SetupStep.ANALYTICS_CONSENT
         if (!snapshot.setupComplete) return SetupStep.READY
         return null
     }

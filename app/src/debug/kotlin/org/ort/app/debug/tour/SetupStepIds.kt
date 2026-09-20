@@ -32,6 +32,10 @@ public object SetupStepIds {
         // design-intent.md §2's S01a/S11a rows.
         "S01a" to "JURISDICTION_NOTICE",
         "S11a" to "MODELS",
+        // P28 (D42, FR-ANL-10, AC-180): the analytics-consent step, right after S11a/MODELS and
+        // before S12/READY — no design-intent.md row exists for it yet (that inventory is outside
+        // this unit's own file ownership, the same note P22's own S01a/S11a addition already made).
+        "S11b" to "ANALYTICS_CONSENT",
     )
 
     /** `null` when [sId] is not one of design-intent's S01..S12/S02b. */

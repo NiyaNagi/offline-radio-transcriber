@@ -30,6 +30,12 @@ public enum class SettingsScreenId {
      * is not one of [SettingsPolling.root]'s dynamic sections — its row is the one static addition
      * this unit's own file-ownership map allows). */
     LICENSES,
+
+    /** P28 (D42, FR-ANL-1..14): the analytics tiers screen —
+     * [org.ort.app.ui.settings.SettingsAnalyticsScreen]. Follows the identical pattern P27
+     * established for [LICENSES]: `SettingsRootScreen`'s own row for this is a static addition to
+     * the "Privacy" section, not a [SettingsPolling.root] dynamic row. */
+    ANALYTICS,
 }
 
 public data class SettingsRowViewState(val label: String, val subLine: String, val screen: SettingsScreenId)
@@ -244,6 +250,19 @@ public data class SettingsExportViewState(
     val tonightSpanLabel: String,
     val allSessionCount: Int,
     val allOverCount: Int,
+)
+
+/** P28 (D42, FR-ANL-1..14): [SettingsAnalyticsScreen]'s own state — [installIdLabel] is a
+ * display-only, already-truncated string (never the raw id rendered as a claim to assert on;
+ * `AC_179`'s own test reads [tier1Enabled]/[tier2Enabled]/[tier3Enabled] directly, never this
+ * label). [destinationConfigured] is D48's honest "is anything actually deployed" fact — `false`
+ * is the default state today. */
+public data class SettingsAnalyticsViewState(
+    val tier1Enabled: Boolean,
+    val tier2Enabled: Boolean,
+    val tier3Enabled: Boolean,
+    val destinationConfigured: Boolean,
+    val installIdLabel: String,
 )
 
 public data class SettingsContributeCategoryViewState(val label: String, val subLine: String, val enabled: Boolean)

@@ -52,4 +52,45 @@ class ModuleGraphTest {
         val violations = ModuleGraph.violations(mapOf(":ghost" to setOf(":core")))
         assertTrue(violations.any { it.from == ":ghost" })
     }
+
+    // P28/D42/FR-ANL: :telemetry is a fourth declared outbound channel, and analytics is exactly
+    // the kind of thing capture must never block on or feed directly (constitution IV, VII) — the
+    // forbidden edge is named explicitly, in both directions, the same way rule 2 already forbids
+    // :capture-* -> :asr-*.
+
+    @Test
+    fun `capture-* to telemetry is forbidden`() {
+        val poisoned = ModuleGraph.allowed.toMutableMap()
+        poisoned[":capture-api"] = poisoned.getValue(":capture-api") + ":telemetry"
+        poisoned[":capture-android"] = poisoned.getValue(":capture-android") + ":telemetry"
+
+        val violations = ModuleGraph.violations(poisoned)
+
+        assertTrue(
+            violations.any { it.from == ":capture-api" && it.to == ":telemetry" && it.reason.contains("explicitly forbidden") },
+            "expected :capture-api -> :telemetry to be named forbidden, got $violations",
+        )
+        assertTrue(
+            violations.any { it.from == ":capture-android" && it.to == ":telemetry" && it.reason.contains("explicitly forbidden") },
+            "expected :capture-android -> :telemetry to be named forbidden, got $violations",
+        )
+    }
+
+    @Test
+    fun `telemetry to capture-* is forbidden`() {
+        val poisoned = ModuleGraph.allowed.toMutableMap()
+        poisoned[":telemetry"] = poisoned.getValue(":telemetry") + ":capture-api"
+
+        val violations = ModuleGraph.violations(poisoned)
+
+        assertTrue(
+            violations.any { it.from == ":telemetry" && it.to == ":capture-api" && it.reason.contains("explicitly forbidden") },
+            "expected :telemetry -> :capture-api to be named forbidden, got $violations",
+        )
+    }
+
+    @Test
+    fun `telemetry itself depends on core only`() {
+        assertEquals(setOf(":core"), ModuleGraph.allowed[":telemetry"])
+    }
 }

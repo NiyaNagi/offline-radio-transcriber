@@ -41,6 +41,10 @@ class SetupStateMachineTest {
         rigTransport: RigTransportKind? = null,
         rigBluetoothVerified: Boolean = false,
         requiredModelsInstalled: Boolean = true,
+        // P28 (D42, FR-ANL-10, AC-180): defaults `true` (already cleared), the same "focus on one
+        // gate at a time" shape `requiredModelsInstalled`'s own default above already uses — every
+        // test that is not specifically about this gate should not have to know it exists.
+        analyticsConsentSeen: Boolean = true,
         setupComplete: Boolean = false,
     ) = SetupSnapshot(
         welcomeSeen = welcomeSeen,
@@ -56,6 +60,7 @@ class SetupStateMachineTest {
         rigTransport = rigTransport,
         rigBluetoothVerified = rigBluetoothVerified,
         requiredModelsInstalled = requiredModelsInstalled,
+        analyticsConsentSeen = analyticsConsentSeen,
         setupComplete = setupComplete,
     )
 
@@ -410,6 +415,38 @@ class SetupStateMachineTest {
             snapshot(requiredModelsInstalled = true, setupComplete = false),
         )
         assertEquals(SetupStep.READY, step, "a full-variant install with nothing to download must never gain this step")
+    }
+
+    // --- P28: SetupStep.ANALYTICS_CONSENT (D42, FR-ANL-10, AC-180) ---------------------------
+
+    @Test
+    fun `AC_180 the analytics consent step is shown once every earlier gate has cleared`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(analyticsConsentSeen = false, setupComplete = false),
+        )
+        assertEquals(SetupStep.ANALYTICS_CONSENT, step)
+    }
+
+    @Test
+    fun `AC_180 Models is still checked before analytics consent, regardless of consent state`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(requiredModelsInstalled = false, analyticsConsentSeen = false, setupComplete = false),
+        )
+        assertEquals(SetupStep.MODELS, step, "the earlier gate must still resolve first")
+    }
+
+    @Test
+    fun `AC_180 seeing the consent step proceeds to Ready, whatever the two toggles are left at`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(analyticsConsentSeen = true, setupComplete = false),
+        )
+        assertEquals(SetupStep.READY, step, "declining tiers 2/3 must never block setup — FR-ANL-10")
     }
 
     @Test

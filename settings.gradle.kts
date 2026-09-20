@@ -42,5 +42,7 @@ include(
     ":net",
     ":llm-mediapipe",
     ":pipeline",
+    // P28 (D42, FR-ANL-1..14): the analytics channel's event schema and on-device queue.
+    ":telemetry",
     ":app",
 )

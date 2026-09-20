@@ -479,6 +479,17 @@ public class SetupActivity : ComponentActivity() {
         refreshStep(pushCurrent = true)
     }
 
+    // --- P28 Analytics consent (D42, FR-ANL-10, AC-180) ---------------------------------------
+
+    /** Declining both toggles (leaving them at their default) and tapping `Continue` leaves every
+     * other function fully working — this only marks the step seen, exactly like
+     * [onContinueJurisdictionNotice] above; the toggles themselves write straight through
+     * [org.ort.app.analytics.AnalyticsAppWiring.controller] as they are flipped, not on continue. */
+    internal fun onContinueAnalyticsConsent() {
+        store.analyticsConsentSeen = true
+        refreshStep(pushCurrent = true)
+    }
+
     // --- S00 Mode (D33, FR-CAP-8/FR-CAP-9) --------------------------------------------------------
 
     /**
@@ -1057,9 +1068,40 @@ public class SetupActivity : ComponentActivity() {
             SetupStep.RIG_BLUETOOTH -> RenderRigBluetooth()
             SetupStep.RADIO_VERIFIED -> RenderRadioVerified()
             SetupStep.MODELS -> RenderModels()
+            SetupStep.ANALYTICS_CONSENT -> RenderAnalyticsConsent()
             SetupStep.READY -> RenderReady()
             null -> {}
         }
+    }
+
+    /** P28 (D42, FR-ANL-10, AC-180). [org.ort.app.analytics.AnalyticsAppWiring.configureOnce] is
+     * idempotent and safe to call from composition — [OrtApplication.onCreate] has always already
+     * run by the time a real device reaches setup, but a Robolectric test's own `Application`
+     * (`OrtApplication`, guarded under Robolectric) never calls it, so this screen calls it itself
+     * defensively, the same way `SettingsAnalyticsPolling.current` does. */
+    @Composable
+    private fun RenderAnalyticsConsent() {
+        org.ort.app.analytics.AnalyticsAppWiring.configureOnce(this)
+        val controller = org.ort.app.analytics.AnalyticsAppWiring.controller
+        var tier2 by remember {
+            mutableStateOf(controller.isTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_2))
+        }
+        var tier3 by remember {
+            mutableStateOf(controller.isTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_3))
+        }
+        AnalyticsConsentScreen(
+            tier2Enabled = tier2,
+            tier3Enabled = tier3,
+            onToggleTier2 = {
+                controller.setTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_2, it)
+                tier2 = it
+            },
+            onToggleTier3 = {
+                controller.setTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_3, it)
+                tier3 = it
+            },
+            onContinue = ::onContinueAnalyticsConsent,
+        )
     }
 
     @Composable

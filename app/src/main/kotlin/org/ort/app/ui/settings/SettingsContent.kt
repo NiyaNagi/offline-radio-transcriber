@@ -258,7 +258,62 @@ private fun SettingsSubScreen(
 
         // P27 (NFR-6d, AC-167): the one new branch this unit's file-ownership map allows here.
         SettingsScreenId.LICENSES -> SettingsLicensesScreen(context = context, onBack = onBack, modifier = modifier)
+
+        // P28 (D42, FR-ANL-1..14): this wave's own turn at the same narrow integration point
+        // P27's LICENSES branch above documents — split into its own function for the identical
+        // detekt LongMethod reason CF11's own branch below already is.
+        SettingsScreenId.ANALYTICS -> SettingsAnalyticsSubScreen(
+            context = context,
+            storeVersion = storeVersion,
+            onStoreChanged = onStoreChanged,
+            onBack = onBack,
+            modifier = modifier,
+        )
     }
+}
+
+/** Split out of [SettingsSubScreen] purely to keep that function under detekt's length limit —
+ * see this file's own `CF11's own branch` comment for the identical reason applied elsewhere. */
+@Composable
+private fun SettingsAnalyticsSubScreen(
+    context: Context,
+    storeVersion: Int,
+    onStoreChanged: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier,
+) {
+    // R_TOUR_STEPS (register): the tour drives every SettingsScreenId destination cold, so this
+    // composable cannot assume OrtApplication.onCreate (guarded off under Robolectric) already
+    // called AnalyticsAppWiring.configureOnce — reading the lateinit `controller` before this ran
+    // threw UninitializedPropertyAccessException the first time the tour actually exercised this
+    // screen. SettingsAnalyticsPolling.current(context) below calls it too, but only inside the
+    // `remember` block, too late for the eager `controller` read that used to sit here.
+    org.ort.app.analytics.AnalyticsAppWiring.configureOnce(context)
+    val scope = rememberCoroutineScope()
+    val controller = org.ort.app.analytics.AnalyticsAppWiring.controller
+    SettingsAnalyticsScreen(
+        state = remember(storeVersion) { SettingsAnalyticsPolling.current(context) },
+        onBack = onBack,
+        onToggleTier1 = {
+            controller.setTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_1, it)
+            onStoreChanged()
+        },
+        onToggleTier2 = {
+            controller.setTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_2, it)
+            onStoreChanged()
+        },
+        onToggleTier3 = {
+            controller.setTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_3, it)
+            onStoreChanged()
+        },
+        onResetInstallId = {
+            scope.launch {
+                org.ort.app.analytics.AnalyticsAppWiring.resetInstallId()
+                onStoreChanged()
+            }
+        },
+        modifier = modifier,
+    )
 }
 
 /**

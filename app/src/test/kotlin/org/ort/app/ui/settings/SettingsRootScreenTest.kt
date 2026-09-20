@@ -96,9 +96,16 @@ class SettingsRootScreenTest {
         // `SettingsScreenId`'s closed set, so it shares CAPTURE's icon rather than inventing an
         // association to a row nothing ever actually shows. LICENSES (P27) is a third documented
         // fallback, for the identical "no bespoke glyph, `OrtIcons.kt` outside this unit's own
-        // ownership" reason TIER/ABOUT already are.
-        val fallbacks =
-            setOf(SettingsScreenId.TIER, SettingsScreenId.ABOUT, SettingsScreenId.MODE, SettingsScreenId.LICENSES)
+        // ownership" reason TIER/ABOUT already are. ANALYTICS (P28) deliberately reuses
+        // CONTRIBUTE's own `OrtIcons.lock` — both are privacy-consent screens, the same reasoning
+        // CONTRIBUTE's own `iconFor` branch already states, not an unrelated placeholder.
+        val fallbacks = setOf(
+            SettingsScreenId.TIER,
+            SettingsScreenId.ABOUT,
+            SettingsScreenId.MODE,
+            SettingsScreenId.LICENSES,
+            SettingsScreenId.ANALYTICS,
+        )
         val distinctExcludingFallbacks = icons.filterKeys { it !in fallbacks }
         assert(distinctExcludingFallbacks.values.toSet().size == distinctExcludingFallbacks.size) {
             "expected every non-fallback row to carry its own distinct icon, got $icons"

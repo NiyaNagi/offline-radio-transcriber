@@ -25,6 +25,13 @@ package org.ort.app.ui.setup
  * this build did not bundle). Both share an existing indicator segment rather than adding a new
  * numbered stage of their own (see [indicatorIndex]'s own doc comment) — renumbering every other
  * stage's artboard is outside this unit's file ownership (the `design` tree).
+ *
+ * P28 (D42, FR-ANL-10, AC-180) adds [ANALYTICS_CONSENT], right after [MODELS] and before [READY]
+ * — explains tier 1 and offers tiers 2/3 as an explicit, unchecked choice, shown exactly once (the
+ * identical shown-once shape [JURISDICTION_NOTICE] already established), and — unlike [MODELS] —
+ * never a hard gate: [SetupStateMachine.stepFor] advances past it the instant it has been seen,
+ * whatever the two toggles are left at (FR-ANL-10's own "declining leaves every other function
+ * fully working").
  */
 public enum class SetupStep {
     WELCOME,
@@ -45,6 +52,7 @@ public enum class SetupStep {
     RIG_BLUETOOTH,
     RADIO_VERIFIED,
     MODELS,
+    ANALYTICS_CONSENT,
     READY,
 }
 
@@ -80,7 +88,9 @@ public fun SetupStep.indicatorIndex(): Int? = when (this) {
     SetupStep.RIG_BLUETOOTH,
     SetupStep.RADIO_VERIFIED,
     -> 7
-    SetupStep.MODELS, SetupStep.READY -> 8
+    // P28: shares MODELS/READY's own segment for the identical reason MODELS shares READY's own —
+    // no artboard exists yet to renumber against (see this function's own P28 doc-comment note).
+    SetupStep.MODELS, SetupStep.ANALYTICS_CONSENT, SetupStep.READY -> 8
 }
 
 /** Whether this step's indicator segment should render halted (`halt/text`) — only the route

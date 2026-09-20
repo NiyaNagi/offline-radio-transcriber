@@ -37,6 +37,14 @@ venv/
 *.flac
 !**/src/test/resources/**/*.flac
 
+# P28 (D42, D48): raw analytics data and generated reports are never committed — the same rule
+# /corpus/data/ already applies, extended to the analytics ingest server's own NDJSON partitions
+# and whatever `ort-analytics report` writes. tools/analytics/tests/fixtures/ is deliberately NOT
+# covered by this pattern (small, committed, fixture data the test suite reads).
+/tools/analytics/data/
+/tools/analytics/reports/
+/tools/analytics/*.egg-info/
+
 # WPG (spec/e2e-capture-modes-plan.md, FR-AST-3): bundled assets are fetched and verified by the
 # fetchBundledAssets Gradle task (buildSrc/FetchBundledAssetsTask.kt) from bundled-assets.json —
 # that manifest is the source-controlled fact; these hundreds of megabytes of binaries, and the

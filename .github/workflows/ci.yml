@@ -56,6 +56,21 @@ jobs:
       - name: lint
         run: cd corpus && python -m ruff check .
 
+  analytics:
+    name: analytics tooling (Python, P28/D42/D48)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install
+        run: python -m pip install --quiet duckdb pytest ruff==0.16.6
+      - name: unit tests (TDD)
+        run: python -m pytest tools/analytics -q
+      - name: lint
+        run: cd tools/analytics && python -m ruff check .
+
   lint:
     name: lint + dependency rules
     runs-on: ubuntu-latest

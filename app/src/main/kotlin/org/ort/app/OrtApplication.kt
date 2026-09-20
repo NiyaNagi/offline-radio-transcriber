@@ -7,12 +7,17 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import org.ort.app.analytics.AnalyticsAppWiring
+import org.ort.app.analytics.AnalyticsUploadWorker
+import org.ort.app.analytics.CrashCaptureHandler
 import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetState
 import org.ort.app.fieldreport.wiring.FieldReportAppWiring
 import org.ort.pipeline.digest.ProseDigestRunner
 import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
+import org.ort.telemetry.AnalyticsEventFactory
+import org.ort.telemetry.AnalyticsTier1Payload
 
 /**
  * Application shell. The Hilt graph, capture service wiring and onboarding arrive with
@@ -55,6 +60,35 @@ class OrtApplication : Application() {
         // recorder — see `FieldReportAppWiring`'s own doc comment for why this is called exactly
         // once, here, rather than from an `Activity`. A no-op in a release build.
         FieldReportAppWiring.configureOnce(filesDir)
+        // P28 (D42, FR-ANL-1..14): the analytics channel's composition root — queue, tier
+        // preferences, install id, upload client (`AnalyticsAppWiring`'s own doc comment). Started
+        // unconditionally (tier 1 is on by default, FR-ANL-1) and idempotently (`configureOnce`).
+        AnalyticsAppWiring.configureOnce(this)
+        // FR-ANL-2/D42: crash and ANR capture without any third-party SDK. Chains whatever handler
+        // was already installed (the platform's own) so recording a crash never changes what
+        // happens to it (`CrashCaptureHandler`'s own doc comment).
+        val previousExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler(
+            CrashCaptureHandler(previousExceptionHandler) { thread, throwable ->
+                AnalyticsAppWiring.submit(
+                    AnalyticsEventFactory.tier1(
+                        AnalyticsAppWiring.baseProvenance(),
+                        AnalyticsTier1Payload.Crash(
+                            exceptionClass = throwable.javaClass.name,
+                            stackTrace = throwable.stackTraceToString(),
+                            isAnr = false,
+                            threadName = thread.name,
+                        ),
+                    ),
+                )
+            },
+        )
+        // FR-ANL-7: the periodic drain-and-upload chain — a no-op today (D48) until
+        // ORT_ANALYTICS_ENDPOINT is configured, since AnalyticsUploadRunner reports NotConfigured
+        // and never drains the queue. Scheduling it regardless costs nothing and means a later
+        // build that does configure an endpoint needs no separate app-level change to start
+        // sending what has already been queuing quietly since v0.1.1.
+        AnalyticsUploadWorker.schedule(this)
         // WPE (E2-I03's own "owed by WPE" note, FR-DIG-5): schedules the prose-digest work chain
         // on every launch — a no-op if it is already scheduled (`ProseDigestRunner.schedule`'s own
         // `ExistingWorkPolicy.KEEP`) — but only when the operator has not disabled it (CF04's
