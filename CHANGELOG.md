@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (P28b: the `play`-variant model catalog wired to the real generated manifest)
 
-### <pending> — ModelCatalog reads `bundled`/`downloadUrl` from the generated per-flavor manifest instead of hardcoding `bundled = true`
+### c4618000 — ModelCatalog reads `bundled`/`downloadUrl` from the generated per-flavor manifest instead of hardcoding `bundled = true`
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (`ModelCatalogEntry`,
 `ModelCatalog.entries`/`mapEntries`/`specFor`, `ModelsController.unverifiedSpecFor`),
