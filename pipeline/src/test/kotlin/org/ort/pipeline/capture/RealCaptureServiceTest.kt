@@ -21,6 +21,7 @@ import org.ort.core.AssetRef
 import org.ort.core.PassId
 import org.ort.core.SystemClock
 import org.ort.core.TransmissionState
+import org.ort.core.Ulid
 import org.ort.core.assets.ModelFileVerifier
 import org.ort.core.capture.VadDetectorKind
 import org.ort.data.OrtDatabase
@@ -30,6 +31,11 @@ import org.ort.data.entity.WorkAttemptEntity
 import org.ort.data.entity.WorkAttemptOutcome
 import org.ort.data.entity.WorkQueueState
 import org.ort.pipeline.PipelineTestFixtures
+import org.ort.pipeline.alerts.AlertEvaluationCoordinator
+import org.ort.pipeline.alerts.AlertEvaluationTrigger
+import org.ort.pipeline.alerts.AlertWatch
+import org.ort.pipeline.alerts.FakeAlertNotificationDispatcher
+import org.ort.pipeline.alerts.InMemoryAlertWatchStore
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.shed.FakeShedSignals
 import org.ort.testing.Requirement
@@ -62,6 +68,10 @@ import java.security.MessageDigest
  * on-device verification.
  */
 @RunWith(RobolectricTestRunner::class)
+@Suppress("LargeClass") // P31 follow-up's two alert-wiring cases pushed this over detekt's
+// threshold -- one class driving the real service end to end per its own class kdoc, the same
+// established convention RealCaptureService.kt's own RealSegmentSink/PassBFactory suppressions
+// document, and every other *ScreenTest LargeClass suppression in this repo already follows.
 public class RealCaptureServiceTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
@@ -707,6 +717,144 @@ public class RealCaptureServiceTest {
             val history = runBlocking { db.workQueueDao().attemptsFor(failedId) }
             assertEquals(1, history.size)
             assertEquals(WorkAttemptOutcome.FAILED, history.single().outcome)
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    /**
+     * P31 follow-up (FR-ALR-3, FR-ALR-4, AC-194, AC-195): the gap this session closes.
+     * [RealCaptureService.startProcessingLoop] built its real `PassB` through [PassBFactory.create]
+     * (build-plan P31 wired everything downstream of `alertTrigger` -- the store, the matcher, the
+     * coordinator, the dispatcher, the Settings screen -- but never passed a real one in), so a
+     * watch that matched every real over ever captured could not have fired a single notification
+     * on a real device. This drives the **real** [RealCaptureService] composition end to end
+     * (`Dependencies.alertEvaluationTrigger`'s real default, substituting only the
+     * [FakeAlertNotificationDispatcher] a Robolectric test can actually inspect for the
+     * `NotificationManager` a real device would use) and proves a matching watch's alert reaches
+     * that dispatcher — never the honest-but-inert [org.ort.pipeline.alerts.NoOpAlertEvaluationTrigger]
+     * default [PassBFactory.create] still falls back to for every caller that supplies nothing.
+     */
+    @Test
+    @Requirement("FR-ALR-3", "FR-ALR-4", "AC-194", "AC-195")
+    public fun `FR_ALR_3 a matching watch's alert reaches the dispatcher through the real capture composition`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+        repeat(12) { fakeIo.enqueueFrames(silentBlock()) }
+
+        val engine = FakeAsrEngine(
+            FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "kilo seven alpha bravo charlie")),
+        )
+        val sessionId = "TEST-SESSION-ALR-FIRE"
+        val dispatcher = FakeAlertNotificationDispatcher()
+        val watchStore = InMemoryAlertWatchStore(
+            initial = listOf(AlertWatch.Callsign(Ulid.generate().value, "K7ABC")),
+        )
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Available(engine, AssetRef("fake-asr-model", "1"), "test-fake") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+            // The one substitution this test makes: a coordinator built from the same real
+            // AlertEvaluationCoordinator class production uses, over a fake store/dispatcher a
+            // Robolectric test can actually inspect -- everything downstream of "a real Context
+            // reached AlertEvaluationCoordinator" is exactly what production does.
+            alertEvaluationTrigger = { _, _ -> AlertEvaluationCoordinator(watchStore, dispatcher) },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            val transmissionId = "$sessionId-0"
+            waitUntil(20_000) {
+                runBlocking { db.transmissionDao().getById(transmissionId) }?.processingState ==
+                    TransmissionState.COMPLETE
+            }
+
+            // AlertEvaluationCoordinator.fireAndForget launches onto its own coroutine scope
+            // (constitution IV: never synchronous with the caller) -- poll for it rather than
+            // asserting immediately after COMPLETE.
+            waitUntil(10_000) { dispatcher.firings.isNotEmpty() }
+
+            val firing = dispatcher.firings.single()
+            assertEquals("K7ABC", firing.input.stationId)
+            assertEquals(
+                "the watch this session configured, not some other one",
+                "K7ABC",
+                (firing.watch as AlertWatch.Callsign).callsign,
+            )
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    /**
+     * Constitution IV ("capture never blocks, never drops, never lies") applied to the new alert
+     * wiring specifically: [org.ort.pipeline.passb.DataPassBResultSink.record] already wraps its
+     * call to `alertTrigger.fireAndForget` in `runCatching` (build-plan P31), and this class's own
+     * `startProcessingLoop` now wraps *constructing* the trigger the same way (see
+     * [RealCaptureService.Dependencies.alertEvaluationTrigger]'s own kdoc) -- but neither of those
+     * facts is evidence on its own (constitution VIII's "a builder's report is not evidence"
+     * discipline, applied here to unit-test claims instead of screenshots). This drives the alert
+     * path throwing **through the real service composition**, the one place this unit owns that
+     * actually proves the fireAndForget call site is unreachable from anything that could stall the
+     * write transaction or the pass queue behind it: capture must still reach a real, persisted
+     * transcript despite an alertTrigger that always throws.
+     */
+    @Test
+    @Requirement("FR-ALR-4", "AC-195")
+    public fun `FR_ALR_4 a throwing alert path never blocks or breaks a real capture session`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+        repeat(12) { fakeIo.enqueueFrames(silentBlock()) }
+
+        val engine = FakeAsrEngine(
+            FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "test transmission received")),
+        )
+        val sessionId = "TEST-SESSION-ALR-THROW"
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Available(engine, AssetRef("fake-asr-model", "1"), "test-fake") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+            // A trigger that always throws, synchronously, the instant Pass B closes -- the
+            // discriminating case: if this class's own construction-time runCatching, or
+            // DataPassBResultSink's own call-site runCatching, were ever removed, this is the test
+            // that would fail (see this method's own kdoc).
+            alertEvaluationTrigger = { _, _ -> AlertEvaluationTrigger { error("boom: the alert path always throws") } },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            val transmissionId = "$sessionId-0"
+            waitUntil(20_000) {
+                runBlocking { db.transmissionDao().getById(transmissionId) }?.processingState ==
+                    TransmissionState.COMPLETE
+            }
+
+            val transcript = runBlocking { db.transcriptDao().getCurrent(transmissionId) }
+            assertNotNull(
+                "constitution IV: a throwing alert path must never prevent the transcript write",
+                transcript,
+            )
+            assertEquals("test transmission received", transcript!!.text)
         } finally {
             controller.destroy()
         }
