@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a structural signing-stability guard)
 
-### (pending — see next commit) — debug-fix session · pin the rolling-release signing key so every build shares one certificate, and guard the build against drift
+### 1c63474b — debug-fix session · pin the rolling-release signing key so every build shares one certificate, and guard the build against drift
 
 **Scope:** `.github/workflows/release.yml` (read only — no change needed there, see below),
 `buildSrc/build.gradle.kts`, `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt`,
