@@ -22,9 +22,7 @@ package org.ort.app.ui.setup
  * P22 (D43, NFR-6c, FR-AST-10..12) adds two more: [JURISDICTION_NOTICE] (right after [WELCOME] —
  * NFR-6c's jurisdiction/legality notice, shown exactly once on first run, AC-166) and [MODELS]
  * (right before [READY] — FR-AST-10's download step for whatever the detected tier requires that
- * this build did not bundle). Both share an existing indicator segment rather than adding a new
- * numbered stage of their own (see [indicatorIndex]'s own doc comment) — renumbering every other
- * stage's artboard is outside this unit's file ownership (the `design` tree).
+ * this build did not bundle).
  *
  * P28 (D42, FR-ANL-10, AC-180) adds [ANALYTICS_CONSENT], right after [MODELS] and before [READY]
  * — explains tier 1 and offers tiers 2/3 as an explicit, unchecked choice, shown exactly once (the
@@ -32,6 +30,16 @@ package org.ort.app.ui.setup
  * never a hard gate: [SetupStateMachine.stepFor] advances past it the instant it has been seen,
  * whatever the two toggles are left at (FR-ANL-10's own "declining leaves every other function
  * fully working").
+ *
+ * **R-1087 (register): [MODELS] and [ANALYTICS_CONSENT] used to share [READY]'s own indicator
+ * segment** rather than each getting one of their own — the earlier doc comment here called that
+ * deliberate ("renumbering every other stage's artboard is outside this unit's file ownership"),
+ * but the consequence was that `setup-models/S11a-models` and
+ * `setup-analytics-consent/S11b-analytics-consent` both rendered an identical "8 of 8", telling
+ * the operator twice that they were on the last step. Fixed by giving both their own position (see
+ * [indicatorIndex]'s own doc comment) and renumbering every affected artboard in the same change —
+ * the ownership boundary that excuse relied on no longer applies once the register names the
+ * defect this caused.
  */
 public enum class SetupStep {
     WELCOME,
@@ -56,24 +64,39 @@ public enum class SetupStep {
     READY,
 }
 
-/** Total steps the header's step indicator counts against (`Setup-Mode.dc.html`: "1 of 8",
- * `Setup-Done.dc.html`: "8 of 8") — one segment per numbered stage (design-intent.md §2, D33:
- * "eight stages since 2026-09-10"). [SetupStep.WELCOME] and every step sharing a stage's segment
- * with another (the mic sub-screens, the radio sub-screens) do not each get their own segment.
- * Left at 8 by P22 — see [indicatorIndex]'s own doc comment for [JURISDICTION_NOTICE]/[MODELS]. */
-public const val SETUP_TOTAL_STEPS: Int = 8
+/** Total steps the header's step indicator counts against (`Setup-Mode.dc.html`: "1 of 10",
+ * `Setup-Done.dc.html`: "10 of 10") — one segment per numbered stage (design-intent.md §2).
+ * [SetupStep.WELCOME] and every step sharing a stage's segment with another (the mic sub-screens,
+ * the radio sub-screens) do not each get their own segment.
+ *
+ * **R-1087: this is a fixed total, not a per-run count.** The step list [SetupStateMachine.stepFor]
+ * actually walks on a given run is conditional — [SetupStep.BLUETOOTH_PERMISSION] only appears in
+ * Bluetooth capture mode, the whole [SetupStep.RIG_TRANSPORT]/[SetupStep.RIG_BLUETOOTH] branch only
+ * with a real rig chosen, [SetupStep.MODELS] only when something this build did not bundle needs
+ * fetching — so "the steps this run will show" is not known until several stages downstream of
+ * where the operator currently is, and a denominator that changed mid-run as those conditions
+ * resolved (8 becoming 6 becoming 9) would be its own kind of dishonest indicator, worse than a
+ * denominator that is merely larger than today's run needs. [SETUP_TOTAL_STEPS] instead counts
+ * every stage the full state machine can ever reach — stable for the whole flow, at the cost of a
+ * bar that does not always fill edge-to-edge for operators who skip conditional stages (the same
+ * trade-off already implicit in the original eight-stage design, which never reserved a segment
+ * count per capture mode either). */
+public const val SETUP_TOTAL_STEPS: Int = 10
 
 /** The step-indicator segment a given [SetupStep] lights up — `Setup-Welcome.dc.html` has no
- * indicator at all (returns `null`); every other board names its "n of 8" explicitly
+ * indicator at all (returns `null`); every other board names its "n of 10" explicitly
  * (design-intent.md §2's stage table: Mode 1, Mic/Mic-denied/BT-permission 2, Notify 3,
  * Input/Verify/Mismatch 4, Level 5, Overnight 6, Radio/Transport/USB/Bluetooth/Verified 7,
- * Ready 8).
+ * Models 8, Analytics consent 9, Ready 10).
  *
  * P22: [JURISDICTION_NOTICE] shares [WELCOME]'s `null` (it is a pre-flow legal notice, not a
- * numbered onboarding stage) and [MODELS] shares [READY]'s `8` (it is the final gate immediately
- * before Ready, not a new stage of its own) — no artboard exists yet for either screen
- * (`design/design-intent.md`'s inventory is outside this unit's ownership), so this deliberately
- * avoids renumbering every other stage's segment count for two screens nothing has drawn yet. */
+ * numbered onboarding stage — that part of the original design stands).
+ *
+ * **R-1087: [MODELS] and [ANALYTICS_CONSENT] each now get their own position** (8 and 9), no
+ * longer sharing [READY]'s. Both are real, distinct decisions an operator can be asked to make —
+ * collapsing either into "the same step as Ready" is exactly the false "you are on the last step"
+ * signal the register row named. See [SETUP_TOTAL_STEPS]'s own doc comment for why the total
+ * counts every reachable stage rather than only the ones a given run walks. */
 public fun SetupStep.indicatorIndex(): Int? = when (this) {
     SetupStep.WELCOME, SetupStep.JURISDICTION_NOTICE -> null
     SetupStep.MODE -> 1
@@ -88,9 +111,9 @@ public fun SetupStep.indicatorIndex(): Int? = when (this) {
     SetupStep.RIG_BLUETOOTH,
     SetupStep.RADIO_VERIFIED,
     -> 7
-    // P28: shares MODELS/READY's own segment for the identical reason MODELS shares READY's own —
-    // no artboard exists yet to renumber against (see this function's own P28 doc-comment note).
-    SetupStep.MODELS, SetupStep.ANALYTICS_CONSENT, SetupStep.READY -> 8
+    SetupStep.MODELS -> 8
+    SetupStep.ANALYTICS_CONSENT -> 9
+    SetupStep.READY -> 10
 }
 
 /** Whether this step's indicator segment should render halted (`halt/text`) — only the route

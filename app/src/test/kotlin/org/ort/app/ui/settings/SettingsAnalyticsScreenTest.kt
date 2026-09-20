@@ -1,6 +1,8 @@
 package org.ort.app.ui.settings
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import org.junit.Rule
 import org.junit.Test
@@ -45,9 +47,31 @@ class SettingsAnalyticsScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("Crashes and ANRs", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Crashes, screens and actions used", substring = true).assertExists()
         composeTestRule.onNodeWithText("transcript, callsign, name, station knowledge or location", substring = true)
             .assertExists()
+    }
+
+    /**
+     * R-1086 (register; constitution I; D42, FR-ANL-2): tier 1's row used to say "Crashes and
+     * ANRs", but no ANR-detection mechanism exists anywhere in this codebase — no watchdog runs,
+     * and [org.ort.telemetry.AnalyticsTier1Payload.Crash.isAnr] is deliberately nullable
+     * ("never measured") for exactly that reason ([org.ort.app.analytics.CrashPayloads]'s own doc
+     * comment). A setup or settings screen promising a category the app never collects is the same
+     * defect class as a confident wrong callsign, arriving as copy — so this asserts the word
+     * never appears anywhere on this screen, not merely that one row's wording changed.
+     */
+    @Test
+    @Requirement("R-1086", "FR-ANL-2")
+    fun `R_1086_no row anywhere on this screen promises ANR collection`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsAnalyticsScreen(state = state(), onBack = {
+                }, onToggleTier1 = {}, onToggleTier2 = {}, onToggleTier3 = {}, onResetInstallId = {})
+            }
+        }
+
+        composeTestRule.onAllNodesWithText("ANR", substring = true, ignoreCase = true).assertCountEquals(0)
     }
 
     @Test

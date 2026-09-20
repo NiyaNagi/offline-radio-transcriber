@@ -17,8 +17,10 @@
 <div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
 
   <!-- S01a is the one screen besides Welcome with indicatorIndex() == null and onBack == null
-       (SetupStateMachine.kt, SetupStep.kt) -- no back chevron, no "n of 8" counter, no segment
-       bars. Shown exactly once, on first run, right after Welcome and before Mode (NFR-6c, AC-166). -->
+       (SetupStateMachine.kt, SetupStep.kt) -- no back chevron, no "n of 10" counter (R-1087: the
+       fixed total grew from 8 to 10 once MODELS and ANALYTICS_CONSENT each got their own
+       position), no segment bars. Shown exactly once, on first run, right after Welcome and
+       before Mode (NFR-6c, AC-166). -->
   <div style="padding: 48px 20px 0;">
     <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.2;">Before you record</div>
     <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px; text-wrap: pretty;">The legality of recording radio traffic varies by where you are</div>

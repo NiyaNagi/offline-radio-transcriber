@@ -36,12 +36,13 @@ only when the operator has explicitly enabled that channel.
 Analytics exists in **exactly three tiers**, each a closed, fixed list of fields — never a schema
 that can grow silently (FR-ANL-1):
 
-- **Tier 1 — usage and quality (on by default, can be turned off).** Crash traces and ANRs; which
+- **Tier 1 — usage and quality (on by default, can be turned off).** Crash traces; which
   screens and actions were used (not their content); per-pass processing speed; capture uptime and
   gaps; how setup went, including whether a model download succeeded; and aggregate accuracy
   statistics (how often a transcript needed correcting, how often a callsign could not be resolved).
-  **Tier 1 never contains transcript text, a callsign, a name, station knowledge, or location of any
-  precision** (FR-ANL-2).
+  Crash traces do not include ANRs (a hung-app detection) — no such mechanism exists in this
+  product today. **Tier 1 never contains transcript text, a callsign, a name, station knowledge, or
+  location of any precision** (FR-ANL-2).
 - **Tier 2 — transcript and callsign content (opt-in, off by default).** Transcript text and
   callsigns, including the pairing of what the recognizer produced against what the operator
   corrected it to (FR-ANL-3).

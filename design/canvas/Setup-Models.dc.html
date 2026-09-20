@@ -17,12 +17,17 @@
 
 <div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
 
-  <!-- S11a shares SetupStep.READY's own indicatorIndex (8) -- SetupStep.kt: "it is the final gate
-       immediately before Ready" -- so this board's own segment row reads identically full to S12's. -->
+  <!-- R-1087 (register): MODELS used to share SetupStep.READY's own indicatorIndex (8), rendering
+       identically full to S12's own "8 of 8" -- the lead's side-by-side capture of this board and
+       S11b (Setup-Analytics-Consent.dc.html) showed both reading an identical, full segment bar,
+       telling the operator twice they were on the last step. MODELS now has its own position (8),
+       distinct from ANALYTICS_CONSENT (9) and READY (10); SETUP_TOTAL_STEPS grew from 8 to 10
+       (SetupStep.kt's own doc comment explains the fixed-total choice). This board's segment row
+       is now 8 of 10 filled, not the full bar. -->
   <div style="padding: 10px 20px 0; display: flex; align-items: center; gap: 14px;">
     <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
     <div style="flex-grow: 1;"></div>
-    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">8 of 8</div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">8 of 10</div>
   </div>
   <div style="display: flex; gap: 4px; padding: 14px 20px 0;">
     <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
@@ -33,6 +38,8 @@
     <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
     <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
     <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
   </div>
 
   <div style="padding: 26px 20px 0;">
