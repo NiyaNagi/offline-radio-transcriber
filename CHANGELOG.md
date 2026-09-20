@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P31: live alerts — a watched callsign, keyword or frequency fires a local notification after Pass B)
 
-### <pending> — P31 wiring · `PassBFactory`/`RealCaptureService` now hand a real `AlertEvaluationCoordinator` to Pass B's closure point, so a matching watch can actually fire on a device
+### c1196a1d — P31 wiring · `PassBFactory`/`RealCaptureService` now hand a real `AlertEvaluationCoordinator` to Pass B's closure point, so a matching watch can actually fire on a device
 
 **Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/passb/PassBFactory.kt`,
 `pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`, and their tests
@@ -12069,7 +12069,7 @@ grew, never shrank, so it is not expected to regress, but this was not directly 
 there (or on whichever port the next validator pass uses) would still be worthwhile hygiene.
 ## 2026-09-11 (WPD reviewer A4 run 6: R-882 reopened — the real 390dp/420dpi collapse root-caused and fixed; R-981 signal-heard caption)
 
-### <pending> — setup modes: R-882 reopened - Radio row stacks status below label+value past 2.0 scale when an action is also present; R-981 - the waveform card's signal-heard caption always renders
+### c1196a1d — setup modes: R-882 reopened - Radio row stacks status below label+value past 2.0 scale when an action is also present; R-981 - the waveform card's signal-heard caption always renders
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/ReadyScreen.kt`,
 `app/src/main/kotlin/org/ort/app/ui/setup/VerifyScreen.kt`, matching test files
