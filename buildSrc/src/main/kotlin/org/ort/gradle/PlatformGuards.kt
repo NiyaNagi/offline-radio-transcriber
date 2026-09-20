@@ -8,11 +8,12 @@ package org.ort.gradle
  * string — never a runtime observation. None of them proves a build made no network call, or
  * that no telemetry SDK actually reported anything; they prove only that the *building blocks*
  * for doing so are (or are not) present in the source tree. Say so wherever a result is reported
- * (constitution VI — never claim more than a number's provenance supports). Two exceptions read a
- * real build artifact instead of a declared one: [missingNativeLibraryViolations] (R-1001, the
- * packaged APK's own zip entries) and [signingStabilityViolations] (debug-fix session 2026-09-19,
- * the packaged APK's own signer certificate) — see each one's own KDoc for why a declared
- * coordinate cannot catch what they catch.
+ * (constitution VI — never claim more than a number's provenance supports). Three exceptions read
+ * a real build artifact instead of a declared one: [missingNativeLibraryViolations] (R-1001, the
+ * packaged APK's own zip entries), [bundledAssetPackagingViolations] (P24 fix, FR-AST-13, the same
+ * zip entries checked for a different property), and [signingStabilityViolations] (debug-fix
+ * session 2026-09-19, the packaged APK's own signer certificate) — see each one's own KDoc for why
+ * a declared coordinate cannot catch what they catch.
  */
 object PlatformGuards {
 
@@ -30,11 +31,27 @@ object PlatformGuards {
     data class ManifestViolation(val module: String, val reason: String)
     data class NativeLibraryViolation(val path: String, val reason: String)
     data class SigningViolation(val reason: String)
+    data class BundledAssetPackagingViolation(val path: String, val reason: String)
+
+    /** Every packaged-APK entry this file's bundled-asset guard treats as "a bundled model asset
+     * shipped" — matches where [FetchBundledAssetsTask] actually writes inside the APK
+     * (`assets/<destination>`, and `assets/bundled/manifest.json` alongside it), regardless of
+     * which flavor's own source set the entry came from at build time. */
+    const val BUNDLED_ASSETS_APK_PREFIX: String = "assets/bundled/"
 
     /** R-1001's own required set — kept as defaults here so [NativeLibraryPackagingGuardTask] and
      * this file's tests share one definition of "what WPJ ships" rather than each hardcoding it. */
     val REQUIRED_NATIVE_LIBRARY_ABIS: List<String> = listOf("arm64-v8a", "x86_64")
     val REQUIRED_NATIVE_LIBRARY_FILES: List<String> = listOf("libsherpa-onnx-jni.so", "libonnxruntime.so")
+
+    /** P23 (Play-readiness): every `FOREGROUND_SERVICE_<TYPE>` permission this project declares
+     * anywhere, mapped to the `android:foregroundServiceType` value Play expects a declaring
+     * `<service>` to carry — see [fgsTypeDeclarationViolations]'s own KDoc and
+     * `docs/fgs-type-declaration.md`, which this map must stay in sync with. */
+    val FGS_PERMISSION_TO_TYPE: Map<String, String> = mapOf(
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE" to "microphone",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC" to "dataSync",
+    )
 
     /** FR-OBS-5 — no analytics/telemetry/crash-reporting dependency in any module, ever. */
     fun telemetryViolations(dependenciesByModule: Map<String, Set<String>>): List<DependencyViolation> =
@@ -95,6 +112,37 @@ object PlatformGuards {
     }
 
     /**
+     * P23 (Play-readiness, `docs/fgs-type-declaration.md`): a manifest that declares a
+     * `FOREGROUND_SERVICE_<TYPE>` permission ([FGS_PERMISSION_TO_TYPE]) SHALL also carry at least
+     * one `<service>` with a matching `android:foregroundServiceType` — Play's own review reads
+     * the permission and the declared type together, and a permission with no matching type is
+     * exactly the kind of mismatch a store listing gets rejected for. Declared-artifact only, like
+     * every other check in this file (this file's own class KDoc): it proves the manifest names
+     * agree, not that the service is ever actually started with that type at runtime —
+     * `:capture-android`'s own `CaptureServiceTest` already covers that narrower, real claim for
+     * the one service this project ships today.
+     */
+    fun fgsTypeDeclarationViolations(manifestTextByModule: Map<String, String>): List<ManifestViolation> =
+        manifestTextByModule.flatMap { (module, text) ->
+            FGS_PERMISSION_TO_TYPE.entries.mapNotNull { (permission, type) ->
+                if (!text.contains(permission)) return@mapNotNull null
+                val typeDeclared = Regex(
+                    "android:foregroundServiceType\\s*=\\s*\"[^\"]*\\b${Regex.escape(type)}\\b[^\"]*\"",
+                ).containsMatchIn(text)
+                if (typeDeclared) {
+                    null
+                } else {
+                    ManifestViolation(
+                        module,
+                        "declares $permission but no <service> carries " +
+                            "android:foregroundServiceType=\"$type\" (Play FGS type declaration, " +
+                            "docs/fgs-type-declaration.md)",
+                    )
+                }
+            }
+        }.sortedWith(compareBy({ it.module }, { it.reason }))
+
+    /**
      * R-1001 (register — every real transmission failed Pass B with `dlopen failed: library
      * "libsherpa-onnx-jni.so" not found`): **the one check in this file that reads a real build
      * artifact rather than a declared coordinate or manifest string.** Every other guard here is,
@@ -131,47 +179,43 @@ object PlatformGuards {
     /**
      * Debug-fix session (2026-09-19) — operator report on the currently released build: install
      * fails on-device with "App not installed. Package appears to be invalid." Reproduction (see
-     * this constant's own KDoc and [SigningStabilityGuardTask]'s) ruled out the artifact being
-     * literally malformed — the published bytes, hash-verified against the release asset, install
-     * cleanly via both `adb install` and `pm install` on three real Android package-manager
-     * instances, including genuine Android 16 (API 36) at 16 KB page size. What *is* real: `.github/
-     * workflows/release.yml` never pins a signing key, so every CI run signs with AGP's own
-     * freshly auto-generated `~/.android/debug.keystore` — confirmed directly by downloading two
-     * different published releases (`v0.1.1` and the current `latest-build`) and finding two
-     * different certificate SHA-256 digests for the same `org.ort.app` package, and by resigning
-     * the published APK's own bytes with a second key and reproducing
-     * `INSTALL_FAILED_UPDATE_INCOMPATIBLE` installing it over the first on a real device. Stock
-     * Android's own Package Installer does not give that failure a distinct message on every OS/
-     * OEM build; it is well documented to fall back to the same generic "Package appears to be
-     * invalid" text INSTALL_FAILED_INVALID_APK/INSTALL_PARSE_FAILED_* produce — indistinguishable
-     * to an operator from a genuinely corrupt APK, which is why this was reported and investigated
-     * as one.
+     * [SigningStabilityGuardTask]'s own KDoc) ruled out the artifact being literally malformed —
+     * the published bytes, hash-verified against the release asset, install cleanly via both
+     * `adb install` and `pm install` on three real Android package-manager instances, including
+     * genuine Android 16 (API 36) at 16 KB page size. What *is* real: `.github/workflows/
+     * release.yml` used to sign with AGP's own freshly auto-generated `~/.android/debug.keystore`
+     * on every CI run — confirmed directly by downloading two different published releases
+     * (`v0.1.1` and a `latest-build`) and finding two different certificate SHA-256 digests for
+     * the same `org.ort.app` package, and by resigning a published APK's own bytes with a second
+     * key and reproducing `INSTALL_FAILED_UPDATE_INCOMPATIBLE` installing it over the first on a
+     * real device. Stock Android's own Package Installer does not give that failure a distinct
+     * message on every OS/OEM build; it is well documented to fall back to the same generic
+     * "Package appears to be invalid" text INSTALL_FAILED_INVALID_APK/INSTALL_PARSE_FAILED_*
+     * produce — indistinguishable to an operator from a genuinely corrupt APK, which is why this
+     * was reported and investigated as one.
      *
-     * The value below is this project's chosen fix: a stable, checked-in keystore
-     * (`buildSrc/signing/ort-rolling-release.keystore`, wired as the `debug` build type's
-     * `signingConfig` in `ort.android-app.gradle.kts`) that every rolling and tagged build signs
-     * with from now on, so an operator can always update in place. This constant pins the
-     * certificate that keystore produces so a future accidental change (the keystore file deleted,
-     * replaced, or the signing config pointed elsewhere) fails the build loudly — see
-     * [SigningStabilityGuardTask] — rather than silently shipping an update-incompatible artifact
-     * again. Computed with `apksigner sign` against that keystore then `apksigner verify
-     * --print-certs` (its "Signer #1 certificate SHA-256 digest" line), the same figure
-     * [SigningStabilityGuardTask] computes from the real assembled APK via apksig.
-     */
-    const val PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256: String =
-        "16a71e4ef0ed98ff4a594fbfef149798b03451d5a241d66053cc7a88bb42bdc7"
-
-    /**
-     * The decision logic behind [SigningStabilityGuardTask] — kept dependency-free (no apksig, no
-     * Gradle types) so it is testable with plain booleans/strings, the same split this file's
-     * every other check already uses between "read a real artifact" (the Task) and "decide what
-     * that reading means" (this object).
+     * **A first version of this fix pinned a constant here, computed from a keystore checked into
+     * the repository.** Rejected on review: this repository is public, and a published private key
+     * would let anyone sign an APK Android accepts as an update to the real one. There is
+     * deliberately no constant in this file any more — [expectedCertificateSha256] is a plain
+     * parameter with no source-code default, supplied by the caller
+     * ([SigningStabilityGuardTask], wired in `ort.android-app.gradle.kts`) from a checked-in digest
+     * file (`buildSrc/signing/release-certificate.sha256`, starting at the placeholder `UNSET`) or
+     * the `ortReleaseCertificateSha256` Gradle property — see RELEASING.md's "Signing" section for
+     * exactly what the operator generates and pastes in once the real key exists.
+     *
+     * [enforceExpectedCertificate] keeps this guard from failing a plain local `assembleFullDebug`,
+     * which AGP signs with its own per-machine debug key that has no reason to match the pin: only
+     * `release.yml`, right after building with the injected release-signing secrets, passes
+     * `-PortEnforcePinnedReleaseSigning=true`. The `verified`/`hasV2OrV3Scheme` checks below are
+     * NOT gated by it — a build that ships unsigned or v1-only is a real defect in any context.
      */
     fun signingStabilityViolations(
         verified: Boolean,
         hasV2OrV3Scheme: Boolean,
         certificateSha256: String?,
-        expectedCertificateSha256: String = PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256,
+        expectedCertificateSha256: String?,
+        enforceExpectedCertificate: Boolean,
     ): List<SigningViolation> {
         val violations = mutableListOf<SigningViolation>()
         if (!verified) {
@@ -185,18 +229,71 @@ object PlatformGuards {
                     "to install",
             )
         }
-        when {
-            certificateSha256 == null ->
-                violations += SigningViolation("no signer certificate could be read from the packaged APK")
-            !certificateSha256.equals(expectedCertificateSha256, ignoreCase = true) ->
-                violations += SigningViolation(
-                    "signing certificate is $certificateSha256, pinned is $expectedCertificateSha256 — every " +
-                        "rolling/tagged build must share one certificate (RELEASING.md) or an operator " +
-                        "updating from a previously installed build hits INSTALL_FAILED_UPDATE_INCOMPATIBLE, " +
-                        "which the on-device installer shows as \"Package appears to be invalid\" rather than " +
-                        "as a signature-mismatch message (register, debug-fix session 2026-09-19)",
-                )
+        if (enforceExpectedCertificate) {
+            when {
+                expectedCertificateSha256.isNullOrBlank() ->
+                    violations += SigningViolation(
+                        "pinned certificate enforcement was requested (-PortEnforcePinnedReleaseSigning=true) " +
+                            "but no digest is configured — paste the real release keystore's certificate " +
+                            "SHA-256 digest into buildSrc/signing/release-certificate.sha256, replacing " +
+                            "UNSET (RELEASING.md's \"Signing\" section has the exact steps)",
+                    )
+                certificateSha256 == null ->
+                    violations += SigningViolation("no signer certificate could be read from the packaged APK")
+                !certificateSha256.equals(expectedCertificateSha256, ignoreCase = true) ->
+                    violations += SigningViolation(
+                        "signing certificate is $certificateSha256, pinned is $expectedCertificateSha256 — " +
+                            "every published artifact must share one certificate (RELEASING.md) or an " +
+                            "operator updating from a previously installed build hits " +
+                            "INSTALL_FAILED_UPDATE_INCOMPATIBLE, which the on-device installer shows as " +
+                            "\"Package appears to be invalid\" rather than as a signature-mismatch message " +
+                            "(register, debug-fix session 2026-09-19)",
+                    )
+            }
         }
         return violations
+    }
+
+    /**
+     * P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): the boundary check proving the
+     * defect this fix closes stays closed — like [missingNativeLibraryViolations], this reads a
+     * real packaged APK's entry paths rather than a declared coordinate, because the defect (the
+     * `play` flavor packaging the identical 628 MB `full` does) is invisible to every
+     * declared-artifact check in this file: nothing about `bundled-assets.json` or the flavor's own
+     * `build.gradle.kts` config says which physical directory the fetch task actually wrote to.
+     *
+     * [expectBundled] is `true` for the `full` variant (FR-AST-3 — every asset ships inside the
+     * installed artifact, so at least one `assets/bundled/` entry must be present; zero would mean
+     * `fetchBundledAssets` never ran or its output never reached the APK) and `false` for `play`
+     * (FR-AST-13 — nothing named in the manifest may ship; every model downloads during setup
+     * instead, AC-190). Reports every offending entry by name so a regression is diagnosable from
+     * the failure message alone, the same discipline [missingNativeLibraryViolations] follows.
+     */
+    fun bundledAssetPackagingViolations(
+        apkEntryPaths: Set<String>,
+        expectBundled: Boolean,
+    ): List<BundledAssetPackagingViolation> {
+        val bundledEntries = apkEntryPaths.filter { it.startsWith(BUNDLED_ASSETS_APK_PREFIX) }
+        return if (expectBundled) {
+            if (bundledEntries.isEmpty()) {
+                listOf(
+                    BundledAssetPackagingViolation(
+                        BUNDLED_ASSETS_APK_PREFIX,
+                        "the full variant's packaged APK contains no $BUNDLED_ASSETS_APK_PREFIX entries — " +
+                            "fetchBundledAssets did not run, or its output never reached the APK (FR-AST-3)",
+                    ),
+                )
+            } else {
+                emptyList()
+            }
+        } else {
+            bundledEntries.sorted().map { path ->
+                BundledAssetPackagingViolation(
+                    path,
+                    "the play variant's packaged APK must not bundle any model asset, but contains $path — " +
+                        "every model must download during setup instead (FR-AST-13, AC-190)",
+                )
+            }
+        }
     }
 }

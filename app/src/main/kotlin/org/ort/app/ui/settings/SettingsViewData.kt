@@ -23,6 +23,13 @@ public enum class SettingsScreenId {
     DIAGNOSTICS,
     ABOUT,
     MODE,
+
+    /** P27 (Wave G, NFR-6d, AC-167): the third-party licence notices screen —
+     * [org.ort.app.ui.settings.SettingsLicensesScreen]. `SettingsRootScreen`'s own row for this
+     * appends after the "About" section's own row (that file's doc comment says why: this screen id
+     * is not one of [SettingsPolling.root]'s dynamic sections — its row is the one static addition
+     * this unit's own file-ownership map allows). */
+    LICENSES,
 }
 
 public data class SettingsRowViewState(val label: String, val subLine: String, val screen: SettingsScreenId)

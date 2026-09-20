@@ -52,16 +52,16 @@ $packageId = "org.ort.app"
 Push-Location $repoRoot
 try {
     $assetsFlag = "-PortAllowMissingBundledAssets=$(if ($PortAllowMissingBundledAssets) { 'true' } else { 'false' })"
-    & "$repoRoot\gradlew.bat" ":app:assembleDebug" $assetsFlag
-    if ($LASTEXITCODE -ne 0) { throw "gradlew :app:assembleDebug failed with exit code $LASTEXITCODE" }
+    & "$repoRoot\gradlew.bat" ":app:assembleFullDebug" $assetsFlag
+    if ($LASTEXITCODE -ne 0) { throw "gradlew :app:assembleFullDebug failed with exit code $LASTEXITCODE" }
 }
 finally {
     Pop-Location
 }
 
-$apk = Get-ChildItem -Path (Join-Path $repoRoot "app\build\outputs\apk\debug") -Filter "*.apk" -ErrorAction Stop |
+$apk = Get-ChildItem -Path (Join-Path $repoRoot "app\build\outputs\apk\full\debug") -Filter "*.apk" -ErrorAction Stop |
     Select-Object -First 1
-if (-not $apk) { throw "no debug APK found under app\build\outputs\apk\debug after assembleDebug" }
+if (-not $apk) { throw "no debug APK found under app\build\outputs\apk\full\debug after assembleFullDebug" }
 
 Write-Output "Installing $($apk.Name) on $serial..."
 & $adb -s $serial install -r -g $apk.FullName

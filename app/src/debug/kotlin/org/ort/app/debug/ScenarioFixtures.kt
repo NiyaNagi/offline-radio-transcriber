@@ -56,6 +56,13 @@ internal object ScenarioFixtures {
      * `rigDescriptorId`/`audioRouteVerified`/`audioNativeRateHz` are E2-A07's v10 columns
      * (`SessionEntity`'s own kdoc) — also default `null` (a pre-v10 row's own honest state), so a
      * scenario that never names them keeps rendering exactly as it did before this round.
+     *
+     * `vadDetector` is D50/FR-SEG-10/AC-162's schema v14 column — defaults to
+     * [org.ort.core.capture.VadDetectorKind.UNKNOWN], the same honest "not recorded" a pre-v14 row
+     * carries (`SessionEntity`'s own default), so a scenario that never names it keeps rendering
+     * exactly as it did before P25/this round. `vad-fallback` is the one caller that overrides it,
+     * to [org.ort.core.capture.VadDetectorKind.ENERGY] (D50, Q22, AC-162 — see [Scenarios]'
+     * `vadFallback` function).
      */
     @Suppress("LongParameterList")
     fun session(
@@ -73,6 +80,7 @@ internal object ScenarioFixtures {
         rigDescriptorId: String? = null,
         audioRouteVerified: Boolean? = null,
         audioNativeRateHz: Int? = null,
+        vadDetector: org.ort.core.capture.VadDetectorKind = org.ort.core.capture.VadDetectorKind.UNKNOWN,
     ): SessionEntity = SessionEntity(
         id = id,
         startedAt = startedAt,
@@ -92,6 +100,7 @@ internal object ScenarioFixtures {
         rigDescriptorId = rigDescriptorId,
         audioRouteVerified = audioRouteVerified,
         audioNativeRateHz = audioNativeRateHz,
+        vadDetector = vadDetector,
     )
 
     /**

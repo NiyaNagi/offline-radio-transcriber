@@ -1,6 +1,7 @@
 name: Release
 
-# Two release shapes:
+# Two release shapes, both built from the `full` variant (FR-AST-13 — every asset bundled, exactly
+# today's behaviour, D35/FR-AST-3):
 #  - a rolling "latest-build" prerelease, republished on every push to main, so there is always
 #    exactly one stable link for "download the current build" without cutting a version. Its
 #    notes are RELEASES.md's own "## Unreleased" section (tools/release_notes.py with no
@@ -11,6 +12,27 @@ name: Release
 # RELEASES.md's own header for why release notes come from it and not from CHANGELOG.md (that
 # file stays the dense, per-commit engineering log AGENTS.md requires), and RELEASING.md for the
 # procedure that keeps RELEASES.md current.
+#
+# P23 (FR-AST-13, D44) added two things, deliberately isolated from the shape above:
+#  - a second job, `build-play-variant`, that unit-tests and bundles the `play` AAB (nothing
+#    bundled — its setup downloads models from the models-v1 mirror instead) on every run this
+#    workflow already runs on. A separate job, not a step in `build-and-release`: a `play`
+#    regression must be visible, but must never block the `full` variant's own release/latest-build
+#    publish path, which is this workflow's actual product for the operator.
+#  - a `models-v1` mirror-publish step inside `build-and-release`, gated to real release tags only
+#    (`v*.*.*`) — the mirror is meant to move only when a numbered version is cut, not on every push
+#    to `main`, so it stays a small, deliberate set of uploads rather than a rewrite on every commit.
+#
+# Debug-fix session (2026-09-19): this job now signs the published `full`-flavor debug APK with a
+# release key held ONLY as GitHub Actions secrets (`ORT_RELEASE_KEYSTORE_BASE64` and its three
+# companions — RELEASING.md's "Signing" section has the one-time `keytool`/`gh secret set` setup),
+# decoded to a temp file for this job alone and deleted afterward — never committed, never printed.
+# A first version of this fix checked a keystore into the repository instead; rejected on review
+# because this repository is public and a checked-in private key would let anyone sign an APK
+# Android accepts as an update to the real one. If those secrets are not set (a fork before its
+# owner configures them, or upstream before the operator's one-time setup) this job refuses to
+# publish and fails loudly, rather than falling back to a fresh ephemeral key that would silently
+# reintroduce the exact defect this session closes (see the "release-signing secrets missing" step).
 on:
   push:
     branches: [main]
@@ -30,7 +52,7 @@ env:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    # WPG (spec/e2e-capture-modes-plan.md, FR-AST-3, D35/D36): assembleDebug depends on
+    # WPG (spec/e2e-capture-modes-plan.md, FR-AST-3, D35/D36): assembleFullDebug depends on
     # fetchBundledAssets, which needs HF_TOKEN for the gated Gemma 3 1B model — a shipped release
     # is never built with the -PortAllowMissingBundledAssets escape hatch (AC-136).
     env:
@@ -45,14 +67,79 @@ jobs:
       - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
 
+      # Debug-fix session (2026-09-19): decodes the release keystore to a temp file for this job
+      # alone. `if:` on the secret directly (not a separate "check" step writing an output) keeps
+      # this to one step; the base64 *value* only ever appears inside `printf`'s argument, which
+      # GitHub's own log masking replaces wherever a secret's exact text would otherwise appear —
+      # never echoed, never passed on a command line another process could list. Absent entirely
+      # when the secret is unset: every later step that depends on `ORT_RELEASE_SIGNING_STORE_FILE`
+      # simply doesn't see it, and `ort.android-app.gradle.kts` falls back to AGP's own per-machine
+      # debug key, exactly as a plain local build does.
+      - name: decode the release keystore (secret; never printed)
+        if: ${{ secrets.ORT_RELEASE_KEYSTORE_BASE64 != '' }}
+        env:
+          ORT_RELEASE_KEYSTORE_BASE64: ${{ secrets.ORT_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          keystore_path="$RUNNER_TEMP/ort-release.keystore"
+          printf '%s' "$ORT_RELEASE_KEYSTORE_BASE64" | base64 -d > "$keystore_path"
+          echo "ORT_RELEASE_SIGNING_STORE_FILE=$keystore_path" >> "$GITHUB_ENV"
+
       # Same gate as CI's `android` job (ci.yml) — a release is only ever cut from a build that
       # passed its own Android unit tests and the dependency-boundary check, not just "compiled".
-      - name: verify and assemble the debug APK
+      # P23: `testDebugUnitTest`/`assembleDebug` renamed `testFullDebugUnitTest`/`assembleFullDebug`
+      # once the `full`/`play` product flavors existed — this step still builds only the `full`
+      # variant, exactly as it always has. Debug-fix session (2026-09-19): the three signing
+      # passwords/alias are step-scoped env, not job-level, and only ever come from secrets — the
+      # keystore *path* (`ORT_RELEASE_SIGNING_STORE_FILE`) came from the previous step via
+      # `$GITHUB_ENV` and is not itself sensitive (only its contents are).
+      - name: verify and assemble the full variant's debug APK
+        env:
+          ORT_RELEASE_SIGNING_STORE_PASSWORD: ${{ secrets.ORT_RELEASE_KEYSTORE_PASSWORD }}
+          ORT_RELEASE_SIGNING_KEY_ALIAS: ${{ secrets.ORT_RELEASE_KEY_ALIAS }}
+          ORT_RELEASE_SIGNING_KEY_PASSWORD: ${{ secrets.ORT_RELEASE_KEY_PASSWORD }}
         run: >-
           ./gradlew
           :data:testDebugUnitTest :net:testDebugUnitTest :rig-usb:testDebugUnitTest
-          :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
-          :app:assembleDebug dependencyRules
+          :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testFullDebugUnitTest
+          :app:assembleFullDebug dependencyRules
+
+      # Debug-fix session (2026-09-19): only meaningful once the APK above was actually signed with
+      # the injected release key — `-PortEnforcePinnedReleaseSigning=true` is the one place in this
+      # whole project that flag is ever passed, so a plain local build is never held to this pin
+      # (see PlatformGuards.signingStabilityViolations's own KDoc). Fails the job if the digest in
+      # buildSrc/signing/release-certificate.sha256 is still the placeholder `UNSET`, or if the
+      # freshly assembled APK's real certificate does not match it.
+      - name: verify the published artifact's certificate is the pinned release key
+        if: ${{ secrets.ORT_RELEASE_KEYSTORE_BASE64 != '' }}
+        run: ./gradlew :app:verifyReleaseSigningStability -PortEnforcePinnedReleaseSigning=true
+
+      # Debug-fix session (2026-09-19): the loud, deliberate alternative to silently publishing an
+      # APK signed with a fresh ephemeral key — exactly the defect this session closes. Only fires
+      # when this run would otherwise have published (a push to `main` or a `vX.Y.Z` tag) and the
+      # secrets are missing (a fork before its owner sets them up, or upstream before the
+      # operator's one-time RELEASING.md setup) — a `workflow_dispatch` on any other branch already
+      # published nothing before this session either, so it stays quiet rather than failing.
+      - name: release-signing secrets missing — refusing to publish (see RELEASING.md)
+        if: >-
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+          secrets.ORT_RELEASE_KEYSTORE_BASE64 == ''
+        run: |
+          {
+            echo "### Release blocked: signing secrets are not configured"
+            echo ""
+            echo "\`ORT_RELEASE_KEYSTORE_BASE64\` (and its three companion secrets) are not set on"
+            echo "this repository, so this run cannot sign a build with the pinned release key."
+            echo "Publishing an APK signed with a fresh, ephemeral key here would silently repeat"
+            echo "the exact bug this workflow now guards against — every operator updating from a"
+            echo "previous install would see \"App not installed. Package appears to be invalid.\""
+            echo "again — so nothing was published."
+            echo ""
+            echo "See RELEASING.md's \"Signing\" section for the one-time \`keytool\`/\`gh secret"
+            echo "set\` setup that unblocks this."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::error::Release-signing secrets are not configured — see RELEASING.md's \"Signing\" section. No artifact was published."
+          exit 1
 
       # A release that fails its own tests must leave behind enough to diagnose it. Without this,
       # a failure's console log carries only the first of a multi-cause exception's stacks, and the
@@ -82,6 +169,8 @@ jobs:
         id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
 
+      # P23: the APK's own output path gained a `full/` flavor segment once product flavors
+      # existed (`app/build/outputs/apk/debug/app-debug.apk` before this unit).
       - name: publish the rolling "latest build" prerelease
         if: github.ref == 'refs/heads/main'
         env:
@@ -89,7 +178,7 @@ jobs:
         run: |
           set -euo pipefail
           gh release delete latest-build --yes --cleanup-tag || true
-          gh release create latest-build app/build/outputs/apk/debug/app-debug.apk \
+          gh release create latest-build app/build/outputs/apk/full/debug/app-full-debug.apk \
             --repo "${{ github.repository }}" \
             --title "Latest build (${{ steps.sha.outputs.short }})" \
             --notes-file release-notes.md \
@@ -101,7 +190,84 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" app/build/outputs/apk/debug/app-debug.apk \
+          gh release create "${{ github.ref_name }}" app/build/outputs/apk/full/debug/app-full-debug.apk \
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             --notes-file release-notes.md
+
+      # D44 (FR-AST-14): mirrors every verified bundled asset to the `models-v1` GitHub Release so
+      # the `play` variant's setup step has something to download. Release tags only — see this
+      # file's own top comment for why every push to `main` does not also do this. Idempotent
+      # (`PublishModelMirrorTask`/`ModelMirrorPublisher`): safe to run again on a re-tagged or
+      # re-run release. Never touches `HF_TOKEN` — `gh` authenticates with `GH_TOKEN` here, same as
+      # the publish steps above.
+      - name: create the models-v1 release, if it does not exist yet
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release view models-v1 --repo "${{ github.repository }}" >/dev/null 2>&1 || \
+            gh release create models-v1 \
+              --repo "${{ github.repository }}" \
+              --title "Model mirror (models-v1)" \
+              --notes "Verified model assets mirrored here for the play build variant's setup downloads (D44, FR-AST-14). This is not a release of the app itself — see docs/privacy-policy.md and spec/functional-spec.md §7.15 for what downloads and why." \
+              --prerelease \
+              --target "$GITHUB_SHA"
+
+      - name: publish verified model assets to the models-v1 mirror (D44, FR-AST-14)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./gradlew :app:publishModelMirror
+
+      # Debug-fix session (2026-09-19): belt-and-braces — `$RUNNER_TEMP` is wiped when the runner's
+      # VM is torn down regardless, but the keystore this session's own decode step wrote is a
+      # private key and deleting it explicitly, unconditionally, the moment this job is done needs
+      # no justification beyond that. `if: always()` so it runs whether earlier steps passed,
+      # failed, or were skipped.
+      - name: remove the decoded release keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/ort-release.keystore"
+
+  build-play-variant:
+    name: build the play variant (FR-AST-13)
+    runs-on: ubuntu-latest
+    # No HF_TOKEN here at all — the whole point of this variant (P23): it bundles nothing named in
+    # bundled-assets.json, so neither its tests nor its bundle build ever touch fetchBundledAssets.
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: unit test and bundle the play variant
+        run: ./gradlew :app:testPlayDebugUnitTest :app:bundlePlayRelease dependencyRules
+
+      - name: keep the test reports even when the build failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-test-reports-${{ github.run_id }}
+          path: |
+            app/build/reports/tests/**
+            app/build/test-results/**
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Kept as a workflow artifact, not a GitHub Release asset: an AAB is not sideloadable (only
+      # `bundletool`/Play Console can install from one), so attaching it to a download page the
+      # operator finds meant for the `full` variant's APK would be actively misleading. This is
+      # here so the AAB can be inspected or pulled for a manual Play Console upload without
+      # rebuilding it locally.
+      - name: upload the play release AAB for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-play-release-aab-${{ github.run_id }}
+          path: app/build/outputs/bundle/playRelease/app-play-release.aab
+          retention-days: 30
+          if-no-files-found: error

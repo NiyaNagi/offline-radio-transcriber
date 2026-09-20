@@ -26,15 +26,15 @@ both attach the same debug APK CI already builds and verifies, and both get thei
 [`tools/release_notes.py`](tools/release_notes.py) reading [`RELEASES.md`](RELEASES.md) — never
 `CHANGELOG.md` directly; see `RELEASES.md`'s own header for why the two files are split.
 
-## Signing — every build shares one certificate
+## Signing — every published build shares one certificate
 
 Debug-fix session (2026-09-19): an operator reported the currently released build failing to
 install with "App not installed. Package appears to be invalid." The published artifact itself
 turned out to be fine — hash-verified against the release asset, and confirmed to install cleanly
 via `adb install` and `pm install` on three real Android package-manager instances, including
-genuine Android 16 (API 36) at 16 KB page size. The real defect: this workflow used to sign
-`assembleDebug`'s output with AGP's own auto-generated `~/.android/debug.keystore`, which is
-freshly created on **every** GitHub Actions run because the runner is a new VM each time — so
+genuine Android 16 (API 36) at 16 KB page size. The real defect: this workflow used to sign the
+published `full`-flavor debug APK with AGP's own auto-generated `~/.android/debug.keystore`, which
+is freshly created on **every** GitHub Actions run because the runner is a new VM each time — so
 `v0.1.1` and successive `latest-build` releases each carried a *different* signing certificate for
 the same `org.ort.app` package (confirmed directly with `apksigner verify --print-certs` against
 two downloaded releases). Any operator updating from one build to another without first
@@ -42,23 +42,92 @@ uninstalling hits `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (reproduced directly), wh
 Package Installers do not give a distinct message — it shows as the same generic "Package appears
 to be invalid" text a genuinely malformed APK produces.
 
-The fix: `debug` now signs with a stable, checked-in keystore,
-[`buildSrc/signing/ort-rolling-release.keystore`](buildSrc/signing/ort-rolling-release.keystore),
-wired in [`ort.android-app.gradle.kts`](buildSrc/src/main/kotlin/ort.android-app.gradle.kts). Its
-store/key password (`ort-rolling-release`) and alias (`ort-rolling-release`) are **not secret** —
-the property this key needs is *stability across CI runs*, not concealment, exactly like AGP's own
-public debug-keystore password (`android`). Every rolling and tagged release from now on carries
-the certificate fingerprint pinned at
-`PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256` (`buildSrc/src/main/kotlin/org/ort/
-gradle/PlatformGuards.kt`), and `:app:verifyReleaseSigningStability` (wired into `:app:check`,
-`ort.android-app.gradle.kts`) fails the build if the assembled APK's real signer certificate ever
-drifts from that pin — via `com.android.tools.build:apksig`, the same library `apksigner` itself is
-built from, so this needs no external SDK tool at guard-check time.
+**A first version of this fix checked a signing keystore into the repository. That was wrong and
+was reworked before merging**: this repository is public, and a published private key would let
+anyone sign an APK Android accepts as an update to the real one — the opposite of what this fix is
+for. The key now lives **only** as GitHub Actions secrets, decoded to a temp file at build time and
+deleted afterward; nothing about it is ever committed.
+
+### One-time setup — do this once, in order
+
+1. **Generate a dedicated release keystore.** Do this somewhere private, never inside this
+   checkout:
+   ```bash
+   keytool -genkeypair -v \
+     -keystore ort-release.keystore -storetype PKCS12 \
+     -alias ort-release -keyalg RSA -keysize 2048 -validity 10950 \
+     -dname "CN=Offline Radio Transcriber, O=Offline Radio Transcriber, C=US"
+   ```
+   `keytool` prompts for a keystore password and a key password twice each — pick strong, distinct
+   values and keep them (a password manager, not a note in this repo). `-validity 10950` is 30
+   years, matching AGP's own debug-keystore convention, so this is not a recurring chore.
+
+2. **Set the four secrets** (`gh secret set` reads the value from stdin with `--body -`, so nothing
+   touches shell history):
+   ```bash
+   base64 -w0 ort-release.keystore | gh secret set ORT_RELEASE_KEYSTORE_BASE64 --repo <owner>/<repo>
+   gh secret set ORT_RELEASE_KEYSTORE_PASSWORD --repo <owner>/<repo>   # paste the keystore password
+   gh secret set ORT_RELEASE_KEY_ALIAS         --repo <owner>/<repo>   # "ort-release", if you used the command above
+   gh secret set ORT_RELEASE_KEY_PASSWORD      --repo <owner>/<repo>   # paste the key password
+   ```
+   (`base64 -w0` avoids line wraps; on macOS use `base64 -i ort-release.keystore | gh secret set ...`
+   instead, since macOS's `base64` has no `-w`.) `gh secret set NAME` with no `--body`/pipe opens an
+   editor or reads stdin — piping or typing the value directly is what keeps it out of your shell's
+   history either way.
+
+3. **Read the certificate's digest and pin it**, so the structural guard (below) can start
+   enforcing it:
+   ```bash
+   keytool -exportcert -keystore ort-release.keystore -alias ort-release -rfc | \
+     openssl x509 -noout -fingerprint -sha256
+   # or, once you have a build signed with it:
+   apksigner verify --print-certs app-full-debug.apk   # "Signer #1 certificate SHA-256 digest"
+   ```
+   Take that digest, strip the colons, lowercase it, and paste it in as the only non-comment line
+   of [`buildSrc/signing/release-certificate.sha256`](buildSrc/signing/release-certificate.sha256),
+   replacing the placeholder `UNSET`. Commit that one-line change normally — it is a public digest,
+   not a secret.
+
+4. **Delete the local keystore file and its password notes from wherever you generated them**
+   once the secret is set and confirmed (`gh secret list --repo <owner>/<repo>` shows the name,
+   never the value) — the secret store is now the only copy `release.yml` needs.
+
+### What happens without the secrets
+
+`build-and-release` checks for `ORT_RELEASE_KEYSTORE_BASE64` before it signs or publishes
+anything. If it is absent (a fork before its owner sets it up, or upstream before step 2 above),
+the job **fails loudly** — a `::error::` annotation plus a job-summary explanation — rather than
+publishing an APK signed with a fresh, throwaway key, which would silently reintroduce the exact
+bug this section exists to close. A red Release run in that state means exactly what it looks
+like: nothing new was published, on purpose, until the secrets exist.
+
+### How it works once configured
+
+`release.yml` decodes `ORT_RELEASE_KEYSTORE_BASE64` to `$RUNNER_TEMP/ort-release.keystore` for the
+one job that needs it, passes it and the three password/alias secrets to Gradle as environment
+variables (`ORT_RELEASE_SIGNING_STORE_FILE`/`_STORE_PASSWORD`/`_KEY_ALIAS`/`_KEY_PASSWORD`) for the
+step that runs `:app:assembleFullDebug`, and removes the temp file in an `if: always()` step
+afterward. [`ort.android-app.gradle.kts`](buildSrc/src/main/kotlin/ort.android-app.gradle.kts)
+only creates and applies that `signingConfig` when those variables are present — **a plain local
+`assembleFullDebug` is unaffected and keeps using AGP's own per-machine debug key**, exactly as
+before this session; only `release.yml`'s own build can produce the artifact this section pins.
+
+`:app:verifyReleaseSigningStability` (wired into `:app:check`) always checks that the packaged
+`full`-flavor debug APK is verifiably signed with at least a v2 scheme. It additionally checks the
+certificate against the digest in `buildSrc/signing/release-certificate.sha256` (or the
+`ortReleaseCertificateSha256` Gradle property, which overrides the file) **only** when invoked with
+`-PortEnforcePinnedReleaseSigning=true` — `release.yml` passes that flag right after building with
+the injected secrets, so a plain local build is never held to a pin it was never signed against. If
+enforcement is requested while the digest file still reads `UNSET`, the guard fails and says so —
+it never silently skips the check it was asked to run.
+
+### The one-time cost this cannot avoid
 
 **Anyone who already installed a build signed with an old, ephemeral debug certificate must
-uninstall `org.ort.app` once before installing a build carrying the new pinned certificate** — that
-one-time uninstall is unavoidable (a signature change is exactly what breaks in-place updates);
-every subsequent rolling/tagged release from this point on will update over it in place.
+uninstall `org.ort.app` once before a build signed with the new, pinned key will install over
+it** — a certificate change is exactly what breaks in-place updates, and there is no way around
+that for the build that makes the switch. Every release after that first one, from every operator
+who has done this once, updates in place normally.
 
 ## Keep `RELEASES.md` current as you go
 
@@ -94,8 +163,8 @@ missing it.
    that point, which should be empty right after step 2).
 7. **The workflow then**: checks out the tag, runs the same test-and-assemble gate CI runs
    (`:data:testDebugUnitTest :net:testDebugUnitTest :rig-usb:testDebugUnitTest
-   :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
-   :app:assembleDebug dependencyRules`), runs `python tools/release_notes.py vX.Y.Z` to build
+   :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testFullDebugUnitTest
+   :app:assembleFullDebug dependencyRules`), runs `python tools/release_notes.py vX.Y.Z` to build
    the notes, and calls `gh release create vX.Y.Z` with the debug APK attached and those notes
    as the body. It does not touch the rolling `latest-build` release on a tag push.
 

@@ -57,9 +57,10 @@ You are the lead for a debugging and fix session on this repository.
 - Known environment facts: the audit AVDs are 1080 px wide at 2.769 px per dp — **390 dp**, not
   Robolectric's 360 dp default. The operator's phone is about 480 dp wide. Emulators wedge under
   host load. The five fetched model assets live under three directories in
-  `app/src/main/assets/bundled/models/` (gitignored; list recursively — the top level holds only
-  the manifest). The gated Gemma model needs `HF_TOKEN`, set in the user-scope
-  environment and as the repository secret; never print it, never commit a fetched asset.
+  `app/src/full/assets/bundled/models/` (gitignored, `full`-flavor-only since the P24 fix —
+  FR-AST-13, AC-190; list recursively — the top level holds only the manifest). The gated Gemma
+  model needs `HF_TOKEN`, set in the user-scope environment and as the repository secret; never
+  print it, never commit a fetched asset.
 
 ## How you work
 
@@ -179,13 +180,13 @@ map, and the instruction to stop and report if the fix needs a file outside them
 must exist and be shown to discriminate; the scoped gate to run; the changelog entry; the
 instruction to report a commit hash plus everything it could **not** verify. Tell it to set
 `$env:JAVA_HOME` to the JDK 17 path and `$env:ANDROID_HOME` in every shell call, that the
-worktree's `app/src/main/assets/bundled/` is separate from main's, and that commit messages go
+worktree's `app/src/full/assets/bundled/` is separate from main's, and that commit messages go
 in single-quoted here-strings with no double quotes. A builder never touches the register, the
 checklists, `results/ui-audit/` captures or memory; it reports and the lead files. Follow-up
 rounds go back to the same agent with `SendMessage` — its context is intact.
 
-Builders run scoped tests (`:app:testDebugUnitTest --tests '<package>.*'` plus lint,
-`dependencyRules platformGuards`, `assembleDebug`) and then the full gate before reporting.
+Builders run scoped tests (`:app:testFullDebugUnitTest --tests '<package>.*'` plus lint,
+`dependencyRules platformGuards`, `assembleFullDebug`) and then the full gate before reporting.
 
 ### Merging
 
@@ -211,7 +212,7 @@ python tools\spec-check\spec_check.py
 
 Add `-PortAllowMissingBundledAssets=true` only for a quick local iteration with no token; the
 gate that precedes a push runs without it. To reproduce CI's world, move
-`app/src/main/assets/bundled/` aside first and run the unit tests; to reproduce the Release
+`app/src/full/assets/bundled/` aside first and run the unit tests; to reproduce the Release
 workflow, run exactly its invocation from `.github/workflows/release.yml` with every asset
 present. Test workers run at 3 g heap (`ort.android-app.gradle.kts`); no unit test may read the
 real Gemma asset — the scenario sweeps take `TinyFixtureBundledAssetSource`.

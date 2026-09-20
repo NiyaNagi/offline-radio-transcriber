@@ -32,95 +32,1175 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a structural signing-stability guard)
+## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a secret-driven release key and a configurable signing-stability guard)
 
-### 1c63474b — debug-fix session · pin the rolling-release signing key so every build shares one certificate, and guard the build against drift
+### (pending — see next commit) — debug-fix session · sign published artifacts from GitHub Actions secrets, never a committed key, and pin the certificate only where a stable key is expected
 
-**Scope:** `.github/workflows/release.yml` (read only — no change needed there, see below),
-`buildSrc/build.gradle.kts`, `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt`,
+**Scope:** `.github/workflows/release.yml`, `buildSrc/build.gradle.kts`,
+`buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt`,
 `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuardsTask.kt`,
-`buildSrc/src/main/kotlin/ort.android-app.gradle.kts`, `buildSrc/signing/ort-rolling-release.keystore`
-(new), `buildSrc/src/test/kotlin/org/ort/gradle/PlatformGuardsTest.kt`, `RELEASING.md`.
+`buildSrc/src/main/kotlin/ort.android-app.gradle.kts`,
+`buildSrc/signing/release-certificate.sha256` (new — a checked-in digest, not a key),
+`buildSrc/src/test/kotlin/org/ort/gradle/PlatformGuardsTest.kt`, `RELEASING.md`.
 **Requirements/ACs:** none pre-existing name this; the register row this session files is the
 record. Constitution VII ("guarantees expressed as types where possible... a rule a person must
-remember is a rule that will eventually be forgotten") and Development Workflow's debugging loop
-("reproduce in the environment that fails... discriminating test... close on evidence") are what
-this session followed.
-**What changed:**
-1. **Reproduced, on real Android, not inferred.** Downloaded the published `latest-build` APK
-   (`gh release download`, commit `152a9283`) and confirmed its SHA-256 matches the release
-   asset's published digest exactly (byte-for-byte, not a corrupted download). Inspected it with
-   `apksigner verify --print-certs` (v2-signed, valid, `CN=Android Debug`), `zipalign -c -v 4`
-   (aligned), and a manual scan for a Zip64 EOCD locator (none — the 554,661,243-byte Gemma asset
-   and the ~603 MB whole archive are both well under the 4 GiB threshold that would require one) —
-   ruling out the two theories the report's own instructions led with. Installed the identical
-   bytes via `adb install` and via `pm install` from a local file (the closer analogue to a
-   device's own Package Installer) on three real Android package-manager instances: an API 34
-   x86_64 emulator, and a genuine Android 16 (API 36) emulator at both default and 16 KB page
-   size — every install **succeeded**, ruling out the artifact being structurally invalid at all.
-2. **Root cause, found by reproduction, not guessed.** `release.yml`'s `assembleDebug` step signs
-   with AGP's own auto-generated `~/.android/debug.keystore` — nothing in the workflow seeds or
-   caches it, and GitHub Actions runners are a fresh VM every run, so every CI run's debug
-   keystore (and therefore its certificate) is different. Confirmed directly: `apksigner verify
-   --print-certs` on the published `v0.1.1` tag and the current `latest-build` reports two
-   different certificate SHA-256 digests for the same `org.ort.app` package
-   (`afe73ba0af893a91eaa6ebb78cd0b582d7499aacb0f30315839fec475869f46b` vs.
-   `bc2d440980e8bde464af3a864fd549565b19e7770a060d2d5144748ea97f6dca`). Resigning the published
-   `latest-build` APK's own bytes with a second, differently-generated debug-style key and
-   installing it over the first with `adb install -r` on a real device reproduces
-   `INSTALL_FAILED_UPDATE_INCOMPATIBLE: ... signatures do not match` — exactly what happens to any
-   operator updating from a previously installed build. Stock Android's own Package Installer
-   does not give that failure a message distinct from a genuinely malformed APK on many OS/OEM
-   builds; both fall back to "App not installed. Package appears to be invalid." — indistinguishable
-   to the operator, which is why this was reported and investigated as a corrupt artifact.
-3. **Fix: a stable, checked-in signing key for the one build type this project ships.** Generated
-   `buildSrc/signing/ort-rolling-release.keystore` (PKCS12, RSA 2048, `CN=Offline Radio
-   Transcriber Rolling Release`, 30-year validity) and wired it as the `debug` build type's
-   `signingConfig` in `ort.android-app.gradle.kts`. Its password/alias (`ort-rolling-release`) are
-   documented in `RELEASING.md`, not secret — the property this key needs is *stability across CI
-   runs*, not concealment, exactly like AGP's own public debug-keystore password. Every rolling
-   and tagged build from now on carries the same certificate, so an operator can update in place.
-4. **Structural guard, in the `platformGuards`/R-1001 style: reads the real assembled APK, not a
-   declared coordinate.** `PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256` pins that
-   keystore's fingerprint; `PlatformGuards.signingStabilityViolations` (pure, dependency-free
-   logic) and `SigningStabilityGuardTask` (reads the packaged APK via `com.android.tools.build:
-   apksig` — the library `apksigner`/AGP's own signing pipeline are themselves built from, so no
-   external SDK tool or hand-rolled APK Signing Block parser is needed) fail the build if the
-   assembled APK is not verifiably signed, carries no v2/v3 scheme, or its certificate has drifted
-   from the pin. Wired as `:app:verifyReleaseSigningStability`, depended on by `:app:check`
-   (`ort.android-app.gradle.kts`), the same pattern `verifySherpaNativeLibrariesPackaged` (R-1001)
-   already established for "needs a real assembled APK, so it runs after `assembleDebug`, not the
-   root `platformGuards` task."
+remember is a rule that will eventually be forgotten") and constitution V's own spirit (nothing
+that would let a stranger impersonate this project leaves this repository) are what this session
+followed, alongside Development Workflow's debugging loop.
+**What changed:** this entry supersedes an earlier same-day commit on this branch that checked a
+signing keystore into the repository — rejected on review before merge: a public repository must
+never carry a private signing key, since anyone could then sign an APK Android accepts as an
+update to the real one, defeating the entire fix. Reworked before merging to `main`:
+1. **Reproduction and root cause stand as originally found** (see this session's first commit,
+   superseded here only in its fix): the published `latest-build`/`v0.1.1` APKs are structurally
+   valid — hash-verified, correctly zipaligned, no Zip64, v2-signed, install cleanly via `adb
+   install`/`pm install` on API 34 and genuine Android 16 (API 36, both page sizes) — but
+   `release.yml` signed with AGP's own auto-generated `~/.android/debug.keystore`, fresh on every
+   GitHub Actions run, so `v0.1.1` and `latest-build` carry two different certificates for the same
+   `org.ort.app` package (confirmed with `apksigner verify --print-certs` on both). Resigning a
+   published APK's own bytes with a second key and installing it over the first reproduces
+   `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, which most on-device Package Installers show as the same
+   generic "Package appears to be invalid" text a malformed APK produces.
+2. **The key now lives only as GitHub Actions secrets.** `release.yml`'s `build-and-release` job
+   decodes `ORT_RELEASE_KEYSTORE_BASE64` to a temp file under `$RUNNER_TEMP` at run time, passes it
+   and its three companion secrets (`ORT_RELEASE_KEYSTORE_PASSWORD`, `ORT_RELEASE_KEY_ALIAS`,
+   `ORT_RELEASE_KEY_PASSWORD`) to Gradle as environment variables for the one step that assembles
+   the published `full`-flavor debug APK, and deletes the temp file in an `if: always()` cleanup
+   step. Nothing is echoed; GitHub's own log masking covers the values regardless.
+   `ort.android-app.gradle.kts` reads those four environment variables and only creates/applies a
+   `release` `signingConfig` when they are present — a plain local `assembleFullDebug` (none of
+   these variables set) still gets AGP's own per-machine debug key exactly as before this session,
+   deliberately: a local developer build must never behave differently for lacking a secret only
+   CI holds.
+3. **Secret absent is handled loudly, on purpose.** If `ORT_RELEASE_KEYSTORE_BASE64` is unset (a
+   fork before its owner configures it, or upstream before the operator's one-time setup), the
+   `build-and-release` job **fails** with a `::error::` annotation and a job-summary explanation
+   rather than publishing anything — chosen over "publish an unsigned/locally-signed artifact
+   anyway" because publishing under a fresh ephemeral key is exactly the bug this session closes;
+   a red Release run is the loud, honest signal that nothing new went out, not a silent repeat.
+4. **The structural guard now enforces only where a stable key is actually expected.**
+   `PlatformGuards.signingStabilityViolations` takes `expectedCertificateSha256` as a plain
+   nullable parameter (no source-code constant — the first version's mistake) and a new
+   `enforceExpectedCertificate` switch; `SigningStabilityGuardTask` (`:app:verifyReleaseSigningStability`,
+   wired into `:app:check`) always checks the packaged `full`-flavor debug APK is verifiably
+   v2/v3-signed, but only compares its certificate against the pin when invoked with
+   `-PortEnforcePinnedReleaseSigning=true` — `release.yml` alone, right after building with the
+   injected secrets. The pin itself is configurable, not hardcoded: `buildSrc/signing/
+   release-certificate.sha256` (checked in, starts at the literal placeholder `UNSET`) or the
+   `ortReleaseCertificateSha256` Gradle property, read by `ort.android-app.gradle.kts` and passed
+   into the task. Enforcing with the pin still `UNSET` is itself a violation, naming exactly what
+   to paste in and where.
+5. **`RELEASING.md`'s "Signing" section rewritten** with the exact `keytool` command to generate
+   the release keystore, the exact `gh secret set` commands for all four secrets, where to read the
+   resulting certificate's SHA-256 digest and paste it into `release-certificate.sha256`, and the
+   one-time cost stated plainly: anyone with `org.ort.app` already installed under the old
+   ephemeral certificate must uninstall once before a build signed with the new key will install
+   over it.
 **Verified:**
-- `./gradlew -p buildSrc test` — 23 tests in `PlatformGuardsTest`, `BUILD SUCCESSFUL`; includes
-  two task-level tests that sign a real tiny APK-shaped zip with the pinned keystore via apksig's
-  own `ApkSigner` and assert the guard accepts it, and a second, differently-keyed signature that
-  the guard rejects.
-- **Discrimination, shown directly**: reverted the pinned certificate constant to a dummy value
-  and re-ran `PlatformGuardsTest` — the "accepts a real APK signed with the pinned keystore" test
-  failed with the guard's own `GradleException` (wrong reason without the fix); restored the real
-  pin and it passed again.
-- **End-to-end, against a real build**: `./gradlew :app:assembleDebug :app:verifyReleaseSigningStability
-  -PortAllowMissingBundledAssets=true` — `BUILD SUCCESSFUL`; `verifyReleaseSigningStability: OK`;
-  independently confirmed with `apksigner verify --print-certs` against the real
-  `app/build/outputs/apk/debug/app-debug.apk` this produced — certificate SHA-256
-  `16a71e4ef0ed98ff4a594fbfef149798b03451d5a241d66053cc7a88bb42bdc7`, matching the pin exactly.
+- `./gradlew -p buildSrc test` — `PlatformGuardsTest`, `BUILD SUCCESSFUL`; covers
+  `signingStabilityViolations` with enforcement on and off (a mismatched or absent pin never fails
+  when enforcement is off; an unconfigured `UNSET` pin fails loudly when enforcement is on; a
+  matching digest passes case-insensitively; a genuine mismatch is reported by both digests) and
+  `SigningStabilityGuardTask` end to end against real APKs signed with `keytool`-generated
+  throwaway keystores (never a checked-in one): passes with enforcement off regardless of the pin,
+  passes with enforcement on and a matching pin, fails with enforcement on and a different key.
+- **Discrimination, shown directly**: each new test asserted against the pre-rework behaviour first
+  (compile/assert failure without `enforceExpectedCertificate`/nullable-pin support), then against
+  the implemented guard, per this project's own TDD discipline.
 **Left open / not done:**
-- `release.yml` itself needed no change — it already attaches whatever `assembleDebug` produces,
-  and the signing config now lives entirely in `ort.android-app.gradle.kts` (owned by this
-  session) — so this entry documents that file only by exclusion (read, not touched).
-- **Anyone who already installed a build signed with the old, ephemeral debug certificate must
-  uninstall once** before installing a build carrying the new pinned certificate — unavoidable (a
-  certificate change is exactly what breaks in-place updates); recorded in `RELEASING.md`. This
-  fix does not repair an install already broken on the operator's device; it prevents every future
-  one once a build with the new key is out.
-- Product flavors (`full`/`play`) landed on `main` after this worktree's base commit
-  (`152a9283`) — not present in this checkout, so this session could not verify the guard/signing
-  config against that variant split; flagged for whoever merges this so `assembleDebug`'s output
-  path is re-checked against the flavored task names if they changed it.
-- Could not test on the operator's exact hardware (Android 16 on real arm64 silicon) — verified
-  instead on a genuine Android 16 (API 36) emulator at both 4 KB and 16 KB page size, the closest
-  available proxy.
+- The operator has not yet generated the release keystore or set the four secrets — until they do,
+  every push to `main` will fail `build-and-release` at the "secrets missing" step by design (see
+  point 3 above); `RELEASING.md`'s "Signing" section is the one-pass setup that unblocks it.
+- `buildSrc/signing/release-certificate.sha256` still reads `UNSET` — the operator pastes the real
+  digest in once the keystore exists, per `RELEASING.md`.
+- Not tested on the operator's exact hardware (Android 16 on real arm64 silicon) — verified on a
+  genuine Android 16 (API 36) emulator at both 4 KB and 16 KB page size, the closest proxy
+  available on this machine, same limitation as the superseded commit.
+
+## 2026-09-19 (P28b: the `play`-variant model catalog wired to the real generated manifest)
+
+### c4618000 — ModelCatalog reads `bundled`/`downloadUrl` from the generated per-flavor manifest instead of hardcoding `bundled = true`
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` (`ModelCatalogEntry`,
+`ModelCatalog.entries`/`mapEntries`/`specFor`, `ModelsController.unverifiedSpecFor`),
+`app/src/main/kotlin/org/ort/app/ui/setup/DebugModelsSetupOverride.kt` (kdoc only — the object
+itself is unchanged), and their tests under `app/src/test/**`.
+
+**Requirements/ACs:** D43, D44, FR-AST-10..14, AC-184..190.
+
+**What changed:** P23/P23a already made `buildSrc`'s catalog renderer emit a per-flavor `bundled`
+and `downloadUrl` on every generated `GeneratedBundledAssetEntry` (`true`/blank on `full`,
+`false`/the real `models-v1` mirror URL on `play`), and P22 already built the setup MODELS step,
+the foreground `ModelDownloadWorker`, and the READY hard gate — but `ModelCatalog.entries` never
+read either generated field: it hardcoded every `ModelCatalogEntry.bundled` to its own class
+default, `true`. P28a found the resulting gap while building the MODELS-step artboards: on a real
+`play` build every model still reported `bundled`, so `ModelsController.download()` refused
+unconditionally ("ships bundled with the app — there is nothing to download"), the MODELS step's
+`rowsForSetupModelsStep()` was always empty, and the READY gate (`SetupStateMachine`'s
+`requiredModelsInstalled`, sourced from `rowsRequiringDownload().isEmpty()`) passed with nothing
+installed — `play` could never reach capture. P28a worked around it for screenshot purposes with a
+debug-only `DebugModelsSetupOverride` rather than fixing the file, correctly, since it belonged to
+a different unit.
+
+Fixed at the source: `ModelCatalogEntry` gained a `downloadUrl: String` field (FR-AST-14/D44, the
+`models-v1` mirror, blank exactly when `bundled` is true) and a `fetchUrl()` — `downloadUrl` once
+not bundled, else the original manifest `url` (never actually fetched for a bundled entry, since
+`download()` refuses before reaching it). `ModelCatalog.entries` is now built by a new, pure,
+`internal` `mapEntries(List<GeneratedBundledAssetEntry>)` that reads `generated.bundled` and
+`generated.downloadUrl` straight through — no hardcoded default reaches a real entry any more.
+`ModelCatalog.specFor` and `ModelsController`'s own `unverifiedSpecFor` both now build
+`ModelFetchSpec.url` from `catalogEntry.fetchUrl()` rather than the bare `url` field, so a real
+`play`-variant download actually hits the pinned GitHub Release mirror (FR-AST-14), never the
+manifest's original HuggingFace/GitHub provenance URL. Every downstream consumer — `download()`'s
+`isBundled` default, `rowFor`'s `bundled` field, `rowsRequiringDownload`/`rowsForSetupModelsStep`,
+`SetupActivity`'s `RenderModels`/`initialModelsSetupRows`/`refreshedModelsSetupRows`, and
+`SetupStateMachine`'s `requiredModelsInstalled` gate — was already correctly wired by P22/P23a and
+needed no change once the one upstream field was honest; verified by reading each call site rather
+than assumed. `DebugModelsSetupOverride` is **kept, not removed**: the debug scenario tooling and
+the canonical screenshot tour both run the `full` variant, where every real entry is genuinely
+`bundled = true` and `rowsForSetupModelsStep()` is therefore always empty, so the override remains
+the only way to drive a non-empty MODELS-step capture without a real `play` build and a real
+network mirror — updated its kdoc to record that P28b closed the gap it used to describe, rather
+than leaving the doc comment naming a bug that no longer exists.
+
+Added tests (`ModelCatalogTest.kt`): `mapEntries` driven directly with a fixture
+`GeneratedBundledAssetEntry` for both the bundled (`full`-shaped) and not-bundled-with-a-mirror
+(`play`-shaped) cases, independent of which flavor's `GeneratedBundledAssetManifest` the test
+module happens to compile against; `fetchUrl()` proven to pick the original `url` when bundled and
+the mirror `downloadUrl` when not; every other field (`id`/`sizeBytes`/`tiers`/`licence`/`gated`/
+checksum) proven to carry through unchanged regardless of `bundled`. Added
+(`ModelsControllerTest.kt`) `AC_184 download refuses a bundled entry and proceeds through a real
+fetch for an unbundled one` — same id, same spec, same body, only `isBundled` differs, closing the
+loop the existing `isBundled = { false }`-seeded tests already exercised piecemeal.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.data.*" --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.work.*" --tests "org.ort.app.assets.*"` — green (every existing test in these packages still passes unchanged, plus the new ones above; `SetupStateMachineTest`'s `AC_184`/`AC_188` cases and `ModelsViewStateRowsRequiringDownloadTest`'s `AC_184` cases, both pure and untouched, continue to hold).
+- `.\gradlew.bat ktlintCheck detekt` — green, whole project.
+- Discrimination: reverted `mapEntries`'s `bundled = generated.bundled, downloadUrl = generated.downloadUrl` lines to the old hardcoded-default shape, re-ran `ModelCatalogTest` — the two new fixture-driven tests (`D43 mapEntries reports an unbundled fixture entry as not bundled...` and `FR_AST_14 fetchUrl uses the pinned models-v1 mirror...`) failed exactly as expected (`bundled` read `true` and `fetchUrl()` returned the HuggingFace source instead of the GitHub mirror); every other test in the file stayed green, confirming the fixture tests — not some unrelated break — are what catches this specific regression. Restored the fix; the same command suite went green again.
+- `.\gradlew.bat :app:testPlayDebugUnitTest` — ran the whole `:app` test suite against the `play` flavor's own compiled `GeneratedBundledAssetManifest` (every entry genuinely `bundled = false` with a real mirror `downloadUrl`). This is real, valuable proof: it is the first time this exact suite has ever run with `bundled` genuinely false, and it immediately found three of *this file's own* pre-existing tests baking in a `full`-only assumption (`ModelCatalogTest`'s and `ModelsControllerTest`'s `WPG ... bundled true ...` tests) that were only ever true because `ModelCatalog` hardcoded the value before this fix — rewritten in this same commit to the real, flavor-agnostic invariant (`bundled == downloadUrl.isBlank()`, and a row always mirrors its own catalog entry) rather than a hardcoded `true`; a fourth (`WPG download refuses ... using the real default`) now skips honestly via `org.junit.Assume` on a flavor with no genuinely bundled entry left to exercise, since `AC_184 download refuses a bundled entry and proceeds ...` already proves the same mechanism flavor-independently. After these fixes, every test in `ModelCatalogTest`/`ModelsControllerTest` passes under **both** `testFullDebugUnitTest` and `testPlayDebugUnitTest`.
+
+**Left open / not done:** this closes the data-layer gap end to end (`ModelCatalog` → `ModelsController.download`/`specFor` → the MODELS step → the READY gate), but the full `testPlayDebugUnitTest` run also surfaced a **larger, separate gap outside this fix's scope**: `SetupActivityTest.kt` (9 of 39 cases), `SetupScaffoldTest.kt` (1 of 3, an uncaught-exception bleed from the SetupActivityTest failures above it in the same fork), `debug/WpiScenariosTest.kt` (3 of 47), `ui/screens/ModelsScreenTest.kt`/`ModelsScreenRejectionTest.kt` (1 each) and `ui/settings/SettingsPollingTest.kt` (1) all carry fixtures that drive setup end to end to `READY` (or otherwise assume every model is already installed) with no MODELS-step handling at all — correct and sufficient on `full` (nothing to download, so `RenderModels` never even shows), but genuinely incomplete on `play`, where those same fixtures now correctly stop at `MODELS` instead of reaching `READY` (proof the READY gate, AC-188, is doing its real job — not a regression this fix introduced). Fixing every such fixture for a second build variant is a materially larger, separate effort than wiring one file to the manifest it should have read all along, and several of the affected files (`ui/screens/**`, `ui/settings/**`, `debug/**`) sit outside this round's owned paths entirely. Flagged as a follow-up rather than expanded into this change. Nothing here installs a real `play` build on a device or emulator either — that a `play`-variant setup flow completes end to end against the real `models-v1` GitHub Release mirror (network reachable, real bytes, real sha256) is provable only on-device or via `tools\ui-audit\install.ps1`/`tour.ps1` against a `play` build, which this round did not run (no artboard exists yet for the MODELS step at all — P22's own note — so the visual-verification trigger in `AGENTS.md` §7 does not newly apply here: no `*Content`/`*Screen`/`*ViewState`/`*ViewData`/`*Mapper` file's rendered *output* changed, only what data feeds it).
+
+---
+
+## 2026-09-19 (P22 batch-gate regression fix, the P25 vad-fallback scenario, and S01a/S11a artboards)
+
+### 21e22471 — jurisdiction-notice resumption fixed at the fixture; P25's vad-fallback scenario built; S01a/S11a given artboards, a real-rows MODELS scenario and tour steps
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**` (`SetupStateMachine.kt`'s kdoc,
+`SetupActivity.kt`'s MODELS-step row functions, new `DebugModelsSetupOverride.kt`),
+`app/src/debug/kotlin/org/ort/app/debug/**` (`Scenarios.kt`, `ScenarioFixtures.kt`,
+`tour/SetupStepIds.kt`), `tools/ui-audit/tour.json`, `design/design-intent.md`,
+`design/canvas/Setup-Jurisdiction.dc.html`, `design/canvas/Setup-Models.dc.html` (both new).
+
+**Requirements/ACs:** D43, D50, NFR-6c, FR-AST-10..12, AC-166, AC-184..190, AC-162.
+
+**What changed — three jobs, in priority order:**
+
+1. **The batch-gate regression (highest priority).** P22 added a `JURISDICTION_NOTICE` step to
+   `SetupStateMachine.stepFor`, directly after `WELCOME` and before every other gate. Twelve
+   `WpiScenariosTest`/`ScenariosTest` cases that seed a setup state partway through (`setup-verified`,
+   `setup-level`, `setup-radio`, `setup-mode`, `setup-bt-permission`, `setup-rig-transport`
+   (and its `-preset` sibling), `setup-rig-bluetooth`, `asset-corrupt`, `rig-bt-connected`,
+   `setup-verified-local-mic`) began failing: each resumed at `JURISDICTION_NOTICE` instead of
+   the step its own test name promises. **Diagnosis:** `stepFor`'s new ordering is correct per
+   AC-166 ("shown exactly once, on first run") — none of these twelve fixtures had ever set
+   `SetupSnapshot.jurisdictionNoticeSeen`, so every one of them was, by construction, indistinguishable
+   from a genuine first run the instant the new gate existed. **Chosen fix: the fixtures, not the
+   production code.** A scenario that seeds a device already past `WELCOME` and resuming at `MODE`
+   or later is not a first run by definition (the prompt's own framing, matching the diagnosis
+   independently) — AC-166 governs first run only. Set `store.jurisdictionNoticeSeen = true`
+   alongside every `store.welcomeSeen = true` in `Scenarios.kt` (12 call sites: `verifiedInputStore`
+   — covers `setupVerified`/`setupLevel`/`setupRadio` — plus each `freshSetupStore` caller:
+   `setupVerifiedLocalMic`, `setupMode`, `setupBtPermission`, `setupRigTransport`,
+   `setupRigBluetooth`, `modeLocalMic`, `modeUsb`, `modeBluetooth`, `rigBtConnected`,
+   `assetsBundled`, `assetCorrupt`) — the last four of those twelve sites have no existing test
+   asserting `stepFor` today but represent the identical "already past first run" fact, so they were
+   fixed too rather than left inconsistent. Recorded the full rationale once, in
+   `SetupSnapshot.jurisdictionNoticeSeen`'s own kdoc, and left a one-line pointer to it at each of
+   the twelve call sites rather than repeating the explanation twelve times.
+2. **P25's undelivered `vad-fallback` scenario (D50, Q22, FR-SEG-10, AC-162).** P25 built the live
+   bar's amber "Energy VAD" mark and the session-review header's "Segmentation: Energy VAD
+   (fallback)" line but left no scenario to reach either — its own CHANGELOG entry named exactly
+   what was missing. Added: a `vadDetector: VadDetectorKind = UNKNOWN` parameter to
+   `ScenarioFixtures.session()` (additive, every existing caller unaffected); a `"vad-fallback"`
+   `Scenarios.NAMES` entry, `load` branch and `republishFacets` branch seeding a live (`markCapturing`),
+   zero-over session with `vadDetector = ENERGY` (the same minimal "0 overs, live" shape
+   `rigLost`/`rigReconnected` already establish); two `tools/ui-audit/tour.json` steps —
+   `vad-fallback/N01-now-vad-fallback` (`NOW`, the live-bar chip) and
+   `vad-fallback/RC02-recording-session-vad-fallback` (`EARLIER_NIGHTS`,
+   `recordingSession: self`, the durable header line — `RecordingSessionSummary`'s own
+   `listAll()` include a live, unended session, so this is reachable even though the session
+   never ends).
+3. **S01a (`JurisdictionNoticeScreen`) and S11a (`ModelsSetupScreen`) given artboards, a scenario
+   and tour steps (constitution VIII: neither could be captured or compared before this).** Added
+   `design/canvas/Setup-Jurisdiction.dc.html` (the one screen besides Welcome with no back chevron,
+   no counter and no segment bars — `indicatorIndex()`/`onBack` are both null for
+   `JURISDICTION_NOTICE`, confirmed by reading `SetupStep.kt`/`SetupStateMachine.kt` before drawing
+   it) and `design/canvas/Setup-Models.dc.html` (shares `READY`'s own `8 of 8` segment fill,
+   drawn with one `PENDING` row and one `FAILED` row so both "still needs your attention" shapes
+   are in one capture); two `design/design-intent.md` §2 rows (`S01a`, `S11a`, following the
+   existing S02b/S02c/S09b/S10b lettered-insertion convention) with an honest `drawn` status
+   (built already in P22; not yet swept against a capture — that is this session's own deliverable,
+   not a claim this makes); `SetupStepIds.kt` entries `"S01a" -> "JURISDICTION_NOTICE"` and
+   `"S11a" -> "MODELS"`; six `tour.json` steps (1.0, 2.0, 2.0-scrolled-to-end for each), using a
+   `"setup-mode"` base for S01a (no dynamic content to seed) and a new `"setup-models"` scenario
+   for S11a.
+
+   **The MODELS step's real production data path cannot show a download-needed row on any build
+   variant today — found and reported, not silently worked around.** `SetupActivity.RenderModels`
+   reads `ModelsController.currentState(context).rowsForSetupModelsStep()`, which only returns a
+   row when its catalog entry is genuinely not bundled — but `ModelsViewData.kt`'s own
+   `ModelCatalog.entries` hardcodes `ModelCatalogEntry.bundled` to its default, `true`, for every
+   entry ("every entry `ModelCatalog` generates today is bundled", that file's own kdoc, verbatim),
+   and never reads `GeneratedBundledAssetManifest.Entry.bundled` (which *is* genuinely `false` for
+   the `play` flavor, per `BundledAssetCatalogRenderer`) to override it. So `rowsForSetupModelsStep()`
+   is unconditionally empty in production, on `full` and `play` alike — a real gap, and
+   `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` is a different unit's file (WPG's),
+   outside this session's ownership. Added `DebugModelsSetupOverride` (in `ui/setup`, this
+   session's own package) — the identical seam `DebugRouteCheckOverride`/`DebugRigLinkPortOverride`
+   already establish for a hardware/wiring gap this package cannot otherwise drive to a capturable
+   state: `SetupActivity.initialModelsSetupRows`/`refreshedModelsSetupRows` read
+   `DebugModelsSetupOverride.activeOverride` first, gated on `BuildConfig.DEBUG` exactly like its
+   two siblings. The new `"setup-models"` scenario calls `DebugModelsSetupOverride.show(...)` with
+   two real `ModelId` entries (`ASR_ENCODER` pending, real catalog size; `ASR_DECODER` failed, a
+   real checksum-mismatch reason) rather than routing through the broken `bundled` plumbing — the
+   byte figures are genuine even though "needs downloading" is asserted directly for this capture.
+   The real fix (propagating `GeneratedBundledAssetManifest.Entry.bundled` into
+   `ModelCatalogEntry.bundled`) is not made here; it belongs to WPG's own file.
+
+   **A second, smaller deviation noted, not fixed:** `ModelsSetupScreen.kt`'s `ModelDownloadRow`
+   renders a `FAILED` row's reason in `OrtColors.textDim`, the same colour as every other row's
+   sub-line — design-guide.md §3's own rule ("Failed / unavailable — amber, states the cause...")
+   would call for amber there, the same way every other failed/degraded state in this app reads.
+   The artboard was drawn to match what the built screen actually does today (`text/dim`, not
+   amber), per this session's own instruction, with the discrepancy called out in the artboard's
+   own comment rather than silently drawn "correctly" and left to surprise whoever compares it
+   against a real capture.
+
+**Verified:**
+`.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.debug.*"` → `BUILD SUCCESSFUL`
+(all `WpiScenariosTest`/`ScenariosTest`/`TourIdsTest`/`TourParityTest`/`TourSpecTest`/`TourStepsTest`
+cases green, including the twelve previously-failing resumption assertions and the new
+`vad-fallback`/`setup-models` scenarios loading without throwing).
+`.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.debug.*"`
+→ `BUILD SUCCESSFUL` (626 tests). One run of this exact command hit three `BluetoothPermissionScreenTest`
+(`S02c`, a file this change never touches) `AppNotIdleException` failures under the load of the
+combined suite; confirmed pre-existing and unrelated — `BluetoothPermissionScreenTest` alone is
+green in isolation, and this exact class of cross-test Compose-idle flake under load is documented
+repeatedly elsewhere in this file (e.g. the 2026-09-10 "idle-root" entry); a second run of the
+identical command completed clean. `.\gradlew.bat ktlintCheck` → `BUILD SUCCESSFUL`.
+`.\gradlew.bat detekt` → `BUILD SUCCESSFUL`.
+**Discrimination (job 1, the regression fix):** `SetupStateMachine.kt`'s own change is a kdoc
+addition only, load-bearing nothing — the real fix is `Scenarios.kt`'s twelve
+`jurisdictionNoticeSeen` lines, so those (and only those) were reverted via `git checkout` back to
+the pre-fix state; reran `WpiScenariosTest`/`ScenariosTest`: the identical twelve cases failed
+(`expected:<X> but was:<JURISDICTION_NOTICE>`) for the right reason; restored, reran: all twelve
+green again.
+
+**Left open / not done:** the real `ModelCatalog.entries`/`GeneratedBundledAssetManifest.bundled`
+plumbing gap (above) is reported, not fixed — outside this session's file ownership.
+`ModelsSetupScreen.kt`'s failed-row colour (`text/dim` vs. the design-guide's own amber-for-failure
+rule) is likewise reported, not fixed — a cosmetic deviation, not a blocker to capture. No emulator
+or tour was run this session (per its own instructions); the lead captures `vad-fallback/N01-*`,
+`vad-fallback/RC02-*`, `setup-mode/S01a-*` and `setup-models/S11a-*` (six ids at 1.0/2.0/2.0-end,
+two at 1.0 only) and judges them against `Setup-Jurisdiction.dc.html`/`Setup-Models.dc.html` and
+the D50 disclosure boards. The `spec/build-plan.md` P22/P25 checkboxes are left exactly as this
+session found them; neither this session's own "done when" was to tick them.
+
+## 2026-09-19
+
+### lead integration — the renamed flavor tasks' callers, outside any Wave G unit's ownership
+
+**Scope:** `.github/workflows/ci.yml`, `.github/workflows/emulator.yml`,
+`tools/ui-audit/install.ps1`, `RELEASING.md`, `README.md`,
+`docs/ui-fix-session-prompt.md`, `docs/debug-fix-session-prompt.md`.
+**Requirements/ACs:** none new — this is the integration half of P23 (D43, FR-AST-13).
+**What changed:** P23's product flavors renamed `:app:assembleDebug` → `assembleFullDebug`,
+`:app:testDebugUnitTest` → `testFullDebugUnitTest` (no plain aggregate survives — the
+unqualified name is now ambiguous and fails), `connectedDebugAndroidTest` →
+`connectedFullDebugAndroidTest`, and moved the APK to
+`app/build/outputs/apk/full/debug/app-full-debug.apk`. P23 owned neither the workflows nor the
+install script and correctly reported them rather than reaching outside its unit; the lead made
+the matching edits here so the next push does not turn CI red on a name that no longer exists.
+The CI job now also assembles only `full` rather than the aggregate, so it does not build the
+`play` variant it never uses. Prose references in the release and session docs were corrected in
+the same pass.
+**Verified:** the task names and the APK path are the ones P23's own build registered and
+measured (`:app:assembleFullDebug`, `:app:assemblePlayDebug`, `:app:testFullDebugUnitTest`
+— 2662 tests green in its run). The hosted proof is the next CI and Release run on the pushed
+commit; until then these files are checked by reading, not by execution.
+**Left open:** `.github/workflows/release.yml` line 100 still describes the pre-flavor APK path
+in a comment (prose only, no task reference).
+
+## 2026-09-19 (build plan P24: automatic thread grouping after Pass B)
+
+### 978c3627 — P24 fix: `play` is now structurally incapable of bundling assets (FR-AST-13, AC-190)
+
+**Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/FetchBundledAssetsTask.kt` (new
+`BundledAssetPackaging` object), `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt` (new
+`bundledAssetPackagingViolations`), `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuardsTask.kt`
+(new `BundledAssetPackagingGuardTask`), `buildSrc/src/main/kotlin/ort.android-app.gradle.kts`
+(fetch destination, `cleanupLegacyBundledAssets`, two new `:app:check`-wired guard tasks),
+`.gitignore`, `README.md`, `docs/debug-fix-session-prompt.md`, `spec/e2e-capture-modes-plan.md`.
+Tests under `buildSrc/src/test/kotlin/org/ort/gradle/FetchBundledAssetsTaskTest.kt` and
+`PlatformGuardsTest.kt`. No `:app` product-code file touched — this is a build-wiring fix.
+
+**Requirements/ACs:** FR-AST-13, AC-190, FR-AST-3 (amended), D43. Constitution VII (Boundaries Are
+Structural, Not Conventional).
+
+**What changed:** the Wave G batch gate found that P23's `play` flavor, meant to bundle no models
+(FR-AST-13), actually did: `FetchBundledAssetsTask` wrote every verified asset to
+`app/src/main/assets/bundled/` — the **shared main source set every flavor inherits** — so once
+both flavors had ever been fetched on one machine, `play`'s own `mergePlayDebugAssets`/
+`mergePlayReleaseAssets` picked up the identical 628 MB `full` did, purely because both flavors
+compile the same main source set. Two consequences on the lead's machine: AC-190 was not actually
+met (a `play` build there silently shipped every model), and the full gate
+(`dependencyRules platformGuards build`) died with `Java heap space` — building four variants under
+`org.gradle.parallel=true` meant `compressFullReleaseAssets` and `compressPlayReleaseAssets` both
+compressed 628 MB concurrently at `-Xmx4g`.
+
+Fixed structurally, not conventionally:
+
+- `BundledAssetPackaging` (new, `FetchBundledAssetsTask.kt`) names the destination as a constant,
+  `ASSETS_OUTPUT_RELATIVE_PATH = "src/full/assets/bundled"` — the `full` flavor's **own** source
+  set. AGP only ever merges a flavor's own `src/<flavor>/assets/` into that flavor's own variants,
+  never into a sibling's, so `play`'s merge/lint/assemble tasks now cannot see this directory at
+  all, regardless of what has ever been fetched on the machine. `ort.android-app.gradle.kts` wires
+  `fetchBundledAssets.assetsOutputDir` from this constant instead of the old literal string. The
+  runtime path inside the APK is unchanged (`assets/bundled/...`) — an APK's asset root has no
+  notion of which source set an entry came from, so `BundledAssetInstaller`/`ModelFileVerifier`
+  needed no changes at all. P22's `BundledAssetCatalogRenderer` (which already renders
+  `bundled=false` for `play`'s generated catalog) was not touched — it was already correct; the
+  defect was purely in where the fetch task's physical output landed.
+- `cleanupLegacyBundledAssets` (new task, `ort.android-app.gradle.kts`): deletes a stale
+  `app/src/main/assets/bundled/` (`BundledAssetPackaging.LEGACY_ASSETS_RELATIVE_PATH`) left over on
+  a developer machine from before this fix — gitignored, so invisible to `git status`, but still an
+  implicit input of every flavor's own asset merge as long as it sits under the shared main source
+  set. Wired ahead of every `merge*Assets` task for **both** flavors, so a `play`-only checkout that
+  never runs `fetchBundledAssets` again still gets it removed once. Confirmed removed on this
+  machine's own pre-existing stale checkout by the real build below.
+- `PlatformGuards.bundledAssetPackagingViolations` + `BundledAssetPackagingGuardTask` (new,
+  `PlatformGuards.kt`/`PlatformGuardsTask.kt`): reads a real packaged APK's zip entries (like
+  `missingNativeLibraryViolations`/`NativeLibraryPackagingGuardTask` already does for R-1001) and
+  fails if `full`'s debug APK contains zero `assets/bundled/` entries, or if `play`'s contains any.
+  Unlike the R-1001 guard (deliberately checked on `full` only, since native-library packaging is
+  flavor-symmetric), this one is registered once per flavor with `expectBundled` set the opposite
+  way — checking only one flavor's APK would prove nothing about the asymmetry this fix depends on.
+  Both wired into `:app:check`, adding no new assemble to the graph: `./gradlew build` already
+  assembles every variant (that is exactly how this defect's own build report reproduced it).
+- `.gitignore`, `README.md`, `docs/debug-fix-session-prompt.md`,
+  `spec/e2e-capture-modes-plan.md`: updated every reference to the old
+  `app/src/main/assets/bundled/` path to the new `app/src/full/assets/bundled/` one.
+
+**Verified:**
+- `.\gradlew.bat -p buildSrc test` — 12 actionable tasks, `BUILD SUCCESSFUL`; the two new test
+  classes' additions (7 in `PlatformGuardsTest`, 2 in `FetchBundledAssetsTaskTest`) all pass.
+  Discrimination: temporarily reverting `BundledAssetPackaging.ASSETS_OUTPUT_RELATIVE_PATH` to the
+  old `"src/main/assets/bundled"` value failed exactly the new destination-path test
+  (`FetchBundledAssetsTaskTest`, `AssertionFailedError` at the expected line) with every other test
+  still green; restored and re-ran green (18/18, 28/28 in the two touched classes).
+- Real build, this machine, `HF_TOKEN` set (no escape hatch): `.\gradlew.bat :app:assembleFullDebug`
+  then `:app:assemblePlayDebug`, both `BUILD SUCCESSFUL`. Measured directly:
+  - `app-full-debug.apk`: 575.76 MB (603,726,487 bytes).
+  - `app-play-debug.apk`: 126.84 MB (132,997,810 bytes) — down from packaging the identical ~628 MB
+    `full` did before this fix on this machine.
+  - `app/build/intermediates/assets/fullDebug/mergeFullDebugAssets/`: 628.46 MB, including
+    `bundled/models/` at 628.41 MB (Gemma 3 1B 528.97 MB, whisper `tiny.en` 98.83 MB, Silero VAD
+    0.61 MB).
+  - `app/build/intermediates/assets/playDebug/mergePlayDebugAssets/`: 0.05 MB — `licenses/` and
+    `lexicon-corrupt/` only, **zero** `bundled/` entries.
+  - `app/src/main/assets/bundled/` confirmed absent after both assembles — this machine had a real
+    stale copy from before the fix; `cleanupLegacyBundledAssets` removed it (visible in both
+    builds' own task lists).
+  - `.\gradlew.bat :app:verifyFullBundledAssetPackagingBoundary --rerun` and
+    `:app:verifyPlayBundledAssetPackagingBoundary --rerun` against the real APKs above: both
+    `BUILD SUCCESSFUL`, log lines confirm `full` "bundles model assets as expected" and `play`
+    "does not bundle model assets as expected".
+  - `.\gradlew.bat ktlintCheck detekt` — `BUILD SUCCESSFUL` (174 actionable tasks for ktlint, 20
+    modules' `detekt` for the second invocation; no violations).
+  - Full gate `.\gradlew.bat dependencyRules platformGuards build` — `dependencyRules`/
+    `platformGuards` both `OK`; `BUILD FAILED in 18m 13s` at `:app:testFullDebugUnitTest` (2571
+    tests completed, 12 failed). **Not caused by this fix**: every failure is in
+    `WpiScenariosTest`/`ScenariosTest` (`app/src/test/kotlin/org/ort/app/debug/`), asserting
+    `SetupStateMachine.stepFor` resumes at a deeper step (`MODE`, `RIG_TRANSPORT`, `READY`, …) but
+    getting `JURISDICTION_NOTICE` instead — `SetupStateMachine.kt:86`'s new P22 gate
+    (`if (!snapshot.jurisdictionNoticeSeen) return SetupStep.JURISDICTION_NOTICE`, landed by the
+    Wave G merge this session started from, D43/NFR-6c/FR-AST-10..12) added a step these scenario
+    fixtures do not seed past. This fix touches no file under `app/src/**` at all (see Scope
+    above), so it cannot be the cause; confirmed no heap exhaustion this run either (the original
+    batch-gate failure mode) — 2571 tests actually ran to completion this time, which the
+    play-side fix's own 126.84 MB measurement above already made likely. Left for the lead to
+    route to whoever owns `app/src/main/kotlin/org/ort/app/ui/setup/**` and
+    `app/src/test/kotlin/org/ort/app/debug/**` (outside this package's ownership — a builder that
+    needs a file outside its package stops and reports, AGENTS.md "Roles in a session").
+
+**Left open / not done:** the full gate (`dependencyRules platformGuards build`) does not reach
+`BUILD SUCCESSFUL` — blocked by the pre-existing, unrelated `JURISDICTION_NOTICE` scenario-fixture
+regression described above, not by anything in this fix's own scope. This fix's own structural
+guarantee was verified directly against the real APKs instead (`verifyFullBundledAssetPackagingBoundary`/
+`verifyPlayBundledAssetPackagingBoundary --rerun`, both `BUILD SUCCESSFUL`, logged "bundles"/"does
+not bundle" as expected) and by the merged-asset-directory measurement above. No heap-derivation
+was needed — the play variant's own merged assets measured 0.05 MB, nowhere near heap pressure at
+`-Xmx4g` even compressed concurrently with `full`'s 628 MB. `verifySherpaNativeLibrariesPackaged`
+(R-1001) was deliberately left untouched: sherpa-onnx's native `.so` libraries are not named in
+`bundled-assets.json`, ship in every variant intentionally (they are the JNI engine, not model
+weights), and remain under the shared `src/main/jniLibs/` — confirmed both `full` and `play` still
+package them via their own `merge(Full|Play)(Debug|Release)JniLibFolders` wiring, unchanged by this
+fix.
+
+### 2add470f — P24: automatic thread grouping after Pass B (FR-SPK-5, AC-163..165)
+
+**Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/threading/**` package (production and its
+behavioural fake), plus one added call and one new default constructor parameter in
+`pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`. Tests under
+`pipeline/src/test/kotlin/org/ort/pipeline/threading/**`. No `:data`, `:app`, `:capture-*` or
+`:segment` file touched.
+
+**Requirements/ACs:** FR-SPK-5 (its "Amendment, this session" note — v0.1.1 overclaimed automatic
+threading; it was unbuilt), FR-SPK-27, FR-SPK-28, AC-163, AC-164, AC-165. Constitution III (runs
+after Pass B closes a transmission, never re-segments), IV (`:capture-*` boundary untouched), I
+(every join/split decision carries an inspectable [`ThreadJoinReason`]).
+
+**What changed:** `RealCaptureService` has inserted every over with `threadId = null` since it was
+written, and nothing in production ever assigned one — `RELEASES.md`'s `## Unreleased` correction
+about v0.1.1 overclaiming automatic threading is now true rather than aspirational. This unit adds:
+
+- `ThreadGrouper` (pure, total): frequency continuity plus inter-transmission gap decide whether a
+  closed transmission joins the most recent matching transmission's thread or starts a new one —
+  same frequency, or FR-SPK-5's own stated exception (the Rig Module reporting the same channel
+  under a different frequency), within a configurable gap (`ThreadGroupingConfig`, default 10
+  minutes — a documented, provisional placeholder; `spec/open-questions.md` Q16 leaves the real
+  number open). An unlistened capture gap (`capture_gap` rows, FR-RUN-12) between two overs breaks
+  continuity outright, whatever the wall-clock arithmetic alone would have allowed, and both
+  frequencies being genuinely unknown (local-microphone capture) falls back to gap-only continuity
+  rather than refusing to group at all.
+- `ThreadKindClassifier` (pure): FR-SPK-27's net heuristic — a dominant voice/callsign present in
+  ≥40% of ≥5 transmissions alongside ≥3 distinct others — labels a thread `NET`; otherwise 2
+  distinct voices is `QSO`, 3+ is `SCANNER`, fewer is `UNKNOWN`. FR-SPK-28: advisory only, never
+  changes whether `ThreadGrouper` joins a transmission; a thread already `NET` stays `NET`
+  regardless of later evidence, and a user-set marking (`ThreadKindSource.USER`) is never
+  overwritten automatically (no `:app` caller sets that yet — this is the data-layer half only).
+- `ThreadGroupingCoordinator`, the one production entry point `DataPassBResultSink.record` now
+  calls, unconditionally, as its last line, for every Pass B outcome (Accepted, Rejected, and
+  Failed alike) — reads a transmission's own row fresh through `ThreadRepository`, decides, and
+  writes. Idempotent per transmission: a transmission that already carries a `threadId` is a
+  no-op, so a Failed attempt's later retry cannot double-count a transmission's own participation.
+- `RoomThreadRepository`, the real `ThreadRepository`. Two writes it needs — stamping
+  `transmission.threadId` and extending an existing `thread` row's `endedAt`/
+  `transmissionCount`/`participantStationIds`/`participantOrder`/`kind` — have no generated DAO
+  method today (`TransmissionDao`/`CatalogDao` are both `@Insert`-only for these). Rather than add
+  one (`:data` is not in this unit's Owns list), both go through `org.ort.data.execRaw` — the
+  general raw-statement escape hatch `:data` already publishes for exactly this: "the rare caller
+  ... that genuinely does need to run a raw statement Room's own generated DAOs cannot express."
+  No `:data` file changed. Every other read (`TransmissionDao.getById`/`.listBySession`,
+  `CaptureGapDao.listBySession`, `CatalogDao.getThread`/`.insert(ThreadEntity)`,
+  `Converters.fromStringList`) is an existing, already-public `:data` surface.
+- `FakeThreadRepository`, the behavioural fake (constitution II) — a plain in-memory session with
+  no Room/Robolectric dependency, scriptable with `TransmissionClosure`s and capture-gap windows,
+  every call recorded.
+- A dual-receive rig's two bands are handled structurally, not as a special case: `priorContextFor`
+  finds the most recent *matching-frequency* transmission in the session, not merely the most
+  recent one, so interleaved transmissions on two bands each build their own thread chain.
+
+**Verified:** `./gradlew :pipeline:testDebugUnitTest` — green, including four new suites
+(`ThreadGrouperTest` 9 tests, `ThreadKindClassifierTest` 7, `ThreadGroupingCoordinatorTest` 8
+against the fake, `DataPassBResultSinkThreadingTest` 7 end-to-end against a real in-memory
+`OrtDatabase` — the tape AC-163/164/165 ask for) and the pre-existing `DataPassBResultSinkTest` (11
+tests, unaffected by the new default constructor parameter). `./gradlew ktlintCheck detekt` —
+green. `./gradlew dependencyRules` — green (no new module edge; `:pipeline/threading` reaches only
+`:core`/`:data`, both already permitted from `:pipeline`). Discrimination, per constitution II —
+reverted each production change in turn, watched the exact expected test(s) fail for the stated
+reason, and no others, then restored: the `DataPassBResultSink.record` wiring line (all 7
+end-to-end tests failed with a `null` `threadId`), `ThreadGrouper`'s gap-exceeded branch (the one
+gap test at each of the three layers — pure, fake-backed coordinator, real end-to-end — failed,
+nothing else), `ThreadKindClassifier`'s net detection (the two `NET`-classification tests failed,
+`FR_SPK_28`'s "stays net" test correctly unaffected since it short-circuits before that check), and
+`RoomThreadRepository`'s frequency/channel matching (only the interleaved-frequency end-to-end test
+failed; the coordinator-level interleaved test was unaffected, correctly isolating the real
+repository's own logic from the fake's).
+
+**Left open / not done:** `ThreadEntity`/`ThreadKind`/`ThreadKindSource` have no UI writer for a
+user to set or clear a net marking yet — `ThreadKindClassifier`'s `USER`-source guard is real code
+with no caller (`:app` work, out of this unit's scope). `ThreadJoinReason` is not persisted or
+logged anywhere durable — `:data`'s schema has no column for it (no migration, per this unit's
+Must-not-touch) and `DiagnosticsLog.kt` is outside this unit's Owns list, so "why" a thread joined
+lives only in the in-memory decision object today; a future session wiring it into a durable record
+or a log line is a genuine follow-up. `ThreadGroupingConfig`'s 10-minute default gap and
+`ThreadKindClassifier`'s net thresholds are documented placeholders — `spec/open-questions.md` Q16
+leaves the real numbers open pending the labelled validation hour. `ThreadEntity.digestText` is
+never written by this unit (unrelated to threading; `ThreadDigestSource`/`ProseDigestGenerator` own
+it). No device/emulator run — Robolectric only, per this session's scope (no emulator).
+## 2026-09-19 (P25: VAD fallback disclosure, D50/Q22/FR-SEG-10/AC-162)
+
+### 386b8313 — P25: VAD fallback disclosure — the live bar chip and the session's own durable record
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/components/LiveBar.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/LiveBarPolling.kt`,
+`app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionScreen.kt` and
+`RecordingSessionViewStateMapper.kt` (this unit's own "owns" list), plus two sibling files in the
+same package this unit's feature is inert without —
+`app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionViewData.kt` (holds
+`RecordingSessionHeaderViewState`, the type the mapper populates) and `RecordingSessionPolling.kt`
+(the real reader that wires `SessionEntity.vadDetector`, already loaded there, into the mapper
+input) — and their paired test files.
+
+**Requirements/ACs:** D50 (Q22 closed), FR-SEG-10 (the UI half — the data layer half was already
+built and tested), AC-162.
+
+**What changed:** D50 closes Q22: when Silero/TEN-VAD is unavailable and capture falls back to
+the RMS-energy VAD, that fact is now disclosed on the live bar and recorded on the session, never
+silently — both halves already existed in the database (`SessionEntity.vadDetector`,
+`TransmissionEntity.vadDetector`, the `vad_stats` diagnostics line) but had never reached a
+screen. Added `LiveBarViewState.vadFallback: Boolean` (default `false`, additive) and a
+shape-distinct amber warning-glyph-plus-"Energy VAD" mark (`VadFallbackMark`) shown on the live
+bar whenever the active session's recorded `VadDetectorKind` does not conform to FR-SEG-1
+(`LiveBarPolling.vadFallbackFor`, a direct read of `SessionEntity.vadDetector` via the existing
+`SessionDao.getById`, gated through the already-existing `VadDetectorKind.conformsToFrSeg1`
+extension — no new `:data` query, no `:capture-*`/`:asr-*` dependency added). Added a durable
+`RecordingSessionHeaderViewState.vadDetectorLabel: String` line (rendered as "Segmentation: "
+plus the label) on the session-review screen, naming the real detector for every session —
+"Silero VAD", "TEN-VAD", "Energy VAD (fallback)", or the honest "not recorded" for a
+pre-schema-v14 row (never a fabricated default, constitution I) — computed once in
+`RecordingSessionViewStateMapper` from
+`SessionEntity.vadDetector` alone, the same source the live chip reads, so the two halves can
+never disagree about the same session. Also fixed one pre-existing
+`RecordingSessionScreenTest` click test (`the Log link fires the session-scoped log callback`)
+that the header's new line pushed below the default scroll position in Robolectric — added
+`.performScrollTo()`, the same pattern this file's own lower-row click tests already use;
+confirmed against `main` before the header change that this test passed unmodified there, so the
+scroll requirement is a genuine, caused-by-this-change effect, not a pre-existing flake.
+
+**Verified:** `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.components.LiveBarTest"
+--tests "org.ort.app.ui.components.LiveBarLayoutTest" --tests
+"org.ort.app.ui.data.LiveBarPollingTest" --tests "org.ort.app.ui.recordings.RecordingSessionScreenTest"
+--tests "org.ort.app.ui.recordings.RecordingSessionScreenLayoutTest" --tests
+"org.ort.app.ui.recordings.RecordingSessionViewStateMapperTest" --rerun-tasks` → `BUILD
+SUCCESSFUL`, all green, including new Robolectric layout tests at `w390dp-h844dp-420dpi` for the
+live bar (font scale 1.0/2.0, chip vs. room-audio-mark vs. label bounds asserted, no overlap/no
+clipping) and for the session header's new line against the counts line above it. Also ran
+`:app:testDebugUnitTest --tests "org.ort.app.ui.recordings.RecordingSessionPollingTest"` (the
+sibling file's own existing test suite) → green, unaffected. Discrimination shown by hand for the
+two load-bearing production changes: reverted `LiveBarPolling.vadFallbackFor` to `return false`
+— the two D50 live-bar tests (including the cross-check test) failed for the right reason, then
+passed again once restored; reverted `RecordingSessionViewStateMapper.vadDetectorLabel` to always
+return `"Silero VAD"` — three of the four `AC_162` mapper tests failed for the right reason (the
+Silero-only case still passed, as expected), then passed again once restored. `./gradlew
+ktlintCheck` → `BUILD SUCCESSFUL` (one line-length/argument-wrapping violation each in the new
+`LiveBarLayoutTest.kt` and the extended `LiveBarPollingTest.kt`/`LiveBar.kt` fixed via
+`ktlintTestSourceSetFormat`/manual wrap, then reconfirmed clean). `./gradlew detekt` → `BUILD
+SUCCESSFUL`.
+
+**Left open / not done:** no debug scenario or tour step was added to show the fallback state —
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt` (4,100+ lines), its `ScenarioFixtures.kt`
+companion, `tools/ui-audit/tour.json`/`sets.json` and `TourIdsTest`/`TourParityTest` are large,
+heavily cross-referenced files this unit does not own and several concurrent P22-P32 builders may
+also be touching; adding a scenario here risked a merge collision or a parity-test break outside
+this unit's own verifiable surface. The minimal addition needed: one new name in
+`Scenarios.NAMES` (e.g. `"vad-fallback"`), a matching `when` branch in `Scenarios.load` inserting
+a `ScenarioFixtures.session(...)` row with `vadDetector = VadDetectorKind.ENERGY` (or a raw
+`SessionEntity` if `ScenarioFixtures.session()` is extended with a `vadDetector` parameter first)
+plus `ScenarioFixtures.markCapturing`, a `republishFacets` branch calling
+`ScenarioFixtures.republishCapturing`, and one tour step over `Now`/the session's own
+`Recording-Session` screen. Per this session's own instructions, the emulator was not run and the
+tour was not captured — the lead captures both screens at font scale 1.0/2.0 after merge, per
+constitution VIII, once the scenario above (or an equivalent) exists to drive it. The
+`spec/build-plan.md` P25 checkbox is deliberately left unchecked: this unit's own "Done when"
+requires the tour capture, which has not happened yet.
+## 2026-09-19 (P27: third-party licence notices screen)
+
+### 42d3332c — P27: third-party licence notices screen (NFR-6d, AC-167)
+
+**Scope:** `:app` — a new `ui/settings/SettingsLicensesScreen.kt`; one new `SettingsScreenId` entry
+in `ui/settings/SettingsViewData.kt`; one new router branch in `ui/settings/SettingsContent.kt`; one
+new row appended in `ui/settings/SettingsRootScreen.kt`; nine bundled licence-text assets under
+`app/src/main/assets/licenses/`; test additions in `SettingsRootScreenTest.kt`/`SettingsContentTest.kt`
+plus three new test files. Also `tools/ui-audit/tour.json` (two new steps), `design/design-intent.md`
+(a new CF12 row) and a new artboard, `design/canvas/Settings-Licenses.dc.html`.
+
+**Requirements/ACs:** NFR-6d, AC-167, FR-AST-14's notices clause.
+
+**What changed:** A real, navigable Settings > Licences screen. `SettingsRootScreen` appends a
+static "Licences" row immediately after the "About" section's own row — that row is not one of
+`SettingsPolling.root`'s dynamic sections (this unit does not own `SettingsPolling.kt`), so it is a
+literal addition inside the one file this unit's own file-ownership map names for a "row". The
+screen lists nine bundled dependencies — Gemma 3 1B, Whisper tiny.en, sherpa-onnx, ONNX Runtime,
+Silero VAD, MediaPipe, usb-serial-for-android, AndroidX and Kotlin — each verified against its own
+published licence source (below); tapping one opens its full text, read from a bundled app asset via
+`Context.assets` only, never `:net`. `BundledLicenceNotices.BUNDLED_ASSET_NOTICES` maps every
+`bundled-assets.json` id to the notice covering it, and a new `SettingsLicensesCoverageTest` walks the
+real, generated `org.ort.app.assets.GeneratedBundledAssetManifest` against that map, so a future
+model shipped with no matching notice entry fails a test rather than shipping silently. Added tour
+steps `overnight/CF12-settings-licenses` and its `@2x` variant, a `CF12` design-intent row, and a new
+artboard (`Settings-Licenses.dc.html`, since none existed for this screen before).
+
+Licence verified per component, from the dependency's own published licence source, not guessed:
+- **Gemma 3 1B** — Gemma Terms of Use (`ai.google.dev/gemma/terms`); the notice sentence and the
+  use-restriction pass-through are quoted from that agreement's own redistribution clause.
+- **Whisper tiny.en** — MIT, verbatim from `github.com/openai/whisper`'s own `LICENSE` (Copyright (c)
+  2022 OpenAI).
+- **sherpa-onnx** — Apache License 2.0, from `github.com/k2-fsa/sherpa-onnx`'s own `LICENSE`.
+- **ONNX Runtime** — MIT, from `github.com/microsoft/onnxruntime`'s own `LICENSE` (bundled inside
+  sherpa-onnx's own Android release tarball per `sherpa-native.json`, not a separate Gradle
+  dependency of this build).
+- **Silero VAD** — MIT, from `github.com/snakers4/silero-vad`'s own `LICENSE` (Copyright
+  2020-present, Silero Team).
+- **MediaPipe** — Apache License 2.0, from `github.com/google-ai-edge/mediapipe`'s own `LICENSE` — a
+  real `:llm-mediapipe` dependency (`com.google.mediapipe:tasks-genai`).
+- **usb-serial-for-android** — MIT, verbatim from `github.com/mik3y/usb-serial-for-android`'s own
+  `LICENSE.txt` (Copyright (c) 2011-2013 Google Inc., Copyright (c) 2013 Mike Wakerly) — a real
+  `:rig-usb` dependency (confirmed by reading `rig-usb/build.gradle.kts`; `Settings-About.dc.html`'s
+  own CF10 row's "not a dependency of this build" note is stale as of WPB/P19).
+- **AndroidX** and **Kotlin** — both Apache License 2.0, the standard notice for the AndroidX/Jetpack
+  libraries and the Kotlin standard library this build actually links.
+
+Hilt/Dagger, named in `AGENTS.md`'s own stack list, is deliberately **not** listed: a repo-wide
+search (`grep -ri hilt`/`dagger`) found no module that actually depends on it — a notice for a
+library this build does not ship would itself be a constitution I violation.
+
+**Verified:** `.\gradlew.bat :app:ktlintCheck :app:detekt` green. `.\gradlew.bat :app:testDebugUnitTest
+--tests "org.ort.app.ui.settings.*"` green — every pre-existing test in the package plus this unit's
+additions (`SettingsLicensesScreenTest`, `SettingsLicensesCoverageTest`, `SettingsLicensesScreenLayoutTest`,
+and new cases in `SettingsRootScreenTest`/`SettingsContentTest`), 28 new/changed tests total. Two key
+tests shown to discriminate: `SettingsLicensesCoverageTest`'s coverage test — reverted (dropped the
+`LLM_GEMMA3_1B` mapping), confirmed red with `AssertionError: ... missing: [LLM_GEMMA3_1B]`, then
+restored and green; the root-to-Licences navigation tests in `SettingsRootScreenTest`/
+`SettingsContentTest` — reverted (disabled the row-append `if`), confirmed both red, then restored
+and green.
+
+**Left open / not done:** the tour itself was not run against an emulator/device this session (out of
+scope per this unit's own instructions) — the two new `tour.json` steps are untested against a real
+capture. The new artboard is a first draft, not lead-reviewed against the register. `python
+tools/spec-check/spec_check.py` was not re-run this session; worth confirming before merge, since a
+new NFR-6d/AC-167 citation and a new design-intent row were added. Hilt/Dagger's absence is
+deliberate, not an oversight — revisit if it is ever actually added as a real dependency.
+## 2026-09-19 (P26: playback stops on navigation, plus small defects — R-1074 blocked)
+
+### 684c3abf — P26 · playback stops on navigation (AC-168), plus R-1079/R-1080/R-1012 — R-1074 not closed, needs files outside this unit's ownership
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`,
+`.../ui/audio/TransportPlaybackController.kt`, `.../ui/screens/TransmissionDetailScreen.kt`,
+`.../ui/screens/CaptureScreen.kt`, `.../ui/recordings/RecordingsScreen.kt`,
+`.../ui/failures/FailureHost.kt`, `asr-sherpa/.../real/RealSherpaDecoder.kt` (KDoc only), plus
+each file's sibling test(s) (three new: `PlaybackStopsOnNavigationTest.kt`,
+`ShouldStopPlaybackOnTransmissionLeaveTest.kt`, `BannerClosingBorderTest.kt`; three extended:
+`PlaybackControlDetailScreenTest.kt`, `RecordingsScreenTest.kt`, `CaptureScreenTest.kt`).
+
+**Requirements/ACs:** AC-168, R-1006 (close); R-1079, R-1080, R-1012 (close); R-1074 (**not**
+closed — see "Left open").
+
+**What changed:**
+- **AC-168/R-1006.** Restores "navigating away from a transmission detail view while its clip
+  plays stops playback, and returning does not auto-resume" — reversed by C10's transport-bar
+  work ("the bar owns playback") — this time at the transport-bar/nav-host layer
+  (`OrtNavHost.kt`'s `NavHostBody`), not the per-screen layer R-1006 originally fixed it at
+  (`TransmissionDetailScreen.kt`'s own former `DisposableEffect(detail.id) { onDispose {
+  player.stop() } }`). A new `DisposableEffect(ids.transmissionId)` calls a new pure decision
+  function, `shouldStopPlaybackOnTransmissionLeave(leftTransmissionId, loadedTransmissionId)`,
+  from `onDispose` — fires synchronously the instant the transmission drill-in stops being the
+  value it was keyed on, before the next frame, so a fast double-navigation cannot race a
+  still-playing clip past its own stop. **Decision, recorded explicitly per the build plan's own
+  instruction** (this reverses a deliberate prior decision — do not silently re-reverse without
+  saying so): `design/canvas/Detail-Playback.dc.html` draws no distinction at all between closing
+  the drill-in outright and a same-screen switch to a different over's own detail
+  (`TransmissionDetailScreen.kt`'s inferred-explanation link, `onOpenTransmission`) — its only
+  note is about scrubbing — so there is no artboard basis to let the same-screen-switch case
+  survive; both are treated as a genuine leave, the simpler and more conservative reading, and
+  the one that matches what R-1006's own operator report was about. `TransportPlaybackController
+  .kt` and `TransmissionDetailScreen.kt`'s own doc comments corrected to say what still survives
+  unconditionally (a poll tick, pause/resume, backgrounding without in-app navigation) versus
+  what now stops (a genuine leave) and exactly where that decision now lives. "Returning does not
+  auto-resume" was already structurally guaranteed by `TransportPlaybackController.stop()`'s
+  existing full-reset behaviour and `PlaybackSection`'s existing `initialPlaybackState` seed —
+  proven directly by a new test rather than re-derived.
+- **R-1079.** `RecordingsScreen.kt`'s `OverAudioBudgetRow`/`ArchiveBudgetRow` and
+  `CaptureScreen.kt`'s `CaptureOverAudioRow`/`CaptureArchiveRow` now format their own "used" byte
+  count with `recordingSessionByteLabel` (`ui/recordings/RecordingSessionViewStateMapper.kt`,
+  R-1068's adaptive B/KB/MB/GB formatter, reused rather than re-derived) instead of
+  `Long.toGigabyteLabel()`, which rounded any non-zero archive/over-audio figure under 0.05 GB to
+  "0.0 GB" — reading as empty for real, retained audio on both N08 Capture and RC01 Recordings,
+  the same defect R-1068 already fixed for RC02's own card.
+- **R-1080.** `FailureHost.kt`'s `BannerOverlay` now closes a new rounded-rect border
+  (`failure-banner-closing-border`) around the scroll box *and* the scroll-hint chevron together,
+  in the hint's own amber (`OrtColors.bannerAmberBorder`), whenever
+  `scrollState.canScrollForward` is true. Root cause: `Banner`'s own border (`ui/components
+  /Feedback.kt`, outside this unit's ownership) wraps its title/body/action `Row` at that Row's
+  real, unclipped height — correct on its own whenever the content fits, but the moment R-1077's
+  layout needs to scroll, `Modifier.verticalScroll` clips that border's own bottom edge along
+  with the content past it, so only the top/side lines ever painted and R-1077's hint pill
+  floated below a shape that never closed. Only drawn while the hint itself shows, so the
+  ordinary, unclipped case never grows a second, redundant frame.
+- **R-1012.** Corrected `RealSherpaDecoder.kt`'s KDoc, which falsely claimed "Nothing in
+  `:pipeline` or `:app` constructs this class yet" — `:pipeline`'s
+  `RealAsrEngineProvider.provide()` (`AsrEngineProvisioning.kt`) has constructed it by default
+  since it existed, whenever `AsrModelLocator.locate` finds all three model files and
+  `ModelFileVerifier` passes them. KDoc only, no behaviour change, per the build plan's own
+  instruction for this row.
+- `ImproveDestinationStatePreservationTest`'s known-red status (missing
+  `WorkManagerTestInitHelper` init) was already fixed on `main` by a concurrent session
+  (`239f9dec`, present after this unit's own `git merge main`) before this unit started work —
+  confirmed green here; no further change was needed or made.
+
+**Verified:**
+- `./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.navigation.*" --tests
+  "org.ort.app.ui.screens.PlaybackControlDetailScreenTest" --tests
+  "org.ort.app.ui.screens.CaptureScreenTest" --tests
+  "org.ort.app.ui.screens.CaptureScreenBoundsTest" --tests
+  "org.ort.app.ui.recordings.RecordingsScreenTest" --tests
+  "org.ort.app.ui.failures.BannerClosingBorderTest" --tests
+  "org.ort.app.ui.failures.BannerChevronClearanceTest"` — 78 tests, all green, including
+  `ImproveDestinationStatePreservationTest`.
+- `./gradlew :app:smokeTestDebugUnitTest --rerun` — green (3m 27s; run since this unit touches
+  `OrtNavHost.kt`).
+- `./gradlew ktlintCheck detekt` — both green.
+- **Discrimination (constitution II), each reverted then restored:** AC-168 — neutralised
+  `shouldStopPlaybackOnTransmissionLeave`'s call in `NavHostBody`
+  (`if (false && shouldStopPlaybackOnTransmissionLeave(...))`);
+  `PlaybackStopsOnNavigationTest` failed (`expected:<1> but was:<0>`). R-1079 — reverted
+  `OverAudioBudgetRow` to `state.usedBytes.toGigabyteLabel()`;
+  `RecordingsScreenTest`'s `R_1079` test failed (`Expected '2' nodes but found '1'`, the
+  remaining node reading "0.0 GB"). R-1080 — reverted `BannerOverlay`'s `Column` to its pre-fix
+  `Modifier.fillMaxWidth()` with no `closingBorder`/tag; `BannerClosingBorderTest` failed
+  (`could not find any node that satisfies: TestTag = 'failure-banner-closing-border'`) — noted
+  honestly in that test's own doc comment: this discriminates the structural wiring, not the
+  drawn pixel itself, since `captureToImage()` is documented elsewhere in this suite
+  (`OrtThemeTest.kt`) as unusable in this sandbox (hangs resolving native graphics with no
+  network egress); the actual visual close is the tour/device capture's job, per constitution
+  VIII.
+
+**Left open / not done:**
+- **R-1074 is not closed.** The register asks that Now's live session chart
+  (`NowViewStateMapper.active` in `app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt` →
+  `ActivityPatternMapper.buildSessionElapsedPattern` in the owned `ActivityPattern.kt`) never
+  show more not-listening time than a real gap contains, while keeping R-1041's tap-a-bar Log
+  filter working. Investigated in depth: a per-clock-hour bucket carrying one three-state enum
+  cannot bound the overstatement honestly for a gap that does not fill a whole hour — marking
+  the hour NOT_LISTENING overstates (a 22-minute gap can read as up to ~118 minutes hatched
+  across up to two bucket edges); not marking it at all fabricates a "was listening" claim FR
+  -RUN-12/constitution IV forbid. The only sound fix mirrors R-1069's own precedent for DG04's
+  session-review coverage bar exactly: real-gap-boundary segments
+  (`org.ort.app.ui.digest.SessionCoverageMapper.buildSegments`, already built and reusable) fed
+  through `ActivityPatternChart`'s existing `segmentWeights` parameter (also already built), with
+  a tapped segment's own real `[start, end)` millis used in place of `hourFilterWindow`'s
+  fixed-hour-index arithmetic. That requires changing `NowViewStateMapper.active`/
+  `hourFilterWindow` in `app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt` and the
+  `ActivityPatternChart`/`onBarClick` wiring in
+  `app/src/main/kotlin/org/ort/app/ui/screens/NowScreen.kt` — **neither file is in P26's owned
+  list** (only `NowContent.kt` and `ActivityPattern.kt` are), and per this session's own explicit
+  instruction ("touch only the files P26 owns; if you need another file, stop and report it")
+  this stops here rather than expanding scope unilaterally. Flagged for the lead to route — a
+  small, well-scoped follow-up prompt touching those two files (or an amendment to P26's own
+  Owns list), reusing the two building blocks named above rather than re-deriving them.
+- `ActivityPatternMapper.buildSessionElapsedPattern`'s own doc comment (in the owned
+  `ActivityPattern.kt`) still describes the R-1074 defect as already-fixed R-913 behaviour ("Now's
+  own live chart ... and a past session's own coverage bar ... both call [this], so neither
+  disagrees") — that claim is already stale today regardless of this session's own work
+  (`DigestPolling.sessionDetail` calls `SessionCoverageMapper.buildSegments` instead, per
+  R-1069's own landed fix) and will need updating in whichever change finally closes R-1074.
+- `RecordingSessionViewStateMapper.kt`'s own doc comment on `recordingSessionByteLabel` ("this is
+  RC02's own sheets and tiles only ... never used for RC01's own multi-gigabyte device-wide
+  budgets") is now inaccurate — R-1079 reuses it for RC01 (`RecordingsScreen.kt`) and N08
+  (`CaptureScreen.kt`) too. Not fixed here: that file (`ui/recordings
+  /RecordingSessionViewStateMapper.kt`) is outside P26's owned list, distinct from the owned
+  `RecordingsScreen.kt`/`RecordingsViewData.kt` — flagged for whoever next touches it.
+- No tour re-capture run in this session — explicitly out of scope per this session's own
+  instruction; the lead captures after merge. Tour steps that show these changes: `overnight
+  /N08-capture` and `recordings-budget-exceeded/N08-capture` (R-1079); `RC01-recordings` and
+  `recordings-budget-exceeded/RC01-recordings` (R-1079); `level-low/F03-level-low-now` at font
+  scale 2.0, and any capture that forces the banner to scroll (R-1080); `overnight/N01-now` once
+  R-1074 lands (no visual change from this session's own work alone). AC-168 has no static
+  screenshot that proves it — it is a navigation behaviour, evidenced by
+  `PlaybackStopsOnNavigationTest` instead, not a screen capture.
+- AC-168's same-screen-switch decision (survive vs. stop, decided: stop) is recorded in this
+  entry and in `shouldStopPlaybackOnTransmissionLeave`'s own doc comment (`OrtNavHost.kt`) —
+  **not** in `results/ui-audit/register.md`, which this session was explicitly told not to edit;
+  the lead should carry this decision into the R-1006 register row when it is judged.
+
+---
+
+## 2026-09-19 (build plan: P22-P32, the D42-D50 governance backlog)
+
+### 58d656c4 — P23: download manifest, model mirror and the two build variants
+
+**Scope:** `buildSrc/**` (`BundledAssetCatalogRenderer`, `ModelMirrorPublisher`,
+`PublishModelMirrorTask`, `PlatformGuards`/`PlatformGuardsTask` extended, `FetchBundledAssetsTask`
+extended, `ort.android-app.gradle.kts`), `bundled-assets.json`, `app/build.gradle.kts`,
+`.github/workflows/release.yml`, `docs/privacy-policy.md`, `docs/play-data-safety.md`,
+`docs/fgs-type-declaration.md`, `spec/build-plan.md` (checklist).
+
+**Requirements/ACs:** D43, D44, FR-AST-13, FR-AST-14, AC-190 (partial — see Left open),
+AC-191 (holds).
+
+**What changed:**
+- **Two build variants.** `app/build.gradle.kts` now declares product flavors `full` (default,
+  bundles every asset, byte-for-byte today's behaviour, D35/FR-AST-3) and `play` (bundles nothing
+  named in `bundled-assets.json`; downloads at setup instead, FR-AST-13). `ort.android-app.gradle.kts`
+  scopes `fetchBundledAssets` (the HF_TOKEN-needing, network-fetching task) to the `full` flavor's
+  own `assembleFullDebug`/`assembleFullRelease`/`mergeFullDebugAssets`/`mergeFullReleaseAssets`
+  tasks only, by exact name — `play`'s own tests and bundle build need neither HF_TOKEN nor the
+  `-PortAllowMissingBundledAssets` escape hatch at all (verified: `:app:assemblePlayDebug` and
+  `:app:testPlayDebugUnitTest` both run clean with no token, no escape hatch, and no
+  `fetchBundledAssets` invocation in the task graph). `fetchSherpaNativeLibraries` (the native
+  ASR/VAD JNI libraries) is wired to both flavors — every variant needs the code, only `full` needs
+  the model weights bundled.
+- **Per-flavor generated catalog.** The `renderCatalogKotlin`/`kotlinString`/`kotlinFieldLine`
+  functions, previously script-local in `ort.android-app.gradle.kts` and therefore untestable, are
+  extracted to `buildSrc/src/main/kotlin/org/ort/gradle/BundledAssetCatalogRenderer.kt` — a plain,
+  unit-tested object. `generateFullBundledAssetCatalog`/`generatePlayBundledAssetCatalog` (replacing
+  the old single `generateBundledAssetCatalog`) each render `GeneratedBundledAssetManifest.kt` into
+  their own flavor's Kotlin source set (`afterEvaluate`, since AGP's flavor source sets do not exist
+  until `app/build.gradle.kts`'s own `productFlavors` block has run — this precompiled script
+  plugin's top-level code runs first). `GeneratedBundledAssetEntry` gained two fields: `bundled`
+  (`true` for every `full` entry, `false` for every `play` entry) and `downloadUrl` (blank when
+  bundled, the manifest's own `mirrorUrl` otherwise). **`ModelsViewData.kt`'s `ModelCatalog` mapping
+  does not yet read either new field** — that is P22's own file (parallel unit, not owned here);
+  today both flavors' `ModelCatalog.entries` still report `bundled = true` regardless, since that
+  default is hardcoded at the mapping's own call site.
+- **Model mirror (D44).** `bundled-assets.json` gained a pinned `mirrorUrl` per entry (the
+  `models-v1` GitHub Release asset URL on this repository, distinct from each entry's build-time
+  source `url`) and is now kept sorted by `id` (`BundledAssetManifestDeterminismTest`). A new
+  `PublishModelMirrorTask`/`ModelMirrorPublisher` pair uploads every asset `fetchBundledAssets`
+  already fetched and verified to the `models-v1` release, idempotently (skips a name+size match,
+  never re-hashes the remote asset — `gh` exposes no remote checksum). Registered as
+  `:app:publishModelMirror`, wired into `release.yml` only on a real `v*.*.*` tag, never on a plain
+  push to `main`. Never touches `HF_TOKEN`.
+- **FGS type declaration guard.** `PlatformGuards.fgsTypeDeclarationViolations` (wired into
+  `PlatformGuardsTask`/`./gradlew platformGuards`) fails the build if any module's manifest declares
+  a `FOREGROUND_SERVICE_<TYPE>` permission with no matching `android:foregroundServiceType` on a
+  `<service>` in that same manifest — a declared-artifact check, like every other guard in that
+  file. Confirmed clean against the real repo (`:capture-android`'s `CaptureService`).
+- **Play-readiness docs.** `docs/privacy-policy.md` (states the three FR-ANL tiers and the FR-ANL-14
+  sentence verbatim), `docs/play-data-safety.md` (a per-category answer sheet for the Play Console
+  Data Safety form), `docs/fgs-type-declaration.md` (the FGS type checklist and per-type
+  justification text).
+
+**Verified:**
+- `./gradlew -p buildSrc test` — 100% green (every new test class:
+  `BundledAssetCatalogRendererTest`, `ModelMirrorPublisherTest`, `BundledAssetManifestMirrorFieldsTest`,
+  `BundledAssetManifestDeterminismTest`, plus the extended `PlatformGuardsTest`/
+  `FetchBundledAssetsTaskTest`).
+- Discrimination shown by hand for the key decisions (reverted, watched red, restored, watched
+  green): `PlatformGuards.fgsTypeDeclarationViolations` (gutted to `emptyList()`), the
+  `ModelMirrorPublisher.plan` skip-by-size branch (forced to always skip), and
+  `BundledAssetCatalogRenderer.render`'s `bundled`/`downloadUrl` fields (forced to `true`/`""`
+  regardless of the flavor argument) — each failed the tests that exist specifically to catch it,
+  then passed again once restored.
+- `./gradlew :app:assembleFullDebug -PortAllowMissingBundledAssets=true` — green, 5/5 fixture assets
+  packaged (escape hatch, no `HF_TOKEN` in this sandbox).
+- `./gradlew :app:assemblePlayDebug` — green, **no `HF_TOKEN`, no escape hatch, no
+  `fetchBundledAssets` invocation at all** — `app/build/outputs/apk/play/debug/app-play-debug.apk`,
+  ~133 MB (vs. the `full` variant's measured ~611 MB installed size, R18/`results/e2e-audit/
+  installed-size.md` — this build carries no model weights).
+- `./gradlew :app:bundlePlayRelease` — green — `app/build/outputs/bundle/playRelease/app-play-release.aab`.
+- `./gradlew :app:verifySherpaNativeLibrariesPackaged` — green against the `full` flavor's own
+  debug APK at its new path (`app/build/outputs/apk/full/debug/app-full-debug.apk`).
+- `./gradlew ktlintCheck` and `./gradlew detekt` — both green across every module, including the
+  regenerated per-flavor catalogs.
+- `./gradlew dependencyRules platformGuards` — both green; `platformGuards`'s own log line now
+  names the FGS check explicitly.
+- `./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.ui.data.ModelCatalogTest" --tests "org.ort.app.assets.*"`
+  — green, confirming P22's existing `ModelCatalog`/`BundledAssetInstaller` tests are unaffected by
+  the new generated fields (they default-read as before).
+- `./gradlew :app:testFullDebugUnitTest :app:smokeTestFullDebugUnitTest -PortAllowMissingBundledAssets=true`
+  — green, 2662 tests, zero failures, `BUILD SUCCESSFUL in 19m 40s`: no regression from this unit
+  across the existing `:app` suite.
+
+**Left open / not done:**
+- **AC-190's runtime half** (installing each variant and comparing its setup flow — `full` never
+  reaches a download step, `play` does) is not verified here: it needs P22's `ui/setup`/
+  `ModelsViewData.kt` work, running in parallel and not owned by this unit, to actually read the new
+  `bundled`/`downloadUrl` fields. This unit only proves the two flavors' generated catalogs disagree
+  correctly — not yet that anything downstream acts on the disagreement.
+- **`verifySherpaNativeLibrariesPackaged` (R-1001) checks only the `full` flavor's own debug APK**,
+  not `play`'s — both flavors share identical native-library wiring, so the risk is not
+  flavor-specific, but this was a deliberate scope cut (doubling this guard's own build cost to
+  re-prove an identical packaging step), not a proven equivalence.
+- **A real `models-v1` release/mirror run is unverified** — `PublishModelMirrorTask`'s `gh`
+  invocations are exercised only through `ModelMirrorPublisher`'s pure decision logic in this
+  session (no real GitHub Release exists to test against); the first real release tag pushed after
+  this lands is the first genuine proof.
+- **Three callers outside this unit's ownership are now broken and were not fixed here** (see this
+  session's own report for the exact diff each needs):
+  - `.github/workflows/ci.yml`'s `android` job — `:app:testDebugUnitTest` now fails outright
+    ("ambiguous... Candidates are: 'testFullDebugUnitTest', 'testPlayDebugUnitTest'"), and
+    `:app:assembleDebug`'s own APK now lands at `app/build/outputs/apk/full/debug/app-full-debug.apk`,
+    not `app/build/outputs/apk/debug/app-debug.apk` (the AAPT badging check and the
+    `actions/upload-artifact` step both read the old path).
+  - `.github/workflows/emulator.yml` — `:app:connectedDebugAndroidTest` is now ambiguous the same
+    way.
+  - `tools/ui-audit/install.ps1` — `:app:assembleDebug` still runs (now building both flavors,
+    wasting time) but its `Get-ChildItem app\build\outputs\apk\debug` glob finds nothing, since that
+    directory no longer exists.
+  - (Lower-severity, prose only, not verified to break anything executable) `RELEASING.md`,
+    `README.md` and `docs/ui-fix-session-prompt.md` still describe the pre-flavor task names.
+### ccd6b061 — P22: setup completes everything (D43, FR-AST-10..12)
+
+**Scope:** `:app` — `ui/setup/**` (new `JurisdictionNoticeScreen.kt`, `ModelsSetupScreen.kt`,
+`OvernightSurvival.kt`; edits to `SetupStep.kt`, `SetupStateMachine.kt`, `SetupStore.kt`,
+`ReadyScreen.kt`, `SetupActivity.kt`), `ui/data/ModelsViewData.kt` (two new pure extension
+functions), a new `work/ModelDownloadWorker.kt`. Also: `app/src/main/AndroidManifest.xml` (the
+explicitly granted foreground-service declaration and its permissions) and one additive line in
+`app/build.gradle.kts` (`implementation(libs.androidx.work.runtime.ktx)`) — the latter is outside
+this unit's owned-files list but was unavoidable to make `:app`'s main source set compile at all
+once a real `androidx.work.CoroutineWorker` is added to it; flagged here for the lead, since
+`app/build.gradle.kts` is P23's own ownership this wave.
+
+**Requirements/ACs:** D43, FR-AST-10, FR-AST-11, FR-AST-12, NFR-6c; AC-166, AC-184, AC-185,
+AC-186, AC-187, AC-188, AC-189, AC-190 (the `full`-variant non-regression half — see Left open for
+AC-190's `play`-variant half, which needs P23). Constitution I (an attribution/state without its
+backing fact is a bug — the Overnight row's `ok` no longer reads the OS's own diagnostic-only
+`isIgnoringBatteryOptimizations()` flag), IV (liveness/survival proven by evidence, never that
+API), VII (the READY gate is a structural, type-level fold of two independent facts).
+
+**What changed:**
+- `SetupStep` gains `JURISDICTION_NOTICE` (right after `WELCOME`) and `MODELS` (right before
+  `READY`); both share an existing step-indicator segment rather than renumbering every other
+  stage, since no artboard exists yet for either screen (`design/**` is outside this unit's file
+  ownership).
+- `SetupStateMachine.stepFor` gains two gates: `!jurisdictionNoticeSeen -> JURISDICTION_NOTICE`
+  (AC-166) and, immediately before `READY`, `!requiredModelsInstalled -> MODELS` (AC-184, AC-188 —
+  this combines with the pre-existing `levelInBand` gate earlier in the same function, so READY
+  now requires both, together, exactly as AC-188 asks). `SetupSnapshot` gains
+  `jurisdictionNoticeSeen` (a real `SetupStore` preference) and `requiredModelsInstalled` (not a
+  store preference — `SetupStore.snapshot()` defaults it `true`, since the store alone cannot know
+  the installed-asset state; `SetupActivity.currentSnapshot()` is the one place that overrides it
+  with the real, freshly read fact from `ModelsController`).
+- `ModelsViewData.kt` gains two pure extension functions on `ModelsViewState`:
+  `rowsRequiringDownload()` (a downloadable, tier-required, not-yet-installed row — what gates
+  READY) and `rowsForSetupModelsStep()` (the same predicate without the install-status filter, so
+  the MODELS screen keeps showing a row once it finishes downloading instead of it vanishing).
+  Both exclude the gated, tier-3-only Gemma model, matching `ReadyScreen.kt`'s pre-existing
+  `modelsRow` carve-out (R-862/AC-138).
+- `work/ModelDownloadWorker.kt` (new): a foreground `CoroutineWorker` (AC-184) that calls the
+  existing, unmodified `ModelsController.download()` — never reimplementing
+  `:net`'s `ModelAcquisition` fetch/resume/checksum/atomic-rename path. Wi-Fi-only by default,
+  overridable per download via a `WorkManager` `Constraints.setRequiredNetworkType` on the
+  enqueued request (AC-187). A checksum-mismatch failure (`ModelActionResult.Failure` whose reason
+  contains "checksum mismatch" — `ModelAcquisition.verifyAndInstall`'s own wording) is reported as
+  `Result.retry()`, never `Result.failure()` or `Result.success()` (AC-186). `uniqueWorkName(id)`
+  is one unique work name per model, `ExistingWorkPolicy.KEEP` (a second tap no-ops onto the
+  running attempt). `observe`/`currentSnapshot` read `WorkInfo` directly into a closed
+  `ModelDownloadSnapshot` sealed interface (`Downloading`/`Succeeded`/`Failed`/`NotRunning`) —
+  never a second, drifting progress model.
+- `OvernightSurvival.kt` (new): `OvernightSurvivalChecker`/`RealOvernightSurvivalChecker` (reads
+  `:data`'s real `session` table — a session that ended cleanly, `TerminationReason.USER`, and
+  lasted at least 15 minutes counts as evidence the process was not killed mid-run; a documented
+  heuristic, not a spec-mandated number), `FakeOvernightSurvivalChecker`, and
+  `DebugOvernightSurvivalOverride` (the same debug-seam shape `DebugRigLinkPortOverride` already
+  establishes for this package). `OvernightSurvivalState` bundles the live, diagnostic-only OS
+  flag with the real, latched `overnightSurvivalProven` fact for `ReadyScreen.kt`'s own row.
+- `ReadyScreen.kt`: `readyRowsFor`'s `batteryExempt: Boolean` parameter is replaced by
+  `overnightState: OvernightSurvivalState`; the Overnight row's `ok`/`statusText`/`actionLabel` are
+  now driven only by `overnightState.survivalProven` — the OS's own exemption flag is used for the
+  row's wording only ("Battery exemption granted/skipped"), never to satisfy the gate (AC-189).
+- `SetupActivity.kt`: `reconcileOvernightSurvival()` runs once in `onCreate`, before the first
+  `refreshStep()`/`tryOpenAtRequestedStep()` — a no-op unless setup has already completed once and
+  survival is not yet proven. If real evidence exists, it latches `overnightSurvivalProven = true`
+  permanently; otherwise it resets `overnightStepSeen = false` so `stepFor`'s own unchanged "not
+  yet seen" gate shows `OVERNIGHT` again on this fresh launch, without looping within the same
+  activity instance (the reset runs once, in `onCreate`, not on every `refreshStep`). New
+  `RenderModels()` composable, new `onContinueJurisdictionNotice()`, `JURISDICTION_NOTICE`/`MODELS`
+  branches in the `RenderStep()` dispatch (now `@Suppress("CyclomaticComplexMethod")`, matching
+  `SetupStateMachine.stepFor`'s own precedent for a flat per-step dispatch).
+
+**Known, deliberate limitation (recorded, not silently accepted):** `MainActivity.kt`'s own
+`isComplete()` fast path is unchanged — it does not check `overnightSurvivalProven` — because
+`MainActivityTest.kt`'s existing `R_080 setup complete and permitted starts capture and launches
+the reader directly` test (outside this unit's ownership) depends on that fast path skipping
+`SetupActivity` once `setupComplete && captureIsPermitted`. Wiring `overnightSurvivalProven` into
+that check would be needed for AC-189's "every relevant subsequent launch" to hold literally on a
+cold app launch when every other gate is already satisfied; as landed, the recurrence is proven at
+the `SetupActivity` level (every time Setup's own walk runs, for any reason: a revoked permission,
+`ReadyScreen`'s own "Fix"/"Change" entry points, the debug `EXTRA_STEP` seam) but does not itself
+force `MainActivity` to re-enter Setup purely to recheck survival. Needs either a grant to touch
+`MainActivity.kt`/`MainActivityTest.kt` or a dedicated follow-up session that owns them.
+
+**Verified:** `./gradlew :app:compileDebugKotlin` and `:app:compileDebugUnitTestKotlin` both green.
+`./gradlew :app:testDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.ui.data.*"
+--tests "org.ort.app.work.*"` — 962 tests passing, 0 failed (includes 31 tests in the five new
+files: `OvernightSurvivalTest`, `ModelDownloadWorkerTest`, `JurisdictionNoticeScreenTest`,
+`ModelsSetupScreenTest`, `ModelsViewStateRowsRequiringDownloadTest`). `./gradlew :app:ktlintCheck`
+and `:app:detekt` both green. Discrimination (constitution II) shown for six key changes by
+reverting the production line, re-running the narrow test, watching it fail for the stated reason,
+then restoring and re-confirming green: the `JURISDICTION_NOTICE` gate in `stepFor`
+(`SetupStateMachineTest`), the `MODELS`/`requiredModelsInstalled` gate in `stepFor`
+(`SetupStateMachineTest`), the Overnight row's `ok` now reading `survivalProven` instead of the OS
+flag (`ReadyRowsForTest`), the checksum-mismatch-to-retry mapping in `ModelDownloadWorker`
+(`ModelDownloadWorkerTest`, which also incidentally re-confirmed AC-184/185/187 pass with the
+production mapping restored), and the `overnightStepSeen` reset in
+`SetupActivity.reconcileOvernightSurvival` (`SetupActivityTest`, two of the three new AC-189
+activity-level tests fail without it).
+
+**Left open / not done:**
+- AC-190's `play`-variant half (a fresh install with no models bundled reaching MODELS and
+  downloading) is not exercisable yet — every entry in the committed `bundled-assets.json` ships
+  `bundled = true` until P23 lands the manifest/mirror and the two build variants. `MODELS`'s own
+  gate, worker, and screen are built and tested against fixture `ModelFetchSpec`s
+  (`ModelDownloadWorkerTest`) and fixture `ModelRowViewState`s (`ModelsViewStateRowsRequiringDownloadTest`,
+  `ModelsSetupScreenTest`), not a real non-bundled catalog entry.
+- The `MainActivity.kt`/`MainActivityTest.kt` gap above.
+- No artboard exists for `JurisdictionNoticeScreen`/`ModelsSetupScreen` — built to this package's
+  own `SetupScaffold` shape; constitution VIII's visual re-verification (tour capture at 1.0/2.0,
+  comparison against an artboard) cannot run until the design inventory adds one, which is outside
+  `design/**`'s ownership for this unit. Robolectric layout tests at `w390dp-h844dp-420dpi` with
+  `@GraphicsMode(NATIVE)` are included for both new screens as the interim check.
+- The screenshot tour itself was not run (this session had no emulator) — per the lead's own
+  capture-after-merge convention; scenario/tour step ids for `setup/jurisdiction-notice` and
+  `setup/models` are not yet added to the tour's own step catalogue (outside this unit's ownership
+  of `tools/ui-audit/`).
+- The 15-minute overnight-survival threshold is a documented heuristic (`OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS`),
+  not a measured or spec-mandated figure.
+
+---
+
+### 57b69260 — build plan: add P22-P32 (Waves G-K) for the D42-D50 governance backlog
+
+**Scope:** documentation only — `spec/build-plan.md`. No Kotlin, Gradle, resources or Python
+product code touched.
+
+**Requirements/ACs:** plans work against D43 (FR-AST-10..12, AC-166, AC-184..189), D43/D44
+(FR-AST-13..14, AC-190..191), D45 (FR-SPK-5's amendment note, the `CorrectionScope` relabel),
+D50/Q22 (FR-SEG-10's UI half), D42/D48/D49 (FR-ANL-1..14, AC-172..183), FR-SPK-5/27/28
+(AC-163..165, automatic thread grouping), FR-UI-5/AC-168 and register R-1006/R-1074/R-1079/
+R-1080/R-1012 (defects), NFR-6d/AC-167 (licence notices), FR-EXP-7/FR-STO-6/FR-STO-9/AC-170..171
+(export and restore), FR-ALR-1..6/AC-192..197 (live alerts), FR-A11Y-1..6 (accessibility). No ids
+established yet — these are unbuilt prompts, not landed requirements.
+
+**What changed:** Added eleven build-plan prompts, P22-P32, grouped into five waves (G-K) after
+Wave F, covering the backlog the 2026-09-19 governance session's nine decisions (D42-D50) opened:
+setup completing to a real READY gate with model download (P22), the model manifest/mirror and
+`full`/`play` build variants (P23), automatic thread grouping finally writing `threadId` after
+Pass B (P24), the D50 VAD-fallback disclosure surfacing FR-SEG-10 data that already exists but
+has never reached a screen (P25), the R-1006 playback-on-navigation reversal plus four small
+defects and one known-red test (P26), the third-party licence notices screen (P27), the full
+analytics channel — `:telemetry`, `:net`'s uploader, `:app`'s tier toggles and setup step, and
+`tools/analytics/` (P28), the D45 "same voice" → "same callsign" relabel plus
+`CatalogDao.allVoiceprints()` (P29), export completion — POTA wiring, the share sheet, and
+restore from a save bundle (P30), live alerts (P31), and a final accessibility pass (P32). Every
+prompt follows the P1-P21 format: Read first, Constitution Check citations, Owns, Must not touch,
+Tests first named for their AC/FR ids, Ships with it (fakes), Done when — including tour/register
+evidence for anything touching a screen, per constitution VIII. Wave boundaries were derived from
+real file collisions found by reading the actual source: `TransmissionDetailScreen.kt` (P26 vs.
+P29), and `SettingsViewData.kt`/`SettingsContent.kt`/`SettingsRootScreen.kt` — the `SettingsScreenId`
+router three of these new screens all extend (P27, P28, P30, P31 each get their own wave for
+exactly this reason). A "Wave order" paragraph explains the dependency shape; a closing note
+records that the hardware protocol (H1-H15) and the labelled validation hour stay manual.
+
+**Verified:** `python tools/spec-check/spec_check.py` prints `OK`. No code changes to build or
+test — this session touched only `spec/build-plan.md` and this file.
+
+**Left open / not done:** the eleven prompts themselves — this commit only writes the plan.
+Two judgement calls a future builder must make explicitly and record, not silently: whether
+AC-168's playback-stops-on-navigation also covers a same-screen switch to a different over (P26,
+reconcile against `Detail-Playback.dc.html`), and where the restore surface lives — a new
+`SettingsBackupScreen` or a section of `SettingsStorageScreen` (P30).
+
+---
+
+## 2026-09-19 (governance and spec amendment session: constitution 2.0.0, D42-D50, Q18/Q19/Q22 closed)
+
+### d58ed8fd — governance: constitution 2.0.0 - Principle V redefined to Audio Is Processed Only On The Device; D42-D50 recorded; Q18/Q19/Q22 closed
+
+**Scope:** documentation only — `.specify/memory/constitution.md`, `AGENTS.md`, `RELEASES.md`,
+`spec/functional-spec.md`, `spec/open-questions.md`, `spec/technical-design.md`,
+`results/coverage-matrix.md`. No Kotlin, Gradle, resources or Python product code touched.
+
+**Requirements/ACs:** D42–D50 (new decisions, spec §3); §16 traceability rows for each; new
+§7.13d FR-ANL-1..14 (the analytics channel); FR-OBS-5 and NFR-6 amended; FR-AST-3 amended,
+FR-AST-10..14 added; FR-SPK-5 and the persistent-voice-identity subsection amended with a D45
+deferral note; FR-STO-9, FR-EXP-7, NFR-6d added; new §7.19 FR-ALR-1..6; AC-163..197 added;
+AC-136/138/139 amended; Q18, Q19 (→ D49) and Q22 (→ D50) closed in `spec/open-questions.md`.
+
+**What changed:** The product owner made nine decisions in a single 2026-09-19 session, resolved
+here on the record per the constitution's own Scope And Precedence rule (raise a conflict,
+amend the spec, record the decision — never resolve it silently in code):
+
+- **D42 redefines constitution Principle V** from "Nothing Leaves The Device Except By A
+  Declared Channel" to "Audio Is Processed Only On The Device" — a **MAJOR** governance bump
+  (1.3.0 → 2.0.0), because a principle is redefined, not merely extended. All audio processing
+  (capture, segmentation, ASR, lexicon, identity, digest) is confirmed to stay on the phone; a
+  fourth declared outbound channel, **analytics**, is added in three tiers (tier 1 on by default
+  and turnable off — crash/ANR, usage, performance, capture uptime, the setup funnel, aggregate
+  quality stats, no transcript/callsign/name/station-knowledge/location; tiers 2 and 3 opt-in —
+  transcripts+callsigns, then audio+corrected-transcript). Specified in new §7.13d, FR-ANL-1..14:
+  closed field lists per tier, a provenance envelope on every event, upload only outside capture
+  through a new `:net` capability token kind (`AnalyticsUpload`, technical design §16), erasure by
+  install-id reset, a separate `field` fold that never mixes with `dev` or touches `eval`, and a
+  bounded queue that never blocks capture. The only permitted privacy claim is now fixed verbatim
+  ("Your audio is processed only on your phone and is never uploaded unless you choose to
+  share it."); a bare "no audio leaves the device" claim is explicitly forbidden. FR-OBS-5 and
+  NFR-6 amended in the open, prior text kept and annotated, following the house style already
+  used for FR-OBS-5/D25/D37/D38.
+- **D43/D44** move model distribution onto two build variants: `full` (everything bundled,
+  published on GitHub, D35's original promise) and `play` (a slim AAB that downloads missing
+  models during setup via the existing `ModelAcquisition` path — resumable, sha256-verified,
+  atomic rename, foreground WorkManager, Wi-Fi-only default). Setup's MODELS step reaches a hard
+  READY gate (every required model installed and verified, plus the mic/level check) before
+  capture is offered; the battery-exemption step keeps recurring until the heartbeat proves
+  survival, never trusting the OS's own exemption flag alone. Downloaded models come from GitHub
+  Release assets under a versioned tag (`models-v1`), pinned by URL/sha256/size in
+  `bundled-assets.json`; Gemma's redistribution notices travel with the mirror. New FR-AST-10..14;
+  FR-AST-3 and AC-136/138/139 amended with visible notes rather than silent rewrites.
+- **D45** defers `:identity` (the persistent voice library, D28) to post-1.0. The UI's
+  "same voice" correction-scope label is corrected to "same callsign", which is what
+  `CorrectionPolling.kt` has always actually matched on (`voiceprintId` is always null; it falls
+  back to `stationId`). FR-SPK-11..26 are marked deferred with a visible note, not deleted.
+  RELEASES.md's `## Unreleased` section is corrected in the same change: v0.1.1's notes
+  overclaimed both automatic thread grouping and voice-based correction propagation.
+- **D46** fixes M4's fork timing: 1.0 ships text-level resolution only (no Pass C); Pass C's
+  fate is decided by a dev-fold measurement after 1.0's labelled validation hour (Q2), not by a
+  release-date deadline.
+- **D47**: 1.0 launches free, no billing; any future billing needs its own `:net` token-kind
+  amendment first.
+- **D48** fixes the analytics destination: a self-hosted HTTPS ingest endpoint, configured at
+  build time by `ORT_ANALYTICS_ENDPOINT` (unset ⇒ events queue locally, nothing sent); a
+  reference ingest server and DuckDB tooling ship under `tools/analytics/` (not built in this
+  session — this is a spec-only change); no third-party analytics/crash SDK with its own HTTP
+  stack; raw analytics data is git-excluded like `research/market/`; deleting an install id
+  purges its rows.
+- **D49 closes Q18 and Q19**: the field-report destination moves to a private repository before
+  public launch (FR-OBS-10's visibility guard stays regardless); an uploaded bundle's retention
+  is 90 days.
+- **D50 closes Q22**: when the Silero VAD is missing and capture falls back to the energy VAD,
+  the fallback is disclosed on the live bar and recorded on the session, never silent.
+
+Also added, per the same session's requirements list: FR-STO-9 (a save-bundle restore round-trips
+sessions/corrections/audio, shows conflicts, deletes nothing quietly); FR-EXP-7 (share a digest,
+thread transcript or over clip through the Android share sheet, user-initiated only, no automatic
+attachment of station knowledge/names/location); NFR-6d (a real, navigable third-party licence
+notices screen for Gemma, Whisper, sherpa-onnx, ONNX Runtime, Silero and other bundled
+libraries); an AC that the NFR-6c jurisdiction notice appears once at first run before capture can
+start; a new §7.19 FR-ALR-1..6 (live alerts — watched callsign/keyword/frequency, local
+notifications only, fired after Pass B, capture never waits on them, a callsign alert always
+names its attribution state and never presents `INFERRED` as heard), promoted from §1.5's
+out-of-scope table with a visible amendment note; an amendment note on FR-SPK-5 stating that
+automatic thread grouping was unbuilt as of v0.1.1, with new ACs for a QSO, a detected net and
+scanner activity threading automatically; an AC that POTA export is reachable from
+Settings > Export; and an AC that navigating away from a playing transmission stops playback
+(FR-UI-5, register R-1006). AC-163..197 (35 new criteria) added across new/extended §14
+subsections; §16 gained ten new traceability rows (D42–D50). `spec/technical-design.md` gained a
+new `:telemetry` module (depends on `:core` only; forbidden edge both ways against `:capture-*`)
+and the `AnalyticsUpload` `:net` capability token kind in §16.
+
+**Verified:** `python tools/spec-check/spec_check.py` → `spec-check: OK` (all 8 checks pass: AC
+ids contiguous and unique through AC-197; no dangling FR/AC/NFR/CON/Q reference; every decision
+Dn has a §16 traceability row; every requirement group has ≥1 criterion; every criterion names a
+requirement; closed questions map to decisions and open ones do not; no mojibake/tabs; no
+unresolved merge-conflict markers). `./gradlew coverageMatrix --offline` → `BUILD SUCCESSFUL in
+21s`, regenerated `results/coverage-matrix.md` (485 → 548 requirement ids; 278 still covered,
+unchanged, since no test code exists yet for the new ids — expected in a docs-only change).
+`./gradlew coverageMatrixCheck --offline`, run as a separate invocation per the standing
+instruction (together they trip Gradle validation) → `BUILD SUCCESSFUL in 3s`,
+`coverageMatrixCheck: up to date (278 covered of 548)`.
+
+**Left open / not done:** this entry is a follow-up commit rather than part of `d58ed8fd` itself,
+because this project's changelog header names the commit's own hash, which cannot be known before
+the commit exists — the same situation `f4c22b2f` resolved for `1c7b9347`, and resolved the same
+way here. The P22+ build-plan prompts that implement FR-ANL, FR-AST-10..14, FR-ALR and everything
+else recorded here are explicitly out of scope for this session (another session owns
+`spec/build-plan.md`); a privacy policy for analytics tiers 2 and 3 is still needed before public
+launch (D48); Q16 (piloting the labelling protocol) and Q2 (recording the validation hour) remain
+open and untouched by this change.
 
 ---
 

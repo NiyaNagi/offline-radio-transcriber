@@ -366,7 +366,7 @@ public data class ReadyActions(
  */
 public fun readyRowsFor(
     store: SetupStore,
-    batteryExempt: Boolean,
+    overnightState: OvernightSurvivalState,
     rigStatus: RigStatus.State,
     modelsState: ModelsViewState,
     actions: ReadyActions,
@@ -381,17 +381,31 @@ public fun readyRowsFor(
         onAction = actions.onFixInput,
     ),
     levelRow(store, actions.onFixLevel),
-    ReadyRow(
-        label = "Overnight",
-        value = if (batteryExempt) "Battery exemption granted" else "Battery exemption skipped",
-        ok = batteryExempt,
-        statusText = "verified".takeIf { batteryExempt },
-        actionLabel = "Fix".takeIf { !batteryExempt },
-        onAction = actions.onFixOvernight,
-    ),
+    overnightRow(overnightState, actions.onFixOvernight),
     radioRow(store, rigStatus, actions.onFixRadio, actions.onChangeRadio),
     modelsRow(modelsState, actions.onInstallModel),
 )
+
+/**
+ * P22 (AC-189, constitution IV): this row's `ok`/`statusText`/`actionLabel` are driven **only** by
+ * [OvernightSurvivalState.survivalProven] — real, heartbeat/session-derived evidence
+ * ([OvernightSurvivalChecker]) — never by [OvernightSurvivalState.batteryExemptDiagnostic], the
+ * live `PowerManager.isIgnoringBatteryOptimizations()` reading this row used before P22. That flag
+ * is shown for wording only ("Battery exemption granted/skipped"): AC-189 is explicit that the OS
+ * reporting the exemption already granted must never, by itself, satisfy this gate.
+ */
+private fun overnightRow(overnightState: OvernightSurvivalState, onFixOvernight: () -> Unit): ReadyRow {
+    val ok = overnightState.survivalProven
+    val value = if (overnightState.batteryExemptDiagnostic) "Battery exemption granted" else "Battery exemption skipped"
+    return ReadyRow(
+        label = "Overnight",
+        value = value,
+        ok = ok,
+        statusText = "verified".takeIf { ok },
+        actionLabel = "Fix".takeIf { !ok },
+        onAction = onFixOvernight,
+    )
+}
 
 /**
  * D33/E2-E13 — S12's new leading row (`Setup-Done.dc.html`, redrawn 2026-09-10): the mode chosen

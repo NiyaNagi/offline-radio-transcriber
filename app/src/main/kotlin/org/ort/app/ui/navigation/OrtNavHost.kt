@@ -14,6 +14,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
@@ -41,6 +42,7 @@ import kotlinx.coroutines.launch
 import org.ort.app.fieldreport.recorder.FieldReportRecorder
 import org.ort.app.fieldreport.recorder.RecorderDestination
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
+import org.ort.app.ui.audio.TransmissionAudioPlayer
 import org.ort.app.ui.audio.TransportPlaybackController
 import org.ort.app.ui.components.LiveBarViewState
 import org.ort.app.ui.components.ScreenHeader
@@ -252,6 +254,14 @@ private val LogFilterOriginSaver: Saver<LogFilterOrigin, String> = Saver(
  * destination/Settings-screen, not only the drill-in ids — a caller that builds its own
  * `navigator` (`ReaderActivity.kt`, which never passes `seed` here at all) is unaffected either
  * way.
+ *
+ * [transportAudioPlayer] (AC-168 test seam): the delegate [rememberTransportPlayback] wraps in the
+ * one shared [TransportPlaybackController] for the host's whole lifetime — `null` (every real
+ * caller) constructs the real [RealTransmissionAudioPlayer] exactly as before; a test supplies a
+ * [org.ort.app.ui.audio.FakeTransmissionAudioPlayer] so AC-168's own stop-on-leave (see
+ * [shouldStopPlaybackOnTransmissionLeave]'s own doc comment) can be proven through this host's real
+ * composition without a real `AudioTrack`/decode — the same reason [navigator] is already an
+ * injectable default rather than always built here.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -260,6 +270,7 @@ public fun OrtNavHost(
     seed: NavSeed? = null,
     navigator: ReaderNavigator = rememberReaderNavigator(seed = seed),
     failureActions: FailureHostActions = FailureHostActions(),
+    transportAudioPlayer: TransmissionAudioPlayer? = null,
 ) {
     val context = LocalContext.current
     // WP12 (screenshot-tour gap, register R-010..R-014/R-334): `seed.openDrawer` starts the drawer
@@ -298,7 +309,7 @@ public fun OrtNavHost(
     LaunchedEffect(drawerLive.liveBar, navigator) {
         navigator.liveBarState.value = drawerLive.liveBar
     }
-    val transportPlayback = rememberTransportPlayback(context, drawerLive)
+    val transportPlayback = rememberTransportPlayback(context, drawerLive, transportAudioPlayer)
 
     OrtNavHostBackHandler(current, navigator, navState, drawerState, scope)
 
@@ -1189,6 +1200,43 @@ internal fun resolveTransportBarState(
 }
 
 /**
+ * AC-168 (register R-1006, build-plan P26): restores the "navigating away from a transmission
+ * detail view while its clip plays stops playback, and returning does not auto-resume" behaviour
+ * the C10 transport-bar work (`TransportPlaybackController`'s own doc comment) deliberately
+ * reversed — but at *this* layer, the transport bar/nav host, not the per-screen layer R-1006
+ * originally fixed it at (`TransmissionDetailScreen.kt`'s own removed `DisposableEffect(detail.id)
+ * { onDispose { player.stop() } }`, per that file's doc comment on [org.ort.app.ui.screens
+ * .PlaybackSection]).
+ *
+ * [NavHostBody]'s own `DisposableEffect(ids.transmissionId)` calls this from `onDispose`, which
+ * fires exactly once, synchronously, the instant the transmission drill-in stops being
+ * [leftTransmissionId] — never on a later poll tick, so a fast double-navigation cannot race a
+ * still-playing clip past its own stop. That covers two shapes the same way: the drill-in closing
+ * outright (a genuine back/drawer navigation, [leftTransmissionId] to `null`), and a same-screen
+ * link (`TransmissionDetailScreen.kt`'s inferred-explanation text, `onOpenTransmission`) opening a
+ * *different* over's own detail without the drill-in id ever going through `null` at all.
+ *
+ * **Decision, recorded here rather than silently (build-plan P26's own instruction, since this
+ * reverses a deliberate prior decision):** `design/canvas/Detail-Playback.dc.html` draws no
+ * distinction between the two shapes at all — its only note is about scrubbing, nothing about
+ * navigation — so there is no artboard basis to let the same-screen-switch case survive. AC-168's
+ * own text ("navigating away from a transmission detail view ... stops playback") reads as *the
+ * screen the operator is looking at* changing, not narrowly "the drill-in id becomes null", so both
+ * shapes are treated as a genuine leave. This is the simpler, more conservative reading, and it
+ * matches what R-1006's own operator report was about: a clip must not keep running once its own
+ * screen is no longer the one on top, with no visible way back to it.
+ *
+ * Only ever stops the transmission that is *still the one loaded* — a fast tap through several
+ * overs updates [TransportPlaybackController.loadedTransmissionId] well before this fires, so a
+ * screen that is no longer even the loaded transmission's own screen never stops whatever is
+ * genuinely playing now.
+ */
+internal fun shouldStopPlaybackOnTransmissionLeave(
+    leftTransmissionId: String?,
+    loadedTransmissionId: String?,
+): Boolean = leftTransmissionId != null && loadedTransmissionId == leftTransmissionId
+
+/**
  * The header (R-003/R-004/R-015/R-016), the current destination or drill-in's content, and the
  * live bar (R-022), stacked in one column filling [OrtNavHost]'s `Scaffold`. Extracted out of
  * [OrtNavHost] purely to keep that function under detekt's length limit — the same reason
@@ -1245,6 +1293,18 @@ private fun NavHostBody(
     val recorderDestination = ids.recorderDestination()
     LaunchedEffect(recorderDestination) {
         FieldReportRecorder.onDestinationChanged(recorderDestination)
+    }
+    // AC-168 (register R-1006): see [shouldStopPlaybackOnTransmissionLeave]'s own doc comment for
+    // exactly which navigations this covers and why. `DisposableEffect`, not `LaunchedEffect` —
+    // `onDispose` fires synchronously the instant `ids.transmissionId` stops being the value
+    // captured here, before this composable's own next frame, never on a delayed poll tick.
+    DisposableEffect(ids.transmissionId) {
+        val leftTransmissionId = ids.transmissionId
+        onDispose {
+            if (shouldStopPlaybackOnTransmissionLeave(leftTransmissionId, transportPlayback.loadedTransmissionId)) {
+                transportPlayback.stop()
+            }
+        }
     }
     // Register R-1041 (R04) / R-1055: [DestinationContent]'s own `when(current)` (`NavHostDispatch`,
     // below) fully disposes whichever destination is not the current one — correct for a plain
@@ -1559,13 +1619,19 @@ private fun NavHostDispatch(
  * the bar's own live dot persists during playback exactly when a session is genuinely live — the
  * same fact [DrawerLiveState.liveBar] already being non-null means (constitution IV: capture is
  * never out of sight, even while the bar reads playback).
+ *
+ * [audioPlayer] (AC-168 test seam — see [OrtNavHost]'s own `transportAudioPlayer` doc comment):
+ * `null` (every real caller) constructs the real [RealTransmissionAudioPlayer] exactly as before.
  */
 @Composable
 private fun rememberTransportPlayback(
     context: android.content.Context,
     drawerLive: DrawerLiveState,
+    audioPlayer: TransmissionAudioPlayer? = null,
 ): TransportPlaybackController {
-    val transportPlayback = remember { TransportPlaybackController(RealTransmissionAudioPlayer(context)) }
+    val transportPlayback = remember {
+        TransportPlaybackController(audioPlayer ?: RealTransmissionAudioPlayer(context))
+    }
     LaunchedEffect(transportPlayback) {
         while (true) {
             transportPlayback.poll()

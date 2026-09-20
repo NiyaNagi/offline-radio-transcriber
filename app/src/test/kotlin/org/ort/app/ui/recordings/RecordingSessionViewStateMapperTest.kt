@@ -8,6 +8,7 @@ import org.junit.Test
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.core.capture.CaptureMode
+import org.ort.core.capture.VadDetectorKind
 import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.data.entity.LabelCertainty
@@ -106,6 +107,7 @@ class RecordingSessionViewStateMapperTest {
         val stationCount: Int = 0,
         val deleteFreesBytes: Long = 0L,
         val exportAvailable: Boolean = true,
+        val vadDetector: VadDetectorKind = VadDetectorKind.UNKNOWN,
     )
 
     private fun input(
@@ -119,6 +121,7 @@ class RecordingSessionViewStateMapperTest {
         startedAtMillis = span.startedAtMillis,
         endedAtMillis = span.endedAtMillis,
         captureMode = facts.captureMode,
+        vadDetector = facts.vadDetector,
         overs = overs,
         gaps = gaps,
         failedCount = facts.failedCount,
@@ -492,6 +495,48 @@ class RecordingSessionViewStateMapperTest {
         assertEquals("2 KB", recordingSessionByteLabel(2_400L))
         assertEquals("1.5 MB", recordingSessionByteLabel(1_500_000L))
         assertEquals("1.1 GB", recordingSessionByteLabel(1_100_000_000L))
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // D50 (Q22 closed, FR-SEG-10, AC-162): the session-review screen's own durable half of the
+    // disclosure — names the real detector for a past session regardless of which one produced it,
+    // sourced from the session's own recorded VadDetectorKind, never a guess.
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `AC_162 the header names Silero VAD when that is the real, recorded detector`() {
+        val state = RecordingSessionViewStateMapper.map(
+            input(facts = SessionFacts(vadDetector = VadDetectorKind.SILERO)),
+        )
+        assertEquals("Silero VAD", state.header.vadDetectorLabel)
+    }
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `AC_162 the header names TEN-VAD when that is the real, recorded detector`() {
+        val state = RecordingSessionViewStateMapper.map(
+            input(facts = SessionFacts(vadDetector = VadDetectorKind.TEN_VAD)),
+        )
+        assertEquals("TEN-VAD", state.header.vadDetectorLabel)
+    }
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `AC_162 the header names the fallback Energy VAD, never silently, when that is the real detector`() {
+        val state = RecordingSessionViewStateMapper.map(
+            input(facts = SessionFacts(vadDetector = VadDetectorKind.ENERGY)),
+        )
+        assertEquals("Energy VAD (fallback)", state.header.vadDetectorLabel)
+    }
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "constitution I")
+    fun `AC_162 a pre-migration UNKNOWN detector reads as not recorded, never a fabricated Silero`() {
+        val state = RecordingSessionViewStateMapper.map(
+            input(facts = SessionFacts(vadDetector = VadDetectorKind.UNKNOWN)),
+        )
+        assertEquals("not recorded", state.header.vadDetectorLabel)
     }
 
     private fun gap(id: String, startedAt: Long, endedAt: Long?, cause: CaptureGapCause = CaptureGapCause.INPUT_LOST) =

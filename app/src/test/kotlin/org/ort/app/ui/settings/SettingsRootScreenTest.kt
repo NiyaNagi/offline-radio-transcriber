@@ -94,10 +94,12 @@ class SettingsRootScreenTest {
         // builds one for it, confirmed by reading that function before adding this exclusion —
         // `iconFor`'s own `MODE` branch exists only to keep that `when` exhaustive over
         // `SettingsScreenId`'s closed set, so it shares CAPTURE's icon rather than inventing an
-        // association to a row nothing ever actually shows.
-        val distinctExcludingFallbacks = icons.filterKeys {
-            it != SettingsScreenId.TIER && it != SettingsScreenId.ABOUT && it != SettingsScreenId.MODE
-        }
+        // association to a row nothing ever actually shows. LICENSES (P27) is a third documented
+        // fallback, for the identical "no bespoke glyph, `OrtIcons.kt` outside this unit's own
+        // ownership" reason TIER/ABOUT already are.
+        val fallbacks =
+            setOf(SettingsScreenId.TIER, SettingsScreenId.ABOUT, SettingsScreenId.MODE, SettingsScreenId.LICENSES)
+        val distinctExcludingFallbacks = icons.filterKeys { it !in fallbacks }
         assert(distinctExcludingFallbacks.values.toSet().size == distinctExcludingFallbacks.size) {
             "expected every non-fallback row to carry its own distinct icon, got $icons"
         }
@@ -115,5 +117,55 @@ class SettingsRootScreenTest {
         assert(iconFor(SettingsScreenId.CAPTURE) !== OrtIcons.capture) {
             "CAPTURE must no longer draw OrtIcons.capture, the wrong (sunburst) glyph"
         }
+    }
+
+    /**
+     * P27 (NFR-6d, AC-167): the licence-notices row is not one of [SettingsPolling.root]'s dynamic
+     * rows (this test's own [state] fixture proves that — it carries no `SettingsScreenId.LICENSES`
+     * row at all) — `SettingsRootScreen` appends it itself, immediately after whichever section is
+     * labelled "About", so it is real and tappable the moment that section renders.
+     */
+    @Test
+    @Requirement("AC-167")
+    fun `AC_167 a Licences row is appended after the About section and opens LICENSES`() {
+        val stateWithAbout = SettingsRootViewState(
+            sections = listOf(
+                SettingsSectionViewState(
+                    label = "About",
+                    rows = listOf(
+                        SettingsRowViewState("Offline radio transcriber", "0.1.0 · build 1", SettingsScreenId.ABOUT),
+                    ),
+                ),
+            ),
+        )
+        var opened: SettingsScreenId? = null
+        composeTestRule.setContent {
+            OrtTheme { SettingsRootScreen(state = stateWithAbout, onDrawer = {}, onOpen = { opened = it }) }
+        }
+
+        val licencesRowDescription = "Licences. Third-party notices · read offline"
+        composeTestRule.onNodeWithContentDescription(licencesRowDescription).assertExists()
+        composeTestRule.onNodeWithContentDescription(licencesRowDescription).performClick()
+
+        assert(opened == SettingsScreenId.LICENSES) { "expected LICENSES, got $opened" }
+    }
+
+    @Test
+    @Requirement("AC-167")
+    fun `AC_167 no Licences row is appended to a section that is not About`() {
+        val stateWithoutAbout = SettingsRootViewState(
+            sections = listOf(
+                SettingsSectionViewState(
+                    label = "Capture",
+                    rows = listOf(SettingsRowViewState("Input and level", "verified", SettingsScreenId.CAPTURE)),
+                ),
+            ),
+        )
+        composeTestRule.setContent {
+            OrtTheme { SettingsRootScreen(state = stateWithoutAbout, onDrawer = {}, onOpen = {}) }
+        }
+
+        composeTestRule.onNodeWithContentDescription("Licences. Third-party notices · read offline")
+            .assertDoesNotExist()
     }
 }

@@ -1,0 +1,16 @@
+# Debug-fix session (2026-09-19): the pinned SHA-256 fingerprint of the certificate that must sign
+# every published release/rolling-build APK. This is a public digest, not a secret — it identifies
+# the certificate, it does not grant anything. Enforced by :app:verifyReleaseSigningStability, but
+# only when invoked with -PortEnforcePinnedReleaseSigning=true (release.yml only — never a plain
+# local build; see PlatformGuards.signingStabilityViolations's own KDoc for the full account of why
+# a checked-in keystore was rejected in favor of this file plus GitHub Actions secrets).
+#
+# UNSET until the operator generates the release keystore and sets the four ORT_RELEASE_* GitHub
+# Actions secrets (RELEASING.md's "Signing" section has the exact keytool/gh secret set commands).
+# Once that keystore exists, read its certificate's SHA-256 digest with either:
+#   keytool -exportcert -keystore ort-release.keystore -alias ort-release -rfc | \
+#     openssl x509 -noout -fingerprint -sha256
+#   apksigner verify --print-certs app-full-debug.apk   # "Signer #1 certificate SHA-256 digest"
+# and replace the single word below with that digest, lowercase, with no colons — nothing else on
+# this line, and nothing else in the file needs to change.
+UNSET

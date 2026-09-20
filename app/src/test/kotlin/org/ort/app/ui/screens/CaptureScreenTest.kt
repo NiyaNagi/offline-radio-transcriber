@@ -1,7 +1,9 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -163,5 +165,49 @@ class CaptureScreenTest {
 
         composeTestRule.onNodeWithTag(CAPTURE_ARCHIVE_RATE_TEST_TAG).assertTextContains("off ·", substring = true)
         composeTestRule.onNodeWithTag(CAPTURE_ARCHIVE_TOGGLE_TEST_TAG).assertTextContains("Turn on", substring = true)
+    }
+
+    /**
+     * R-1079 (register): the Capture storage card's own "Raw archive 0.0 GB of 60 GB" — a real,
+     * non-zero archive rounded to nothing via `Long.toGigabyteLabel()`, reading as empty. Fixed with
+     * R-1068's own adaptive B/KB/MB/GB formatter (`recordingSessionByteLabel`), reused, not
+     * re-derived. Discrimination: reverting `CaptureArchiveRow`/`CaptureOverAudioRow`'s own
+     * formatter call back to `toGigabyteLabel()` makes this fail with "0.0 GB of ...".
+     */
+    @Test
+    @Requirement("R-1079")
+    fun `R_1079 a small non-zero archive or over-audio size never rounds to 0-0 GB`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                CaptureScreen(
+                    status = status(),
+                    level = LevelViewState.notMeasured(),
+                    hearingText = null,
+                    overs = LiveMonitorOversViewState.EMPTY,
+                    storage = CaptureStorageViewState(
+                        overAudio = CaptureOverAudioViewState(
+                            usedBytes = 32_000L,
+                            budgetGb = 8,
+                            fractionUsed = 0.0001f,
+                            exceeded = false,
+                            warningLabel = "warns when full · never deleted without you",
+                        ),
+                        archive = CaptureArchiveViewState(
+                            enabled = true,
+                            usedBytes = 32_000L,
+                            budgetGb = 60,
+                            fractionUsed = 0.0001f,
+                            monthlyRateLabel = "about 15 GB a month (estimated)",
+                            isMeasuredRate = false,
+                        ),
+                    ),
+                )
+            }
+        }
+
+        // Two separate "N KB of M GB" labels — the over-audio row's and the archive row's own —
+        // each its own `Text` node.
+        composeTestRule.onAllNodesWithText("32 KB", substring = true, useUnmergedTree = true)
+            .assertCountEquals(2)
     }
 }

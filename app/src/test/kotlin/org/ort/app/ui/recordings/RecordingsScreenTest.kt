@@ -1,9 +1,11 @@
 package org.ort.app.ui.recordings
 
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -250,5 +252,52 @@ class RecordingsScreenTest {
         composeTestRule.onNodeWithTag(RECORDINGS_ARCHIVE_TOGGLE_TEST_TAG).performClick()
         assert(turnedOff) { "Turn off did not fire its own callback" }
         assert(!openedBudget) { "Turn off must not also fire the card's own onOpenOverAudioBudget" }
+    }
+
+    /**
+     * R-1079 (register): a non-zero archive smaller than 0.1 GB used to round to "0.0 GB" via
+     * `Long.toGigabyteLabel()` — reading as empty for real, retained audio — the same defect
+     * R-1068 already fixed on Recording-Session with `recordingSessionByteLabel`'s adaptive B/KB/
+     * MB/GB units. Discrimination: reverting `ArchiveBudgetRow`'s own formatter call back to
+     * `toGigabyteLabel()` makes this fail with "0.0 GB of 60 GB"; restored, it reads "32 KB of 60 GB".
+     */
+    @Test
+    @Requirement("R-1079")
+    fun `R_1079 a small non-zero archive size never rounds to 0-0 GB`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RecordingsScreen(
+                    state = stateWith().copy(
+                        budgets = RecordingsBudgetsViewState(
+                            overAudio = OverAudioCardViewState(
+                                usedBytes = 32_000L,
+                                budgetGb = 8,
+                                fractionUsed = 0.0001f,
+                                exceeded = false,
+                            ),
+                            archive = ArchiveCardViewState(
+                                enabled = true,
+                                usedBytes = 32_000L,
+                                budgetGb = 60,
+                                fractionUsed = 0.0001f,
+                                monthlyRateLabel = "about 15 GB a month (estimated)",
+                                isMeasuredRate = false,
+                            ),
+                        ),
+                    ),
+                    onDrawer = {},
+                    onSelectFilter = {},
+                    onOpenSession = {},
+                    onOpenOverAudioBudget = {},
+                    onTurnOffArchive = {},
+                )
+            }
+        }
+        // Two separate "N KB of M GB" labels — the over-audio row's and the archive row's own —
+        // each its own `Text` node in the unmerged tree (the card's own `.clickable` merges every
+        // descendant into one node in the default, merged tree — `RECORDINGS_BUDGETS_CARD_TEST_TAG`'s
+        // own doc comment above already establishes why every row-level assertion here needs it).
+        composeTestRule.onAllNodesWithText("32 KB", substring = true, useUnmergedTree = true)
+            .assertCountEquals(2)
     }
 }

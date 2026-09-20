@@ -189,6 +189,15 @@ private fun RecordingSessionHeaderSection(header: RecordingSessionHeaderViewStat
             color = OrtColors.textLow,
             modifier = Modifier.padding(top = 4.dp),
         )
+        // D50 (Q22, FR-SEG-10, AC-162): the durable half of the disclosure — the session's own
+        // record of which detector produced its boundaries, surviving after the live bar's own
+        // chip disappears at session end. Named for every session, not only a fallback one.
+        Text(
+            text = "Segmentation: ${header.vadDetectorLabel}",
+            style = OrtType.subLine,
+            color = OrtColors.textFaint,
+            modifier = Modifier.padding(top = 3.dp).testTag(RECORDING_SESSION_VAD_DETECTOR_TEST_TAG),
+        )
     }
 }
 
@@ -878,6 +887,7 @@ private fun RecordingSessionSheetActions(confirmLabel: String, onConfirm: () -> 
 }
 
 public const val RECORDING_SESSION_LOADING_TEST_TAG: String = "rc02-loading"
+public const val RECORDING_SESSION_VAD_DETECTOR_TEST_TAG: String = "rc02-vad-detector"
 public const val RECORDING_SESSION_OPEN_LOG_TEST_TAG: String = "rc02-open-log"
 public const val RECORDING_SESSION_COVERAGE_TEST_TAG: String = "rc02-coverage"
 public const val RECORDING_SESSION_PLAY_ALL_TEST_TAG: String = "rc02-play-all"

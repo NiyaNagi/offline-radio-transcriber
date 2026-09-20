@@ -115,20 +115,20 @@ jobs:
         run: >-
           ./gradlew
           :data:testDebugUnitTest :net:testDebugUnitTest :rig-usb:testDebugUnitTest
-          :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testDebugUnitTest
+          :capture-android:testDebugUnitTest :pipeline:testDebugUnitTest :app:testFullDebugUnitTest
       - name: assemble debug APK (fetches and verifies every bundled asset — WPG)
-        run: ./gradlew :app:assembleDebug
+        run: ./gradlew :app:assembleFullDebug
       - name: AC-93 / NFR-5 — the APK targets the minimum supported API level
         run: |
           set -euo pipefail
           AAPT="$(find "$ANDROID_SDK_ROOT/build-tools" -name aapt | sort | tail -1)"
-          BADGING="$("$AAPT" dump badging app/build/outputs/apk/debug/app-debug.apk)"
+          BADGING="$("$AAPT" dump badging app/build/outputs/apk/full/debug/app-full-debug.apk)"
           echo "$BADGING" | grep -E "sdkVersion:'26'" \
             || { echo "::error::minSdkVersion is not 26"; echo "$BADGING" | grep sdkVersion; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: app-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/full/debug/app-full-debug.apk
 
   report:
     name: coverage matrix

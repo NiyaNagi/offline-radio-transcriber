@@ -78,6 +78,9 @@ public object RecordingSessionPolling {
                 startedAtMillis = summary.startedAtMillis,
                 endedAtMillis = summary.endedAtMillis,
                 captureMode = session.captureMode?.let { runCatching { CaptureMode.valueOf(it) }.getOrNull() },
+                // D50 (Q22, FR-SEG-10, AC-162): the session's own recorded detector, read straight
+                // off the full entity already loaded above — never re-derived from a transmission.
+                vadDetector = session.vadDetector,
                 overs = overs,
                 gaps = gaps,
                 failedCount = summary.failedCount,

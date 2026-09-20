@@ -255,6 +255,9 @@ private fun SettingsSubScreen(
             onBack = onBack,
             modifier = modifier,
         )
+
+        // P27 (NFR-6d, AC-167): the one new branch this unit's file-ownership map allows here.
+        SettingsScreenId.LICENSES -> SettingsLicensesScreen(context = context, onBack = onBack, modifier = modifier)
     }
 }
 

@@ -29,6 +29,7 @@ class SetupStateMachineTest {
     @Suppress("LongParameterList")
     private fun snapshot(
         welcomeSeen: Boolean = true,
+        jurisdictionNoticeSeen: Boolean = true,
         captureMode: CaptureMode? = CaptureMode.USB_RADIO,
         bluetoothPermissionDeclined: Boolean = false,
         notificationsSkipped: Boolean = false,
@@ -39,9 +40,11 @@ class SetupStateMachineTest {
         radioChoice: RadioChoice? = RadioChoice.NONE,
         rigTransport: RigTransportKind? = null,
         rigBluetoothVerified: Boolean = false,
+        requiredModelsInstalled: Boolean = true,
         setupComplete: Boolean = false,
     ) = SetupSnapshot(
         welcomeSeen = welcomeSeen,
+        jurisdictionNoticeSeen = jurisdictionNoticeSeen,
         captureMode = captureMode,
         bluetoothPermissionDeclined = bluetoothPermissionDeclined,
         notificationsSkipped = notificationsSkipped,
@@ -52,6 +55,7 @@ class SetupStateMachineTest {
         radioChoice = radioChoice,
         rigTransport = rigTransport,
         rigBluetoothVerified = rigBluetoothVerified,
+        requiredModelsInstalled = requiredModelsInstalled,
         setupComplete = setupComplete,
     )
 
@@ -63,6 +67,38 @@ class SetupStateMachineTest {
             snapshot(welcomeSeen = false),
         )
         assertEquals(SetupStep.WELCOME, step)
+    }
+
+    // --- P22: SetupStep.JURISDICTION_NOTICE (NFR-6c, AC-166) ---------------------------------
+
+    @Test
+    fun `AC_166 welcome seen but the jurisdiction notice not yet seen shows JurisdictionNotice`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(recordAudio = false, notifications = false),
+            micPermanentlyDenied = false,
+            snapshot(jurisdictionNoticeSeen = false),
+        )
+        assertEquals(SetupStep.JURISDICTION_NOTICE, step)
+    }
+
+    @Test
+    fun `AC_166 the jurisdiction notice is checked before Welcome is ever consulted`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(recordAudio = false, notifications = false),
+            micPermanentlyDenied = false,
+            snapshot(welcomeSeen = false, jurisdictionNoticeSeen = false),
+        )
+        assertEquals(SetupStep.WELCOME, step, "Welcome itself still comes first")
+    }
+
+    @Test
+    fun `AC_166 a dismissed jurisdiction notice proceeds past it to Mode`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(recordAudio = false, notifications = false),
+            micPermanentlyDenied = false,
+            snapshot(jurisdictionNoticeSeen = true, captureMode = null),
+        )
+        assertEquals(SetupStep.MODE, step)
     }
 
     // --- D33: SetupStep.MODE ---------------------------------------------------------------
@@ -332,6 +368,48 @@ class SetupStateMachineTest {
             ),
         )
         assertEquals(SetupStep.READY, step)
+    }
+
+    // --- P22: SetupStep.MODELS (FR-AST-10..12, AC-184, AC-188) -------------------------------
+
+    @Test
+    fun `AC_184 a required model still missing shows Models rather than Ready`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(requiredModelsInstalled = false, setupComplete = false),
+        )
+        assertEquals(SetupStep.MODELS, step)
+    }
+
+    @Test
+    fun `AC_188 Models is checked even once level is already in band -- both gates are required together`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(levelInBand = true, requiredModelsInstalled = false, setupComplete = false),
+        )
+        assertEquals(SetupStep.MODELS, step, "level alone must never be enough to reach Ready")
+    }
+
+    @Test
+    fun `AC_188 level not yet in band is still checked before Models, regardless of the model state`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(levelInBand = false, requiredModelsInstalled = false),
+        )
+        assertEquals(SetupStep.LEVEL, step, "the earlier gate must still resolve first")
+    }
+
+    @Test
+    fun `AC_184 every required model installed proceeds past Models to Ready`() {
+        val step = SetupStateMachine.stepFor(
+            permissions(true, true),
+            micPermanentlyDenied = false,
+            snapshot(requiredModelsInstalled = true, setupComplete = false),
+        )
+        assertEquals(SetupStep.READY, step, "a full-variant install with nothing to download must never gain this step")
     }
 
     @Test

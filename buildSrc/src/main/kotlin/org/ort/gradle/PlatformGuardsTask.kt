@@ -37,22 +37,27 @@ abstract class PlatformGuardsTask : DefaultTask() {
         val httpClient = PlatformGuards.httpClientViolations(deps)
         val internet = PlatformGuards.internetPermissionViolations(manifests)
         val missingInternet = PlatformGuards.missingInternetPermissionViolations(manifests)
+        val fgsTypes = PlatformGuards.fgsTypeDeclarationViolations(manifests)
 
         logger.lifecycle(
             "platformGuards: checked ${deps.size} modules' external dependencies and " +
                 "${manifests.size} manifests — no analytics/telemetry SDK, no HTTP client outside :net, " +
-                "android.permission.INTERNET declared by :net and only :net " +
-                "(FR-OBS-5, NFR-6, AC-59, audit F-008).",
+                "android.permission.INTERNET declared by :net and only :net, every declared " +
+                "FOREGROUND_SERVICE_<TYPE> permission has a matching foregroundServiceType " +
+                "(FR-OBS-5, NFR-6, AC-59, audit F-008, P23 Play-readiness).",
         )
 
-        if (telemetry.isNotEmpty() || httpClient.isNotEmpty() || internet.isNotEmpty() || missingInternet.isNotEmpty()) {
+        if (telemetry.isNotEmpty() || httpClient.isNotEmpty() || internet.isNotEmpty() ||
+            missingInternet.isNotEmpty() || fgsTypes.isNotEmpty()
+        ) {
             throw GradleException(
                 buildString {
-                    appendLine("Platform guard violation(s) — audit F-008/F-027:")
+                    appendLine("Platform guard violation(s) — audit F-008/F-027, P23:")
                     telemetry.forEach { appendLine("  ${it.module} -> ${it.coordinate}   (${it.reason})") }
                     httpClient.forEach { appendLine("  ${it.module} -> ${it.coordinate}   (${it.reason})") }
                     internet.forEach { appendLine("  ${it.module}   (${it.reason})") }
                     missingInternet.forEach { appendLine("  ${it.module}   (${it.reason})") }
+                    fgsTypes.forEach { appendLine("  ${it.module}   (${it.reason})") }
                     appendLine()
                     appendLine(
                         "This is a declared-artifact check, not a runtime traffic capture — it proves " +
@@ -132,19 +137,19 @@ abstract class NativeLibraryPackagingGuardTask : DefaultTask() {
 }
 
 /**
- * Debug-fix session (2026-09-19) — reads the real assembled APK's real signer certificate, the
- * other exception [PlatformGuards]'s class KDoc names alongside [NativeLibraryPackagingGuardTask].
- * Uses `com.android.apksig` (the library `apksigner`/AGP's own signing pipeline are themselves
- * built from) rather than shelling out to the SDK's `apksigner` binary or hand-parsing the APK
- * Signing Block v2/v3 format — no assumption about SDK layout or OS-specific executable name, and
- * no re-implementation of a security-sensitive binary format this project does not own.
+ * Debug-fix session (2026-09-19, reworked after coordinator review) — reads the real assembled
+ * APK's real signer certificate, one of the exceptions [PlatformGuards]'s class KDoc names
+ * alongside [NativeLibraryPackagingGuardTask] and [BundledAssetPackagingGuardTask]. Uses
+ * `com.android.apksig` (the library `apksigner`/AGP's own signing pipeline are themselves built
+ * from) rather than shelling out to the SDK's `apksigner` binary or hand-parsing the APK Signing
+ * Block v2/v3 format — no assumption about SDK layout or OS-specific executable name, and no
+ * re-implementation of a security-sensitive binary format this project does not own.
  *
- * See [PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256]'s own KDoc for the full defect
- * account this guard closes: every rolling/tagged build must carry the identical certificate
- * (`buildSrc/signing/ort-rolling-release.keystore`, wired in `ort.android-app.gradle.kts`) or an
- * operator updating from a previously installed build hits `INSTALL_FAILED_UPDATE_INCOMPATIBLE`,
- * which on-device shows as the same generic "Package appears to be invalid" text a genuinely
- * malformed APK produces.
+ * See [PlatformGuards.signingStabilityViolations]'s own KDoc for the full defect account this
+ * guard closes, and for why [expectedCertificateSha256] carries no source-code default (a checked-
+ * in private signing key was rejected on review) and [enforceExpectedCertificate] defaults to
+ * `false` (a plain local `assembleFullDebug`, signed with AGP's own per-machine debug key, must
+ * never fail this check).
  */
 abstract class SigningStabilityGuardTask : DefaultTask() {
 
@@ -152,11 +157,23 @@ abstract class SigningStabilityGuardTask : DefaultTask() {
     @get:InputFile
     abstract val apkFile: RegularFileProperty
 
+    /** The pinned digest from `buildSrc/signing/release-certificate.sha256` (or the
+     * `ortReleaseCertificateSha256` override) — absent/blank means "not configured yet" and is
+     * only itself a violation when [enforceExpectedCertificate] is `true`. */
     @get:Input
-    abstract val expectedCertificateSha256: Property<String>
+    @get:Optional
+    abstract val pinnedCertificateSha256: Property<String>
+
+    /** `true` only for `release.yml`'s own invocation (`-PortEnforcePinnedReleaseSigning=true`),
+     * right after it has built with the injected release-signing secrets — see this class's own
+     * KDoc. Defaults to `false` so every other invocation (a plain local build, CI's `android`
+     * job) never fails on a certificate that was never supposed to match. */
+    @get:Input
+    @get:Optional
+    abstract val enforceExpectedCertificate: Property<Boolean>
 
     init {
-        expectedCertificateSha256.convention(PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256)
+        enforceExpectedCertificate.convention(false)
     }
 
     @TaskAction
@@ -180,9 +197,8 @@ abstract class SigningStabilityGuardTask : DefaultTask() {
             verified = result.isVerified,
             hasV2OrV3Scheme = result.isVerifiedUsingV2Scheme || result.isVerifiedUsingV3Scheme,
             certificateSha256 = certificateSha256,
-            expectedCertificateSha256 = expectedCertificateSha256.getOrElse(
-                PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256,
-            ),
+            expectedCertificateSha256 = pinnedCertificateSha256.orNull,
+            enforceExpectedCertificate = enforceExpectedCertificate.getOrElse(false),
         )
         if (violations.isNotEmpty()) {
             throw GradleException(
@@ -200,8 +216,12 @@ abstract class SigningStabilityGuardTask : DefaultTask() {
             )
         }
         logger.lifecycle(
-            "verifyReleaseSigningStability: OK — ${apk.path} is verified, v2/v3-signed, and matches the " +
-                "pinned rolling-release certificate.",
+            "verifyReleaseSigningStability: OK — ${apk.path} is verified and v2/v3-signed" +
+                if (enforceExpectedCertificate.getOrElse(false)) {
+                    ", and matches the pinned release certificate."
+                } else {
+                    " (pinned-certificate enforcement not requested for this invocation)."
+                },
         )
     }
 
@@ -210,5 +230,52 @@ abstract class SigningStabilityGuardTask : DefaultTask() {
          * `defaultConfig.minSdk`) — pinned as both bounds so apksig checks exactly the schemes a
          * real minSdk-26 device needs without reading AndroidManifest.xml for it. */
         const val MIN_SDK_VERSION = 26
+    }
+}
+
+/**
+ * P24 fix (register, Wave G batch gate, FR-AST-13, AC-190): reads a real packaged debug APK per
+ * flavor to prove [PlatformGuards.bundledAssetPackagingViolations]'s boundary actually holds —
+ * `full` bundles every asset, `play` bundles none — the same real-artifact-not-declared-coordinate
+ * shape [NativeLibraryPackagingGuardTask] established for R-1001. Unlike that task, this one is
+ * NOT symmetric across flavors by design: it exists precisely because `full` and `play` MUST
+ * differ here, so `ort.android-app.gradle.kts` registers one instance per flavor with
+ * [expectBundled] set the opposite way and wires both into `:app:check` — checking only one
+ * variant's APK would prove nothing about the boundary the other side of this fix depends on.
+ */
+abstract class BundledAssetPackagingGuardTask : DefaultTask() {
+
+    /** The packaged APK to inspect — a real build output, not a declared input, same as
+     * [NativeLibraryPackagingGuardTask.apkFile]. */
+    @get:InputFile
+    abstract val apkFile: RegularFileProperty
+
+    /** `true` for the `full`-flavor instance, `false` for the `play`-flavor instance — see this
+     * class's own KDoc for why both are registered rather than one shared task. */
+    @get:Input
+    abstract val expectBundled: Property<Boolean>
+
+    @TaskAction
+    fun check() {
+        val apk = apkFile.get().asFile
+        val entryPaths: Set<String> = ZipFile(apk).use { zip ->
+            zip.entries().asSequence().map { it.name }.toSet()
+        }
+        val violations = PlatformGuards.bundledAssetPackagingViolations(entryPaths, expectBundled.get())
+        if (violations.isNotEmpty()) {
+            throw GradleException(
+                buildString {
+                    appendLine(
+                        "Bundled-asset packaging boundary violation(s) — FR-AST-13, AC-190, checked ${apk.path}:",
+                    )
+                    violations.forEach { appendLine("  ${it.path}   (${it.reason})") }
+                },
+            )
+        }
+        logger.lifecycle(
+            "verifyBundledAssetPackagingBoundary: OK — ${apk.path} " +
+                (if (expectBundled.get()) "bundles" else "does not bundle") +
+                " model assets as expected for this flavor (FR-AST-13, AC-190).",
+        )
     }
 }

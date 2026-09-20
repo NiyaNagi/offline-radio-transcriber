@@ -234,6 +234,46 @@ class LiveBarTest {
         composeTestRule.onNodeWithText("room", useUnmergedTree = true).assertDoesNotExist()
     }
 
+    // -----------------------------------------------------------------------------------------
+    // D50 (Q22 closed, FR-SEG-10, AC-162): the fallback energy VAD's own live disclosure — never
+    // silent while capture continues on it.
+    // -----------------------------------------------------------------------------------------
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `D50 the fallback mark renders and is described when vadFallback is true`() {
+        val state = LiveBarViewState(
+            level = listOf(0.1f, 0.2f, 0.1f, 0.3f),
+            partialText = "and we're clear",
+            label = "Live",
+            tone = LiveBarTone.NOMINAL,
+            vadFallback = true,
+        )
+
+        composeTestRule.setContent {
+            OrtTheme { LiveBar(state = state, onClick = {}, modifier = Modifier.testTag("bar")) }
+        }
+
+        composeTestRule.onNodeWithText("Energy VAD", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithTag("live-bar-vad-fallback-mark", useUnmergedTree = true).assertExists()
+        composeTestRule.onNodeWithTag("bar").assert(hasContentDescription("energy VAD fallback", substring = true))
+    }
+
+    @Test
+    @Requirement("D50", "FR-SEG-10", "AC-162")
+    fun `D50 no fallback mark renders when vadFallback is false, the default`() {
+        val state = LiveBarViewState(
+            level = listOf(0.1f),
+            partialText = null,
+            label = "Live",
+            tone = LiveBarTone.NOMINAL,
+        )
+
+        composeTestRule.setContent { OrtTheme { LiveBar(state = state, onClick = {}) } }
+
+        composeTestRule.onNodeWithText("Energy VAD", useUnmergedTree = true).assertDoesNotExist()
+    }
+
     @Test
     fun `P5 a live partial renders italic and dimmed, distinct from a resolved row`() {
         val state = LiveBarViewState(

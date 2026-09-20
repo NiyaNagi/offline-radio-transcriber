@@ -28,6 +28,10 @@ public object SetupStepIds {
         "S02c" to "BLUETOOTH_PERMISSION",
         "S09b" to "RIG_TRANSPORT",
         "S10b" to "RIG_BLUETOOTH",
+        // P22 (D43, NFR-6c, FR-AST-10..12): the two setup steps that round added — see
+        // design-intent.md §2's S01a/S11a rows.
+        "S01a" to "JURISDICTION_NOTICE",
+        "S11a" to "MODELS",
     )
 
     /** `null` when [sId] is not one of design-intent's S01..S12/S02b. */

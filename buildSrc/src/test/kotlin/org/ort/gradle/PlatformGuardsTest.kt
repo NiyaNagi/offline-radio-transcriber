@@ -99,6 +99,98 @@ class PlatformGuardsTest {
         assertEquals(":net", violations.single().module)
     }
 
+    // ---- P23 (Play-readiness) — a declared FOREGROUND_SERVICE_<TYPE> permission needs a matching
+    // android:foregroundServiceType on some <service> in the same module's manifest -------------
+
+    @Test
+    fun `P23 a microphone FGS permission with a matching service type is not reported`() {
+        val manifests = mapOf(
+            ":capture-android" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+                    <application>
+                        <service android:name=".CaptureService" android:foregroundServiceType="microphone" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        assertTrue(PlatformGuards.fgsTypeDeclarationViolations(manifests).isEmpty())
+    }
+
+    @Test
+    fun `P23 a declared FGS permission with no matching service type is reported`() {
+        val manifests = mapOf(
+            ":capture-android" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+                    <application>
+                        <service android:name=".CaptureService" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        val violations = PlatformGuards.fgsTypeDeclarationViolations(manifests)
+        assertEquals(1, violations.size)
+        assertEquals(":capture-android", violations.single().module)
+        assertTrue(violations.single().reason.contains("microphone"))
+    }
+
+    @Test
+    fun `P23 no FGS permission declared at all is not reported`() {
+        val manifests = mapOf(":core" to "<manifest />")
+        assertTrue(PlatformGuards.fgsTypeDeclarationViolations(manifests).isEmpty())
+    }
+
+    @Test
+    fun `P23 a dataSync FGS permission is checked independently of microphone`() {
+        val manifests = mapOf(
+            ":pipeline" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+                    <application>
+                        <service android:name=".ReprocessService" android:foregroundServiceType="dataSync" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        assertTrue(PlatformGuards.fgsTypeDeclarationViolations(manifests).isEmpty())
+    }
+
+    @Test
+    fun `P23 a service type value that only partially matches as a substring is not fooled`() {
+        // "dataSync" must not be satisfied by a type value where it is merely a substring of a
+        // longer, unrelated token with no word boundary around it (e.g. a typo'd custom value) —
+        // only a real, word-bounded "dataSync" (optionally pipe-separated with another type, the
+        // real multi-type manifest syntax) counts.
+        val manifests = mapOf(
+            ":pipeline" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+                    <application>
+                        <service android:name=".X" android:foregroundServiceType="xdataSyncy" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        val violations = PlatformGuards.fgsTypeDeclarationViolations(manifests)
+        assertEquals(1, violations.size)
+    }
+
+    @Test
+    fun `P23 a real multi-type pipe-separated value is recognised`() {
+        val manifests = mapOf(
+            ":pipeline" to """
+                <manifest>
+                    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+                    <application>
+                        <service android:name=".X" android:foregroundServiceType="camera|dataSync" />
+                    </application>
+                </manifest>
+            """.trimIndent(),
+        )
+        assertTrue(PlatformGuards.fgsTypeDeclarationViolations(manifests).isEmpty())
+    }
+
     // ---- R-1001 — the packaged APK must really contain the sherpa-onnx native libraries ---------
     // Unlike every check above, this one reads a real build artifact (the APK's own zip entries),
     // not a declared coordinate or manifest string — see PlatformGuards's own KDoc update and this
@@ -222,7 +314,8 @@ class PlatformGuardsTest {
         assertThrows(org.gradle.api.GradleException::class.java) { task.check() }
     }
 
-    // ---- Signing-stability guard — debug-fix session, 2026-09-19 -----------------------------
+    // ---- Signing-stability guard — debug-fix session, 2026-09-19 (reworked after coordinator ---
+    // review: no keystore may be committed to this public repository) ---------------------------
     // Operator report, currently released build: install fails on-device with "App not installed.
     // Package appears to be invalid." The published `latest-build` APK (commit 152a9283) was
     // downloaded via `gh release download`, hash-verified byte for byte against the release
@@ -231,61 +324,116 @@ class PlatformGuardsTest {
     // both 4 KB and 16 KB page size) — so the artifact itself is not structurally invalid, not
     // Zip64, correctly zipaligned, and validly v2-signed.
     //
-    // Root cause found by direct reproduction, not inference: `release.yml` never pins a signing
-    // key, so `:app:assembleDebug` signs with AGP's own auto-generated `~/.android/debug.keystore`
-    // — freshly created on every GitHub Actions run, since the runner is a new VM each time and
-    // nothing seeds or caches it. Downloading `v0.1.1` and the current `latest-build` and running
-    // `apksigner verify --print-certs` on both shows two *different* certificate SHA-256 digests
-    // for the same `org.ort.app` package. Resigning the published APK's own bytes with a second,
-    // different debug-style key and installing it over the first with `adb install -r` on a real
-    // device reproduces `INSTALL_FAILED_UPDATE_INCOMPATIBLE: ... signatures do not match` —
-    // exactly the situation any operator hits updating from a previously installed build (an
-    // earlier `latest-build`, or the tagged `v0.1.1`) to a new one. Stock Android's own Package
-    // Installer does not give this failure a distinct message on many OS/OEM builds; it falls back
-    // to the same generic "Package appears to be invalid" text INSTALL_FAILED_INVALID_APK/
-    // INSTALL_PARSE_FAILED_* produce, so the operator's report and this mechanism are consistent —
-    // the emulator reproduction above rules out the artifact being literally malformed, leaving
-    // signing-key instability as the mechanism this test suite guards against for every future
-    // build.
+    // Root cause found by direct reproduction, not inference: `release.yml` used to sign with
+    // AGP's own auto-generated `~/.android/debug.keystore` — freshly created on every GitHub
+    // Actions run, since the runner is a new VM each time and nothing seeded or cached it.
+    // Downloading `v0.1.1` and a `latest-build` and running `apksigner verify --print-certs` on
+    // both showed two *different* certificate SHA-256 digests for the same `org.ort.app` package.
+    // Resigning a published APK's own bytes with a second, different debug-style key and
+    // installing it over the first with `adb install -r` on a real device reproduces
+    // `INSTALL_FAILED_UPDATE_INCOMPATIBLE: ... signatures do not match` — exactly the situation
+    // any operator hits updating from a previously installed build to a new one. Stock Android's
+    // own Package Installer does not give this failure a distinct message on many OS/OEM builds;
+    // it falls back to the same generic "Package appears to be invalid" text
+    // INSTALL_FAILED_INVALID_APK/INSTALL_PARSE_FAILED_* produce, so the operator's report and this
+    // mechanism are consistent — the reproduction above rules out the artifact being literally
+    // malformed, leaving signing-key instability as the mechanism this test suite guards against.
+    //
+    // The fix's first version pinned a constant certificate computed from a keystore checked into
+    // the repository — rejected on review (a public repo must never carry a private signing key).
+    // [PlatformGuards.signingStabilityViolations] now takes the expected digest as a plain nullable
+    // parameter with an explicit [enforceExpectedCertificate] switch, so a local build (which never
+    // passes a real pin, and is never signed with one) cannot fail this check — only `release.yml`,
+    // which does both, can.
     @Test
-    fun `signing-stability guard — a matching certificate and v2 or v3 scheme is not reported`() {
+    fun `signing-stability guard — enforcement off means a mismatched or absent pin never fails a build`() {
         assertTrue(
             PlatformGuards.signingStabilityViolations(
                 verified = true,
                 hasV2OrV3Scheme = true,
-                certificateSha256 = PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256,
+                certificateSha256 = "whatever-a-local-machines-own-debug-key-produces",
+                expectedCertificateSha256 = null,
+                enforceExpectedCertificate = false,
             ).isEmpty(),
+            "a plain local build (AGP's own per-machine debug key, no enforcement requested) must never fail here",
         )
     }
 
     @Test
-    fun `signing-stability guard — apksig reporting unverified is reported`() {
+    fun `signing-stability guard — enforcement on with no pin configured yet is reported, naming what to do`() {
+        val violations = PlatformGuards.signingStabilityViolations(
+            verified = true,
+            hasV2OrV3Scheme = true,
+            certificateSha256 = "abc123",
+            expectedCertificateSha256 = null,
+            enforceExpectedCertificate = true,
+        )
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("release-certificate.sha256"))
+        assertTrue(violations.single().reason.contains("UNSET"))
+    }
+
+    @Test
+    fun `signing-stability guard — enforcement on with a blank pin is treated the same as unconfigured`() {
+        val violations = PlatformGuards.signingStabilityViolations(
+            verified = true,
+            hasV2OrV3Scheme = true,
+            certificateSha256 = "abc123",
+            expectedCertificateSha256 = "   ",
+            enforceExpectedCertificate = true,
+        )
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("no digest is configured"))
+    }
+
+    @Test
+    fun `signing-stability guard — enforcement on with a matching certificate is not reported`() {
+        assertTrue(
+            PlatformGuards.signingStabilityViolations(
+                verified = true,
+                hasV2OrV3Scheme = true,
+                certificateSha256 = "abc123",
+                expectedCertificateSha256 = "ABC123",
+                enforceExpectedCertificate = true,
+            ).isEmpty(),
+            "the comparison must be case-insensitive",
+        )
+    }
+
+    @Test
+    fun `signing-stability guard — apksig reporting unverified is reported regardless of enforcement`() {
         val violations = PlatformGuards.signingStabilityViolations(
             verified = false,
             hasV2OrV3Scheme = true,
-            certificateSha256 = PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256,
+            certificateSha256 = "abc123",
+            expectedCertificateSha256 = null,
+            enforceExpectedCertificate = false,
         )
         assertEquals(1, violations.size)
         assertTrue(violations.single().reason.contains("not installably signed"))
     }
 
     @Test
-    fun `signing-stability guard — no v2 or v3 scheme is reported (v1-only or unsigned fails on minSdk 26)`() {
+    fun `signing-stability guard — no v2 or v3 scheme is reported regardless of enforcement (v1-only or unsigned fails on minSdk 26)`() {
         val violations = PlatformGuards.signingStabilityViolations(
             verified = true,
             hasV2OrV3Scheme = false,
-            certificateSha256 = PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256,
+            certificateSha256 = "abc123",
+            expectedCertificateSha256 = null,
+            enforceExpectedCertificate = false,
         )
         assertEquals(1, violations.size)
         assertTrue(violations.single().reason.contains("v2/v3"))
     }
 
     @Test
-    fun `signing-stability guard — no readable certificate is reported`() {
+    fun `signing-stability guard — enforcement on with no readable certificate is reported`() {
         val violations = PlatformGuards.signingStabilityViolations(
             verified = true,
             hasV2OrV3Scheme = true,
             certificateSha256 = null,
+            expectedCertificateSha256 = "abc123",
+            enforceExpectedCertificate = true,
         )
         assertEquals(1, violations.size)
         assertTrue(violations.single().reason.contains("no signer certificate"))
@@ -298,39 +446,41 @@ class PlatformGuardsTest {
             hasV2OrV3Scheme = true,
             certificateSha256 = "deadbeef",
             expectedCertificateSha256 = "cafef00d",
+            enforceExpectedCertificate = true,
         )
         assertEquals(1, violations.size)
         assertTrue(violations.single().reason.contains("deadbeef"))
         assertTrue(violations.single().reason.contains("cafef00d"))
     }
 
-    @Test
-    fun `signing-stability guard — the digest comparison is case-insensitive`() {
-        assertTrue(
-            PlatformGuards.signingStabilityViolations(
-                verified = true,
-                hasV2OrV3Scheme = true,
-                certificateSha256 = PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256.uppercase(),
-            ).isEmpty(),
-        )
+    // ---- SigningStabilityGuardTask — reads a real APK's real signature, via apksig ------------
+    // No checked-in keystore exists any more (the whole point of this rework) — each test below
+    // generates its own throwaway keystore with `keytool` (every environment building this project
+    // already has one under JAVA_HOME/bin), signs a tiny real zip with apksig's own `ApkSigner`,
+    // and reads the *real* certificate digest straight from the keystore for the assertion, the
+    // same value `SigningStabilityGuardTask` itself computes from the signed APK via apksig.
+
+    private fun generateKeystore(dir: File, alias: String, password: String, name: String = "$alias.keystore"): File {
+        val keystore = File(dir, name)
+        val javaHome = System.getProperty("java.home")
+        val keytool = File(javaHome, if (System.getProperty("os.name").startsWith("Windows")) "bin/keytool.exe" else "bin/keytool")
+        val proc = ProcessBuilder(
+            keytool.path, "-genkeypair", "-keystore", keystore.path, "-storetype", "PKCS12",
+            "-storepass", password, "-alias", alias, "-keypass", password,
+            "-keyalg", "RSA", "-keysize", "2048", "-validity", "3650", "-dname", "CN=$alias",
+        ).redirectErrorStream(true).start()
+        proc.inputStream.readBytes()
+        check(proc.waitFor() == 0) { "keytool failed generating $keystore" }
+        return keystore
     }
 
-    // ---- SigningStabilityGuardTask — reads a real APK's real signature, via apksig ------------
-    // Signs a tiny real zip with the project's own pinned keystore (buildSrc/signing/
-    // ort-rolling-release.keystore) using apksig's own `ApkSigner`, then verifies the task accepts
-    // it against the pin and rejects it once resigned with a different key — the same
-    // discrimination the register's own reproduction used (a resigned copy of the same bytes).
-
-    private fun pinnedKeystoreFile(): File =
-        File("signing/ort-rolling-release.keystore").let { relativeToBuildSrc ->
-            if (relativeToBuildSrc.exists()) {
-                relativeToBuildSrc
-            } else {
-                // buildSrc's own test working directory is buildSrc/ itself when run via Gradle;
-                // fall back to an absolute resolution for IDE-run tests whose working dir differs.
-                File(System.getProperty("user.dir"), "signing/ort-rolling-release.keystore")
-            }
-        }
+    private fun certificateSha256Of(keystore: File, alias: String, password: String): String {
+        val ks = java.security.KeyStore.getInstance("PKCS12")
+        java.io.FileInputStream(keystore).use { ks.load(it, password.toCharArray()) }
+        val certificate = ks.getCertificate(alias) as java.security.cert.X509Certificate
+        return java.security.MessageDigest.getInstance("SHA-256").digest(certificate.encoded)
+            .joinToString("") { "%02x".format(it) }
+    }
 
     private fun signWithKeystore(apk: File, keystore: File, alias: String, password: String, outDir: File): File {
         val ks = java.security.KeyStore.getInstance("PKCS12")
@@ -374,48 +524,149 @@ class PlatformGuardsTest {
     }
 
     @Test
-    fun `AC discrimination — the task accepts a real APK signed with the pinned keystore`(@TempDir dir: File) {
-        val keystore = pinnedKeystoreFile()
-        org.junit.jupiter.api.Assumptions.assumeTrue(keystore.exists(), "pinned keystore not found at ${keystore.path}")
-        val signed = signWithKeystore(tinyZip(dir), keystore, "ort-rolling-release", "ort-rolling-release", dir)
+    fun `AC discrimination — the task never fails a real APK when enforcement is off, whatever the pin says`(
+        @TempDir dir: File,
+    ) {
+        val keystore = generateKeystore(dir, "local-debug", "local-debug")
+        val signed = signWithKeystore(tinyZip(dir), keystore, "local-debug", "local-debug", dir)
 
         val project = ProjectBuilder.builder().build()
         val task = project.tasks.create("verifyReleaseSigningStability", SigningStabilityGuardTask::class.java)
         task.apkFile.set(signed)
-        task.expectedCertificateSha256.set(PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256)
+        // Deliberately NOT setting enforceExpectedCertificate (its convention is false) and
+        // deliberately setting a pin that does NOT match this build's own certificate — the exact
+        // shape of a plain local `assembleFullDebug` once a real pin is configured for CI.
+        task.pinnedCertificateSha256.set("not-this-builds-certificate-at-all")
 
         task.check() // must not throw
     }
 
     @Test
-    fun `AC discrimination — the task fails a real APK signed with a different key than the pin`(@TempDir dir: File) {
-        val keystore = pinnedKeystoreFile()
-        org.junit.jupiter.api.Assumptions.assumeTrue(keystore.exists(), "pinned keystore not found at ${keystore.path}")
+    fun `AC discrimination — the task accepts a real APK whose certificate matches the enforced pin`(
+        @TempDir dir: File,
+    ) {
+        val keystore = generateKeystore(dir, "release-key", "release-pass")
+        val digest = certificateSha256Of(keystore, "release-key", "release-pass")
+        val signed = signWithKeystore(tinyZip(dir), keystore, "release-key", "release-pass", dir)
 
-        // A second, different self-signed debug-style key — models exactly the register's own
-        // reproduction: a different CI run's freshly auto-generated debug.keystore. Building a
-        // minimal self-signed cert directly is not portable across JDKs (no public JDK API
-        // generates one; apksig's own test utilities are not exported for reuse), so this second
-        // cert is generated the same way apksigner/keytool itself would: shell out to keytool,
-        // which every environment building this project already has (JAVA_HOME/bin).
-        val otherKeystore = File(dir, "other.keystore")
-        val javaHome = System.getProperty("java.home")
-        val keytool = File(javaHome, if (System.getProperty("os.name").startsWith("Windows")) "bin/keytool.exe" else "bin/keytool")
-        val proc = ProcessBuilder(
-            keytool.path, "-genkeypair", "-keystore", otherKeystore.path, "-storetype", "PKCS12",
-            "-storepass", "other-pass", "-alias", "other-key", "-keypass", "other-pass",
-            "-keyalg", "RSA", "-keysize", "2048", "-validity", "3650", "-dname", "CN=Other Debug Key",
-        ).redirectErrorStream(true).start()
-        proc.inputStream.readBytes()
-        proc.waitFor()
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create("verifyReleaseSigningStability", SigningStabilityGuardTask::class.java)
+        task.apkFile.set(signed)
+        task.pinnedCertificateSha256.set(digest)
+        task.enforceExpectedCertificate.set(true)
 
+        task.check() // must not throw
+    }
+
+    // ---- P24 fix (register, Wave G batch gate, FR-AST-13, AC-190) — `play` must never bundle any
+    // model asset, `full` must bundle every one. Like R-1001 above, this reads a real packaged
+    // APK's zip entries rather than a declared coordinate: nothing about bundled-assets.json or
+    // either flavor's build.gradle.kts config says which physical directory fetchBundledAssets
+    // actually wrote its output to — that is exactly how the defect (`play` packaging the identical
+    // 628 MB `full` did) escaped every existing declared-artifact check in this file. ----------
+
+    @Test
+    fun `FR_AST_13 AC_190 the full variant with bundled assets present is not reported`() {
+        val entries = setOf(
+            "classes.dex",
+            "assets/bundled/manifest.json",
+            "assets/bundled/models/whisper-tiny-en-int8/tiny.en-encoder.int8.onnx",
+        )
+        assertTrue(PlatformGuards.bundledAssetPackagingViolations(entries, expectBundled = true).isEmpty())
+    }
+
+    @Test
+    fun `FR_AST_13 AC_190 discrimination — the full variant with no bundled assets at all is reported`() {
+        val entries = setOf("classes.dex", "assets/licenses/whisper.txt")
+        val violations = PlatformGuards.bundledAssetPackagingViolations(entries, expectBundled = true)
+        assertEquals(1, violations.size)
+        assertTrue(violations.single().reason.contains("FR-AST-3"))
+    }
+
+    @Test
+    fun `FR_AST_13 AC_190 the play variant with no bundled assets is not reported`() {
+        val entries = setOf("classes.dex", "assets/licenses/whisper.txt")
+        assertTrue(PlatformGuards.bundledAssetPackagingViolations(entries, expectBundled = false).isEmpty())
+    }
+
+    @Test
+    fun `FR_AST_13 AC_190 discrimination — the play variant with a bundled model asset is reported by its exact path`() {
+        // This is the Wave G batch gate's own defect, reproduced directly: `play`'s packaged APK
+        // carrying the same assets/bundled/ entries `full` does.
+        val entries = setOf(
+            "classes.dex",
+            "assets/bundled/manifest.json",
+            "assets/bundled/models/llm/gemma3-1b-it-int4.task",
+        )
+        val violations = PlatformGuards.bundledAssetPackagingViolations(entries, expectBundled = false)
+        assertEquals(2, violations.size)
+        assertEquals(
+            setOf("assets/bundled/manifest.json", "assets/bundled/models/llm/gemma3-1b-it-int4.task"),
+            violations.map { it.path }.toSet(),
+        )
+        assertTrue(violations.all { it.reason.contains("FR-AST-13") })
+    }
+
+    // ---- BundledAssetPackagingGuardTask — the Gradle task itself, real-APK end to end -------------
+
+    @Test
+    fun `AC discrimination — the full guard task passes a real APK that bundles assets`(@TempDir dir: File) {
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create(
+            "verifyFullBundledAssetPackagingBoundary",
+            BundledAssetPackagingGuardTask::class.java,
+        )
+        task.apkFile.set(writeZip(dir, listOf("classes.dex", "assets/bundled/manifest.json")))
+        task.expectBundled.set(true)
+
+        task.check() // must not throw
+    }
+
+    @Test
+    fun `AC discrimination — the task fails a real APK whose certificate does not match the enforced pin`(
+        @TempDir dir: File,
+    ) {
+        // A second, different self-signed key — models exactly the register's own reproduction: a
+        // different CI run's freshly auto-generated debug.keystore, or (post-rework) a release
+        // build whose certificate has genuinely drifted from the pinned digest.
+        val keystore = generateKeystore(dir, "release-key", "release-pass")
+        val otherKeystore = generateKeystore(dir, "other-key", "other-pass")
+        val pinnedDigest = certificateSha256Of(keystore, "release-key", "release-pass")
         val signed = signWithKeystore(tinyZip(dir), otherKeystore, "other-key", "other-pass", dir)
 
         val project = ProjectBuilder.builder().build()
         val task = project.tasks.create("verifyReleaseSigningStability", SigningStabilityGuardTask::class.java)
         task.apkFile.set(signed)
-        task.expectedCertificateSha256.set(PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256)
+        task.pinnedCertificateSha256.set(pinnedDigest)
+        task.enforceExpectedCertificate.set(true)
 
         assertThrows(org.gradle.api.GradleException::class.java) { task.check() }
+    }
+
+    @Test
+    fun `AC discrimination — the play guard task fails a real APK that bundles assets`(@TempDir dir: File) {
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create(
+            "verifyPlayBundledAssetPackagingBoundary",
+            BundledAssetPackagingGuardTask::class.java,
+        )
+        task.apkFile.set(writeZip(dir, listOf("classes.dex", "assets/bundled/manifest.json")))
+        task.expectBundled.set(false)
+
+        val thrown = assertThrows(org.gradle.api.GradleException::class.java) { task.check() }
+        assertTrue(thrown.message!!.contains("assets/bundled/manifest.json"))
+    }
+
+    @Test
+    fun `AC discrimination — the play guard task passes a real APK with no bundled assets`(@TempDir dir: File) {
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create(
+            "verifyPlayBundledAssetPackagingBoundary",
+            BundledAssetPackagingGuardTask::class.java,
+        )
+        task.apkFile.set(writeZip(dir, listOf("classes.dex", "assets/licenses/whisper.txt")))
+        task.expectBundled.set(false)
+
+        task.check() // must not throw
     }
 }

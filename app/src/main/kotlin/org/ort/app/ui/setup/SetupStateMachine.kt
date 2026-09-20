@@ -13,6 +13,23 @@ import org.ort.core.capture.RigTransportKind
  */
 public data class SetupSnapshot(
     val welcomeSeen: Boolean,
+    /**
+     * P22 (NFR-6c, AC-166). `false` until the jurisdiction/legality notice has been dismissed —
+     * shown exactly once, right after [welcomeSeen], on first run.
+     *
+     * **Regression, fixed at the fixture, not here**: adding this gate directly after
+     * [welcomeSeen] in [SetupStateMachine.stepFor] is correct per AC-166 ("shown exactly once, on
+     * first run") — but it means any debug scenario or test fixture that sets [welcomeSeen] =
+     * `true` while claiming to resume at [SetupStep.MODE] or any later step must *also* set this
+     * to `true`, or `stepFor` will (correctly) route back to [SetupStep.JURISDICTION_NOTICE], since
+     * a fixture resuming mid-setup or further is by construction not a first run. Twelve
+     * `WpiScenariosTest`/`ScenariosTest` resumption assertions failed exactly this way when P22
+     * landed, because none of the fixtures they load had been updated for the new gate — fixed by
+     * setting this alongside [welcomeSeen] in every one of `Scenarios.kt`'s own setup-seeding
+     * functions (`verifiedInputStore`, `freshSetupStore` callers, `setupVerifiedLocalMic`), never
+     * by weakening `stepFor`'s own ordering.
+     */
+    val jurisdictionNoticeSeen: Boolean,
     /** D33/FR-CAP-8. `null` until S00 is walked. */
     val captureMode: CaptureMode?,
     /** S02c's "Not now — use USB instead". */
@@ -29,6 +46,17 @@ public data class SetupSnapshot(
     /** Whether S10b's checklist has reached `RigLinkState.Verified` — see [SetupStore]'s own doc
      * comment. */
     val rigBluetoothVerified: Boolean,
+    /**
+     * P22 (FR-AST-10..12, AC-184, AC-188): whether every model the detected tier requires is
+     * either bundled or already installed and verified — i.e. nothing is left for the setup
+     * MODELS step to fetch. Unlike every other field here, this is **not** a [SetupStore]
+     * preference: [SetupStore] has no way to know what the manifest or the installed-asset
+     * state currently is, so [SetupStore.snapshot] defaults this to `true` (nothing it can see
+     * is blocking) and the real caller ([SetupActivity]) overrides it with the true, freshly
+     * read fact via `.copy(...)` before ever handing this snapshot to [SetupStateMachine.stepFor]
+     * — see [SetupActivity]'s own `currentSnapshot()`.
+     */
+    val requiredModelsInstalled: Boolean,
     val setupComplete: Boolean,
 )
 
@@ -69,6 +97,7 @@ public object SetupStateMachine {
         snapshot: SetupSnapshot,
     ): SetupStep? {
         if (!snapshot.welcomeSeen) return SetupStep.WELCOME
+        if (!snapshot.jurisdictionNoticeSeen) return SetupStep.JURISDICTION_NOTICE
         if (snapshot.captureMode == null) return SetupStep.MODE
         if (!permissions.recordAudioGranted && micPermanentlyDenied) return SetupStep.MICROPHONE_DENIED
         if (!permissions.recordAudioGranted) return SetupStep.MICROPHONE
@@ -81,6 +110,11 @@ public object SetupStateMachine {
         if (snapshot.radioChoice == null) return SetupStep.RADIO
         if (needsRigTransport(snapshot)) return SetupStep.RIG_TRANSPORT
         if (needsRigBluetoothLink(snapshot)) return SetupStep.RIG_BLUETOOTH
+        // P22 (FR-AST-12, AC-188): READY is a hard gate — reached only once level (above) AND the
+        // required models (here) both clear, together. A tier whose models are all bundled or
+        // already installed reads `requiredModelsInstalled = true` from the moment SetupActivity
+        // builds this snapshot, so this never adds a step to the `full` variant's existing flow.
+        if (!snapshot.requiredModelsInstalled) return SetupStep.MODELS
         if (!snapshot.setupComplete) return SetupStep.READY
         return null
     }
