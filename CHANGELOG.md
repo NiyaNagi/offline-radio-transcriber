@@ -32,6 +32,127 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (R-1043 follow-up: a gate-flake diagnosis session — one discriminated fix, two reports that would not reproduce)
+
+### fb461f61 — R-1043 follow-up · `TransmissionDetailContentTest`'s three "type a callsign" flows now wait for the revealed field explicitly, closing an implicit-idle-wait gap; `SettingsCaptureScreenTest`/`BluetoothPermissionScreenTest`'s reported `AppNotIdleException` and `:data`'s reported `SQLITE_CANTOPEN` did not reproduce and are left open, named
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/screens/TransmissionDetailContentTest.kt` only. No
+production code, no `app/build.gradle.kts`, no `buildSrc` test-task wiring changed — see "Left
+open" below for why the two other reported flakes have no code change in this commit.
+
+**Requirements/ACs:** constitution II (test integrity — "a test MUST be shown to discriminate";
+"prefer a capability probe to exception forensics" reads equally as "prefer a deterministic wait
+to a longer implicit one"); R-1043 (register — this class of gate flake); constitution's
+Development Workflow ("diagnose before repairing," "machine-specific tuning is derived, not
+hardcoded" — the reason no forkEvery/timeout number changed here without evidence it helps).
+
+**What changed:**
+- **Reproduced, deliberately:** ran `:app:testFullDebugUnitTest`/`:app:smokeTestFullDebugUnitTest`
+  unfiltered once under 24-28 synthetic CPU-bound background processes on this 32-core machine
+  (peak ~100% total CPU) — completed clean, no failures, before being stopped early once its size
+  made it impractical to repeat five times in this session (see "Left open"). Followed with faster,
+  targeted batches instead: an 8-class `--tests` batch sharing one JVM fork by construction
+  (`org.ort.app.ui.settings.{SettingsContentTest,SettingsCaptureScreenTest,ModelsContentTest,
+  SettingsExportScreenTest}`, `org.ort.app.ui.setup.{BluetoothPermissionScreenTest,RadioScreenTest,
+  OvernightScreenTest,SetupActivityTest}`, default `maxParallelForks=1` so all eight run
+  sequentially in one process) — 5 consecutive runs (1 baseline, 4 under 28 busy processes at
+  ~100% CPU) all green, `SettingsCaptureScreenTest`/`BluetoothPermissionScreenTest` included. A
+  separate `:data:testDebugUnitTest` full run (every DB-backed test in that module, which shares
+  one JVM for the whole task — no `forkEvery` is set there or anywhere outside `:app`) — 5
+  consecutive runs, all under the same heavy load — never produced `SQLITE_CANTOPEN`.
+- **One mechanism found and fixed, by inspection, in `TransmissionDetailContentTest`:** its three
+  "type a callsign" flows (`R_052 correcting via Not right applies...`, `R_1041 view affected
+  overs...`, `R_189_after_a_fresh_typed_correction...`) each do
+  `onNodeWithText("Type a callsign").performClick()` immediately followed by
+  `onNodeWithContentDescription("Typed callsign")...` with no wait between them. That click only
+  flips `CorrectionSheet`'s own local `tier` state (`CorrectionSheet.kt`) — a synchronous
+  recomposition, no coroutine — so a plain `waitForIdle()` should ordinarily be enough, and
+  `onNodeWithContentDescription(...)` does perform exactly one such idle-wait before searching.
+  The gap is that it is exactly **one** wait, not a retry: under CPU contention Robolectric's own
+  idle check can report idle a moment before the revealed node's recomposition is actually
+  visible, and `onNodeWithContentDescription` then throws immediately instead of trying again —
+  which matches tonight's report precisely (`performScrollTo()` failing on `ContentDescription =
+  'Typed callsign'`, then passing instants later on an unchanged tree). This file already has the
+  right idiom for exactly this shape (`waitUntilDescriptionExists`, used everywhere else in the
+  same class for a poll that lands off the composition clock) — added one explicit call to it
+  before each of the three affected interactions, so the wait becomes a bounded, retrying one
+  instead of a single implicit check. No assertion, fixture or production code changed.
+- **Not changed, and why:** `SettingsCaptureScreenTest` and `BluetoothPermissionScreenTest` carry
+  no database and no async state of their own — a `AppNotIdleException`/"idle check accumulation"
+  report for either is, by every precedent already in this file's own `app/build.gradle.kts`
+  history, a cross-class Compose-Recomposer-poisoning symptom from *another* class sharing the
+  same JVM fork, not a defect in either file. Five runs of an 8-class batch built to share one
+  fork under heavy CPU load did not reproduce it — this session's synthetic load (CPU-bound
+  spin loops) is evidently not the same stressor as the real gate's own reported condition ("beside
+  three builders compiling in their own worktrees," per R-1043's register text — real concurrent
+  Gradle/Kotlin-daemon memory and I/O pressure, not just CPU cycles). Isolating either class into
+  the existing `registerComposePoisonSmokeTestTask` list on an unconfirmed guess would be exactly
+  the "blind fix" the constitution warns against (Development Workflow: "two blind fixes for one
+  CI failure cost more than the single instrumented run that produced the answer") — left open,
+  named, for the next occurrence to instrument directly (a `jstack` of the wedged worker, the
+  technique every prior instance in this file was actually root-caused with).
+- **`:data`'s reported `SQLITE_CANTOPEN`** ("two differently-named Room databases opened back to
+  back in one Robolectric process on Windows") is consistent with `:data`'s own `DurabilityTest`
+  and `FtsIndexRepairTest`, which open `durability-test.db`/`fts-repair-test.db` respectively
+  against the *same* `BundledSQLiteDriver`, sharing the one JVM every `:data` test runs in by
+  default (`ort.common.gradle.kts`'s shared `Test` convention sets no `forkEvery` — confirmed by
+  grep: only `app/build.gradle.kts` sets one anywhere in this repository) — the identical
+  "unrelated tests sharing one Robolectric JVM" shape `app/build.gradle.kts`'s own history spent
+  several sessions on, and Windows file-handle release lag on rapid open/close/reopen is a known
+  flaky-SQLite-on-Windows pattern. This is a real, provable *candidate* mechanism, not a confirmed
+  one: 5 runs of the whole `:data:testDebugUnitTest` suite under the same heavy CPU load never
+  reproduced it. `:data`'s own test files and `data/build.gradle.kts` are outside this package's
+  ownership (working agreement: "a builder that needs a file outside its package stops and
+  reports") — no `forkEvery` was added anywhere, including in the shared `buildSrc` convention
+  plugin (`ort.common.gradle.kts`, which *is* this package's own to touch), because applying it
+  there would affect every Robolectric-backed module's build time on an unconfirmed guess, which
+  is exactly the kind of change Development Workflow's "diagnose before repairing" rules out.
+  Reported instead of fixed; see "Left open."
+
+**Verified:**
+- `.\gradlew.bat -PortAllowMissingBundledAssets=true ":app:testFullDebugUnitTest" "--tests"
+  <8 classes> --rerun`, 5 consecutive runs (this machine, 32 logical processors, JDK 17.0.20.1,
+  Robolectric, `dev` fixtures only) — green 5/5, `BUILD SUCCESSFUL in 21s`-`45s`; 4 of the 5 ran
+  under 28 synthetic CPU-bound PowerShell processes holding ~100% total CPU.
+- `.\gradlew.bat -PortAllowMissingBundledAssets=true ":data:testDebugUnitTest" --rerun`, 5
+  consecutive runs, same machine, all under the same heavy load — green 5/5, `BUILD SUCCESSFUL in
+  20s`-`27s`, no `SQLITE_CANTOPEN`.
+- `.\gradlew.bat -PortAllowMissingBundledAssets=true ":app:smokeTestFullDebugUnitTest" "--tests"
+  "org.ort.app.ui.screens.TransmissionDetailContentTest" --rerun`, 5 consecutive runs with the fix
+  applied, under the same 28-process load — green 5/5, `BUILD SUCCESSFUL in 21s`-`23s`, including
+  the three fixed tests.
+- **Not discriminated**: could not force the original `R_052` failure to reproduce on this machine
+  (with or without the fix) to watch it fail first, matching this project's own prior experience
+  that this class of race needs real concurrent Gradle builds, not synthetic CPU load, to surface
+  (register R-1043: `CaptureStatusContentTest` R_232 "did not reproduce (8 of 8 alone, 6 of 6 under
+  load)"). The fix is justified by direct inspection of the implicit-vs-retrying wait gap and by
+  matching this file's own established idiom, not by a red-then-green discriminating run.
+- `-PortAllowMissingBundledAssets=true` used throughout (local iteration only, per its own escape
+  hatch contract) — no `HF_TOKEN` gate or hosted run was exercised this session; nothing here was
+  pushed.
+
+**Left open / not done:**
+- The full, unfiltered `:app:testFullDebugUnitTest` + `:app:smokeTestFullDebugUnitTest` run (the
+  actual shape of a real gate) was exercised once under load and stopped early, clean so far, once
+  its size (thousands of tests) made five full repeats impractical inside this session — the
+  targeted batches above substitute scoped, faster reproductions of the same "several classes in
+  one JVM" shape for the specific classes named tonight, not a fifth confirmation of the whole
+  gate.
+- `SettingsCaptureScreenTest`/`BluetoothPermissionScreenTest`'s `AppNotIdleException` report:
+  unreproduced, uninstrumented, left open under R-1043 exactly as several prior single-occurrence
+  entries in that row already are. If it recurs, `jstack` the wedged worker before trying anything
+  else (per this row's own established method) rather than isolating either class speculatively.
+- `:data`'s `SQLITE_CANTOPEN` report: unreproduced on this machine; the candidate mechanism above
+  (shared-JVM, differently-named on-disk SQLite files, Windows handle-release timing) is
+  documented here for whichever session owns `:data` next, along with the one structural fix this
+  package could apply on confirmation — a machine-derived `forkEvery` in `ort.common.gradle.kts`'s
+  shared `Test` convention, mirroring `app/build.gradle.kts`'s own already-proven remedy for the
+  identical shape of bug, applied once for every Robolectric-backed module instead of each
+  rediscovering it. Not applied here without that confirmation.
+- No change to `app/build.gradle.kts`'s `forkEvery` formula (`availableCpuCount / 4`, coerced to
+  `[1, 12]`) — nothing in this session's evidence showed it wrong for the 32-core case it produces
+  here (`8`), only that it does not by itself prevent every flake this class of bug can produce.
+
 ## 2026-09-20 (P31: live alerts — a watched callsign, keyword or frequency fires a local notification after Pass B)
 
 ### e773b36d — P31 gate fix · `AndroidAlertNotificationDispatcher.dispatch` now honours `canDeliver()` with a lint-visible `POST_NOTIFICATIONS` guard instead of posting blind

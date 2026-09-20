@@ -327,6 +327,17 @@ class TransmissionDetailContentTest {
         composeTestRule.onNodeWithText("Not right?").performClick()
         composeTestRule.waitUntilTextExists("Type a callsign")
         composeTestRule.onNodeWithText("Type a callsign").performScrollTo().performClick()
+        // R-1043 (this task): `performClick()` above only switches `CorrectionSheet`'s own local
+        // `tier` state (`MAIN` -> `TYPE`), a synchronous recomposition with no coroutine involved —
+        // but the very next line's `onNodeWithContentDescription(...)` does exactly one implicit
+        // idle-wait before searching and throws immediately if the node is not there yet, unlike
+        // this file's own `waitUntilDescriptionExists`, which polls with a real timeout. Observed
+        // failing under a loaded full gate with "could not find any node ... Typed callsign", then
+        // passing in isolation moments later on an unchanged tree — a single implicit idle-wait is
+        // not the same guarantee as a bounded, retrying one under CPU contention. Waiting on the
+        // node explicitly here, the same idiom every other multi-step flow in this file already
+        // uses, makes the wait itself the discriminating fix rather than a longer fixed timeout.
+        composeTestRule.waitUntilDescriptionExists("Typed callsign")
         composeTestRule.onNodeWithContentDescription("Typed callsign").performScrollTo().performTextInput("KA7LWH")
         composeTestRule.onNodeWithText("Save unverified correction").performScrollTo().performClick()
         composeTestRule.waitUntilTextExists("Corrected to KA7LWH")
@@ -366,6 +377,10 @@ class TransmissionDetailContentTest {
         composeTestRule.onNodeWithText("Not right?").performClick()
         composeTestRule.waitUntilTextExists("Type a callsign")
         composeTestRule.onNodeWithText("Type a callsign").performScrollTo().performClick()
+        // R-1043 (this task): see R_052's own comment above — an explicit, retrying wait for the
+        // freshly-revealed node, not the single implicit idle-wait `onNodeWithContentDescription`
+        // performs on its own, is what survives a loaded gate.
+        composeTestRule.waitUntilDescriptionExists("Typed callsign")
         composeTestRule.onNodeWithContentDescription("Typed callsign").performScrollTo().performTextInput("KA7LWH")
         composeTestRule.onNodeWithText("Save unverified correction").performScrollTo().performClick()
         composeTestRule.waitUntilTextExists("Corrected to KA7LWH")
@@ -406,6 +421,8 @@ class TransmissionDetailContentTest {
         composeTestRule.onNodeWithText("Not right?").performClick()
         composeTestRule.waitUntilTextExists("Type a callsign")
         composeTestRule.onNodeWithText("Type a callsign").performScrollTo().performClick()
+        // R-1043 (this task): see R_052's own comment above.
+        composeTestRule.waitUntilDescriptionExists("Typed callsign")
         composeTestRule.onNodeWithContentDescription("Typed callsign").performScrollTo().performTextInput("VE7ABC")
         composeTestRule.onNodeWithText("Save unverified correction").performScrollTo().performClick()
         composeTestRule.waitUntilTextExists("Corrected to VE7ABC")
