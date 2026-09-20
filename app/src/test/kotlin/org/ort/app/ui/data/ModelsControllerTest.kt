@@ -190,24 +190,86 @@ class ModelsControllerTest {
         assertNull(state.requeuedMessage)
     }
 
+    /**
+     * P28b (D43, FR-AST-13): running `testPlayDebugUnitTest` against the real fix immediately
+     * caught this test's own stale premise — "using the real default" used to mean "every entry
+     * ships bundled today, D35", which stopped being universally true the moment `ModelCatalog`
+     * genuinely read `bundled` per flavor: `play`'s own compiled catalog reports every entry
+     * `bundled = false`, so there is nothing left for this exact assertion to exercise there.
+     * [org.junit.Assume.assumeTrue] skips honestly on such a flavor rather than asserting a fact
+     * that flavor's own catalog does not carry; [AC_184 download refuses a bundled entry and
+     * proceeds through a real fetch for an unbundled one] already proves the refuse/proceed
+     * mechanism itself, flavor-independently, via an injected `isBundled`.
+     */
     @Test
-    @Requirement("D35", "FR-AST-1")
+    @Requirement("D35", "D43", "FR-AST-1", "FR-AST-13")
     fun `WPG download refuses with no network call at all for a bundled entry, using the real default`(): Unit =
         runTest {
+            val genuinelyBundled = ModelId.entries.filter { ModelCatalog.entry(it).bundled }
+            org.junit.Assume.assumeTrue(
+                "this flavor's real catalog has no genuinely bundled entry left to exercise (play, FR-AST-13)",
+                genuinelyBundled.isNotEmpty(),
+            )
             // A client that throws if it is ever invoked — proves ModelAcquisition.fetch (and
             // therefore the network) is never reached, using the REAL ModelCatalog-backed
-            // isBundled default (every entry ships bundled today, D35).
+            // isBundled default.
             val neverCalled = object : org.ort.net.HttpRangeClient {
                 override fun get(url: String, rangeStart: Long): org.ort.net.HttpRangeResult =
                     error("download() must never make a network call for a bundled entry")
             }
 
-            val result = ModelsController.download(context, ModelId.VAD, client = neverCalled)
+            val result = ModelsController.download(context, genuinelyBundled.first(), client = neverCalled)
 
             assertTrue("expected a Failure, got $result", result is ModelActionResult.Failure)
             assertTrue(
                 (result as ModelActionResult.Failure).reason.contains("ships bundled"),
             )
+        }
+
+    @Test
+    @Requirement("AC-184", "D43", "FR-AST-10", "FR-AST-11")
+    fun `AC_184 download refuses a bundled entry and proceeds through a real fetch for an unbundled one`(): Unit =
+        runTest {
+            // Same id, same spec, same body -- only `isBundled` differs, so this is a genuine
+            // discrimination of the one branch P28b's play-variant gap depended on: `bundled` was
+            // never actually threaded from the manifest before this change, so both arms of this
+            // test would have "refused" under the old hardcoded-true default.
+            val spec = specFor(goodChecksum)
+            val noSizeCheck: (ModelId) -> Long? = { null }
+
+            val refusedForBundled = ModelsController.download(
+                context,
+                ModelId.ASR_DECODER,
+                client = FakeHttpRangeClient(body),
+                specFor = spec,
+                isBundled = { true },
+            )
+            assertTrue("a bundled entry must refuse", refusedForBundled is ModelActionResult.Failure)
+            assertTrue(
+                (refusedForBundled as ModelActionResult.Failure).reason.contains("ships bundled"),
+            )
+            assertFalse(
+                "refusing a bundled entry must never touch disk",
+                spec(ModelId.ASR_DECODER, modelsDir).destination.exists(),
+            )
+
+            val succeededForUnbundled = ModelsController.download(
+                context,
+                ModelId.ASR_DECODER,
+                client = FakeHttpRangeClient(body),
+                specFor = spec,
+                isBundled = { false },
+            )
+            assertTrue(
+                "an unbundled entry must actually fetch and install, got $succeededForUnbundled",
+                succeededForUnbundled is ModelActionResult.Success,
+            )
+            val dest = spec(ModelId.ASR_DECODER, modelsDir).destination
+            assertTrue("the fetched file must land at the destination", dest.isFile)
+            val installedRow = ModelsController
+                .currentState(context, specFor = spec, expectedSizeBytes = noSizeCheck)
+                .rows.first { it.id == ModelId.ASR_DECODER }
+            assertEquals(ModelRowStatus.INSTALLED, installedRow.status)
         }
 
     @Test
@@ -344,12 +406,25 @@ class ModelsControllerTest {
         assertNull(activated)
     }
 
+    /**
+     * P28b (D43, FR-AST-13): running `testPlayDebugUnitTest` caught this test's own stale premise
+     * the same way as the two tests above — `play`'s real catalog reports every entry
+     * `bundled = false`, so a hardcoded `must report bundled` no longer holds on every flavor.
+     * Rewritten to the invariant `rowFor` actually promises regardless of flavor: a row's `bundled`
+     * always mirrors its own catalog entry's, never a stale or hardcoded copy.
+     */
     @Test
-    @Requirement("D35", "FR-AST-1")
-    fun `WPG every row reports bundled true, matching the real catalog`() {
+    @Requirement("D35", "D43", "FR-AST-1", "FR-AST-13")
+    fun `D43 every row's bundled flag matches its own catalog entry, whatever this flavor's manifest says`() {
         val state = ModelsController.currentState(context)
 
-        state.rows.forEach { row -> assertTrue("${row.id} must report bundled", row.bundled) }
+        state.rows.forEach { row ->
+            assertEquals(
+                "${row.id}'s row must mirror its catalog entry's bundled flag",
+                ModelCatalog.entry(row.id).bundled,
+                row.bundled,
+            )
+        }
     }
 
     @Test

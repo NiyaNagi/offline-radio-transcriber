@@ -521,6 +521,15 @@ free.
   every push — say so if that's the design); the privacy-policy and Data-Safety docs exist and
   name the FR-ANL-14 sentence verbatim where they make a privacy claim at all.
 
+  **Follow-up, done 2026-09-19 (see CHANGELOG's own entry for the commit hash):** the gap this
+  unit's own note named above — `ModelCatalog.entries` (P22's file) never reading
+  `bundled`/`downloadUrl` off the generated per-flavor manifest, so `play` still reported every
+  entry bundled — is now closed. `ModelCatalog.mapEntries` reads both fields straight from
+  `GeneratedBundledAssetEntry`; `specFor`/`unverifiedSpecFor` fetch from the mirror
+  (`ModelCatalogEntry.fetchUrl()`) once an entry is not bundled. AC-190's runtime half (installing
+  each variant and comparing its setup flow on a device) remains unverified from this worktree —
+  see this fix's own CHANGELOG entry for exactly what was and was not proven.
+
 - [x] **P24 · Automatic thread grouping after Pass B** *(new `:pipeline` threading package)* —
   D45's own note names this as the thing v0.1.1 overclaimed; FR-SPK-5, AC-163..165. Done
   2026-09-19: `pipeline/.../threading/**` (`ThreadGrouper`, `ThreadKindClassifier`,

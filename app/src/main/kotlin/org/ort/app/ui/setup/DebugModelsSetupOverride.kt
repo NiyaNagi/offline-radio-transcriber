@@ -3,32 +3,31 @@ package org.ort.app.ui.setup
 import org.ort.app.BuildConfig
 
 /**
- * This round's own file-ownership finding, reported rather than worked around: the setup
- * `MODELS` step ([SetupActivity.RenderModels]) reads its rows from
+ * P28a found the real production gap this object stood in for: the setup `MODELS` step
+ * ([SetupActivity.RenderModels]) reads its rows from
  * [org.ort.app.ui.data.ModelsController.currentState]`.rowsForSetupModelsStep()`, which only ever
  * returns a row when its catalog entry is genuinely `!bundled` — but
- * [org.ort.app.ui.data.ModelCatalog.entries] hardcodes every entry's
- * [org.ort.app.ui.data.ModelCatalogEntry.bundled] to its default, `true` ("every entry
- * [org.ort.app.ui.data.ModelCatalog] generates today is bundled", that file's own kdoc, verbatim),
- * and never reads [org.ort.app.assets.GeneratedBundledAssetManifest]'s own per-flavor `bundled`
- * field (`false` for `play`, per `BundledAssetCatalogRenderer`) to override it. So on *any* build
- * variant available to this session — including a real `play` debug build — the real production
- * path can never show a row here today: `rowsForSetupModelsStep()` is unconditionally empty.
+ * [org.ort.app.ui.data.ModelCatalog.entries] hardcoded every entry's
+ * [org.ort.app.ui.data.ModelCatalogEntry.bundled] to its default, `true`, rather than reading
+ * [org.ort.app.assets.GeneratedBundledAssetManifest]'s own per-flavor `bundled` field (`false` for
+ * `play`, per `BundledAssetCatalogRenderer`). **P28b (D43/D44, FR-AST-10..14) fixed that gap** in
+ * `ModelsViewData.kt` (`ModelCatalog.mapEntries` now reads `bundled`/`downloadUrl` from the
+ * generated manifest) — the real production path now shows a row here on a genuine `play` build.
  *
- * `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` is a different unit's file (WPG's),
- * outside what this round's prompt names as ownable here, so the real fix — plumbing
- * [org.ort.app.assets.GeneratedBundledAssetManifest.Entry.bundled] into
- * [org.ort.app.ui.data.ModelCatalogEntry.bundled] — is not made in this change. This object is the
- * same kind of seam [DebugRouteCheckOverride]/[DebugRigLinkPortOverride] already establish for a
- * screen this package cannot otherwise drive to a state worth capturing: a debug scenario
- * (`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`, outside this package's ownership) calls
- * [show] with the exact rows it wants the MODELS step to render — a real, honest shape
- * (`ModelDownloadRowStatus.PENDING`/`FAILED`/`DOWNLOADING`), just not sourced through the
- * currently-broken `bundled` plumbing — so the screen and its artboard are reachable by a capture
- * (constitution VIII) despite that gap. [SetupActivity.initialModelsSetupRows]/
- * [SetupActivity.refreshedModelsSetupRows] read [activeOverride] ahead of ever calling
- * [org.ort.app.ui.data.ModelsController.currentState], the same "read the override first" order
- * [SetupActivity.onCreate] already uses for [DebugRouteCheckOverride]/[DebugRigLinkPortOverride].
+ * This object stays, deliberately, rather than being removed: the debug scenario tooling
+ * (`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`) and the canonical screenshot tour both
+ * run against the `full` variant, where every catalog entry is genuinely `bundled = true` and
+ * `rowsForSetupModelsStep()` is therefore always empty — there is still no way to drive the real
+ * production path to a non-empty, `PENDING`/`FAILED`/`DOWNLOADING` MODELS-step capture without a
+ * real `play` build and a real network mirror. This remains the same kind of seam
+ * [DebugRouteCheckOverride]/[DebugRigLinkPortOverride] already establish for exactly that reason:
+ * a debug scenario calls [show] with the exact rows it wants the MODELS step to render — a real,
+ * honest shape, just not reachable through `full`'s own bundled-everything catalog — so the screen
+ * and its artboard stay reachable by a capture (constitution VIII).
+ * [SetupActivity.initialModelsSetupRows]/[SetupActivity.refreshedModelsSetupRows] read
+ * [activeOverride] ahead of ever calling [org.ort.app.ui.data.ModelsController.currentState], the
+ * same "read the override first" order [SetupActivity.onCreate] already uses for
+ * [DebugRouteCheckOverride]/[DebugRigLinkPortOverride].
  *
  * **Read gated on `BuildConfig.DEBUG`**, identically to [DebugRouteCheckOverride]: a release build
  * must never consult this object even in the (already impossible, per [show]'s own doc) case that
