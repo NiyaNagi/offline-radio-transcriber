@@ -110,6 +110,17 @@ public fun SettingsRootScreen(
                         subLine = "Usage and quality on by default · transcripts and audio are opt-in",
                     )
                 }
+                // P31 (FR-ALR-1..6): the live-alerts screen's own row, appended to "Capture" the
+                // same static way P27/P28/P30 appended their own rows — this screen id is not one
+                // of SettingsPolling.root's dynamic sections either.
+                if (section.label == "Capture") {
+                    NavRow(
+                        rowTitle = "Live alerts",
+                        onClick = { onOpen(SettingsScreenId.ALERTS) },
+                        icon = iconFor(SettingsScreenId.ALERTS),
+                        subLine = "Notify on a watched callsign, keyword or frequency · local only",
+                    )
+                }
             }
         }
     }
@@ -158,6 +169,10 @@ internal fun iconFor(screen: SettingsScreenId): ImageVector = when (screen) {
     // existing concept (a file the operator saves themselves), for the identical "OrtIcons.kt is
     // outside this unit's own file ownership" reason as LICENSES/ANALYTICS above.
     SettingsScreenId.BACKUP -> OrtIcons.export
+    // P31: no bespoke alerts/bell glyph exists either — the identical "OrtIcons.kt is outside
+    // this unit's own file ownership" reason as LICENSES/ANALYTICS/BACKUP above; the generic
+    // settings glyph (TIER/ABOUT/LICENSES' own fallback) stands in.
+    SettingsScreenId.ALERTS -> OrtIcons.settings
 }
 
 /** A tinted status dot for a settings sub-screen row (`Settings-Capture`/`Settings-Rig`'s green/

@@ -45,6 +45,12 @@ public enum class SettingsScreenId {
      * [ANALYTICS]: appended to the "Records" section, beside Export, not a [SettingsPolling.root]
      * dynamic row. */
     BACKUP,
+
+    /** P31 (FR-ALR-1..6): live alerts — [org.ort.app.ui.settings.SettingsAlertsScreen]. Follows
+     * the identical static-row-append pattern P27/P28/P30 established for [LICENSES]/[ANALYTICS]/
+     * [BACKUP]: appended to the "Capture" section (a live-monitoring concern, not a records or
+     * privacy one), not a [SettingsPolling.root] dynamic row. */
+    ALERTS,
 }
 
 public data class SettingsRowViewState(val label: String, val subLine: String, val screen: SettingsScreenId)
@@ -464,6 +470,47 @@ public data class NeverLeavesDeviceItem(val title: String, val subLine: String? 
  * quotes this exactly; `Settings-Export`'s own single-sentence "never exported" note is a separate,
  * differently-worded restatement `Settings-Export.dc.html` itself gives, so it is not built from
  * this list. */
+/** P31 (FR-ALR-1): the three watch kinds FR-ALR-1 names, kept as this package's own UI-facing
+ * enum rather than importing `org.ort.pipeline.alerts.AlertWatch`'s sealed class directly into a
+ * view state — the same view/domain separation every other `Settings*ViewState` in this file
+ * already keeps. */
+public enum class SettingsAlertWatchKind { CALLSIGN, KEYWORD, FREQUENCY }
+
+/** One row of [SettingsAlertsViewState.watches] — [label] is already formatted
+ * ([org.ort.pipeline.alerts.AlertWatch.displayValue]), never re-derived here. */
+public data class SettingsAlertWatchRowViewState(
+    val id: String,
+    val kind: SettingsAlertWatchKind,
+    val label: String,
+    val enabled: Boolean,
+)
+
+/**
+ * P31 (FR-ALR-1, FR-ALR-2, FR-ALR-6): [SettingsAlertsScreen]'s own state.
+ * [notificationsPermissionGranted] is D-honest (constitution I): `false` renders a banner stating
+ * alerts cannot fire, rather than a toggle that silently does nothing (functional spec §7.19's own
+ * "handle that honestly").
+ */
+public data class SettingsAlertsViewState(
+    val alertsEnabled: Boolean,
+    val notificationsPermissionGranted: Boolean,
+    val watches: List<SettingsAlertWatchRowViewState>,
+)
+
+/** [SettingsAlertsScreen]'s own action bundle — the identical detekt `LongParameterList` reason
+ * [SettingsBackupActions]/[SettingsExportShareActions] already exist for. [onEditWatch] carries
+ * the whole [SettingsAlertWatchKind] alongside the id since a caller cannot otherwise tell which
+ * of the three add/edit paths a bare id belongs to. */
+public data class SettingsAlertsActions(
+    val onToggleAlertsEnabled: (Boolean) -> Unit = {},
+    val onToggleWatch: (id: String, enabled: Boolean) -> Unit = { _, _ -> },
+    val onEditWatch: (id: String, kind: SettingsAlertWatchKind, newValue: String) -> Unit = { _, _, _ -> },
+    val onRemoveWatch: (id: String) -> Unit = {},
+    val onAddCallsignWatch: (String) -> Unit = {},
+    val onAddKeywordWatch: (String) -> Unit = {},
+    val onAddFrequencyWatch: (String) -> Unit = {},
+)
+
 public val NEVER_LEAVES_DEVICE: List<NeverLeavesDeviceItem> = listOf(
     NeverLeavesDeviceItem("Voiceprints", "a voice is a biometric · it is used here and only here"),
     NeverLeavesDeviceItem("Names and notes you gave stations"),

@@ -13,6 +13,9 @@ import org.ort.data.entity.TranscriptPass
 import org.ort.data.inWriteTransaction
 import org.ort.lexicon.PhoneticLattice
 import org.ort.lexicon.SlotDetail
+import org.ort.pipeline.alerts.AlertEvaluationTrigger
+import org.ort.pipeline.alerts.AlertMatchInput
+import org.ort.pipeline.alerts.NoOpAlertEvaluationTrigger
 import org.ort.pipeline.threading.RoomThreadRepository
 import org.ort.pipeline.threading.ThreadGroupingCoordinator
 
@@ -64,10 +67,19 @@ import org.ort.pipeline.threading.ThreadGroupingCoordinator
  * last step of [record] — automatic thread grouping happens **after** Pass B closes a
  * transmission, off the capture path, whatever [result]'s own outcome was (see [threadGrouper]'s
  * own kdoc for why a [PassBOutcome.Failed] retry is harmless rather than double-counted).
+ *
+ * **Build-plan P31 (FR-ALR-3, FR-ALR-4, AC-194, AC-195):** [alertTrigger] is handed one
+ * [org.ort.pipeline.alerts.AlertMatchInput] per call, built from this same, just-resolved
+ * [result] plus a fresh read of [result]'s own [org.ort.data.entity.TransmissionEntity.frequencyHz]
+ * — never from a Pass A partial, which never reaches this sink at all (AC-194). [AlertEvaluationTrigger.fireAndForget]
+ * is not `suspend` and is wrapped in [runCatching] here besides: a hung, slow or throwing alert
+ * path must never delay this write transaction or the pass queue behind it (constitution IV,
+ * FR-ALR-4, AC-195) — see that interface's own kdoc for how it guarantees that.
  */
 public class DataPassBResultSink(
     private val db: OrtDatabase,
     private val threadGrouper: ThreadGroupingCoordinator = ThreadGroupingCoordinator(RoomThreadRepository(db)),
+    private val alertTrigger: AlertEvaluationTrigger = NoOpAlertEvaluationTrigger,
 ) : PassBResultSink {
 
     override suspend fun record(result: PassBResult): Unit = db.inWriteTransaction {
@@ -112,8 +124,28 @@ public class DataPassBResultSink(
         }
         persistLattice(result)
         persistCandidates(result)
+        // P31 (FR-ALR-3, FR-ALR-4, AC-194, AC-195): fires only from this Pass B closure point,
+        // never from a Pass A partial (which never reaches this sink). `runCatching` around a
+        // non-suspend, fire-and-forget call: see this class's own kdoc for why neither this write
+        // transaction nor the pass queue behind it may ever wait on, or be broken by, alert
+        // evaluation.
+        runCatching { alertTrigger.fireAndForget(alertMatchInputFor(result)) }
         threadGrouper.onTransmissionClosed(result.transmissionId)
     }
+
+    /** [PassBResult] itself carries no frequency (technical design §3.4: a pass is a pure function
+     * of the segment audio, not of the row's own rig-set fields) — read fresh, in this same write
+     * transaction, from the [org.ort.data.entity.TransmissionEntity] segment-persist already wrote
+     * (constitution I: never guessed, `null` when genuinely absent). [AlertMatchInput.transcriptText]
+     * is `null` for anything but a [PassBOutcome.Accepted] outcome — a keyword watch has nothing to
+     * match against a rejected or failed decode. */
+    private suspend fun alertMatchInputFor(result: PassBResult): AlertMatchInput = AlertMatchInput(
+        transmissionId = result.transmissionId,
+        attributionState = result.attribution.state,
+        stationId = result.attribution.stationId,
+        transcriptText = (result.outcome as? PassBOutcome.Accepted)?.result?.text,
+        frequencyHz = db.transmissionDao().getById(result.transmissionId)?.frequencyHz,
+    )
 
     /** [PassBResult.lattice] is non-null exactly when Pass B produced one (see its own doc
      * comment) — never silently dropped, always inspectable (constitution I, FR-UI-8). */
