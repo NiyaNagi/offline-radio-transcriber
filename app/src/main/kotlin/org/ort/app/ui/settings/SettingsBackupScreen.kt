@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -17,6 +18,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.SectionHeader
@@ -211,6 +219,11 @@ private fun RestorePlanSummary(plan: SettingsRestorePlanViewState) {
  * already draws — kept local rather than reused from [org.ort.app.export.ExportCoordinator]'s own
  * screen since `SettingsExportScreen.kt`'s own button carries extra font-scale-specific layout
  * (`ExportSaveFileButton`) this screen's simpler, single-line label does not need. */
+// R-1090 (FR-A11Y-2, the R-380/R-543 pattern this package's own `PrimaryButton`/`SecondaryButton`
+// carry — `ui/components/Controls.kt`'s own doc comment): this screen's local button carried no
+// `semantics` of its own at all (the confirmed-broken shape) and no `requiredHeightIn` floor
+// either — `padding` alone is the same under-the-floor risk `TextAction`'s own R-510-class doc
+// comment already names, not a guaranteed 44dp.
 @Composable
 private fun PrimaryActionButton(label: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val bg = if (enabled) OrtColors.accentGreen else OrtColors.bgChip
@@ -218,9 +231,23 @@ private fun PrimaryActionButton(label: String, enabled: Boolean, onClick: () -> 
     Box(
         modifier = modifier
             .padding(vertical = OrtSpacing.xs)
+            .requiredHeightIn(min = 44.dp)
             .background(bg, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = OrtSpacing.md),
+            .padding(horizontal = 20.dp, vertical = OrtSpacing.md)
+            .clearAndSetSemantics {
+                contentDescription = label
+                text = AnnotatedString(label)
+                role = Role.Button
+                if (enabled) {
+                    onClick(label = null) {
+                        onClick()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(text = label, style = OrtType.control, color = fg)
@@ -232,9 +259,19 @@ private fun SecondaryActionButton(label: String, onClick: () -> Unit, modifier: 
     Box(
         modifier = modifier
             .padding(vertical = OrtSpacing.xs)
+            .requiredHeightIn(min = 44.dp)
             .background(OrtColors.bgCard, RoundedCornerShape(8.dp))
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = OrtSpacing.md),
+            .padding(horizontal = 20.dp, vertical = OrtSpacing.md)
+            .clearAndSetSemantics {
+                contentDescription = label
+                text = AnnotatedString(label)
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         contentAlignment = Alignment.Center,
     ) {
         Text(text = label, style = OrtType.control, color = OrtColors.textBody)

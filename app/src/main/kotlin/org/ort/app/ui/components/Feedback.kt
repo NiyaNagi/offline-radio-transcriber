@@ -31,7 +31,11 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.theme.OrtColors
@@ -115,13 +119,32 @@ public fun Banner(
     }
 }
 
+/**
+ * R-1090 (FR-A11Y-2, register): a plain, trailing `semantics(mergeDescendants = true) {}` — no
+ * explicit `contentDescription` of its own, relying entirely on the single child [Text] merging
+ * up — is exactly the second of the two failed attempts [CheckboxRow]'s own doc comment
+ * (`ui/components/Controls.kt`) found by device experiment: a merge boundary that only *adds*
+ * (here, adds nothing at all) alongside automatically-merged descendant text is not reliably
+ * exported to the real `AccessibilityNodeInfo` tree on this Compose/device combination.
+ * `clearAndSetSemantics` with an explicit, composed description is this package's own confirmed
+ * fix, applied here the same way [ActionBarButton] (`ui/components/Rows.kt`) already does for the
+ * identical one-child-`Text`-button shape.
+ */
 @Composable
 private fun BannerAction(text: String, color: Color, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) {},
+            .clearAndSetSemantics {
+                contentDescription = text
+                this.text = AnnotatedString(text)
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         contentAlignment = Alignment.CenterStart,
     ) {
         Text(text = text, style = OrtType.textAction.copy(fontWeight = FontWeight.Medium), color = color)

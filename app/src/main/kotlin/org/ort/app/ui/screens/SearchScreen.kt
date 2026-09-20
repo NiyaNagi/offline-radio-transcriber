@@ -33,8 +33,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -543,13 +548,29 @@ private fun SearchSectionLabel(text: String) {
 @Composable
 private fun RecentRow(entry: RecentSearchEntry, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val mono = isCallsignLike(entry.label)
+    val description = "${entry.label}, ${entry.overCount} overs"
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics(mergeDescendants = true) {
-                contentDescription = "${entry.label}, ${entry.overCount} overs"
+            // R-1090 (FR-A11Y-2, the R-380/CheckboxRow pattern — see `ui/components/Controls.kt`'s
+            // own doc comment): a plain, trailing `semantics(mergeDescendants = true) { ... }` does
+            // not reliably export this node's own description to a real device once real child
+            // content sits beneath it. `clearAndSetSemantics` with an explicit `Text` entry per
+            // descendant keeps [entry]'s label/count independently exact-matchable while still
+            // exporting a real `contentDescription` on-device.
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = listOf(
+                    AnnotatedString(entry.label),
+                    AnnotatedString("${entry.overCount} overs"),
+                )
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
             }
             .padding(horizontal = OrtSpacing.lg),
         verticalAlignment = Alignment.CenterVertically,

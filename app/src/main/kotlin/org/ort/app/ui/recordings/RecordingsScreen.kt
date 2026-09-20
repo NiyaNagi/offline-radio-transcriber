@@ -19,8 +19,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.EmptyState
 import org.ort.app.ui.components.FilterChip
@@ -189,14 +194,31 @@ private fun RecordingsSessionRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // R-1090 (FR-A11Y-2, device-confirmed on `ort_audit_a11y2`): a real `uiautomator` dump of this
+    // exact row showed the clickable node's own `content-desc` empty, with the real description
+    // carried only by a separate, non-clickable child — `mergeDescendants = true` failing to hide
+    // descendant semantics on this device, the same shape `CheckboxRow`'s own doc comment
+    // (`ui/components/Controls.kt`) already found broken and fixed with `clearAndSetSemantics`.
+    val description = sessionRowDescription(session)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(vertical = OrtSpacing.sm)
-            .semantics(mergeDescendants = true) { contentDescription = sessionRowDescription(session) }
-            .testTag("recordings-session-row-${session.id}"),
+            .testTag("recordings-session-row-${session.id}")
+            // `testTag` must sit before `clearAndSetSemantics` in the chain — placed after it, the
+            // tag does not survive (`clearAndSetSemantics` replaces this node's whole semantics
+            // configuration; found failing this unit's own gate, not by inspection).
+            .clearAndSetSemantics {
+                contentDescription = description
+                text = AnnotatedString(description)
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
     ) {
@@ -262,6 +284,19 @@ private fun RecordingBadge(badge: RecordingBadgeViewState, modifier: Modifier = 
  * operator (D40/R-1037); the archive states on/off, usage, the monthly rate and offers `Turn off`
  * beside the statement (D39/R-1036, FR-STO-3f).
  */
+/**
+ * R-1090 (FR-A11Y-2, device-confirmed on `ort_audit_a11y2`): this card's own `.clickable(...)`
+ * carried no `semantics` of its own at all — the R-380-original shape (`ui/components/Controls.kt`'s
+ * own doc comment) — and a real `uiautomator` dump confirmed it: the clickable card's own
+ * `content-desc` was genuinely empty, not even an attempted (if broken) merge. Unlike this
+ * package's usual fix, this card is not converted to `clearAndSetSemantics`: [ArchiveBudgetRow]
+ * nests its own independently-clickable "Turn off"/"Turn on" [TextAction] inside it, and
+ * `clearAndSetSemantics` would hide that nested control from TalkBack entirely, trading one defect
+ * for a worse one (an unreachable control). A plain, non-merging `contentDescription` — matching
+ * the `onClickLabel` this card already declares — names what the card itself opens without
+ * touching descendant semantics, so "Turn off"/"Turn on" and the two budget rows' own descriptions
+ * stay independently reachable exactly as they are today.
+ */
 @Composable
 private fun RecordingsBudgetsCard(
     budgets: RecordingsBudgetsViewState,
@@ -274,6 +309,7 @@ private fun RecordingsBudgetsCard(
             .fillMaxWidth()
             .background(OrtColors.bgCard, RoundedCornerShape(8.dp))
             .clickable(onClickLabel = "Storage settings", role = Role.Button, onClick = onOpenOverAudioBudget)
+            .semantics { contentDescription = "Storage settings" }
             .padding(horizontal = OrtSpacing.md, vertical = OrtSpacing.sm)
             .testTag(RECORDINGS_BUDGETS_CARD_TEST_TAG),
     ) {

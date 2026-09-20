@@ -410,6 +410,10 @@ private fun ExportPotaSection(enabled: Boolean, onExportPota: () -> Unit) {
     )
     val bg = if (enabled) OrtColors.bgCard else OrtColors.bgChip
     val fg = if (enabled) OrtColors.textBody else OrtColors.textDisabled
+    val label = "Export POTA activity"
+    // R-1090 (FR-A11Y-2, the R-380/R-543 pattern this file's own sibling buttons already carry —
+    // see [ExportSaveFileButton]'s own doc comment): this one button was missed by that earlier
+    // pass — it carried no `semantics` of its own at all, the confirmed-broken shape.
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -417,10 +421,23 @@ private fun ExportPotaSection(enabled: Boolean, onExportPota: () -> Unit) {
             .background(bg, RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, role = Role.Button, onClick = onExportPota)
             .padding(horizontal = OrtSpacing.md)
-            .testTag("export-pota-button"),
+            .testTag("export-pota-button")
+            .clearAndSetSemantics {
+                contentDescription = label
+                text = AnnotatedString(label)
+                role = Role.Button
+                if (enabled) {
+                    onClick(label = null) {
+                        onExportPota()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            },
         contentAlignment = Alignment.CenterStart,
     ) {
-        Text(text = "Export POTA activity", style = OrtType.control, color = fg)
+        Text(text = label, style = OrtType.control, color = fg)
     }
 }
 
@@ -458,6 +475,9 @@ private fun ExportShareSection(shareActions: SettingsExportShareActions) {
     )
 }
 
+// R-1090 (FR-A11Y-2, the R-380/R-543 pattern this file's own sibling buttons already carry — see
+// [ExportSaveFileButton]'s own doc comment): this row carried no `semantics` of its own at all,
+// the confirmed-broken shape.
 @Composable
 private fun ShareRow(label: String, onClick: () -> Unit, testTag: String) {
     Box(
@@ -468,7 +488,16 @@ private fun ShareRow(label: String, onClick: () -> Unit, testTag: String) {
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = OrtSpacing.md)
             .testTag(testTag)
-            .padding(vertical = OrtSpacing.xs),
+            .padding(vertical = OrtSpacing.xs)
+            .clearAndSetSemantics {
+                contentDescription = label
+                text = AnnotatedString(label)
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         contentAlignment = Alignment.CenterStart,
     ) {
         Text(text = label, style = OrtType.control, color = OrtColors.textBody)

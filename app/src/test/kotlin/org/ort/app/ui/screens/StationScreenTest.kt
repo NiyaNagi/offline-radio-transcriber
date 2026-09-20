@@ -1,5 +1,9 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -9,6 +13,8 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -24,6 +30,8 @@ import org.ort.app.ui.data.UnidentifiedVoicesSummary
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.Attribution
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 /** R-070/R-071 (ui-conformance-plan WP8): everything heard from one station, across every session. */
 @RunWith(RobolectricTestRunner::class)
@@ -211,6 +219,29 @@ class StationScreenTest {
         composeTestRule.onNodeWithText("W7NPC").performClick()
 
         assert(opened == "W7NPC")
+    }
+
+    /**
+     * R-1090 (FR-A11Y-2): a real `uiautomator` dump on `ort_audit_a11y2` measured this row at 88px
+     * on a 420dpi device (33.5dp) — under the floor — because it never carried a `heightIn` at all.
+     * Shown to discriminate: reverting the `heightIn(min = 44.dp)` this unit adds to `StationRow`
+     * makes this test fail at exactly this width/density, the tour's own canonical config.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1090 a station row clears the 44dp touch-target floor at the tour AVD's own width`() {
+        composeTestRule.setContent {
+            Box(modifier = Modifier.width(390.dp)) {
+                OrtTheme {
+                    StationsListScreen(state = StationsListState(stations = listOf(fixtureRow())), onOpen = {})
+                }
+            }
+        }
+
+        val bounds = composeTestRule.onNodeWithTag("station-row-W7NPC").getUnclippedBoundsInRoot()
+        val height = bounds.bottom - bounds.top
+        assertTrue("expected station-row-W7NPC to clear the 44dp floor; got $height", height >= 44.dp)
     }
 
     private fun fixtureRow() = StationListEntryViewState(

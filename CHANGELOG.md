@@ -451,6 +451,126 @@ change, confirmed the new test fails for the right reason, restored, confirmed g
   instruction to run only the scoped commands above.
 
 ## 2026-09-20 (P32 gate fix: `CheckboxRow`/`ToggleRow`'s content-description fix regressed six consumer tests; corrected)
+## 2026-09-20 (R-1090 accessibility sweep, second half: the screens P32 never reached)
+
+### b9d916e8 — R-1090 · the screens P32's accessibility sweep never reached: correction sheet, Search, Threads, Stations, Digest, Recordings, Capture and Settings' Export/Backup
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/CorrectionSheet.kt`, `SearchScreen.kt`,
+`ThreadScreen.kt`, `ThreadDetailScreen.kt`, `StationScreen.kt`, `StationIdentityScreen.kt`,
+`LiveMonitorScreen.kt`; `app/src/main/kotlin/org/ort/app/ui/digest/DigestScreens.kt`,
+`SessionsScreens.kt`; `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingsScreen.kt`;
+`app/src/main/kotlin/org/ort/app/ui/components/Feedback.kt` (shared); `app/src/main/kotlin/org/ort/app/ui/settings/SettingsExportScreen.kt`,
+`SettingsBackupScreen.kt`; new test `app/src/test/kotlin/org/ort/app/ui/screens/StationScreenTest.kt`.
+
+**Requirements/ACs:** FR-A11Y-2, constitution VII (the accessibility floor), constitution VIII
+(accessibility judged on a device, never the test tree).
+
+**What changed:** register row R-1090 — P32 fixed two shared-component defects (header icon
+touch targets, `CheckboxRow`/`ToggleRow`'s missing content description) and stopped, leaving
+the correction sheet, Search, Threads, Stations, Digest, Recordings, Capture and Settings'
+Licences/Backup/Export/Contribute/Diagnostics/About/Storage/Rig/Tier/Capture sub-screens
+uninspected. This unit booted a fresh AVD (`ort_audit_a11y2`, port 5568 — `ort_audit`/5554 and
+`ort_audit_a11y`/5560 were already in use by other sessions), inventoried every screen on that
+device with `uiautomator dump`, and fixed every real defect found:
+
+- **The R-380/CheckboxRow class of defect** (a `.clickable(...)` node whose trailing, non-clearing
+  `semantics(mergeDescendants = true) { contentDescription = ... }` does not reliably export that
+  description to the real `AccessibilityNodeInfo` tree once real child content sits beneath it —
+  confirmed directly this session by a fresh `uiautomator` dump of `StationRow`, showing an
+  empty `content-desc` on the clickable node itself and the real description on a separate,
+  non-clickable child) was found, unfixed, in: `CorrectionSheet`'s candidate and station-search
+  rows, `SearchScreen`'s `RecentRow`, `ThreadScreen`'s `ThreadCard` and `FrequencyMeanwhileRow`,
+  `ThreadDetailScreen`'s `ThreadDetailOverRow`, `StationScreen`'s `StationRow` and
+  `RecentOverRow`, `StationIdentityScreen`'s `SplitOverRow`, `RecordingsScreen`'s
+  `RecordingsSessionRow`, `DigestScreens`' `DigestRow` and `SessionsScreens`' `SessionRow`. All
+  ten converted to `clearAndSetSemantics`, most with an explicit multi-entry
+  `SemanticsProperties.Text` list (the `CheckboxRow` pattern) so each row's own tested fields
+  (a callsign, a transcript, a badge) stay independently exact-matchable by `onNodeWithText`.
+- **The original, no-semantics-at-all R-380 shape** (a bare `.clickable()` wrapping only a child
+  `Text`, confirmed by a fresh device dump to carry a genuinely empty `content-desc` — not even
+  an attempted merge) was found in two buttons `SettingsExportScreen.kt`'s own sibling buttons
+  had already been fixed for but these two were missed (`ExportPotaSection`'s button, `ShareRow`),
+  and in `SettingsBackupScreen.kt`'s local `PrimaryActionButton`/`SecondaryActionButton` (which
+  also carried no `requiredHeightIn` floor at all). All four fixed with `clearAndSetSemantics`;
+  the two Backup buttons also gained `requiredHeightIn(min = 44.dp)`.
+- **Missing 44dp touch-target floors** (FR-A11Y-2), found by device measurement, not by
+  inspection: `StationScreen.kt`'s `StationRow` (measured 88px/33.5dp on the 420dpi
+  `ort_audit_a11y2` device) and `RecentOverRow`, and `StationIdentityScreen.kt`'s `SplitOverRow`
+  — none had a `heightIn` at all. All three gained `heightIn(min = 44.dp)`.
+- **The R-1073 under-the-floor icon shape** (`.clickable` directly on a small `Icon`'s own
+  `Modifier.size(...)`, rather than a real 44dp `Box` around it) was found, unfixed, on
+  `LiveMonitorScreen`'s own back chevron (this screen draws its own header rather than using
+  `ScreenHeader`/`DrillInHeader`, so it never got the P32/R-1073 fix). Fixed with the same
+  outer-`Box`-carries-the-floor pattern established elsewhere.
+- **A missing checkbox `toggleableState`**: `StationIdentityScreen.kt`'s `SplitOverRow` declared
+  `Role.Checkbox` on its clickable but never set `toggleableState`, so a screen reader could
+  announce "checkbox" but never "checked"/"not checked". Fixed as part of its `clearAndSetSemantics`
+  conversion.
+- **A shared-component defect reaching every `Banner` in the app**: `Feedback.kt`'s
+  `BannerAction` ("Retry"/etc.) used a bare `semantics(mergeDescendants = true) {}` with no
+  explicit `contentDescription` at all — the confirmed-broken "second attempt" shape
+  `CheckboxRow`'s own doc comment already names. Fixed with `clearAndSetSemantics`, the same
+  `ActionBarButton` pattern.
+- **`RecordingsScreen.kt`'s budgets card** is the one row left un-converted to
+  `clearAndSetSemantics` on purpose: it nests an independently-clickable "Turn off"/"Turn on"
+  `TextAction` inside a larger clickable card, and `clearAndSetSemantics` would hide that nested
+  control from TalkBack entirely — a worse defect than the one being fixed. Given a plain,
+  non-merging `contentDescription` instead (matching its existing `onClickLabel`), which names
+  the card without touching descendant semantics.
+
+**Inspected and confirmed clean** (device dump, `ort_audit_a11y2`): the drawer (`DrawerRow`
+already carries `clearAndSetSemantics` from R-546), Search's initial state and query field,
+Threads' empty state, Stations' list rows and filter chips after the fix above, Recordings'
+budget card rows (`KeyValueRow`'s non-clickable `focusable()` path, confirmed correctly exported
+on-device — informational, not clickable), Settings root (every `NavRow` carries its content
+description directly on the clickable node), Settings' Storage screen (`KeyValueRow` rows,
+budget chip row), and Settings' Licences screen (every third-party notice row). Settings'
+Contribute, Diagnostics, About, Rig, Tier and Capture sub-screens carry no local `.clickable()`
+calls at all — built entirely from already-fixed shared components (`NavRow`, `KeyValueRow`,
+`CheckboxRow`, `ToggleRow`) — confirmed by source inspection; not separately device-dumped given
+the strong, consistent pattern that shared-component-only screens measured clean everywhere
+this pass checked.
+
+**Verified:** `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.*"` green, 2244+
+tests, no failures (two pre-existing failures this session's `testTag`-after-`clearAndSetSemantics`
+ordering mistake introduced in `RecordingsScreen.kt` were caught by this same command and fixed —
+`testTag` must precede `clearAndSetSemantics` in a modifier chain or the tag does not survive).
+`.\gradlew.bat ktlintCheck detekt` green. New `StationScreenTest.R_1090` (the 44dp floor on
+`StationRow` at `w390dp-h844dp-420dpi`) shown to discriminate: reverting the `heightIn` addition
+fails it for exactly that reason; every semantics fix's own discriminating evidence is the device
+dump quoted above, not a Robolectric assertion — Robolectric's merge behaviour is exactly what
+this whole defect class is invisible to (constitution VIII).
+
+**Left open / not done:**
+- The register's own open question — whether `uiautomator`'s "empty-label clickable parent,
+  labelled non-clickable child" shape (seen again this session on `ScreenHeader`'s drawer/search
+  icons, already-fixed-and-accepted per R-1073) is itself ground truth, or a dump artifact a real
+  TalkBack pass would read correctly — is still unsettled. This unit only converted rows where
+  the *combination* of `mergeDescendants = true` and an explicit override left the clickable
+  node's own `content-desc` genuinely empty (the `CheckboxRow`-confirmed failure mode), not every
+  screen carrying the plain icon-in-box shape.
+- `SearchScreen.kt`'s `WidenRow` ("Show" affordance), `StruckThroughQueryField` and
+  `UnappliedTextCountLine` use a plain, non-merging `.semantics { contentDescription = ... }`
+  alongside real descendant `Text` — a different, likely-safe shape (no `mergeDescendants`
+  interaction) but not device-verified this session; flagged rather than changed speculatively.
+- Two findings surfaced in passing, outside this row's assigned screen list, left unfixed:
+  `ImproveScreens.kt` and `FrequencyScreen.kt` (`FrequencyChangeScreen`/`FrequencyDetailContent`)
+  each carry the same confirmed `.clickable(...)` + trailing `semantics(mergeDescendants = true)`
+  shape this unit fixed everywhere it was in scope. Neither "Improve records" nor "Frequencies"
+  is named in R-1090's own not-reached list; reported rather than fixed, to respect this unit's
+  scope.
+- A possible functional (not accessibility) finding, noted but not investigated further:
+  `ThreadScreen` rendered `ThreadListViewState.Empty` ("No overs yet.") for the
+  `stations-14-nights` scenario despite Now/Log showing real, non-zero overs for the same
+  session — may be a real gap between Threads' own query and the scenario's seeded data, or a
+  timing artifact of this session's own scripted navigation; not chased further as out of scope
+  for an accessibility sweep.
+- No live TalkBack pass was run (this environment has no way to drive TalkBack's own gesture
+  navigation); every finding above is `uiautomator`-dump evidence, which the register itself
+  already flags as not fully settled for the icon-in-box shape.
+- R-1090's own five-screen "inspected and clean, not separately device-dumped" set (Contribute,
+  Diagnostics, About, Rig, Tier, Capture sub-screens) rests on source inspection plus the strong
+  pattern from every other screen checked this session, not each one's own device dump.
 
 ### 90a4f331 — P32 gate fix · `CheckboxRow`/`ToggleRow` carry a real content description without erasing descendant text or state
 
