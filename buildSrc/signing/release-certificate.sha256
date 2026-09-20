@@ -13,4 +13,4 @@
 #   apksigner verify --print-certs app-full-debug.apk   # "Signer #1 certificate SHA-256 digest"
 # and replace the single word below with that digest, lowercase, with no colons — nothing else on
 # this line, and nothing else in the file needs to change.
-UNSET
+5fdfe6d0776cea4b7d28a9d3f358473f122993e7ddc4f3378fa4e899cf3756f9
