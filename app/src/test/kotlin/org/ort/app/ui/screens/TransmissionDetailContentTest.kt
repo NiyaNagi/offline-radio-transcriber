@@ -589,10 +589,11 @@ class TransmissionDetailContentTest {
             }
         }
         // `detail` and `sourceOverTimeLabel` are two separate state writes inside one `refresh()`
-        // call — waiting on the generic "Matched by voice" text (present in both the honest
-        // fallback wording and the final one) can catch the composition between those two writes;
-        // waiting on the real time clause itself is the one condition that is only true once both
-        // have landed.
+        // call — waiting on the generic "Carried from " text (present in both the pre-load
+        // fallback wording, "Carried from the source over,", and the final one, "Carried from
+        // 02:14:07," — this unit, D45/FR-UI-8, dropped the unbackable "Matched by voice" claim
+        // from both) can catch the composition between those two writes; waiting on the real time
+        // clause itself is the one condition that is only true once both have landed.
         composeTestRule.waitUntilTextExists("00:00:00")
 
         composeTestRule.onNodeWithText("00:00:00", substring = true).assertExists()
