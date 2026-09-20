@@ -100,7 +100,7 @@ No other setup board's indicator or colour changed in this unit.
 ---
 ## 2026-09-20 (R-1074: `Now`'s live-session chart stops hatching a whole hour for a real 22-minute gap)
 
-### 98ecc1ca — R-1074 · `Now`'s live chart reuses `SessionCoverageMapper.buildSegments`, ending whole-clock-hour hatching
+### ebf5a7c5 — R-1074 · `Now`'s live chart reuses `SessionCoverageMapper.buildSegments`, ending whole-clock-hour hatching
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt`,
 `app/src/main/kotlin/org/ort/app/ui/data/ActivityPattern.kt` (kdoc only — no behaviour change),
