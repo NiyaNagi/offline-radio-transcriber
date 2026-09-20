@@ -737,6 +737,19 @@ private-destination-before-public-launch condition, recorded as a release gate).
   test and failed to resolve for `.assertIsOff()` in another, same composition) — dropped in favor
   of the wording-only assertions that already cover AC-179's substantive claim; worth a closer look
   if a future change needs to assert rendered toggle state specifically.
+- **A large, ad-hoc combined test-filter run** (`--tests "org.ort.app.analytics.*" --tests
+  "org.ort.app.ui.settings.*" --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.debug.*"` in
+  one invocation) hit the pre-existing "Compose never reaches idle" JVM-sharing accumulation
+  failure `app/build.gradle.kts`'s own `registerComposePoisonSmokeTestTask`/
+  `applyComposeIdlePoisonMitigations` functions already document at length (`AppNotIdleException`
+  after ~15M idle-check attempts, in `SettingsAnalyticsScreenTest`,
+  `SettingsAboutScreenTest` and `SettingsCaptureScreenTest`) — not reproducible when any one of
+  those packages is run alone (each confirmed green individually, repeatedly, including a fresh
+  run after every fix in this change). Left as an observation for whoever next tunes
+  `forkEvery`/the isolation list, not treated as a defect in this unit's own code: this is exactly
+  the class of failure `AGENTS.md`'s "Green means green on CI" line exists to catch on the real
+  gate, which runs `:app:testFullDebugUnitTest` in full with its own tuned settings, not an
+  arbitrary combination of `--tests` filters a builder happened to choose.
 - **`RealAnalyticsUploadClient`'s TLS** is exercised only via plain HTTP in tests (the loopback
   fixture mirrors `RealFieldReportUploadClient`'s own precedent); `tools/analytics/server.py`'s
   `--cert`/`--key` path is implemented but has no automated test of its own.
