@@ -85,12 +85,18 @@ class DetailViewStateMapperTest {
     // sentence text (constitution II). ----
 
     @Test
-    fun `R_1046 a genuine voice-matched INFERRED with no source keeps its own honest text`() {
+    fun `D45 an INFERRED with no source and no correction never claims a voice match`() {
+        // This task (constitution I, D45): `sourceId == null && !corrected` is unreachable via
+        // every current write path (the resolver never returns INFERRED, `:identity` is an empty
+        // stub, and the one write path that produces INFERRED always sets `corrected = 1`) — but
+        // the type remains constructible, so the mapper must still never claim a mechanism this
+        // codebase has no evidence for.
         val body = DetailViewStateMapper.from(detail(Attribution.inferred("K7LWH", 0.82))).body
         check(body is DetailBodyViewState.Inferred)
         assertFalse(body.corrected)
         assertNull(body.correctionTyped)
-        assertTrue(body.explanation.contains("Matched by voice"), body.explanation)
+        assertFalse(body.explanation.contains("Matched by voice"), body.explanation)
+        assertFalse(body.explanation.contains("voice"), body.explanation)
     }
 
     @Test
@@ -161,10 +167,15 @@ class DetailViewStateMapperTest {
     }
 
     @Test
-    fun `R_057 UNKNOWN explains itself with the definitional sentence, never a fabricated voice match`() {
+    fun `R_057 D45 UNKNOWN explains itself with the definitional sentence, never a fabricated voice match`() {
+        // This task (constitution I, D45): the old sentence — "the voice matched no one heard
+        // before" — claimed a voice-matching attempt `:identity` (an empty stub) has never made,
+        // for *every* UNKNOWN over (a common, everyday resolution outcome). This test's own name
+        // promised this guard before this fix but never actually asserted it.
         val body = DetailViewStateMapper.from(detail(Attribution.unknown())).body
         check(body is DetailBodyViewState.Unknown)
         assertTrue(body.explanation.contains("Nothing is claimed"), body.explanation)
+        assertFalse(body.explanation.contains("voice", ignoreCase = true), body.explanation)
         assertTrue(body.tried.any { it.title.contains("grammar", ignoreCase = true) })
         assertTrue(body.tried.any { it.title.contains("unidentified voice", ignoreCase = true) })
     }

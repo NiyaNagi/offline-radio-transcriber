@@ -35,12 +35,22 @@ class StationIdentityScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
+    // This task (constitution I, D45): every test below except the two `D45`-named ones exercises
+    // layout/interaction concerns unrelated to voice-cluster honesty, so this fixture keeps
+    // `hasVoiceprint = true` — the aspirational, once-`:identity`-ships shape — rather than
+    // changing 20 unrelated assertions to accommodate the new, honest default. The real, current
+    // (`hasVoiceprint = false`) shape is exercised by its own dedicated tests below.
     private fun fixtureState(name: String? = null, note: String? = null) = StationIdentityViewState(
         stationId = "N7XYZ",
         callsign = "N7XYZ",
         heardOverCount = 31,
         lexiconLabel = "region 7",
-        voice = StationVoiceViewState(clusterOverCount = 38, confirmedCount = 31, inferredCount = 7),
+        voice = StationVoiceViewState(
+            hasVoiceprint = true,
+            clusterOverCount = 38,
+            confirmedCount = 31,
+            inferredCount = 7,
+        ),
         givenByYou = StationGivenByYouViewState(name = name, note = note),
     )
 
@@ -229,6 +239,7 @@ class StationIdentityScreenTest {
     fun `R_572 the Voiceprint sub-line states stable-since when a real first-seen date exists`() {
         val state = fixtureState().copy(
             voice = StationVoiceViewState(
+                hasVoiceprint = true,
                 clusterOverCount = 38,
                 confirmedCount = 31,
                 inferredCount = 7,
@@ -247,6 +258,46 @@ class StationIdentityScreenTest {
 
         composeTestRule.onNodeWithText("31 with the callsign heard · 7 inferred from it").assertExists()
         composeTestRule.onNodeWithText("stable since", substring = true).assertDoesNotExist()
+    }
+
+    // ---- This task (constitution I, D45): `hasVoiceprint = false` is the real, current shape for
+    // every station on every device — `:identity` is an empty stub and nothing else ever creates
+    // the first VoiceprintEntity for a station. The row must say so honestly, never "One cluster,
+    // N overs" (a claim of real voice clustering this app has never performed). ----
+
+    @Test
+    fun `D45 with no real voiceprint bound the Voiceprint row reads honestly, never a claimed cluster`() {
+        val state = fixtureState().copy(
+            voice = StationVoiceViewState(
+                hasVoiceprint = false,
+                clusterOverCount = 38,
+                confirmedCount = 31,
+                inferredCount = 7,
+            ),
+        )
+        composeTestRule.setContent { OrtTheme { StationIdentityScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onNodeWithText("No voice on file yet").assertExists()
+        composeTestRule.onNodeWithText("One cluster", substring = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `D45 with no real voiceprint bound the marker reads not-computed, not a fabricated inferred confidence`() {
+        // name = "Dave" (as R_571 uses) so only Note and Nearest-other are "small" for reasons
+        // unrelated to this fix — isolating the count this test actually cares about: Voiceprint
+        // flips from a hollow "inferred" ring (R_214's fixture, hasVoiceprint = true) to the same
+        // "small dot" the Nearest-other row already uses for "not computed yet".
+        val state = fixtureState(name = "Dave").copy(
+            voice = StationVoiceViewState(
+                hasVoiceprint = false,
+                clusterOverCount = 38,
+                confirmedCount = 31,
+                inferredCount = 7,
+            ),
+        )
+        composeTestRule.setContent { OrtTheme { StationIdentityScreen(state = state, onBack = {}) } }
+
+        composeTestRule.onAllNodesWithContentDescription("small dot", substring = true).assertCountEquals(3)
     }
 
     // R-073's own screen scrolls (`Column(...).verticalScroll(...)`), so "Given by you"'s Rename/

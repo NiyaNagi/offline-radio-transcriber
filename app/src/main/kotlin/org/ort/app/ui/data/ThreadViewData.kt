@@ -27,6 +27,16 @@ public object ThreadGroupingMapper {
      *   cluster match" — the *only* mechanism it documents) — "by voice".
      * - [Attribution.corrected] with no source is exactly [Attribution.withCorrection]'s own shape
      *   (a human typed or picked a callsign; no source, no score) — "by callsign".
+     *
+     * **This task (constitution I, D45): the "by voice" branches below are correctly gated, and
+     * currently unreachable.** `:identity` is an empty stub (D45 defers the voice library past
+     * 1.0) and the resolver never returns `INFERRED` itself, so no production write path has ever
+     * set a real, non-null `sourceTransmissionId` — the *only* condition that reaches "inherited
+     * by voice…" here. Unlike [org.ort.app.ui.data.DetailViewStateMapper]'s own former generic
+     * fallback (fixed in the same change), this `when` never claims "voice" for the
+     * `sourceId == null` cases — "by callsign" requires real evidence (`corrected`), and the final
+     * `else` names no mechanism at all. Kept exactly as-is, not deleted, for the real
+     * `sourceTransmissionId` a future `:identity` will write.
      */
     public fun reasoningFor(detail: TransmissionDetail, timeLabelById: Map<String, String>): String =
         when (detail.attribution.state) {
@@ -337,6 +347,11 @@ public object ThreadListMapper {
         sorted.filter { it.attribution.state == AttributionState.INFERRED }.forEach { detail ->
             val station = detail.attribution.stationId ?: return@forEach
             val pos = positionById[detail.id]
+            // This task (constitution I, D45): `sourcePos` is non-null only when a real
+            // `sourceTransmissionId` resolves to another over in *this* thread — evidence, not a
+            // guess. No production write path sets one today (`:identity` is an empty stub), so
+            // this branch is currently unreachable; the neutral "inherited $station" fallback below
+            // — never "voice" — is what every real INFERRED row (a human correction) reads as.
             val sourcePos = detail.attribution.sourceTransmissionId?.toString()?.let { positionById[it] }
             val confidenceSuffix = detail.attribution.confidence?.let { " · %.2f".format(it) }.orEmpty()
             val text = if (sourcePos != null) {

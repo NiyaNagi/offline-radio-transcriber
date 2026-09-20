@@ -46,8 +46,9 @@ public sealed interface DetailBodyViewState {
      * [org.ort.app.ui.screens.TransmissionDetailScreen] can make that timestamp itself the tappable
      * link the board draws it as — a separate `Open the source over` line beneath the sentence is
      * not what the board shows. `null` when no source id is known yet — either a genuine voice
-     * match with nothing resolved ([explanation]'s honest generic "Matched by voice." fallback,
-     * exactly as before) or, since register R-1046, a human correction (see [corrected]/
+     * match with nothing resolved (this task: [explanation]'s honest, mechanism-neutral fallback —
+     * see [bodyFor]'s own doc comment for why it no longer says "Matched by voice" here) or, since
+     * register R-1046, a human correction (see [corrected]/
      * [correctionTyped] below for how [explanation] tells that case apart instead of reusing the
      * same sentence for both).
      */
@@ -446,7 +447,18 @@ public object DetailViewStateMapper {
                         "Not heard in this over. The operator corrected this."
                     }
 
-                    else -> "Not heard in this over. Matched by voice."
+                    // This task (constitution I, D45): `sourceId == null && !attribution.corrected`
+                    // is unreachable via every current write path — the resolver
+                    // (`:pipeline`'s `CallsignResolver`) never returns INFERRED itself, `:identity`
+                    // is an empty stub (D45), and the one write path that does produce INFERRED
+                    // (`CorrectionDao.applyCorrectedAttribution`) always sets `corrected = 1`. So
+                    // this branch, if ever reached (a future caller, a data inconsistency), MUST
+                    // NOT claim "Matched by voice" — this codebase has no evidence a voice matched
+                    // anything. Kept honestly non-committal rather than deleted, since the type
+                    // itself (`Attribution.inferred` with no source) remains constructible and is
+                    // reserved for a real, future `:identity` mechanism this mapper cannot yet
+                    // distinguish from "no reason recorded at all".
+                    else -> "Not heard in this over. Inferred, with no source over or correction recorded for it."
                 }
                 DetailBodyViewState.Inferred(
                     explanation = explanation,
@@ -459,8 +471,14 @@ public object DetailViewStateMapper {
 
             AttributionState.AMBIGUOUS -> ambiguousBody(detail.inspection, ambiguousEvidence)
 
+            // This task (constitution I, D45): the old sentence claimed "the voice matched no
+            // one heard before" for *every* UNKNOWN over — asserting a voice-matching attempt
+            // that never happened (`:identity` is an empty stub; no production code compares a
+            // voiceprint to anything). [triedStepsFor]'s own "Voice match against N stations"
+            // step already states the real, honest fact (a voiceprint was or was not even
+            // extracted); this top-line sentence now names no mechanism at all.
             AttributionState.UNKNOWN -> DetailBodyViewState.Unknown(
-                explanation = "No callsign heard, and the voice matched no one heard before. Nothing is claimed.",
+                explanation = "No callsign heard, and nothing else resolved it. Nothing is claimed.",
                 tried = triedStepsFor(detail.inspection, unknownContext),
             )
         }

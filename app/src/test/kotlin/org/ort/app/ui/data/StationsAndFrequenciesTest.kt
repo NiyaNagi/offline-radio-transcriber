@@ -1,6 +1,7 @@
 package org.ort.app.ui.data
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.ort.core.Attribution
@@ -112,10 +113,20 @@ class StationsAndFrequenciesTest {
     @Test
     fun `R_070 countContext reads the confirmed-inferred split honestly`() {
         val mixed = StationViewMapper.countContext(confirmedCount = 3, inferredCount = 12)
-        assertEquals("12 by voice match · 3 heard", mixed)
+        assertEquals("12 inferred · 3 heard", mixed)
         assertEquals("1 over", StationViewMapper.countContext(confirmedCount = 1, inferredCount = 0))
-        assertEquals("5 by voice match", StationViewMapper.countContext(confirmedCount = 0, inferredCount = 5))
+        assertEquals("5 inferred", StationViewMapper.countContext(confirmedCount = 0, inferredCount = 5))
         assertEquals("0 overs", StationViewMapper.countContext(confirmedCount = 0, inferredCount = 0))
+    }
+
+    @Test
+    fun `D45 countContext never claims a voice match, since the only production INFERRED path is a correction`() {
+        // This task (constitution I, D45): `:identity` is an empty stub — the resolver
+        // (`CallsignResolver`) never returns INFERRED, and the one write path that does
+        // (`CorrectionDao.applyCorrectedAttribution`) is a human correction. "N by voice match"
+        // named a mechanism this app has never run; "inferred" names the real, closed-set state.
+        val text = StationViewMapper.countContext(confirmedCount = 0, inferredCount = 7)
+        assertFalse(text.contains("voice", ignoreCase = true), text)
     }
 
     // --- R-071: the frequency-usage summary ("145.230 almost always · 146.960 twice") ---

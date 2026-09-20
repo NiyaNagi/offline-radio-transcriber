@@ -237,6 +237,16 @@ public object StationPolling {
      * "Given by you" reads the *latest* [org.ort.data.dao.StationIdentityDao] history row for each
      * field — the same source [renameStation]/[updateStationNote] write to and [stationRow] reads
      * for the Stations list, so a rename shows up identically in both places.
+     *
+     * **This task (constitution I, D45): [StationVoiceViewState.hasVoiceprint] gates the whole
+     * "Voice" section, not just [StationVoiceViewState.stableSinceLabel].** [boundCluster] below is
+     * the real, structural fact — `:identity` never having shipped ever creates a
+     * [org.ort.data.entity.VoiceprintEntity] for any station outside a manual [splitVoiceprint]
+     * (itself only reachable from an *existing* one), so [boundCluster] is `null` for every station
+     * today. Before this fix, [StationVoiceViewState.clusterOverCount] (`confirmed + inferred`,
+     * R-213) was shown regardless, always claiming "One cluster, N overs" — a real voice cluster
+     * that has never actually been computed. `hasVoiceprint = boundCluster != null` is the caller's
+     * (`StationIdentityScreen`'s) signal to say so honestly instead.
      */
     public suspend fun stationIdentity(context: Context, stationId: String): StationIdentityViewState {
         val db = SharedDatabase.get(context)
@@ -266,6 +276,7 @@ public object StationPolling {
             heardOverCount = confirmed,
             lexiconLabel = station?.ituRegionFromPrefix,
             voice = StationVoiceViewState(
+                hasVoiceprint = boundCluster != null,
                 clusterOverCount = clusterOvers,
                 confirmedCount = confirmed,
                 inferredCount = inferred,

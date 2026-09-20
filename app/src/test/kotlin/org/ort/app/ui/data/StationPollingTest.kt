@@ -3,6 +3,7 @@ package org.ort.app.ui.data
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -135,7 +136,7 @@ class StationPollingTest {
 
         val row = rows.single { it.stationId == "W7NPC" }
         assertEquals(AttributionState.CONFIRMED, row.attribution.state)
-        assertEquals("1 by voice match · 1 heard", row.countContext)
+        assertEquals("1 inferred · 1 heard", row.countContext)
         assertTrue(row.heardTonight)
     }
 
@@ -310,7 +311,33 @@ class StationPollingTest {
         assertEquals(1, identity.voice.confirmedCount)
         assertEquals(1, identity.voice.inferredCount)
         assertEquals(2, identity.voice.clusterOverCount)
+        assertTrue("a real VoiceprintEntity is bound here", identity.voice.hasVoiceprint)
     }
+
+    @Test
+    fun `D45 hasVoiceprint is honestly false when no real voiceprint is bound, never a claimed cluster`(): Unit =
+        runTest {
+            // This task (constitution I, D45): `:identity` is an empty stub — nothing in this
+            // codebase ever creates the *first* VoiceprintEntity for a station (splitVoiceprint
+            // only ever splits an *existing* one), so every station reaches this with no bound
+            // voiceprint at all until that pipeline ships. `StationIdentityScreen` must read this
+            // honestly rather than claiming "One cluster, N overs" regardless (the R-213 proxy,
+            // `confirmedCount + inferredCount`, is not a real voice-cluster fact by itself).
+            db.sessionDao().insert(session("S1", startedAt = 0L))
+            db.catalogDao().insert(station("WA7HJR"))
+            db.transmissionDao().insert(
+                tx(
+                    "TX1",
+                    "S1",
+                    0L,
+                    attribution = FixtureAttribution("WA7HJR", AttributionState.CONFIRMED, 0.9),
+                ),
+            )
+
+            val identity = StationPolling.stationIdentity(context, "WA7HJR")
+
+            assertFalse(identity.voice.hasVoiceprint)
+        }
 
     @Test
     fun `R_572_stableSinceLabel_is_the_real_earliest_over_in_the_current_bound_cluster`(): Unit = runTest {
@@ -416,6 +443,7 @@ class StationPollingTest {
         // The identity screen reflects the smaller remaining cluster (constitution III's "nothing
         // deleted" cuts the other way here too: TX2 did not vanish, it moved).
         assertEquals(1, refreshed.voice.clusterOverCount)
+        assertTrue("the split leaves a real voiceprint bound", refreshed.voice.hasVoiceprint)
 
         val tx2 = db.transmissionDao().getById("TX2")!!
         assertEquals(AttributionState.UNKNOWN, tx2.attributionState)
