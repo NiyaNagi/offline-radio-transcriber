@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-19 (play-flavor unit-test follow-up: 16 fixtures made to state their own preconditions)
 
-### <pending> — `:app`'s test fixtures state the READY/MODELS gate and the real-bundling precondition explicitly, so `testPlayDebugUnitTest` is green on both flavors
+### 6d6ee030 — `:app`'s test fixtures state the READY/MODELS gate and the real-bundling precondition explicitly, so `testPlayDebugUnitTest` is green on both flavors
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/ScenarioFixtures.kt` (new
 `installEveryModelFixtureAtRealSize`), `app/src/test/kotlin/org/ort/app/ui/setup/SetupActivityTest.kt`,
