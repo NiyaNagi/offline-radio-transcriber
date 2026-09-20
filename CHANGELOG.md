@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (R-1043: the Release-only `BannerClosingBorderTest` timeout, root-caused and fixed by shape)
 
-### <pending> — R-1043 · `BannerClosingBorderTest`/`BannerChevronClearanceTest` stop opening a real database inside their own wall-clock wait; two `ui/navigation` files pre-warm one instead, preserving their own real/divergent `sessionId` scenarios
+### b0b64d62 — R-1043 · `BannerClosingBorderTest`/`BannerChevronClearanceTest` stop opening a real database inside their own wall-clock wait; two `ui/navigation` files pre-warm one instead, preserving their own real/divergent `sessionId` scenarios
 
 **Scope:** `app/src/test/kotlin/org/ort/app/ui/failures/BannerClosingBorderTest.kt`,
 `app/src/test/kotlin/org/ort/app/ui/failures/BannerChevronClearanceTest.kt`,
