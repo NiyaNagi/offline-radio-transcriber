@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P28 follow-up: the analytics channel finally emits — instrumentation for every tier-1 event and the tier-2 correction pair)
 
-### (pending — this commit) — P28 follow-up · the analytics channel now actually records something
+### c91d43e9 — P28 follow-up · the analytics channel now actually records something
 
 **Scope:** new call-site helpers under `app/src/main/kotlin/org/ort/app/analytics/**`
 (`CorrectionAnalytics`, `SetupFunnelAnalytics`, `FeatureUsageAnalytics`, `QualityStatsAggregator`,
