@@ -34,6 +34,69 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (correction-attribution consolidation: a corrected transmission stops reading UNKNOWN on the Log, Live Monitor, a Recording Session and Threads)
 
+### design-only — artboards and design-intent rows for the two P28 analytics screens (`SettingsAnalyticsScreen`, `AnalyticsConsentScreen`), drawn against constitution VIII after the fact, plus a copy finding on the setup screen
+
+**Scope:** `design/canvas/Settings-Analytics.dc.html` (new), `design/canvas/Setup-Analytics-Consent.dc.html`
+(new), `design/design-intent.md` (two new rows: CF13 in §11, S11b in §2). No Kotlin touched — this
+unit does not own `app/src/main/kotlin/**`.
+
+**Requirements/ACs:** constitution VIII (every screen in the inventory MUST have an artboard,
+reachable by a capture); FR-ANL-1, FR-ANL-2, FR-ANL-3, FR-ANL-4, FR-ANL-7, FR-ANL-9, FR-ANL-10,
+FR-ANL-11, AC-180 (the three-tier analytics channel and its two UI surfaces); D42, D48.
+
+**What changed:**
+
+1. **The gap.** P28 (`bc2e802b`/`586a83b3`) shipped `SettingsAnalyticsScreen.kt` and
+   `AnalyticsConsentScreen.kt` with tour steps and a debug scenario but no artboard and no
+   design-intent row, so neither screen was reachable by the visual-conformance program at all —
+   constitution VIII calls a screen with no artboard "not yet designed," not merely undrawn.
+2. **`Settings-Analytics.dc.html`** (CF13) drawn against `Settings-Contribute.dc.html` (the other
+   settings screen that discloses a consent channel category by category) and
+   `Settings-Storage.dc.html` (a subtitle that states the one governing fact before any row): the
+   three tier toggles, the "never in any tier" statement, and the install id + reset row, all at
+   the built screen's own copy — which on inspection already says plainly what each tier sends
+   (FR-ANL-2..4's field lists, close to verbatim) and already carries D48's honest
+   no-destination-configured disclosure via `SettingsAnalyticsViewState.destinationConfigured`. No
+   copy finding on this screen; drawn as built.
+3. **`Setup-Analytics-Consent.dc.html`** (S11b) drawn against `Setup-Models.dc.html` (the only
+   other board sharing `SetupStep.indicatorIndex() == 8`) for the header/segment shape, with one
+   difference `Setup-Models.dc.html` does not demonstrate: `AnalyticsConsentScreen.kt` passes
+   `onBack = null`, so this board's header has no back chevron while still carrying the full "8 of
+   8" counter and segment row — a combination no earlier board shows.
+4. **Copy finding (judged as a designer, filed here for the register, not fixed in Kotlin):**
+   `AnalyticsConsentScreen.kt` takes no `destinationConfigured` parameter and never discloses D48's
+   honest state the way `SettingsAnalyticsScreen.kt` does one tap away. An operator reading only
+   the setup screen — the first and, if they decline the toggles, possibly only screen where
+   analytics is explained — has no way to know that in this build, with no destination configured,
+   turning on either opt-in toggle sends nothing anywhere; every event queues on-device
+   regardless. That is an understatement of the true, honest state on the one screen that sets the
+   operator's expectation first. The artboard draws the corrected copy: a disclosure line beneath
+   the tier-1 paragraph reading "No destination is configured in this build — events queue on this
+   phone and nothing is ever sent, whatever you choose below," reusing verbatim the sentence
+   `Settings-Analytics.dc.html` shows for the identical state, so the two screens cannot disagree
+   about what "on" means. This is a real screen/copy gap, not invented for this task — recorded
+   here and in the S11b design-intent row for the lead to route as a register finding; not
+   corrected in `AnalyticsConsentScreen.kt` itself (outside this unit's file ownership).
+5. No other copy issue found on either screen against FR-ANL-1..14 or the D42/D48 requirements
+   named above: tier field lists, the closed "never in any tier" list, and the opt-in/on-by-default
+   defaults all match the spec.
+
+**Verified:** both `.dc.html` files opened at `file://` in the Browser pane and screenshotted; each
+inspected via `getBoundingClientRect()`/`scrollHeight` against the outer `390×844` frame to confirm
+no clipped content (`Settings-Analytics.dc.html`: scrollable body 681/681px, not clipped;
+`Setup-Analytics-Consent.dc.html`: scrollable body 606/606px, not clipped; the pinned action bar/row
+sits inside the frame in both). No Gradle build, gate or tour run — this change touches only
+`design/**`, which is drawn material, not built UI; the `results/ui-audit/` capture-and-compare step
+this design-intent row calls for is the lead's/a builder's next step, not this one.
+
+**Left open / not done:** the actual `results/ui-audit/` capture of CF13/S11b against these new
+artboards (needs the tour steps already present, `overnight/CF13-settings-analytics` and
+`setup-analytics-consent/S11b-analytics-consent`, run against a built app — outside a design-only
+unit); the copy finding above is not filed as a `results/ui-audit/register.md` row by this unit
+(explicitly not owned here) — the lead should file it; whether `AnalyticsConsentScreen.kt` should
+gain a `destinationConfigured` parameter to render the disclosure this artboard now specifies is a
+Kotlin change for whichever unit owns `app/src/main/kotlin/org/ort/app/ui/setup/**`.
+
 ### WPATTR — the corrected-attribution downgrade the voice-match sweep flagged as data loss, not wording, fixed once, and the last digest overclaim it inventoried but did not own
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/TransmissionDetail.kt`, `ReaderPolling.kt`,

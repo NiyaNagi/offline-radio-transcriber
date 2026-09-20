@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .lbl { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250); padding: 16px 20px 2px; }
+    .r { display: flex; align-items: center; gap: 12px; padding: 11px 20px; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px; box-sizing: border-box; }
+    .n { font-size: 14px; color: oklch(0.94 0.006 250); }
+    .s { font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px; line-height: 1.4; }
+    .m { font-family: 'IBM Plex Mono', monospace; }
+    .tg-off { width: 42px; height: 24px; border-radius: 12px; background: oklch(0.30 0.012 250); display: flex; align-items: center; padding: 0 3px; box-sizing: border-box; flex-shrink: 0; }
+    .tg-on { width: 42px; height: 24px; border-radius: 12px; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: flex-end; padding: 0 3px; box-sizing: border-box; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<!-- CF13 -- Settings-Analytics.dc.html. Neighbour used: Settings-Contribute.dc.html (the other
+     settings screen that discloses exactly what a consent channel sends, category by category) and
+     Settings-Storage.dc.html (a subtitle that states the one fact that matters before any row).
+     Serves FR-ANL-1, FR-ANL-2..4, FR-ANL-9, FR-ANL-7, FR-ANL-11, D42, D48.
+
+     Copy finding recorded in design-intent.md and the task report, not silently fixed in the built
+     screen (out of file ownership here): none on THIS screen -- SettingsAnalyticsScreen.kt's own
+     copy already says plainly what each tier sends and already carries D48's honest "no destination
+     configured, in which case nothing is ever sent" disclosure via
+     SettingsAnalyticsViewState.destinationConfigured. This board draws that default, honest,
+     no-destination-configured state, since that is what every device running this build actually
+     shows today; the alternate "queued events send only while capture is not running" sentence
+     (FR-ANL-7) is the other real string the same subtitle slot renders once a destination exists,
+     noted here rather than drawn a second time. -->
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: center; gap: 12px; padding: 10px 16px 12px;">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg>
+    <div style="font-size: 15px; color: oklch(0.72 0.14 150);">Settings</div>
+    <div style="flex-grow: 1;"></div>
+  </div>
+
+  <div style="padding: 0 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em;">Analytics</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px; line-height: 1.45;">No destination is configured in this build — events queue on this phone and nothing is ever sent.</div>
+  </div>
+
+  <div style="flex-grow: 1; overflow: hidden;">
+
+    <div class="lbl">On by default</div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div class="n">Usage and quality (tier 1)</div><div class="s">Crashes and ANRs, screens and actions used, per-pass speed, capture uptime, the setup funnel, and aggregate quality rates — never a transcript, callsign, name, station knowledge or location.</div></div>
+      <div class="tg-on"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.16 0.01 150);"></div></div>
+    </div>
+
+    <div class="lbl">Opt-in</div>
+    <div class="r">
+      <div style="flex-grow: 1;"><div class="n">Transcripts and callsigns (tier 2)</div><div class="s">Transcript text and callsigns, including what the recognizer heard paired with your correction.</div></div>
+      <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+    </div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div class="n">Audio (tier 3)</div><div class="s">Retained over audio together with its corrected transcript.</div></div>
+      <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+    </div>
+
+    <div class="lbl">Never in any tier</div>
+    <div style="padding: 2px 20px 12px; border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="font-size: 12.5px; line-height: 1.5; color: oklch(0.62 0.008 250);">A user-supplied name, station knowledge, or location finer than a grid square never leaves the device through this channel, in any combination of tiers above.</div>
+    </div>
+
+    <div class="lbl">This install</div>
+    <div style="padding: 2px 20px 0;">
+      <div class="m" style="font-size: 12.5px; color: oklch(0.62 0.008 250);">id ...a41f9c02</div>
+    </div>
+    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.68 0.008 250)" stroke-width="2"><path d="M6,10 H18 A2,2 0 0 1 20,12 V19 A2,2 0 0 1 18,21 H6 A2,2 0 0 1 4,19 V12 A2,2 0 0 1 6,10 Z M8 10V7a4 4 0 0 1 8 0v3"></path></svg>
+      <div style="flex-grow: 1;"><div class="n">Reset install id</div><div class="s">Starts a new, unlinked id and asks the destination to erase every row tied to the old one.</div></div>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.50 0.008 250)" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"></path></svg>
+    </div>
+
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

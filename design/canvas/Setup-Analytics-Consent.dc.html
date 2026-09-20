@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .tg-off { width: 42px; height: 24px; border-radius: 12px; background: oklch(0.30 0.012 250); display: flex; align-items: center; padding: 0 3px; box-sizing: border-box; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<!-- S11b -- Setup-Analytics-Consent.dc.html. SetupStep.ANALYTICS_CONSENT shares MODELS/READY's own
+     indicatorIndex() == 8 (SetupStep.kt), so this board's header row draws the full "8 of 8" segment
+     row exactly as Setup-Models.dc.html does -- but onBack == null (AnalyticsConsentScreen.kt,
+     "never a hard gate"), so unlike Setup-Models this board has no back chevron: the header's left
+     slot is empty and only the "8 of 8" counter sits at the right, the same asymmetry
+     SetupScaffold.kt's own ScaffoldHeaderRow produces for this exact (onBack=null, index!=null)
+     combination -- a state no earlier board demonstrates (Setup-Jurisdiction.dc.html has neither
+     chevron nor counter; every other board has both). Serves FR-ANL-9, FR-ANL-10, AC-180, D42, D48.
+
+     COPY FINDING (recorded in the task report and in design-intent.md, not fixed in
+     AnalyticsConsentScreen.kt -- outside this unit's ownership): the built screen has no
+     destinationConfigured input at all and never discloses D48's honest state the way
+     SettingsAnalyticsScreen.kt does one tap away. An operator reading only this screen has no way
+     to know that, in this build, turning on "Also share transcripts and callsigns" or "Also share
+     audio" sends nothing anywhere -- every event queues on the phone until a destination exists.
+     That is an omission of the exact fact the settings screen states plainly, on the one screen an
+     operator sees before ever choosing a tier. This board adds the disclosure line below the tier-1
+     paragraph, reusing the identical sentence Settings-Analytics.dc.html draws for the same state,
+     so the two screens never disagree about what "on" actually means. -->
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="padding: 10px 20px 0; display: flex; align-items: center; gap: 14px;">
+    <div style="flex-grow: 1;"></div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">8 of 8</div>
+  </div>
+  <div style="display: flex; gap: 4px; padding: 14px 20px 0;">
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+  </div>
+
+  <div style="padding: 26px 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.2;">Help improve this app</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">On by default, closed to what it can ever contain</div>
+  </div>
+
+  <div style="padding: 18px 20px 0; display: flex; flex-direction: column; gap: 14px; flex-grow: 1; overflow: hidden;">
+    <div style="font-size: 15px; line-height: 1.4; color: oklch(0.76 0.006 250); text-wrap: pretty;">Usage and quality analytics are on: crashes and ANRs, which screens and actions are used, per-pass speed, capture uptime, the setup funnel, and aggregate quality rates. Never a transcript, callsign, name, station knowledge or location. Turn it off any time in Settings.</div>
+
+    <!-- Corrected wording -- see this file's own COPY FINDING note above. Same sentence
+         Settings-Analytics.dc.html's subtitle uses for the identical no-destination-configured
+         state, so a device running this build never tells two different stories about it. -->
+    <div style="font-size: 12.5px; line-height: 1.5; color: oklch(0.58 0.008 250); padding: 11px 14px; background: oklch(0.195 0.009 250); border-radius: 10px;">No destination is configured in this build — events queue on this phone and nothing is ever sent, whatever you choose below.</div>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div style="font-size: 14px; color: oklch(0.94 0.006 250);">Also share transcripts and callsigns</div><div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px; line-height: 1.4;">Off unless you turn it on — includes what the recognizer heard paired with your correction.</div></div>
+      <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid oklch(0.21 0.010 250); border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div style="font-size: 14px; color: oklch(0.94 0.006 250);">Also share audio</div><div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px; line-height: 1.4;">Off unless you turn it on — retained over audio with its corrected transcript.</div></div>
+      <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+    </div>
+  </div>
+
+  <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Continue</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>
