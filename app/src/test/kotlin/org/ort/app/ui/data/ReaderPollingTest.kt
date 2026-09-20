@@ -345,6 +345,37 @@ class ReaderPollingTest {
         assertEquals(0.95, detail.attribution.confidence)
     }
 
+    /**
+     * Register (this session): `CorrectionDao.applyCorrectedAttribution`
+     * (`data/src/main/kotlin/org/ort/data/dao/CorrectionDao.kt:49-54`) is the *only* write path a
+     * correction ever takes, and it unconditionally writes `attributionState = 'INFERRED'` with
+     * `attributionConfidence = NULL` — there is no calibrated probability for "a human said so".
+     * `ReaderPolling`'s own `attributionFrom` used to require a non-null confidence for every
+     * INFERRED row, so this real write (never a hand-built fixture) used to read back as
+     * `Attribution.unknown()`, discarding the just-written `stationId` — the exact bug
+     * `CorrectionPolling.currentAttribution`'s own R-189 doc comment already named and patched for
+     * the Detail screen's own direct read, but not for this one.
+     */
+    @Test
+    fun `FR_SPK_7 a corrected transmission renders its real callsign, never UNKNOWN`(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(
+            transmission(
+                "TX1",
+                samplePosition = 1L,
+                attribution = FixtureAttribution(AttributionState.UNKNOWN),
+            ),
+        )
+        db.correctionDao().applyCorrectedAttribution("TX1", "KA7LWH")
+
+        val detail = ReaderPolling.currentTransmissionDetails(context, "S1").single()
+
+        assertEquals(AttributionState.INFERRED, detail.attribution.state)
+        assertEquals("KA7LWH", detail.attribution.stationId)
+        assertTrue(detail.attribution.corrected)
+        assertNull(detail.attribution.confidence)
+    }
+
     @Test
     fun `a transmission with no retained audio file reports hasAudio false rather than crashing`(): Unit = runTest {
         db.sessionDao().insert(session())

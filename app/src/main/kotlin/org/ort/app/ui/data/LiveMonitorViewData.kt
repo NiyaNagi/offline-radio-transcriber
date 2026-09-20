@@ -180,7 +180,7 @@ public object LiveMonitorOversMapper {
                 transcript = currentText.orEmpty(),
                 durationLabel = durationLabel,
                 frequencyLabel = ReaderTransmissionViewStateMapper.frequencyLabel(entity.frequencyHz),
-                attribution = attributionFrom(entity),
+                attribution = ReaderTransmissionViewStateMapper.attributionFrom(entity),
                 callsign = entity.stationId,
                 attributionStateLabel = attributionStateLabel(entity.attributionState),
                 inferredFromLabel = if (entity.attributionState == AttributionState.INFERRED) sourceTimeLabel else null,
@@ -203,30 +203,14 @@ public object LiveMonitorOversMapper {
         TranscriptPass.B, TranscriptPass.A, null -> "Pass B running"
     }
 
-    /** Duplicated from `LogViewData.kt`/`ReaderPolling.kt` deliberately — see this file's own doc
-     * comment. */
-    private fun attributionFrom(entity: TransmissionEntity): Attribution {
-        val stationId = entity.stationId
-        val confidence = entity.attributionConfidence
-        return when (entity.attributionState) {
-            AttributionState.CONFIRMED ->
-                if (stationId != null && confidence != null) {
-                    Attribution.confirmed(stationId, confidence)
-                } else {
-                    Attribution.unknown()
-                }
-
-            AttributionState.INFERRED ->
-                if (stationId != null && confidence != null) {
-                    Attribution.inferred(stationId, confidence)
-                } else {
-                    Attribution.unknown()
-                }
-
-            AttributionState.AMBIGUOUS -> Attribution.ambiguous()
-            AttributionState.UNKNOWN -> Attribution.unknown()
-        }
-    }
+    // Register R-1041-class (this session): this file's own former private `attributionFrom` copy
+    // silently downgraded every corrected transmission to `Attribution.unknown` (it required a
+    // non-null confidence for INFERRED, but `CorrectionDao.applyCorrectedAttribution` always writes
+    // one as NULL) — the identical bug `ReaderPolling.kt` carried, while `LogViewData.kt` and
+    // `RecordingSessionViewStateMapper.kt`'s own copies already checked `entity.corrected` first and
+    // did not have it. All four now share one implementation:
+    // [ReaderTransmissionViewStateMapper.attributionFrom] (`TransmissionDetail.kt`, same package;
+    // see its own doc comment for why a correction is `INFERRED`/no-confidence, never `CONFIRMED`).
 
     /**
      * FR-RUN-12: the span between two consecutive (non-rejected) overs in [sorted] (ascending by

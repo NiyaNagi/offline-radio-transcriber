@@ -2,9 +2,7 @@ package org.ort.app.ui.recordings
 
 import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.improve.Plurals
-import org.ort.core.Attribution
 import org.ort.core.AttributionState
-import org.ort.core.TransmissionId
 import org.ort.core.TransmissionState
 import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.VadDetectorKind
@@ -251,7 +249,11 @@ public object RecordingSessionViewStateMapper {
     ): RecordingSessionRow.Over {
         val transmission = input.transmission
         val status = statusOf(transmission)
-        val attribution = if (status == RecordingSessionOverStatus.RESOLVED) attributionFrom(transmission) else null
+        val attribution = if (status == RecordingSessionOverStatus.RESOLVED) {
+            ReaderTransmissionViewStateMapper.attributionFrom(transmission)
+        } else {
+            null
+        }
         return RecordingSessionRow.Over(
             id = transmission.id,
             timeLabel = ReaderTransmissionViewStateMapper.timeLabel(transmission.startedAtUtc),
@@ -302,39 +304,14 @@ public object RecordingSessionViewStateMapper {
         return listOfNotNull("training", label.rating).joinToString(" · ")
     }
 
-    /**
-     * Duplicated deliberately from `org.ort.app.ui.data.LogViewData`'s own private
-     * `attributionFrom`/`org.ort.app.ui.data.ReaderPolling`'s own private copy — both are `private`
-     * to packages this build unit does not own, the same "each package keeps its own small, pure
-     * copy" convention `LogViewData`'s own doc comment already states outright for the identical
-     * function.
-     */
-    private fun attributionFrom(entity: TransmissionEntity): Attribution {
-        val stationId = entity.stationId
-        if (entity.corrected && stationId != null) {
-            return Attribution.unknown().withCorrection(stationId)
-        }
-        val confidence = entity.attributionConfidence
-        return when (entity.attributionState) {
-            AttributionState.CONFIRMED ->
-                if (stationId != null && confidence != null) {
-                    Attribution.confirmed(stationId, confidence)
-                } else {
-                    Attribution.unknown()
-                }
-            AttributionState.INFERRED ->
-                if (stationId != null && confidence != null) {
-                    Attribution.inferred(stationId, confidence, sourceId(entity))
-                } else {
-                    Attribution.unknown()
-                }
-            AttributionState.AMBIGUOUS -> Attribution.ambiguous()
-            AttributionState.UNKNOWN -> Attribution.unknown()
-        }
-    }
-
-    private fun sourceId(entity: TransmissionEntity): TransmissionId? =
-        entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }
+    // Register R-1041-class (this session): this file's own former private `attributionFrom` copy
+    // (a deliberate duplicate of `LogViewData`'s/`ReaderPolling`'s own private copies, per this
+    // function's former doc comment) already checked `entity.corrected` first, so it did not carry
+    // the downgrade-to-UNKNOWN bug those two files did — but four copies of one fact was exactly how
+    // `ReaderPolling`'s and `LiveMonitorViewData`'s copies were able to drift without it. All four
+    // now share one implementation: [ReaderTransmissionViewStateMapper.attributionFrom]
+    // (`org.ort.app.ui.data.TransmissionDetail.kt`; see its own doc comment for why a correction is
+    // `INFERRED`/no-confidence, never `CONFIRMED`).
 
     private fun gapRow(gap: CaptureGapEntity): RecordingSessionRow.Gap = RecordingSessionRow.Gap(
         id = gap.id,

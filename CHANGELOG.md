@@ -32,6 +32,166 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (correction-attribution consolidation: a corrected transmission stops reading UNKNOWN on the Log, Live Monitor, a Recording Session and Threads)
+
+### WPATTR — the corrected-attribution downgrade the voice-match sweep flagged as data loss, not wording, fixed once, and the last digest overclaim it inventoried but did not own
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/TransmissionDetail.kt`, `ReaderPolling.kt`,
+`LogViewData.kt`, `LiveMonitorViewData.kt`; `app/src/main/kotlin/org/ort/app/ui/recordings/RecordingSessionViewStateMapper.kt`
+(explicitly named in this unit's own task, though outside its usual `ui/data`/`ui/digest` grant);
+`app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt`; `design/canvas/Digest.dc.html`;
+matching tests under `app/src/test/kotlin/org/ort/app/ui/{data,digest,recordings}/**` (new
+`ThreadPollingTest.kt`).
+
+**Requirements/ACs:** constitution I (an attribution without its real state is a bug at the data
+layer, not just the UI — non-negotiable), FR-SPK-7 (a correction locks the attribution),
+FR-SPK-13 (`CONFIRMED` means heard in *this* transmission; no correction may promote to it),
+constitution II (strict TDD, a test shown to discriminate).
+
+**What changed:**
+
+1. **Verified the claim first, and found it half true.** `CorrectionDao.applyCorrectedAttribution`
+   (`data/src/main/kotlin/org/ort/data/dao/CorrectionDao.kt:49-54`) unconditionally writes
+   `attributionState = 'INFERRED'` with `attributionConfidence = NULL` — there is no calibrated
+   probability for "a human said so". Each of the four named read paths carried its own private
+   `attributionFrom(entity)` that rebuilt an `Attribution` via `Attribution.inferred(stationId,
+   confidence, ...)`, whose signature requires a non-null `confidence`; the state-based branch
+   silently fell back to `Attribution.unknown()` whenever it was null, discarding the just-written
+   `stationId`. But `LogViewData.kt` (fixed 2026-09-13, `9967fe4e`, R-189-class) and
+   `RecordingSessionViewStateMapper.kt` (fixed the same way, its own doc comment) had **already**
+   been given the `entity.corrected` upfront check that avoids this — only `ReaderPolling.kt` and
+   `LiveMonitorViewData.kt` still carried the bug. Confirmed by reading each file
+   (`git log` on all four) and by a Robolectric reproduction (see Verified) before changing
+   anything, per this unit's own instruction not to trust the sweep's inventory at face value.
+   `ThreadPolling`/`SearchPolling` both read through `ReaderPolling` (`currentTransmissionDetails`/
+   `detailFromEntity`), so they inherited the same gap with no code of their own to point at; both
+   are fixed by this same change, with no edit to `ThreadViewData.kt`/`SearchViewData.kt` needed.
+   Confirmed exports (`ExportCoordinator.toExportAttribution`, `SessionAudioExport
+   .toManifestAttribution`) and the capture notification (`RealCaptureService.lastOverCallsign`)
+   were never affected — the first two already accept a null confidence (R-1039), the third reads
+   the raw `stationId` column directly, never a reconstructed `Attribution`.
+2. **Fixed once, not four times.** The reconstruction now lives in one place both
+   `CorrectionPolling.currentAttribution` (the Detail screen's own, independent fix, R-189, left
+   unchanged) and all four read paths share:
+   `ReaderTransmissionViewStateMapper.attributionFrom(entity: TransmissionEntity): Attribution`
+   (`TransmissionDetail.kt`, same package as three of the four call sites; `:app`-internal, not
+   `:data` — this unit's own task named `:data` as the alternative home and asked to stop and
+   report rather than edit it if that were the right home; it was not needed, since every caller is
+   inside `:app` and `TransmissionDetail.kt` already was the established shared home for exactly
+   this kind of cross-file mapping reuse, per its own pre-existing `timeLabel`/`durationLabel`/
+   `frequencyLabel` functions). `ReaderPolling.kt`, `LogViewData.kt`, `LiveMonitorViewData.kt` and
+   `RecordingSessionViewStateMapper.kt` each had their private copy (and, where present, its
+   `sourceId` helper) deleted, with a comment at the old site pointing to the shared function and
+   the unused `Attribution`/`AttributionState`/`TransmissionId` imports each copy no longer needed
+   removed.
+3. **The state and confidence a corrected attribution carries, decided deliberately, not
+   inherited by accident:** `INFERRED`, `stationId` set, `confidence = null`, `corrected = true`
+   (`Attribution.unknown().withCorrection(stationId)` — `:core`'s own, pre-existing factory, unchanged
+   here). Never `CONFIRMED`: a correction is a human's after-the-fact judgement — typed, or picked
+   from a candidate list — and the callsign need not have been audible in that particular over at
+   all, so FR-SPK-13 forbids promoting it regardless of operator certainty. No confidence: there is
+   no calibrated probability for "a human said so" to store, and the four states carry one only
+   where it was actually computed. Documented at length on the shared function itself so the next
+   reader does not have to re-derive it from the DAO's own comment.
+4. **Checked what else reads these columns for the same staleness.** Exports: both
+   `toExportAttribution`/`toManifestAttribution` already handle a null confidence honestly (R-1039)
+   and carry `corrected` through — unaffected, confirmed by reading both. Digest: `DigestPolling`
+   reads `TransmissionEntity.attributionState`/`.stationId` directly, never through a reconstructed
+   `Attribution` — a corrected row is written with `attributionState = INFERRED` directly by the
+   same DAO call, so it was never miscounted as unidentified; no reconstruction bug there. Search:
+   `SearchPolling.filtered` maps through `ReaderPolling.detailFromEntity` — fixed by change (2)
+   above, no separate edit. Notifications: `CaptureNotificationBuilder`'s `lastOverCallsign` reads
+   `TransmissionEntity.stationId` raw, never an `Attribution` — unaffected.
+5. **`DigestPolling.kt:549`'s `unidentifiedVoicesItem`** (the last overclaim the voice-match sweep
+   inventoried on 2026-09-20 but flagged as outside its own `ui/data`/`ui/screens` ownership, per
+   this file's own commit `4c5d33c6`) — "no callsign heard, no voice matched — they stay findable"
+   named a mechanism (a voice matcher that ran and failed to find a match) no production path in
+   this build has ever run: `:identity` is an empty stub, `voiceprintId` is `null` on every
+   transmission `RealCaptureService` writes, and the resolver never returns `INFERRED` itself. Now
+   reads "no callsign heard, and nothing else resolved it — they stay findable", reusing
+   `DetailViewStateMapper.bodyFor`'s own exact UNKNOWN wording (the same sweep's fix,
+   `4c5d33c6`) rather than inventing a third phrasing for the identical fact. `design/canvas
+   /Digest.dc.html`'s matching "sub" line updated in place (constitution VIII: the artboard is the
+   specification) — a code/artboard mismatch was already latent there.
+
+**Where the single reconstruction now lives:** `org.ort.app.ui.data.ReaderTransmissionViewStateMapper
+.attributionFrom` (`TransmissionDetail.kt`). `CorrectionPolling.currentAttribution`'s own,
+independent reconstruction (the Detail screen's direct read, not through any of the four polled
+paths) is untouched — it already produced the identical, correct shape and is not one of the four
+duplicates this task named.
+
+**Tests, named for the fact they establish, each shown to discriminate (revert the corrected-first
+check in `TransmissionDetail.kt`, confirm the new test fails for the right reason, restore, confirm
+it passes — done for all five in one pass; results below):**
+- `ReaderPollingTest.FR_SPK_7 a corrected transmission renders its real callsign, never UNKNOWN` —
+  real `CorrectionDao.applyCorrectedAttribution` write, real `OrtDatabase` read, no hand-built
+  fixture standing in for either.
+- `ThreadPollingTest.FR_SPK_7 a corrected transmission renders its real callsign on the Threads
+  screen, never UNKNOWN` (new file) — proves `ThreadPolling.threadDetail`'s own inherited fix
+  end to end through a real DB, with no edit to `ThreadViewData.kt` itself.
+- `LiveMonitorViewDataTest.a corrected COMPLETE entity renders Resolved with its real callsign,
+  never UNKNOWN` — the pure `LiveMonitorOversMapper.rowFor` path.
+- `RecordingSessionViewStateMapperTest.a corrected resolved over carries its real corrected
+  callsign, never UNKNOWN` — a regression lock for a screen that was already correct before this
+  session, now sharing the moved function.
+- `LogPollingTest.R_1041 a corrected transmission shows its real callsign in the Log, never UNKNOWN`
+  — pre-existing (2026-09-13), left unchanged; re-verified green against the moved function.
+- `DigestPollingTest.an unidentified-voice item never claims a voice match this build cannot make`
+  — asserts the sub-line never contains "voice" (case-insensitive), not just the literal new string,
+  matching the sweep's own `D45_FR_UI_8_...` substring-probe convention rather than a brittle
+  literal-text check alone.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.*"` — `BUILD SUCCESSFUL`, every
+  suite in the package green, including all five tests above (182 actionable tasks).
+- `.\gradlew.bat ktlintCheck detekt` — `BUILD SUCCESSFUL`, whole project (one `LongParameterList`
+  detekt finding in `RecordingSessionViewStateMapperTest.kt`'s own `over()` helper, from an early
+  draft that added `corrected` as a ninth standalone parameter, fixed by folding it into the
+  existing `OverAttribution` bundle the file's own convention already uses for this exact reason).
+- **Discrimination, shown, not asserted:** reverted the `entity.corrected` upfront check in
+  `TransmissionDetail.kt`'s `attributionFrom`, reran the five tests above — all five failed for the
+  precise reason (`expected:<INFERRED> but was:<UNKNOWN>`/equivalent), 94 other tests in the same
+  run unaffected; restored, reran — all green (`99 tests completed, 5 failed` → `0 failed`).
+  Separately reverted `DigestPolling.kt`'s sub-line wording — its own new test failed alone (`47
+  tests completed, 1 failed`); restored — green.
+
+**Tour ids for the lead to recapture** (constitution VIII: this is a text-content fix, not a
+layout/touch-target change — no row/column/badge/banner shape changed, so no new Robolectric
+bounds test or `uiautomator` dump is called for, only a recapture to confirm the rendered text):
+- `corrected/L01-log-corrected`, `corrected/D02-inferred-corrected` — the two existing steps that
+  seed a genuinely corrected transmission and land directly on the fixed `ReaderPolling`/
+  `LogViewData` paths.
+- `overnight-live-monitor/N07-live-monitor` (`@2x`, `@2x-end`) — the only Live Monitor tour step;
+  its `overnight-live-monitor` scenario does not currently seed a corrected transmission, so this
+  recapture is a regression check on the moved function, not a demonstration of the fix.
+- `overnight/RC02-recording-session` (`@2x`, `@2x-end`), `gap-call/RC02-recording-session-gap`,
+  `vad-fallback/RC02-recording-session-vad-fallback` — same caveat: no step currently seeds a
+  corrected row on this screen.
+- `overnight/T02-thread-detail` — same caveat for Threads; no `corrected`-scenario step reaches
+  `THREADS` at all today.
+- `llm-enabled-prose/DG05-digest-prose` (`@2x`), `llm-disabled/DG01-digest` — for the `DigestPolling`
+  wording fix; whether either scenario's session actually has an `UNKNOWN` transmission (and
+  therefore renders the "unidentified voices" row at all) was not verified against the tour itself
+  this session.
+
+**Left open / not done:**
+- No tour step seeds a `corrected` transmission for the Live Monitor, Recording Session, or Threads
+  destinations — only the Log/Detail pair does. The `corrected` scenario (`Scenarios.kt:1087`)
+  exists and is destination-agnostic; wiring it (or an equivalent) to `CAPTURE`
+  (`drillIn: tapLiveBar`), `EARLIER_NIGHTS` (`drillIn: recordingSession`) and `THREADS` would give
+  this fix, and any future regression of it, real visual evidence on all four screens rather than
+  three real ones plus unit-test coverage on the fourth. Flagged, not built here — outside this
+  unit's task.
+- The tour itself was not run this session (not requested; scope was the data-layer fix plus unit
+  coverage). The ids above are for whoever runs the next full/scoped tour.
+- `CorrectionPolling.currentAttribution`'s own reconstruction and the newly shared
+  `ReaderTransmissionViewStateMapper.attributionFrom` are now two independent implementations of
+  the identical rule (checked side by side; they produce the same `Attribution` for every case
+  tested). Consolidating them into one was judged out of scope: `currentAttribution` takes a
+  `fallback: Attribution` already computed by the caller and only overrides it when corrected,
+  a different shape than `attributionFrom`'s "reconstruct from scratch" signature, and unifying them
+  would mean changing `CorrectionPolling.kt`, a file this unit was not asked to touch.
+
 ## 2026-09-19 (P29: D45 relabel — "same voice" becomes "same callsign"; `CatalogDao.allVoiceprints()`)
 
 ### c9d2a599 — P29: the correction-scope UI stops claiming a voice match it never makes; `CatalogDao.allVoiceprints()` closes the field-report gap for unbound voiceprints
