@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+    .tg-on { width: 42px; height: 24px; border-radius: 12px; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: flex-end; padding: 0 3px; box-sizing: border-box; flex-shrink: 0; }
+  </style>
+</helmet>
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <!-- S11a shares SetupStep.READY's own indicatorIndex (8) -- SetupStep.kt: "it is the final gate
+       immediately before Ready" -- so this board's own segment row reads identically full to S12's. -->
+  <div style="padding: 10px 20px 0; display: flex; align-items: center; gap: 14px;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    <div style="flex-grow: 1;"></div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">8 of 8</div>
+  </div>
+  <div style="display: flex; gap: 4px; padding: 14px 20px 0;">
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+  </div>
+
+  <div style="padding: 26px 20px 0;">
+    <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.2;">Models</div>
+    <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">This build did not carry everything your device's tier can use</div>
+  </div>
+
+  <div style="padding: 18px 20px 0; display: flex; flex-direction: column; gap: 14px; flex-grow: 1; overflow: hidden;">
+    <div style="font-size: 13px; line-height: 1.45; color: oklch(0.76 0.006 250); text-wrap: pretty;">Every model below is downloaded once, verified against its published checksum, and never activated unless it matches (FR-AST-2).</div>
+
+    <div style="display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid oklch(0.21 0.010 250); border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="flex-grow: 1;"><div style="font-size: 14px; color: oklch(0.94 0.006 250);">Wi-Fi only</div><div style="font-size: 11.5px; color: oklch(0.58 0.008 250); margin-top: 2px;">Downloads wait for Wi-Fi</div></div>
+      <div class="tg-on"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.16 0.01 150);"></div></div>
+    </div>
+
+    <!-- PENDING row: nothing fetched yet, real manifest size shown, Download offered. -->
+    <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; color: oklch(0.94 0.006 250);">Whisper tiny.en — encoder</div>
+        <div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px;">78 MB</div>
+      </div>
+      <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150);">Download</div>
+    </div>
+
+    <!-- FAILED row: a real failure reason, Retry offered. Drawn to match what the built screen
+         actually does today (ModelsSetupScreen.kt's ModelDownloadRow: the status line is always
+         OrtColors.textDim, the same as every other row) -- not the amber the design-guide's own
+         §3 convention calls for on a failed state elsewhere in the app. Noted, not silently
+         "corrected": a real deviation worth a register row once this is captured, not invented here. -->
+    <div style="display: flex; align-items: flex-start; gap: 12px; padding: 8px 0;">
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; color: oklch(0.94 0.006 250);">Whisper tiny.en — decoder</div>
+        <div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px; line-height: 1.4;">checksum did not match the published digest — try again</div>
+      </div>
+      <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150); flex-shrink: 0;">Retry</div>
+    </div>
+
+  </div>
+
+  <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.30 0.012 250); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.46 0.008 250);">Continue</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

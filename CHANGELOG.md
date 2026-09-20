@@ -32,6 +32,131 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (P22 batch-gate regression fix, the P25 vad-fallback scenario, and S01a/S11a artboards)
+
+### <pending> — jurisdiction-notice resumption fixed at the fixture; P25's vad-fallback scenario built; S01a/S11a given artboards, a real-rows MODELS scenario and tour steps
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/**` (`SetupStateMachine.kt`'s kdoc,
+`SetupActivity.kt`'s MODELS-step row functions, new `DebugModelsSetupOverride.kt`),
+`app/src/debug/kotlin/org/ort/app/debug/**` (`Scenarios.kt`, `ScenarioFixtures.kt`,
+`tour/SetupStepIds.kt`), `tools/ui-audit/tour.json`, `design/design-intent.md`,
+`design/canvas/Setup-Jurisdiction.dc.html`, `design/canvas/Setup-Models.dc.html` (both new).
+
+**Requirements/ACs:** D43, D50, NFR-6c, FR-AST-10..12, AC-166, AC-184..190, AC-162.
+
+**What changed — three jobs, in priority order:**
+
+1. **The batch-gate regression (highest priority).** P22 added a `JURISDICTION_NOTICE` step to
+   `SetupStateMachine.stepFor`, directly after `WELCOME` and before every other gate. Twelve
+   `WpiScenariosTest`/`ScenariosTest` cases that seed a setup state partway through (`setup-verified`,
+   `setup-level`, `setup-radio`, `setup-mode`, `setup-bt-permission`, `setup-rig-transport`
+   (and its `-preset` sibling), `setup-rig-bluetooth`, `asset-corrupt`, `rig-bt-connected`,
+   `setup-verified-local-mic`) began failing: each resumed at `JURISDICTION_NOTICE` instead of
+   the step its own test name promises. **Diagnosis:** `stepFor`'s new ordering is correct per
+   AC-166 ("shown exactly once, on first run") — none of these twelve fixtures had ever set
+   `SetupSnapshot.jurisdictionNoticeSeen`, so every one of them was, by construction, indistinguishable
+   from a genuine first run the instant the new gate existed. **Chosen fix: the fixtures, not the
+   production code.** A scenario that seeds a device already past `WELCOME` and resuming at `MODE`
+   or later is not a first run by definition (the prompt's own framing, matching the diagnosis
+   independently) — AC-166 governs first run only. Set `store.jurisdictionNoticeSeen = true`
+   alongside every `store.welcomeSeen = true` in `Scenarios.kt` (12 call sites: `verifiedInputStore`
+   — covers `setupVerified`/`setupLevel`/`setupRadio` — plus each `freshSetupStore` caller:
+   `setupVerifiedLocalMic`, `setupMode`, `setupBtPermission`, `setupRigTransport`,
+   `setupRigBluetooth`, `modeLocalMic`, `modeUsb`, `modeBluetooth`, `rigBtConnected`,
+   `assetsBundled`, `assetCorrupt`) — the last four of those twelve sites have no existing test
+   asserting `stepFor` today but represent the identical "already past first run" fact, so they were
+   fixed too rather than left inconsistent. Recorded the full rationale once, in
+   `SetupSnapshot.jurisdictionNoticeSeen`'s own kdoc, and left a one-line pointer to it at each of
+   the twelve call sites rather than repeating the explanation twelve times.
+2. **P25's undelivered `vad-fallback` scenario (D50, Q22, FR-SEG-10, AC-162).** P25 built the live
+   bar's amber "Energy VAD" mark and the session-review header's "Segmentation: Energy VAD
+   (fallback)" line but left no scenario to reach either — its own CHANGELOG entry named exactly
+   what was missing. Added: a `vadDetector: VadDetectorKind = UNKNOWN` parameter to
+   `ScenarioFixtures.session()` (additive, every existing caller unaffected); a `"vad-fallback"`
+   `Scenarios.NAMES` entry, `load` branch and `republishFacets` branch seeding a live (`markCapturing`),
+   zero-over session with `vadDetector = ENERGY` (the same minimal "0 overs, live" shape
+   `rigLost`/`rigReconnected` already establish); two `tools/ui-audit/tour.json` steps —
+   `vad-fallback/N01-now-vad-fallback` (`NOW`, the live-bar chip) and
+   `vad-fallback/RC02-recording-session-vad-fallback` (`EARLIER_NIGHTS`,
+   `recordingSession: self`, the durable header line — `RecordingSessionSummary`'s own
+   `listAll()` include a live, unended session, so this is reachable even though the session
+   never ends).
+3. **S01a (`JurisdictionNoticeScreen`) and S11a (`ModelsSetupScreen`) given artboards, a scenario
+   and tour steps (constitution VIII: neither could be captured or compared before this).** Added
+   `design/canvas/Setup-Jurisdiction.dc.html` (the one screen besides Welcome with no back chevron,
+   no counter and no segment bars — `indicatorIndex()`/`onBack` are both null for
+   `JURISDICTION_NOTICE`, confirmed by reading `SetupStep.kt`/`SetupStateMachine.kt` before drawing
+   it) and `design/canvas/Setup-Models.dc.html` (shares `READY`'s own `8 of 8` segment fill,
+   drawn with one `PENDING` row and one `FAILED` row so both "still needs your attention" shapes
+   are in one capture); two `design/design-intent.md` §2 rows (`S01a`, `S11a`, following the
+   existing S02b/S02c/S09b/S10b lettered-insertion convention) with an honest `drawn` status
+   (built already in P22; not yet swept against a capture — that is this session's own deliverable,
+   not a claim this makes); `SetupStepIds.kt` entries `"S01a" -> "JURISDICTION_NOTICE"` and
+   `"S11a" -> "MODELS"`; six `tour.json` steps (1.0, 2.0, 2.0-scrolled-to-end for each), using a
+   `"setup-mode"` base for S01a (no dynamic content to seed) and a new `"setup-models"` scenario
+   for S11a.
+
+   **The MODELS step's real production data path cannot show a download-needed row on any build
+   variant today — found and reported, not silently worked around.** `SetupActivity.RenderModels`
+   reads `ModelsController.currentState(context).rowsForSetupModelsStep()`, which only returns a
+   row when its catalog entry is genuinely not bundled — but `ModelsViewData.kt`'s own
+   `ModelCatalog.entries` hardcodes `ModelCatalogEntry.bundled` to its default, `true`, for every
+   entry ("every entry `ModelCatalog` generates today is bundled", that file's own kdoc, verbatim),
+   and never reads `GeneratedBundledAssetManifest.Entry.bundled` (which *is* genuinely `false` for
+   the `play` flavor, per `BundledAssetCatalogRenderer`) to override it. So `rowsForSetupModelsStep()`
+   is unconditionally empty in production, on `full` and `play` alike — a real gap, and
+   `app/src/main/kotlin/org/ort/app/ui/data/ModelsViewData.kt` is a different unit's file (WPG's),
+   outside this session's ownership. Added `DebugModelsSetupOverride` (in `ui/setup`, this
+   session's own package) — the identical seam `DebugRouteCheckOverride`/`DebugRigLinkPortOverride`
+   already establish for a hardware/wiring gap this package cannot otherwise drive to a capturable
+   state: `SetupActivity.initialModelsSetupRows`/`refreshedModelsSetupRows` read
+   `DebugModelsSetupOverride.activeOverride` first, gated on `BuildConfig.DEBUG` exactly like its
+   two siblings. The new `"setup-models"` scenario calls `DebugModelsSetupOverride.show(...)` with
+   two real `ModelId` entries (`ASR_ENCODER` pending, real catalog size; `ASR_DECODER` failed, a
+   real checksum-mismatch reason) rather than routing through the broken `bundled` plumbing — the
+   byte figures are genuine even though "needs downloading" is asserted directly for this capture.
+   The real fix (propagating `GeneratedBundledAssetManifest.Entry.bundled` into
+   `ModelCatalogEntry.bundled`) is not made here; it belongs to WPG's own file.
+
+   **A second, smaller deviation noted, not fixed:** `ModelsSetupScreen.kt`'s `ModelDownloadRow`
+   renders a `FAILED` row's reason in `OrtColors.textDim`, the same colour as every other row's
+   sub-line — design-guide.md §3's own rule ("Failed / unavailable — amber, states the cause...")
+   would call for amber there, the same way every other failed/degraded state in this app reads.
+   The artboard was drawn to match what the built screen actually does today (`text/dim`, not
+   amber), per this session's own instruction, with the discrepancy called out in the artboard's
+   own comment rather than silently drawn "correctly" and left to surprise whoever compares it
+   against a real capture.
+
+**Verified:**
+`.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.debug.*"` → `BUILD SUCCESSFUL`
+(all `WpiScenariosTest`/`ScenariosTest`/`TourIdsTest`/`TourParityTest`/`TourSpecTest`/`TourStepsTest`
+cases green, including the twelve previously-failing resumption assertions and the new
+`vad-fallback`/`setup-models` scenarios loading without throwing).
+`.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.debug.*"`
+→ `BUILD SUCCESSFUL` (626 tests). One run of this exact command hit three `BluetoothPermissionScreenTest`
+(`S02c`, a file this change never touches) `AppNotIdleException` failures under the load of the
+combined suite; confirmed pre-existing and unrelated — `BluetoothPermissionScreenTest` alone is
+green in isolation, and this exact class of cross-test Compose-idle flake under load is documented
+repeatedly elsewhere in this file (e.g. the 2026-09-10 "idle-root" entry); a second run of the
+identical command completed clean. `.\gradlew.bat ktlintCheck` → `BUILD SUCCESSFUL`.
+`.\gradlew.bat detekt` → `BUILD SUCCESSFUL`.
+**Discrimination (job 1, the regression fix):** `SetupStateMachine.kt`'s own change is a kdoc
+addition only, load-bearing nothing — the real fix is `Scenarios.kt`'s twelve
+`jurisdictionNoticeSeen` lines, so those (and only those) were reverted via `git checkout` back to
+the pre-fix state; reran `WpiScenariosTest`/`ScenariosTest`: the identical twelve cases failed
+(`expected:<X> but was:<JURISDICTION_NOTICE>`) for the right reason; restored, reran: all twelve
+green again.
+
+**Left open / not done:** the real `ModelCatalog.entries`/`GeneratedBundledAssetManifest.bundled`
+plumbing gap (above) is reported, not fixed — outside this session's file ownership.
+`ModelsSetupScreen.kt`'s failed-row colour (`text/dim` vs. the design-guide's own amber-for-failure
+rule) is likewise reported, not fixed — a cosmetic deviation, not a blocker to capture. No emulator
+or tour was run this session (per its own instructions); the lead captures `vad-fallback/N01-*`,
+`vad-fallback/RC02-*`, `setup-mode/S01a-*` and `setup-models/S11a-*` (six ids at 1.0/2.0/2.0-end,
+two at 1.0 only) and judges them against `Setup-Jurisdiction.dc.html`/`Setup-Models.dc.html` and
+the D50 disclosure boards. The `spec/build-plan.md` P22/P25 checkboxes are left exactly as this
+session found them; neither this session's own "done when" was to tick them.
+
 ## 2026-09-19
 
 ### lead integration — the renamed flavor tasks' callers, outside any Wave G unit's ownership

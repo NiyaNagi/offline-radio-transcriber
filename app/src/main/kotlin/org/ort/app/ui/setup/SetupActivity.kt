@@ -1349,28 +1349,34 @@ public class SetupActivity : ComponentActivity() {
      * process), so this is a plain [ModelsController] read: every downloadable, tier-required
      * row is [ModelDownloadRowStatus.INSTALLED] if it already is, [ModelDownloadRowStatus.PENDING]
      * otherwise. [refreshedModelsSetupRows] is what layers real `WorkManager` state on top from
-     * the first poll onward. */
+     * the first poll onward. [DebugModelsSetupOverride.activeOverride] is read first — see that
+     * object's own kdoc for the real production gap it stands in for. */
     private fun initialModelsSetupRows(context: Context): List<ModelDownloadRowViewState> =
-        ModelsController.currentState(context).rowsForSetupModelsStep().map { row ->
-            ModelDownloadRowViewState(
-                id = row.id,
-                label = row.label,
-                sizeBytes = row.sizeBytes ?: 0L,
-                status = if (row.status == ModelRowStatus.INSTALLED) {
-                    ModelDownloadRowStatus.INSTALLED
-                } else {
-                    ModelDownloadRowStatus.PENDING
-                },
-            )
-        }
+        DebugModelsSetupOverride.activeOverride ?: ModelsController.currentState(context)
+            .rowsForSetupModelsStep().map { row ->
+                ModelDownloadRowViewState(
+                    id = row.id,
+                    label = row.label,
+                    sizeBytes = row.sizeBytes ?: 0L,
+                    status = if (row.status == ModelRowStatus.INSTALLED) {
+                        ModelDownloadRowStatus.INSTALLED
+                    } else {
+                        ModelDownloadRowStatus.PENDING
+                    },
+                )
+            }
 
     /** [ModelDownloadWorker.currentSnapshot] layered onto [ModelsController]'s own real installed
      * state — installed always wins outright (a row `WorkManager` never heard of, because it was
      * bundled to begin with or side-loaded, must still read as done); otherwise this is exactly
      * what the operator's last [ModelDownloadWorker.start]/[org.ort.app.ui.setup.SetupActivity]
-     * poll actually found. */
-    private suspend fun refreshedModelsSetupRows(context: Context): List<ModelDownloadRowViewState> =
-        ModelsController.currentState(context).rowsForSetupModelsStep().map { row ->
+     * poll actually found. [DebugModelsSetupOverride.activeOverride] is read first, and — since an
+     * overridden capture has no real `WorkManager` job behind it — returned as-is on every poll
+     * rather than layered with a live snapshot that would only ever read `NotRunning`/`null` and
+     * silently downgrade a `FAILED`/`DOWNLOADING` override row back to `PENDING`. */
+    private suspend fun refreshedModelsSetupRows(context: Context): List<ModelDownloadRowViewState> {
+        DebugModelsSetupOverride.activeOverride?.let { return it }
+        return ModelsController.currentState(context).rowsForSetupModelsStep().map { row ->
             val sizeBytes = row.sizeBytes ?: 0L
             if (row.status == ModelRowStatus.INSTALLED) {
                 ModelDownloadRowViewState(row.id, row.label, sizeBytes, ModelDownloadRowStatus.INSTALLED)
@@ -1391,6 +1397,7 @@ public class SetupActivity : ComponentActivity() {
                 }
             }
         }
+    }
 
     /** S09b's per-transport sub-line (`Setup-Rig-Transport.dc.html`) — the preset case names it
      * generically ("preset by your mode") since S09b has no knowledge of the specific mode's own
