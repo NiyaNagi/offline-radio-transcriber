@@ -152,6 +152,90 @@ hardcoded" — the reason no forkEvery/timeout number changed here without evide
 - No change to `app/build.gradle.kts`'s `forkEvery` formula (`availableCpuCount / 4`, coerced to
   `[1, 12]`) — nothing in this session's evidence showed it wrong for the 32-core case it produces
   here (`8`), only that it does not by itself prevent every flake this class of bug can produce.
+## 2026-09-20 (P32: accessibility pass — WCAG 2.2 AA, partial; see this entry's "Left open")
+
+### 0b7efcde — P32 · two shared-component accessibility fixes: header touch targets and toggle/checkbox descriptions
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Rows.kt`,
+`app/src/main/kotlin/org/ort/app/ui/components/Controls.kt`, and their tests
+(`app/src/test/kotlin/org/ort/app/ui/components/RowsTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/components/ControlsTest.kt`, new
+`app/src/test/kotlin/org/ort/app/ui/components/HeaderTouchTargetTest.kt`). This is a partial pass,
+not the whole of P32 — see "Left open" below; the register findings this session produced are
+listed in this session's own report rather than filed directly (P32's instructions reserve
+register edits to the lead).
+
+**Requirements/ACs:** FR-A11Y-2 (content descriptions on every interactive element), FR-A11Y-4
+(contrast), constitution VII's accessibility floor, constitution VIII (accessibility judged on a
+device).
+
+**What changed:**
+- **`ScreenHeader`'s drawer/search icons and `DrillInHeader`'s "more" kebab had `.clickable`
+  directly on a 19-21dp `Icon`'s own `Modifier.size`**, the identical under-the-44dp-floor shape
+  register R-1073 already fixed on `DrillInHeader`'s own back chevron in the same file — just
+  never carried to these three siblings. `ScreenHeader` is the header the nav host draws above
+  almost every top-level destination (Now, Log, Threads, Stations, Recordings, and any screen that
+  has not grown its own header), so this is a wide-reaching gap. Fixed with a new shared
+  `HeaderTouchTargetIcon` (`Rows.kt`) — the same "outer 44dp `Box` carries the floor and the
+  `clickable`, the glyph inside keeps its own unchanged size" pattern R-1073 and
+  `SearchScreen.kt`'s `SearchHeaderTouchTargetIcon` already established — that both composables
+  now route through.
+- **`CheckboxRow` and `ToggleRow` (`Controls.kt`) carried no content description on their own
+  clickable/toggleable node at all** — real-device `uiautomator` evidence this pass (Settings >
+  Analytics' three tier toggles) showed `content-desc=""` on every one, the identical R-380/R-381
+  shape this same file's `TextAction`/`PrimaryButton`/`SecondaryButton`/`DestructiveButton`/
+  `FilterChip`/`NavRow`/`KeyValueRow` were already fixed for, just never carried to these two.
+  Every settings toggle and checkbox in the app uses one of these two composables (Analytics'
+  three tiers, Alerts' master switch, Contribute's categories, and any future one), so this one
+  fix reaches all of them. Fixed the same established way: `clearAndSetSemantics`, redeclaring
+  `toggleableState`/`role`/the click action alongside a real `contentDescription` built from
+  `label` (+ `subLine`, + `count` for `CheckboxRow`) the same way `NavRow` already composes its own.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.components.*"` — 169 tests,
+  all passing (`RowsTest`, `HeaderTouchTargetTest`, `ControlsTest`, and every sibling in the
+  package unaffected by these two files).
+- `.\gradlew.bat ktlintCheck detekt` — both green (the new test file exists specifically to keep
+  `RowsTest` under detekt's `LargeClass` threshold after adding the kebab/`ScreenHeader` tests).
+- Both fixes shown to discriminate: the production change reverted, the new test(s) fail for the
+  right reason (measured touch-target size under 44dp; empty `ContentDescription` on the node
+  carrying `OnClick`), then restored and passing again.
+- **Device evidence** (own AVD `ort_audit_a11y`, port 5560, Pixel 6 API 34, `overnight` scenario,
+  `install.ps1 -Clear`): before this fix, `uiautomator dump` of Settings > Analytics showed all
+  three tier toggles with `content-desc=""`; after, the same dump shows
+  `content-desc="Usage and quality (tier 1). Crashes, screens and actions used, ..."` (and the
+  tier 2/3 equivalents) on the exact `checkable="true" clickable="true"` node. Settings > Alerts'
+  master toggle confirmed the same fix propagating live. The `ScreenHeader`/`DrillInHeader` touch
+  targets could not be corroborated this way — see "Left open".
+
+**Left open / not done:**
+- **P32 is not complete.** This entry covers two shared-component fixes found first because they
+  affect the most screens; it is not the full screen-by-screen sweep the unit's own instructions
+  describe (Now, Log, Detail, Correction sheet, Search, Threads, Stations, Digest, Recordings,
+  Capture, every setup step and every Settings screen). See this session's own report for the
+  full inventory of what was and wasn't checked, and for contrast findings against
+  `design/design-guide.md`'s tokens (`marker/unknown`, `line/control`, `text/disabled` and
+  `text/figure` measured below their required ratio — reported, not overridden locally, per this
+  unit's own instructions).
+- **`uiautomator` bounds could not corroborate the touch-target fix, or refute it** — the same
+  outer-clickable-node/labelled-child split this pass found for `DrillInHeader`'s *already-shipped,
+  already-verified* back chevron (unrelated to this change) shows on-device regardless of the fix,
+  which means Compose's own accessibility bridge pads/restructures small-target bounds in a way
+  `uiautomator`'s raw AccessibilityNodeInfo dump does not reflect faithfully here. The Robolectric
+  `getUnclippedBoundsInRoot()` bounds tests (real layout measurement, not the accessibility bridge)
+  are the discriminating evidence for this fix instead.
+- **A suspected `DrawerRow` touch-target defect was investigated and found NOT to be one.** Real
+  device density is 420dpi (`adb shell wm density`, confirmed directly — not inferred), i.e. 2.625x,
+  not the 3.0x this session first assumed from a coincidental fit; at the correct density, drawer
+  rows measure ~46.5dp, above the 44dp floor. `DrawerRow`'s `heightIn` (vs `requiredHeightIn`) was
+  edited and reverted in the same session once this was caught — no net change to `Drawer.kt`.
+  Recorded here per constitution I rather than silently discarded.
+- Tour ids needing re-capture: **none** — neither fix changes any screen's visual layout (a
+  touch-target box grows only the invisible hit region around an unchanged glyph; a content
+  description is inaudible/invisible on screen), so no artboard comparison or re-capture applies
+  per constitution VIII's own trigger list.
+
+---
 
 ## 2026-09-20 (P31: live alerts — a watched callsign, keyword or frequency fires a local notification after Pass B)
 

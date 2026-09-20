@@ -851,6 +851,16 @@ shape before an accessibility pass sweeps it).
 - [ ] **P32 · Accessibility pass — WCAG 2.2 AA, FR-A11Y** *(`:app`, every screen)* — FR-A11Y-1..6.
   Last, deliberately, after every other screen change in this wave-set has landed.
 
+  **Partial progress, 2026-09-20 (see `CHANGELOG.md`'s own entry):** two shared-component fixes
+  landed — `ScreenHeader`/`DrillInHeader`'s under-floor touch targets (the R-1073 pattern, missed
+  on three sibling icons) and `CheckboxRow`/`ToggleRow`'s missing content descriptions (the
+  R-380/R-381 pattern, missed on these two). Not done: the full screen-by-screen sweep (Now, Log,
+  Detail, Correction sheet, Search, Threads, Stations, Digest, Recordings, Capture, every setup
+  step, every Settings screen), and routing the contrast findings (`marker/unknown`,
+  `line/control`, `text/disabled`, `text/figure` all measured below their required WCAG ratio
+  against `design/design-guide.md`'s own tokens) to whoever owns the guide. Still open for the
+  next session on this unit.
+
   **Read first:** FR-A11Y-1..6, constitution VII's accessibility-floor bullet, constitution
   VIII in full (the device-dump discipline — "accessibility is judged on a device, never from the
   test tree"); `results/ui-audit/register.md` for every still-open `polish`/accessibility-flavoured

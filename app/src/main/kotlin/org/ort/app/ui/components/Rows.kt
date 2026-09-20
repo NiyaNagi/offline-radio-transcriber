@@ -267,30 +267,33 @@ public fun DrillInHeader(
         ) {
             // R-1073: the outer Box carries the real 44dp floor and the clickable; the Icon
             // inside keeps its own, unchanged 20dp size — see this composable's own doc comment.
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clickable(role = Role.Button, onClickLabel = "Back to $parentLabel", onClick = onBack)
-                    .testTag("drill-in-header-back"),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = OrtIcons.back,
-                    contentDescription = "Back to $parentLabel",
-                    tint = OrtColors.accentGreen,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            HeaderTouchTargetIcon(
+                icon = OrtIcons.back,
+                contentDescription = "Back to $parentLabel",
+                tint = OrtColors.accentGreen,
+                glyphSize = 20.dp,
+                onClick = onBack,
+                testTag = "drill-in-header-back",
+            )
             Text(text = parentLabel, style = OrtType.bodyProse, color = OrtColors.accentGreen)
             Spacer(modifier = Modifier.weight(1f))
             if (onKebab != null) {
-                Icon(
-                    imageVector = OrtIcons.more,
+                // P32 (FR-A11Y-2, the R-1073 pattern): this icon still had `.clickable` directly on
+                // its own 19dp `Modifier.size`, the identical under-the-floor shape R-1073 fixed for
+                // the back chevron three lines above, in the same composable — missed the first time
+                // because that fix was scoped to the back target the register's dumps had actually
+                // measured. `HeaderTouchTargetIcon` closes both the same way.
+                HeaderTouchTargetIcon(
+                    icon = OrtIcons.more,
                     contentDescription = kebabDescription,
                     tint = OrtColors.textDim,
-                    modifier = Modifier.size(19.dp)
-                        .then(if (kebabTestTag != null) Modifier.testTag(kebabTestTag) else Modifier)
-                        .clickable(role = Role.Button, onClickLabel = kebabDescription, onClick = onKebab),
+                    glyphSize = 19.dp,
+                    onClick = onKebab,
+                    // A stable default tag (never absent, unlike before this fix) so the touch
+                    // target is always discoverable by tag — the same guarantee
+                    // "drill-in-header-back" already gives the chevron beside it — while a caller
+                    // that names its own (kebabTestTag) still gets that instead, unchanged.
+                    testTag = kebabTestTag ?: "drill-in-header-kebab",
                 )
             }
         }
@@ -312,12 +315,18 @@ public fun ScreenHeader(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Icon(
-                imageVector = OrtIcons.drawer,
+            // P32 (FR-A11Y-2, the R-1073 pattern): this is the header the nav host draws above
+            // almost every top-level destination (Now, Log, Threads, Stations, Recordings, and
+            // every screen that has not grown its own header) — `.clickable` sat directly on the
+            // 21dp glyph's own `Modifier.size`, the same under-the-floor shape R-1073 fixed on
+            // `DrillInHeader`'s back chevron, just never carried over to this sibling composable.
+            HeaderTouchTargetIcon(
+                icon = OrtIcons.drawer,
                 contentDescription = "Open navigation",
                 tint = OrtColors.textIcon,
-                modifier = Modifier.size(21.dp)
-                    .clickable(role = Role.Button, onClickLabel = "Open navigation", onClick = onDrawer),
+                glyphSize = 21.dp,
+                onClick = onDrawer,
+                testTag = "screen-header-drawer-icon",
             )
             Spacer(modifier = Modifier.weight(1f))
             if (liveElapsedLabel != null) {
@@ -330,15 +339,50 @@ public fun ScreenHeader(
                 }
             }
             if (onSearch != null) {
-                Icon(
-                    imageVector = OrtIcons.search,
+                HeaderTouchTargetIcon(
+                    icon = OrtIcons.search,
                     contentDescription = "Search",
                     tint = OrtColors.textDim,
-                    modifier = Modifier.size(19.dp)
-                        .clickable(role = Role.Button, onClickLabel = "Search", onClick = onSearch),
+                    glyphSize = 19.dp,
+                    onClick = onSearch,
+                    testTag = "screen-header-search-icon",
                 )
             }
         }
+    }
+}
+
+/**
+ * P32 (FR-A11Y-2, the R-1073 pattern): a real 44dp touch target around an unchanged glyph — the
+ * same fix R-1073 gave [DrillInHeader]'s back chevron and `SearchScreen.kt`'s private
+ * `SearchHeaderTouchTargetIcon` already gives its own drawer icon and back chevron, pulled out
+ * here so [ScreenHeader]'s drawer/search icons and [DrillInHeader]'s kebab icon — sharing the
+ * identical shape, in this same file — stop each re-deriving it (or, as here, missing it) on
+ * their own. [testTag] is `null` by default; a caller that does not need one (most icons before
+ * this existed had none) gets a plain `Box` with no tag at all.
+ */
+@Composable
+private fun HeaderTouchTargetIcon(
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color,
+    glyphSize: Dp,
+    onClick: () -> Unit,
+    testTag: String? = null,
+) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clickable(role = Role.Button, onClickLabel = contentDescription, onClick = onClick)
+            .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = tint,
+            modifier = Modifier.size(glyphSize),
+        )
     }
 }
 

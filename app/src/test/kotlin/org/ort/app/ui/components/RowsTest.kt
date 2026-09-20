@@ -462,6 +462,10 @@ class RowsTest {
         assertDrillInHeaderBackTargetMeetsFloor(fontScale = 2f)
     }
 
+    // P32's kebab/`ScreenHeader` touch-target tests moved to `HeaderTouchTargetTest.kt` —
+    // detekt's own `LargeClass` finding, once this file grew past a reasonable size (the same
+    // reason R-373's tests moved to `LogRowResponsiveTest.kt`, above).
+
     @Test
     fun `R_192_drill_in_header_kebab_can_be_named`() {
         // WP8 had to clone this whole header (StationDetailHeader) just to relabel its kebab

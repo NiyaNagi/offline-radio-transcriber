@@ -53,6 +53,8 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -666,7 +668,17 @@ private fun RadioDot(selected: Boolean, modifier: Modifier = Modifier) {
     }
 }
 
-/** guide §6.11: 16dp checkbox, 4px radius, `accent/green` fill + `accent/on-green` check when on. */
+/** guide §6.11: 16dp checkbox, 4px radius, `accent/green` fill + `accent/on-green` check when on.
+ *
+ * P32 (FR-A11Y-2, the R-380/R-381 pattern this package's own `NavRow`/`TextAction`/`FilterChip`
+ * already carry, `ControlsTest`'s own doc comment on that pattern's device finding): a plain
+ * `.toggleable(...)` alone never carried [label] onto its own clickable node — real-device
+ * uiautomator evidence this pass (Settings > Analytics' three toggles, the same shape this row
+ * shares) showed exactly the empty `content-desc=""` that finding already describes. Fixed the
+ * same way every other interactive row in this file was: `clearAndSetSemantics`, redeclaring
+ * everything `.toggleable()` used to supply on its own (`toggleableState`, `role`, the click
+ * action) alongside the description `.toggleable()` never carried.
+ */
 @Composable
 public fun CheckboxRow(
     label: String,
@@ -677,11 +689,24 @@ public fun CheckboxRow(
     count: String? = null,
     leading: (@Composable () -> Unit)? = null,
 ) {
+    val baseDescription = subLine?.let { "$label. $it" } ?: label
+    val description = count?.let { "$baseDescription, $it" } ?: baseDescription
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
-            .toggleable(value = checked, onValueChange = onCheckedChange, role = Role.Checkbox),
+            .toggleable(value = checked, onValueChange = onCheckedChange, role = Role.Checkbox)
+            .clearAndSetSemantics {
+                contentDescription = description
+                // R-380 correction (WP2, gate-blocking) — see `NavRow`'s own doc comment above.
+                text = AnnotatedString(description)
+                toggleableState = ToggleableState(checked)
+                role = Role.Checkbox
+                onClick(label = null) {
+                    onCheckedChange(!checked)
+                    true
+                }
+            },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(11.dp),
     ) {
@@ -722,7 +747,13 @@ private fun CheckboxBox(checked: Boolean, modifier: Modifier = Modifier) {
 }
 
 /** guide §6.11: 42x24 pill, `accent/green` + `accent/on-green` knob when on, `bg/chip` +
- * `text/signal` knob when off. A toggle carries its consequence as [subLine]. */
+ * `text/signal` knob when off. A toggle carries its consequence as [subLine].
+ *
+ * P32 (FR-A11Y-2, the R-380/R-381 pattern — see [CheckboxRow]'s own doc comment for the full
+ * finding, real-device uiautomator evidence this pass, and why this needs `clearAndSetSemantics`
+ * rather than a plain `.toggleable()`): every settings toggle in the app uses this composable — the
+ * three Analytics tiers, Alerts' master switch, and any future one — so this one fix carries to
+ * every screen that uses it. */
 @Composable
 public fun ToggleRow(
     label: String,
@@ -731,11 +762,23 @@ public fun ToggleRow(
     modifier: Modifier = Modifier,
     subLine: String? = null,
 ) {
+    val description = subLine?.let { "$label. $it" } ?: label
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
-            .toggleable(value = checked, onValueChange = onCheckedChange, role = Role.Switch),
+            .toggleable(value = checked, onValueChange = onCheckedChange, role = Role.Switch)
+            .clearAndSetSemantics {
+                contentDescription = description
+                // R-380 correction (WP2, gate-blocking) — see `NavRow`'s own doc comment.
+                text = AnnotatedString(description)
+                toggleableState = ToggleableState(checked)
+                role = Role.Switch
+                onClick(label = null) {
+                    onCheckedChange(!checked)
+                    true
+                }
+            },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
