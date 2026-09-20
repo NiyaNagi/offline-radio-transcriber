@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P31: live alerts — a watched callsign, keyword or frequency fires a local notification after Pass B)
 
-### <pending> — P31 · live alerts: watches, matching, coalescing and an honest notification, hooked at Pass B's own closure point
+### 78cd924a — P31 · live alerts: watches, matching, coalescing and an honest notification, hooked at Pass B's own closure point
 
 **Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/alerts/**` package
 (`AlertWatch`/`AlertWatchStore`/`AlertMatcher`/`AlertMatchInput`/`AlertNotificationContent`/
@@ -147,8 +147,6 @@ module edge — `dependencyRules` unchanged).
   and files") leaves that sweep, and the `spec/build-plan.md` checkbox, to the session that can drive
   the emulator. The `spec/build-plan.md` P31 checkbox is deliberately left unchecked for the same
   reason.
-- The commit hash above is filled in by a follow-up commit once it exists, matching this repo's own
-  precedent (`16b7e867`).
 
 ---
 
