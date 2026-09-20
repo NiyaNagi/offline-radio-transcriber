@@ -32,6 +32,126 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (P31: live alerts — a watched callsign, keyword or frequency fires a local notification after Pass B)
+
+### <pending> — P31 · live alerts: watches, matching, coalescing and an honest notification, hooked at Pass B's own closure point
+
+**Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/alerts/**` package
+(`AlertWatch`/`AlertWatchStore`/`AlertMatcher`/`AlertMatchInput`/`AlertNotificationContent`/
+`AlertNotificationDispatcher`/`AlertFiring`/`AlertEvaluationCoordinator`); a second, additive call
+in `pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt` (coordinates with P24's
+own `threadGrouper` call in the same file, neither line touches the other); new `:app`
+`org.ort.app.alerts.AlertsAppWiring` and `app/src/main/kotlin/org/ort/app/ui/settings/SettingsAlertsScreen.kt`;
+one new `SettingsScreenId.ALERTS` case/row/router branch in `SettingsViewData.kt`,
+`SettingsRootScreen.kt` and `SettingsContent.kt`; a new `design/canvas/Settings-Alerts.dc.html`
+artboard and its `design/design-intent.md` row (`CF15`); three new `tools/ui-audit/tour.json`
+steps (`overnight/CF15-settings-alerts` at 1.0/2.0/2.0-end).
+
+**Requirements/ACs:** FR-ALR-1..6, AC-192..197, constitution I (an INFERRED match is never worded
+as heard), IV (capture/Pass B never wait on alert evaluation), VII (`:pipeline/alerts` adds no new
+module edge — `dependencyRules` unchanged).
+
+**What changed:**
+- **The three watch kinds are a closed, sealed type** (`AlertWatch.Callsign`/`.Keyword`/`.Frequency`),
+  never a stringly-typed row — constitution VII. `AlertMatcher` matches a callsign case-insensitively
+  against the transmission's *resolved* `stationId`, a keyword as a case-insensitive substring of the
+  accepted transcript, and a frequency within a 2.5 kHz tolerance (ordinary rig retuning drift, not a
+  literal bit-exact reading).
+- **Storage is a plain file**, `FileBackedAlertWatchStore` (`alerts/watches.txt` under
+  `context.filesDir`), not a new `:data` Room table or `SharedPreferences` — chosen because the one
+  production seam that will eventually need to construct a real store
+  (`org.ort.pipeline.passb.PassBFactory`) has a `filesDir: File` already and no `Context`; both sides
+  can point at the identical path (`FileBackedAlertWatchStore.RELATIVE_PATH`) without one needing the
+  other's dependency.
+- **The integration point is exactly where the plan named it**: one additive line in
+  `DataPassBResultSink.record` — `runCatching { alertTrigger.fireAndForget(alertMatchInputFor(result)) }`
+  — built from the same, just-resolved `PassBResult` plus a fresh read of the transmission's own
+  `frequencyHz`. Never from a Pass A partial, which never reaches this sink at all (AC-194).
+- **FR-ALR-4/AC-195, by construction, not by discipline.** `AlertEvaluationTrigger.fireAndForget` is
+  deliberately not `suspend`: it launches the real evaluation onto its own `CoroutineScope(SupervisorJob()
+  + Dispatchers.Default)` and returns immediately, so neither Pass B's write transaction nor the pass
+  queue behind it can ever be slowed by a hung or slow watch store/dispatcher. `DataPassBResultSink`
+  wraps the call in `runCatching` besides, so a badly-behaved trigger cannot break persistence either.
+- **The coalescing rule** (functional spec §7.19's own "a watch that matches fifty times should not
+  produce fifty notifications"): `AlertEvaluationCoordinator` keeps, per watch id, only the wall time
+  of its most recent match. A match inside a 10-minute window of the previous one for the same watch
+  is a "repeat" (`AlertFiring.isRepeat`) — the real `AndroidAlertNotificationDispatcher` reuses that
+  watch's own notification id and sets `NotificationCompat.Builder.setOnlyAlertOnce(true)`
+  unconditionally, so Android's own platform behaviour is what actually suppresses the repeat alert:
+  the operator is alerted once per episode, the notification's content keeps updating (`"K7ABC · 5×"`)
+  silently thereafter until dismissed. A match after the window elapses starts a fresh, alerting
+  episode. State is per-process only (never persisted) — a fresh app process starts every watch's
+  count over, the same discretion `ThreadGroupingCoordinator` already applies for the identical reason.
+- **FR-ALR-5/AC-196 — the one requirement this unit treats as load-bearing.**
+  `AlertNotificationContentBuilder` (a plain function, no `Notification`, tested on a bare JVM) is the
+  single place a callsign watch's wording is decided: `CONFIRMED` reads "Heard now" / "Confirmed —
+  heard in this transmission."; `INFERRED`, `AMBIGUOUS` and `UNKNOWN` all read a hedged "Possible
+  match" / "...not confirmed heard in this transmission." — the word "heard" never appears outside the
+  `CONFIRMED` branch. A keyword/frequency watch's own body states the resolved station (if any) with
+  the identical hedge, never a bare callsign that could read as a confirmed hearing.
+- **FR-ALR-2 is handled honestly, not silently.** `notificationsCanFire`
+  (`NotificationManagerCompat.areNotificationsEnabled()`) backs both the Settings screen's own amber
+  banner ("Alerts cannot fire — notifications are turned off...") and is available to the real
+  dispatcher; nothing pretends a toggle works when the platform will not deliver.
+- **The Settings screen** (`SettingsAlertsScreen.kt`, new `SettingsScreenId.ALERTS` appended to the
+  "Capture" section, `SettingsRootScreen.kt`/`SettingsContent.kt`/`SettingsViewData.kt` following the
+  identical static-row-append pattern P27/P28/P30 established) lets the operator add/edit/remove a
+  watch of each kind, toggle any one on/off, and turn every watch off at once without deleting them
+  (AC-192, AC-197) — inline tap-to-edit, the same shape `SettingsCaptureScreen.kt`'s
+  `ManualFrequencyRow` already established for the manual-frequency field, chosen over inventing a new
+  form pattern.
+- A new artboard, `design/canvas/Settings-Alerts.dc.html` (no prior board existed — this screen did
+  not exist before this unit), and its `design-intent.md` inventory row (`CF15`), and three new
+  `tools/ui-audit/tour.json` steps reaching it via the existing, generic `settingsScreen` drillIn key
+  (`TourIds.kt` needed no change — `SettingsScreenId.ALERTS` is resolved by the same
+  `SettingsScreenId.entries.firstOrNull { it.name == name }` lookup every other screen already uses).
+
+**Verified:**
+- `.\gradlew.bat :pipeline:testDebugUnitTest` — BUILD SUCCESSFUL, every test green, including the
+  new `alerts` package suite and `DataPassBResultSinkAlertsTest`.
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.settings.*" --tests "org.ort.app.alerts.*"`
+  — BUILD SUCCESSFUL, including the new `SettingsAlertsScreenTest` (8 cases) and every pre-existing
+  Settings test unaffected by the new `ALERTS` row/branch. `pipeline`'s own
+  `AndroidAlertNotificationDispatcherTest` (`ShadowNotificationManager`, real
+  `FLAG_ONLY_ALERT_ONCE`, one notification id reused across 50 matches) is covered in the
+  `:pipeline:testDebugUnitTest` run above.
+- `.\gradlew.bat dependencyRules` — OK, `:pipeline`'s dependency set is unchanged (no new module
+  edge; `alerts` is a package inside the existing `:pipeline` module).
+- `.\gradlew.bat :pipeline:ktlintCheck :pipeline:detekt :app:ktlintCheck :app:detekt` — all four green.
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.debug.tour.*"` — BUILD SUCCESSFUL,
+  confirming the three new `tour.json` steps name a real `SettingsScreenId` and a supported drillIn
+  key.
+- Each discriminating test was shown to discriminate while writing it (strict TDD): the coalescing
+  test fails without the `isRepeat`/count logic; the AC-196 wording test genuinely failed once, live,
+  when the `UNKNOWN` branch's copy did not yet contain the same "not confirmed heard" hedge the
+  `INFERRED`/`AMBIGUOUS` branches use, and passed once that wording was made consistent; the AC-195
+  test fails if `fireAndForget` is made `suspend`/awaited at the call site; the AC-194 retry test
+  fails if the sink ever forwarded a Pass A-shaped partial.
+
+**Left open / not done:**
+- **Production wiring is not connected.** `PassBFactory.create` still constructs
+  `DataPassBResultSink(db)` with the default `NoOpAlertEvaluationTrigger` — neither `PassBFactory.kt`
+  nor `RealCaptureService.kt` (the one call site with a real `Context` to build an
+  `AndroidAlertNotificationDispatcher` and a `FileBackedAlertWatchStore` from) is in this unit's own
+  Owns list, and both are outside it. Alerts are fully built, tested and reachable from Settings, but
+  will not actually fire on a real device until a session with those two files in scope wires a real
+  `AlertEvaluationCoordinator` into `PassBFactory.create`'s `sink` parameter, matching the store path
+  `FileBackedAlertWatchStore.RELATIVE_PATH` already fixes.
+- **AC-193 (packet capture across a real session)** is a device/manual verification this session had
+  no emulator or device to run (per this session's own instructions) — the structural proof
+  (`dependencyRules`: `:pipeline` cannot reach `:net`, confirmed above) stands in for it here; the
+  literal packet-capture protocol is left for a hardware session.
+- **Not recaptured by the tour.** This session added the three tour steps and the artboard but did
+  not run `tools\ui-audit\install.ps1`/`tour.ps1` (no emulator in this environment) — Constitution
+  VIII's own division of labour ("builders capture to a scratch directory and report; the lead judges
+  and files") leaves that sweep, and the `spec/build-plan.md` checkbox, to the session that can drive
+  the emulator. The `spec/build-plan.md` P31 checkbox is deliberately left unchecked for the same
+  reason.
+- The commit hash above is filled in by a follow-up commit once it exists, matching this repo's own
+  precedent (`16b7e867`).
+
+---
+
 ## 2026-09-20 (P28 follow-up: the analytics channel finally emits — instrumentation for every tier-1 event and the tier-2 correction pair)
 
 ### c7d5a168 — R-1085 follow-up · the consent screen states D48's honest fact, and `isAnr` stops asserting a measurement that was never taken

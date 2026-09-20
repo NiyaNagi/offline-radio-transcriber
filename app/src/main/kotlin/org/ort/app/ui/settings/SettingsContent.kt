@@ -275,6 +275,10 @@ private fun SettingsSubScreen(
         // P30 (FR-STO-6, FR-STO-9): this wave's own turn at the same narrow integration point
         // P27/P28's branches above document.
         SettingsScreenId.BACKUP -> SettingsBackupSubScreen(context = context, onBack = onBack, modifier = modifier)
+
+        // P31 (FR-ALR-1..6): this wave's own turn at the same narrow integration point.
+        SettingsScreenId.ALERTS ->
+            SettingsAlertsSubScreen(context, storeVersion, onStoreChanged, onBack, modifier)
     }
 }
 
@@ -320,6 +324,118 @@ private fun SettingsAnalyticsSubScreen(
         },
         modifier = modifier,
     )
+}
+
+/**
+ * P31 (FR-ALR-1, FR-ALR-6), split out purely to keep [SettingsSubScreen] under detekt's length
+ * limit — the same reason every other real-I/O branch in this file already is its own function.
+ * `Add`/`Edit` reject a blank or `|`/newline-carrying draft outright (the delimiter
+ * `org.ort.pipeline.alerts.FileBackedAlertWatchStore`'s own line format reserves) rather than let
+ * a watch corrupt the shared file it is stored in; a frequency
+ * draft is parsed as MHz (the same unit the manual-frequency field elsewhere in this package
+ * already uses) and silently ignored if it does not parse as a positive number — never a crash
+ * over a typo.
+ */
+@Composable
+private fun SettingsAlertsSubScreen(
+    context: Context,
+    storeVersion: Int,
+    onStoreChanged: () -> Unit,
+    onBack: () -> Unit,
+    modifier: Modifier,
+) {
+    val state = remember(storeVersion) { SettingsAlertsPolling.current(context) }
+    val watchStore = org.ort.app.alerts.AlertsAppWiring.watchStore
+    SettingsAlertsScreen(
+        state = state,
+        onBack = onBack,
+        actions = SettingsAlertsActions(
+            onToggleAlertsEnabled = {
+                watchStore.alertsEnabled = it
+                onStoreChanged()
+            },
+            onToggleWatch = { id, enabled ->
+                watchStore.list().find { it.id == id }?.let { watch ->
+                    watchStore.update(watch.withEnabled(enabled))
+                    onStoreChanged()
+                }
+            },
+            onEditWatch = { id, kind, newValue ->
+                editAlertWatch(watchStore, id, kind, newValue)
+                onStoreChanged()
+            },
+            onRemoveWatch = { id ->
+                watchStore.remove(id)
+                onStoreChanged()
+            },
+            onAddCallsignWatch = { value ->
+                if (isValidWatchText(value)) {
+                    val watch = org.ort.pipeline.alerts.AlertWatch.Callsign(id = newAlertWatchId(), callsign = value)
+                    watchStore.add(watch)
+                    onStoreChanged()
+                }
+            },
+            onAddKeywordWatch = { value ->
+                if (isValidWatchText(value)) {
+                    val watch = org.ort.pipeline.alerts.AlertWatch.Keyword(id = newAlertWatchId(), keyword = value)
+                    watchStore.add(watch)
+                    onStoreChanged()
+                }
+            },
+            onAddFrequencyWatch = { value ->
+                parseFrequencyMhzToHz(value)?.let { hz ->
+                    val watch = org.ort.pipeline.alerts.AlertWatch.Frequency(id = newAlertWatchId(), frequencyHz = hz)
+                    watchStore.add(watch)
+                    onStoreChanged()
+                }
+            },
+        ),
+        modifier = modifier,
+    )
+}
+
+/** `org.ort.pipeline.alerts.FileBackedAlertWatchStore`'s own line format reserves `|` as its field
+ * separator and a newline as its line separator — a watch's own text must carry neither. */
+private fun isValidWatchText(value: String): Boolean =
+    value.isNotBlank() && !value.contains('|') && !value.contains('\n')
+
+private fun parseFrequencyMhzToHz(mhzText: String): Long? {
+    val mhz = mhzText.trim().toDoubleOrNull() ?: return null
+    if (mhz <= 0.0) return null
+    return (mhz * 1_000_000.0).toLong()
+}
+
+private fun newAlertWatchId(): String = org.ort.core.Ulid.generate().value
+
+private fun org.ort.pipeline.alerts.AlertWatch.withEnabled(enabled: Boolean): org.ort.pipeline.alerts.AlertWatch =
+    when (this) {
+        is org.ort.pipeline.alerts.AlertWatch.Callsign -> copy(enabled = enabled)
+        is org.ort.pipeline.alerts.AlertWatch.Keyword -> copy(enabled = enabled)
+        is org.ort.pipeline.alerts.AlertWatch.Frequency -> copy(enabled = enabled)
+    }
+
+/** [SettingsAlertsSubScreen]'s own `Edit` handler — [SettingsAlertWatchKind] names which of the
+ * three shapes [id] must already be (the row that produced this callback came from exactly one of
+ * them), so this never guesses a watch's kind from its current value. A frequency edit that does
+ * not parse as MHz leaves the watch unchanged rather than silently deleting it. */
+private fun editAlertWatch(
+    watchStore: org.ort.pipeline.alerts.AlertWatchStore,
+    id: String,
+    kind: SettingsAlertWatchKind,
+    newValue: String,
+) {
+    if (kind != SettingsAlertWatchKind.FREQUENCY && !isValidWatchText(newValue)) return
+    val existing = watchStore.list().find { it.id == id } ?: return
+    val updated = when (kind) {
+        SettingsAlertWatchKind.CALLSIGN -> (existing as? org.ort.pipeline.alerts.AlertWatch.Callsign)
+            ?.copy(callsign = newValue)
+        SettingsAlertWatchKind.KEYWORD -> (existing as? org.ort.pipeline.alerts.AlertWatch.Keyword)
+            ?.copy(keyword = newValue)
+        SettingsAlertWatchKind.FREQUENCY -> parseFrequencyMhzToHz(newValue)?.let { hz ->
+            (existing as? org.ort.pipeline.alerts.AlertWatch.Frequency)?.copy(frequencyHz = hz)
+        }
+    } ?: return
+    watchStore.update(updated)
 }
 
 /**

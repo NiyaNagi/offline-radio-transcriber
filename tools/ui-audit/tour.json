@@ -138,6 +138,9 @@
     { "id": "overnight/CF14-settings-backup", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "BACKUP" } },
     { "id": "overnight/CF14-settings-backup@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "BACKUP" }, "fontScale": 2.0 },
     { "id": "overnight/CF14-settings-backup@2x-end", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "BACKUP" }, "fontScale": 2.0, "scroll": "end" },
+    { "id": "overnight/CF15-settings-alerts", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ALERTS" } },
+    { "id": "overnight/CF15-settings-alerts@2x", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ALERTS" }, "fontScale": 2.0 },
+    { "id": "overnight/CF15-settings-alerts@2x-end", "scenario": "overnight", "destination": "SETTINGS", "drillIn": { "settingsScreen": "ALERTS" }, "fontScale": 2.0, "scroll": "end" },
 
     { "id": "overnight/D01-confirmed", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "confirmed" } },
     { "id": "overnight/D02-inferred", "scenario": "overnight", "destination": "LOG", "drillIn": { "transmission": "inferred" } },
