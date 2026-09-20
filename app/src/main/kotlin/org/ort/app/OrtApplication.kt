@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import org.ort.app.analytics.AnalyticsAppWiring
 import org.ort.app.analytics.AnalyticsUploadWorker
 import org.ort.app.analytics.CrashCaptureHandler
+import org.ort.app.analytics.CrashPayloads
 import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetState
@@ -17,7 +18,6 @@ import org.ort.app.fieldreport.wiring.FieldReportAppWiring
 import org.ort.pipeline.digest.ProseDigestRunner
 import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import org.ort.telemetry.AnalyticsEventFactory
-import org.ort.telemetry.AnalyticsTier1Payload
 
 /**
  * Application shell. The Hilt graph, capture service wiring and onboarding arrive with
@@ -64,21 +64,21 @@ class OrtApplication : Application() {
         // preferences, install id, upload client (`AnalyticsAppWiring`'s own doc comment). Started
         // unconditionally (tier 1 is on by default, FR-ANL-1) and idempotently (`configureOnce`).
         AnalyticsAppWiring.configureOnce(this)
-        // FR-ANL-2/D42: crash and ANR capture without any third-party SDK. Chains whatever handler
-        // was already installed (the platform's own) so recording a crash never changes what
-        // happens to it (`CrashCaptureHandler`'s own doc comment).
+        // FR-ANL-2/D42, constitution I: crash capture without any third-party SDK. Chains whatever
+        // handler was already installed (the platform's own) so recording a crash never changes
+        // what happens to it (`CrashCaptureHandler`'s own doc comment). The payload itself is built
+        // by `CrashPayloads.fromUncaughtException` (not inline here) so it carries a discriminating
+        // unit test with no Android dependency — see that object's own doc comment for why
+        // `isAnr` is always `null` on this path: no ANR-detection mechanism exists anywhere in this
+        // codebase, and `Thread.UncaughtExceptionHandler` fires for an uncaught exception, never for
+        // a hung main thread, so this call site can never truthfully report `true` or `false`.
         val previousExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler(
             CrashCaptureHandler(previousExceptionHandler) { thread, throwable ->
                 AnalyticsAppWiring.submit(
                     AnalyticsEventFactory.tier1(
                         AnalyticsAppWiring.baseProvenance(),
-                        AnalyticsTier1Payload.Crash(
-                            exceptionClass = throwable.javaClass.name,
-                            stackTrace = throwable.stackTraceToString(),
-                            isAnr = false,
-                            threadName = thread.name,
-                        ),
+                        CrashPayloads.fromUncaughtException(thread, throwable),
                     ),
                 )
             },

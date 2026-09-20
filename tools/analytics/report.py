@@ -26,6 +26,20 @@ def generate_report(con: duckdb.DuckDBPyConnection) -> str:
     lines.append(f"- crash-free rate: {_format_rate(crash['crash_free_rate'])}")
     lines.append("")
 
+    # FR-ANL-2, constitution I: `isAnr` is a real tri-state (true/false/unmeasured), never a
+    # default -- see `queries.crash_anr_breakdown`'s own doc comment. Reported as its own section
+    # rather than folded into "Crash-free sessions" above, so "unmeasured" is never mistaken for a
+    # zero count of real ANRs.
+    anr = queries.crash_anr_breakdown(con)
+    lines.append("## Crashes by ANR state")
+    if anr["total"] == 0:
+        lines.append("- no crash events in this fold")
+    else:
+        lines.append(f"- confirmed ANR: {anr['anr']}")
+        lines.append(f"- confirmed not an ANR: {anr['not_anr']}")
+        lines.append(f"- unmeasured (no ANR-detection ran): {anr['unmeasured']}")
+    lines.append("")
+
     lines.append("## Setup funnel")
     funnel = queries.setup_funnel(con)
     if not funnel:

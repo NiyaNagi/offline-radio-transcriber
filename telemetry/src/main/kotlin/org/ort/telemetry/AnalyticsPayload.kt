@@ -22,13 +22,24 @@ public sealed interface AnalyticsPayload
 public sealed interface AnalyticsTier1Payload : AnalyticsPayload {
 
     /** Crash traces and ANRs. [stackTrace] is code/line-number content, never operator or
-     * third-party text — the same distinction [AnalyticsFieldVocabularyTest] draws explicitly. */
+     * third-party text — the same distinction [AnalyticsFieldVocabularyTest] draws explicitly.
+     *
+     * **[isAnr] is `Boolean?`, not `Boolean` (constitution I).** No ANR-detection mechanism exists
+     * anywhere in this codebase — every event this build has ever produced reaches
+     * [org.ort.app.analytics.CrashPayloads] through `Thread.UncaughtExceptionHandler`, which fires
+     * for an uncaught exception, never for a hung main thread. A field that always reports `false`
+     * is not "measured, and not an ANR" — it is "never measured" wearing a default, exactly the
+     * silent wrongness constitution I forbids, and it would skew any crash analysis
+     * `tools/analytics` later runs against this field. `null` states the honest fact: this build
+     * cannot tell an ANR from an ordinary crash. The moment real detection lands, it sets this
+     * field to a genuine `true`/`false`; until then every event is truthfully absent here, the
+     * same discipline [AnalyticsProvenance.sessionId] already applies to "not yet known." */
     @Serializable
     @SerialName("tier1_crash")
     public data class Crash(
         val exceptionClass: String,
         val stackTrace: String,
-        val isAnr: Boolean,
+        val isAnr: Boolean?,
         val threadName: String,
     ) : AnalyticsTier1Payload
 

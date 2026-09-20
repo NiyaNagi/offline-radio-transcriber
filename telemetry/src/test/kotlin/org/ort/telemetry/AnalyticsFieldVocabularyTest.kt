@@ -71,6 +71,27 @@ class AnalyticsFieldVocabularyTest {
 
     private fun declaredNonSyntheticFields(klass: Class<*>): List<Field> = klass.declaredFields.filterNot(::isSynthetic)
 
+    /**
+     * FR-ANL-2, constitution I: `isAnr` was found hardcoded `false` with no ANR-detection
+     * mechanism anywhere in the codebase — "never measured" wearing a default. Kotlin compiles a
+     * non-null `Boolean` to the JVM primitive `boolean` and a nullable `Boolean?` to the boxed
+     * `java.lang.Boolean`, so this reflects the real, structural guarantee (not a convention a
+     * reviewer must remember, constitution VII): the field can represent "not measured" at the
+     * type level, and reverting it to a non-null `Boolean` fails this test at the type check
+     * itself, before any value is ever constructed.
+     */
+    @Test
+    @Requirement("FR-ANL-2")
+    fun `FR_ANL_2_isAnr is nullable — no ANR detection exists to assert it as a measured boolean`() {
+        val field = AnalyticsTier1Payload.Crash::class.java.getDeclaredField("isAnr")
+
+        assertEquals(
+            java.lang.Boolean::class.java,
+            field.type,
+            "isAnr must be a boxed Boolean (Kotlin Boolean?), never a primitive boolean",
+        )
+    }
+
     @Test
     @Requirement("AC-172", "FR-ANL-2")
     fun `AC_172_tier1 payload classes never carry transcript, callsign, name, station knowledge or location fields`() {

@@ -27,6 +27,68 @@ def test_crash_free_sessions(con):
     assert result["crash_free_rate"] == pytest.approx(0.5)
 
 
+def test_crash_anr_breakdown_reads_the_fixtures_measured_false(con):
+    # The fixture's one tier1_crash row carries `"isAnr": false` -- a real, measured non-ANR
+    # crash, not an unmeasured one.
+    result = queries.crash_anr_breakdown(con)
+
+    assert result == {"anr": 0, "not_anr": 1, "unmeasured": 0, "total": 1}
+
+
+def test_crash_anr_breakdown_never_folds_null_into_false(tmp_path):
+    """FR-ANL-2, constitution I: three crash rows -- a confirmed ANR, a confirmed non-ANR crash,
+    and one with `isAnr` explicitly `null` (exactly what `:app`'s `CrashPayloads
+    .fromUncaughtException` writes today, since no ANR-detection mechanism exists yet). The
+    discriminating claim this test makes: the `null` row must land in `unmeasured`, not silently
+    join the `false` row's count -- a regression that coerced `null` back into `false` would still
+    report `total == 3` but would misreport `not_anr == 2` and `unmeasured == 0`.
+    """
+    partition = tmp_path / "schema-1"
+    partition.mkdir()
+    base_provenance = (
+        '"provenance": {"appVersion": "0.1.1", "band": null, "buildHash": "abc123", '
+        '"captureMode": null, "deviceModel": "Pixel 7", "detectedTier": "T2", '
+        '"executionProvider": "cpu", "installId": "install-1", "modelIds": [], '
+        '"modelShas": [], "overId": null, "rigModule": null, "schemaVersion": 1, '
+        '"sessionId": "session-x", "soc": "Tensor G2"}'
+    )
+    rows = [
+        '{"fold": "field", "tier": "TIER_1", ' + base_provenance + ', '
+        '"payload": {"payloadType": "tier1_crash", "exceptionClass": "AnrException", '
+        '"stackTrace": "watchdog", "isAnr": true, "threadName": "ort-anr-watchdog"}}',
+        '{"fold": "field", "tier": "TIER_1", ' + base_provenance + ', '
+        '"payload": {"payloadType": "tier1_crash", "exceptionClass": "java.lang.IllegalStateException", '
+        '"stackTrace": "boom", "isAnr": false, "threadName": "main"}}',
+        '{"fold": "field", "tier": "TIER_1", ' + base_provenance + ', '
+        '"payload": {"payloadType": "tier1_crash", "exceptionClass": "java.lang.IllegalStateException", '
+        '"stackTrace": "boom", "isAnr": null, "threadName": "main"}}',
+    ]
+    (partition / "2026-09-19.ndjson").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    con = duckdb.connect(":memory:")
+    loader.load_events(con, tmp_path)
+
+    result = queries.crash_anr_breakdown(con)
+
+    assert result == {"anr": 1, "not_anr": 1, "unmeasured": 1, "total": 3}
+
+
+def test_crash_anr_breakdown_is_honestly_empty_with_no_crash_events(tmp_path):
+    partition = tmp_path / "schema-1"
+    partition.mkdir()
+    (partition / "2026-09-19.ndjson").write_text(
+        '{"fold": "field", "tier": "TIER_1", '
+        '"provenance": {"schemaVersion": 1}, '
+        '"payload": {"payloadType": "tier1_usage", "screen": "X", "action": "Y"}}\n',
+        encoding="utf-8",
+    )
+    con = duckdb.connect(":memory:")
+    loader.load_events(con, tmp_path)
+
+    result = queries.crash_anr_breakdown(con)
+
+    assert result == {"anr": 0, "not_anr": 0, "unmeasured": 0, "total": 0}
+
+
 def test_setup_funnel(con):
     result = queries.setup_funnel(con)
 

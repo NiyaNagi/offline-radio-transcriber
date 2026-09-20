@@ -1,10 +1,14 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.ToggleRow
 import org.ort.app.ui.theme.OrtColors
@@ -16,15 +20,21 @@ import org.ort.app.ui.theme.OrtType
  * same terms [org.ort.app.ui.settings.SettingsAnalyticsScreen] uses (FR-ANL-9) and offers tiers 2
  * and 3 as an explicit, unchecked choice — declining both (leaving them off and tapping
  * `Continue`) leaves every other function fully working, the same guarantee `JurisdictionNoticeScreen`'s
- * own sibling gate ([SetupSnapshot.jurisdictionNoticeSeen]) already makes for its own step. No
- * artboard exists for this screen yet (the `design` tree is outside this unit's file ownership) —
- * built to this package's own established [SetupScaffold] shape rather than left undrawn, the same
- * choice that screen's own doc comment already made.
+ * own sibling gate ([SetupSnapshot.jurisdictionNoticeSeen]) already makes for its own step.
+ *
+ * **R-1085 (register; constitution I; D42/D48/FR-ANL-11/AC-180):** [destinationConfigured] is the
+ * same D48 fact [org.ort.app.ui.settings.SettingsAnalyticsScreen] already renders one screen away —
+ * before this fix, this screen took no such parameter and could only ever imply the two toggles
+ * below share data, on the one surface most likely to set the operator's expectation, while in
+ * this build nothing leaves the device whatever they choose. `design/canvas/Setup-Analytics-Consent
+ * .dc.html` now exists and draws the corrected copy — the disclosure box below reuses that
+ * artboard's own sentence verbatim, so the two screens never disagree about what "on" means.
  */
 @Composable
 public fun AnalyticsConsentScreen(
     tier2Enabled: Boolean,
     tier3Enabled: Boolean,
+    destinationConfigured: Boolean,
     onToggleTier2: (Boolean) -> Unit,
     onToggleTier3: (Boolean) -> Unit,
     onContinue: () -> Unit,
@@ -49,6 +59,21 @@ public fun AnalyticsConsentScreen(
                 "Turn it off any time in Settings.",
             style = OrtType.bodyProse,
             color = OrtColors.textSecondary,
+        )
+        Text(
+            text = if (destinationConfigured) {
+                "Queued events send only while capture is not running."
+            } else {
+                "No destination is configured in this build — events queue on this phone and " +
+                    "nothing is ever sent, whatever you choose below."
+            },
+            style = OrtType.cardBody,
+            color = OrtColors.textFaint,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(OrtColors.bgCard, RoundedCornerShape(10.dp))
+                .padding(horizontal = 14.dp, vertical = 11.dp)
+                .testTag("setup-analytics-destination-disclosure"),
         )
         ToggleRow(
             label = "Also share transcripts and callsigns",
