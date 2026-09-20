@@ -34,6 +34,122 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P31: live alerts — a watched callsign, keyword or frequency fires a local notification after Pass B)
 
+### <pending> — P31 wiring · `PassBFactory`/`RealCaptureService` now hand a real `AlertEvaluationCoordinator` to Pass B's closure point, so a matching watch can actually fire on a device
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/passb/PassBFactory.kt`,
+`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt`, and their tests
+(`pipeline/src/test/kotlin/org/ort/pipeline/passb/PassBFactoryTest.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/capture/RealCaptureServiceTest.kt`). No file under
+`pipeline/src/main/kotlin/org/ort/pipeline/alerts/**` changed — that subsystem (built and merged
+as P31, commit `78cd924a`) was already complete; this closes the one gap its own build report
+named as left open: "Production wiring is not connected."
+
+**Requirements/ACs:** FR-ALR-3, FR-ALR-4, AC-194, AC-195; constitution IV (capture never blocks,
+never drops, never lies — applied here to the alert path specifically); constitution VII
+(`:capture-*`/`:pipeline` module boundaries unchanged, `dependencyRules` re-run below).
+
+**What changed:**
+- **`PassBFactory.create` gained a ninth, additive, defaulted parameter**,
+  `alertTrigger: AlertEvaluationTrigger = NoOpAlertEvaluationTrigger`, threaded straight into the
+  `DataPassBResultSink(db, alertTrigger = alertTrigger)` it already built. Every existing caller
+  (`ReprocessRunner.realPassBFor`, every pre-P31 test) is unchanged — the default is exactly the
+  honest no-op P31 shipped — so reprocessing still never fires a live alert, only live capture can.
+  `@Suppress("LongParameterList")` added, matching this repo's own established convention (e.g.
+  `RealSegmentSink`'s identical suppression in this same file's neighbour).
+- **`RealCaptureService.startProcessingLoop` now builds and passes a real one.** A new
+  `Dependencies.alertEvaluationTrigger: (Context, File) -> AlertEvaluationTrigger` seam — the same
+  "settable lambda, real production default" shape every other Context-needing collaborator in
+  this class already uses (`captureConfigurationStore`, `archiveSettingsStore`, `shedSignals`) —
+  defaults to `AlertEvaluationCoordinator(FileBackedAlertWatchStore(File(filesDir,
+  FileBackedAlertWatchStore.RELATIVE_PATH)), AndroidAlertNotificationDispatcher(context))`. The
+  store path is the exact one `org.ort.app.alerts.AlertsAppWiring.configureOnce` already
+  constructs from `:app`'s side (`FileBackedAlertWatchStore.RELATIVE_PATH`'s own kdoc named this as
+  the not-yet-connected half) — both sides now read and write the one real file under the device's
+  own `filesDir`, never a second, independently-scoped copy.
+- **Constructed once per capture session, not once per item.** `alertTrigger` is built at the top
+  of `startProcessingLoop` (called once per `startCapture()`), before the single `PassB`/`sink`
+  that `CaptureProcessingLoop.runForever()` then reuses for every item — including every Pass B
+  retry — for that session's whole lifetime. This matters for FR-ALR-6's coalescing rule
+  (`AlertEvaluationCoordinator`'s own per-watch `lastFired` map, P31): a coordinator rebuilt per
+  item would reset that map on every call and defeat coalescing entirely; the one-per-session
+  construction here is what lets a retried or repeatedly-matching transmission still collapse into
+  one alerting episode rather than a fresh notification each time (verified by inspection —
+  `AlertEvaluationCoordinatorTest`'s existing coalescing suite already covers the coordinator's own
+  half of this; nothing here changes that logic, only where one instance now lives).
+- **Two independent safety nets against constitution IV, not one.** `DataPassBResultSink.record`
+  already wrapped `alertTrigger.fireAndForget(...)` in `runCatching` (P31, unchanged). This session
+  adds a second one at the point the trigger itself is *constructed*:
+  `runCatching { dependencies.alertEvaluationTrigger(applicationContext, filesDir) }.getOrElse { NoOpAlertEvaluationTrigger }`.
+  `startProcessingLoop` runs in the same plain `CoroutineScope(Dispatchers.IO + Job())` — not a
+  `SupervisorJob` — that the sibling `runCaptureFlow` coroutine records real audio in (see this
+  method's own pre-existing kdoc on `SafePass`/`ThermalTrackingPass` for why an uncaught exception
+  here would have cancelled that sibling too); this construction-time `runCatching` closes that
+  specific risk even though nothing the real default builds does I/O at construction time.
+- **No double-fire risk found beyond what P31 already governs.** `DataPassBResultSink.record` calls
+  `threadGrouper.onTransmissionClosed(...)` and `runCatching { alertTrigger.fireAndForget(...) }`
+  independently, with no shared mutable state and no ordering dependency between them — both hook
+  the same closure point but neither reads the other's result. A Pass B retry that keeps failing
+  (e.g. an unresolvable engine fault) still calls `record()`, and therefore still calls
+  `fireAndForget`, on every attempt — including for a `Frequency` watch, whose match input
+  (`frequencyHz`) is present even on a `Failed`/`Rejected` outcome — but this was already true
+  before this session and is exactly what `AlertEvaluationCoordinator`'s pre-existing coalescing
+  window is for: repeated matches for the same watch inside 10 minutes become one alerting episode
+  (`isRepeat = true`, `occurrenceCount` climbing) via `AndroidAlertNotificationDispatcher`'s
+  `setOnlyAlertOnce(true)`, never a fresh notification per attempt. This session did not need to
+  add anything for that guarantee to hold in production — it only needed the coordinator to
+  actually be the one live, session-scoped instance handling every retry, which the point above
+  establishes.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:testDebugUnitTest` — BUILD SUCCESSFUL. New: `PassBFactoryTest`'s three
+  alert cases (`FR_ALR_3` a caller-supplied trigger receives the real, resolved result;
+  `FR_ALR_4` a throwing trigger never prevents the transmission completing; `FR_ALR_4` the default
+  stays `NoOp` when a caller supplies none) and `RealCaptureServiceTest`'s two (`FR_ALR_3` a
+  matching watch's alert reaches a `FakeAlertNotificationDispatcher` through the *real* service
+  composition, driven end to end with `Robolectric.buildService`; `FR_ALR_4` a trigger that always
+  throws never prevents a real capture session's transcript from being written). All pre-existing
+  `:pipeline` tests unaffected, including the untouched `alerts` package suite and
+  `DataPassBResultSinkAlertsTest`.
+- **Discriminating (constitution II):** `RealCaptureService.kt`'s
+  `PassBFactory.create(filesDir, db, engine, modelRef, provider, alertTrigger = alertTrigger)` call
+  was reverted to the pre-fix `PassBFactory.create(filesDir, db, engine, modelRef, provider)` and
+  `:pipeline:testDebugUnitTest --tests "org.ort.pipeline.capture.RealCaptureServiceTest"` re-run:
+  `FR_ALR_3` failed — `condition not met within 10000ms` waiting on `dispatcher.firings.isNotEmpty()`,
+  the honest symptom of the gap this entry closes — while every other test, including `FR_ALR_4`,
+  stayed green (a `NoOp` trigger never throws, so that test does not by itself discriminate the
+  wiring; `FR_ALR_3` does). The wiring was restored and both tests, plus `PassBFactoryTest`'s three,
+  re-ran green.
+- `.\gradlew.bat dependencyRules` — OK. No new module edge: `alerts` remains a package inside the
+  existing `:pipeline` module, `:capture-*` gained no dependency, and `:pipeline` still does not
+  reach `:net` (`AndroidAlertNotificationDispatcher`/`FileBackedAlertWatchStore` touch only
+  `android.app.Notification*`/`java.io.File`, both already reachable from `:pipeline`).
+- `.\gradlew.bat ktlintCheck detekt` — both green across every module (fixed along the way:
+  `PassBFactory.create`'s new parameter needed `@Suppress("LongParameterList")`;
+  `RealCaptureServiceTest` needed `@Suppress("LargeClass")` once its two new cases pushed it over
+  detekt's line threshold; four lines over 120 chars, in `RealCaptureService.kt` and
+  `PassBFactoryTest.kt`, were reflowed).
+
+**Left open / not done:**
+- **Device verification.** Nothing here was run against a real device, a real notification
+  permission prompt, or a real `NotificationManager` — this session had no emulator (per its own
+  instructions) and none of that is provable on Robolectric. `AndroidAlertNotificationDispatcherTest`
+  (P31, unchanged) already covers the `ShadowNotificationManager`/`setOnlyAlertOnce` behaviour on
+  the JVM; whether a real ColorOS device actually shows the heads-up notification, and whether a
+  denied POST_NOTIFICATIONS permission is surfaced the way the Settings screen's amber banner
+  claims, is a hardware-session verification, not something this unit could close.
+  `spec/build-plan.md`'s P31 checkbox is still left unchecked for the same reason the P31 build
+  report itself gave.
+- **The tour was not re-run.** This change touches no `app/src/main/kotlin/org/ort/app/ui/**`,
+  `app/src/main/res/**`, `design/**`, debug-scenario or tour-step file, and no `*Content`/`*Screen`/
+  `*ViewState`/`*ViewData`/`*Mapper` file under `:app` — constitution VIII's own diff-triggered
+  visual re-verification does not apply to this unit, and none was run.
+- **`ReprocessRunner` still never fires a live alert**, by design (see "What changed" above) —
+  reprocessing reruns historical transmissions, and this session's own scope
+  (`PassBFactory.kt`/`RealCaptureService.kt`/`alerts/**`) does not include
+  `reprocess/ReprocessRunner.kt`. If a future session decides reprocessing *should* also be able to
+  fire an alert, that is a product decision belonging to the session that owns that file, not an
+  oversight here.
+
 ### 78cd924a — P31 · live alerts: watches, matching, coalescing and an honest notification, hooked at Pass B's own closure point
 
 **Scope:** new `pipeline/src/main/kotlin/org/ort/pipeline/alerts/**` package

@@ -52,6 +52,11 @@ import org.ort.pipeline.CaptureProcessingLoop
 import org.ort.pipeline.GapPersister
 import org.ort.pipeline.Pass
 import org.ort.pipeline.PassDrainRunner
+import org.ort.pipeline.alerts.AlertEvaluationCoordinator
+import org.ort.pipeline.alerts.AlertEvaluationTrigger
+import org.ort.pipeline.alerts.AndroidAlertNotificationDispatcher
+import org.ort.pipeline.alerts.FileBackedAlertWatchStore
+import org.ort.pipeline.alerts.NoOpAlertEvaluationTrigger
 import org.ort.pipeline.analytics.AnalyticsBridge
 import org.ort.pipeline.archive.ARCHIVE_DIR_NAME
 import org.ort.pipeline.archive.ArchiveGapPersister
@@ -198,6 +203,40 @@ public class RealCaptureService : Service() {
                     SharedPreferencesArchiveSettingsStore.PREFS_NAME,
                     android.content.Context.MODE_PRIVATE,
                 ),
+            )
+        },
+        /**
+         * P31 follow-up (FR-ALR-3, FR-ALR-4, AC-194, AC-195): the gap this session closes —
+         * `PassBFactory.create` had a caller-suppliable `alertTrigger` parameter (build-plan P31)
+         * that this class never passed, so every real capture session's Pass B closure ran with
+         * the honest-but-inert [org.ort.pipeline.alerts.NoOpAlertEvaluationTrigger] default, and no
+         * watch — however matching — could ever reach a notification. Real by default, exactly the
+         * same "settable seam, real default" discipline every other Context-needing collaborator in
+         * this class already uses (see [captureConfigurationStore], [archiveSettingsStore]):
+         * - [FileBackedAlertWatchStore] is built against `File(dir, FileBackedAlertWatchStore.RELATIVE_PATH)`
+         *   under this session's own `filesDir` — the exact same path `:app`'s
+         *   `org.ort.app.alerts.AlertsAppWiring.configureOnce` constructs its own store against, so
+         *   both sides read and write the one real file, never a second, independently-scoped copy
+         *   (the same reasoning [FileBackedAlertWatchStore]'s own kdoc gives for choosing a plain
+         *   `File` over `SharedPreferences` here).
+         * - [AndroidAlertNotificationDispatcher] wraps the real `Context` — its own `canDeliver()`
+         *   is `NotificationManagerCompat.areNotificationsEnabled()` (see [notificationsCanFire]),
+         *   so a denied POST_NOTIFICATIONS permission is reported honestly rather than pretended
+         *   away; [AlertEvaluationCoordinator] itself never needs to consult it before dispatching —
+         *   `dispatch()` is safe to call whether or not anything will actually be shown, and a
+         *   denied permission surfaces as "no notification appeared", never a crash or a stall.
+         *
+         * A plain `(Context, File) -> AlertEvaluationTrigger` lambda, not a `val` field constructed
+         * once in `onCreate()`: this class's other Context-scoped collaborators follow the identical
+         * pattern precisely so a Robolectric test can substitute a fake dispatcher (or one that
+         * throws, proving constitution IV's "capture never blocks, never lies" for this specific
+         * path — see `RealCaptureServiceTest`'s own alert-path tests) without touching production
+         * code at all.
+         */
+        val alertEvaluationTrigger: (android.content.Context, File) -> AlertEvaluationTrigger = { ctx, dir ->
+            AlertEvaluationCoordinator(
+                watchStore = FileBackedAlertWatchStore(File(dir, FileBackedAlertWatchStore.RELATIVE_PATH)),
+                dispatcher = AndroidAlertNotificationDispatcher(ctx),
             )
         },
     )
@@ -894,7 +933,23 @@ public class RealCaptureService : Service() {
         // recording audio -- exactly the "capture must never block on or die from inference"
         // failure the constitution names. The item still ends FAILED with lastError set; capture
         // itself must never even notice a Pass B item failed.
-        val pass = SafePass(ThermalTrackingPass(PassBFactory.create(filesDir, db, engine, modelRef, provider), db))
+        // P31 follow-up (FR-ALR-3, FR-ALR-4, AC-194, AC-195): the one real Context this whole
+        // module has, handed to the one place that can build a real AlertEvaluationCoordinator --
+        // see [Dependencies.alertEvaluationTrigger]'s own kdoc for why this, and not PassBFactory
+        // itself, is the composition root for it (constitution VII: `:pipeline`'s non-Android
+        // FlacSegmentAudioProvider seam already forced PassBFactory to stay Context-free; adding
+        // one there for this alone would be a worse asymmetry than building it here instead).
+        //
+        // constitution IV: this `scope` is a plain Job, not a SupervisorJob (see this method's own
+        // kdoc above) -- an uncaught construction failure here would cancel the sibling
+        // runCaptureFlow coroutine that is actually recording audio. runCatching keeps that
+        // impossible even though nothing built by [Dependencies.alertEvaluationTrigger]'s real
+        // default does I/O at construction time; a test's own throwing seam (proving exactly this
+        // guarantee -- see RealCaptureServiceTest) is caught the same way.
+        val alertTrigger = runCatching { dependencies.alertEvaluationTrigger(applicationContext, filesDir) }
+            .getOrElse { NoOpAlertEvaluationTrigger }
+        val realPassB = PassBFactory.create(filesDir, db, engine, modelRef, provider, alertTrigger = alertTrigger)
+        val pass = SafePass(ThermalTrackingPass(realPassB, db))
         CaptureProcessingLoop(PassDrainRunner(queue, runId = sessionId), pass).runForever()
     }
 
