@@ -118,8 +118,19 @@ jobs:
       # (see PlatformGuards.signingStabilityViolations's own KDoc). Fails the job if the digest in
       # buildSrc/signing/release-certificate.sha256 is still the placeholder `UNSET`, or if the
       # freshly assembled APK's real certificate does not match it.
+      # Debug-fix session (2026-09-19), third pass: this step re-enters Gradle, and the guard task
+      # depends on the packaged APK, so AGP re-runs `packageFullDebug` here. With the signing
+      # passwords scoped to the assemble step alone, the `release` signingConfig existed (its
+      # storeFile arrives through $GITHUB_ENV and outlives the step) while its passwords did not,
+      # and packaging failed with `SigningConfig "release" is missing required property
+      # "storePassword"` (run 35494321768). The three secrets stay step-scoped rather than
+      # job-level — every step that can package the APK gets them, and no other step does.
       - name: verify the published artifact's certificate is the pinned release key
         if: env.HAS_RELEASE_SIGNING == 'true'
+        env:
+          ORT_RELEASE_SIGNING_STORE_PASSWORD: ${{ secrets.ORT_RELEASE_KEYSTORE_PASSWORD }}
+          ORT_RELEASE_SIGNING_KEY_ALIAS: ${{ secrets.ORT_RELEASE_KEY_ALIAS }}
+          ORT_RELEASE_SIGNING_KEY_PASSWORD: ${{ secrets.ORT_RELEASE_KEY_PASSWORD }}
         run: ./gradlew :app:verifyReleaseSigningStability -PortEnforcePinnedReleaseSigning=true
 
       # Debug-fix session (2026-09-19): the loud, deliberate alternative to silently publishing an
