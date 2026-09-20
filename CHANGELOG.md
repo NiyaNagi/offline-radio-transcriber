@@ -32,6 +32,101 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (voice-match overclaim sweep — closing the class of defect two units found the same night: the app claiming a voice match it cannot have made, since `:identity` is an empty stub and `voiceprintId` is null on every transmission)
+
+### 4c5d33c6 — voice-match overclaim sweep · close every reachable claim of a voice match this codebase has never made, keep the D45-deferred plumbing intact
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt`, `NowViewState.kt`,
+`StationPolling.kt`, `StationsAndFrequencies.kt`, `ThreadViewData.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/StationIdentityScreen.kt`, their tests under
+`app/src/test/**`, `design/canvas/Detail-Unknown.dc.html`, `Main.dc.html`, `Station-Identity.dc.html`,
+`Stations.dc.html`, `design/design-intent.md`. Two sibling files this same defect class touches
+(`CorrectionPolling.kt`, `CorrectionSheet.kt`, `TransmissionDetailContent.kt`,
+`TransmissionDetailScreen.kt`, `design/canvas/Detail.dc.html`/`States.dc.html`/
+`Detail-Correct-C.dc.html`) were left untouched — not yet merged on sibling branches — per this
+session's own instruction.
+**Requirements/ACs:** constitution I (Uncertainty Is Content, non-negotiable), D45 (the voice
+library is deferred past 1.0, not cancelled), FR-SPK-4/7/13, FR-UI-8.
+**What changed:** a full inventory of every user-visible string, KDoc claim and identifier across
+`:app` (UI, view-state mappers, digest, settings, exports) asserting or implying a voice match,
+plus a reachability check for each against the real write paths (`:pipeline`'s `CallsignResolver`
+never returns `INFERRED`; `:identity` is an empty stub — only `package-info.kt`; the one write path
+that produces `INFERRED` is `CorrectionDao.applyCorrectedAttribution`, a human correction, which
+always nulls confidence/source and sets `corrected = 1`; nothing in this codebase ever inserts the
+*first* `VoiceprintEntity` for a station — `splitVoiceprint` only ever splits an *existing* one).
+Fixed the ones a real device can reach today:
+1. **`StationPolling.stationIdentity`/`StationIdentityScreen`'s "Voiceprint: One cluster, N overs"**
+   rendered unconditionally, for every station, always — a real voice cluster this device has never
+   computed (R-213's own `confirmed + inferred` proxy, chosen against a debug-scenario-seeded
+   voiceprint, not production). Added `StationVoiceViewState.hasVoiceprint` (the real
+   `boundCluster != null` fact); the row now reads "No voice on file yet" with the same
+   `Attribution.unknown()` "not computed" marker the Nearest-other row already uses, honestly,
+   until `hasVoiceprint` is real.
+2. **`StationViewMapper.countContext`/`NowViewState.stationsSection`'s "N by voice match"** — shown
+   for every station whose overs are all `INFERRED`, i.e. every station a human has ever corrected
+   without a resolver-confirmed hit — claimed a voice-matching mechanism that has never run.
+   Renamed to "N inferred", naming the closed-set *state* (FR-SPK-4/7: "carried from context or
+   voice") rather than a specific mechanism; accurate under today's correction-only reality and a
+   future `:identity` alike. `StationPolling`'s path is reachable today (raw entity-column read);
+   `NowViewState`'s equivalent branch is currently blocked by a separate, already-known
+   attribution-reconstruction gap (not papered over here — see "Left open" below) but was fixed
+   defensively for the same reason.
+3. **`DetailViewStateMapper.bodyFor`'s two remaining overclaims**: the generic INFERRED fallback
+   ("Not heard in this over. Matched by voice.", reached when neither a real source nor a
+   correction explains the state — unreachable via every current write path, but the type
+   (`Attribution.inferred` with no source) remains constructible) now reads "...Inferred, with no
+   source over or correction recorded for it."; the UNKNOWN explanation ("No callsign heard, and
+   the voice matched no one heard before.") — reachable for every ordinary unresolved over, the
+   most common resolution outcome — now reads "No callsign heard, and nothing else resolved it."
+   Its own guard test's *name* already promised this before this fix but never asserted it.
+4. **`ThreadViewData.kt`/`ThreadDetailScreen.kt`'s "inherited by voice from <time>"**: audited and
+   found *already* correctly gated — "by voice" only when a real, non-null `sourceTransmissionId`
+   resolves (evidence this codebase cannot produce today), "by callsign" only when `corrected`, and
+   a neutral fallback naming no mechanism otherwise. No wording change; added KDoc naming today's
+   unreachability and D45, plus guard tests making the invariant explicit (it previously held only
+   by inspection).
+5. **Every "genuine voice match" branch is kept, not deleted** — `sourceTransmissionId`-gated
+   wording in `DetailViewState.kt`/`ThreadViewData.kt`, `StationVoiceViewState.clusterOverCount`'s
+   R-213 semantics, the AMBIGUOUS "· voice match" clause gated on a real bound voiceprint — each is
+   reserved, commented, for the day `:identity` (D45) genuinely populates the fact it reads.
+Design: `Stations.dc.html`/`Main.dc.html` updated in place (the wording fix now matches built
+reality exactly); `Detail-Unknown.dc.html` updated in place; `Station-Identity.dc.html` kept as the
+aspirational once-`:identity`-ships state with an HTML comment recording the accepted deviation,
+mirrored in `design-intent.md`'s ST04 row (its own established R-572 convention, extended).
+**Verified:** `.\gradlew.bat ktlintCheck detekt` — BUILD SUCCESSFUL. `.\gradlew.bat
+:app:testFullDebugUnitTest --tests "org.ort.app.ui.*"` — BUILD SUCCESSFUL, all suites green
+(`DetailViewStateMapperTest` 26, `ThreadViewDataTest` 22, `NowViewStateMapperTest` 17,
+`StationPollingTest` 15, `StationsAndFrequenciesTest` 16, `StationIdentityScreenTest` 24 — 0
+failures each). Discrimination: reverted every production file above (test files kept), re-ran the
+six suites — exactly 5 failures, each on the precise overclaiming string this fix removes
+(`StationIdentityScreenTest` × 2, `DetailViewStateMapperTest` × 2, `NowViewStateMapperTest` × 1);
+`StationVoiceViewState.hasVoiceprint` discriminated at compile time instead (`Unresolved reference
+'hasVoiceprint'` / `No parameter with name 'hasVoiceprint' found`) once its own test file was
+included, a stronger signal than a runtime assertion. Restored; re-ran clean.
+**Left open / not done:** `ReaderPolling.kt`/`LogViewData.kt`/`LiveMonitorViewData.kt`/
+`RecordingSessionViewStateMapper.kt` each duplicate an `attributionFrom(entity)` that reconstructs
+via `Attribution.inferred(stationId, confidence, sourceId)`, which requires non-null `confidence` —
+`applyCorrectedAttribution` always nulls it, so every one of these four read paths silently
+downgrades a corrected transmission to `Attribution.unknown()`, discarding the correction (the
+exact "downgrade to UNKNOWN" bug `CorrectionPolling.currentAttribution`'s own doc comment already
+names and fixes, but only for the one Detail-screen call site that uses it). `ThreadPolling`
+(`ThreadViewData.kt`, this session's own file) reads through `ReaderPolling.currentTransmissionDetails`
+and inherits this gap — a corrected transmission reads as UNKNOWN on the Threads screen, not as its
+real corrected station. This is an *undercall* (data loss), not the overclaim class this session
+was scoped to, and the fix (threading `CorrectionPolling`'s corrected-aware reconstruction through
+four more read paths) is a materially larger change than this sweep — flagged, not fixed here.
+Two sibling branches' own fixes (`CorrectionSheet.kt`'s "Every over matched to this voice",
+`TransmissionDetailScreen.kt`'s "Matched by voice to <time>") were read for context but left
+untouched per this session's instruction; nothing in them needed a change beyond what those
+branches already carry. Files outside this session's ownership (`:app`'s `ui/digest`, `ui/improve`,
+`ui/settings`, `ui/setup`) also carry "voice match"/"voice matching" language — inventoried, not
+fixed (outside `ui/data/**`/`ui/screens/**`); most read as legitimate tier-capability descriptions
+(`SettingsTierScreen.kt`), one (`DigestPolling.kt`'s "no voice matched — they stay findable") reads
+the identical class of claim this session closed elsewhere and is a reasonable follow-up for
+whichever session owns `ui/digest`.
+
+---
+
 ## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a secret-driven release key and a configurable signing-stability guard)
 
 ### da4237b5 — debug-fix session · sign published artifacts from GitHub Actions secrets, never a committed key, and pin the certificate only where a stable key is expected

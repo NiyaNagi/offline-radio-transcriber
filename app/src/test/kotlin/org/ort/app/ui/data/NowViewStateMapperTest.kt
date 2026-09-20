@@ -1,6 +1,7 @@
 package org.ort.app.ui.data
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -178,7 +179,11 @@ class NowViewStateMapperTest {
     }
 
     @Test
-    fun `R_030 a station heard by voice only reads by voice match, a confirmed one reads overs`() {
+    fun `D45 an inferred-only station reads inferred, never a claimed voice match, a confirmed one reads overs`() {
+        // This task (constitution I, D45): the old "1 by voice match" label named a mechanism
+        // (`:identity`) that is an empty stub — the only production path to INFERRED is a human
+        // correction. "Inferred" stays accurate whether the state came from a correction (today)
+        // or a real voice match (once `:identity` ships).
         val view = NowViewStateMapper.active(
             details = listOf(
                 detail("TX1", Attribution.confirmed("W7NPC", 0.9)),
@@ -196,7 +201,8 @@ class NowViewStateMapperTest {
         val confirmedRow = view.stations.rows.single { it.stationId == "W7NPC" }
         val inferredRow = view.stations.rows.single { it.stationId == "KJ7ABC" }
         assertEquals("1 over", confirmedRow.countLabel)
-        assertEquals("1 by voice match", inferredRow.countLabel)
+        assertEquals("1 inferred", inferredRow.countLabel)
+        assertFalse(inferredRow.countLabel.contains("voice", ignoreCase = true))
     }
 
     @Test

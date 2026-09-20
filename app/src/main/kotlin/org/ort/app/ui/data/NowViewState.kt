@@ -304,6 +304,18 @@ public object NowViewStateMapper {
         return items
     }
 
+    /**
+     * R-030. **This task (constitution I, D45): the `else` branch's label names no mechanism.**
+     * `hasConfirmed == false` here means every over this device attributed to [stationId] carries
+     * `AttributionState.INFERRED` — a closed *state*, not a claim of "voice match" (FR-SPK-4/7:
+     * "carried from context or voice"). `:identity` is an empty stub today (D45), so in practice
+     * this can only be a station whose overs all came from a human correction; a caller reached
+     * through [org.ort.app.ui.data.ReaderPolling]'s own attribution reconstruction cannot even
+     * produce this branch for a corrected row today (see this package's report — a separate,
+     * already-known gap, not papered over here), so this is presently unreachable in production.
+     * Naming the state ("inferred") rather than a mechanism ("by voice match") keeps the label
+     * honest both today (correction-only) and once `:identity` genuinely populates it.
+     */
     private fun stationsSection(details: List<TransmissionDetail>): NowStationsSection {
         val attributed = details.filter { it.attribution.stationId != null }
         val byStation = attributed.groupBy { it.attribution.stationId!! }
@@ -313,7 +325,7 @@ public object NowViewStateMapper {
             val countLabel = if (hasConfirmed) {
                 "${forStation.size} over" + if (forStation.size == 1) "" else "s"
             } else {
-                "${forStation.size} by voice match"
+                "${forStation.size} inferred"
             }
             val lastTime = forStation.maxOf { it.startedAtUtcMillis }
             NowStationRow(

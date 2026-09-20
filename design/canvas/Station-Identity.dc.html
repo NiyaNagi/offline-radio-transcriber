@@ -46,6 +46,13 @@
       <div class="v">US · region 7 · valid 1×3<div class="sub">from the bundled prefix table, v2026.08</div></div>
     </div>
 
+    <!-- This task (constitution I/VIII, D45) — accepted deviation, also recorded in
+         design-intent.md's ST04 row: this board draws the state once `:identity` has bound a real
+         voiceprint to the station (hasVoiceprint = true). `:identity` is an empty stub today and
+         nothing else in this codebase ever creates a station's *first* voiceprint, so every real
+         device reads "No voice on file yet" here instead, with the small "not computed" dot
+         (`Station-Identity.dc.html`'s own Nearest-other marker, reused) rather than the hollow
+         inferred ring below. -->
     <div class="lbl" style="padding: 18px 0 2px;">Voice</div>
     <div class="row">
       <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0;"></div>

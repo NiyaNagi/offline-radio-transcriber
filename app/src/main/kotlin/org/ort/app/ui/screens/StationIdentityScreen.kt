@@ -187,11 +187,29 @@ private fun HeardAndVoiceFacts(state: StationIdentityViewState, onSplit: () -> U
         // R-570 (register, design): the board attaches `Split` to the Nearest-other row, not
         // Voiceprint — it is a *comparison* between the two clusters that decides whether a split
         // makes sense, so the action belongs beside the thing being compared against.
+        //
+        // This task (constitution I, D45): [StationVoiceViewState.hasVoiceprint] is the real,
+        // structural gate — `:identity` is an empty stub (D45) and nothing in this codebase ever
+        // creates the *first* voiceprint for a station outside a manual Split (which itself needs
+        // an existing one), so `hasVoiceprint` is `false` for every station until that pipeline
+        // ships. Before this fix, "One cluster, N overs" rendered unconditionally — claiming a real
+        // voice cluster this device has never actually computed. The `Attribution.unknown()`
+        // marker below matches the "Nearest other" row's own "not computed yet" honesty for the
+        // identical reason.
+        val voiceMarker = if (state.voice.hasVoiceprint) {
+            Attribution.inferred(state.stationId, 1.0)
+        } else {
+            Attribution.unknown()
+        }
         MarkedKeyValueRow(
-            attribution = Attribution.inferred(state.stationId, 1.0),
+            attribution = voiceMarker,
             key = "Voiceprint",
-            value = "One cluster, ${pluralize(state.voice.clusterOverCount, "over")}",
-            subLine = voiceSubLine,
+            value = if (state.voice.hasVoiceprint) {
+                "One cluster, ${pluralize(state.voice.clusterOverCount, "over")}"
+            } else {
+                "No voice on file yet"
+            },
+            subLine = if (state.voice.hasVoiceprint) voiceSubLine else null,
             modifier = Modifier.testTag("station-identity-voiceprint-row"),
         )
         val nearestId = state.voice.nearestOtherStationId

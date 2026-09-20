@@ -1,6 +1,7 @@
 package org.ort.app.ui.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -320,5 +321,28 @@ class ThreadViewDataTest {
 
         assertEquals("inherited (source transmission not recorded)", over.reasoning)
         assertNull(over.sourceTimeLabel)
+        // D45 guard (constitution I): `:identity` is an empty stub — no production write path sets
+        // a real `sourceTransmissionId`, so an INFERRED row with none (and no correction) must
+        // never claim a voice match it has no evidence for.
+        assertFalse(over.reasoning.contains("voice", ignoreCase = true))
+    }
+
+    @Test
+    fun `D45 howAttributed never claims a voice match for an INFERRED row with no real source`() {
+        // Guard (constitution I, D45): `howAttributedLines`' own "matched $station's voice from
+        // over $sourcePos" branch requires a real `sourceTransmissionId` that resolves to another
+        // over in this thread — evidence this codebase cannot produce today (`:identity` is an
+        // empty stub; the only production path to INFERRED is a human correction, which never
+        // carries a source). This must read as a neutral "inherited", never "voice".
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.inferred("K7LWH", 0.82)),
+        )
+
+        val detailState = ThreadListMapper.detailState("T1", details)!!
+
+        assertTrue(detailState.howAttributed.isNotEmpty())
+        detailState.howAttributed.forEach { line ->
+            assertFalse(line.text, line.text.contains("voice", ignoreCase = true))
+        }
     }
 }

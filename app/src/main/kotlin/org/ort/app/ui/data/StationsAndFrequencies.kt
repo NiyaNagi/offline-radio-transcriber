@@ -23,8 +23,18 @@ public enum class StationListBadge { NEW, CORRECTED }
  * One row of the "Stations" list (R-070) — the station's **dominant attribution state tonight**
  * (the most recent session; [org.ort.app.ui.components.AttributionRow] draws it at 9dp), an
  * honest count context built only from what the split of confirmed/inferred overs actually shows
- * ("12 by voice match · 3 heard") — never a fabricated "net control" this data cannot support —
+ * ("12 inferred · 3 heard") — never a fabricated "net control" this data cannot support —
  * plus any badge and the operator-given name shown beside the callsign.
+ *
+ * **D45 (constitution I): "inferred", never "by voice match".** `AttributionState.INFERRED` is a
+ * closed-set *state*, not a claim about mechanism (FR-SPK-4/7 — "carried from context or voice").
+ * Today `:identity` is an empty stub (D45 defers the voice library past 1.0) and the resolver
+ * ([org.ort.pipeline.passb.CallsignResolver]) never returns `INFERRED` itself, so the *only*
+ * production path that ever writes `attributionState = INFERRED` is a human correction
+ * ([org.ort.data.dao.CorrectionDao.applyCorrectedAttribution]) — this label used to read "N by
+ * voice match" for exactly that count, claiming a voice-matching mechanism that has never run.
+ * "Inferred" stays accurate under both the current, correction-only reality and a future
+ * `:identity` that genuinely populates it.
  */
 public data class StationListEntryViewState(
     val stationId: String,
@@ -32,7 +42,7 @@ public data class StationListEntryViewState(
     val transmissionCount: Int,
     val lastHeardLabel: String?,
     val attribution: Attribution = Attribution.unknown(),
-    /** "48 overs · net control" or "12 by voice match · 3 heard" — see this file's mapper doc comment. */
+    /** "48 overs · net control" or "12 inferred · 3 heard" — see this file's mapper doc comment. */
     val countContext: String = "",
     val badge: StationListBadge? = null,
     val givenName: String? = null,
@@ -320,8 +330,26 @@ public data class FrequencyChangeViewState(
 // Station-Identity (R-073) — Station-Identity.dc.html.
 // -------------------------------------------------------------------------------------------
 
-/** `Station-Identity.dc.html`'s "Voice" section (R-073) — real where the identity pipeline writes data. */
+/**
+ * `Station-Identity.dc.html`'s "Voice" section (R-073) — real where the identity pipeline writes
+ * data.
+ *
+ * **This task (constitution I, D45): [hasVoiceprint] is the real, structural gate.** `:identity`
+ * is an empty stub today (D45 defers the voice library past 1.0) and the only inserter of a real
+ * [org.ort.data.entity.VoiceprintEntity] is [org.ort.app.ui.data.StationPolling.splitVoiceprint],
+ * which itself requires an *existing* bound voiceprint to split away from — so nothing in this
+ * codebase ever creates the first one, and [hasVoiceprint] is `false` for every station on every
+ * device until `:identity` ships. Before this fix, [clusterOverCount] (`confirmedCount +
+ * inferredCount`, R-213's own deliberate proxy for a real voiceprint cluster's `memberCount`) was
+ * shown unconditionally as "One cluster, N overs" — claiming a real voice cluster exists for
+ * *every* station, always, which [org.ort.app.ui.screens.StationIdentityScreen] now renders only
+ * when [hasVoiceprint] is true; the honest "no voice on file yet" state otherwise
+ * ([org.ort.app.ui.data.StationPolling.stationIdentity]'s own doc comment has the full reasoning).
+ * [clusterOverCount]'s own R-213 semantics are unchanged for the [hasVoiceprint] case this
+ * codebase cannot reach yet — kept, not deleted, for when it can.
+ */
 public data class StationVoiceViewState(
+    val hasVoiceprint: Boolean = false,
     val clusterOverCount: Int,
     val confirmedCount: Int,
     val inferredCount: Int,
@@ -419,18 +447,19 @@ public object StationViewMapper {
     )
 
     /**
-     * "12 by voice match · 3 heard" (`Stations.dc.html`'s own worked example, R-070) from a real
-     * confirmed/inferred split — never "net control", which has no supporting data anywhere in
-     * `:data` (this package's report names the gap; the brief itself only asks for it "if data
-     * supports it"). A confirmed-only count reads as plain overs ("48 overs"); once the split is
-     * mixed, the confirmed share is phrased as "heard" — CONFIRMED means literally heard in that
-     * transmission, which is exactly the distinction this sentence exists to carry.
+     * "12 inferred · 3 heard" (`Stations.dc.html`'s own worked example, R-070, wording amended —
+     * see this file's class doc for why "by voice match" overclaimed) from a real confirmed/
+     * inferred split — never "net control", which has no supporting data anywhere in `:data`
+     * (this package's report names the gap; the brief itself only asks for it "if data supports
+     * it"). A confirmed-only count reads as plain overs ("48 overs"); once the split is mixed, the
+     * confirmed share is phrased as "heard" — CONFIRMED means literally heard in that transmission,
+     * which is exactly the distinction this sentence exists to carry.
      */
     public fun countContext(confirmedCount: Int, inferredCount: Int): String = when {
         confirmedCount == 0 && inferredCount == 0 -> "0 overs"
         inferredCount == 0 -> pluralOvers(confirmedCount)
-        confirmedCount == 0 -> "$inferredCount by voice match"
-        else -> "$inferredCount by voice match · $confirmedCount heard"
+        confirmedCount == 0 -> "$inferredCount inferred"
+        else -> "$inferredCount inferred · $confirmedCount heard"
     }
 
     private fun pluralOvers(count: Int): String = if (count == 1) "1 over" else "$count overs"
