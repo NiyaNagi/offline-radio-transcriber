@@ -1,6 +1,8 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import org.junit.Rule
 import org.junit.Test
@@ -90,5 +92,32 @@ class AnalyticsConsentScreenTest {
                 substring = false,
             )
             .assertExists()
+    }
+
+    /**
+     * R-1086 (register; constitution I; D42, FR-ANL-2): the tier 1 paragraph used to say "crashes
+     * and ANRs", but no ANR-detection mechanism exists anywhere in this codebase — no watchdog
+     * runs, and [org.ort.telemetry.AnalyticsTier1Payload.Crash.isAnr] is deliberately nullable
+     * ("never measured") for exactly that reason ([org.ort.app.analytics.CrashPayloads]'s own doc
+     * comment). This is the setup step where the operator first decides on analytics at all, so
+     * asserts the word never appears anywhere on it, not merely that one paragraph's wording moved.
+     */
+    @Test
+    @Requirement("R-1086", "FR-ANL-2")
+    fun `R_1086_no text anywhere on this screen promises ANR collection`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                AnalyticsConsentScreen(
+                    tier2Enabled = false,
+                    tier3Enabled = false,
+                    destinationConfigured = false,
+                    onToggleTier2 = {},
+                    onToggleTier3 = {},
+                    onContinue = {},
+                )
+            }
+        }
+
+        composeTestRule.onAllNodesWithText("ANR", substring = true, ignoreCase = true).assertCountEquals(0)
     }
 }

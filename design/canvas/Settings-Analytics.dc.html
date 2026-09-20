@@ -34,7 +34,14 @@
      no-destination-configured state, since that is what every device running this build actually
      shows today; the alternate "queued events send only while capture is not running" sentence
      (FR-ANL-7) is the other real string the same subtitle slot renders once a destination exists,
-     noted here rather than drawn a second time. -->
+     noted here rather than drawn a second time.
+
+     R-1086 (register; constitution I; D42, FR-ANL-2): the tier 1 row used to read "Crashes and
+     ANRs" -- but no ANR-detection mechanism exists anywhere in this codebase (no watchdog runs,
+     and AnalyticsTier1Payload.Crash.isAnr is deliberately nullable, "never measured"). "and ANRs"
+     is dropped here, from SettingsAnalyticsScreen.kt's identical row, from
+     Setup-Analytics-Consent.dc.html's tier 1 paragraph, and from docs/privacy-policy.md's tier 1
+     description -- all four said the same false thing and now say the same true one. -->
 
 <div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
 
@@ -53,7 +60,7 @@
 
     <div class="lbl">On by default</div>
     <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
-      <div style="flex-grow: 1;"><div class="n">Usage and quality (tier 1)</div><div class="s">Crashes and ANRs, screens and actions used, per-pass speed, capture uptime, the setup funnel, and aggregate quality rates — never a transcript, callsign, name, station knowledge or location.</div></div>
+      <div style="flex-grow: 1;"><div class="n">Usage and quality (tier 1)</div><div class="s">Crashes, screens and actions used, per-pass speed, capture uptime, the setup funnel, and aggregate quality rates — never a transcript, callsign, name, station knowledge or location.</div></div>
       <div class="tg-on"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.16 0.01 150);"></div></div>
     </div>
 

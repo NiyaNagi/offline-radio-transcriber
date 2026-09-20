@@ -29,6 +29,16 @@ import org.ort.app.ui.theme.OrtType
  * this build nothing leaves the device whatever they choose. `design/canvas/Setup-Analytics-Consent
  * .dc.html` now exists and draws the corrected copy — the disclosure box below reuses that
  * artboard's own sentence verbatim, so the two screens never disagree about what "on" means.
+ *
+ * **R-1086 (register; constitution I; D42, FR-ANL-2):** the tier 1 paragraph used to say "crashes
+ * and ANRs" — but no ANR-detection mechanism exists anywhere in this codebase: no watchdog runs,
+ * and [org.ort.telemetry.AnalyticsTier1Payload.Crash.isAnr] is deliberately nullable ("never
+ * measured") for exactly that reason ([org.ort.app.analytics.CrashPayloads]'s own doc comment). A
+ * setup screen promising a category the app never collects is the same defect class as a
+ * confident wrong callsign, arriving as copy. "and ANRs" is dropped here, from
+ * `Setup-Analytics-Consent.dc.html`, from [org.ort.app.ui.settings.SettingsAnalyticsScreen]'s
+ * equivalent row, and from `docs/privacy-policy.md`'s tier 1 description — all four said the same
+ * false thing and now say the same true one.
  */
 @Composable
 public fun AnalyticsConsentScreen(
@@ -53,7 +63,7 @@ public fun AnalyticsConsentScreen(
         },
     ) {
         Text(
-            text = "Usage and quality analytics are on: crashes and ANRs, which screens and " +
+            text = "Usage and quality analytics are on: crashes, which screens and " +
                 "actions are used, per-pass speed, capture uptime, the setup funnel, and aggregate " +
                 "quality rates. Never a transcript, callsign, name, station knowledge or location. " +
                 "Turn it off any time in Settings.",

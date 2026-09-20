@@ -57,7 +57,8 @@ class SetupScaffoldTest {
     fun `R_120 the step counter renders exactly once, never doubled above the segment row`() {
         renderScaffold()
 
-        composeTestRule.onAllNodesWithText("2 of 8").assertCountEquals(1)
+        // R-1087: the fixed total grew from 8 to 10; MICROPHONE's own position (2) is unchanged.
+        composeTestRule.onAllNodesWithText("2 of $SETUP_TOTAL_STEPS").assertCountEquals(1)
     }
 
     /** Matches `FailureScreensTest`'s/`ReaderAccessibilityTest`'s own V7 font-scale pattern — a

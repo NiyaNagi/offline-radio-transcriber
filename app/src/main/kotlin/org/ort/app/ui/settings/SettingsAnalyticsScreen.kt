@@ -26,6 +26,15 @@ import org.ort.telemetry.AnalyticsTier
  * are opt-in and start unchecked. [SettingsAnalyticsViewState.destinationConfigured] renders the
  * honest D48 state: `false` (the default today, no endpoint deployed) means every event queues
  * on-device and nothing is ever sent, whatever the three toggles say.
+ *
+ * **R-1086 (register; constitution I; D42, FR-ANL-2):** tier 1's row used to say "Crashes and
+ * ANRs", but no ANR-detection mechanism exists anywhere in this codebase — no watchdog runs, and
+ * [org.ort.telemetry.AnalyticsTier1Payload.Crash.isAnr] is deliberately nullable ("never
+ * measured") for exactly that reason ([org.ort.app.analytics.CrashPayloads]'s own doc comment).
+ * "and ANRs" is dropped here, from [org.ort.app.ui.setup.AnalyticsConsentScreen]'s identical
+ * paragraph, from `design/canvas/Settings-Analytics.dc.html` and
+ * `design/canvas/Setup-Analytics-Consent.dc.html`, and from `docs/privacy-policy.md`'s tier 1
+ * description.
  */
 @Composable
 public fun SettingsAnalyticsScreen(
@@ -58,7 +67,7 @@ public fun SettingsAnalyticsScreen(
                 label = "Usage and quality (tier 1)",
                 checked = state.tier1Enabled,
                 onCheckedChange = onToggleTier1,
-                subLine = "Crashes and ANRs, screens and actions used, per-pass speed, capture " +
+                subLine = "Crashes, screens and actions used, per-pass speed, capture " +
                     "uptime, the setup funnel, and aggregate quality rates — never a transcript, " +
                     "callsign, name, station knowledge or location.",
             )

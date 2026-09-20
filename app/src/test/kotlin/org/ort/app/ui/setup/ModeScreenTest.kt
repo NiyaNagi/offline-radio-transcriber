@@ -22,7 +22,7 @@ class ModeScreenTest {
     val composeTestRule = createComposeRule()
 
     @Test
-    fun `E2_E01 renders the three modes with the board's exact copy and counter 1 of 8`() {
+    fun `E2_E01 renders the three modes with the board's exact copy and counter 1 of 10`() {
         composeTestRule.setContent {
             OrtTheme { ModeScreen(onChoose = {}) }
         }
@@ -31,7 +31,8 @@ class ModeScreenTest {
         composeTestRule.onNodeWithText("Local microphone").assertIsDisplayed()
         composeTestRule.onNodeWithText("USB-connected radio").assertIsDisplayed()
         composeTestRule.onNodeWithText("Bluetooth-connected radio").assertIsDisplayed()
-        composeTestRule.onNodeWithText("1 of 8").assertIsDisplayed()
+        // R-1087: the fixed total grew from 8 to 10; MODE's own position (1) is unchanged.
+        composeTestRule.onNodeWithText("1 of $SETUP_TOTAL_STEPS").assertIsDisplayed()
     }
 
     @Test

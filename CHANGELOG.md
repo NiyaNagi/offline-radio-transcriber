@@ -149,6 +149,116 @@ module edge — `dependencyRules` unchanged).
   reason.
 
 ---
+## 2026-09-20 (register fix: R-1086 the analytics consent screen's false ANR promise, R-1087 two setup steps both reading "8 of 8")
+
+### R-1086/R-1087 — setup progress-indicator honesty and the analytics screens' ANR overclaim
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/SetupStep.kt`, `AnalyticsConsentScreen.kt`;
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsAnalyticsScreen.kt`; new
+`app/src/test/kotlin/org/ort/app/ui/setup/SetupStepTest.kt`; updated
+`AnalyticsConsentScreenTest.kt`, `SettingsAnalyticsScreenTest.kt`, `BluetoothPermissionScreenTest.kt`,
+`ModeScreenTest.kt`, `SetupScaffoldTest.kt`; every `design/canvas/Setup-*.dc.html` board that draws
+a step indicator, `design/canvas/Settings-Analytics.dc.html`; `design/design-intent.md` §2;
+`docs/privacy-policy.md` (`docs/play-data-safety.md` checked, already correct, unchanged).
+
+**Requirements/ACs:** R-1086, R-1087 (register), constitution I, D42, D43, FR-ANL-2, AC-166,
+AC-180, AC-184, AC-188.
+
+**What changed:**
+- **R-1087.** `SetupStep.indicatorIndex()` gave P22's `MODELS` and P28's `ANALYTICS_CONSENT` the
+  same position as `READY` (segment 8 of 8), so `setup-models/S11a-models` and
+  `setup-analytics-consent/S11b-analytics-consent` both rendered an identical, full "8 of 8" bar —
+  telling the operator twice that they were on the last step. Every step now has a distinct
+  position: `MODE` 1, the mic group (`MICROPHONE`/`MICROPHONE_DENIED`/`BLUETOOTH_PERMISSION`) 2,
+  `NOTIFICATIONS` 3, the input group (`INPUT`/`VERIFY`/`ROUTE_MISMATCH`) 4, `LEVEL` 5, `OVERNIGHT`
+  6, the radio group (`RADIO`/`RIG_TRANSPORT`/`RADIO_USB`/`RIG_BLUETOOTH`/`RADIO_VERIFIED`) 7,
+  `MODELS` 8, `ANALYTICS_CONSENT` 9, `READY` 10; `WELCOME`/`JURISDICTION_NOTICE` keep no indicator
+  (pre-flow notices, unchanged). `SETUP_TOTAL_STEPS` moved from 8 to 10 and is deliberately a
+  **fixed total** — every stage the state machine can ever reach, not the subset a given run walks
+  — because several stages are conditional (Bluetooth permission only in that capture mode, the
+  rig-transport branch only with a real rig chosen, `MODELS` only when something needs
+  downloading) and a denominator that changed mid-run as those conditions resolved would be its
+  own kind of dishonest indicator, worse than one that is merely larger than today's run needs.
+  New `SetupStepTest` asserts the declared stage groups against the real `indicatorIndex()` output
+  (this is what catches the exact R-1087 sharing), that `MODELS`/`ANALYTICS_CONSENT`/`READY` are
+  now pairwise distinct, and that the positions in use run 1..`SETUP_TOTAL_STEPS` with no gaps.
+  Every `design/canvas/Setup-*.dc.html` board that draws the indicator was redrawn to match: the
+  fixed-position boards (Mode, Mic, Mic-Denied, Bluetooth-Permission, Notify, Input, Verify,
+  Route-Mismatch, Level, Battery, Rig, Rig-Transport, Rig-Usb, Rig-Bluetooth, Rig-Verified) keep
+  their own segment number but the bar now has ten segments instead of eight; `Setup-Models.dc.html`
+  moves to `8 of 10` (was the full `8 of 8`); `Setup-Analytics-Consent.dc.html` moves to `9 of 10`
+  (was `8 of 8`); `Setup-Done.dc.html` moves to `10 of 10` (all ten lit, was `8 of 8`).
+  `design/design-intent.md` §2's stage table and every `counter now 'n of 8'` note are updated to
+  `n of 10`, and the S11a/S11b rows note their new, separate positions.
+- **R-1086.** `AnalyticsConsentScreen`'s tier 1 paragraph and `SettingsAnalyticsScreen`'s tier 1 row
+  both said "crashes and ANRs," but no ANR-detection mechanism exists anywhere in this codebase —
+  no watchdog runs, and `AnalyticsTier1Payload.Crash.isAnr` is deliberately nullable ("never
+  measured", fixed earlier the same night in `c7d5a168`) for exactly that reason. "and ANRs" is
+  dropped from both screens, from `design/canvas/Setup-Analytics-Consent.dc.html` and
+  `design/canvas/Settings-Analytics.dc.html`'s identical copy, and from `docs/privacy-policy.md`'s
+  tier 1 description, which also gained one sentence stating plainly that crash traces do not
+  include ANRs, since no such mechanism exists today. `docs/play-data-safety.md` was checked and
+  already said only "crash logs," with no ANR claim anywhere in the file — no change needed there.
+  New discriminating tests on both screens (`R_1086_no row/text anywhere on this screen promises
+  ANR collection`) assert the word "ANR" appears nowhere on either screen at all, not merely that
+  one row's wording moved; the pre-existing `AC_179_tier 1's row names crashes...` assertion was
+  updated to match the corrected copy instead of asserting the old, false one.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.setup.SetupStepTest" --tests
+  "org.ort.app.ui.setup.SetupStateMachineTest"` — BUILD SUCCESSFUL, all tests green (39 tests).
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests
+  "org.ort.app.ui.settings.SettingsAnalyticsScreenTest" --tests
+  "org.ort.app.ui.setup.AnalyticsConsentScreenTest"` — BUILD SUCCESSFUL, all 10 tests green,
+  including the two new `R_1086` tests.
+- `.\gradlew.bat ktlintCheck detekt` — BUILD SUCCESSFUL.
+- `.\gradlew.bat :app:compileFullDebugUnitTestKotlin` — BUILD SUCCESSFUL (every edited test file
+  compiles clean).
+- Each new/changed test shown to discriminate: `SetupStepTest`'s three R-1087 assertions fail for
+  the stated reason (`MODELS`/`ANALYTICS_CONSENT` both reading position 8) against the pre-fix
+  `SETUP_TOTAL_STEPS = 8` / shared `indicatorIndex()` branch, and pass once restored; both
+  `R_1086` tests fail (finding one "ANR" node) against the pre-fix "crashes and ANRs" copy on each
+  screen, and pass once "and ANRs" is dropped.
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
+  "org.ort.app.ui.settings.*" --tests "org.ort.app.debug.*"` (the full requested scope): run twice
+  against the fix on this shared, heavily-contended machine. The first run found exactly the three
+  expected pre-fix failures (`BluetoothPermissionScreenTest`, `ModeScreenTest`,
+  `SetupScaffoldTest`, each asserting a literal `"N of 8"` string against the new `SETUP_TOTAL_STEPS
+  = 10`), fixed to assert `"N of $SETUP_TOTAL_STEPS"` instead. The second run (14m 32s, 891 tests)
+  came back **891 tests completed, 6 failed — all six in `SettingsCaptureScreenTest`**, a screen
+  this change never touches; every failure is Espresso's `AppNotIdleException`
+  (`app/build/test-results/testFullDebugUnitTest/TEST-org.ort.app.ui.settings.SettingsCaptureScreenTest.xml`),
+  the machine-idle-timeout flake this session saw repeatedly from concurrent daemon contention, not
+  a regression from this change. Every test in `org.ort.app.ui.setup.*`, the rest of
+  `org.ort.app.ui.settings.*`, and `org.ort.app.debug.*` — including every file this change
+  touched — passed.
+
+**Left open / not done:**
+- `SettingsCaptureScreenTest`'s six `AppNotIdleException` failures on the second full run (above)
+  are believed to be a machine-contention flake, not a regression, but were not independently
+  re-run in isolation to confirm that belief — worth a clean re-run on a quieter machine before
+  fully discharging.
+- The lead must re-run the visual tour and re-capture every setup screen (constitution VIII) —
+  every `setup-*` tour id touches a screen whose indicator changed: `setup-mode/S00`,
+  `setup-verified*` (mic, mic-denied, bluetooth-permission, notify, input, verify, route-mismatch,
+  level, battery, radio, rig-transport, rig-usb, rig-bluetooth, rig-verified families),
+  `setup-bt-permission/S02c`, `setup-models/S11a-models`,
+  `setup-analytics-consent/S11b-analytics-consent`, and `setup-verified`/`setup-verified-local-mic`/
+  `rig-bt-connected`'s `S12-ready*` — at font scale 1.0 and 2.0 (and scrolled to end where the
+  screen scrolls). This session captured no device evidence, per its own instructions.
+- The full aggregate `org.ort.app.ui.setup.*`/`ui.settings.*`/`debug.*` test run had not completed
+  on this shared machine by commit time (see Verified above) — every test it would exercise was
+  otherwise confirmed green or compiling clean in isolation, but the full run itself should be
+  reconciled before this is treated as fully gated.
+- `spec/functional-spec.md`'s FR-ANL-2 still lists "crash traces and ANRs" in tier 1's closed field
+  list, which is now inconsistent with this fix. That is a spec defect outside this session's file
+  ownership (not one of the paths this unit was told it owns) — flagged for the lead/register
+  rather than silently amended here.
+- `Setup-Mic-Denied.dc.html` draws its own segment 2 in the halted (amber/red,
+  `oklch(0.72 0.15 25)`) color, although `SetupStep.MICROPHONE_DENIED.isHalted()` is `false` in
+  code (only `ROUTE_MISMATCH` halts, per that function's own doc comment). Noticed while
+  renumbering every board's segment row; left untouched as out of scope for R-1086/R-1087 and
+  noted here rather than silently fixed or silently ignored.
 
 ## 2026-09-20 (P28 follow-up: the analytics channel finally emits — instrumentation for every tier-1 event and the tier-2 correction pair)
 

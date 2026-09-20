@@ -15,14 +15,20 @@
   </style>
 </helmet>
 
-<!-- S11b -- Setup-Analytics-Consent.dc.html. SetupStep.ANALYTICS_CONSENT shares MODELS/READY's own
-     indicatorIndex() == 8 (SetupStep.kt), so this board's header row draws the full "8 of 8" segment
-     row exactly as Setup-Models.dc.html does -- but onBack == null (AnalyticsConsentScreen.kt,
+<!-- S11b -- Setup-Analytics-Consent.dc.html. onBack == null (AnalyticsConsentScreen.kt,
      "never a hard gate"), so unlike Setup-Models this board has no back chevron: the header's left
-     slot is empty and only the "8 of 8" counter sits at the right, the same asymmetry
+     slot is empty and only the "n of 10" counter sits at the right, the same asymmetry
      SetupScaffold.kt's own ScaffoldHeaderRow produces for this exact (onBack=null, index!=null)
      combination -- a state no earlier board demonstrates (Setup-Jurisdiction.dc.html has neither
      chevron nor counter; every other board has both). Serves FR-ANL-9, FR-ANL-10, AC-180, D42, D48.
+
+     R-1087 (register): SetupStep.ANALYTICS_CONSENT used to share MODELS/READY's own indicatorIndex
+     (8), so this board's header row drew the full "8 of 8" segment row exactly as
+     Setup-Models.dc.html did, telling the operator twice they were on the last step (the lead's
+     side-by-side capture of the two boards). ANALYTICS_CONSENT now has its own position (9),
+     distinct from MODELS (8) and READY (10); SETUP_TOTAL_STEPS grew from 8 to 10 (SetupStep.kt's
+     own doc comment explains the fixed-total choice). This board's segment row is now 9 of 10
+     filled, not the full bar.
 
      COPY FINDING (recorded in the task report and in design-intent.md, not fixed in
      AnalyticsConsentScreen.kt -- outside this unit's ownership): the built screen has no
@@ -33,13 +39,20 @@
      That is an omission of the exact fact the settings screen states plainly, on the one screen an
      operator sees before ever choosing a tier. This board adds the disclosure line below the tier-1
      paragraph, reusing the identical sentence Settings-Analytics.dc.html draws for the same state,
-     so the two screens never disagree about what "on" actually means. -->
+     so the two screens never disagree about what "on" actually means.
+
+     R-1086 (register; constitution I; D42, FR-ANL-2): the tier 1 paragraph used to read "crashes
+     and ANRs" -- but no ANR-detection mechanism exists anywhere in this codebase (no watchdog
+     runs, and AnalyticsTier1Payload.Crash.isAnr is deliberately nullable, "never measured"). "and
+     ANRs" is dropped here, from AnalyticsConsentScreen.kt's identical paragraph, from
+     Settings-Analytics.dc.html's tier 1 row, and from docs/privacy-policy.md's tier 1 description
+     -- all four said the same false thing and now say the same true one. -->
 
 <div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
 
   <div style="padding: 10px 20px 0; display: flex; align-items: center; gap: 14px;">
     <div style="flex-grow: 1;"></div>
-    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">8 of 8</div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">9 of 10</div>
   </div>
   <div style="display: flex; gap: 4px; padding: 14px 20px 0;">
     <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
@@ -50,6 +63,8 @@
     <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
     <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
     <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
   </div>
 
   <div style="padding: 26px 20px 0;">
@@ -58,7 +73,7 @@
   </div>
 
   <div style="padding: 18px 20px 0; display: flex; flex-direction: column; gap: 14px; flex-grow: 1; overflow: hidden;">
-    <div style="font-size: 15px; line-height: 1.4; color: oklch(0.76 0.006 250); text-wrap: pretty;">Usage and quality analytics are on: crashes and ANRs, which screens and actions are used, per-pass speed, capture uptime, the setup funnel, and aggregate quality rates. Never a transcript, callsign, name, station knowledge or location. Turn it off any time in Settings.</div>
+    <div style="font-size: 15px; line-height: 1.4; color: oklch(0.76 0.006 250); text-wrap: pretty;">Usage and quality analytics are on: crashes, which screens and actions are used, per-pass speed, capture uptime, the setup funnel, and aggregate quality rates. Never a transcript, callsign, name, station knowledge or location. Turn it off any time in Settings.</div>
 
     <!-- Corrected wording -- see this file's own COPY FINDING note above. Same sentence
          Settings-Analytics.dc.html's subtitle uses for the identical no-destination-configured
