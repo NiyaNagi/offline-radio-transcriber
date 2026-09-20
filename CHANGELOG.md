@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (R-1043 follow-up: a gate-flake diagnosis session — one discriminated fix, two reports that would not reproduce)
 
-### <pending> — R-1043 follow-up · `TransmissionDetailContentTest`'s three "type a callsign" flows now wait for the revealed field explicitly, closing an implicit-idle-wait gap; `SettingsCaptureScreenTest`/`BluetoothPermissionScreenTest`'s reported `AppNotIdleException` and `:data`'s reported `SQLITE_CANTOPEN` did not reproduce and are left open, named
+### fb461f61 — R-1043 follow-up · `TransmissionDetailContentTest`'s three "type a callsign" flows now wait for the revealed field explicitly, closing an implicit-idle-wait gap; `SettingsCaptureScreenTest`/`BluetoothPermissionScreenTest`'s reported `AppNotIdleException` and `:data`'s reported `SQLITE_CANTOPEN` did not reproduce and are left open, named
 
 **Scope:** `app/src/test/kotlin/org/ort/app/ui/screens/TransmissionDetailContentTest.kt` only. No
 production code, no `app/build.gradle.kts`, no `buildSrc` test-task wiring changed — see "Left
