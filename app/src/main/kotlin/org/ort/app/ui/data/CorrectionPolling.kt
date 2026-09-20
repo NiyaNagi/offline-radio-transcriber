@@ -32,11 +32,16 @@ import java.util.Locale
  * read) purely to keep the affected-row time label identical to every other screen's, rather than
  * a second, drifting format.
  *
- * **Propagation scope** (`Flow-Correct.dc.html`: "this over only, or every over matched to the
- * same voice"): every transmission sharing the corrected transmission's `voiceprintId` — or its
- * `stationId` when there is no voiceprint — gets its own [org.ort.data.entity.CorrectionEntity].
- * Nothing is ever deleted; `undoAll` is itself a further correction, kept exactly like every
- * other one (constitution III).
+ * **Propagation scope, relabelled (D45).** `Flow-Correct.dc.html`'s own words used to read "this
+ * over only, or every over matched to the same voice" — but [TransmissionEntity.voiceprintId] is
+ * `null` on every transmission this build ever writes ([org.ort.pipeline.capture.RealCaptureService]
+ * inserts it that way, and `:identity`'s cross-session enrolment does not exist yet), so this has
+ * always actually matched by `stationId`, i.e. **callsign**, not voice. D45 defers the voice library
+ * (FR-SPK-11..26) past 1.0 and requires the UI to say what it does: [CorrectionScope.EVERY_OVER_SAME_CALLSIGN]
+ * is every transmission sharing the corrected transmission's `voiceprintId` where one exists — or
+ * its `stationId` when there is no voiceprint, which today is every case — each getting its own
+ * [org.ort.data.entity.CorrectionEntity]. Nothing is ever deleted; `undoAll` is itself a further
+ * correction, kept exactly like every other one (constitution III).
  *
  * **R-052 complete.** `:data`'s [org.ort.data.dao.StationIdentityDao] (schema v3) closes the gap
  * this file's earlier revision reported: [applyCorrection] now really rebinds the voiceprint
@@ -45,8 +50,12 @@ import java.util.Locale
  * `Detail-Propagated.dc.html` counts ([org.ort.data.dao.StationIdentityDao.updatePriorWeight], the
  * superseded weight kept via [PriorAdjustmentEntity.isCurrent]) — but only for a **verified**
  * correction ([CorrectionTier.PICK_CANDIDATE]/[CorrectionTier.SEARCH_LEXICON]) applied with
- * [CorrectionScope.EVERY_OVER_SAME_VOICE]: `Detail-Correct-C.dc.html`'s own words for
- * [CorrectionTier.FREE_TEXT] are "cannot feed the priors or the voice match", and a `this over
+ * [CorrectionScope.EVERY_OVER_SAME_CALLSIGN], and (per the paragraph above) only ever actually
+ * rebinds anything on a build where a transmission carries a real `voiceprintId` — none does
+ * today, so [applyCorrection]'s rebind branch is real, tested code with no reachable production
+ * caller until the voice library ships. `Detail-Correct-C.dc.html`'s own words for
+ * [CorrectionTier.FREE_TEXT] are "cannot feed the priors or the voice match" (unchanged by this
+ * relabel: an unverified, typed correction never rebinds regardless of scope), and a `this over
  * only` scope must not rebind a voiceprint shared by overs the operator deliberately left alone.
  * [PropagationOutcome.voiceprintReassigned]/`.priorsUpdatedCount` are now real, derived from
  * [PropagationOutcome.voiceprintRebind]/`.priorAdjustments` rather than fixed at `false`/`0`.
@@ -56,7 +65,7 @@ import java.util.Locale
  * a fresh, genuinely durable run. See each function's own doc for the schema gap this cannot
  * honestly represent (per-attempt history) and why there is no scheduler to trigger synchronously.
  */
-public enum class CorrectionScope { THIS_OVER_ONLY, EVERY_OVER_SAME_VOICE }
+public enum class CorrectionScope { THIS_OVER_ONLY, EVERY_OVER_SAME_CALLSIGN }
 
 /** One row of `Detail-Propagated.dc.html`'s "the N overs, as they read now" list. */
 public data class AffectedOverViewState(
@@ -481,10 +490,10 @@ public object CorrectionPolling {
      * Applies [request] to every transmission [scope] selects, each as its own
      * [org.ort.data.dao.CorrectionDao.recordCorrection] (its own audit row, its own locked
      * attribution — never one write standing in for many). When [scope] is
-     * [CorrectionScope.EVERY_OVER_SAME_VOICE], the target carries a `voiceprintId`, and [request]
-     * is verified (not [CorrectionTier.FREE_TEXT]), this also rebinds that voiceprint to the
-     * corrected station and versions the two named priors — see this file's class doc for why
-     * those three conditions gate it.
+     * [CorrectionScope.EVERY_OVER_SAME_CALLSIGN], the target carries a `voiceprintId`, and
+     * [request] is verified (not [CorrectionTier.FREE_TEXT]), this also rebinds that voiceprint to
+     * the corrected station and versions the two named priors — see this file's class doc for why
+     * those three conditions gate it, and for why the middle one never holds in this build today.
      */
     public suspend fun applyCorrection(
         context: Context,
@@ -505,7 +514,7 @@ public object CorrectionPolling {
 
         val voiceprintId = target?.voiceprintId
         val verified = request.tier != CorrectionTier.FREE_TEXT
-        val rebind = if (scope == CorrectionScope.EVERY_OVER_SAME_VOICE && verified && voiceprintId != null) {
+        val rebind = if (scope == CorrectionScope.EVERY_OVER_SAME_CALLSIGN && verified && voiceprintId != null) {
             rebindVoiceprint(db, voiceprintId, targets, request.newStationId, request.correctedAtMillis)
         } else {
             null

@@ -18,33 +18,29 @@ import org.ort.data.entity.VoiceprintEntity
  * own producers, which structurally never touch a voiceprint at all (that object's own doc
  * comment, AC-109).
  *
- * **Known gap, stated rather than silently narrowed (constitution I).** `:data`'s public API
- * ([org.ort.data.dao.CatalogDao], [org.ort.data.dao.ActivityDao] — checked before writing this;
- * the `:data` module is outside this round's own file-ownership map to extend) has no "every voiceprint"
- * query, only [org.ort.data.dao.CatalogDao.voiceprintsForStation], keyed by a station id. This
- * producer therefore walks every station [org.ort.data.dao.ActivityDao.listStations] returns and
- * collects each one's bound voiceprints — a voiceprint never yet bound to any station
- * (`boundStationId == null`) is not reachable this way, and is silently absent from this file's
- * output rather than from a station's own row. Flagged as real follow-up work: a `:data`-side
- * `CatalogDao.allVoiceprints()` (or equivalent) would close it; adding one is outside this
- * package's ownership this round.
+ * **Gap closed (D45).** This producer used to walk every station [org.ort.data.dao.ActivityDao.listStations]
+ * returns and collect each one's bound voiceprints via [org.ort.data.dao.CatalogDao.voiceprintsForStation]
+ * — `:data` had no "every voiceprint" query, so a voiceprint never yet bound to any station
+ * (`boundStationId == null`) was silently unreachable and absent from this file's output, even
+ * though the consent screen names this whole category before every upload (FR-OBS-9). D45 adds
+ * [org.ort.data.dao.CatalogDao.allVoiceprints] to close exactly that gap (register R-1010); this
+ * producer now reads it directly, so an unbound voiceprint is included like any other.
  */
 public object VoiceprintEmbeddingsProducer : DiagnosticsFileProducer {
 
     /** The file name this category's entry takes inside a field-report bundle. */
     public const val FILE_NAME: String = "voiceprints.json"
 
-    /** The exact station-walk query [produce] itself uses, pulled out so
+    /** The exact query [produce] itself uses, pulled out so
      * [org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder] can ask "is there anything here at
      * all" ([count]) without a second, independently-written copy of the same query — the identical
      * reuse discipline [org.ort.app.fieldreport.bundle.FieldReportBundleBuilder.screenFrameFiles]'s
-     * own visibility change (WPDUMP) applies one file over. */
+     * own visibility change (WPDUMP) applies one file over. D45: reads
+     * [org.ort.data.dao.CatalogDao.allVoiceprints] directly — every voiceprint, station-bound or
+     * not — rather than the old per-station walk that could never reach an unbound one. */
     private suspend fun loadVoiceprints(context: Context): List<VoiceprintEntity> = withContext(Dispatchers.IO) {
         val db = OrtDatabase.create(context.applicationContext)
-        val stations = db.activityDao().listStations()
-        stations
-            .flatMap { station -> db.catalogDao().voiceprintsForStation(station.id) }
-            .distinctBy { it.id }
+        db.catalogDao().allVoiceprints()
     }
 
     /** WPDUMP: the real count behind the local-save checklist's `VOICEPRINT_EMBEDDINGS` row —

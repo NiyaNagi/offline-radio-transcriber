@@ -12,6 +12,7 @@ import org.ort.data.entity.CallsignCandidateEntity
 import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.LatticeSource
 import org.ort.data.entity.PhoneticLatticeEntity
+import org.ort.data.entity.VoiceprintEntity
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
@@ -341,4 +342,41 @@ public class CatalogDaoTest {
             assertEquals(5, span.spanStart)
             assertEquals(8, span.spanEnd)
         }
+
+    private fun voiceprint(id: String, boundStationId: String?) = VoiceprintEntity(
+        id = id,
+        embedding = ByteArray(0),
+        memberCount = 0,
+        centroidUpdatedAt = null,
+        boundStationId = boundStationId,
+        bindingConfidence = null,
+        lastConfirmedAt = null,
+        isEnrolled = false,
+        enrolmentObservationCount = 0,
+        enrolmentSessionIds = null,
+        enrolledAt = null,
+        lastMatchedAt = null,
+        bindingSource = null,
+        embeddingModelId = null,
+        embeddingModelVersion = null,
+    )
+
+    /**
+     * D45: [org.ort.data.dao.CatalogDao.allVoiceprints] is the "every voiceprint" query
+     * [org.ort.app.fieldreport.bundle.VoiceprintEmbeddingsProducer]'s own doc comment named as
+     * missing — a voiceprint never bound to a station (`boundStationId == null`) was previously
+     * unreachable except by walking every known station, which by construction never finds one
+     * with no station at all. This asserts the real fix: every row, bound or not.
+     */
+    @Test
+    @Requirement("D45")
+    public fun D45_allVoiceprints_returns_every_voiceprint_including_ones_with_no_boundStationId(): Unit = runTest {
+        val dao = db.catalogDao()
+        dao.insert(voiceprint("V-BOUND", boundStationId = "ST1"))
+        dao.insert(voiceprint("V-UNBOUND", boundStationId = null))
+
+        val all = dao.allVoiceprints()
+
+        assertEquals(setOf("V-BOUND", "V-UNBOUND"), all.map { it.id }.toSet())
+    }
 }

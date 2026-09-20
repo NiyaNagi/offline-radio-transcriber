@@ -319,7 +319,7 @@ private fun MainDestination(
                             tier = CorrectionTier.PICK_CANDIDATE,
                             correctedAtMillis = SystemClock.wallMillis(),
                         ),
-                        CorrectionScope.EVERY_OVER_SAME_VOICE,
+                        CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
                     )
                     onDestinationChange(DetailDestination.Propagated(outcome))
                 }
@@ -411,7 +411,7 @@ private fun CorrectingOverlay(
         everyOverCount = CorrectionPolling.affectedOverCount(
             context,
             transmissionId,
-            CorrectionScope.EVERY_OVER_SAME_VOICE,
+            CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
         )
     }
 
@@ -445,7 +445,7 @@ private fun CorrectingOverlay(
         CorrectionSheet(
             currentCallsign = current.attribution.stationId,
             candidates = viewState.why.candidates,
-            everyOverSameVoiceCount = everyOverCount,
+            everyOverSameCallsignCount = everyOverCount,
             onSearchStations = { query -> CorrectionPolling.searchHeardStations(context, query) },
             onApply = ::apply,
             onDismiss = onDismiss,

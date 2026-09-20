@@ -42,8 +42,10 @@ import org.ort.app.ui.theme.OrtType
  * in order — pick a resolved candidate, search the lexicon, or type a callsign marked unverified.
  * Tier A/B name an already-known identity and, per the flow board's own example ("picked from the
  * resolver's candidates" → "6 overs re-attributed"), propagate to every over sharing the
- * corrected over's voice by default. Tier C is a weaker signal, so it asks for scope explicitly —
- * `Detail-Correct-C.dc.html` is the only board that shows the "Apply to" radio choice.
+ * corrected over's callsign by default (D45 — see [CorrectionScope]'s own doc comment for why that
+ * is what actually runs, not the voice-based propagation the board's own copy used to describe).
+ * Tier C is a weaker signal, so it asks for scope explicitly — `Detail-Correct-C.dc.html` is the
+ * only board that shows the "Apply to" radio choice.
  *
  * Height-capped and independently scrollable, the same pattern `SearchScreen.kt`'s
  * `SearchFiltersSheet` (WP7) uses: `Sheet` (WP2) is the static surface only — "not the scaffold
@@ -58,7 +60,7 @@ import org.ort.app.ui.theme.OrtType
 public fun CorrectionSheet(
     currentCallsign: String?,
     candidates: List<RankedCandidateViewState>,
-    everyOverSameVoiceCount: Int,
+    everyOverSameCallsignCount: Int,
     onSearchStations: suspend (String) -> StationSearchOutcome,
     onApply: (callsign: String, tier: CorrectionTier, scope: CorrectionScope) -> Unit,
     onDismiss: () -> Unit,
@@ -73,7 +75,7 @@ public fun CorrectionSheet(
                     currentCallsign = currentCallsign,
                     candidates = candidates,
                     onPick = { callsign ->
-                        onApply(callsign, CorrectionTier.PICK_CANDIDATE, CorrectionScope.EVERY_OVER_SAME_VOICE)
+                        onApply(callsign, CorrectionTier.PICK_CANDIDATE, CorrectionScope.EVERY_OVER_SAME_CALLSIGN)
                     },
                     onOpenSearch = { tier = CorrectionTierStep.SEARCH },
                     onOpenType = { tier = CorrectionTierStep.TYPE },
@@ -82,14 +84,14 @@ public fun CorrectionSheet(
                 CorrectionTierStep.SEARCH -> SearchTier(
                     onSearchStations = onSearchStations,
                     onPick = { callsign ->
-                        onApply(callsign, CorrectionTier.SEARCH_LEXICON, CorrectionScope.EVERY_OVER_SAME_VOICE)
+                        onApply(callsign, CorrectionTier.SEARCH_LEXICON, CorrectionScope.EVERY_OVER_SAME_CALLSIGN)
                     },
                     onBack = { tier = CorrectionTierStep.MAIN },
                     onOpenType = { tier = CorrectionTierStep.TYPE },
                 )
 
                 CorrectionTierStep.TYPE -> TypeTier(
-                    everyOverSameVoiceCount = everyOverSameVoiceCount,
+                    everyOverSameCallsignCount = everyOverSameCallsignCount,
                     onApply = { callsign, scope -> onApply(callsign, CorrectionTier.FREE_TEXT, scope) },
                     onBack = { tier = CorrectionTierStep.MAIN },
                 )
@@ -177,7 +179,7 @@ private fun SearchTier(
     }
     Text(
         text = "Only stations this phone has heard appear here — it is not a callsign database. " +
-            "Naming one that has a voice on file also tells the matcher this voice is theirs.",
+            "Naming one also corrects every other over currently sharing this over's callsign.",
         style = OrtType.subLine,
         color = OrtColors.textFaint,
         modifier = Modifier.padding(top = OrtSpacing.md),
@@ -220,7 +222,7 @@ private fun StationSearchResultRow(row: StationSearchRow, query: String, onClick
 /** Tier C: typed callsign, recorded unverified, with the explicit scope choice. */
 @Composable
 private fun TypeTier(
-    everyOverSameVoiceCount: Int,
+    everyOverSameCallsignCount: Int,
     onApply: (callsign: String, scope: CorrectionScope) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -248,11 +250,16 @@ private fun TypeTier(
         selected = scope == CorrectionScope.THIS_OVER_ONLY,
         onClick = { scope = CorrectionScope.THIS_OVER_ONLY },
     )
+    // D45: `Detail-Correct-C.dc.html` still draws this row as "Every over matched to this
+    // voice" — the artboard has not caught up with the amendment yet (functional spec's
+    // FR-SPK-5 amendment note: "the UI SHALL say 'every over with the same callsign'"), and
+    // `design/canvas/**` is outside this package's ownership to edit. Reported to the lead
+    // rather than silently drawn to match a stale board (constitution VIII).
     RadioRow(
-        label = "Every over matched to this voice",
-        selected = scope == CorrectionScope.EVERY_OVER_SAME_VOICE,
-        onClick = { scope = CorrectionScope.EVERY_OVER_SAME_VOICE },
-        count = everyOverSameVoiceCount.toString(),
+        label = "Every over with the same callsign",
+        selected = scope == CorrectionScope.EVERY_OVER_SAME_CALLSIGN,
+        onClick = { scope = CorrectionScope.EVERY_OVER_SAME_CALLSIGN },
+        count = everyOverSameCallsignCount.toString(),
     )
     PrimaryButton(
         text = "Save unverified correction",
