@@ -261,8 +261,13 @@ class ScenariosTest {
         val thread = rows.mapNotNull { it.threadId }.first()
         val threadEntity = db.catalogDao().getThread(thread)
         assertNotNull(threadEntity)
-        assertEquals(4, threadEntity!!.transmissionCount)
-        assertEquals(2, threadEntity.participantStationIds?.size)
+        // R-1099: 5 transmissions and 3 participants, not 4/2 -- a fifth, corrected over was added
+        // to this thread so Threads itself has a real corrected row to capture (T02-thread-detail's
+        // own "any" thread is this one).
+        assertEquals(5, threadEntity!!.transmissionCount)
+        assertEquals(3, threadEntity.participantStationIds?.size)
+        val threadRows = rows.filter { it.threadId == thread }
+        assertTrue("expected the thread to carry its own corrected row", threadRows.any { it.corrected })
     }
 
     @Test

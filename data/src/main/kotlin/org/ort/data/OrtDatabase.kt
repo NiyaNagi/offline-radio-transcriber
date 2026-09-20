@@ -93,7 +93,9 @@ import java.util.concurrent.Executors
  * for [TransmissionLabelEntity] — see each one's own doc comment. v14 (WPSEGPROV, FR-SEG-10,
  * register R-1054, AC-162) adds `session.vadDetector`/`.vadDetectorVersion` and
  * `transmission.vadDetector`/`.vadDetectorVersion`/`.rigSquelchFusionApplied` — see
- * [SessionEntity.vadDetector] and [TransmissionEntity.vadDetector]'s own doc comments.
+ * [SessionEntity.vadDetector] and [TransmissionEntity.vadDetector]'s own doc comments. v15
+ * (register R-1098, FR-SPK-5) adds `transmission.threadJoinReason` — see
+ * [TransmissionEntity.threadJoinReason]'s own doc comment.
  */
 @Database(
     entities = [
@@ -146,7 +148,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun transmissionLabelDao(): TransmissionLabelDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 14
+        public const val SCHEMA_VERSION: Int = 15
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -523,6 +525,28 @@ public abstract class OrtDatabase : RoomDatabase() {
         )
 
         /**
+         * v14 → v15 (register R-1098, FR-SPK-5, constitution I): adds
+         * `transmission.threadJoinReason` — see [org.ort.data.entity.TransmissionEntity
+         * .threadJoinReason]'s own doc comment. No existing table or column is touched or dropped;
+         * every v14 row survives untouched, the new column `NULL` (no threading decision recorded
+         * for it — honest, since threading never ran for a row this old — never a fabricated
+         * reason), verified by `MigrationTest`.
+         */
+        public val MIGRATION_14_15: Migration = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_14_15_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_14_15_STATEMENTS.forEach(connection::execSQL)
+            }
+        }
+
+        private val MIGRATION_14_15_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `transmission` ADD COLUMN `threadJoinReason` TEXT",
+        )
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> = arrayOf(
@@ -539,6 +563,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             MIGRATION_11_12,
             MIGRATION_12_13,
             MIGRATION_13_14,
+            MIGRATION_14_15,
         )
 
         private suspend fun PooledConnection.exec(sql: String) {

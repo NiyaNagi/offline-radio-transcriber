@@ -7,7 +7,9 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.core.Attribution
+import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
+import org.ort.data.entity.TransmissionEntity
 
 /**
  * `TransmissionDetail` -> `TransmissionListEntryViewState`, compose-agnostic (build-plan P14).
@@ -162,5 +164,87 @@ class ReaderTransmissionViewStateMapperTest {
 
         val message = "expected a failure label: ${view.transcriptText}"
         assertTrue(view.transcriptText.contains("fail", ignoreCase = true), message)
+    }
+
+    // ---- R-1099: the shared "what does a correction reconstruct to" reconstruction ----
+
+    private fun entity(
+        id: String = "TX1",
+        stationId: String? = "K7LWH",
+        corrected: Boolean = false,
+        attributionState: AttributionState = AttributionState.INFERRED,
+        attributionConfidence: Double? = 0.7,
+    ) = TransmissionEntity(
+        id = id,
+        sessionId = "S1",
+        threadId = null,
+        startedAtUtc = 0L,
+        endedAtUtc = 1_000L,
+        durationMs = 1_000L,
+        audioFormat = "flac/16k/mono",
+        preRollMs = 200,
+        postRollMs = 200,
+        frequencyHz = 146_960_000L,
+        frequencyProvenance = "measured",
+        mode = null,
+        signalStrength = null,
+        channelName = null,
+        voiceprintId = null,
+        attributionState = attributionState,
+        stationId = stationId,
+        attributionConfidence = attributionConfidence,
+        attributionSourceTransmissionId = null,
+        corrected = corrected,
+        processingState = TransmissionState.COMPLETE,
+        rejectionReason = null,
+        samplePosition = 0L,
+        monotonicStartNanos = 0L,
+        utcOffsetMinutes = 0,
+        calibrationId = null,
+        executionProvider = null,
+    )
+
+    @Test
+    fun `R_1099 correctedAttributionOrNull is null for an uncorrected row`() {
+        assertNull(ReaderTransmissionViewStateMapper.correctedAttributionOrNull(entity(corrected = false)))
+    }
+
+    @Test
+    fun `R_1099 correctedAttributionOrNull is null when corrected but no station was ever recorded`() {
+        assertNull(
+            ReaderTransmissionViewStateMapper.correctedAttributionOrNull(entity(corrected = true, stationId = null)),
+        )
+    }
+
+    @Test
+    fun `R_1099 correctedAttributionOrNull reconstructs the exact shape a correction always writes`() {
+        val attribution = ReaderTransmissionViewStateMapper.correctedAttributionOrNull(
+            entity(corrected = true, stationId = "VE7ABC"),
+        )
+
+        assertNotNull(attribution)
+        assertEquals(AttributionState.INFERRED, attribution!!.state)
+        assertEquals("VE7ABC", attribution.stationId)
+        assertNull(attribution.confidence)
+        assertTrue(attribution.corrected, "a correction's attribution must carry the corrected lock")
+    }
+
+    @Test
+    fun `R_1099 attributionFrom delegates to correctedAttributionOrNull for a corrected row`() {
+        val corrected = entity(corrected = true, stationId = "VE7ABC")
+
+        assertEquals(
+            ReaderTransmissionViewStateMapper.correctedAttributionOrNull(corrected),
+            ReaderTransmissionViewStateMapper.attributionFrom(corrected),
+        )
+    }
+
+    @Test
+    fun `R_1099 attributionFrom still reconstructs from state and confidence for an uncorrected row`() {
+        val uncorrected = entity(corrected = false, attributionState = AttributionState.CONFIRMED, stationId = "K7LWH")
+
+        val attribution = ReaderTransmissionViewStateMapper.attributionFrom(uncorrected)
+
+        assertEquals(Attribution.confirmed("K7LWH", 0.7), attribution)
     }
 }

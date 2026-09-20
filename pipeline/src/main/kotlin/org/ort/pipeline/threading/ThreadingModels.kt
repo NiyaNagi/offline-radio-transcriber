@@ -1,5 +1,6 @@
 package org.ort.pipeline.threading
 
+import org.ort.data.entity.ThreadJoinReason
 import org.ort.data.entity.ThreadKind
 import org.ort.data.entity.ThreadKindSource
 
@@ -31,22 +32,16 @@ public data class TransmissionClosure(
 }
 
 /**
- * Why [ThreadGrouper] joined or started a thread — kept as data rather than thrown away once the
- * decision is made (constitution I: "every machine conclusion MUST be inspectable"). The data
- * model this unit may touch has no per-thread "reason" column (`:data`'s schema is out of scope —
- * no migration), so this is where that explainability lives today; a future session wiring it
- * into a durable record or a log is a genuine follow-up, not a defect in this one.
+ * Why [ThreadGrouper] joined or started a thread (constitution I: "every machine conclusion MUST
+ * be inspectable"). Register R-1098: this used to be kept as data only long enough for
+ * [ThreadGroupingCoordinator] to read it and then discard it — `:data` had no column for it and
+ * nothing ever logged it, so a machine conclusion the operator sees on every Log screen had no
+ * durable trace of *why*. [ThreadGroupingCoordinator] now passes [ThreadGroupingDecision.reason]
+ * to [ThreadRepository.startThread]/`.appendToThread`, which stamp it onto the transmission's own
+ * row ([org.ort.data.entity.TransmissionEntity.threadJoinReason]) — see that column's own doc
+ * comment for where it lives and why. [ThreadJoinReason] itself is defined in `:data`, not here —
+ * see its own doc comment for why the module graph forces that direction.
  */
-public enum class ThreadJoinReason {
-    FIRST_TRANSMISSION_IN_SESSION,
-    SAME_FREQUENCY_WITHIN_GAP,
-    SAME_RIG_CHANNEL_WITHIN_GAP,
-    NO_FREQUENCY_INFO_WITHIN_GAP,
-    NEW_THREAD_FREQUENCY_CHANGED,
-    NEW_THREAD_GAP_EXCEEDED,
-    NEW_THREAD_UNLISTENED_CAPTURE_GAP,
-}
-
 public sealed interface ThreadGroupingDecision {
     public val reason: ThreadJoinReason
 

@@ -1,5 +1,7 @@
 package org.ort.pipeline.threading
 
+import org.ort.data.entity.ThreadJoinReason
+
 /**
  * FR-SPK-5's "configurable gap threshold". [gapThresholdMillis] has no measured default yet —
  * `spec/open-questions.md`'s Q16 labelling-protocol question ("does a 20-minute gap on the same

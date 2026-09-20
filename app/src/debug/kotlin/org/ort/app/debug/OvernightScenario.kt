@@ -494,12 +494,45 @@ internal object OvernightScenario {
                 ScenarioFixtures.seedConfirmedResolverOutput(db, id, station, 0.85, createdAt = t + 500L)
             }
         }
+        // -- 10b. A fifth, corrected over in the same thread. -------------------------------------
+        // Register R-1099: before this, no tour step reached a corrected transmission on Threads
+        // (T02-thread-detail's own "any" thread is this one) -- tx6 above already carries the
+        // `corrected` shape, but it stands alone, outside every thread, so Threads itself never
+        // showed it. Same INFERRED/no-confidence/corrected shape as tx6 and the dedicated
+        // `corrected` scenario, timed well inside the gap threshold so it genuinely joins.
+        val txQsoCorrected = "$sessionId-qso-corrected"
+        val tQsoCorrected = qsoTimes.last() + 60_000L
+        insertTx(
+            db,
+            context,
+            ScenarioFixtures.transmission(
+                id = txQsoCorrected, sessionId = sessionId, threadId = threadId,
+                startedAtUtc = tQsoCorrected, samplePosition = nextSample(),
+                frequencyHz = FREQ_A, signalStrength = 6.5,
+                attributionState = AttributionState.INFERRED, stationId = "KJ7ABC", attributionConfidence = null,
+                corrected = true,
+            ),
+            text = "kilo juliet seven alpha bravo charlie, back to you",
+            writeAudio = true,
+        )
+        db.catalogDao().insert(
+            CorrectionEntity(
+                id = "$txQsoCorrected-correction1",
+                transmissionId = txQsoCorrected,
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = "K7LWH",
+                newValue = "KJ7ABC",
+                correctedAt = tQsoCorrected + 30_000L,
+                propagatedToCount = 1,
+            ),
+        )
+        val qsoParticipants = qsoStations + "KJ7ABC"
         db.catalogDao().insert(
             ThreadEntity(
-                id = threadId, sessionId = sessionId, startedAt = qsoTimes.first(), endedAt = qsoTimes.last() + 4_200L,
-                frequencyHz = FREQ_A, transmissionCount = qsoTimes.size, participantStationIds = qsoStations,
+                id = threadId, sessionId = sessionId, startedAt = qsoTimes.first(), endedAt = tQsoCorrected + 4_200L,
+                frequencyHz = FREQ_A, transmissionCount = qsoTimes.size + 1, participantStationIds = qsoParticipants,
                 digestText = null, kind = ThreadKind.QSO, kindSource = ThreadKindSource.DETECTED,
-                participantOrder = qsoStations,
+                participantOrder = qsoParticipants,
             ),
         )
 

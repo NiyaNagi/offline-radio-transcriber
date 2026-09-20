@@ -32,6 +32,154 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (R-1098/R-1099: a thread's join reason is now inspectable, and a corrected attribution has one reconstruction, not two)
+
+### <pending> — R-1098 persists `ThreadJoinReason` on the transmission row; R-1099 unifies `CorrectionPolling.currentAttribution` with `attributionFrom` and seeds a corrected transmission on Live Monitor and Threads
+
+**Scope:** `data/src/main/kotlin/org/ort/data/entity/CatalogEntities.kt` (new `ThreadJoinReason`
+enum), `data/src/main/kotlin/org/ort/data/entity/TransmissionEntity.kt` (new
+`threadJoinReason` column), `data/src/main/kotlin/org/ort/data/OrtDatabase.kt` (schema v15,
+`MIGRATION_14_15`), `data/schemas/org.ort.data.OrtDatabase/15.json`,
+`data/src/test/kotlin/org/ort/data/MigrationTest.kt`; `pipeline/src/main/kotlin/org/ort/pipeline
+/threading/{ThreadingModels,ThreadGrouper,ThreadRepository,RoomThreadRepository,
+ThreadGroupingCoordinator}.kt`, `.../fake/FakeThreadRepository.kt`, and
+`pipeline/src/test/kotlin/org/ort/pipeline/threading/{ThreadGrouperTest,
+ThreadGroupingCoordinatorTest,DataPassBResultSinkThreadingTest}.kt`; `app/src/main/kotlin/org/ort
+/app/ui/data/{TransmissionDetail,CorrectionPolling}.kt` and
+`app/src/test/kotlin/org/ort/app/ui/data/{ReaderTransmissionViewStateMapperTest,
+CorrectionPollingTest}.kt`; `app/src/debug/kotlin/org/ort/app/debug/{Scenarios,
+OvernightScenario}.kt` and `app/src/test/kotlin/org/ort/app/debug/{OvernightLiveMonitorScenarioTest,
+ScenariosTest}.kt`.
+
+**Requirements/ACs:** FR-SPK-5, AC-163..165, FR-SPK-10, constitution I ("every machine conclusion
+MUST be inspectable"; "an attribution without its confidence state is a bug, at the data layer"),
+constitution VII (structural boundaries), R-1098, R-1099.
+
+**What changed:**
+
+1. **R-1098 — a thread's join reason is now persisted, not discarded.** `ThreadGrouper.decide`
+   always computed a `ThreadJoinReason` (`FIRST_TRANSMISSION_IN_SESSION`,
+   `SAME_FREQUENCY_WITHIN_GAP`, `SAME_RIG_CHANNEL_WITHIN_GAP`, `NO_FREQUENCY_INFO_WITHIN_GAP`,
+   `NEW_THREAD_FREQUENCY_CHANGED`, `NEW_THREAD_GAP_EXCEEDED`,
+   `NEW_THREAD_UNLISTENED_CAPTURE_GAP`), but `ThreadGroupingCoordinator` read it only to log-shape
+   decide a `ThreadKind` and then threw it away — no `:data` column, no diagnostics-log line.
+   Decided **against** the diagnostics log as the home for this: `DiagnosticsLog` is a rotating,
+   developer-facing bundle file (2 MiB × 2 generations, drained off the audio-frame path), not
+   something the operator's own Log/Threads screens can read back per-transmission, and constitution
+   I's own framing here is explicit — "grouping is a machine conclusion the operator sees on every
+   Log screen" — which calls for a durable, queryable fact on the record itself, the same shape
+   `vadDetector`/`rigStateChangedMidTransmission` already established for other per-transmission
+   provenance. Persisted instead as `transmission.threadJoinReason` (schema v15,
+   `MIGRATION_14_15`, nullable `TEXT`, no default needed for a nullable `ADD COLUMN`): `ThreadGrouper`
+   already lived in `:pipeline`, but the enum itself moved to `:data` (`org.ort.data.entity
+   .ThreadJoinReason`) since the module graph only runs one way (`:pipeline` depends on `:data`,
+   never the reverse) and the entity needs the type to store it — the same reason `ThreadKind`/
+   `ThreadKindSource` already live there. `ThreadRepository.startThread`/`.appendToThread` both
+   gained a `reason: ThreadJoinReason` parameter; `RoomThreadRepository` stamps `threadId` and
+   `threadJoinReason` in the same raw `UPDATE` statement, so a row can never carry one without the
+   other. Two related gaps from the same unit, handled by making them **visible as provisional
+   rather than fixed**, not by building past this unit's scope: `ThreadKindClassifier`'s three net-
+   detection thresholds already carry their own "all three thresholds are provisional... kept as
+   named constants for exactly that reason" doc comment (unchanged, confirmed still accurate);
+   `ThreadGroupingConfig.gapThresholdMillis` already documents itself as "a deliberately
+   conservative, documented placeholder, not a spec-mandated number" pending Q16's labelled hour
+   (unchanged). `ThreadKindSource.USER` still has guard code (`ThreadKindClassifier.classify`
+   returns early for it) and no writer — that remains `:app` work nobody has built (a user-facing
+   "set this thread's kind" action), stated plainly here and in that file's own doc comment rather
+   than built past this unit's actual scope (persisting the join reason).
+2. **R-1099 — the two reconstructions of a corrected attribution are now one.** A prior session
+   collapsed four read paths' own private `attributionFrom(entity)` copies into
+   `ReaderTransmissionViewStateMapper.attributionFrom`, but left
+   `CorrectionPolling.currentAttribution` as a second, independent implementation of the identical
+   "what does a correction reconstruct to" rule (`Attribution.unknown().withCorrection(stationId)`),
+   noting the risk explicitly in its own "left open" note. Extracted that shared rule into a new
+   public `ReaderTransmissionViewStateMapper.correctedAttributionOrNull(entity): Attribution?` —
+   `null` when uncorrected, the real corrected shape otherwise — and both `attributionFrom` and
+   `currentAttribution` now call it. **The two functions still differ, deliberately and by design,
+   not as a lingering second implementation:** for an *uncorrected* row, `attributionFrom`
+   reconstructs the whole `Attribution` from `entity`'s own `attributionState`/
+   `attributionConfidence`; `currentAttribution` instead trusts the caller-supplied `fallback`
+   (`ReaderPolling`'s own, already-unified value) rather than re-deriving it a second way. This
+   difference is pinned by a new test,
+   `R_1099_currentAttribution_and_attributionFrom_agree_on_a_corrected_row`, which hands
+   `currentAttribution` a deliberately *wrong* fallback and asserts it is overridden to match
+   `attributionFrom`'s own independent reconstruction of the same row — proving the shared branch
+   really is shared, not two copies that happen to agree today.
+3. **R-1099 — a corrected transmission is now reachable on Live Monitor and Threads.** Neither tour
+   scenario ever seeded one: `overnight-live-monitor` (Live Monitor's own scenario) had none of its
+   seven states carrying `corrected = true`, and `overnight`'s own pre-existing corrected
+   transmission (`tx6`, added long before this unit) stands outside every `ThreadEntity`, so
+   `overnight/T02-thread-detail`'s "any" thread never showed it either. Added an eighth,
+   `corrected = true` transmission (`INFERRED`, `KJ7ABC`, no confidence, a real `CorrectionEntity`
+   row) to `overnightLiveMonitor`, and a fifth, corrected transmission to `overnight`'s own QSO
+   thread (now 5 transmissions, 3 participants, up from 4/2) — both the exact
+   `Attribution.unknown().withCorrection` shape `tx6`/the dedicated `corrected` scenario already
+   use. Recording Session needed **no scenario change**: `RecordingSessionPolling.state` already
+   lists every transmission in the session via `listBySession` with no filter, so `tx6` was already
+   reachable on `overnight/RC02-recording-session` — the earlier "no capture on three surfaces" note
+   undercounted by one; only Live Monitor and Threads genuinely lacked the data.
+
+**Tests, named for the id they establish, each shown to discriminate (reverted the production
+change, confirmed the new test fails for the right reason, restored, confirmed green):**
+- `DataPassBResultSinkThreadingTest.R_1098 the join reason is persisted on the real transmission
+  row, not discarded` / `R_1098 a gap-exceeded new thread persists its own distinct reason on the
+  real row` — real (in-memory) `OrtDatabase`, real `RoomThreadRepository`, no fake.
+- `ThreadGroupingCoordinatorTest.R_1098 the coordinator hands ThreadGrouper's real reason to the
+  repository for every decision` / `...a gap-exceeded new thread records its own distinct reason...`
+  / `...an unlistened capture gap records its own distinct reason` — against `FakeThreadRepository`,
+  which now records the real reason per transmission (`joinReasonFor`).
+- `MigrationTest.migration_from_v14_to_v15_preserves_existing_rows_and_adds_the_thread_join_reason_column`
+  — a pre-existing v14 `transmission` row survives with the new column `NULL`, and the new write
+  path (a real `ThreadJoinReason`) is usable immediately after; both sweep tests
+  (`every_prior_fixture_from_v1_to_v14_...`, `r_885_every_fixture_from_v1_to_v14_...`) widened to
+  cover v14, with a `verifyThreadJoinReasonUsableThroughRealOpen` real-open check on the latter.
+- `ReaderTransmissionViewStateMapperTest.R_1099 correctedAttributionOrNull is null for an
+  uncorrected row` / `...is null when corrected but no station was ever recorded` / `...reconstructs
+  the exact shape a correction always writes` / `...attributionFrom delegates to
+  correctedAttributionOrNull for a corrected row` / `...attributionFrom still reconstructs from
+  state and confidence for an uncorrected row`.
+- `CorrectionPollingTest.R_1099_currentAttribution_and_attributionFrom_agree_on_a_corrected_row` —
+  see point 2 above for what this actually pins.
+- `OvernightLiveMonitorScenarioTest.R_1099 overnight-live-monitor seeds a Resolved row carrying the
+  corrected lock` (new); `R_1007 ...seven states...`/`...transmissionCount`/`...Resolved-confirmed
+  row and a Resolved-inferred row linked to it` updated for the eighth transmission (the last one
+  fixed to exclude the new corrected row from `.first { INFERRED }`, since Live Monitor sorts
+  newest-first and the corrected row is also `INFERRED`).
+- `ScenariosTest`'s existing `R_110 overnight seeds every Rows.dc.html variant...` updated for the
+  QSO thread's new 5/3 shape and a new assertion that the thread itself carries a corrected row.
+
+**Verified:**
+- `.\gradlew.bat :data:testDebugUnitTest :pipeline:testDebugUnitTest` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.data.*" --tests
+  "org.ort.app.debug.*"` — `BUILD SUCCESSFUL` on the second run (the first run reported "774 tests
+  completed, 1 failed": `OvernightLiveMonitorScenarioTest`'s pre-existing inferred-row assertion
+  caught the new corrected row first under Live Monitor's newest-first sort, fixed by narrowing
+  that test's own filter — see point 3 above).
+- `.\gradlew.bat ktlintCheck detekt` — `BUILD SUCCESSFUL`, whole project.
+- **Discrimination:** each new test reverted against its production change and re-run — confirmed
+  failing for the stated reason, then restored to green, for every test named above.
+
+**Left open / not done:**
+- `ThreadKindSource.USER` has no writer anywhere in `:app` — a user-facing "override this thread's
+  kind" action was not built here (out of this unit's scope: persisting the join reason, not adding
+  a new user-facing feature); the classifier's own guard against overwriting it already exists.
+- The gap threshold (10 min) and the three net-detection thresholds remain provisional constants
+  awaiting Q16's labelled hour — confirmed already documented as such, not newly flagged.
+- No UI screen renders `threadJoinReason` yet — this unit's scope was persisting it at the data
+  layer (constitution I: "at the data layer, not just the UI"); a future screen (Log or Thread
+  detail) reading it back is a real, disclosed follow-up, not a defect in this change. It is
+  already inspectable via `TransmissionDao.getById`/`listBySession` for a developer or a future
+  screen to read.
+- Tour ids the lead should recapture (constitution VIII — these three screens' own real data
+  changed): `overnight-live-monitor/N07-live-monitor` (`@1x`, `@2x`, `@2x-end`),
+  `overnight/T02-thread-detail`, `overnight/RC02-recording-session` (`@1x`, `@2x`, `@2x-end`,
+  already reachable before this change but never confirmed against its artboard with a corrected
+  row present). The tour itself was not run this session (scope was the data-layer fix, the
+  reconstruction unification, and the scenario seeding plus unit coverage — consistent with the
+  prior R-1099-adjacent session's own stated scope).
+- The full gate (`dependencyRules platformGuards build`) was not run, per this unit's own
+  instruction to run only the scoped commands above.
+
 ## 2026-09-20 (P32 gate fix: `CheckboxRow`/`ToggleRow`'s content-description fix regressed six consumer tests; corrected)
 
 ### 90a4f331 — P32 gate fix · `CheckboxRow`/`ToggleRow` carry a real content description without erasing descendant text or state

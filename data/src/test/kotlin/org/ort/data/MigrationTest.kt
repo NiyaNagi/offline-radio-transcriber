@@ -930,24 +930,106 @@ public class MigrationTest {
     }
 
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v13 — walks forward through
-     * the *entire* migration chain to v14 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v13,
+     * WPSEGPROV follow-up (register R-1098, FR-SPK-5, constitution I): v14 → v15 adds
+     * `transmission.threadJoinReason`. Proves both halves of FR-AST-5/6: a pre-existing
+     * `transmission` row survives untouched with the new column `NULL` (no threading decision ever
+     * recorded for it, never a fabricated reason), and the new write path
+     * ([OrtDatabase.transmissionDao]'s insert, using the real [org.ort.data.entity.ThreadJoinReason]
+     * enum) is immediately usable afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-SPK-5", "R-1098")
+    public fun migration_from_v14_to_v15_preserves_existing_rows_and_adds_the_thread_join_reason_column() {
+        val dbName = "migration-test-db-v15"
+        val v14 = helper.createDatabase(dbName, 14)
+        // R-1098: a freshly created v14 schema declares `session.vadDetector` `NOT NULL` with no
+        // SQL-level default (only `MIGRATION_13_14`'s own `ALTER TABLE ... DEFAULT 'UNKNOWN'`
+        // carries one, and that path never runs for a fixture created directly at v14) — see the
+        // identical fact documented on this file's `every_prior_fixture...`/`r_885_every_fixture...`
+        // sweeps.
+        v14.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, captureMode, " +
+                "audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport, vadDetector) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 14, 0, 0, NULL, NULL, NULL, NULL, NULL, 'UNKNOWN')",
+        )
+        v14.execSQL(
+            "INSERT INTO transmission (id, sessionId, threadId, startedAtUtc, endedAtUtc, durationMs, " +
+                "audioFormat, preRollMs, postRollMs, frequencyHz, frequencyProvenance, mode, signalStrength, " +
+                "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
+                "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
+                "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
+                "isReprocessCandidate, processedTier, rigStateChangedMidTransmission, vadDetector, " +
+                "vadDetectorVersion, rigSquelchFusionApplied) VALUES ('TX1', 'S1', NULL, 0, 1000, 1000, " +
+                "'flac/16k/mono', 200, 200, NULL, 'measured', NULL, NULL, NULL, NULL, 'UNKNOWN', NULL, NULL, " +
+                "NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, NULL, 0, 'UNKNOWN', NULL, 0)",
+        )
+        v14.close()
+
+        helper.runMigrationsAndValidate(dbName, 15, true, OrtDatabase.MIGRATION_14_15)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val migrated = runBlocking { db.transmissionDao().getById("TX1") }
+            assertEquals("flac/16k/mono", migrated!!.audioFormat) // pre-existing row survives
+            assertEquals(
+                "the new column must default to NULL, never a fabricated reason",
+                null,
+                migrated.threadJoinReason,
+            )
+
+            runBlocking {
+                db.transmissionDao().insert(
+                    migrated.copy(
+                        id = "TX2",
+                        threadJoinReason = org.ort.data.entity.ThreadJoinReason.SAME_FREQUENCY_WITHIN_GAP,
+                    ),
+                )
+            }
+            val newRow = runBlocking { db.transmissionDao().getById("TX2") }
+            // New write path usable post-migration, using the real enum type.
+            assertEquals(org.ort.data.entity.ThreadJoinReason.SAME_FREQUENCY_WITHIN_GAP, newRow!!.threadJoinReason)
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v14 — walks forward through
+     * the *entire* migration chain to v15 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v14,
      * so the same insert works unmodified against every fixture version; what varies is only which
      * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
      * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v13_migrates_forward_to_v14_preserving_its_session_row() {
-        for (fixtureVersion in 1..13) {
+    public fun every_prior_fixture_from_v1_to_v14_migrates_forward_to_v15_preserving_its_session_row() {
+        for (fixtureVersion in 1..14) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
-            fixture.execSQL(
-                "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
-                    "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
-                    "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, $fixtureVersion, 0, 0)",
-            )
+            // R-1098: a *freshly created* v14 schema (this is, exactly what `createDatabase` builds
+            // from `schemas/14.json`) declares `session.vadDetector` as `NOT NULL` with no SQL-level
+            // `DEFAULT` — only `MIGRATION_13_14`'s own `ALTER TABLE ... DEFAULT 'UNKNOWN'` carries a
+            // default, and that path never runs for a fixture created directly at v14. Every
+            // fixtureVersion below 14 has no such column at all, so it is added to the insert only
+            // from v14 on, the same "insert what this fixture version's own schema requires" shape
+            // this loop already has no other way to express with one shared statement.
+            if (fixtureVersion >= 14) {
+                fixture.execSQL(
+                    "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                        "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, vadDetector) VALUES " +
+                        "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, $fixtureVersion, 0, 0, 'UNKNOWN')",
+                )
+            } else {
+                fixture.execSQL(
+                    "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                        "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
+                        "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, $fixtureVersion, 0, 0)",
+                )
+            }
             fixture.close()
 
             helper.runMigrationsAndValidate(dbName, OrtDatabase.SCHEMA_VERSION, true, *OrtDatabase.MIGRATIONS)
@@ -960,7 +1042,7 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v14",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v15",
                     "test",
                     migrated!!.appVersion,
                 )
@@ -1031,21 +1113,33 @@ public class MigrationTest {
      * itself: the same factory function, with the same [androidx.sqlite.driver.bundled
      * .BundledSQLiteDriver], the shipped app and every other production caller use. `fixtureVersion`
      * 9 is the version named in the halt report (`data/schemas/org.ort.data.OrtDatabase/9.json`);
-     * the loop also covers every earlier released version (v13 added, WPSEGPROV, head v14), since
+     * the loop also covers every earlier released version (v14 added, R-1098, head v15), since
      * each is an on-disk shape a real device could still be carrying. Widening the range by one is
      * the one change each new head version needs here.
      */
     @Test
     @Requirement("R-885", "AC-53", "FR-AST-5", "FR-AST-6")
-    public fun r_885_every_fixture_from_v1_to_v13_opens_through_OrtDatabase_create_and_reads_its_session_row() {
-        for (fixtureVersion in 1..13) {
+    public fun r_885_every_fixture_from_v1_to_v14_opens_through_OrtDatabase_create_and_reads_its_session_row() {
+        for (fixtureVersion in 1..14) {
             val dbName = "r885-real-open-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
-            fixture.execSQL(
-                "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
-                    "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
-                    "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, $fixtureVersion, 0, 0)",
-            )
+            // R-1098: see the identical branch's own comment in
+            // `every_prior_fixture_from_v1_to_v14_migrates_forward_to_v15_preserving_its_session_row`
+            // — a freshly created v14 schema's `session.vadDetector` is `NOT NULL` with no SQL-level
+            // default.
+            if (fixtureVersion >= 14) {
+                fixture.execSQL(
+                    "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                        "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, vadDetector) VALUES " +
+                        "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, $fixtureVersion, 0, 0, 'UNKNOWN')",
+                )
+            } else {
+                fixture.execSQL(
+                    "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                        "terminationReason, sourceId, schemaVersion, gapCount, shedEvents) VALUES " +
+                        "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, $fixtureVersion, 0, 0)",
+                )
+            }
             fixture.close()
 
             // The real production factory -- installs BundledSQLiteDriver and, since this on-disk
@@ -1077,6 +1171,10 @@ public class MigrationTest {
                 // MIGRATION_13_14 through this connection-based path -- proven by writing a real
                 // VadDetectorKind through the transmission insert path, not just "did not crash".
                 if (fixtureVersion == 13) runBlocking { verifyVadDetectorUsableThroughRealOpen(db) }
+                // R-1098: fixtureVersion 14 is the one whose real open runs exactly
+                // MIGRATION_14_15 through this connection-based path -- proven by writing a real
+                // ThreadJoinReason through the transmission insert path, not just "did not crash".
+                if (fixtureVersion == 14) runBlocking { verifyThreadJoinReasonUsableThroughRealOpen(db) }
             } finally {
                 db.close()
             }
@@ -1175,5 +1273,22 @@ public class MigrationTest {
         assertEquals("silero-v5", transmission?.vadDetectorVersion)
         assertEquals(true, transmission?.rigSquelchFusionApplied)
         assertEquals(true, transmission?.conformsToFrSeg1())
+    }
+
+    /** R-1098: [org.ort.data.entity.TransmissionEntity.threadJoinReason], exercised through a real
+     * [OrtDatabase.create] open — see the caller's own doc comment. */
+    private suspend fun verifyThreadJoinReasonUsableThroughRealOpen(db: OrtDatabase) {
+        db.transmissionDao().insert(
+            TestFixtures.transmission("TX-R885-V14", sessionId = "S1").copy(
+                threadJoinReason = org.ort.data.entity.ThreadJoinReason.NEW_THREAD_GAP_EXCEEDED,
+            ),
+        )
+        val transmission = db.transmissionDao().getById("TX-R885-V14")
+        assertEquals(
+            "MIGRATION_14_15's threadJoinReason column must be usable through the real " +
+                "connection-based open, not just Room's legacy SupportSQLiteDatabase path",
+            org.ort.data.entity.ThreadJoinReason.NEW_THREAD_GAP_EXCEEDED,
+            transmission?.threadJoinReason,
+        )
     }
 }

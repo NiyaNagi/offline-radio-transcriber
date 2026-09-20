@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
+import org.ort.data.entity.ThreadJoinReason
 import org.ort.data.entity.ThreadKind
 import org.ort.pipeline.threading.fake.FakeThreadRepository
 
@@ -160,5 +161,62 @@ class ThreadGroupingCoordinatorTest {
         coordinator.onTransmissionClosed("does-not-exist")
 
         assertNull(repo.threadIdFor("does-not-exist"))
+    }
+
+    // ---- R-1098: ThreadGrouper.decide's own verdict reaches the repository, not just the thread ----
+
+    @Test
+    fun `R_1098 the coordinator hands ThreadGrouper's real reason to the repository for every decision`() = runTest {
+        val repo = FakeThreadRepository()
+        val coordinator = ThreadGroupingCoordinator(repo)
+        val freq = 146_520_000L
+        repo.seedClosure(closure("TX1", 0, 5_000, freq, 0))
+        repo.seedClosure(closure("TX2", 10_000, 15_000, freq, 1)) // within the gap: joins TX1's thread
+
+        coordinator.onTransmissionClosed("TX1")
+        coordinator.onTransmissionClosed("TX2")
+
+        assertEquals(
+            ThreadJoinReason.FIRST_TRANSMISSION_IN_SESSION,
+            repo.joinReasonFor("TX1"),
+            "the first transmission in a session must record its own real start reason",
+        )
+        assertEquals(
+            ThreadJoinReason.SAME_FREQUENCY_WITHIN_GAP,
+            repo.joinReasonFor("TX2"),
+            "a transmission that joins by matching frequency must record that real reason, not the " +
+                "other transmission's",
+        )
+    }
+
+    @Test
+    fun `R_1098 a gap-exceeded new thread records its own distinct reason, not FIRST_TRANSMISSION`() = runTest {
+        val repo = FakeThreadRepository()
+        val grouper = ThreadGrouper(ThreadGroupingConfig(gapThresholdMillis = 60_000L))
+        val coordinator = ThreadGroupingCoordinator(repo, grouper)
+        val freq = 146_520_000L
+        repo.seedClosure(closure("TX1", 0, 5_000, freq, 0))
+        repo.seedClosure(closure("TX2", 5_000 + 61_000, 5_000 + 61_000 + 1_000, freq, 1)) // 61s gap
+
+        coordinator.onTransmissionClosed("TX1")
+        coordinator.onTransmissionClosed("TX2")
+
+        assertEquals(ThreadJoinReason.FIRST_TRANSMISSION_IN_SESSION, repo.joinReasonFor("TX1"))
+        assertEquals(ThreadJoinReason.NEW_THREAD_GAP_EXCEEDED, repo.joinReasonFor("TX2"))
+    }
+
+    @Test
+    fun `R_1098 an unlistened capture gap records its own distinct reason`() = runTest {
+        val repo = FakeThreadRepository()
+        val coordinator = ThreadGroupingCoordinator(repo)
+        val freq = 146_520_000L
+        repo.seedClosure(closure("TX1", 0, 5_000, freq, 0))
+        repo.seedClosure(closure("TX2", 6_000, 7_000, freq, 1))
+        repo.seedCaptureGap("S1", fromUtc = 5_000, toUtc = 6_000)
+
+        coordinator.onTransmissionClosed("TX1")
+        coordinator.onTransmissionClosed("TX2")
+
+        assertEquals(ThreadJoinReason.NEW_THREAD_UNLISTENED_CAPTURE_GAP, repo.joinReasonFor("TX2"))
     }
 }
