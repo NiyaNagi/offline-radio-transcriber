@@ -32,10 +32,16 @@ object ModuleGraph {
         ":data" to setOf(":core"),
         ":net" to setOf(":core"),
         ":testing" to setOf(":core"),
+        // P28/D42/FR-ANL-1..14: the fourth declared outbound channel. :telemetry depends on
+        // :core only (technical design §2's module table) — it must never see :data (payloads are
+        // recomputed from a closed field list, never an entity graph, FR-ANL-6) and must never see
+        // or be seen by :capture-* (the explicitlyForbidden block below), which is the structural
+        // half of "analytics never blocks or feeds off capture directly" (constitution IV, VII).
+        ":telemetry" to setOf(":core"),
         ":pipeline" to setOf(
             ":core", ":onnx", ":capture-api", ":capture-android", ":segment",
             ":asr-api", ":asr-sherpa", ":lexicon", ":identity", ":rig", ":rig-usb", ":data",
-            ":llm-api", ":llm-mediapipe", ":rig-bluetooth",
+            ":llm-api", ":llm-mediapipe", ":rig-bluetooth", ":telemetry",
         ),
         ":eval" to setOf(
             ":core", ":onnx", ":capture-api", ":segment", ":asr-api", ":asr-sherpa",
@@ -48,7 +54,9 @@ object ModuleGraph {
         // ":rig" and ":llm-api" added by Wave F scaffolding (WP0'): the setup UI reads the rig
         // catalogue directly (FR-RIG-16) and the Settings LLM toggle reads engine state through
         // the :llm-api contract (FR-DIG-3b) — neither is on the forbidden list below.
-        ":app" to setOf(":pipeline", ":data", ":net", ":core", ":lexicon", ":rig", ":llm-api"),
+        // ":telemetry" added by P28 (D42) — :app owns the Settings tier toggles, the setup
+        // consent step and the crash/ANR capture wiring, all of which submit events to the queue.
+        ":app" to setOf(":pipeline", ":data", ":net", ":core", ":lexicon", ":rig", ":llm-api", ":telemetry"),
     )
 
     /** The forbidden edges the design calls out by name (technical design §2, last paragraph). */
@@ -72,6 +80,13 @@ object ModuleGraph {
             )) {
                 add(pure to android)
             }
+        }
+        // P28/D42 — :telemetry is a fourth declared outbound channel, and capture must never
+        // block on or feed it directly (constitution IV), so the edge is forbidden both ways:
+        // capture cannot depend on analytics, and analytics cannot reach into capture either.
+        for (c in listOf(":capture-api", ":capture-android")) {
+            add(c to ":telemetry")
+            add(":telemetry" to c)
         }
     }
 

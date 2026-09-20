@@ -2317,6 +2317,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.LOCAL_MICROPHONE
         store.notificationsSkipped = true
         store.selectedInputId = "mic-0"
@@ -2362,6 +2365,7 @@ public object Scenarios {
         val store = SharedPreferencesSetupStore(prefs)
         store.welcomeSeen = true
         store.jurisdictionNoticeSeen = true
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.USB_RADIO
         republishSetupModelsFacets()
         return LoadResult(0, 0, null)
@@ -2495,6 +2499,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         // D33/P19 (WPD): SetupStateMachine.stepFor now gates on captureMode before anything else
         // -- USB_RADIO matches the "usb-1" input fixture every caller of this shared base seeds
         // below, so each scenario's own documented resume point is reached again.
@@ -2818,6 +2825,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         return LoadResult(0, 0, null)
     }
 
@@ -2837,6 +2847,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.bluetoothPermissionDeclined = false
         return LoadResult(0, 0, null)
@@ -2860,6 +2873,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "wired-1"
@@ -2928,6 +2944,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "wired-1"
@@ -3134,6 +3153,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.LOCAL_MICROPHONE
         store.notificationsSkipped = true
         return LoadResult(1, 1, sessionId)
@@ -3211,6 +3233,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.USB_RADIO
         store.notificationsSkipped = true
         return LoadResult(1, 1, sessionId)
@@ -3304,6 +3329,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.notificationsSkipped = true
         return LoadResult(1, 1, sessionId)
@@ -3540,6 +3568,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "wired-1"
@@ -3813,6 +3844,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.USB_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "usb-1"
@@ -3850,6 +3884,9 @@ public object Scenarios {
         // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
         // kdoc for why every fixture resuming past WELCOME must set this too.
         store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.USB_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "usb-1"

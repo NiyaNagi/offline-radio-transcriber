@@ -139,6 +139,17 @@ user-visible change and its `CHANGELOG.md` entry doesn't also get a line under
 no requirement ids, no commit hashes, no internal package names), the next release will be
 missing it.
 
+## Before a *public* release (D49)
+
+The field-report channel's destination (D37/D38) is `github.com/NiyaNagi/offline-radio-transcriber`
+today — a **public** repository, accepted on the record for testing while the operator was the
+only recipient. **D49 requires the destination to move to a private repository before this
+project's first public release**, with the destination itself build-configurable and FR-OBS-10's
+visibility guard staying in force regardless; an uploaded bundle's retention is 90 days. This is
+not automated anywhere (no CI check can know what "public release" means for this project) —
+confirm the destination has actually moved before cutting the release that first reaches anyone
+outside the operator, and record that confirmation in this section's own history once it happens.
+
 ## Cutting a release
 
 1. **Confirm `## Unreleased` reads the way you want the release notes to read.** Tidy the

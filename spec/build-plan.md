@@ -681,7 +681,7 @@ free.
 **Wave H — needs Wave G** (`TransmissionDetailScreen.kt` released by P26; the Settings hot files
 released by P27; P22's setup steps released for P28 to extend).
 
-- [ ] **P28 · Analytics — `:telemetry`, `:net`'s uploader, `:app`'s tiers, and the ingest tooling**
+- [x] **P28 · Analytics — `:telemetry`, `:net`'s uploader, `:app`'s tiers, and the ingest tooling**
   *(new `:telemetry`, `:net`, `:app` Settings/setup/crash-capture, `tools/analytics/`)* — D42,
   D48, D49, FR-ANL-1..14, AC-172..183. Needs Wave G (P26/P27 must have released
   `TransmissionDetailScreen.kt` and the Settings hot files first).

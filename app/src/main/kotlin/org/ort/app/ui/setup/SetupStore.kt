@@ -93,6 +93,9 @@ public interface SetupStore {
      */
     public var overnightSurvivalProven: Boolean
 
+    /** P28 (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s own doc comment. */
+    public var analyticsConsentSeen: Boolean
+
     /** The immutable view [SetupStateMachine.stepFor] decides against.
      *
      * [SetupSnapshot.requiredModelsInstalled] is the one field this store cannot itself answer —
@@ -113,6 +116,7 @@ public interface SetupStore {
         rigTransport = rigTransport,
         rigBluetoothVerified = rigBluetoothVerified,
         requiredModelsInstalled = true,
+        analyticsConsentSeen = analyticsConsentSeen,
         setupComplete = setupComplete,
     )
 
@@ -159,6 +163,7 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
     override var modeOverriddenAudio: Boolean by BooleanPref(KEY_MODE_OVERRIDDEN_AUDIO, default = false)
     override var modeOverriddenRig: Boolean by BooleanPref(KEY_MODE_OVERRIDDEN_RIG, default = false)
     override var overnightSurvivalProven: Boolean by BooleanPref(KEY_OVERNIGHT_SURVIVAL_PROVEN, default = false)
+    override var analyticsConsentSeen: Boolean by BooleanPref(KEY_ANALYTICS_CONSENT_SEEN, default = false)
 
     private inner class BooleanPref(val key: String, val default: Boolean) :
         kotlin.properties.ReadWriteProperty<Any?, Boolean> {
@@ -234,6 +239,7 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
         public const val KEY_MODE_OVERRIDDEN_RIG: String = "mode_overridden_rig"
         public const val KEY_JURISDICTION_NOTICE_SEEN: String = "jurisdiction_notice_seen"
         public const val KEY_OVERNIGHT_SURVIVAL_PROVEN: String = "overnight_survival_proven"
+        public const val KEY_ANALYTICS_CONSENT_SEEN: String = "analytics_consent_seen"
     }
 }
 
@@ -268,4 +274,5 @@ public class InMemorySetupStore(
     override var modeOverriddenAudio: Boolean = false,
     override var modeOverriddenRig: Boolean = false,
     override var overnightSurvivalProven: Boolean = false,
+    override var analyticsConsentSeen: Boolean = false,
 ) : SetupStore

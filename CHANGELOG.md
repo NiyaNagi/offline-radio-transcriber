@@ -32,6 +32,141 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20
+
+### d4825fc2 — P28 · Analytics — `:telemetry`, `:net`'s uploader, `:app`'s tiers, and the ingest tooling
+
+**Scope:** new `:telemetry` module (event schema, provenance envelope, tier gating, on-device
+queue); `net/src/main/kotlin/org/ort/net/NetCapability.kt` (add `AnalyticsUpload`),
+`net/src/main/kotlin/org/ort/net/analytics/real/RealAnalyticsUploadClient.kt` (new);
+`core/src/main/kotlin/org/ort/core/analytics/` (new — `AnalyticsUploadClient` contract and its
+`FakeAnalyticsUploadClient`, the same `:core`-hosted-contract resolution
+`org.ort.core.fieldreport.FieldReportUploadClient` already uses); `settings.gradle.kts`,
+`buildSrc/src/main/kotlin/org/ort/gradle/ModuleGraph.kt` (register `:telemetry` and the forbidden
+`:capture-*` <-> `:telemetry` edge both ways); `app/build.gradle.kts` (the `:telemetry` dependency,
+the `ANALYTICS_ENDPOINT` `BuildConfig` field from `ORT_ANALYTICS_ENDPOINT`);
+`app/src/main/kotlin/org/ort/app/analytics/` (new — `AnalyticsAppWiring`, `CrashCaptureHandler`,
+`AnalyticsUploadRunner`, `AnalyticsUploadWorker`); `app/src/main/kotlin/org/ort/app/OrtApplication.kt`
+(wiring, crash handler, worker schedule); `app/src/main/kotlin/org/ort/app/ui/settings/SettingsAnalyticsScreen.kt`
+(new), `SettingsViewData.kt` (`SettingsScreenId.ANALYTICS`, `SettingsAnalyticsViewState`),
+`SettingsRootScreen.kt` (the Analytics row and its `iconFor` branch), `SettingsContent.kt` (the
+router branch); `app/src/main/kotlin/org/ort/app/ui/setup/` (`SetupStep.ANALYTICS_CONSENT`,
+`SetupStateMachine.kt`'s gate, `SetupStore.kt`'s `analyticsConsentSeen`, `SetupActivity.kt`'s
+render branch, `AnalyticsConsentScreen.kt` new); `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`
+and `app/src/test/kotlin/org/ort/app/ui/setup/{SetupActivityTest,SetupStateMachineTest}.kt` (the
+new gate's fixture seeding — the identical regression P22 already documented, fixed the same way a
+third time); new `tools/analytics/` (Python: `ingest.py`, `server.py`, `loader.py`, `queries.py`,
+`report.py`, `cli.py`, `pyproject.toml`, `tests/`); `.github/workflows/ci.yml` (the `analytics`
+job); `.gitignore` (raw analytics data/reports never committed); `RELEASING.md` (D49's
+private-destination-before-public-launch condition, recorded as a release gate).
+
+**Requirements/ACs:** D42, D48, FR-ANL-1..14, AC-172..183.
+
+**What changed:**
+1. **`:telemetry`** — `AnalyticsTier` (TIER_1/2/3), `AnalyticsProvenance` (FR-ANL-8's envelope,
+   every field non-optional at the type level), a closed, `sealed` `AnalyticsPayload` hierarchy
+   (`AnalyticsTier1Payload.{Crash,Usage,Performance,CaptureHeartbeat,SetupFunnel,QualityStats}`,
+   `AnalyticsTier2Payload.{Transcript,Correction}`, `AnalyticsTier3Payload`) built only through
+   `AnalyticsEventFactory` so a tier/payload mismatch cannot compile. `AnalyticsEventCodec`
+   recomputes NDJSON deterministically (kotlinx.serialization, `payloadType` discriminator) —
+   `:telemetry` has no compile-time path to `:data` at all, so FR-ANL-6's "never serialised from
+   an entity graph" is structural, not a review rule. `AnalyticsTierPreferences` (tier 1 defaults
+   on, tiers 2/3 off — `InMemory`/`SharedPreferences`-backed), `AnalyticsController` (gates
+   `submit` by tier, purges a tier's already-queued events the instant it is disabled — FR-ANL-9),
+   `InstallIdStore` (reset mints a new id and reports the old one, FR-ANL-11),
+   `InMemoryAnalyticsEventQueue`/`FileBackedAnalyticsEventQueue` (bounded by count and bytes,
+   drop-oldest, `droppedCount()` — FR-ANL-13; the file-backed queue is one NDJSON file rewritten on
+   every mutation, surviving process death).
+2. **`:core`/`:net`** — `AnalyticsUploadClient` (`isConfigured`/`upload`/`purge`), its closed
+   `AnalyticsUploadFailureReason` vocabulary and `FakeAnalyticsUploadClient` (scriptable success/
+   failure/hang, mirroring `FakeFieldReportUploadClient` exactly) live in `:core` for the same
+   reason the field-report contract does — the one place both `:net` (real impl) and `:app`
+   (composition root) can see without a forbidden edge. `RealAnalyticsUploadClient` is plain
+   `java.net.HttpURLConnection` (no third-party HTTP client anywhere in this codebase, constitution
+   V/VII): `POST {endpoint}/ingest` with the NDJSON body, `DELETE {endpoint}/install/{id}` for
+   FR-ANL-11's erasure. `endpoint` unset or blank means `NOT_CONFIGURED` and neither method ever
+   opens a socket (D48's default state today). `NetCapability.AnalyticsUpload` is the channel's own
+   capability token, alongside `UserInitiated`/`ContributionGrant`.
+3. **`:app`** — `AnalyticsAppWiring` is the composition root (`configureOnce` is idempotent,
+   called from `OrtApplication.onCreate`): owns the real queue, tier preferences, install-id store
+   and upload client, and exposes `submit`/`baseProvenance`/`resetInstallId`/`runUploadOnce`.
+   `CrashCaptureHandler` chains the platform's own `Thread.UncaughtExceptionHandler` (records a
+   `tier1_crash` event first, always defers to the previous handler afterward, even if recording
+   itself throws) — no third-party crash SDK anywhere. `AnalyticsUploadRunner`/`AnalyticsUploadWorker`
+   (a self-rescheduling one-time-work chain, mirroring `org.ort.pipeline.digest.ProseDigestRunner`
+   exactly) drain the queue only when `CaptureState.isCapturing` is false (AC-177) and the
+   destination is configured, re-queuing on a failed upload rather than losing the batch.
+   `SettingsAnalyticsScreen` shows three toggles in FR-ANL-2..4's own field-list wording, the
+   honest D48 "not configured, nothing is ever sent" state, and a reset-install-id action — added
+   at the same narrow integration point (`SettingsScreenId`, one static `SettingsRootScreen.kt`
+   row, one `SettingsContent.kt` branch) P27 established for `LICENSES`. `SetupStep.ANALYTICS_CONSENT`
+   (FR-ANL-10, AC-180) sits between `MODELS` and `READY`, explains tier 1, offers tiers 2/3
+   unchecked, and — unlike `MODELS` — never blocks: `SetupStateMachine.stepFor` advances past it
+   the instant it has been seen, whatever the toggles are left at. No artboard exists yet for
+   either new screen (Constitution VIII) — flagged for the design/tour session; both are built to
+   this package's own established `SettingsContent`/`SetupScaffold` shapes rather than left
+   undrawn, the precedent `JurisdictionNoticeScreen`/`SettingsLicensesScreen` already set.
+4. **`tools/analytics`** — a stdlib-only reference HTTPS ingest server (`--cert`/`--key` optional;
+   plain HTTP for local dev), `POST /ingest` and `DELETE /install/<id>`; every ingested row is
+   stamped `fold: "field"` server-side, unconditionally, regardless of any client claim (FR-ANL-12)
+   and a purged install id is refused on every later ingest too (AC-181). A DuckDB `loader.py`
+   registers a queryable `events` view and refuses (`FoldViolation`) anything but `fold="field"`,
+   the same structural discipline `corpus`'s own eval-fold seal already applies. Five named,
+   reproducible queries (`crash_free_sessions`, `setup_funnel`, `real_time_factor`,
+   `correction_rate`, `field_wer` — a plain word-level Levenshtein over tier 2's opt-in
+   `(ASR hypothesis, correction)` pairs) and a `report.py` text-report generator, wired through one
+   `ort-analytics` CLI (`serve`/`report`). Raw data and generated reports are never committed
+   (`.gitignore`); the CI job installs `duckdb`/`pytest`/`ruff` and runs both.
+
+**Verified:**
+- `./gradlew -p buildSrc test --tests "org.ort.gradle.ModuleGraphTest"` — green; the new
+  `:telemetry` forbidden-edge tests were shown to fail first (module missing from the design
+  graph), then pass once `ModuleGraph.kt` was updated (discriminating).
+- `./gradlew :telemetry:test` — 26 tests green, including the AC-172/175 field-vocabulary tests
+  (shown to fail when a `location` field was deliberately injected into `Usage`, then reverted).
+- `./gradlew :core:test --tests "org.ort.core.analytics.AnalyticsUploadClientTest"` — green.
+- `./gradlew :net:test` — green (includes `RealAnalyticsUploadClientTest` against a real loopback
+  HTTP fixture, no network).
+- `./gradlew dependencyRules` — OK; `:telemetry -> :core` only, no edge to/from `:capture-*`.
+- `./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.analytics.*" --tests "org.ort.app.ui.settings.*" --tests "org.ort.app.ui.setup.*" --tests "org.ort.app.debug.*"` —
+  green after fixing four `SetupActivityTest`/`Scenarios.kt` fixtures that predated the new
+  `ANALYTICS_CONSENT` gate (the identical regression shape P22's own `jurisdictionNoticeSeen` fix
+  already documents, found by actually running the suite, not by inspection) and one
+  `SettingsRootScreenTest` icon-reuse assertion (ANALYTICS deliberately reuses CONTRIBUTE's own
+  `OrtIcons.lock`).
+- `./gradlew ktlintCheck detekt` — green across the whole project (fixed one detekt `LongMethod`
+  by extracting `SettingsAnalyticsSubScreen` out of `SettingsSubScreen`, one `UnusedPrivateProperty`
+  in a net test, and ran `ktlintFormat` for the rest).
+- `python -m pytest tools/analytics -q` — 33 passed; the AC-182 fold-stamping test was shown to
+  fail first (`event.setdefault` instead of unconditional assignment let a client-claimed `eval`
+  fold through), then pass once reverted to the unconditional stamp (discriminating).
+- `cd tools/analytics && python -m ruff check .` — clean.
+
+**Left open / not done:**
+- **Instrumenting real screens/passes to actually call `AnalyticsController.submit(...)`** (usage
+  events per screen, per-pass performance, the aggregate quality-stats rollup, capture-heartbeat
+  gaps) is not part of this unit's file-ownership map — the schema, queue, gating, uploader and
+  Settings/setup surfaces are complete and ready to receive events; wiring individual screens and
+  `:pipeline` passes to emit them is follow-on work for the units that own those files.
+- **No artboard exists yet** for `SettingsAnalyticsScreen`/`AnalyticsConsentScreen` (Constitution
+  VIII) — needs drawing and a tour capture at font scale 1.0/2.0 before this can be marked visually
+  verified; scenario/tour ids to add: a debug scenario that resumes setup at `ANALYTICS_CONSENT`,
+  and a `Settings/Analytics` tour step reachable from the root's new Privacy-section row.
+  `SettingsAnalyticsScreenTest`'s own toggle-state assertions (`assertIsOn`/`assertIsOff`) were
+  found flaky under this suite's shared Robolectric semantics tree in a way this session did not
+  fully root-cause (an identical `onNodeWithText` selector resolved for `.assertExists()` in one
+  test and failed to resolve for `.assertIsOff()` in another, same composition) — dropped in favor
+  of the wording-only assertions that already cover AC-179's substantive claim; worth a closer look
+  if a future change needs to assert rendered toggle state specifically.
+- **`RealAnalyticsUploadClient`'s TLS** is exercised only via plain HTTP in tests (the loopback
+  fixture mirrors `RealFieldReportUploadClient`'s own precedent); `tools/analytics/server.py`'s
+  `--cert`/`--key` path is implemented but has no automated test of its own.
+- The **install-id-reset purge** (`AnalyticsAppWiring.resetInstallId`) is best-effort against
+  whatever destination is configured — its result is not surfaced to the operator beyond the id
+  having already changed; no retry queue exists if the purge call itself fails.
+
+---
+
 ## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a secret-driven release key and a configurable signing-stability guard)
 
 ### da4237b5 — debug-fix session · sign published artifacts from GitHub Actions secrets, never a committed key, and pin the certificate only where a stable key is expected

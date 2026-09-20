@@ -88,6 +88,17 @@ public fun SettingsRootScreen(
                         subLine = "Third-party notices · read offline",
                     )
                 }
+                // P28 (D42, FR-ANL-1..14): the analytics tiers screen's own row, appended to
+                // "Privacy" the same static way P27 appended Licences to "About" above — this
+                // screen id is not one of SettingsPolling.root's dynamic sections either.
+                if (section.label == "Privacy") {
+                    NavRow(
+                        rowTitle = "Analytics",
+                        onClick = { onOpen(SettingsScreenId.ANALYTICS) },
+                        icon = iconFor(SettingsScreenId.ANALYTICS),
+                        subLine = "Usage and quality on by default · transcripts and audio are opt-in",
+                    )
+                }
             }
         }
     }
@@ -128,6 +139,10 @@ internal fun iconFor(screen: SettingsScreenId): ImageVector = when (screen) {
     // P27: no bespoke glyph exists for this row either — reuses the same TIER/ABOUT fallback rather
     // than inventing one in a file (`OrtIcons.kt`) this unit does not own.
     SettingsScreenId.LICENSES -> OrtIcons.settings
+    // P28: a privacy-consent screen — reuses OrtIcons.lock, the same glyph CONTRIBUTE already uses
+    // for the identical reason (no bespoke analytics glyph exists, and OrtIcons.kt is outside this
+    // unit's own file ownership).
+    SettingsScreenId.ANALYTICS -> OrtIcons.lock
 }
 
 /** A tinted status dot for a settings sub-screen row (`Settings-Capture`/`Settings-Rig`'s green/

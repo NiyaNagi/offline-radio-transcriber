@@ -78,6 +78,16 @@ extensions.configure<BaseAppModuleExtension> {
     defaultConfig {
         buildConfigField("String", "GIT_SHORT_COMMIT", "\"${gitShortCommitProvider.get()}\"")
         buildConfigField("String", "SHERPA_ONNX_VERSION", "\"${libs.versions.sherpaOnnx.get()}\"")
+        // P28 (D42, D48, FR-ANL-7): the analytics ingest endpoint, configured at build time only —
+        // a Gradle property (`-PortAnalyticsEndpoint=...`) or the `ORT_ANALYTICS_ENDPOINT`
+        // environment variable, exactly the pattern `ORT_FIELD_REPORT_TOKEN` already uses
+        // (ort.android-app.gradle.kts). Unset (blank) is the default state today, since no
+        // endpoint has been deployed — RealAnalyticsUploadClient's own contract treats that as
+        // "not configured": events queue locally and nothing is ever sent.
+        val analyticsEndpointProvider = providers.gradleProperty("ortAnalyticsEndpoint")
+            .orElse(providers.environmentVariable("ORT_ANALYTICS_ENDPOINT"))
+            .orElse("")
+        buildConfigField("String", "ANALYTICS_ENDPOINT", "\"${analyticsEndpointProvider.get()}\"")
     }
 
     // build-plan P9 / M2.21a: the on-device harness runner and its JVM-side verification must
@@ -129,6 +139,8 @@ dependencies {
     // the Settings LLM toggle reads engine state through the :llm-api contract (FR-DIG-3b).
     implementation(project(":rig"))
     implementation(project(":llm-api"))
+    // P28 (D42, FR-ANL-1..14): the analytics channel's schema, tier gating and on-device queue.
+    implementation(project(":telemetry"))
     // P22 (D43, FR-AST-10..12, AC-184): app/src/main/kotlin/org/ort/app/work/ModelDownloadWorker.kt
     // extends androidx.work.CoroutineWorker and calls WorkManager directly -- :pipeline already
     // carries this dependency (ReprocessWorker/ProseDigestRunner) but only as `implementation`,

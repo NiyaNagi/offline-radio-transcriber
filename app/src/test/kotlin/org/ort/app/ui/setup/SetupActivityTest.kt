@@ -116,6 +116,10 @@ class SetupActivityTest {
      * function's own history already applied once for [SetupSnapshot.jurisdictionNoticeSeen]
      * (P22's own regression, see that field's doc comment) — rather than leaving every caller of
      * this helper to resume on [SetupStep.MODELS] instead of [SetupStep.READY] on `play`.
+     *
+     * **P28 (D42, FR-ANL-10, AC-180) applies the identical fix a third time**, for
+     * [SetupSnapshot.analyticsConsentSeen] — the new gate sits between `requiredModelsInstalled`
+     * and `setupComplete`, so "every gate except complete" now includes it too.
      */
     private fun storeEverySetupGateExceptComplete() {
         ApplicationProvider.getApplicationContext<Application>()
@@ -129,6 +133,7 @@ class SetupActivityTest {
             .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
             .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_RADIO_CHOICE, RadioChoice.NONE.name)
+            .putBoolean(SharedPreferencesSetupStore.KEY_ANALYTICS_CONSENT_SEEN, true)
             .apply()
         org.ort.app.debug.ScenarioFixtures.installEveryModelFixtureAtRealSize(
             ApplicationProvider.getApplicationContext(),
@@ -347,6 +352,9 @@ class SetupActivityTest {
             // fresh Robolectric :data instance) and this "hands back immediately" case would resume
             // on Overnight instead.
             .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, true)
+            // P28 (D42, FR-ANL-10, AC-180): not this test's own concern either -- see
+            // storeEverySetupGateExceptComplete's own doc comment for the identical fix.
+            .putBoolean(SharedPreferencesSetupStore.KEY_ANALYTICS_CONSENT_SEEN, true)
             .apply()
         // D43/FR-AST-12: this test does not go through storeEverySetupGateExceptComplete() (it
         // inlines KEY_SETUP_COMPLETE itself) — see that helper's own doc comment for why the READY
@@ -677,6 +685,9 @@ class SetupActivityTest {
             .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
             .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
             .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
+            // P28 (D42, FR-ANL-10, AC-180): see storeEverySetupGateExceptComplete's own doc
+            // comment for the identical fix -- this walk also finishes at SetupStep.READY.
+            .putBoolean(SharedPreferencesSetupStore.KEY_ANALYTICS_CONSENT_SEEN, true)
             .apply()
         // D43/FR-AST-12: this walk finishes at SetupStep.READY -- see
         // storeEverySetupGateExceptComplete()'s own doc comment for why the READY gate now also
@@ -762,6 +773,10 @@ class SetupActivityTest {
                 org.ort.rig.descriptor.BundledDescriptors.kenwoodThD75a().id,
             )
             .putString(SharedPreferencesSetupStore.KEY_RIG_TRANSPORT, RigTransportKind.BLUETOOTH_SPP.name)
+            // P28 (D42, FR-ANL-10, AC-180): harmless for the callers of this helper that stop at
+            // RIG_BLUETOOTH itself, and required for the one that walks all the way to READY --
+            // see storeEverySetupGateExceptComplete's own doc comment for the identical fix.
+            .putBoolean(SharedPreferencesSetupStore.KEY_ANALYTICS_CONSENT_SEEN, true)
             .apply()
         grant(
             Manifest.permission.RECORD_AUDIO,
