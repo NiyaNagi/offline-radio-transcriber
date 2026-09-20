@@ -144,6 +144,25 @@ class ControlsTest {
                         onClickLabel = "Open level meter",
                         modifier = Modifier.testTag("kv"),
                     )
+                    // P32 (FR-A11Y-2): found on a real device this pass (Settings > Analytics'
+                    // three toggles, `uiautomator` dump: `content-desc=""` on every one) — the
+                    // identical R-380/R-381 shape every composable above this line was already
+                    // fixed for, just never carried to these two. See `CheckboxRow`'s own doc
+                    // comment.
+                    CheckboxRow(
+                        label = "Confirmed",
+                        checked = true,
+                        onCheckedChange = {},
+                        subLine = "Only attributions heard in this over.",
+                        modifier = Modifier.testTag("checkbox"),
+                    )
+                    ToggleRow(
+                        label = "Usage and quality (tier 1)",
+                        checked = true,
+                        onCheckedChange = {},
+                        subLine = "Crashes, screens and actions used.",
+                        modifier = Modifier.testTag("toggle"),
+                    )
                 }
             }
         }
@@ -186,6 +205,18 @@ class ControlsTest {
         assert(kvDescription?.contains("Level") == true && kvDescription.contains("Open level meter")) {
             "expected KeyValueRow's own clickable node to carry both the fact ('Level, Not " +
                 "measured') and the action hint ('Open level meter'), got $kvDescription"
+        }
+
+        assert(hasOnClick("checkbox")) { "expected CheckboxRow to carry OnClick on its own node" }
+        assert(descriptionOf("checkbox")?.contains("Confirmed") == true) {
+            "expected 'checkbox' (carrying OnClick) to also carry a description containing " +
+                "'Confirmed', got ${descriptionOf("checkbox")}"
+        }
+
+        assert(hasOnClick("toggle")) { "expected ToggleRow to carry OnClick on its own node" }
+        assert(descriptionOf("toggle")?.contains("Usage and quality (tier 1)") == true) {
+            "expected 'toggle' (carrying OnClick) to also carry a description containing " +
+                "'Usage and quality (tier 1)', got ${descriptionOf("toggle")}"
         }
     }
 
