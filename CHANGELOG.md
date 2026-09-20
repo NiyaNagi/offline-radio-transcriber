@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P28 follow-up: the analytics channel finally emits — instrumentation for every tier-1 event and the tier-2 correction pair)
 
-### \<pending\> — R-1085 follow-up · the consent screen states D48's honest fact, and `isAnr` stops asserting a measurement that was never taken
+### c7d5a168 — R-1085 follow-up · the consent screen states D48's honest fact, and `isAnr` stops asserting a measurement that was never taken
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/AnalyticsConsentScreen.kt` and its wiring in
 `SetupActivity.kt`; a new `app/src/main/kotlin/org/ort/app/analytics/CrashPayloads.kt` and its
