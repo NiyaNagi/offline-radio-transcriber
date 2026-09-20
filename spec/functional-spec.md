@@ -1759,13 +1759,21 @@ field list, never an open schema a future change can extend without a spec amend
 is on by default and can be turned off. Tiers 2 and 3 are opt-in**, off until the operator turns
 each on individually.
 
-**FR-ANL-2 (M)** — **Tier 1's closed field list**: crash traces and ANRs; usage and feature
+**FR-ANL-2 (M)** — **Tier 1's closed field list**: crash traces; usage and feature
 events (which screens and actions were used, not their content); performance (per-pass latency,
 real-time factor); capture uptime and heartbeat gaps (NFR-8); the setup funnel, including
 model-download outcomes (FR-AST-11); and aggregate transcript-quality statistics — correction
 rate by field, confidence and attribution-state mix, unresolved-callsign rate, VAD-fallback rate
 (FR-SEG-10). Tier 1 SHALL NOT contain transcript text, a callsign, a user-supplied name, station
 knowledge or location of any precision.
+
+> **Amended 2026-09-20 (register R-1086).** This requirement previously read "crash traces **and
+> ANRs**". Nothing in the application detects an ANR — there is no main-thread watchdog — so the
+> crash payload's `isAnr` is nullable and always written absent, never `false` (Principle I: a
+> value the system could not measure is absent, never a default). Four surfaces had inherited the
+> claim from this line and said the app collects ANRs: the setup consent step, the Settings
+> analytics screen, both of their artboards, and the privacy policy. All now say "crashes". If a
+> watchdog is ever built, this list and those surfaces change together, in the same change.
 
 **FR-ANL-3 (M)** — **Tier 2's closed field list**, opt-in: transcript text and callsigns,
 including `(ASR hypothesis, user correction)` pairs. While tier 2 is off, no field in this list
