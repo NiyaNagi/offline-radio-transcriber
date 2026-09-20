@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
 import org.ort.app.BuildConfig
 import org.ort.app.MainActivity
+import org.ort.app.analytics.SetupFunnelAnalytics
 import org.ort.app.fieldreport.wiring.FieldReportAppWiring
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
@@ -137,6 +138,9 @@ public class SetupActivity : ComponentActivity() {
         get() = stepState.value
         set(value) {
             stepState.value = value
+            // P28 follow-up (FR-ANL-2): the setup funnel's "step reached" event -- one line, no
+            // other logic added to this class (this unit's own file-ownership restriction).
+            if (value != null) SetupFunnelAnalytics.reached(value.name)
             if (value == SetupStep.RIG_BLUETOOTH) refreshPairedDevices()
         }
     private val backStack = ArrayDeque<SetupStep>()
@@ -440,6 +444,9 @@ public class SetupActivity : ComponentActivity() {
         val permissions = currentPermissionsState()
         val next = SetupStateMachine.stepFor(permissions, micPermanentlyDenied(), currentSnapshot())
         if (next == null) {
+            // P28 follow-up (FR-ANL-2): the setup funnel's "step completed" event for the terminal
+            // step -- one line, no other logic added to this class.
+            SetupFunnelAnalytics.completed(SetupStep.READY.name)
             store.setupComplete = true
             handBackToMainActivity()
             return
@@ -530,6 +537,7 @@ public class SetupActivity : ComponentActivity() {
     internal fun onDeclineBluetoothPermission() {
         onChooseMode(CaptureMode.USB_RADIO)
         store.bluetoothPermissionDeclined = true
+        SetupFunnelAnalytics.skipped(SetupStep.BLUETOOTH_PERMISSION.name)
     }
 
     // --- S02/S02b Microphone --------------------------------------------------------------------
@@ -559,6 +567,7 @@ public class SetupActivity : ComponentActivity() {
 
     internal fun skipNotifications() {
         store.notificationsSkipped = true
+        SetupFunnelAnalytics.skipped(SetupStep.NOTIFICATIONS.name)
         refreshStep(pushCurrent = true)
     }
 
@@ -665,6 +674,7 @@ public class SetupActivity : ComponentActivity() {
 
     internal fun onSkipOvernight() {
         store.overnightStepSeen = true
+        SetupFunnelAnalytics.skipped(SetupStep.OVERNIGHT.name)
         refreshStep(pushCurrent = true)
     }
 

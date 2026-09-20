@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.ort.app.analytics.FeatureUsageAnalytics
 import org.ort.app.fieldreport.recorder.FieldReportRecorder
 import org.ort.app.fieldreport.recorder.RecorderDestination
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
@@ -298,6 +299,7 @@ public fun OrtNavHost(
     // Hoisted into `navigator` (round 3) so `ReaderActivity`'s `FailureHostActions`, mounted above
     // this composable, can also switch destinations — see `ReaderNavigator.kt`'s own doc comment.
     var current by navigator.currentState
+    ReportScreenViewed(current)
     val drawerLive = rememberDrawerLiveState(sessionId, context)
     // R-910/R-911: mirrors `drawerLive.liveBar` — the same real `LiveBarPolling` fact `Now`/`Capture`
     // read again through their own, separately-polled embedded bar (`embedsOwnLiveBar` below leaves
@@ -440,6 +442,19 @@ public fun OrtNavHost(
  * `BackHandler(enabled = sheetOpen) { sheetOpen = false }` inside its own file — WP5's and WP7's
  * respectively, not this row's to add — see this round's own report.
  */
+/**
+ * P28 follow-up (FR-ANL-2): tier-1 feature usage — which screen was actually reached, never its
+ * content. A pure side effect with no visual output, extracted to its own function only to keep
+ * [OrtNavHost] itself under detekt's `LongMethod` threshold — see
+ * [org.ort.app.analytics.FeatureUsageAnalytics]'s own doc comment for why "actions" are left open.
+ */
+@Composable
+private fun ReportScreenViewed(current: ReaderDestination) {
+    LaunchedEffect(current) {
+        FeatureUsageAnalytics.screenViewed(current)
+    }
+}
+
 @Composable
 private fun OrtNavHostBackHandler(
     current: ReaderDestination,

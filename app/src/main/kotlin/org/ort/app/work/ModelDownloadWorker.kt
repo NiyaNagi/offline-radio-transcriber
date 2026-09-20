@@ -20,6 +20,7 @@ import androidx.work.WorkerParameters
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import org.ort.app.analytics.SetupFunnelAnalytics
 import org.ort.app.ui.data.ModelActionResult
 import org.ort.app.ui.data.ModelCatalog
 import org.ort.app.ui.data.ModelId
@@ -85,14 +86,20 @@ public class ModelDownloadWorker(context: Context, params: WorkerParameters) : C
             isBundled = isBundled,
         )
         return when (outcome) {
-            is ModelActionResult.Success -> Result.success()
+            is ModelActionResult.Success -> {
+                // P28 follow-up (FR-ANL-2, FR-AST-11): the setup funnel's model-download outcome.
+                SetupFunnelAnalytics.modelDownloadOutcome(succeeded = true)
+                Result.success()
+            }
             is ModelActionResult.Failure -> {
                 // AC-186: a checksum mismatch is exactly this reason text
                 // (org.ort.net.ModelAcquisition.verifyAndInstall) -- re-queue via WorkManager's own
                 // retry rather than reporting a permanent failure for what a clean re-fetch can fix.
                 if (outcome.reason.contains("checksum mismatch")) {
+                    SetupFunnelAnalytics.modelDownloadOutcome(succeeded = false, retrying = true)
                     Result.retry()
                 } else {
+                    SetupFunnelAnalytics.modelDownloadOutcome(succeeded = false)
                     Result.failure(failureData(outcome.reason))
                 }
             }

@@ -21,6 +21,8 @@ import org.junit.runner.Description
 import org.junit.runner.RunWith
 import org.junit.runners.model.Statement
 import org.ort.app.MainActivity
+import org.ort.app.analytics.AnalyticsAppWiring
+import org.ort.app.analytics.AnalyticsUploadRunOutcome
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.core.capture.CaptureMode
@@ -77,6 +79,7 @@ class SetupActivityTest {
         // survival test seam.
         DebugOvernightSurvivalOverride.clear()
         DebugOvernightSurvivalOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
+        AnalyticsAppWiring.resetForTest()
     }
 
     private fun clearPrefs() {
@@ -330,6 +333,44 @@ class SetupActivityTest {
                 assertEquals(CaptureMode.USB_RADIO, store.captureMode)
                 assertTrue(store.bluetoothPermissionDeclined)
             }
+        }
+    }
+
+    @Test
+    fun `FR_ANL_2_reaching a setup step submits a setup-funnel reached event`() {
+        AnalyticsAppWiring.configureOnce(ApplicationProvider.getApplicationContext())
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { }
+
+        // Tier 1 is on by default (AC-172): reaching NotConfigured (not NothingQueued) proves the
+        // WELCOME "reached" event landed in the real queue -- no endpoint is set in a test build
+        // (D48).
+        kotlinx.coroutines.runBlocking {
+            assertEquals(AnalyticsUploadRunOutcome.NotConfigured, AnalyticsAppWiring.runUploadOnce())
+        }
+    }
+
+    @Test
+    fun `FR_ANL_2_declining Bluetooth permission submits a setup-funnel skipped event`() {
+        AnalyticsAppWiring.configureOnce(ApplicationProvider.getApplicationContext())
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.BLUETOOTH_RADIO.name)
+            .apply()
+        grant(Manifest.permission.RECORD_AUDIO)
+        deny(Manifest.permission.POST_NOTIFICATIONS)
+        deny(Manifest.permission.BLUETOOTH_CONNECT)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onDeclineBluetoothPermission() }
+        }
+
+        kotlinx.coroutines.runBlocking {
+            assertEquals(AnalyticsUploadRunOutcome.NotConfigured, AnalyticsAppWiring.runUploadOnce())
         }
     }
 

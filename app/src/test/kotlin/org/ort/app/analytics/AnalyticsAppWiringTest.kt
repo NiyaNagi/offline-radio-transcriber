@@ -7,7 +7,10 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.pipeline.analytics.AnalyticsBridge
+import org.ort.telemetry.AnalyticsEventFactory
 import org.ort.telemetry.AnalyticsTier
+import org.ort.telemetry.AnalyticsTier1Payload
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -84,5 +87,33 @@ class AnalyticsAppWiringTest {
         val outcome = AnalyticsAppWiring.runUploadOnce()
 
         assert(outcome == AnalyticsUploadRunOutcome.NothingQueued || outcome == AnalyticsUploadRunOutcome.NotConfigured)
+    }
+
+    @Test
+    fun `FR_ANL_2_configureOnce wires pipeline's AnalyticsBridge to this object's real queue`() = runTest {
+        AnalyticsAppWiring.configureOnce(context())
+
+        AnalyticsBridge.submit(
+            AnalyticsEventFactory.tier1(
+                AnalyticsAppWiring.baseProvenance(),
+                AnalyticsTier1Payload.Usage("NOW", "VIEW"),
+            ),
+        )
+
+        // Tier 1 is on by default (AC-172), so the event above reached the real queue this object
+        // owns -- provable from outside without a package-private accessor by observing that
+        // runUploadOnce now finds something queued (NotConfigured, not NothingQueued: no endpoint
+        // is set in a test build, D48).
+        val outcome = AnalyticsAppWiring.runUploadOnce()
+        assert(outcome == AnalyticsUploadRunOutcome.NotConfigured)
+    }
+
+    @Test
+    fun `FR_ANL_13_submitSafely never throws when building the event itself throws`() {
+        AnalyticsAppWiring.configureOnce(context())
+
+        AnalyticsAppWiring.submitSafely { error("simulated failure building the event") }
+
+        // No exception reached this line.
     }
 }

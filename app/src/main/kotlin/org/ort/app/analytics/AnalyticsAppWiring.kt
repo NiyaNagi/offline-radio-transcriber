@@ -5,6 +5,7 @@ import android.os.Build
 import org.ort.app.BuildConfig
 import org.ort.core.analytics.AnalyticsUploadClient
 import org.ort.net.analytics.real.RealAnalyticsUploadClient
+import org.ort.pipeline.analytics.AnalyticsBridge
 import org.ort.pipeline.capture.CaptureState
 import org.ort.telemetry.ANALYTICS_SCHEMA_VERSION
 import org.ort.telemetry.AnalyticsController
@@ -63,6 +64,15 @@ public object AnalyticsAppWiring {
         )
         controller = AnalyticsController(queue, tierPreferences)
         uploadClient = RealAnalyticsUploadClient(BuildConfig.ANALYTICS_ENDPOINT.ifBlank { null })
+        // P28 follow-up (D42, FR-ANL-1..14): wires `:pipeline`'s own submission seam
+        // (`AnalyticsBridge`'s own doc comment explains why that module cannot hold this
+        // composition root itself) to this object's real controller/provenance, exactly once,
+        // before any capture session can start (this call runs first in
+        // `OrtApplication.onCreate`). Routed through `submitSafely` — never `submit` directly —
+        // so a `:pipeline` call site (which cannot itself catch an `:app`-side wiring failure) is
+        // just as protected as every other caller of this object.
+        AnalyticsBridge.submit = { event -> submitSafely { event } }
+        AnalyticsBridge.baseProvenance = ::baseProvenance
     }
 
     /** D48: whether an endpoint is configured in this build — Settings shows this rather than
@@ -108,9 +118,25 @@ public object AnalyticsAppWiring {
     )
 
     /** Submits [event] if its tier is enabled — a thin, discoverable call site for callers that
-     * do not otherwise need [controller] directly. */
+     * do not otherwise need [controller] directly. Assumes [configureOnce] has already run; most
+     * callers should prefer [submitSafely]. */
     public fun submit(event: AnalyticsEvent) {
         controller.submit(event)
+    }
+
+    /**
+     * FR-RUN-1/FR-ANL-13 extended to every instrumentation call site this build adds outside
+     * `OrtApplication` itself: [build] and the eventual [controller].[org.ort.telemetry.AnalyticsController.submit]
+     * both run inside [runCatching], so a call site reached before [configureOnce] has ever run in
+     * this process (a `lateinit` read throws), or one whose [controller]/queue throws for any other
+     * reason (a full disk, a corrupted queue file), can never propagate into the caller — capture,
+     * a correction, a setup step, a screen navigation. Building [build] lazily, inside the same
+     * `runCatching`, matters just as much as guarding [submit] itself: [baseProvenance] reads
+     * [installIdStore], another `lateinit`, and a caller that built its event eagerly before calling
+     * a guarded `submit` would already have crashed constructing the argument.
+     */
+    public fun submitSafely(build: () -> AnalyticsEvent) {
+        runCatching { submit(build()) }
     }
 
     /** Test-only reset — mirrors the pattern already used across this app's other process-lifetime
@@ -119,5 +145,6 @@ public object AnalyticsAppWiring {
      * Robolectric tests that share one JVM. */
     public fun resetForTest() {
         configured = false
+        AnalyticsBridge.resetForTest()
     }
 }

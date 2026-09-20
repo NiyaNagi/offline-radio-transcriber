@@ -6,11 +6,15 @@ import androidx.work.Data
 import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.analytics.AnalyticsAppWiring
+import org.ort.app.analytics.AnalyticsUploadRunOutcome
 import org.ort.app.ui.data.ModelId
 import org.ort.net.Checksum
 import org.ort.net.ModelFetchSpec
@@ -46,6 +50,16 @@ class ModelDownloadWorkerTest {
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
     private val body = ByteArray(2048) { it.toByte() }
     private val checksum = Checksum(value = sha256(body))
+
+    @Before
+    fun configureAnalytics() {
+        AnalyticsAppWiring.configureOnce(context)
+    }
+
+    @After
+    fun resetAnalytics() {
+        AnalyticsAppWiring.resetForTest()
+    }
 
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
@@ -129,6 +143,29 @@ class ModelDownloadWorkerTest {
             result is ListenableWorker.Result.Retry,
         )
         assertFalse("the bad file must never reach the final destination", destination().isFile)
+    }
+
+    @Test
+    fun `FR_ANL_2_a successful download submits a setup-funnel download_succeeded event`() = runBlocking {
+        destination().parentFile?.deleteRecursively()
+        val worker = buildWorker(FakeHttpRangeClient(body))
+
+        worker.doWork()
+
+        // Tier 1 is on by default (AC-172): reaching NotConfigured (not NothingQueued) proves the
+        // event landed in the real queue -- no endpoint is set in a test build (D48).
+        assertEquals(AnalyticsUploadRunOutcome.NotConfigured, AnalyticsAppWiring.runUploadOnce())
+    }
+
+    @Test
+    fun `FR_ANL_2_a checksum mismatch submits a setup-funnel download_retry event`() = runBlocking {
+        destination().parentFile?.deleteRecursively()
+        val wrongBody = ByteArray(2048) { (it + 1).toByte() }
+        val worker = buildWorker(FakeHttpRangeClient(wrongBody))
+
+        worker.doWork()
+
+        assertEquals(AnalyticsUploadRunOutcome.NotConfigured, AnalyticsAppWiring.runUploadOnce())
     }
 
     @Test

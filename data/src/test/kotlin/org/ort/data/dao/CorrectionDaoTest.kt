@@ -246,6 +246,44 @@ public class CorrectionDaoTest {
     }
 
     @Test
+    @Requirement("FR-ANL-2")
+    public fun `FR_ANL_2_listAllFields returns every correction's field name, and only that`(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session("S1"))
+        db.transmissionDao().insert(TestFixtures.transmission("TX1", sessionId = "S1", stationId = "K7ABC"))
+        db.transmissionDao().insert(TestFixtures.transmission("TX2", sessionId = "S1", stationId = null))
+        db.correctionDao().recordCorrection(
+            CorrectionEntity(
+                id = "CORR1",
+                transmissionId = "TX1",
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = "K7ABC",
+                newValue = "W7NPC",
+                correctedAt = 100L,
+            ),
+        )
+        db.correctionDao().recordCorrection(
+            CorrectionEntity(
+                id = "CORR2",
+                transmissionId = "TX2",
+                field = CorrectionDao.FIELD_STATION_UNVERIFIED,
+                previousValue = null,
+                newValue = "N0CALL",
+                correctedAt = 200L,
+            ),
+        )
+
+        val fields = db.correctionDao().listAllFields()
+
+        assertEquals(listOf(CorrectionDao.FIELD_STATION, CorrectionDao.FIELD_STATION_UNVERIFIED), fields.sorted())
+    }
+
+    @Test
+    @Requirement("FR-ANL-2")
+    public fun `FR_ANL_2_listAllFields is empty when no correction has ever been recorded`(): Unit = runTest {
+        assertEquals(emptyList<String>(), db.correctionDao().listAllFields())
+    }
+
+    @Test
     public fun isCorrected_reflects_the_lock(): Unit = runTest {
         db.sessionDao().insert(TestFixtures.session("S1"))
         db.transmissionDao().insert(TestFixtures.transmission("TX1", sessionId = "S1"))

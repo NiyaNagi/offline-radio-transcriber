@@ -1,6 +1,7 @@
 package org.ort.app.ui.data
 
 import android.content.Context
+import org.ort.app.analytics.CorrectionAnalytics
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
 import org.ort.core.PassId
@@ -509,6 +510,10 @@ public object CorrectionPolling {
                 previousStationId = row.stationId,
             ).toEntity()
             db.correctionDao().recordCorrection(entity)
+            // P28 follow-up (D42, FR-ANL-3): tier 2's (ASR hypothesis, user correction) pair --
+            // dropped before ever reaching the queue while tier 2 is off (AnalyticsController.submit's
+            // own doc comment), so this call is unconditional here.
+            CorrectionAnalytics.corrected(previousStationId = row.stationId, newStationId = request.newStationId)
             affectedRow(db, row, oldCallsign = row.stationId, newCallsign = request.newStationId)
         }
 

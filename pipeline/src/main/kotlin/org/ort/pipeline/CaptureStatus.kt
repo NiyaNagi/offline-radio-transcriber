@@ -5,8 +5,12 @@ import org.ort.capture.android.heartbeat.LivenessChecker
 import org.ort.capture.android.heartbeat.UncleanEndDetector
 import org.ort.capture.android.heartbeat.UncleanEndReport
 import org.ort.core.Clock
+import org.ort.pipeline.analytics.AnalyticsBridge
+import org.ort.pipeline.analytics.CaptureHeartbeatAnalytics
 import org.ort.pipeline.rig.CaptureConfiguration
 import org.ort.pipeline.shed.ShedController
+import org.ort.telemetry.AnalyticsEventFactory
+import org.ort.telemetry.AnalyticsTier1Payload
 
 /**
  * What the app's status surface shows (FR-UI-7, FR-PLT-1 — build-plan P8's status-surface
@@ -61,8 +65,31 @@ public class CaptureStatusRepository(
         pendingConfiguration: CaptureConfiguration? = null,
     ): CaptureStatus {
         val last = heartbeatStore.last()
+        val nowWallMillis = clock.wallMillis()
         val alive = last != null &&
-            livenessChecker.isAlive(last.wallMillis, clock.wallMillis(), isIgnoringBatteryOptimizationsDiagnosticOnly)
+            livenessChecker.isAlive(last.wallMillis, nowWallMillis, isIgnoringBatteryOptimizationsDiagnosticOnly)
+        // P28 follow-up (FR-ANL-2, NFR-8): capture uptime and heartbeat gaps, sampled here rather
+        // than on the audio frame path itself (constitution IV) — only while a session is genuinely
+        // capturing, so an idle poll never reports a fabricated "gap" against a session that has not
+        // started. See CaptureHeartbeatAnalytics's own doc comment for why this class, not a new one.
+        if (isCapturing) {
+            // runCatching: constitution IV — an analytics failure of any kind (an unwired bridge, a
+            // throwing provenance/queue) must never propagate into the status surface's own read.
+            runCatching {
+                CaptureHeartbeatAnalytics.sample(sessionId, elapsedMillis, alive, nowWallMillis)?.let { sampled ->
+                    AnalyticsBridge.submit(
+                        AnalyticsEventFactory.tier1(
+                            AnalyticsBridge.baseProvenance().copy(sessionId = sessionId),
+                            AnalyticsTier1Payload.CaptureHeartbeat(
+                                uptimeMs = sampled.uptimeMs,
+                                gapCount = sampled.gapCount,
+                                gapDurationMs = sampled.gapDurationMs,
+                            ),
+                        ),
+                    )
+                }
+            }
+        }
         return CaptureStatus(
             sessionId = sessionId,
             isCapturing = isCapturing,

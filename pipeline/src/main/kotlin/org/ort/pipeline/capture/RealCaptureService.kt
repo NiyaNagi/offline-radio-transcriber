@@ -52,6 +52,7 @@ import org.ort.pipeline.CaptureProcessingLoop
 import org.ort.pipeline.GapPersister
 import org.ort.pipeline.Pass
 import org.ort.pipeline.PassDrainRunner
+import org.ort.pipeline.analytics.AnalyticsBridge
 import org.ort.pipeline.archive.ARCHIVE_DIR_NAME
 import org.ort.pipeline.archive.ArchiveGapPersister
 import org.ort.pipeline.archive.pruneArchiveIfOverBudget
@@ -85,6 +86,8 @@ import org.ort.segment.SegmentWriter
 import org.ort.segment.Segmenter
 import org.ort.segment.SileroVad
 import org.ort.segment.SquelchGate
+import org.ort.telemetry.AnalyticsEventFactory
+import org.ort.telemetry.AnalyticsTier1Payload
 import java.io.File
 import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
@@ -1558,7 +1561,24 @@ internal class ThermalTrackingPass(
 
         val durationMs = db.transmissionDao().getById(item.transmissionId)?.durationMs
         if (durationMs != null && durationMs > 0) {
-            ThermalStatus.recordPassTiming(elapsedMillis.toDouble() / durationMs.toDouble())
+            val realTimeFactor = elapsedMillis.toDouble() / durationMs.toDouble()
+            ThermalStatus.recordPassTiming(realTimeFactor)
+            // P28 follow-up (FR-ANL-2): tier-1 per-pass latency/real-time-factor — the exact same
+            // two numbers just recorded for ThermalStatus and about to be logged below, never a
+            // second, independently-computed measurement. runCatching: constitution IV — an
+            // analytics failure must never fail a real pass run that otherwise completed.
+            runCatching {
+                AnalyticsBridge.submit(
+                    AnalyticsEventFactory.tier1(
+                        AnalyticsBridge.baseProvenance(),
+                        AnalyticsTier1Payload.Performance(
+                            passId = item.pass.name,
+                            latencyMs = elapsedMillis,
+                            realTimeFactor = realTimeFactor,
+                        ),
+                    ),
+                )
+            }
         }
         // FR-OBS-1 "per-pass latency": every real pass run this loop drives, tagged with the tier
         // it ran at (the same mapping runShedMonitor's own tier-change logging uses).
