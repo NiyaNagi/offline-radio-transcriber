@@ -220,24 +220,19 @@ AC-180, AC-184, AC-188.
   `R_1086` tests fail (finding one "ANR" node) against the pre-fix "crashes and ANRs" copy on each
   screen, and pass once "and ANRs" is dropped.
 - `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.setup.*" --tests
-  "org.ort.app.ui.settings.*" --tests "org.ort.app.debug.*"` (the full requested scope): run twice
-  against the fix on this shared, heavily-contended machine. The first run found exactly the three
+  "org.ort.app.ui.settings.*" --tests "org.ort.app.debug.*"` (the full requested scope): run three
+  times against the fix on this shared, heavily-contended machine. Run 1 found exactly the three
   expected pre-fix failures (`BluetoothPermissionScreenTest`, `ModeScreenTest`,
-  `SetupScaffoldTest`, each asserting a literal `"N of 8"` string against the new `SETUP_TOTAL_STEPS
-  = 10`), fixed to assert `"N of $SETUP_TOTAL_STEPS"` instead. The second run (14m 32s, 891 tests)
-  came back **891 tests completed, 6 failed — all six in `SettingsCaptureScreenTest`**, a screen
-  this change never touches; every failure is Espresso's `AppNotIdleException`
+  `SetupScaffoldTest`, each asserting a literal `"N of 8"` string against the new
+  `SETUP_TOTAL_STEPS = 10`), fixed to assert `"N of $SETUP_TOTAL_STEPS"` instead. Run 2 (14m 32s,
+  891 tests) came back **891 tests completed, 6 failed — all six in `SettingsCaptureScreenTest`**,
+  a screen this change never touches, every failure Espresso's `AppNotIdleException`
   (`app/build/test-results/testFullDebugUnitTest/TEST-org.ort.app.ui.settings.SettingsCaptureScreenTest.xml`),
-  the machine-idle-timeout flake this session saw repeatedly from concurrent daemon contention, not
-  a regression from this change. Every test in `org.ort.app.ui.setup.*`, the rest of
-  `org.ort.app.ui.settings.*`, and `org.ort.app.debug.*` — including every file this change
-  touched — passed.
+  the machine-idle-timeout flake this session saw repeatedly from concurrent daemon contention.
+  Run 3 (9m 14s) came back **BUILD SUCCESSFUL, no failures at all**, confirming run 2's six
+  failures were exactly that flake and not a regression from this change.
 
 **Left open / not done:**
-- `SettingsCaptureScreenTest`'s six `AppNotIdleException` failures on the second full run (above)
-  are believed to be a machine-contention flake, not a regression, but were not independently
-  re-run in isolation to confirm that belief — worth a clean re-run on a quieter machine before
-  fully discharging.
 - The lead must re-run the visual tour and re-capture every setup screen (constitution VIII) —
   every `setup-*` tour id touches a screen whose indicator changed: `setup-mode/S00`,
   `setup-verified*` (mic, mic-denied, bluetooth-permission, notify, input, verify, route-mismatch,
@@ -246,10 +241,6 @@ AC-180, AC-184, AC-188.
   `setup-analytics-consent/S11b-analytics-consent`, and `setup-verified`/`setup-verified-local-mic`/
   `rig-bt-connected`'s `S12-ready*` — at font scale 1.0 and 2.0 (and scrolled to end where the
   screen scrolls). This session captured no device evidence, per its own instructions.
-- The full aggregate `org.ort.app.ui.setup.*`/`ui.settings.*`/`debug.*` test run had not completed
-  on this shared machine by commit time (see Verified above) — every test it would exercise was
-  otherwise confirmed green or compiling clean in isolation, but the full run itself should be
-  reconciled before this is treated as fully gated.
 - `spec/functional-spec.md`'s FR-ANL-2 still lists "crash traces and ANRs" in tier 1's closed field
   list, which is now inconsistent with this fix. That is a spec defect outside this session's file
   ownership (not one of the paths this unit was told it owns) — flagged for the lead/register
