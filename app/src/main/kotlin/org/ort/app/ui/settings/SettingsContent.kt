@@ -282,6 +282,13 @@ private fun SettingsAnalyticsSubScreen(
     onBack: () -> Unit,
     modifier: Modifier,
 ) {
+    // R_TOUR_STEPS (register): the tour drives every SettingsScreenId destination cold, so this
+    // composable cannot assume OrtApplication.onCreate (guarded off under Robolectric) already
+    // called AnalyticsAppWiring.configureOnce — reading the lateinit `controller` before this ran
+    // threw UninitializedPropertyAccessException the first time the tour actually exercised this
+    // screen. SettingsAnalyticsPolling.current(context) below calls it too, but only inside the
+    // `remember` block, too late for the eager `controller` read that used to sit here.
+    org.ort.app.analytics.AnalyticsAppWiring.configureOnce(context)
     val scope = rememberCoroutineScope()
     val controller = org.ort.app.analytics.AnalyticsAppWiring.controller
     SettingsAnalyticsScreen(
