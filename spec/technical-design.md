@@ -74,7 +74,7 @@ Gradle multi-module, Kotlin, JVM toolchain 17, `compileSdk` current, `minSdk` 26
                         analytics upload (D48, outside capture only)
 :eval            [JVM]  evaluation harness, corpus manifest, metrics, reliability diagrams  ← PURE
 :testing         [JVM]  fakes, fixtures, corpus loaders, deterministic seeds
-:app             [AND]  Compose UI, navigation, settings, onboarding, Hilt graph
+:app             [AND]  Compose UI, navigation, settings, onboarding, composition root
 ```
 
 The `-api` / `-impl` split exists for one reason: **the evaluation harness must run the
@@ -213,7 +213,10 @@ interface Clock {
 }
 ```
 
-Injected everywhere via Hilt (FR-TST-2 → AC-91). `TestClock` advances manually. **No call site
+Injected everywhere by constructor, passed from the composition root (FR-TST-2 → AC-91). *D15
+named Hilt for this; the build never took the dependency and no source file imports it — the
+substitution FR-TST-1..3 needs is achieved by plain constructor parameters and the project's own
+fakes. Recorded here rather than silently left wrong; see D15's amendment note.* `TestClock` advances manually. **No call site
 may use `System.currentTimeMillis()` directly**; a lint rule enforces it, because thread gaps,
 the 10-minute ID window, retention and voiceprint decay are all otherwise untestable.
 

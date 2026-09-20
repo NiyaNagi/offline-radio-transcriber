@@ -88,7 +88,8 @@ Never `git stash`; never `gradlew --stop`; never merge while a gate is mid-build
 
 ## Stack
 
-Kotlin · Compose · Room + FTS5 · Coroutines/Flow · Hilt · WorkManager · sherpa-onnx behind
+Kotlin · Compose · Room + FTS5 · Coroutines/Flow · **constructor injection by hand, not Hilt**
+(D15 named Hilt; it was never adopted — see that decision's amendment note) · WorkManager · sherpa-onnx behind
 interfaces · `usb-serial-for-android` · Gradle Kotlin DSL · **minSdk 26**, target current.
 Desktop tooling under `corpus/` is Python with its own `pyproject.toml` and CI job.
 
