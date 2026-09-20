@@ -32,6 +32,153 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (P28 follow-up: the analytics channel finally emits — instrumentation for every tier-1 event and the tier-2 correction pair)
+
+### c91d43e9 — P28 follow-up · the analytics channel now actually records something
+
+**Scope:** new call-site helpers under `app/src/main/kotlin/org/ort/app/analytics/**`
+(`CorrectionAnalytics`, `SetupFunnelAnalytics`, `FeatureUsageAnalytics`, `QualityStatsAggregator`,
+`QualityStatsReporter`); a new `AnalyticsBridge`/`CaptureHeartbeatAnalytics` pair under
+`pipeline/src/main/kotlin/org/ort/pipeline/analytics/**`; instrumentation call sites in
+`pipeline/src/main/kotlin/org/ort/pipeline/CaptureStatus.kt` and
+`.../capture/RealCaptureService.kt` (`ThermalTrackingPass`); one-line submit calls in
+`app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt` (beyond that, unchanged),
+`app/src/main/kotlin/org/ort/app/work/ModelDownloadWorker.kt`,
+`app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/CorrectionPolling.kt`,
+`app/src/main/kotlin/org/ort/app/analytics/AnalyticsAppWiring.kt` (`submitSafely`, the
+`AnalyticsBridge` wiring) and `AnalyticsUploadWorker.kt`; one additive DAO method,
+`CorrectionDao.listAllFields()`; `pipeline/build.gradle.kts` (`:telemetry` dependency added — the
+edge `ModuleGraph` already permitted but no module had declared). Matching tests across
+`pipeline/src/test/kotlin/org/ort/pipeline/**` and `app/src/test/kotlin/org/ort/app/**`, plus
+`data/src/test/kotlin/org/ort/data/dao/CorrectionDaoTest.kt`.
+
+**Requirements/ACs:** FR-ANL-1..14, D42, D48 (the analytics channel itself), FR-AST-11
+(model-download outcome), FR-SEG-10 (VAD-fallback rate), constitution IV (capture never blocks —
+every new call site is `runCatching`/`submitSafely`-guarded), constitution VII (`:capture-*` never
+gains a `:telemetry` edge — enforced structurally, `dependencyRules` green), AC-172/173/175/177-179
+(existing `:telemetry` vocabulary and gating tests, unchanged, still green).
+
+**What changed:**
+
+1. **The gap this unit was created to close**: P28 (`bc2e802b`/`acef4add`) built the entire tiered
+   schema, queue, provenance envelope and Settings/setup UI, but nothing anywhere called
+   `AnalyticsController.submit(...)` except the crash handler already wired in `OrtApplication`
+   (verified by reading it — already correct, no fix needed there). Tier 1 was on by default and
+   recorded nothing. This unit wires real call sites for every tier-1 field FR-ANL-2 names, plus
+   the tier-2 `(ASR hypothesis, user correction)` pair.
+2. **Crash/ANR** — verified `CrashCaptureHandler`'s wiring in `OrtApplication.onCreate` reaches
+   `AnalyticsAppWiring.submit` correctly; no change needed. **ANR detection itself does not exist
+   anywhere in this codebase** (`isAnr` is hardcoded `false`) — building a real main-thread-hang
+   watchdog is a new subsystem beyond this unit's "instrumentation call sites" scope and was not
+   attempted; see Left open.
+3. **Setup funnel + model-download outcome (FR-ANL-2, FR-AST-11)** — `SetupFunnelAnalytics`
+   (`:app`) wraps the `SetupFunnel(step, outcome)` payload. `SetupActivity.kt` gained exactly four
+   one-line submit calls (its own step-transition property setter for "reached", `refreshStep`'s
+   completion branch for "completed", and the three concrete skip actions
+   `onDeclineBluetoothPermission`/`skipNotifications`/`onSkipOvernight` for "skipped") — no other
+   logic touched, per this unit's own file-ownership restriction. `ModelDownloadWorker.doWork()`
+   reports `download_succeeded`/`download_retry`/`download_failed` from its own real outcome
+   branches.
+4. **Capture uptime and heartbeat gaps (FR-ANL-2, NFR-8)** — `CaptureHeartbeatAnalytics` (new,
+   `:pipeline`) is a pure, process-wide sampler (the `ThermalStatus`/`VadAvailability` pattern) fed
+   from `CaptureStatusRepository.current()` — the existing liveness read
+   (`CaptureStatus.isAlive`/`lastHeartbeatWallMillis`), never the audio frame path itself. A "gap"
+   is a span where a poll read not-alive between two samples; a summary emits at most once per
+   5 minutes of session uptime, only while `isCapturing`. `:pipeline` had no accumulator for this
+   before now (`DiagnosticsLog.logHeartbeatGap` exists but is called only from its own test, never
+   production — left as found, out of this unit's scope to wire).
+5. **Per-pass latency and real-time factor (FR-ANL-2)** — `RealCaptureService`'s
+   `ThermalTrackingPass.run()` now submits `Performance(passId, latencyMs, realTimeFactor)` using
+   the exact `elapsedMillis`/`realTimeFactor` locals already computed for `ThermalStatus` and
+   `DiagnosticsLog.logPassLatency` — never a second computation. Only Pass B (`B_OFFLINE`) runs
+   through this wrapper today (Pass A/`A_STREAM` is unbuilt, M8) — the wrapper is generic over
+   `item.pass`, so a future Pass A gets this for free.
+6. **VAD-fallback rate + transcript-quality aggregates (FR-ANL-2, FR-SEG-10)** —
+   `QualityStatsAggregator` (`:app`, pure, no Room/Robolectric dependency) computes
+   `correctionRateByField` (from the new `CorrectionDao.listAllFields()`), `attributionStateMix`,
+   `confidenceMix` (high/medium/low buckets), `unresolvedCallsignRate` (UNKNOWN fraction) and
+   `vadFallbackRate` (`!vadDetector.conformsToFrSeg1` fraction) from `TransmissionDao.listAll()`.
+   `QualityStatsReporter` submits one `QualityStats` event per run of `AnalyticsUploadWorker`'s
+   existing 6-hour periodic chain — never a new WorkManager job, never during capture (the upload
+   chain already refuses to *send* during capture; queuing is always allowed, FR-ANL-7).
+7. **Feature usage (FR-ANL-2)** — `FeatureUsageAnalytics.screenViewed` submits `Usage(screen,
+   "VIEW")` from a new `ReportScreenViewed` composable in `OrtNavHost.kt`
+   (`LaunchedEffect(current)`), extracted to its own function to keep `OrtNavHost` under detekt's
+   `LongMethod` threshold. **Per-action usage is left open** — no central action-dispatch
+   chokepoint exists in this app; wiring dozens of individual `on*` callbacks was judged out of
+   this unit's scope (see Left open).
+8. **Tier-2 correction pair (FR-ANL-3)** — `CorrectionAnalytics.corrected` submits
+   `Correction(asrHypothesis, userCorrection, callsign)` from `CorrectionPolling.applyCorrection`,
+   right after `CorrectionDao.recordCorrection` succeeds for each affected transmission. This
+   codebase has no free-text transcript-edit flow yet (only a callsign/attribution correction), so
+   the pair carries the previous and new *callsigns* — the only real hypothesis/correction pair
+   this build can produce; flagged in the code for whoever eventually adds transcript editing.
+9. **`AnalyticsAppWiring.submitSafely`** (new) — every one of this unit's new call sites is reached
+   from code paths most existing tests exercise *without* ever calling
+   `AnalyticsAppWiring.configureOnce()` first (a `lateinit` read would otherwise throw
+   `UninitializedPropertyAccessException` and break dozens of unrelated, previously-green tests).
+   `submitSafely` builds the event and calls `submit` inside one `runCatching`, so a call site
+   reached before configuration, or a controller/queue that throws for any reason, can never
+   propagate into the caller. `AnalyticsBridge.submit` (`:pipeline`) is wired through the same
+   guard. The two `:pipeline` call sites (`CaptureStatus.kt`, `ThermalTrackingPass`) additionally
+   wrap their own `AnalyticsBridge` calls in `runCatching` directly, since `AnalyticsBridge
+   .baseProvenance()` is evaluated as a constructor argument before `AnalyticsBridge.submit` itself
+   ever runs.
+10. **`:pipeline` gained a real `:telemetry` dependency** (`pipeline/build.gradle.kts`) — the edge
+    `ModuleGraph.allowed[":pipeline"]` already listed since P28, never declared until now.
+    `:capture-api`/`:capture-android` still cannot reach `:telemetry` in either direction
+    (`dependencyRules` — unchanged, still enforced, still green).
+
+**Verified:**
+- `.\gradlew.bat dependencyRules` — green; `:pipeline -> ... :telemetry` is the only new edge, and
+  it is the one `ModuleGraph.allowed` already named.
+- `.\gradlew.bat :pipeline:testDebugUnitTest` — full module green, including
+  `CaptureHeartbeatAnalyticsTest` (new, 6 tests), `CaptureStatusRepositoryTest` (+2),
+  `ThermalTrackingPassTest` (+2).
+- `.\gradlew.bat :data:testDebugUnitTest --tests "org.ort.data.dao.CorrectionDaoTest"` — green,
+  including `listAllFields` (+2).
+- `.\gradlew.bat :app:testFullDebugUnitTest` — full module green (13m30s local run), including
+  every new test under `org.ort.app.analytics.*` (24 new tests across `AnalyticsAppWiringTest`,
+  `AnalyticsSubmitSafelyTest`, `SetupFunnelAnalyticsTest`, `FeatureUsageAnalyticsTest`,
+  `QualityStatsAggregatorTest`, `QualityStatsReporterTest`), `CorrectionPollingTest` (+2),
+  `SetupActivityTest` (+2), `ModelDownloadWorkerTest` (+2).
+- `.\gradlew.bat ktlintCheck` and `.\gradlew.bat detekt` — both green across every touched module.
+- **Discrimination proven directly** for the capture-heartbeat call site: reverted
+  `CaptureStatus.kt`'s production change alone (`git stash` on that one file), reran
+  `CaptureStatusRepositoryTest` — the new `FR_ANL_2_current emits a CaptureHeartbeat event...` test
+  failed (`expected: <1> but was: <0>`); restored the change, reran — green again. Every other new
+  test asserts a specific computed value or queue state that cannot pass without its corresponding
+  production code (e.g. `QualityStatsAggregatorTest`'s exact rate arithmetic,
+  `ModelDownloadWorkerTest`'s `NotConfigured`-vs-`NothingQueued` queue-state proof).
+- A dedicated `AnalyticsSubmitSafelyTest` (its own Robolectric-sandboxed test class, so no other
+  test's `configureOnce()` call can leak state into it) proves `submitSafely` never throws before
+  `configureOnce` has ever run in the process — the actual failure mode this fix exists for.
+
+**Left open / not done:**
+- **ANR detection.** No watchdog exists to ever set `Crash.isAnr = true`; building one (a
+  main-thread-responsiveness ping, AOSP's classic pattern) is a new subsystem, not an
+  instrumentation call site, and was not attempted here. `CrashCaptureHandler`'s existing wiring
+  for thrown exceptions is unaffected and correct.
+- **Per-action feature usage.** Only screen views are instrumented (`FeatureUsageAnalytics
+  .screenViewed`); which specific action/button was used is not, for lack of a central
+  action-dispatch chokepoint in this app (confirmed by search) — wiring it would mean touching
+  dozens of independent `on*` callbacks across many files, judged out of scope for this unit.
+- **`DiagnosticsLog.logHeartbeatGap`** is still never called from production code (only from its
+  own test) — a pre-existing gap this unit did not introduce and did not fix, since
+  `CaptureHeartbeatAnalytics` derives gaps independently from `CaptureStatus.isAlive`, not from
+  that log line.
+- Several touched files sit under `app/src/main/kotlin/org/ort/app/ui/**`
+  (`SetupActivity.kt`, `OrtNavHost.kt`, `CorrectionPolling.kt`) — constitution VIII's own
+  file-glob trigger names this path unconditionally for the visual-re-verification requirement.
+  Every change in those files is a non-rendering side effect (an analytics submit call, or a
+  `LaunchedEffect` with no visual output) with no layout, `ViewState`/`ViewData`/`Mapper` or
+  artboard-relevant change; this session had no emulator access (explicitly out of scope for this
+  unit) to run the screenshot tour itself, so the re-verification could not be run here — flagged
+  for the lead's own judgement rather than asserted as unnecessary.
+
+---
+
 ## 2026-09-20 (correction-attribution consolidation: a corrected transmission stops reading UNKNOWN on the Log, Live Monitor, a Recording Session and Threads)
 
 ### design-only — artboards and design-intent rows for the two P28 analytics screens (`SettingsAnalyticsScreen`, `AnalyticsConsentScreen`), drawn against constitution VIII after the fact, plus a copy finding on the setup screen

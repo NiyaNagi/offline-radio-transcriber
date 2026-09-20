@@ -24,6 +24,10 @@ public class AnalyticsUploadWorker(context: Context, params: WorkerParameters) :
     override suspend fun doWork(): Result {
         try {
             AnalyticsAppWiring.configureOnce(applicationContext)
+            // P28 follow-up (FR-ANL-2): the tier-1 aggregate transcript-quality stats, computed
+            // and queued on the same periodic cycle the upload itself already runs on — never on
+            // the audio frame path, never blocking capture (a background WorkManager job).
+            QualityStatsReporter.reportOnce(applicationContext)
             AnalyticsAppWiring.runUploadOnce()
             return Result.success()
         } finally {

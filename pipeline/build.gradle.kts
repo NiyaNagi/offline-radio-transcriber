@@ -26,6 +26,12 @@ dependencies {
     // the wave that owns P20.
     implementation(project(":llm-api"))
     implementation(project(":llm-mediapipe"))
+    // P28 follow-up (D42, FR-ANL-1..14): the fourth declared outbound channel's payload/queue
+    // types, used only through `analytics/AnalyticsBridge.kt` — never a compile edge from
+    // `:capture-api`/`:capture-android` themselves (`ModuleGraph`'s `explicitlyForbidden` still
+    // blocks that both ways); `:pipeline` was already in `ModuleGraph.allowed[":telemetry"]`'s
+    // reverse set before this, only the Gradle declaration was missing.
+    implementation(project(":telemetry"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.androidx.core.ktx)
     // WPH follow-up (P21, FR-DIG-5): ProseDigestRunner's charging+idle-constrained schedule.

@@ -114,6 +114,16 @@ public interface CorrectionDao {
         corrected: Boolean,
     )
 
+    /**
+     * P28 follow-up (FR-ANL-2): the one read `:app`'s tier-1 "correction rate by field" aggregate
+     * (`org.ort.app.analytics.QualityStatsAggregator`) needs — every correction's own [field]
+     * name, and nothing else. Deliberately narrower than `SELECT *`: even a caller that misused
+     * this could not leak a [CorrectionEntity.previousValue]/[CorrectionEntity.newValue] (both
+     * callsigns, forbidden in a tier-1 payload) through it, because they were never read.
+     */
+    @Query("SELECT field FROM correction")
+    public suspend fun listAllFields(): List<String>
+
     public companion object {
         public const val FIELD_STATION: String = "stationId"
         public const val FIELD_STATION_UNVERIFIED: String = "stationId_unverified"

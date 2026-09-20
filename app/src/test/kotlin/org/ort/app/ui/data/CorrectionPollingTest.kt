@@ -9,6 +9,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.analytics.AnalyticsAppWiring
+import org.ort.app.analytics.AnalyticsUploadRunOutcome
 import org.ort.core.Attribution
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
@@ -18,6 +20,7 @@ import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.VoiceprintBindingSource
 import org.ort.data.entity.VoiceprintEntity
+import org.ort.telemetry.AnalyticsTier
 import org.robolectric.RobolectricTestRunner
 
 /**
@@ -53,6 +56,7 @@ class CorrectionPollingTest {
     @After
     fun closeDatabase() {
         db.close()
+        AnalyticsAppWiring.resetForTest()
     }
 
     private fun session() = SessionEntity(
@@ -204,6 +208,32 @@ class CorrectionPollingTest {
         )
 
         assertEquals(2, outcome.overCount)
+    }
+
+    @Test
+    fun `FR_ANL_3_applyCorrection submits a tier2 correction event once tier 2 is enabled`(): Unit = runTest {
+        AnalyticsAppWiring.configureOnce(context)
+        AnalyticsAppWiring.controller.setTierEnabled(AnalyticsTier.TIER_2, true)
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1"))
+
+        CorrectionPolling.applyCorrection(context, request("TX1", "K7LWH", "KA7LWH"), CorrectionScope.THIS_OVER_ONLY)
+
+        // Tier 2's event reached the real queue -- provable without a package-private accessor by
+        // observing that runUploadOnce now finds something queued (NotConfigured, not
+        // NothingQueued: no endpoint is set in a test build, D48).
+        assertEquals(AnalyticsUploadRunOutcome.NotConfigured, AnalyticsAppWiring.runUploadOnce())
+    }
+
+    @Test
+    fun `FR_ANL_3_applyCorrection submits nothing while tier 2 stays off (the default)`(): Unit = runTest {
+        AnalyticsAppWiring.configureOnce(context)
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1"))
+
+        CorrectionPolling.applyCorrection(context, request("TX1", "K7LWH", "KA7LWH"), CorrectionScope.THIS_OVER_ONLY)
+
+        assertEquals(AnalyticsUploadRunOutcome.NothingQueued, AnalyticsAppWiring.runUploadOnce())
     }
 
     @Test

@@ -6,6 +6,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -17,6 +18,9 @@ import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
 import org.ort.pipeline.Pass
 import org.ort.pipeline.PipelineTestFixtures
+import org.ort.pipeline.analytics.AnalyticsBridge
+import org.ort.telemetry.AnalyticsEvent
+import org.ort.telemetry.AnalyticsTier1Payload
 import org.ort.testing.Requirement
 import org.ort.testing.TestClock
 import org.robolectric.RobolectricTestRunner
@@ -40,6 +44,7 @@ class ThermalTrackingPassTest {
     @After
     fun resetHolder() {
         ThermalStatus.reset()
+        AnalyticsBridge.resetForTest()
     }
 
     private fun item(transmissionId: String) = WorkQueueItemEntity(
@@ -95,6 +100,50 @@ class ThermalTrackingPassTest {
 
         ThermalStatus.sample(ThermalStatus.THERMAL_STATUS_NONE)
         assertNull((ThermalStatus.state as ThermalStatus.State.Nominal).realTimeFactor)
+    }
+
+    @Test
+    @Requirement("F-007", "FR-ANL-2")
+    fun `FR_ANL_2_a real pass run submits a tier1 Performance event with the same measured numbers`() = runTest {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        val tx = PipelineTestFixtures.transmission(id = "TX03").copy(durationMs = 1_000L)
+        db.transmissionDao().insert(tx)
+        val clock = TestClock()
+        val delegate = Pass {
+            clock.advance(250)
+            PassRunOutcome.Finished(TransmissionState.COMPLETE)
+        }
+        val submitted = mutableListOf<AnalyticsEvent>()
+        AnalyticsBridge.submit = { submitted += it }
+        val tracked = ThermalTrackingPass(delegate, db, clock)
+
+        tracked.run(item("TX03"))
+
+        assertEquals(1, submitted.size)
+        val payload = submitted.single().payload as AnalyticsTier1Payload.Performance
+        assertEquals(PassId.B_OFFLINE.name, payload.passId)
+        assertEquals(250L, payload.latencyMs)
+        assertEquals(0.25, payload.realTimeFactor, 1e-9)
+    }
+
+    @Test
+    @Requirement("FR-ANL-2")
+    fun `FR_ANL_2_no analytics event is submitted for a transmission with no findable duration`() = runTest {
+        val db = OrtDatabase.create(ApplicationProvider.getApplicationContext(), inMemory = true)
+        db.sessionDao().insert(PipelineTestFixtures.session())
+        val clock = TestClock()
+        val delegate = Pass {
+            clock.advance(50)
+            PassRunOutcome.Finished(TransmissionState.COMPLETE)
+        }
+        val submitted = mutableListOf<AnalyticsEvent>()
+        AnalyticsBridge.submit = { submitted += it }
+        val tracked = ThermalTrackingPass(delegate, db, clock)
+
+        tracked.run(item("DOES-NOT-EXIST-2"))
+
+        assertTrue("no measurable duration means no fabricated analytics event either", submitted.isEmpty())
     }
 
     @Test
