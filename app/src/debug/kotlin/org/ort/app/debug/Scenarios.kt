@@ -28,9 +28,12 @@ import org.ort.app.ui.failures.ReconcileRecord
 import org.ort.app.ui.failures.ReconcileViewState
 import org.ort.app.ui.failures.UsbViewState
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
+import org.ort.app.ui.setup.DebugModelsSetupOverride
 import org.ort.app.ui.setup.DebugRigLinkPortOverride
 import org.ort.app.ui.setup.DebugRouteCheckOverride
 import org.ort.app.ui.setup.InMemoryRigLinkPort
+import org.ort.app.ui.setup.ModelDownloadRowStatus
+import org.ort.app.ui.setup.ModelDownloadRowViewState
 import org.ort.app.ui.setup.PairedDevice
 import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.RouteCheckStage
@@ -208,6 +211,10 @@ public object Scenarios {
         // E2-J04 (checklist row, coordinator round): the one local-mic-mode setup base — see
         // [setupVerifiedLocalMic]'s own doc comment.
         "setup-verified-local-mic",
+        // P22 (D43, FR-AST-10..12) — the setup MODELS step (S11a) needs real rows a tier-required,
+        // not-yet-installed model would show. See [setupModels]'s own doc comment for the real
+        // production gap ([DebugModelsSetupOverride]'s own kdoc) this scenario stands in for.
+        "setup-models",
         "clock-dst",
         "usb-permission",
         "interrupted-pass",
@@ -257,6 +264,12 @@ public object Scenarios {
         // `logFilterTransmissionIds` filter names — see [CrossSessionReviewScenario]'s own doc
         // comment.
         "cross-session-review",
+        // P25/this round (D50, Q22, FR-SEG-10, AC-162): the scenario P25's own CHANGELOG entry
+        // named but did not build — a live session whose recorded VadDetectorKind is ENERGY
+        // (Silero/TEN-VAD unavailable), so the live bar's amber "Energy VAD" mark and the session
+        // review header's "Segmentation: Energy VAD (fallback)" line are both reachable by a
+        // capture — see [vadFallback]'s own doc comment.
+        "vad-fallback",
     )
 
     public suspend fun load(context: Context, name: String): LoadResult {
@@ -323,6 +336,7 @@ public object Scenarios {
             "setup-level" -> setupLevel(context)
             "setup-radio" -> setupRadio(context)
             "setup-verified-local-mic" -> setupVerifiedLocalMic(context)
+            "setup-models" -> setupModels(context)
             "clock-dst" -> clockDst(context, db)
             "usb-permission" -> usbPermission(context, db)
             "interrupted-pass" -> interruptedPass(context, db)
@@ -356,6 +370,7 @@ public object Scenarios {
             "tier0-llm-stored" -> tier0LlmStored(context)
             "overnight-live-monitor" -> overnightLiveMonitor(context, db)
             "cross-session-review" -> CrossSessionReviewScenario.load(context, db)
+            "vad-fallback" -> vadFallback(context, db)
             else -> error("unreachable — guarded by the require() above")
         }
     }
@@ -471,6 +486,7 @@ public object Scenarios {
             "input-mismatch" -> republishInputMismatchFacets()
             "setup-verified" -> republishSetupVerifiedFacets()
             "setup-level" -> republishSetupLevelFacets()
+            "setup-models" -> republishSetupModelsFacets()
             "clock-dst" -> {
                 ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("clock-dst"))
                 republishClockDstFacets()
@@ -533,6 +549,7 @@ public object Scenarios {
                 republishOvernightLiveMonitorFacets()
             }
             "search-unavailable" -> DebugSearchOverride.forceNextTextSearchUnavailable()
+            "vad-fallback" -> ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("vad-fallback"))
             // Every other name (pure setup-flow `SharedPreferences` states, ended sessions with no
             // live facet, `lexicon-corrupt` — see this function's own kdoc) sets nothing beyond
             // [resetProcessWideFacets]'s own defaults, already applied by [republish] above.
@@ -773,6 +790,10 @@ public object Scenarios {
         // R-943 (WPD's own seam): a RouteCheckState published for a prior `setup-verified` load's
         // own S05 render must not leak into a later scenario's own S05/route-mismatch board.
         DebugRouteCheckOverride.clear()
+        // This round's own seam (see [DebugModelsSetupOverride]'s own kdoc): rows published for a
+        // prior `setup-models` load's own S11a render must not leak into a later scenario's own
+        // MODELS board.
+        DebugModelsSetupOverride.clear()
         // R-807 (register, coordinator round): [DebugBundledAssetSourceOverride] is deliberately
         // NOT cleared here, unlike every override above — it exists to survive across a whole
         // *sequence* of [load] calls within one test (`ScenariosTest`'s own R_110 stress-repeat
@@ -1809,6 +1830,32 @@ public object Scenarios {
     }
 
     /**
+     * `vad-fallback` — P25/this round (D50, Q22, FR-SEG-10, AC-162). P25 built the disclosure
+     * itself (the live bar's amber "Energy VAD" mark, `RecordingSessionHeaderViewState`'s
+     * "Segmentation: Energy VAD (fallback)" line) but left the fixture unbuilt — its own
+     * CHANGELOG entry names exactly this: a session whose real, recorded
+     * [org.ort.core.capture.VadDetectorKind] does not conform to FR-SEG-1
+     * ([org.ort.core.capture.VadDetectorKind.ENERGY], Silero/TEN-VAD unavailable), genuinely
+     * capturing so `Now`'s live bar reads it live, and reachable from `Earlier nights` (RC02,
+     * `recordingSession: self`) so the durable per-session record reads it too — the same
+     * "0 overs, live, minimal" shape [rigLost]/[rigReconnected] above already establish for a
+     * scenario whose whole point is one process-wide/session-column fact, not a populated log.
+     */
+    private suspend fun vadFallback(context: Context, db: OrtDatabase): LoadResult {
+        val sessionId = ScenarioFixtures.sessionId("vad-fallback")
+        db.sessionDao().insert(
+            ScenarioFixtures.session(
+                sessionId,
+                startedAt = SystemClock.wallMillis() - 45 * 60_000L,
+                endedAt = null,
+                vadDetector = org.ort.core.capture.VadDetectorKind.ENERGY,
+            ),
+        )
+        ScenarioFixtures.markCapturing(context, sessionId)
+        return LoadResult(0, 1, sessionId)
+    }
+
+    /**
      * `level-low` — F3, register R-112. Peak −38 dBFS, floor −60 dBFS, no clipping
      * (`Fail-Level.dc.html`'s own figures) — the radio's volume has drifted quiet, but capture is
      * still genuinely running.
@@ -2267,6 +2314,9 @@ public object Scenarios {
         )
         val store = SharedPreferencesSetupStore(prefs)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.LOCAL_MICROPHONE
         store.notificationsSkipped = true
         store.selectedInputId = "mic-0"
@@ -2285,6 +2335,58 @@ public object Scenarios {
         store.manualFrequencyHz = 145_230_000L
         store.setupComplete = false
         return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-models` — P22 (D43, FR-AST-10..12): the setup MODELS step (S11a) shown with real,
+     * tier-required rows still needing action — one genuinely missing
+     * ([ModelDownloadRowStatus.PENDING], nothing fetched yet) and one whose last download failed
+     * its checksum ([ModelDownloadRowStatus.FAILED], the `Retry` action), so both of the step's
+     * "still needs your attention" shapes are reachable by one capture rather than only the
+     * all-installed state [assetsBundled]/[setupVerified] already cover.
+     *
+     * **Not sourced through the real, tier-eligible/not-bundled catalog plumbing** — see
+     * [DebugModelsSetupOverride]'s own kdoc for the real production gap this stands in for
+     * ([org.ort.app.ui.data.ModelCatalog.entries] hardcodes `bundled = true` for every entry on
+     * every variant today, so [org.ort.app.ui.data.ModelsViewState.rowsForSetupModelsStep] is
+     * unconditionally empty in production regardless of build flavor). The two rows named here are
+     * real [ModelId] entries with their real catalog sizes (`ModelCatalog.entry(id).sizeBytes`), so
+     * the board's byte figures are genuine even though the "needs downloading" fact itself is
+     * asserted directly for this capture, not derived.
+     */
+    private fun setupModels(context: Context): LoadResult {
+        val prefs = context.applicationContext.getSharedPreferences(
+            SharedPreferencesSetupStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        )
+        val store = SharedPreferencesSetupStore(prefs)
+        store.welcomeSeen = true
+        store.jurisdictionNoticeSeen = true
+        store.captureMode = CaptureMode.USB_RADIO
+        republishSetupModelsFacets()
+        return LoadResult(0, 0, null)
+    }
+
+    /** R-1076: [setupModels]'s own process-wide facet, split out — see [republishFacets]'s own
+     * kdoc. */
+    private fun republishSetupModelsFacets() {
+        DebugModelsSetupOverride.show(
+            listOf(
+                ModelDownloadRowViewState(
+                    id = ModelId.ASR_ENCODER,
+                    label = ModelId.ASR_ENCODER.label,
+                    sizeBytes = ModelCatalog.entry(ModelId.ASR_ENCODER).sizeBytes,
+                    status = ModelDownloadRowStatus.PENDING,
+                ),
+                ModelDownloadRowViewState(
+                    id = ModelId.ASR_DECODER,
+                    label = ModelId.ASR_DECODER.label,
+                    sizeBytes = ModelCatalog.entry(ModelId.ASR_DECODER).sizeBytes,
+                    status = ModelDownloadRowStatus.FAILED,
+                    failureReason = "checksum did not match the published digest — try again",
+                ),
+            ),
+        )
     }
 
     /**
@@ -2390,6 +2492,9 @@ public object Scenarios {
         )
         val store = SharedPreferencesSetupStore(prefs)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         // D33/P19 (WPD): SetupStateMachine.stepFor now gates on captureMode before anything else
         // -- USB_RADIO matches the "usb-1" input fixture every caller of this shared base seeds
         // below, so each scenario's own documented resume point is reached again.
@@ -2710,6 +2815,9 @@ public object Scenarios {
     private fun setupMode(context: Context): LoadResult {
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         return LoadResult(0, 0, null)
     }
 
@@ -2726,6 +2834,9 @@ public object Scenarios {
     private fun setupBtPermission(context: Context): LoadResult {
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.bluetoothPermissionDeclined = false
         return LoadResult(0, 0, null)
@@ -2746,6 +2857,9 @@ public object Scenarios {
     private fun setupRigTransport(context: Context): LoadResult {
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "wired-1"
@@ -2811,6 +2925,9 @@ public object Scenarios {
     private fun seedRigBluetoothLinkStore(context: Context) {
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "wired-1"
@@ -3014,6 +3131,9 @@ public object Scenarios {
         ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "W7NPC", 0.9, createdAt = startedAt + 1_000L)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.LOCAL_MICROPHONE
         store.notificationsSkipped = true
         return LoadResult(1, 1, sessionId)
@@ -3088,6 +3208,9 @@ public object Scenarios {
         ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "K7LWH", 0.92, createdAt = startedAt + 1_000L)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.USB_RADIO
         store.notificationsSkipped = true
         return LoadResult(1, 1, sessionId)
@@ -3178,6 +3301,9 @@ public object Scenarios {
         ScenarioFixtures.seedConfirmedResolverOutput(db, txId, "WA7HJR", 0.88, createdAt = startedAt + 1_000L)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.notificationsSkipped = true
         return LoadResult(1, 1, sessionId)
@@ -3411,6 +3537,9 @@ public object Scenarios {
         republishRigBtConnectedFacets()
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "wired-1"
@@ -3681,6 +3810,9 @@ public object Scenarios {
         installRealBundledAssets(context)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.USB_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "usb-1"
@@ -3715,6 +3847,9 @@ public object Scenarios {
         installRealBundledAssets(context, corruptId = ModelId.ASR_ENCODER)
         val store = freshSetupStore(context)
         store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
         store.captureMode = CaptureMode.USB_RADIO
         store.notificationsSkipped = true
         store.selectedInputId = "usb-1"
