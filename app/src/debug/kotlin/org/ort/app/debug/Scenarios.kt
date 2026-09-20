@@ -4329,7 +4329,48 @@ public object Scenarios {
             ),
         )
 
-        ScenarioFixtures.markCapturing(context, sessionId, samplePosition = 7L)
+        // 8. Corrected -- register R-1099: before this, no tour step reached a corrected
+        // transmission on Live Monitor, so the R-1041-class fix (`ReaderTransmissionViewStateMapper
+        // .attributionFrom`, which this screen's own `LiveMonitorOversMapper.rowFor` calls for its
+        // `Resolved` row) had unit coverage but no capture here. Same exact shape as `overnight`'s
+        // own tx6 and the dedicated `corrected` scenario: INFERRED, no confidence, `corrected = true`.
+        val txCorrected = "$sessionId-corrected"
+        val tCorrected = offsetSeconds(185)
+        db.transmissionDao().insert(
+            ScenarioFixtures.transmission(
+                id = txCorrected,
+                sessionId = sessionId,
+                startedAtUtc = tCorrected,
+                samplePosition = 8L,
+                frequencyHz = freq,
+                attributionState = AttributionState.INFERRED,
+                stationId = "KJ7ABC",
+                attributionConfidence = null,
+                corrected = true,
+            ),
+        )
+        db.transcriptDao().insert(
+            ScenarioFixtures.transcript(
+                id = "$txCorrected-t1",
+                transmissionId = txCorrected,
+                text = "kilo juliet seven alpha bravo charlie, back to you",
+                isCurrent = true,
+                createdAt = tCorrected + 500L,
+            ),
+        )
+        db.catalogDao().insert(
+            CorrectionEntity(
+                id = "$txCorrected-correction1",
+                transmissionId = txCorrected,
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = "K7LWH",
+                newValue = "KJ7ABC",
+                correctedAt = tCorrected + 30_000L,
+                propagatedToCount = 1,
+            ),
+        )
+
+        ScenarioFixtures.markCapturing(context, sessionId, samplePosition = 8L)
         val txCount = db.transmissionDao().listBySession(sessionId).size
         return LoadResult(transmissionCount = txCount, sessionCount = 1, primarySessionId = sessionId)
     }

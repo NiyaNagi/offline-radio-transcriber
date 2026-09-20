@@ -16,6 +16,7 @@ import org.ort.core.PassFingerprint
 import org.ort.core.PassId
 import org.ort.core.Tier
 import org.ort.data.OrtDatabase
+import org.ort.data.entity.ThreadJoinReason
 import org.ort.data.entity.ThreadKind
 import org.ort.pipeline.PipelineTestFixtures
 import org.ort.pipeline.passb.DataPassBResultSink
@@ -227,5 +228,48 @@ class DataPassBResultSinkThreadingTest {
         sink.record(accepted("TX2", "K7ABC"))
 
         assertNotEquals(db.transmissionDao().getById("TX1")!!.threadId, db.transmissionDao().getById("TX2")!!.threadId)
+    }
+
+    // ---- R-1098: the real join reason survives all the way onto the transmission's own row ----
+
+    @Test
+    fun `R_1098 the join reason is persisted on the real transmission row, not discarded`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+        val freq = 146_520_000L
+        seedTransmission(db, "TX1", 0, 0, freq)
+        seedTransmission(db, "TX2", 1, 10_000, freq)
+
+        sink.record(accepted("TX1", "K7ABC"))
+        sink.record(accepted("TX2", "W7XYZ"))
+
+        assertEquals(
+            "the first transmission in a session must persist its own real start reason",
+            ThreadJoinReason.FIRST_TRANSMISSION_IN_SESSION,
+            db.transmissionDao().getById("TX1")!!.threadJoinReason,
+        )
+        assertEquals(
+            "a transmission joining an existing thread by frequency must persist that real reason",
+            ThreadJoinReason.SAME_FREQUENCY_WITHIN_GAP,
+            db.transmissionDao().getById("TX2")!!.threadJoinReason,
+        )
+    }
+
+    @Test
+    fun `R_1098 a gap-exceeded new thread persists its own distinct reason on the real row`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+        val freq = 146_520_000L
+        seedTransmission(db, "TX1", 0, 0, freq)
+        // 11 minutes later -- past the 10-minute default gap threshold.
+        seedTransmission(db, "TX2", 1, 11 * 60 * 1000L, freq)
+
+        sink.record(accepted("TX1", "K7ABC"))
+        sink.record(accepted("TX2", "K7ABC"))
+
+        assertEquals(
+            ThreadJoinReason.NEW_THREAD_GAP_EXCEEDED,
+            db.transmissionDao().getById("TX2")!!.threadJoinReason,
+        )
     }
 }

@@ -1,5 +1,6 @@
 package org.ort.pipeline.threading
 
+import org.ort.data.entity.ThreadJoinReason
 import org.ort.data.entity.ThreadKind
 
 /**
@@ -36,15 +37,28 @@ public interface ThreadRepository {
      */
     public suspend fun unlistenedCaptureGapBetween(sessionId: String, fromUtc: Long, toUtc: Long): Boolean
 
-    /** Creates a new `Thread` row for [closure] alone and stamps [closure]'s own transmission with
-     * its id. Returns the new thread's id. */
-    public suspend fun startThread(closure: TransmissionClosure, kind: ThreadKind): String
+    /**
+     * Creates a new `Thread` row for [closure] alone and stamps [closure]'s own transmission with
+     * its id and, per register R-1098, [reason] — the real [ThreadGrouper.decide] verdict this
+     * transmission's own row now carries forward (`transmission.threadJoinReason`), never thrown
+     * away once the caller has read it. Returns the new thread's id.
+     */
+    public suspend fun startThread(closure: TransmissionClosure, kind: ThreadKind, reason: ThreadJoinReason): String
 
     /**
      * Extends [threadId] with [closure] and stamps [closure]'s own transmission with it —
      * `endedAt`/`transmissionCount`/`participantStationIds`/`kind` all move forward, never
      * backward (constitution III: "nothing is deleted quietly" — no prior thread field is ever
-     * cleared, only extended).
+     * cleared, only extended). Register R-1098: also stamps [reason], the real
+     * [ThreadGrouper.decide] verdict for *this* transmission's own join, onto its own row
+     * (`transmission.threadJoinReason`) — a fact about this transmission's join, not about the
+     * thread as a whole, so it is never folded into [ThreadEntity][org.ort.data.entity.ThreadEntity]
+     * itself the way `endedAt`/`kind` are.
      */
-    public suspend fun appendToThread(threadId: String, closure: TransmissionClosure, kind: ThreadKind)
+    public suspend fun appendToThread(
+        threadId: String,
+        closure: TransmissionClosure,
+        kind: ThreadKind,
+        reason: ThreadJoinReason,
+    )
 }

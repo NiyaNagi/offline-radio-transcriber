@@ -3,6 +3,7 @@ package org.ort.pipeline.threading
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.ort.data.entity.ThreadJoinReason
 import org.ort.data.entity.ThreadKind
 import org.ort.data.entity.ThreadKindSource
 

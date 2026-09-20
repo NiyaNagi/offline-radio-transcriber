@@ -270,10 +270,8 @@ public object ReaderTransmissionViewStateMapper {
      * cause, but it must also never invent a station that was not actually written.
      */
     public fun attributionFrom(entity: TransmissionEntity): Attribution {
+        correctedAttributionOrNull(entity)?.let { return it }
         val stationId = entity.stationId
-        if (entity.corrected && stationId != null) {
-            return Attribution.unknown().withCorrection(stationId)
-        }
         val confidence = entity.attributionConfidence
         return when (entity.attributionState) {
             AttributionState.CONFIRMED ->
@@ -293,6 +291,37 @@ public object ReaderTransmissionViewStateMapper {
             AttributionState.AMBIGUOUS -> Attribution.ambiguous()
             AttributionState.UNKNOWN -> Attribution.unknown()
         }
+    }
+
+    /**
+     * Register R-1099: the one reconstruction of what a *correction* makes an attribution read as
+     * — `null` when [entity] carries no correction, so a caller falls back to whatever it already
+     * has for the uncorrected case. This is the fact [attributionFrom] (above) and
+     * [org.ort.app.ui.data.CorrectionPolling.currentAttribution] now share, in place of each
+     * separately hard-coding `Attribution.unknown().withCorrection(stationId)` — two copies of the
+     * exact rule whose earlier divergence (one copy required a non-null confidence for INFERRED,
+     * the other did not) was the R-1041-class defect this file's own [attributionFrom] doc comment
+     * already describes at length. Public so `CorrectionPolling.kt` (a different package's file,
+     * not extended by that fix) can call it directly rather than keeping its own copy.
+     *
+     * **Why [attributionFrom] and `currentAttribution` still differ beyond this shared call, and
+     * why that is not the same bug again (register R-1099):** for an *uncorrected* row,
+     * [attributionFrom] reconstructs the whole [Attribution] from [entity]'s own
+     * `attributionState`/`attributionConfidence` columns; `currentAttribution` instead returns
+     * whatever `fallback: Attribution` its caller already computed (`ReaderPolling`'s own, already
+     * unified read). That is a genuine, tested difference in *shape*, not two rules for the same
+     * fact: `currentAttribution`'s whole reason to exist is to patch the one case (a correction)
+     * where a caller-supplied fallback can be wrong, while trusting that fallback everywhere else
+     * rather than re-deriving it a second, possibly-inconsistent way. `CorrectionPollingTest`'s own
+     * `R_189_currentAttribution_leaves_an_uncorrected_row_to_the_resolvers_own_fallback` pins this
+     * exact difference: it hands `currentAttribution` a `fallback` that deliberately does **not**
+     * match what [attributionFrom] would independently reconstruct from the same row, and asserts
+     * the fallback wins — proving the two functions are not silently reconverging into a second
+     * "reconstruct from scratch" implementation by accident.
+     */
+    public fun correctedAttributionOrNull(entity: TransmissionEntity): Attribution? {
+        val stationId = entity.stationId
+        return if (entity.corrected && stationId != null) Attribution.unknown().withCorrection(stationId) else null
     }
 
     private fun sourceId(entity: TransmissionEntity): TransmissionId? =

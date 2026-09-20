@@ -4,6 +4,7 @@ import org.ort.core.Ulid
 import org.ort.data.Converters
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.ThreadEntity
+import org.ort.data.entity.ThreadJoinReason
 import org.ort.data.entity.ThreadKind
 import org.ort.data.entity.ThreadKindSource
 import org.ort.data.execRaw
@@ -86,7 +87,11 @@ public class RoomThreadRepository(private val db: OrtDatabase) : ThreadRepositor
             gap.startedAt < toUtc && gapEnd > fromUtc
         }
 
-    override suspend fun startThread(closure: TransmissionClosure, kind: ThreadKind): String {
+    override suspend fun startThread(
+        closure: TransmissionClosure,
+        kind: ThreadKind,
+        reason: ThreadJoinReason,
+    ): String {
         val threadId = Ulid.generate().value
         db.catalogDao().insert(
             ThreadEntity(
@@ -103,11 +108,16 @@ public class RoomThreadRepository(private val db: OrtDatabase) : ThreadRepositor
                 participantOrder = closure.stationId?.let { listOf(it) },
             ),
         )
-        stampTransmission(threadId, closure.transmissionId)
+        stampTransmission(threadId, closure.transmissionId, reason)
         return threadId
     }
 
-    override suspend fun appendToThread(threadId: String, closure: TransmissionClosure, kind: ThreadKind) {
+    override suspend fun appendToThread(
+        threadId: String,
+        closure: TransmissionClosure,
+        kind: ThreadKind,
+        reason: ThreadJoinReason,
+    ) {
         val thread = db.catalogDao().getThread(threadId) ?: return
         val previousParticipants = thread.participantStationIds.orEmpty()
         val previousOrder = thread.participantOrder.orEmpty()
@@ -128,10 +138,21 @@ public class RoomThreadRepository(private val db: OrtDatabase) : ThreadRepositor
             kind.name,
             threadId,
         )
-        stampTransmission(threadId, closure.transmissionId)
+        stampTransmission(threadId, closure.transmissionId, reason)
     }
 
-    private suspend fun stampTransmission(threadId: String, transmissionId: String) {
-        db.execRaw("UPDATE transmission SET threadId = ? WHERE id = ?", threadId, transmissionId)
+    /**
+     * Register R-1098: stamps both `transmission.threadId` (the pre-existing write) and
+     * `transmission.threadJoinReason` (the real [ThreadGrouper.decide] verdict for this exact
+     * transmission) in the same raw statement — one write, not two, so a caller can never observe
+     * a row with a thread id but no reason (or the reverse) between them.
+     */
+    private suspend fun stampTransmission(threadId: String, transmissionId: String, reason: ThreadJoinReason) {
+        db.execRaw(
+            "UPDATE transmission SET threadId = ?, threadJoinReason = ? WHERE id = ?",
+            threadId,
+            reason.name,
+            transmissionId,
+        )
     }
 }

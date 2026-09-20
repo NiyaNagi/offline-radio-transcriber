@@ -129,6 +129,31 @@ public data class VoiceprintEntity(
 public enum class ThreadKind { QSO, NET, SCANNER, UNKNOWN }
 public enum class ThreadKindSource { DETECTED, USER }
 
+/**
+ * Register R-1098 (FR-SPK-5, constitution I: "every machine conclusion MUST be inspectable"): why
+ * [org.ort.pipeline.threading.ThreadGrouper.decide] joined the current transmission to an existing
+ * thread, or started a new one — computed for every decision and, until this existed, thrown away
+ * the instant [org.ort.pipeline.threading.ThreadGroupingCoordinator] read it. Thread grouping is a
+ * machine conclusion the operator sees on every Log screen; before this, there was no durable trace
+ * of *why* a transmission ended up where it did, only the resulting `threadId` itself.
+ *
+ * Lives here, in `:data`, rather than in `:pipeline` (where
+ * [org.ort.pipeline.threading.ThreadGrouper] actually computes it) because
+ * [TransmissionEntity.threadJoinReason] needs a type it can store, and the module graph runs one
+ * way only — `:pipeline` already depends on `:data` for [ThreadKind]/[ThreadKindSource] for exactly
+ * this reason, never the reverse. `:pipeline`'s own `ThreadingModels.kt` imports this enum rather
+ * than keeping a second, independent copy.
+ */
+public enum class ThreadJoinReason {
+    FIRST_TRANSMISSION_IN_SESSION,
+    SAME_FREQUENCY_WITHIN_GAP,
+    SAME_RIG_CHANNEL_WITHIN_GAP,
+    NO_FREQUENCY_INFO_WITHIN_GAP,
+    NEW_THREAD_FREQUENCY_CHANGED,
+    NEW_THREAD_GAP_EXCEEDED,
+    NEW_THREAD_UNLISTENED_CAPTURE_GAP,
+}
+
 @Entity(tableName = "thread")
 public data class ThreadEntity(
     @PrimaryKey val id: String,

@@ -39,7 +39,7 @@ public class ThreadGroupingCoordinator(
                     current = closure,
                     transmissionCountBeforeCurrent = 0,
                 )
-                repository.startThread(closure, kind)
+                repository.startThread(closure, kind, decision.reason)
             }
             is ThreadGroupingDecision.JoinExistingThread -> {
                 val thread = requireNotNull(prior) {
@@ -52,7 +52,7 @@ public class ThreadGroupingCoordinator(
                     current = closure,
                     transmissionCountBeforeCurrent = thread.transmissionCount,
                 )
-                repository.appendToThread(decision.threadId, closure, kind)
+                repository.appendToThread(decision.threadId, closure, kind, decision.reason)
             }
         }
     }

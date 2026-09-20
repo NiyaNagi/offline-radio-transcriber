@@ -1,6 +1,7 @@
 package org.ort.pipeline.threading.fake
 
 import org.ort.core.Ulid
+import org.ort.data.entity.ThreadJoinReason
 import org.ort.data.entity.ThreadKind
 import org.ort.data.entity.ThreadKindSource
 import org.ort.pipeline.threading.PriorThreadContext
@@ -31,6 +32,11 @@ public class FakeThreadRepository : ThreadRepository {
     private val threadIdByTransmission: MutableMap<String, String> = mutableMapOf()
     private val threads: MutableMap<String, ThreadRecord> = mutableMapOf()
 
+    /** Register R-1098: the real [ThreadJoinReason] [startThread]/[appendToThread] stamped for each
+     * transmission — the same fact [org.ort.pipeline.threading.RoomThreadRepository] now writes to
+     * `transmission.threadJoinReason`, kept here so a test can assert it without a real database. */
+    private val joinReasonByTransmission: MutableMap<String, ThreadJoinReason> = mutableMapOf()
+
     /** `sessionId` -> list of `[fromUtc, toUtc)` unlistened capture-gap windows. */
     private val captureGaps: MutableMap<String, MutableList<LongRange>> = mutableMapOf()
 
@@ -50,6 +56,10 @@ public class FakeThreadRepository : ThreadRepository {
 
     /** The thread id [transmissionId] ended up with, or `null` if it was never threaded. */
     public fun threadIdFor(transmissionId: String): String? = threadIdByTransmission[transmissionId]
+
+    /** Register R-1098: the real [ThreadJoinReason] recorded for [transmissionId]'s own join, or
+     * `null` if it was never threaded. */
+    public fun joinReasonFor(transmissionId: String): ThreadJoinReason? = joinReasonByTransmission[transmissionId]
 
     /** How many transmissions [threadId] carries right now, or `null` if it does not exist. */
     public fun transmissionCountOf(threadId: String): Int? = threads[threadId]?.transmissionCount
@@ -107,7 +117,11 @@ public class FakeThreadRepository : ThreadRepository {
     override suspend fun unlistenedCaptureGapBetween(sessionId: String, fromUtc: Long, toUtc: Long): Boolean =
         captureGaps[sessionId].orEmpty().any { window -> window.first < toUtc && window.last + 1 > fromUtc }
 
-    override suspend fun startThread(closure: TransmissionClosure, kind: ThreadKind): String {
+    override suspend fun startThread(
+        closure: TransmissionClosure,
+        kind: ThreadKind,
+        reason: ThreadJoinReason,
+    ): String {
         startThreadCalls += closure
         val threadId = Ulid.generate().value
         threads[threadId] = ThreadRecord(
@@ -122,10 +136,16 @@ public class FakeThreadRepository : ThreadRepository {
             record.transmissionIds += closure.transmissionId
         }
         threadIdByTransmission[closure.transmissionId] = threadId
+        joinReasonByTransmission[closure.transmissionId] = reason
         return threadId
     }
 
-    override suspend fun appendToThread(threadId: String, closure: TransmissionClosure, kind: ThreadKind) {
+    override suspend fun appendToThread(
+        threadId: String,
+        closure: TransmissionClosure,
+        kind: ThreadKind,
+        reason: ThreadJoinReason,
+    ) {
         appendToThreadCalls += threadId to closure
         val record = threads.getValue(threadId)
         record.endedAtUtc = maxOf(record.endedAtUtc, closure.endedAtUtc)
@@ -134,5 +154,6 @@ public class FakeThreadRepository : ThreadRepository {
         closure.voiceKey?.let { key -> record.voiceKeyCounts[key] = (record.voiceKeyCounts[key] ?: 0) + 1 }
         record.transmissionIds += closure.transmissionId
         threadIdByTransmission[closure.transmissionId] = threadId
+        joinReasonByTransmission[closure.transmissionId] = reason
     }
 }

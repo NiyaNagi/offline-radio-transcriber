@@ -123,6 +123,19 @@ public data class TransmissionEntity(
     val vadDetector: VadDetectorKind = VadDetectorKind.UNKNOWN,
     val vadDetectorVersion: String? = null,
     val rigSquelchFusionApplied: Boolean = false,
+    /**
+     * [threadJoinReason] (schema v15, register R-1098, FR-SPK-5, constitution I): the real
+     * [ThreadJoinReason] [org.ort.pipeline.threading.ThreadGrouper.decide] actually returned for
+     * this transmission's own threading decision — see [ThreadJoinReason]'s own doc comment for why
+     * a machine conclusion the operator sees on every Log screen used to have no durable trace of
+     * *why*. Set once, at persist time, by
+     * [org.ort.pipeline.threading.RoomThreadRepository.startThread]/`.appendToThread` — never
+     * revisited afterwards, the same "write once" discipline [vadDetector] and
+     * [rigStateChangedMidTransmission] already use. `null` for a pre-v15 row (never fabricated) and
+     * for any transmission threading has not yet run for — never conflated with a real, computed
+     * reason.
+     */
+    val threadJoinReason: ThreadJoinReason? = null,
 ) {
     /**
      * The derived on-disk path for this transmission's audio (technical design §12.2): paths

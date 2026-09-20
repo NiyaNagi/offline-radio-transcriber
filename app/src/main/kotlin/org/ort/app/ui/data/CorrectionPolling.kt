@@ -348,6 +348,19 @@ public object CorrectionPolling {
      * still-standing one, then undone back to that earlier one) — `restoreAttribution` can and does
      * write that exact `corrected = true`/`INFERRED`/`NULL`-confidence shape back,
      * since it is what the snapshot genuinely recorded ([org.ort.data.dao.CorrectionDao.restoreAttribution]).
+     *
+     * **Register R-1099: the "what does a correction reconstruct to" half of this function is no
+     * longer its own, independent copy.** It now calls
+     * [ReaderTransmissionViewStateMapper.correctedAttributionOrNull] — the exact
+     * `Attribution.unknown().withCorrection(stationId)` shape both this function and
+     * [ReaderTransmissionViewStateMapper.attributionFrom] need, previously hard-coded separately in
+     * each — the same duplication-of-one-rule shape that produced the original R-1041-class defect
+     * (see [ReaderTransmissionViewStateMapper.attributionFrom]'s own doc comment). The *uncorrected*
+     * half deliberately still differs: this function keeps trusting the caller-supplied [fallback]
+     * rather than reconstructing from [entity] a second way — see
+     * [ReaderTransmissionViewStateMapper.correctedAttributionOrNull]'s own doc comment for why that
+     * remaining difference is real and tested, not a lingering second implementation of the same
+     * fact.
      */
     public suspend fun currentAttribution(
         context: Context,
@@ -356,12 +369,7 @@ public object CorrectionPolling {
     ): Attribution {
         val db = OrtDatabase.create(context.applicationContext)
         val entity = db.transmissionDao().getById(transmissionId) ?: return fallback
-        val stationId = entity.stationId
-        return if (entity.corrected && stationId != null) {
-            Attribution.unknown().withCorrection(stationId)
-        } else {
-            fallback
-        }
+        return ReaderTransmissionViewStateMapper.correctedAttributionOrNull(entity) ?: fallback
     }
 
     /**

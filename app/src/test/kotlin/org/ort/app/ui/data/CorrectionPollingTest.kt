@@ -606,6 +606,33 @@ class CorrectionPollingTest {
         assertEquals(fallback, attribution)
     }
 
+    // ---- R-1099: currentAttribution's corrected branch is no longer a second, independent copy ----
+
+    /**
+     * Pins the unification itself: for a *corrected* row, [CorrectionPolling.currentAttribution]
+     * must produce the exact same [Attribution] [ReaderTransmissionViewStateMapper.attributionFrom]
+     * would independently reconstruct from the same row — because both now call the one shared
+     * [ReaderTransmissionViewStateMapper.correctedAttributionOrNull]. The `fallback` passed here is
+     * deliberately wrong (`Attribution.confirmed` with a different callsign and state) — if this
+     * still passed, `currentAttribution` would be silently trusting the fallback for a corrected row
+     * instead of overriding it, the exact class of bug R-189 fixed once already.
+     */
+    @Test
+    fun R_1099_currentAttribution_and_attributionFrom_agree_on_a_corrected_row(): Unit = runTest {
+        db.sessionDao().insert(session())
+        db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        db.correctionDao().recordCorrection(request("TX1", "K7LWH", "VE7ABC").toEntity())
+
+        val entity = db.transmissionDao().getById("TX1")!!
+        val wrongFallback = Attribution.confirmed("K7LWH", 0.99)
+
+        val viaCurrentAttribution = CorrectionPolling.currentAttribution(context, "TX1", fallback = wrongFallback)
+        val viaAttributionFrom = ReaderTransmissionViewStateMapper.attributionFrom(entity)
+
+        assertEquals(viaAttributionFrom, viaCurrentAttribution)
+        assertEquals("VE7ABC", viaCurrentAttribution.stationId)
+    }
+
     // ---- R-1046 (register, halt): `correctionTyped` tells a typed, unverified correction apart
     // from one picked from a resolved candidate/known station — the real audit-row fact
     // `DetailViewStateMapper` needs so the Detail screen never claims a typed guess was "Matched by

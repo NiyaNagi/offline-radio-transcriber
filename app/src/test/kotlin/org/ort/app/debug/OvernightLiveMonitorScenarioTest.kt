@@ -50,7 +50,9 @@ class OvernightLiveMonitorScenarioTest {
 
             assertTrue("the scenario must mark capture as genuinely running", CaptureState.isCapturing)
             assertEquals(result.primarySessionId, CaptureState.sessionId)
-            assertEquals(7, result.transmissionCount)
+            // R-1099: an 8th, corrected transmission was added so this surface has a real corrected
+            // row to capture (see this scenario's own comment on that transmission).
+            assertEquals(8, result.transmissionCount)
         }
 
     @Test
@@ -88,7 +90,12 @@ class OvernightLiveMonitorScenarioTest {
             val confirmed = resolved.first { it.attribution.state == AttributionState.CONFIRMED }
             assertEquals("W7NPC", confirmed.callsign)
 
-            val inferred = resolved.first { it.attribution.state == AttributionState.INFERRED }
+            // R-1099: excludes the corrected row added below -- it is also INFERRED (a correction's
+            // own shape, `Attribution.unknown().withCorrection`), but it is not the voice-matched
+            // over this test is pinning, and (sorted newest-first) it would otherwise be `.first`.
+            val inferred = resolved.first {
+                it.attribution.state == AttributionState.INFERRED && !it.attribution.corrected
+            }
             assertEquals("K7LWH", inferred.callsign)
             assertNotNull(
                 "an INFERRED row whose source transmission is still in this session's own list " +
@@ -149,11 +156,25 @@ class OvernightLiveMonitorScenarioTest {
         assertEquals(1, overs.filterIsInstance<LiveMonitorOverRow.NotTranscribed>().size)
         assertEquals(1, overs.filterIsInstance<LiveMonitorOverRow.ListenedSilence>().size)
         val resolved = overs.filterIsInstance<LiveMonitorOverRow.Resolved>()
-        assertEquals(3, resolved.size)
+        // R-1099: 4, not 3 -- the corrected row (also `Resolved`, INFERRED) added below.
+        assertEquals(4, resolved.size)
         assertEquals(
             setOf(AttributionState.CONFIRMED, AttributionState.INFERRED, AttributionState.UNKNOWN),
             resolved.map { it.attribution.state }.toSet(),
         )
+    }
+
+    // ---- R-1099: a corrected transmission is now reachable on Live Monitor ----
+
+    @Test
+    fun `R_1099 overnight-live-monitor seeds a Resolved row carrying the corrected lock`() = runTest {
+        val result = Scenarios.load(context, "overnight-live-monitor")
+        val overs = LiveMonitorOversPolling.current(context, result.primarySessionId).overs
+        val resolved = overs.filterIsInstance<LiveMonitorOverRow.Resolved>()
+
+        val corrected = resolved.filter { it.attribution.corrected }
+        assertEquals("expected exactly one corrected Resolved row", 1, corrected.size)
+        assertEquals("KJ7ABC", corrected.single().callsign)
     }
 
     // --- R-1024 (register, `overnight-live-monitor` seeds no level samples) ---------------------
