@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P32 gate fix: `CheckboxRow`/`ToggleRow`'s content-description fix regressed six consumer tests; corrected)
 
-### (pending) — P32 gate fix · `CheckboxRow`/`ToggleRow` carry a real content description without erasing descendant text or state
+### 90a4f331 — P32 gate fix · `CheckboxRow`/`ToggleRow` carry a real content description without erasing descendant text or state
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Controls.kt` and its tests
 (`app/src/test/kotlin/org/ort/app/ui/components/ControlsTest.kt`, new
