@@ -87,4 +87,29 @@ class SetupStepTest {
         val positionsInUse = SetupStep.entries.mapNotNull { it.indicatorIndex() }.toSet()
         assertEquals((1..SETUP_TOTAL_STEPS).toSet(), positionsInUse)
     }
+
+    /**
+     * R-1091 (register): `Setup-Mic-Denied.dc.html` draws its segment 2 in `halt/text`, and
+     * [MicrophoneDeniedScreen] already renders [SetupHaltBanner] — the same halting-tone banner
+     * [RouteMismatchScreen] uses — for its body. A permanently denied microphone is a real halt:
+     * capture cannot start at all until the operator leaves the app for system settings and comes
+     * back, which is exactly [SetupStep.ROUTE_MISMATCH]'s own shape ("no `Continue` exists on this
+     * screen at all"). The artboard and the screen's own content already agree it is a halt; only
+     * this pure function disagreed. Judged: the code was wrong, not the drawing.
+     */
+    @Test
+    fun `R_1091 MICROPHONE_DENIED is halted, matching Setup-Mic-Denied dc html and its own halt banner`() {
+        assertTrue(SetupStep.MICROPHONE_DENIED.isHalted())
+    }
+
+    @Test
+    fun `R_1091 ROUTE_MISMATCH remains halted`() {
+        assertTrue(SetupStep.ROUTE_MISMATCH.isHalted())
+    }
+
+    @Test
+    fun `R_1091 no other SetupStep is halted`() {
+        val halted = SetupStep.entries.filter { it.isHalted() }.toSet()
+        assertEquals(setOf(SetupStep.MICROPHONE_DENIED, SetupStep.ROUTE_MISMATCH), halted)
+    }
 }

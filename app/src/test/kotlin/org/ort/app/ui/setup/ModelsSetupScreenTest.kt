@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import org.junit.Assert.assertEquals
@@ -15,6 +16,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.data.ModelId
+import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
@@ -125,6 +127,54 @@ class ModelsSetupScreenTest {
     fun `a failed row shows its real failure reason and offers Retry, never a fabricated one`() {
         val failed = pendingRow.copy(status = ModelDownloadRowStatus.FAILED, failureReason = "connection interrupted")
         assertEquals("connection interrupted", modelDownloadRowStatusLine(failed))
+    }
+
+    /**
+     * R-1092 (register, design-guide §3, FR-AST-10, AC-186): the FAILED row's reason used to render
+     * in `text/dim`, the same colour every other row's status line uses, so a checksum mismatch read
+     * like ordinary secondary text rather than the amber the guide reserves for a failed state
+     * (§6.8 "Failed / unavailable — amber ... never a bare 'error'"). [modelDownloadRowStatusColor]
+     * is the single place [ModelDownloadRow] reads its status-line colour from; pinning it here
+     * means the composable cannot drift back to dim without this test failing.
+     */
+    @Test
+    fun `R_1092 a FAILED row's reason renders in accent amber text, not dim`() {
+        val failed = pendingRow.copy(status = ModelDownloadRowStatus.FAILED, failureReason = "checksum mismatch")
+        assertEquals(OrtColors.accentAmberText, modelDownloadRowStatusColor(failed))
+    }
+
+    @Test
+    fun `R_1092 every non-FAILED row keeps the ordinary dim status colour`() {
+        val pending = pendingRow.copy(status = ModelDownloadRowStatus.PENDING)
+        val downloading = pendingRow.copy(status = ModelDownloadRowStatus.DOWNLOADING)
+        val installed = pendingRow.copy(status = ModelDownloadRowStatus.INSTALLED)
+        assertEquals(OrtColors.textDim, modelDownloadRowStatusColor(pending))
+        assertEquals(OrtColors.textDim, modelDownloadRowStatusColor(downloading))
+        assertEquals(OrtColors.textDim, modelDownloadRowStatusColor(installed))
+    }
+
+    /** The wiring proof the pure-function test above cannot stand in for: the real composition
+     * renders the FAILED reason with `OrtType.subLine` unchanged (only its colour moves), and it
+     * is still findable by its own text. Colour itself is not queryable from the semantics tree
+     * (`OrtThemeTest`'s own note: `captureToImage()` hangs in this sandbox with no network egress),
+     * so [modelDownloadRowStatusColor] — [ModelDownloadRow]'s one and only source for this colour —
+     * is what carries the pin; this test guards that the reason text a checksum failure reports is
+     * still the one rendered, not silently swapped for a generic "Download failed" while the colour
+     * moves. */
+    @Test
+    fun `R_1092 a FAILED row still renders its own real failure reason on screen`() {
+        val failed = pendingRow.copy(status = ModelDownloadRowStatus.FAILED, failureReason = "checksum mismatch")
+        composeTestRule.setContent {
+            OrtTheme {
+                ModelsSetupScreen(
+                    state = ModelsSetupViewState(rows = listOf(failed), wifiOnly = true),
+                    onDownload = {},
+                    onToggleWifiOnly = {},
+                    onContinue = {},
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("checksum mismatch").assertIsDisplayed()
     }
 
     @Test
