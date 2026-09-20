@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P32: accessibility pass — WCAG 2.2 AA, partial; see this entry's "Left open")
 
-### (pending) — P32 · two shared-component accessibility fixes: header touch targets and toggle/checkbox descriptions
+### 0b7efcde — P32 · two shared-component accessibility fixes: header touch targets and toggle/checkbox descriptions
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/components/Rows.kt`,
 `app/src/main/kotlin/org/ort/app/ui/components/Controls.kt`, and their tests
