@@ -1,22 +1,29 @@
 package org.ort.pipeline.alerts
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 
 /**
  * Build-plan P31 (FR-ALR-2, FR-ALR-4): where a matched watch actually becomes something the
  * operator sees. [canDeliver] lets a caller (this package's own coordinator, or `:app`'s Settings
  * screen) ask honestly whether anything will actually happen before pretending it did — POST_NOTIFICATIONS
  * may have been denied at setup (functional spec §7.19's own "handle that honestly").
+ *
+ * [dispatch] returns whether it actually posted — `false` means the platform's own permission
+ * state made delivery impossible (constitution I: an attribution/outcome without its true state
+ * is a bug). A caller MUST NOT treat a `false` as if the alert had fired.
  */
 public interface AlertNotificationDispatcher {
     public fun canDeliver(): Boolean
-    public fun dispatch(firing: AlertFiring)
+    public fun dispatch(firing: AlertFiring): Boolean
 }
 
 /**
@@ -38,11 +45,40 @@ public class AndroidAlertNotificationDispatcher(private val context: Context) : 
 
     override fun canDeliver(): Boolean = notificationsCanFire(context)
 
-    override fun dispatch(firing: AlertFiring) {
+    /**
+     * Honours [canDeliver] (the FR-ALR-2 honesty check this class previously exposed but never
+     * consulted at its own call site) *and* carries a second, literal
+     * `ContextCompat.checkSelfPermission` guard immediately ahead of the `notify()` call.
+     * `canDeliver()`/`NotificationManagerCompat.areNotificationsEnabled()` is correct at runtime
+     * but is an opaque method call as far as lint's `MissingPermission` data-flow analysis is
+     * concerned, so it cannot discharge `NotificationManagerCompat.notify`'s own
+     * `@RequiresPermission(POST_NOTIFICATIONS)` obligation (confirmed against the compiled
+     * `androidx.core:core:1.13.1` annotation directly — it carries no `conditional` element, so
+     * lint treats it as a plain revocable-permission requirement, satisfied only by a manifest
+     * declaration *and* a literal, traceable `checkSelfPermission`/`==PERMISSION_GRANTED` guard it
+     * can follow itself — never by an indirection through a differently-named method, however
+     * equivalent). The guard below is that literal check, not a second opinion offered for its own
+     * sake — see this package's own `AndroidManifest.xml` for the matching `<uses-permission>`,
+     * without which lint reports the permission missing outright rather than merely unguarded.
+     *
+     * Below API 33 (`Build.VERSION_CODES.TIRAMISU`) `POST_NOTIFICATIONS` is not a runtime
+     * permission at all — there is nothing to request and nothing to deny — so the guard is
+     * skipped there entirely rather than calling `checkSelfPermission` for a concept that does not
+     * exist yet on that platform.
+     */
+    override fun dispatch(firing: AlertFiring): Boolean {
+        if (!canDeliver()) return false
+        val postNotificationsDenied = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        if (postNotificationsDenied) return false
         ensureChannel()
         val content = AlertNotificationContentBuilder.build(firing)
         val notification = build(content)
         NotificationManagerCompat.from(context).notify(notificationIdFor(firing.watch.id), notification)
+        return true
     }
 
     private fun build(content: AlertNotificationContent): Notification = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -81,17 +117,21 @@ public fun notificationsCanFire(context: Context): Boolean =
     NotificationManagerCompat.from(context).areNotificationsEnabled()
 
 /** The behavioural fake (constitution II) — every coordinator/content test uses this rather than a
- * real `NotificationManager`. Records every [dispatch] call verbatim, in order, so a coalescing
- * test can assert both how many firings were recorded and what each one's own [AlertFiring.isRepeat]/
- * [AlertFiring.occurrenceCount] carried. */
+ * real `NotificationManager`. Records every *delivered* [dispatch] call verbatim, in order, so a
+ * coalescing test can assert both how many firings were recorded and what each one's own
+ * [AlertFiring.isRepeat]/[AlertFiring.occurrenceCount] carried. When [setDeliverable] has set
+ * `false`, [dispatch] mirrors [AndroidAlertNotificationDispatcher]'s own honesty: it records
+ * nothing and reports `false`, rather than pretending an alert fired that could not have. */
 public class FakeAlertNotificationDispatcher(private var deliverable: Boolean = true) : AlertNotificationDispatcher {
 
     public val firings: MutableList<AlertFiring> = mutableListOf()
 
     override fun canDeliver(): Boolean = deliverable
 
-    override fun dispatch(firing: AlertFiring) {
+    override fun dispatch(firing: AlertFiring): Boolean {
+        if (!deliverable) return false
         firings += firing
+        return true
     }
 
     public fun setDeliverable(value: Boolean) {

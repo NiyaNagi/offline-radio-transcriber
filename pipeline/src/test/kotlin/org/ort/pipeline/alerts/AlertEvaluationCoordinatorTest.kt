@@ -104,9 +104,10 @@ class AlertEvaluationCoordinatorTest {
         val releaseDispatch = CountDownLatch(1)
         val stallingDispatcher = object : AlertNotificationDispatcher {
             override fun canDeliver() = true
-            override fun dispatch(firing: AlertFiring) {
+            override fun dispatch(firing: AlertFiring): Boolean {
                 dispatchStarted.countDown()
                 releaseDispatch.await(5, TimeUnit.SECONDS)
+                return true
             }
         }
         val coordinator = AlertEvaluationCoordinator(store, stallingDispatcher)
