@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -75,5 +76,22 @@ class MicrophoneScreensTest {
         }
         composeTestRule.onNodeWithTag("setup-back").performClick()
         assert(backed)
+    }
+
+    /**
+     * R-1091 (register): `Setup-Mic-Denied.dc.html` draws its step-indicator segment in
+     * `halt/text`, but [SetupStep.MICROPHONE_DENIED.isHalted] used to be `false`, so
+     * [SegmentBars]' own merged content description read "Step 2 of 10" here, never naming the
+     * halt the screen's own [SetupHaltBanner] body already announces. This is the wiring proof
+     * `SetupStepTest`'s own `R_1091` unit test cannot stand in for: it exercises the real
+     * [MicrophoneDeniedScreen] composition through [SetupScaffold]/[SegmentBars], not the bare
+     * [isHalted] function.
+     */
+    @Test
+    fun `R_1091 the step indicator announces the halt, matching Setup-Mic-Denied dc html`() {
+        composeTestRule.setContent {
+            OrtTheme { MicrophoneDeniedScreen(onOpenSettings = {}, onCheckAgain = {}) }
+        }
+        composeTestRule.onNodeWithContentDescription("Step 2 of 10, halted at step 2").assertIsDisplayed()
     }
 }

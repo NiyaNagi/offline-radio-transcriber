@@ -8,6 +8,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.PrimaryButton
@@ -98,7 +99,11 @@ private fun ModelDownloadRow(row: ModelDownloadRowViewState, onDownload: (ModelI
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(text = row.label, style = OrtType.control, color = OrtColors.textHigh)
-            Text(text = modelDownloadRowStatusLine(row), style = OrtType.subLine, color = OrtColors.textDim)
+            Text(
+                text = modelDownloadRowStatusLine(row),
+                style = OrtType.subLine,
+                color = modelDownloadRowStatusColor(row),
+            )
         }
         when (row.status) {
             ModelDownloadRowStatus.PENDING -> TextAction(
@@ -123,6 +128,24 @@ internal fun modelDownloadRowStatusLine(row: ModelDownloadRowViewState): String 
     ModelDownloadRowStatus.DOWNLOADING -> "Downloading…"
     ModelDownloadRowStatus.INSTALLED -> "Installed · checksum verified"
     ModelDownloadRowStatus.FAILED -> row.failureReason ?: "Download failed"
+}
+
+/**
+ * R-1092 (register, design-guide §3/§6.8, FR-AST-10, AC-186): the FAILED status line used to
+ * render in `text/dim`, the same colour every other row's status line uses, so a checksum
+ * mismatch read like ordinary secondary text rather than the amber the guide reserves for a
+ * failed state ("Failed / unavailable — amber, states the cause in operator terms ... never a
+ * bare 'error'"). [OrtColors.accentAmberText] is the guide's own "amber explanatory text" token
+ * (§3: "Amber explanatory text, 'revised' badge text") — the colour, not a fill, since this is a
+ * sentence of explanation beside the row, not a badge or a banner. [ModelDownloadRow] reads this
+ * function alone for that colour, so nothing else can drift it back to dim independently.
+ */
+internal fun modelDownloadRowStatusColor(row: ModelDownloadRowViewState): Color = when (row.status) {
+    ModelDownloadRowStatus.FAILED -> OrtColors.accentAmberText
+    ModelDownloadRowStatus.PENDING,
+    ModelDownloadRowStatus.DOWNLOADING,
+    ModelDownloadRowStatus.INSTALLED,
+    -> OrtColors.textDim
 }
 
 private fun sizeLabel(sizeBytes: Long): String = if (sizeBytes <= 0L) {

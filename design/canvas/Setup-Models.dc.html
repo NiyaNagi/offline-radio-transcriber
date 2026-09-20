@@ -64,15 +64,14 @@
       <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150);">Download</div>
     </div>
 
-    <!-- FAILED row: a real failure reason, Retry offered. Drawn to match what the built screen
-         actually does today (ModelsSetupScreen.kt's ModelDownloadRow: the status line is always
-         OrtColors.textDim, the same as every other row) -- not the amber the design-guide's own
-         §3 convention calls for on a failed state elsewhere in the app. Noted, not silently
-         "corrected": a real deviation worth a register row once this is captured, not invented here. -->
+    <!-- FAILED row: a real failure reason, Retry offered. The reason renders in accent/amber-text
+         (design-guide §3/§6.8: "Failed / unavailable — amber, states the cause in operator terms
+         ... never a bare 'error'") -- R-1092 fixed ModelsSetupScreen.kt's ModelDownloadRow to
+         match, via modelDownloadRowStatusColor(). -->
     <div style="display: flex; align-items: flex-start; gap: 12px; padding: 8px 0;">
       <div style="flex-grow: 1;">
         <div style="font-size: 14px; color: oklch(0.94 0.006 250);">Whisper tiny.en — decoder</div>
-        <div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px; line-height: 1.4;">checksum did not match the published digest — try again</div>
+        <div style="font-size: 12px; color: oklch(0.62 0.05 60); margin-top: 2px; line-height: 1.4;">checksum did not match the published digest — try again</div>
       </div>
       <div style="font-size: 13px; font-weight: 500; color: oklch(0.72 0.14 150); flex-shrink: 0;">Retry</div>
     </div>

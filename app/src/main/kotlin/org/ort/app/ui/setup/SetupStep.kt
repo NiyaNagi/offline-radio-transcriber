@@ -116,6 +116,18 @@ public fun SetupStep.indicatorIndex(): Int? = when (this) {
     SetupStep.READY -> 10
 }
 
-/** Whether this step's indicator segment should render halted (`halt/text`) — only the route
- * mismatch board halts (guide §6.10, `Setup-Route-Mismatch.dc.html`). */
-public fun SetupStep.isHalted(): Boolean = this == SetupStep.ROUTE_MISMATCH
+/** Whether this step's indicator segment should render halted (`halt/text`, guide §6.10).
+ *
+ * **R-1091 (register):** `Setup-Mic-Denied.dc.html` drew [SetupStep.MICROPHONE_DENIED]'s segment
+ * halted from the start; this function did not agree, and nobody had decided which was wrong.
+ * Judged here: a permanently denied microphone is a real halt, not a lesser warning — capture
+ * cannot start at all, [MicrophoneDeniedScreen] already renders [SetupHaltBanner] (the same
+ * halting-tone banner [RouteMismatchScreen] uses) for exactly that reason, and the screen offers
+ * no `Continue`, only "Open app settings" and "Check again" — [RouteMismatchScreen]'s own shape.
+ * The drawing and the screen's own content were right; this function was the outlier. Fixed by
+ * adding [SetupStep.MICROPHONE_DENIED] here, which changes one visible thing:
+ * [SegmentBars] now paints its segment `halt/text` and the step indicator's merged content
+ * description reads "halted at step 2" on that screen, matching `Setup-Route-Mismatch.dc.html`'s
+ * own halted segment 4. Nothing else reads [isHalted] today.
+ */
+public fun SetupStep.isHalted(): Boolean = this == SetupStep.ROUTE_MISMATCH || this == SetupStep.MICROPHONE_DENIED

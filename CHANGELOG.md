@@ -32,6 +32,73 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (R-1091/R-1092: the mic-denied halt indicator and the FAILED models row's colour)
+
+### R-1091, R-1092 · `SetupStep.isHalted()` now agrees with `Setup-Mic-Denied.dc.html`; the FAILED models row renders amber, not dim
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/SetupStep.kt`,
+`app/src/main/kotlin/org/ort/app/ui/setup/ModelsSetupScreen.kt`, their tests
+(`app/src/test/kotlin/org/ort/app/ui/setup/SetupStepTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/setup/MicrophoneScreensTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/setup/ModelsSetupScreenTest.kt`), and
+`design/canvas/Setup-Models.dc.html`.
+
+**Requirements/ACs:** constitution I, VIII; design-guide §3, §6.8; FR-AST-10; AC-186; R-1087
+(the step-indicator work this unit's `SetupStep.kt` touch builds on).
+
+**What changed:**
+- **R-1091.** `Setup-Mic-Denied.dc.html` drew its segment 2 in `halt/text` from the start;
+  `SetupStep.MICROPHONE_DENIED.isHalted()` returned `false`. Judged the code wrong, not the
+  drawing: a permanently denied microphone is a real halt — capture cannot start at all until the
+  operator leaves for system settings and returns — and `MicrophoneDeniedScreen` already renders
+  `SetupHaltBanner` (the same halting-tone banner `RouteMismatchScreen` uses) and offers no
+  `Continue`, only "Open app settings"/"Check again", the same shape as the one screen `isHalted()`
+  already covered. Fixed `isHalted()` to also return `true` for `MICROPHONE_DENIED`. `isHalted()`
+  has exactly one caller, `SetupScaffold`'s `SegmentBars`, so the only consequences are: that
+  screen's segment 2 now paints `halt/text` instead of `accent/green`, and the segment row's merged
+  `contentDescription` now reads "Step 2 of 10, halted at step 2" instead of "Step 2 of 10" — both
+  now match `Setup-Route-Mismatch.dc.html`'s own halted-segment shape. No artboard change was
+  needed for R-1091: the drawing was already right, and `design-intent.md`'s S02b row already
+  called it "Halting".
+- **R-1092.** `ModelsSetupScreen.kt`'s `ModelDownloadRow` rendered every status line — PENDING,
+  DOWNLOADING, INSTALLED, and FAILED — in `OrtColors.textDim`, so a checksum-mismatch reason read
+  as ordinary secondary text instead of the amber the design guide reserves for a failed state
+  (§6.8: "Failed / unavailable — amber, states the cause in operator terms ... never a bare
+  'error'"). Extracted `modelDownloadRowStatusColor(row)` (mirroring the existing
+  `modelDownloadRowStatusLine(row)`) returning `OrtColors.accentAmberText` — the guide's own
+  "amber explanatory text" token (§3) — for FAILED and `OrtColors.textDim` for every other status;
+  `ModelDownloadRow` now reads this function alone for the status line's colour. Fixed
+  `Setup-Models.dc.html`'s FAILED row to draw its reason in `oklch(0.62 0.05 60)`
+  (`accent/amber-text`) instead of `oklch(0.62 0.008 250)` (`text/dim`), and removed the HTML
+  comment noting the board had been drawn to match the (wrong) built behaviour — the guide is the
+  authority, so the artboard now leads and the deviation note no longer applies.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.setup.*"` — full package,
+  green, 198 tests, no failures.
+- Each new/changed test shown to discriminate by reverting the production change and restoring it:
+  - `SetupStep.isHalted()` reverted to `this == SetupStep.ROUTE_MISMATCH` alone:
+    `SetupStepTest`'s `R_1091 MICROPHONE_DENIED is halted...` and `R_1091 no other SetupStep is
+    halted` both fail (`expected: <true> but was: <false>`; set mismatch), and
+    `MicrophoneScreensTest`'s `R_1091 the step indicator announces the halt...` fails ("component
+    is not displayed"). Restored, all three pass.
+  - `modelDownloadRowStatusColor` reverted to unconditionally return `OrtColors.textDim`:
+    `ModelsSetupScreenTest`'s `R_1092 a FAILED row's reason renders in accent amber text, not dim`
+    fails; the sibling "every non-FAILED row keeps the ordinary dim status colour" test still
+    passes (proving it does not accidentally depend on the same defect). Restored, passes.
+- `.\gradlew.bat ktlintCheck detekt` — both green.
+
+**Left open / not done:** captures are the lead's job, not this unit's (no emulator was used).
+Tour ids to re-capture at font scale 1.0 and 2.0 (scrolled to end where applicable), against
+their artboards:
+- `setup-mic-denied/S02b-mic-denied` (and any `-2x`/`-end` variants) — the halted segment 2 and
+  its "halted at step 2" description, against `Setup-Mic-Denied.dc.html`.
+- `setup-models/S11a-models` (and its `-2x`/`-end` variants) — the FAILED row's reason now in
+  amber, against the corrected `Setup-Models.dc.html`.
+No other setup board's indicator or colour changed in this unit.
+
+---
+
 ## 2026-09-20 (P32 gate fix: `CheckboxRow`/`ToggleRow`'s content-description fix regressed six consumer tests; corrected)
 
 ### 90a4f331 — P32 gate fix · `CheckboxRow`/`ToggleRow` carry a real content description without erasing descendant text or state
