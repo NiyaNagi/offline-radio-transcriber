@@ -266,11 +266,30 @@ internal const val SOURCE_OVER_LINK_TAG = "source-over"
 
 /**
  * R-423 (design): `Detail.dc.html`'s own inline link — the source over's real timestamp is itself
- * the tappable text ("Matched by voice to `02:14:07`, where the callsign was heard clearly."),
- * styled the board's own accent green — never a separate "Open the source over" line beneath the
- * sentence, which is not what the board draws. `internal`, not `private` — the same
- * direct-testability precedent `highlightedTranscript` (R-182) already set in this file, so the
- * real span/tag/colour can be asserted without Compose.
+ * the tappable text ("Not heard in this over. Carried from `02:14:07`, where the callsign was
+ * heard clearly."), styled the board's own accent green — never a separate "Open the source over"
+ * line beneath the sentence, which is not what the board draws. `internal`, not `private` — the
+ * same direct-testability precedent `highlightedTranscript` (R-182) already set in this file, so
+ * the real span/tag/colour can be asserted without Compose.
+ *
+ * **This unit (constitution I, D45, FR-UI-8): the sentence no longer says "voice."** [sourceId]
+ * being non-null means exactly one real fact — `Attribution.sourceTransmissionId` (`core/Attribution.kt`'s
+ * own doc: "the transmission a non-CONFIRMED attribution was carried from, if any") names another
+ * transmission this attribution was carried from — and nothing about *how*. No production code
+ * path currently produces that combination: `CallsignResolver.resolve` (`:pipeline`) returns only
+ * `CONFIRMED`/`AMBIGUOUS`/`UNKNOWN` (its own kdoc: "never `INFERRED`... reading only the current
+ * transmission's lattice"), `:identity` is an empty stub (D45 defers the voice library), and every
+ * write to `attributionSourceTransmissionId` reachable from capture or correction
+ * (`DataPassBResultSink`, `RealCaptureService`, `CorrectionDao.applyCorrectedAttribution`/
+ * `restoreAttribution`) either passes `Attribution.confirmed`/`ambiguous`/`unknown` (no source at
+ * all) or explicitly writes `null`. A voice match is therefore not a claim this build can back —
+ * the same correction D45 already made to the correction-scope label ("same voice" → "same
+ * callsign") for the identical reason. The branch stays, not deleted (constitution I: a state a
+ * debug scenario fixture can still exercise — `OvernightScenario.kt`, `Scenarios.kt` write this
+ * column directly, ahead of the real D28 voice library — must still render honestly, and the
+ * inline link keeps this inspectable per FR-UI-8 either way), but the prose now states only the
+ * fact the data can prove: the callsign was *carried from* that other over, never asserted to
+ * have been recognised by voice.
  */
 internal fun buildInferredExplanationText(
     sourceId: String,
@@ -279,7 +298,7 @@ internal fun buildInferredExplanationText(
 ): AnnotatedString {
     val timeLabel = sourceOverTimeLabel ?: "the source over"
     return buildAnnotatedString {
-        append("Not heard in this over. Matched by voice to ")
+        append("Not heard in this over. Carried from ")
         pushStringAnnotation(tag = SOURCE_OVER_LINK_TAG, annotation = sourceId)
         withStyle(SpanStyle(color = linkColor)) { append(timeLabel) }
         pop()

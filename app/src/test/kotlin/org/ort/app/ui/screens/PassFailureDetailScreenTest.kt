@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -159,7 +160,7 @@ class PassFailureDetailScreenTest {
         val annotated = buildInferredExplanationText("SRC1", "02:14:07", OrtColors.accentGreen)
 
         assertEquals(
-            "Not heard in this over. Matched by voice to 02:14:07, where the callsign was heard clearly.",
+            "Not heard in this over. Carried from 02:14:07, where the callsign was heard clearly.",
             annotated.text,
         )
         val linkStart = annotated.text.indexOf("02:14:07")
@@ -177,7 +178,34 @@ class PassFailureDetailScreenTest {
     fun `R_423_buildInferredExplanationText_falls_back_to_the_generic_phrase_when_no_time_is_known`() {
         val annotated = buildInferredExplanationText("SRC1", null, OrtColors.accentGreen)
 
-        assertTrue(annotated.text.contains("Matched by voice to the source over,"))
+        assertTrue(annotated.text.contains("Carried from the source over,"))
+    }
+
+    /**
+     * This unit (constitution I, D45, FR-UI-8). No production path can construct an `INFERRED`
+     * attribution with a `sourceTransmissionId` today: `CallsignResolver.resolve` (`:pipeline`)
+     * only ever returns `CONFIRMED`/`AMBIGUOUS`/`UNKNOWN` (its own kdoc says so explicitly),
+     * `:identity` — the persistent voice library D28/D45 defers — is an empty stub, and every real
+     * write path (`DataPassBResultSink`, `RealCaptureService`, `CorrectionDao`) either carries no
+     * source at all or writes one back as `null`. The one place this state is ever constructed is
+     * a debug scenario fixture (`OvernightScenario.kt`/`Scenarios.kt`) built to exercise this
+     * screen's link/inspection behaviour ahead of the real feature — so the sentence must still be
+     * inspectable (FR-UI-8: the link to the source over stays), but it must never claim the one
+     * mechanism ("voice") this build cannot back for a state it never produces. Shown to
+     * discriminate: reverting this test's production change (restoring "Matched by voice to ") is
+     * caught by this assertion, not just by the two literal-text tests above (which a future edit
+     * could rephrase without ever removing the word "voice").
+     */
+    @Test
+    fun `D45_FR_UI_8_inferred_explanation_never_asserts_a_voice_match_no_production_path_produces_one`() {
+        val withTime = buildInferredExplanationText("SRC1", "02:14:07", OrtColors.accentGreen)
+        val withoutTime = buildInferredExplanationText("SRC1", null, OrtColors.accentGreen)
+
+        assertFalse(withTime.text.contains("voice", ignoreCase = true))
+        assertFalse(withoutTime.text.contains("voice", ignoreCase = true))
+        // FR-UI-8: dropping the mechanism claim must not drop the inspection link itself.
+        assertEquals("SRC1", sourceIdAtOffset(withTime, withTime.text.indexOf("02:14:07")))
+        assertEquals("SRC1", sourceIdAtOffset(withoutTime, withoutTime.text.indexOf("the source over")))
     }
 
     @Test

@@ -32,6 +32,119 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (P29 builder's spun-off unit: the INFERRED source-transmission explanation claimed a voice match no production path can produce)
+
+### d79ee14b — D45 correction sheet · `TransmissionDetailScreen`'s INFERRED-with-source explanation no longer claims "Matched by voice"
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailScreen.kt` (own file only —
+`buildInferredExplanationText` and its doc comment), `app/src/test/kotlin/org/ort/app/ui/screens/PassFailureDetailScreenTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/screens/TransmissionDetailContentTest.kt` (comment only, no
+assertion changed), `design/canvas/Detail.dc.html`, `design/canvas/States.dc.html`,
+`design/canvas/Detail-Correct-C.dc.html`.
+
+**Requirements/ACs:** constitution I (Uncertainty Is Content — never assert a claim the data
+cannot back), D45 (the voice library deferred to post-1.0; the identical "same voice" → "same
+callsign" correction this session mirrors), FR-UI-8 (every machine conclusion must stay
+inspectable, even once the mechanism claim is removed), FR-SPK-4/7/13 (only these describe what a
+non-null `Attribution.sourceTransmissionId` would mean, and that mechanism does not exist in this
+build).
+
+**What changed:** The P29 builder, working the "same voice" → "same callsign" relabel elsewhere in
+this same screen, found a second instance of the identical defect and flagged it as its own unit
+rather than folding it in: `buildInferredExplanationText` rendered "Not heard in this over.
+Matched by voice to `<time>`, where the callsign was heard clearly." for any INFERRED attribution
+carrying a `sourceTransmissionId` — a specific, mechanistic claim ("matched by voice") that no
+production code path can currently produce.
+
+Traced the write path end to end before touching anything (this file's task explicitly required
+establishing reachability first): `CallsignResolver.resolve` (`pipeline/src/main/kotlin/org/ort/pipeline/passb/CallsignResolver.kt`)
+returns only `CONFIRMED`/`AMBIGUOUS`/`UNKNOWN` — its own kdoc states outright "Only `CONFIRMED`,
+`AMBIGUOUS` and `UNKNOWN` are reachable from here — never `INFERRED`"; `DataPassBResultSink.record`
+(`pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt:95-101`) writes
+`attributionSourceTransmissionId` straight from that same `Attribution`, so it is written non-null
+never; `RealCaptureService` inserts every transmission with `attributionSourceTransmissionId = null`
+(`pipeline/src/main/kotlin/org/ort/pipeline/capture/RealCaptureService.kt:1824`);
+`CorrectionDao.applyCorrectedAttribution` (`data/src/main/kotlin/org/ort/data/dao/CorrectionDao.kt:49-54`)
+unconditionally sets the column `NULL` on every human correction, and `restoreAttribution` only
+ever restores a value `attributionSnapshot` captured earlier from one of these same paths, so it
+can never restore a non-null one either; `:identity` (`identity/src/main/kotlin/org/ort/identity/package-info.kt`)
+is a package-info-only stub — no code anywhere binds a `voiceprintId` or performs a cross-session
+match. The *only* place in the whole tree that ever constructs this exact state is a debug
+scenario fixture (`app/src/debug/kotlin/org/ort/app/debug/OvernightScenario.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`) writing the entity column directly to
+exercise this screen's link/inspection rendering for the tour — never a real transmission.
+
+Reworded `buildInferredExplanationText` to state only the fact the data can prove — "Not heard in
+this over. Carried from `<time>`, where the callsign was heard clearly." (and the no-time-known
+fallback, "...Carried from the source over, ..."). The branch is kept, not deleted: constitution I
+still requires FR-UI-8's inspection (the source-over link is unchanged — same tag, same span, same
+tap target) for whatever debug/tour fixture or future D28 voice-library match reaches it; only the
+mechanism claim is gone. Expanded the function's doc comment to record the full reachability trace
+above, so a future reader does not have to re-derive it, and to say explicitly that the branch
+stays buildable for D28.
+
+Added the strict-TDD discriminating test first (`D45_FR_UI_8_inferred_explanation_never_asserts_a_voice_match_no_production_path_produces_one`
+in `PassFailureDetailScreenTest.kt`), asserting the rendered text never contains "voice" (case
+insensitive) in either the timed or untimed form, while still asserting the inline link survives
+(`sourceIdAtOffset` still resolves for both). Updated the two pre-existing `R_423` literal-text
+tests in the same file to the new wording (they were asserting the old claim verbatim, which is
+exactly the "stale test as false-green" trap constitution II names — they are not the discriminator
+here on their own, since a future rewording could keep "voice" out of the literal string they
+check while missing a different one; the new test is a substring probe on the actual bad word).
+Updated `TransmissionDetailContentTest.kt`'s `R_183` comment (no assertion changed) to name the new
+wording it is actually racing between.
+
+**Artboards updated (constitution VIII — the artboard is the specification):**
+- `design/canvas/Detail.dc.html` — the INFERRED header's own sentence, the literal source of the
+  old wording, now reads "Not heard in this over. Carried from `02:14:07`, where the callsign was
+  heard clearly."
+- `design/canvas/States.dc.html` — the four-attribution-states legend's INFERRED box echoed the
+  identical sentence pattern ("Not heard here. Matched by voice to an over where it was.");
+  updated to "Not heard here. Carried from an over where it was." for the same reason.
+- `design/canvas/Detail-Correct-C.dc.html` — flagged directly in this unit's own task as already
+  stale: the Tier-C "Apply to" radio row still drew the pre-D45 "Every over matched to this voice"
+  label (`CorrectionSheet.kt`'s own `TypeTier` composable, P29's separate, not-yet-landed unit).
+  Corrected to the D45-mandated wording, "Every over with the same callsign," per
+  `spec/functional-spec.md`'s own amendment note under "Persistent voice identity (D28)." This is
+  an artboard-only fix — `CorrectionSheet.kt` itself is P29's file, not touched here.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.screens.*"` — `BUILD SUCCESSFUL`,
+  all tests in the package pass (Windows, local JDK/AGP from `gradle.properties`).
+- `.\gradlew.bat ktlintCheck detekt` — `BUILD SUCCESSFUL`.
+- **Discrimination, shown, not asserted:** reverted the one production line (`append("Not heard in
+  this over. Carried from ")` back to `append("Not heard in this over. Matched by voice to ")`),
+  reran `PassFailureDetailScreenTest` — the new `D45_FR_UI_8_...` test failed
+  (`java.lang.AssertionError` on `assertFalse(...contains("voice", ignoreCase = true))`) along with
+  the two updated `R_423` literal-text tests, for the expected reason; restored the fix and reran —
+  all 17 tests in the class passed.
+
+**Left open / not done:**
+- `CorrectionSheet.kt`'s own "Every over matched to this voice" `RadioRow` label — the literal
+  string the corrected `Detail-Correct-C.dc.html` artboard now specifies — is unchanged: it is
+  P29's own named unit (`spec/build-plan.md`, still unchecked as of this commit) and outside this
+  unit's ownership (`app/src/main/kotlin/org/ort/app/ui/screens/CorrectionSheet.kt`,
+  `app/src/main/kotlin/org/ort/app/ui/data/CorrectionPolling.kt`). The artboard now states the
+  target text; the code has not caught up yet.
+- The identical defect class exists in at least one more place this unit did not touch, found
+  while tracing reachability and left for its own owner rather than folded in here:
+  `app/src/main/kotlin/org/ort/app/ui/data/DetailViewStateMapper.kt`'s generic INFERRED
+  `explanation` fallback ("Matched by voice.", asserted by
+  `app/src/test/kotlin/org/ort/app/ui/data/DetailViewStateMapperTest.kt`) and
+  `app/src/main/kotlin/org/ort/app/ui/data/ThreadViewData.kt`'s `reasoningFor`/`ThreadDetailScreen.kt`'s
+  "inherited by voice from `<time>`" line make the same unbackable claim, for the same reason (no
+  production path ever produces a non-null `sourceTransmissionId`/binds a `voiceprintId`). Neither
+  is `TransmissionDetailScreen.kt`, both are outside this unit's ownership, and a flagged follow-up
+  task was raised for whoever owns `ui/data/**`.
+- No tour capture was run (not requested for this unit; scope was narrow enough that the existing
+  Robolectric coverage plus the artboard corrections above are the evidence). Tour ids that show
+  this exact copy, for whoever runs the next full/scoped tour: the Log/Detail scenario's INFERRED
+  over with a recorded source (`overnight`'s D02/`Detail.dc.html` state) and the states-legend
+  capture if one exists for `States.dc.html`. No `:pipeline`/`:data` change was needed or made —
+  the fix is entirely UI copy plus artboards, as the reachability trace above shows.
+
+---
+
 ## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a secret-driven release key and a configurable signing-stability guard)
 
 ### da4237b5 — debug-fix session · sign published artifacts from GitHub Actions secrets, never a committed key, and pin the certificate only where a stable key is expected
