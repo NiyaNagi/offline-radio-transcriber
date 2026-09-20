@@ -100,7 +100,7 @@ No other setup board's indicator or colour changed in this unit.
 ---
 ## 2026-09-20 (R-1074 gate fix: the batch gate's own smoke suite still asserted the old whole-hour tap contract)
 
-### 5be40cd7 — R-1074 gate fix · `NowContentTest`'s R-1041 smoke test updated for the segment-window tap contract
+### 521696fd — R-1074 gate fix · `NowContentTest`'s R-1041 smoke test updated for the segment-window tap contract
 
 **Scope:** `app/src/test/kotlin/org/ort/app/ui/screens/NowContentTest.kt`,
 `app/src/test/kotlin/org/ort/app/ui/data/NowViewStateMapperTest.kt` (one existing R-1041 test
