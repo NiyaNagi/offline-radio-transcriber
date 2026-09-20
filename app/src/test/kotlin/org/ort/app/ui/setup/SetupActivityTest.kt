@@ -103,7 +103,20 @@ class SetupActivityTest {
 
     /** Every gate except [SharedPreferencesSetupStore.KEY_SETUP_COMPLETE] itself satisfied — the
      * natural resume point is [SetupStep.READY]. Shared by the round-3 tests below so each states
-     * only what it adds. */
+     * only what it adds.
+     *
+     * **D43/FR-AST-12 (play-flavor unit-test follow-up):** [SetupStateMachine.stepFor]'s
+     * READY gate has read a real `requiredModelsInstalled` fact
+     * ([SetupActivity.currentSnapshot]'s own `ModelsController.currentState` read) since P22 — on
+     * the `full` flavor every [org.ort.app.ui.data.ModelCatalogEntry] is `bundled = true`, so that
+     * fact was always vacuously satisfied and no fixture here ever needed to say so; on `play`
+     * (D43, FR-AST-13) nothing is bundled at all, so a fresh Robolectric `filesDir` genuinely has
+     * every model outstanding unless a fixture states otherwise. "Every gate... satisfied" now
+     * includes this one on both flavors, so it is stated here explicitly — the same fix this
+     * function's own history already applied once for [SetupSnapshot.jurisdictionNoticeSeen]
+     * (P22's own regression, see that field's doc comment) — rather than leaving every caller of
+     * this helper to resume on [SetupStep.MODELS] instead of [SetupStep.READY] on `play`.
+     */
     private fun storeEverySetupGateExceptComplete() {
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
@@ -117,6 +130,9 @@ class SetupActivityTest {
             .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_RADIO_CHOICE, RadioChoice.NONE.name)
             .apply()
+        org.ort.app.debug.ScenarioFixtures.installEveryModelFixtureAtRealSize(
+            ApplicationProvider.getApplicationContext(),
+        )
     }
 
     @Test
@@ -332,6 +348,12 @@ class SetupActivityTest {
             // on Overnight instead.
             .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, true)
             .apply()
+        // D43/FR-AST-12: this test does not go through storeEverySetupGateExceptComplete() (it
+        // inlines KEY_SETUP_COMPLETE itself) — see that helper's own doc comment for why the READY
+        // gate now also needs every model genuinely installed on both flavors.
+        org.ort.app.debug.ScenarioFixtures.installEveryModelFixtureAtRealSize(
+            ApplicationProvider.getApplicationContext(),
+        )
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         // The activity finishes itself inside onCreate (refreshStep() -> handBackToMainActivity()),
@@ -656,6 +678,12 @@ class SetupActivityTest {
             .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
             .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
             .apply()
+        // D43/FR-AST-12: this walk finishes at SetupStep.READY -- see
+        // storeEverySetupGateExceptComplete()'s own doc comment for why the READY gate now also
+        // needs every model genuinely installed on both flavors.
+        org.ort.app.debug.ScenarioFixtures.installEveryModelFixtureAtRealSize(
+            ApplicationProvider.getApplicationContext(),
+        )
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
@@ -986,6 +1014,12 @@ class SetupActivityTest {
     @Test
     fun `R_1005c entering a frequency after declining the link reaches READY, never loops back`() {
         storeGatedAtRigBluetooth()
+        // D43/FR-AST-12: this walk finishes at SetupStep.READY -- see
+        // storeEverySetupGateExceptComplete()'s own doc comment for why the READY gate now also
+        // needs every model genuinely installed on both flavors.
+        org.ort.app.debug.ScenarioFixtures.installEveryModelFixtureAtRealSize(
+            ApplicationProvider.getApplicationContext(),
+        )
         DebugRigLinkPortOverride.isDebugBuild = { true }
         DebugRigLinkPortOverride.show(InMemoryRigLinkPort())
         try {

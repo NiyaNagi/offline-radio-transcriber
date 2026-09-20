@@ -24,6 +24,7 @@ import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
 import org.ort.pipeline.capture.CaptureState
 import java.io.File
+import java.io.RandomAccessFile
 
 /**
  * Shared fixture-building helpers for [Scenarios]' individual scenario builders — no test data
@@ -370,6 +371,37 @@ internal object ScenarioFixtures {
             is ChecksumState.UnknownSideloadOnly -> "sideloaded"
         }
         File(destination.parentFile, destination.name + ".sha256").writeText(markerText)
+    }
+
+    /**
+     * D43/FR-AST-10..12, AC-184..190 (play-flavor unit-test follow-up): a test standing in
+     * for "this device already has every model, however it got them" — the `full` variant's real
+     * bundling, or the `play` variant's already-completed setup-time download (FR-AST-10..12) —
+     * cannot use [installEveryModelFixture]'s fixed 64-byte placeholder: since R-865, that shape
+     * genuinely reads as [org.ort.app.ui.data.TruncatedAsset], never `INSTALLED`, once
+     * [org.ort.app.ui.data.ModelsController.currentState] compares the placeholder's on-disk length
+     * against [ModelCatalogEntry.sizeBytes] — the manifest's real declared size, present in both
+     * flavors' compiled catalogs regardless of [ModelCatalogEntry.bundled]. This writes each
+     * destination as a *sparse* file ([RandomAccessFile.setLength] — the identical, already-
+     * established technique [Scenarios]' own `recordingsBudgetExceeded` uses for a realistic-sized
+     * fixture at near-zero cost: no real disk block allocation for the unwritten span, but
+     * [File.length] reports the real, matching logical size) plus the matching checksum marker
+     * `rowFor` reads — so every row verifies exactly the way a real install would, on either
+     * flavor's own compiled [ModelCatalog], with no dependency on whether this build ever bundles a
+     * real `bundled/manifest.json` asset (P23: `play` structurally never does).
+     */
+    fun installEveryModelFixtureAtRealSize(context: Context) {
+        ModelCatalog.entries.forEach { entry ->
+            val destination = entry.destination(context.filesDir)
+            destination.parentFile?.mkdirs()
+            val sizeBytes = entry.sizeBytes.takeIf { it > 0 } ?: 64L
+            RandomAccessFile(destination, "rw").use { it.setLength(sizeBytes) }
+            val markerText = when (val state = entry.checksumState) {
+                is ChecksumState.Known -> state.checksum.value
+                is ChecksumState.UnknownSideloadOnly -> "sideloaded"
+            }
+            File(destination.parentFile, destination.name + ".sha256").writeText(markerText)
+        }
     }
 
     /** The other half of [installEveryModelFixture] — `model-missing`'s own contract ("keeps
