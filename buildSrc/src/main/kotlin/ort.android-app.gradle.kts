@@ -409,13 +409,13 @@ tasks.named("check") { dependsOn(verifySherpaNativeLibrariesPackaged) }
 // defect account. Targets the `full`-flavor debug APK, the one artifact `release.yml` actually
 // publishes (same path verifySherpaNativeLibrariesPackaged already checks, above).
 //
-// This does NOT fail a plain local `assembleFullDebug`: [enforcePin] defaults to `false` unless the
-// invocation explicitly passes `-PortEnforcePinnedReleaseSigning=true` (release.yml only, right
-// after it has built with the injected release-signing secrets) — a local build, signed with
-// AGP's own per-machine debug key, is expected to differ from the pin and must not break the
-// build for that. What IS always checked, in every invocation: the APK is actually verifiably
-// signed with at least a v2 scheme — a build that ships unsigned or v1-only is a real defect on
-// any machine, not just CI's.
+// This does NOT fail a plain local `assembleFullDebug`: `enforceExpectedCertificate` defaults to
+// `false` unless the invocation explicitly passes `-PortEnforcePinnedReleaseSigning=true`
+// (release.yml only, right after it has built with the injected release-signing secrets) — a
+// local build, signed with AGP's own per-machine debug key, is expected to differ from the pin
+// and must not break the build for that. What IS always checked, in every invocation: the APK is
+// actually verifiably signed with at least a v2 scheme — a build that ships unsigned or v1-only
+// is a real defect on any machine, not just CI's.
 //
 // The expected digest itself is deliberately NOT a source constant (a first version of this fix
 // hardcoded one derived from a keystore that got checked into the repository — rejected on review:
