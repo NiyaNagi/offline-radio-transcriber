@@ -4,11 +4,15 @@ package org.ort.gradle
  * Pure logic behind the `platformGuards` task (audit F-027). Kept separate from Gradle types so
  * it can be unit-tested, same pattern as [ModuleGraph] and [CoverageMatrix].
  *
- * Every check here is a **declared-artifact** proxy — a dependency coordinate or a manifest
+ * Most checks here are a **declared-artifact** proxy — a dependency coordinate or a manifest
  * string — never a runtime observation. None of them proves a build made no network call, or
  * that no telemetry SDK actually reported anything; they prove only that the *building blocks*
  * for doing so are (or are not) present in the source tree. Say so wherever a result is reported
- * (constitution VI — never claim more than a number's provenance supports).
+ * (constitution VI — never claim more than a number's provenance supports). Two exceptions read a
+ * real build artifact instead of a declared one: [missingNativeLibraryViolations] (R-1001, the
+ * packaged APK's own zip entries) and [signingStabilityViolations] (debug-fix session 2026-09-19,
+ * the packaged APK's own signer certificate) — see each one's own KDoc for why a declared
+ * coordinate cannot catch what they catch.
  */
 object PlatformGuards {
 
@@ -25,6 +29,7 @@ object PlatformGuards {
     data class DependencyViolation(val module: String, val coordinate: String, val reason: String)
     data class ManifestViolation(val module: String, val reason: String)
     data class NativeLibraryViolation(val path: String, val reason: String)
+    data class SigningViolation(val reason: String)
 
     /** R-1001's own required set — kept as defaults here so [NativeLibraryPackagingGuardTask] and
      * this file's tests share one definition of "what WPJ ships" rather than each hardcoding it. */
@@ -122,4 +127,76 @@ object PlatformGuards {
                 )
             }
             .sortedBy { it.path }
+
+    /**
+     * Debug-fix session (2026-09-19) — operator report on the currently released build: install
+     * fails on-device with "App not installed. Package appears to be invalid." Reproduction (see
+     * this constant's own KDoc and [SigningStabilityGuardTask]'s) ruled out the artifact being
+     * literally malformed — the published bytes, hash-verified against the release asset, install
+     * cleanly via both `adb install` and `pm install` on three real Android package-manager
+     * instances, including genuine Android 16 (API 36) at 16 KB page size. What *is* real: `.github/
+     * workflows/release.yml` never pins a signing key, so every CI run signs with AGP's own
+     * freshly auto-generated `~/.android/debug.keystore` — confirmed directly by downloading two
+     * different published releases (`v0.1.1` and the current `latest-build`) and finding two
+     * different certificate SHA-256 digests for the same `org.ort.app` package, and by resigning
+     * the published APK's own bytes with a second key and reproducing
+     * `INSTALL_FAILED_UPDATE_INCOMPATIBLE` installing it over the first on a real device. Stock
+     * Android's own Package Installer does not give that failure a distinct message on every OS/
+     * OEM build; it is well documented to fall back to the same generic "Package appears to be
+     * invalid" text INSTALL_FAILED_INVALID_APK/INSTALL_PARSE_FAILED_* produce — indistinguishable
+     * to an operator from a genuinely corrupt APK, which is why this was reported and investigated
+     * as one.
+     *
+     * The value below is this project's chosen fix: a stable, checked-in keystore
+     * (`buildSrc/signing/ort-rolling-release.keystore`, wired as the `debug` build type's
+     * `signingConfig` in `ort.android-app.gradle.kts`) that every rolling and tagged build signs
+     * with from now on, so an operator can always update in place. This constant pins the
+     * certificate that keystore produces so a future accidental change (the keystore file deleted,
+     * replaced, or the signing config pointed elsewhere) fails the build loudly — see
+     * [SigningStabilityGuardTask] — rather than silently shipping an update-incompatible artifact
+     * again. Computed with `apksigner sign` against that keystore then `apksigner verify
+     * --print-certs` (its "Signer #1 certificate SHA-256 digest" line), the same figure
+     * [SigningStabilityGuardTask] computes from the real assembled APK via apksig.
+     */
+    const val PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256: String =
+        "16a71e4ef0ed98ff4a594fbfef149798b03451d5a241d66053cc7a88bb42bdc7"
+
+    /**
+     * The decision logic behind [SigningStabilityGuardTask] — kept dependency-free (no apksig, no
+     * Gradle types) so it is testable with plain booleans/strings, the same split this file's
+     * every other check already uses between "read a real artifact" (the Task) and "decide what
+     * that reading means" (this object).
+     */
+    fun signingStabilityViolations(
+        verified: Boolean,
+        hasV2OrV3Scheme: Boolean,
+        certificateSha256: String?,
+        expectedCertificateSha256: String = PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256,
+    ): List<SigningViolation> {
+        val violations = mutableListOf<SigningViolation>()
+        if (!verified) {
+            violations += SigningViolation(
+                "apksig could not verify the packaged APK's signature — it is not installably signed",
+            )
+        }
+        if (!hasV2OrV3Scheme) {
+            violations += SigningViolation(
+                "no v2/v3 signature scheme present — minSdk 26 and Android 11+ require at least v2 " +
+                    "to install",
+            )
+        }
+        when {
+            certificateSha256 == null ->
+                violations += SigningViolation("no signer certificate could be read from the packaged APK")
+            !certificateSha256.equals(expectedCertificateSha256, ignoreCase = true) ->
+                violations += SigningViolation(
+                    "signing certificate is $certificateSha256, pinned is $expectedCertificateSha256 — every " +
+                        "rolling/tagged build must share one certificate (RELEASING.md) or an operator " +
+                        "updating from a previously installed build hits INSTALL_FAILED_UPDATE_INCOMPATIBLE, " +
+                        "which the on-device installer shows as \"Package appears to be invalid\" rather than " +
+                        "as a signature-mismatch message (register, debug-fix session 2026-09-19)",
+                )
+        }
+        return violations
+    }
 }

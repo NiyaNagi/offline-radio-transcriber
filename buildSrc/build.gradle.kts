@@ -28,6 +28,12 @@ dependencies {
     // (Windows dev machine, Linux CI/Release runner) without depending on what happens to be
     // installed on the host.
     implementation("org.apache.commons:commons-compress:1.27.1")
+    // Debug-fix session (2026-09-19, operator report: "App not installed. Package appears to be
+    // invalid."): SigningStabilityGuardTask reads the real assembled APK's signer certificate the
+    // same way `apksigner` itself does — this IS the library `apksigner`/AGP's own signing pipeline
+    // are built from, so it needs no external SDK tool on PATH and no hand-rolled APK Signing Block
+    // v2/v3 parser (register: see this task's own KDoc for the full defect account).
+    implementation("com.android.tools.build:apksig:8.7.2")
 
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")

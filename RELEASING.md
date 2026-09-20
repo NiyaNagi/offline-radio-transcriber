@@ -26,6 +26,40 @@ both attach the same debug APK CI already builds and verifies, and both get thei
 [`tools/release_notes.py`](tools/release_notes.py) reading [`RELEASES.md`](RELEASES.md) — never
 `CHANGELOG.md` directly; see `RELEASES.md`'s own header for why the two files are split.
 
+## Signing — every build shares one certificate
+
+Debug-fix session (2026-09-19): an operator reported the currently released build failing to
+install with "App not installed. Package appears to be invalid." The published artifact itself
+turned out to be fine — hash-verified against the release asset, and confirmed to install cleanly
+via `adb install` and `pm install` on three real Android package-manager instances, including
+genuine Android 16 (API 36) at 16 KB page size. The real defect: this workflow used to sign
+`assembleDebug`'s output with AGP's own auto-generated `~/.android/debug.keystore`, which is
+freshly created on **every** GitHub Actions run because the runner is a new VM each time — so
+`v0.1.1` and successive `latest-build` releases each carried a *different* signing certificate for
+the same `org.ort.app` package (confirmed directly with `apksigner verify --print-certs` against
+two downloaded releases). Any operator updating from one build to another without first
+uninstalling hits `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (reproduced directly), which most on-device
+Package Installers do not give a distinct message — it shows as the same generic "Package appears
+to be invalid" text a genuinely malformed APK produces.
+
+The fix: `debug` now signs with a stable, checked-in keystore,
+[`buildSrc/signing/ort-rolling-release.keystore`](buildSrc/signing/ort-rolling-release.keystore),
+wired in [`ort.android-app.gradle.kts`](buildSrc/src/main/kotlin/ort.android-app.gradle.kts). Its
+store/key password (`ort-rolling-release`) and alias (`ort-rolling-release`) are **not secret** —
+the property this key needs is *stability across CI runs*, not concealment, exactly like AGP's own
+public debug-keystore password (`android`). Every rolling and tagged release from now on carries
+the certificate fingerprint pinned at
+`PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256` (`buildSrc/src/main/kotlin/org/ort/
+gradle/PlatformGuards.kt`), and `:app:verifyReleaseSigningStability` (wired into `:app:check`,
+`ort.android-app.gradle.kts`) fails the build if the assembled APK's real signer certificate ever
+drifts from that pin — via `com.android.tools.build:apksig`, the same library `apksigner` itself is
+built from, so this needs no external SDK tool at guard-check time.
+
+**Anyone who already installed a build signed with an old, ephemeral debug certificate must
+uninstall `org.ort.app` once before installing a build carrying the new pinned certificate** — that
+one-time uninstall is unavoidable (a signature change is exactly what breaks in-place updates);
+every subsequent rolling/tagged release from this point on will update over it in place.
+
 ## Keep `RELEASES.md` current as you go
 
 Add to `## Unreleased` **when a change lands**, not when a release is cut. A release is then

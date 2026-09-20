@@ -1,14 +1,17 @@
 package org.ort.gradle
 
+import com.android.apksig.ApkVerifier
 import org.gradle.api.DefaultTask
 import org.gradle.api.GradleException
 import org.gradle.api.file.RegularFileProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.MapProperty
+import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.TaskAction
+import java.security.MessageDigest
 import java.util.zip.ZipFile
 
 /**
@@ -125,5 +128,87 @@ abstract class NativeLibraryPackagingGuardTask : DefaultTask() {
             "verifySherpaNativeLibrariesPackaged: OK — ${apk.path} contains every required native " +
                 "library for every required ABI (register R-1001).",
         )
+    }
+}
+
+/**
+ * Debug-fix session (2026-09-19) — reads the real assembled APK's real signer certificate, the
+ * other exception [PlatformGuards]'s class KDoc names alongside [NativeLibraryPackagingGuardTask].
+ * Uses `com.android.apksig` (the library `apksigner`/AGP's own signing pipeline are themselves
+ * built from) rather than shelling out to the SDK's `apksigner` binary or hand-parsing the APK
+ * Signing Block v2/v3 format — no assumption about SDK layout or OS-specific executable name, and
+ * no re-implementation of a security-sensitive binary format this project does not own.
+ *
+ * See [PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256]'s own KDoc for the full defect
+ * account this guard closes: every rolling/tagged build must carry the identical certificate
+ * (`buildSrc/signing/ort-rolling-release.keystore`, wired in `ort.android-app.gradle.kts`) or an
+ * operator updating from a previously installed build hits `INSTALL_FAILED_UPDATE_INCOMPATIBLE`,
+ * which on-device shows as the same generic "Package appears to be invalid" text a genuinely
+ * malformed APK produces.
+ */
+abstract class SigningStabilityGuardTask : DefaultTask() {
+
+    /** The packaged APK to inspect — a real build output, same as [NativeLibraryPackagingGuardTask]. */
+    @get:InputFile
+    abstract val apkFile: RegularFileProperty
+
+    @get:Input
+    abstract val expectedCertificateSha256: Property<String>
+
+    init {
+        expectedCertificateSha256.convention(PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256)
+    }
+
+    @TaskAction
+    fun check() {
+        val apk = apkFile.get().asFile
+        // Pinning both bounds tells apksig which schemes to check without it needing to read
+        // AndroidManifest.xml for a minSdkVersion — this project only ever ships minSdk 26
+        // (`ort.android-app.gradle.kts`'s own `defaultConfig.minSdk = 26`), so both bounds are
+        // that single, real, already-declared value.
+        val result = ApkVerifier.Builder(apk)
+            .setMinCheckedPlatformVersion(MIN_SDK_VERSION)
+            .setMaxCheckedPlatformVersion(MIN_SDK_VERSION)
+            .build()
+            .verify()
+        val certificateSha256 = result.signerCertificates.firstOrNull()?.let { certificate ->
+            MessageDigest.getInstance("SHA-256").digest(certificate.encoded).joinToString("") {
+                "%02x".format(it)
+            }
+        }
+        val violations = PlatformGuards.signingStabilityViolations(
+            verified = result.isVerified,
+            hasV2OrV3Scheme = result.isVerifiedUsingV2Scheme || result.isVerifiedUsingV3Scheme,
+            certificateSha256 = certificateSha256,
+            expectedCertificateSha256 = expectedCertificateSha256.getOrElse(
+                PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256,
+            ),
+        )
+        if (violations.isNotEmpty()) {
+            throw GradleException(
+                buildString {
+                    appendLine("Signing-stability violation(s) — debug-fix session 2026-09-19, checked ${apk.path}:")
+                    violations.forEach { appendLine("  ${it.reason}") }
+                    appendLine()
+                    appendLine(
+                        "An operator installing this artifact over any previously installed build of " +
+                            "org.ort.app signed with a different certificate will see " +
+                            "INSTALL_FAILED_UPDATE_INCOMPATIBLE, which many devices show as \"App not " +
+                            "installed. Package appears to be invalid.\" — see RELEASING.md.",
+                    )
+                },
+            )
+        }
+        logger.lifecycle(
+            "verifyReleaseSigningStability: OK — ${apk.path} is verified, v2/v3-signed, and matches the " +
+                "pinned rolling-release certificate.",
+        )
+    }
+
+    private companion object {
+        /** This project's one and only minSdk (`ort.android-app.gradle.kts`'s own
+         * `defaultConfig.minSdk`) — pinned as both bounds so apksig checks exactly the schemes a
+         * real minSdk-26 device needs without reading AndroidManifest.xml for it. */
+        const val MIN_SDK_VERSION = 26
     }
 }

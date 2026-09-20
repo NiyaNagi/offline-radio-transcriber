@@ -32,6 +32,98 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-19 (debug-fix session: operator report — "App not installed. Package appears to be invalid." — reproduced, root-caused, and closed with a structural signing-stability guard)
+
+### (pending — see next commit) — debug-fix session · pin the rolling-release signing key so every build shares one certificate, and guard the build against drift
+
+**Scope:** `.github/workflows/release.yml` (read only — no change needed there, see below),
+`buildSrc/build.gradle.kts`, `buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuards.kt`,
+`buildSrc/src/main/kotlin/org/ort/gradle/PlatformGuardsTask.kt`,
+`buildSrc/src/main/kotlin/ort.android-app.gradle.kts`, `buildSrc/signing/ort-rolling-release.keystore`
+(new), `buildSrc/src/test/kotlin/org/ort/gradle/PlatformGuardsTest.kt`, `RELEASING.md`.
+**Requirements/ACs:** none pre-existing name this; the register row this session files is the
+record. Constitution VII ("guarantees expressed as types where possible... a rule a person must
+remember is a rule that will eventually be forgotten") and Development Workflow's debugging loop
+("reproduce in the environment that fails... discriminating test... close on evidence") are what
+this session followed.
+**What changed:**
+1. **Reproduced, on real Android, not inferred.** Downloaded the published `latest-build` APK
+   (`gh release download`, commit `152a9283`) and confirmed its SHA-256 matches the release
+   asset's published digest exactly (byte-for-byte, not a corrupted download). Inspected it with
+   `apksigner verify --print-certs` (v2-signed, valid, `CN=Android Debug`), `zipalign -c -v 4`
+   (aligned), and a manual scan for a Zip64 EOCD locator (none — the 554,661,243-byte Gemma asset
+   and the ~603 MB whole archive are both well under the 4 GiB threshold that would require one) —
+   ruling out the two theories the report's own instructions led with. Installed the identical
+   bytes via `adb install` and via `pm install` from a local file (the closer analogue to a
+   device's own Package Installer) on three real Android package-manager instances: an API 34
+   x86_64 emulator, and a genuine Android 16 (API 36) emulator at both default and 16 KB page
+   size — every install **succeeded**, ruling out the artifact being structurally invalid at all.
+2. **Root cause, found by reproduction, not guessed.** `release.yml`'s `assembleDebug` step signs
+   with AGP's own auto-generated `~/.android/debug.keystore` — nothing in the workflow seeds or
+   caches it, and GitHub Actions runners are a fresh VM every run, so every CI run's debug
+   keystore (and therefore its certificate) is different. Confirmed directly: `apksigner verify
+   --print-certs` on the published `v0.1.1` tag and the current `latest-build` reports two
+   different certificate SHA-256 digests for the same `org.ort.app` package
+   (`afe73ba0af893a91eaa6ebb78cd0b582d7499aacb0f30315839fec475869f46b` vs.
+   `bc2d440980e8bde464af3a864fd549565b19e7770a060d2d5144748ea97f6dca`). Resigning the published
+   `latest-build` APK's own bytes with a second, differently-generated debug-style key and
+   installing it over the first with `adb install -r` on a real device reproduces
+   `INSTALL_FAILED_UPDATE_INCOMPATIBLE: ... signatures do not match` — exactly what happens to any
+   operator updating from a previously installed build. Stock Android's own Package Installer
+   does not give that failure a message distinct from a genuinely malformed APK on many OS/OEM
+   builds; both fall back to "App not installed. Package appears to be invalid." — indistinguishable
+   to the operator, which is why this was reported and investigated as a corrupt artifact.
+3. **Fix: a stable, checked-in signing key for the one build type this project ships.** Generated
+   `buildSrc/signing/ort-rolling-release.keystore` (PKCS12, RSA 2048, `CN=Offline Radio
+   Transcriber Rolling Release`, 30-year validity) and wired it as the `debug` build type's
+   `signingConfig` in `ort.android-app.gradle.kts`. Its password/alias (`ort-rolling-release`) are
+   documented in `RELEASING.md`, not secret — the property this key needs is *stability across CI
+   runs*, not concealment, exactly like AGP's own public debug-keystore password. Every rolling
+   and tagged build from now on carries the same certificate, so an operator can update in place.
+4. **Structural guard, in the `platformGuards`/R-1001 style: reads the real assembled APK, not a
+   declared coordinate.** `PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256` pins that
+   keystore's fingerprint; `PlatformGuards.signingStabilityViolations` (pure, dependency-free
+   logic) and `SigningStabilityGuardTask` (reads the packaged APK via `com.android.tools.build:
+   apksig` — the library `apksigner`/AGP's own signing pipeline are themselves built from, so no
+   external SDK tool or hand-rolled APK Signing Block parser is needed) fail the build if the
+   assembled APK is not verifiably signed, carries no v2/v3 scheme, or its certificate has drifted
+   from the pin. Wired as `:app:verifyReleaseSigningStability`, depended on by `:app:check`
+   (`ort.android-app.gradle.kts`), the same pattern `verifySherpaNativeLibrariesPackaged` (R-1001)
+   already established for "needs a real assembled APK, so it runs after `assembleDebug`, not the
+   root `platformGuards` task."
+**Verified:**
+- `./gradlew -p buildSrc test` — 23 tests in `PlatformGuardsTest`, `BUILD SUCCESSFUL`; includes
+  two task-level tests that sign a real tiny APK-shaped zip with the pinned keystore via apksig's
+  own `ApkSigner` and assert the guard accepts it, and a second, differently-keyed signature that
+  the guard rejects.
+- **Discrimination, shown directly**: reverted the pinned certificate constant to a dummy value
+  and re-ran `PlatformGuardsTest` — the "accepts a real APK signed with the pinned keystore" test
+  failed with the guard's own `GradleException` (wrong reason without the fix); restored the real
+  pin and it passed again.
+- **End-to-end, against a real build**: `./gradlew :app:assembleDebug :app:verifyReleaseSigningStability
+  -PortAllowMissingBundledAssets=true` — `BUILD SUCCESSFUL`; `verifyReleaseSigningStability: OK`;
+  independently confirmed with `apksigner verify --print-certs` against the real
+  `app/build/outputs/apk/debug/app-debug.apk` this produced — certificate SHA-256
+  `16a71e4ef0ed98ff4a594fbfef149798b03451d5a241d66053cc7a88bb42bdc7`, matching the pin exactly.
+**Left open / not done:**
+- `release.yml` itself needed no change — it already attaches whatever `assembleDebug` produces,
+  and the signing config now lives entirely in `ort.android-app.gradle.kts` (owned by this
+  session) — so this entry documents that file only by exclusion (read, not touched).
+- **Anyone who already installed a build signed with the old, ephemeral debug certificate must
+  uninstall once** before installing a build carrying the new pinned certificate — unavoidable (a
+  certificate change is exactly what breaks in-place updates); recorded in `RELEASING.md`. This
+  fix does not repair an install already broken on the operator's device; it prevents every future
+  one once a build with the new key is out.
+- Product flavors (`full`/`play`) landed on `main` after this worktree's base commit
+  (`152a9283`) — not present in this checkout, so this session could not verify the guard/signing
+  config against that variant split; flagged for whoever merges this so `assembleDebug`'s output
+  path is re-checked against the flavored task names if they changed it.
+- Could not test on the operator's exact hardware (Android 16 on real arm64 silicon) — verified
+  instead on a genuine Android 16 (API 36) emulator at both 4 KB and 16 KB page size, the closest
+  available proxy.
+
+---
+
 ## 2026-09-13 (WPNAVHOST round 2: R-1061 reproduced and fixed on device; live bar height measured, not guessed; Done-restore captured with real models)
 
 ### 1c7b9347 — WPCAP fix: restore N08's own live bar and Full log entry point, broken by the first merge pass

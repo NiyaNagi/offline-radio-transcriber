@@ -5,7 +5,9 @@ import org.ort.gradle.BundledAssetManifest
 import org.ort.gradle.FetchBundledAssetsTask
 import org.ort.gradle.FetchSherpaNativeTask
 import org.ort.gradle.NativeLibraryPackagingGuardTask
+import org.ort.gradle.PlatformGuards
 import org.ort.gradle.SherpaNativeManifest
+import org.ort.gradle.SigningStabilityGuardTask
 import java.io.File
 
 plugins {
@@ -54,6 +56,33 @@ extensions.configure<BaseAppModuleExtension> {
         buildConfigField("String", "FIELD_REPORT_TOKEN", "\"\"")
     }
 
+    // Debug-fix session (2026-09-19, operator report: "App not installed. Package appears to be
+    // invalid."): a stable, checked-in keystore for the one build type this project actually
+    // ships (`debug` — see `release.yml`'s own comment on why: both release shapes attach
+    // `assembleDebug`'s output). Without this, AGP falls back to its own auto-generated
+    // `~/.android/debug.keystore`, freshly created on every GitHub Actions run because the runner
+    // is a new VM each time — confirmed directly: `apksigner verify --print-certs` on the
+    // published `v0.1.1` and the current `latest-build` releases reports two different
+    // certificate SHA-256 digests for the same `org.ort.app` package, and resigning the published
+    // APK's own bytes with a second key and installing it over the first on a real device
+    // reproduces `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. This keystore's password/alias are not
+    // secret — the property this key needs is *stability across CI runs*, not concealment, the
+    // same reason AGP's own debug keystore password ("android") is public — see RELEASING.md for
+    // the full account and PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256's own KDoc for
+    // how this keystore's fingerprint is pinned and enforced by `verifyReleaseSigningStability`
+    // below.
+    val rollingReleaseKeystoreFile = rootProject.layout.projectDirectory
+        .file("buildSrc/signing/ort-rolling-release.keystore").asFile
+
+    signingConfigs {
+        create("rollingRelease") {
+            storeFile = rollingReleaseKeystoreFile
+            storePassword = "ort-rolling-release"
+            keyAlias = "ort-rolling-release"
+            keyPassword = "ort-rolling-release"
+        }
+    }
+
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
@@ -76,6 +105,9 @@ extensions.configure<BaseAppModuleExtension> {
                 "FIELD_REPORT_TOKEN",
                 "\"${providers.environmentVariable("ORT_FIELD_REPORT_TOKEN").getOrElse("")}\"",
             )
+            // See this block's own top-of-file comment: every rolling/tagged build must share one
+            // signing certificate so an operator can update in place.
+            signingConfig = signingConfigs.getByName("rollingRelease")
         }
     }
 
@@ -312,6 +344,25 @@ val verifySherpaNativeLibrariesPackaged = tasks.register<NativeLibraryPackagingG
 }
 
 tasks.named("check") { dependsOn(verifySherpaNativeLibrariesPackaged) }
+
+// Debug-fix session (2026-09-19): the signing-stability half of the same fix
+// verifySherpaNativeLibrariesPackaged models above (an assembled-APK guard, not a declared-
+// coordinate one) — see PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256 and
+// SigningStabilityGuardTask's own KDoc for the full defect this closes. Same ordering rationale:
+// needs a real assembled APK, so it is wired here (after assembleDebug), not the root
+// dependencyRules/platformGuards task, which runs before any variant is assembled.
+val verifyReleaseSigningStability = tasks.register<SigningStabilityGuardTask>(
+    "verifyReleaseSigningStability",
+) {
+    group = "verification"
+    description = "Fails if the packaged debug APK is not installably signed or its certificate " +
+        "has drifted from the pinned rolling-release key (debug-fix session 2026-09-19)."
+    apkFile.set(layout.buildDirectory.file("outputs/apk/debug/app-debug.apk"))
+    expectedCertificateSha256.set(PlatformGuards.PINNED_ROLLING_RELEASE_CERTIFICATE_SHA256)
+    dependsOn("assembleDebug")
+}
+
+tasks.named("check") { dependsOn(verifyReleaseSigningStability) }
 
 // `app/src/main/assets/bundled/` (fetchBundledAssets' own output) is an *implicit* input to a
 // whole family of AGP-internal tasks that read the main variant's assets directly — not just
