@@ -32,6 +32,102 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (R-1122/R-1103: corpus run provenance, and a tested arbiter for the tour script)
+
+### `<pending>` — R-1103: the tour script's run-id matching and step-count checks move to a tested Python module
+
+**Scope:** `tools/ui-audit/tour.ps1`, new `tools/ui-audit/tour_manifest.py` and
+`tools/ui-audit/tests/test_tour_manifest.py`, `.github/workflows/ci.yml` (comment only — no job
+added, the existing `ui-audit-diff` job's `pytest tools/ui-audit -q` already picks the new suite
+up).
+
+**Requirements/ACs:** constitution II (test-backed change), constitution VIII (visual conformance
+is evidence-backed — `tour.ps1` is the arbiter); R-1103 (register), R-1083 (the defect this logic
+exists to keep fixed).
+
+**What changed:** R-1083's fix (a stale or foreign tour manifest reported as a successful run)
+and the fewer-screenshots-than-steps check next to it lived entirely as inline PowerShell in
+`tour.ps1`'s polling loop and post-pull checks, untested because this repository has no
+PowerShell test harness. Following the pattern `diff.py` established the same night for the same
+reason (R-1116), the decision logic — none of it touches a device — moves to
+`tools/ui-audit/tour_manifest.py`: `check_done_marker` (is the last manifest line this
+invocation's own "done" marker, a foreign/stale one, or not there yet), `summarize` (parse the
+manifest's step lines into ok/error counts and the ok-id list once, replacing two independent
+inline parses `tour.ps1` used to do), and `verify_step_count`/`verify_pulled_count` (the two
+"fewer results than asked for" guards). `tour.ps1` now shells out to this script for all three
+decisions instead of re-implementing the parsing inline — a genuine wiring change, not merely an
+extraction left unused (the "built but not connected" pattern this register keeps finding
+elsewhere). Manual reproduction while wiring this in found a real, previously-unknown bug:
+Windows PowerShell 5.1 prepends a UTF-8 BOM when it pipes a string to a native process's stdin,
+which would have silently corrupted the very first parsed line of every real tour run;
+`tour_manifest.py`'s CLI now reads stdin as bytes and decodes with `utf-8-sig`, which strips a
+BOM if present and is a no-op otherwise.
+
+**Verified:** `python -m pytest tools/ui-audit -q` — 26 passed, including 19 new
+`test_tour_manifest.py::test_R_1103_*` cases (7 on `check_done_marker`, 2 on `summarize`, 4 on the
+verify guards, 6 on the CLI surface `tour.ps1` actually calls, including the BOM reproduction).
+`python -m ruff check tools/ui-audit/tour_manifest.py tools/ui-audit/tests/test_tour_manifest.py`
+— all checks passed. `tour.ps1` itself tokenized with no parse errors
+(`[System.Management.Automation.PSParser]::Tokenize`) and its exact PowerShell-to-Python call
+shapes (`poll`, `summarize`, `verify`) were dry-run separately against fixture manifest text
+shaped like real `adb`-pulled output, confirming the BOM fix and the JSON field names line up end
+to end. Discriminated twice: (1) reverted `check_done_marker` to the pre-R-1083 shape
+(`return DoneResult(done=True)` unconditionally) — three tests failed for the right reason,
+including the named defect (`test_R_1103_a_foreign_run_ids_done_line_is_not_reported_done`) —
+then restored; (2) reverted the BOM fix to plain `utf-8` decoding — the new CLI BOM test failed
+for the right reason — then restored.
+
+**Left open / not done:** no end-to-end run against a real emulator (none available in this
+session). The dry runs above exercise the exact call shapes with fixture text, not a live device.
+Whether to add a Pester harness instead was considered and rejected: the two decisions this row
+names are pure JSON-parsing logic with no PowerShell-specific behaviour to test, `tools/ui-audit`
+already has a same-night precedent (`diff.py`/R-1116) for solving exactly this shape of problem
+by moving logic to Python, and the CI wiring already exists (`ui-audit-diff` job runs
+`pytest tools/ui-audit -q`) rather than needing a new hosted PowerShell runner. No Pester was
+introduced.
+
+### `<pending>` — R-1122: the corpus harness's run fingerprint now carries machine, execution provider and thread count
+
+**Scope:** `corpus/` only — `corpus/src/corpus/fingerprint.py`, `corpus/src/corpus/report.py`,
+`corpus/src/corpus/harness.py`, plus `corpus/tests/test_fingerprint.py` (new) and
+`corpus/tests/test_harness.py`.
+
+**Requirements/ACs:** constitution VI ("every reported figure carries fold, machine, execution
+provider, thread count, model version and run fingerprint"); R-1122 (register).
+
+**What changed:** `run_fingerprint` used to hash only the manifest, fold, config, git revision
+and Python version — two runs on different machines, execution providers or thread counts
+collapsed to the identical fingerprint, so the one guarantee this module exists for ("two runs
+that agree on all of these must agree on the number") could not actually be checked. It now
+accepts (and, absent an explicit override, computes) `machine`, `provider` and `threads`, and
+hashes all three. Three new pure functions carry the actual facts: `machine_descriptor()` (OS,
+release, CPU architecture, processor description, core count — deliberately never
+`platform.node()`, the operator's own hostname, since this file's output is meant to be
+publishable), `thread_count()` (`os.cpu_count()` — the harness configures no thread pool of its
+own yet), and `execution_provider()` (honestly `"none (harness v0, no model runs)"`, since
+`harness.py`'s own docstring says this runs "before any model exists" — the same discipline
+`Report.model_version`'s `"none (harness v0, hand transcripts)"` already applies, rather than
+naming a provider like the old hardcoded `"cpu-local"` that was never true of anything running).
+`Report` gains a `thread_count` field, and its `machine`/`provider` defaults now come from the
+same two functions instead of `platform.node()` and a bare `"cpu-local"` string. `harness.evaluate`
+computes `machine`/`provider`/`threads` once and hands the same values to both `Report` and
+`run_fingerprint`, so the visible report and the opaque hash can never describe two different
+runs (the "two implementations of one fact" pattern this register keeps finding, e.g. R-1099).
+
+**Verified:** `cd corpus && python -m pytest -q` — 82 passed, 1 skipped (pre-existing), including
+9 new `test_fingerprint.py::test_R_1122_*` cases and 3 new `test_harness.py::test_R_1122_*` cases;
+`python -m ruff check .` — all checks passed. Discriminated: reverted all three production files
+to their pre-fix content (a tagged, then-dropped `git stash`), confirmed both new test files fail
+to even import (`ImportError: cannot import name 'execution_provider'` — the tests could not have
+passed against the old code), then restored and confirmed green again.
+
+**Left open / not done:** `execution_provider()`/`thread_count()` are honest placeholders for a
+harness that runs no model yet; when a real ONNX/sherpa execution path lands in `corpus`, it
+should report its actual provider name/version and configured intra-op thread count here instead
+of these defaults — a natural follow-up this fix's seam is built for, not a new register row.
+
+---
+
 ## 2026-09-20 (P37: `diff.py` can fail)
 
 ### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change

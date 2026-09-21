@@ -81,7 +81,11 @@ jobs:
           python-version: "3.12"
       - name: install
         run: python -m pip install --quiet pytest
-      - name: unit tests (TDD) — the stdlib PNG decode/compare path only, no Pillow installed
+      # This job's name still names R-1116 (diff.py), but `pytest tools/ui-audit -q` also picks
+      # up tests/test_tour_manifest.py — R-1103's fix, moving tour.ps1's run-id-matching and
+      # fewer-screenshots-than-steps decisions into a plain Python module for the same reason
+      # R-1116 gave diff.py its own suite: no PowerShell test harness exists in this repository.
+      - name: unit tests (TDD) — diff.py's stdlib PNG decode/compare path (no Pillow) and tour_manifest.py (R-1103)
         run: python -m pytest tools/ui-audit -q
 
   lint:

@@ -3,14 +3,24 @@
 Constitution: "Every reported figure carries fold, machine, execution provider, thread count,
 model version and run fingerprint. A number whose fold is unstated is not evidence." The
 report refuses to exist without a fold, and refuses to serialise without a fingerprint.
+
+R-1122 (register): `machine`, `provider` and `thread_count` used to default to `platform.node()`
+(the operator's own hostname - a publishability problem, not just an omission) and a hardcoded
+`"cpu-local"` that was never actually true of anything running, and there was no `thread_count`
+field at all despite constitution VI naming it explicitly. They now default to
+`corpus.fingerprint`'s own `machine_descriptor()`/`execution_provider()`/`thread_count()` - the
+same functions `run_fingerprint` hashes - so the report a human reads and the fingerprint a
+machine compares are never two independent guesses about the same run (see
+`test_R_1122_report_and_fingerprint_agree_on_the_same_provenance`).
 """
 from __future__ import annotations
 
 import json
-import platform
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from .fingerprint import execution_provider, machine_descriptor, thread_count
 
 
 class ReportError(ValueError):
@@ -23,8 +33,9 @@ class Report:
     fingerprint: str
     per_source: dict[str, dict[str, Any]]
     aggregate: dict[str, Any]
-    provider: str = "cpu-local"
-    machine: str = field(default_factory=platform.node)
+    provider: str = field(default_factory=execution_provider)
+    machine: str = field(default_factory=machine_descriptor)
+    thread_count: int = field(default_factory=thread_count)
     model_version: str = "none (harness v0, hand transcripts)"
     config: dict[str, Any] = field(default_factory=dict)
 
@@ -40,6 +51,7 @@ class Report:
             "fingerprint": self.fingerprint,
             "provider": self.provider,
             "machine": self.machine,
+            "thread_count": self.thread_count,
             "model_version": self.model_version,
             "config": self.config,
             "per_source": self.per_source,
@@ -51,7 +63,7 @@ class Report:
             f"# Corpus harness report — fold `{self.fold}`",
             "",
             f"- fingerprint: `{self.fingerprint}`",
-            f"- provider: {self.provider} · machine: {self.machine}",
+            f"- provider: {self.provider} · machine: {self.machine} · threads: {self.thread_count}",
             f"- model: {self.model_version}",
             "",
             "## Aggregate",

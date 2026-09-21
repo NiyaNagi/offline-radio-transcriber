@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from corpus.fingerprint import execution_provider, machine_descriptor, run_fingerprint, thread_count
 from corpus.gate import EvalFoldSealed
 from corpus.harness import evaluate
 from corpus.manifest import Manifest, Session, Source
@@ -82,3 +83,37 @@ def test_report_roundtrips_to_disk(tmp_path):
     assert doc["fold"] == "dev"
     assert doc["fingerprint"] == report.fingerprint
     assert (tmp_path / "report.md").exists()
+
+
+def test_R_1122_report_carries_machine_provider_and_thread_count():
+    """Constitution VI: "every reported figure carries fold, machine, execution provider, thread
+    count, model version and run fingerprint" - all six must be visible on the Report itself, not
+    only folded invisibly into the fingerprint hash a human cannot read back."""
+    report = evaluate(_manifest(), "dev", _transcripts())
+    assert report.machine == machine_descriptor()
+    assert report.provider == execution_provider()
+    assert report.thread_count == thread_count()
+    assert report.model_version
+
+
+def test_R_1122_report_and_fingerprint_agree_on_the_same_provenance():
+    """The report's visible machine/provider/thread_count fields and the opaque fingerprint hash
+    must be computed from the same facts, not two independent guesses (the "two implementations
+    of one rule" pattern this register keeps finding elsewhere, e.g. R-1099) - otherwise a reader
+    could see one machine on the report and have the fingerprint silently describe another."""
+    report = evaluate(_manifest(), "dev", _transcripts())
+    expected = run_fingerprint(
+        _manifest().to_dict(), "dev", {},
+        machine=report.machine, provider=report.provider, threads=report.thread_count,
+    )
+    assert report.fingerprint == expected
+
+
+def test_R_1122_report_machine_is_not_the_operator_hostname(monkeypatch):
+    """This file's output is meant to be publishable - a report must never carry the operator's
+    own machine name."""
+    import platform
+
+    monkeypatch.setattr(platform, "node", lambda: "adam-steenwyks-laptop")
+    report = evaluate(_manifest(), "dev", _transcripts())
+    assert "adam-steenwyks-laptop" not in report.machine

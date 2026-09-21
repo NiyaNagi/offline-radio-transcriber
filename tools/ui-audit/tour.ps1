@@ -111,6 +111,13 @@ if (-not $androidHome) { $androidHome = Join-Path $env:LOCALAPPDATA "Android\Sdk
 $adb = Join-Path $androidHome "platform-tools\adb.exe"
 $serial = "emulator-$Port"
 $packageId = "org.ort.app"
+# R-1103 (register): the run-id-matching and fewer-results-than-requested decisions below used to
+# be inline PowerShell with no automated test, because this repository has no PowerShell test
+# harness. They now live in tools/ui-audit/tour_manifest.py, a plain Python module with no device
+# dependency, covered by tools/ui-audit/tests/test_tour_manifest.py and the existing
+# ui-audit-diff CI job - see that module's own docstring for why this follows diff.py's pattern
+# (R-1116) rather than adding a second test framework.
+$tourManifestPy = Join-Path $repoRoot "tools\ui-audit\tour_manifest.py"
 
 $tourPath = if ([System.IO.Path]::IsPathRooted($Tour)) { $Tour } else { Join-Path $repoRoot $Tour }
 if (-not (Test-Path $tourPath)) { throw "tour spec not found at $tourPath" }
@@ -196,20 +203,15 @@ while ((Get-Date) -lt $deadline) {
     $manifestText = & $adb -s $serial shell $pollCmd 2>$null
     $ErrorActionPreference = $prevEap
     if ($manifestText) {
-        $lastLine = ($manifestText -split "`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -Last 1)
-        if ($lastLine -match '"done"\s*:\s*true') {
-            # R-1083: a "done" line existing is no longer enough on its own - it must be *this*
-            # invocation's own run. A malformed/partial line (a concurrent append caught mid-write)
-            # is treated as "not yet" rather than a hard failure - the next poll tick reads the
-            # completed file.
-            $doneLine = $null
-            try { $doneLine = $lastLine | ConvertFrom-Json } catch { $doneLine = $null }
-            if ($doneLine -and $doneLine.runId -eq $runId) {
-                $done = $true
-                break
-            } elseif ($doneLine -and $doneLine.runId) {
-                $foreignRunId = $doneLine.runId
-            }
+        # R-1103: the run-id-matching decision (is this *this* invocation's own "done" line, a
+        # foreign/stale one, or not there yet) is tour_manifest.py's `check_done_marker`, not
+        # inline PowerShell - see this script's own top-of-file note and that module's docstring.
+        $pollResult = ($manifestText | & python $tourManifestPy poll --run-id $runId) | ConvertFrom-Json
+        if ($pollResult.done) {
+            $done = $true
+            break
+        } elseif ($pollResult.foreignRunId) {
+            $foreignRunId = $pollResult.foreignRunId
         }
     }
     Start-Sleep -Seconds 3
@@ -250,20 +252,21 @@ $lines = $manifestText -split "`n" | Where-Object { $_.Trim() -ne "" }
 # join explicitly instead, one JSONL line per manifest entry, exactly like the on-device file.
 $noBomUtf8Manifest = New-Object System.Text.UTF8Encoding $false
 [System.IO.File]::WriteAllText($manifestDest, (($lines -join "`n") + "`n"), $noBomUtf8Manifest)
-# R-1083: `@(...)` forces array context even when exactly one step ran - without it, PowerShell
-# 5.1 unwraps a single-element pipeline result to a bare scalar, and `.Count` on that is `$null`
-# (silently blank when interpolated into a string), which made the new step-count check below
-# compare `$null -ne 1` and fail every single-step run - found by actually running a one-step
-# `-Only` tour against this fix, not by inspection.
-$stepLines = @($lines | Where-Object { $_ -notmatch '"done"\s*:\s*true' } | ForEach-Object { $_ | ConvertFrom-Json })
-$okCount = @($stepLines | Where-Object { $_.ok -eq $true }).Count
-$errorCount = @($stepLines | Where-Object { $_.ok -eq $false }).Count
+# R-1103: the manifest-line parsing itself (step/ok/error counts, the ok-id list to pull) is
+# tour_manifest.py's `summarize`, not a second inline parse here - the old shape re-implemented
+# this same JSON parsing twice (once for this summary, once for the pull loop below), and neither
+# copy had a test. `summarize` is called once and both this script's summary print and its pull
+# loop read from its one result.
+$summary = ($manifestText | & python $tourManifestPy summarize) | ConvertFrom-Json
+$stepCount = $summary.stepCount
+$okCount = $summary.okCount
+$errorCount = $summary.errorCount
+$okIds = @($summary.okIds)
 
-$okSteps = @($stepLines | Where-Object { $_.ok -eq $true })
-Write-Output "Pulling $($okSteps.Count) screenshot(s) via run-as + base64..."
+Write-Output "Pulling $($okIds.Count) screenshot(s) via run-as + base64..."
 $pulledCount = 0
-foreach ($step in $okSteps) {
-    $relativePath = "$($step.id).png"
+foreach ($id in $okIds) {
+    $relativePath = "$id.png"
     $localFile = Join-Path $outDir $relativePath.Replace("/", "\")
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $localFile) | Out-Null
 
@@ -275,7 +278,7 @@ foreach ($step in $okSteps) {
     $pullExitCode = $LASTEXITCODE
     $ErrorActionPreference = $prevEap
     if ($pullExitCode -ne 0 -or -not $encoded) {
-        Write-Warning "could not pull '$($step.id)' (base64 exit $pullExitCode) - skipping, not failing the whole run"
+        Write-Warning "could not pull '$id' (base64 exit $pullExitCode) - skipping, not failing the whole run"
         continue
     }
     $bytes = [Convert]::FromBase64String(($encoded -join ""))
@@ -284,31 +287,42 @@ foreach ($step in $okSteps) {
 }
 
 Write-Output ""
-Write-Output "steps: $($stepLines.Count)  ok: $okCount  errors: $errorCount  elapsed: $([Math]::Round($elapsed.TotalSeconds, 1))s"
+Write-Output "steps: $stepCount  ok: $okCount  errors: $errorCount  elapsed: $([Math]::Round($elapsed.TotalSeconds, 1))s"
 if ($errorCount -gt 0) {
     Write-Output "failed steps:"
-    $stepLines | Where-Object { $_.ok -eq $false } | ForEach-Object {
-        Write-Output ("  - {0}: {1}" -f $_.id, $_.errorMessage)
+    foreach ($e in $summary.errors) {
+        Write-Output ("  - {0}: {1}" -f $e.id, $e.errorMessage)
     }
 }
 Write-Output "screenshots + tour-manifest.json written under $outDir"
 
-# R-1083 (the third symptom of the same finding): a run that produced fewer screenshots than the
-# spec asked for must fail, not print a quiet summary and exit 0 - `-Only "vad-fallback/*"`'s own
-# false-green report was "steps: 2  ok: 2  errors: 0" while zero PNGs had actually been written.
-# Two independent counts, either one enough to fail on its own:
+# R-1083 (the third symptom of the same finding) / R-1103 (now tested off-device): a run that
+# produced fewer screenshots than the spec asked for must fail, not print a quiet summary and
+# exit 0 - `-Only "vad-fallback/*"`'s own false-green report was "steps: 2  ok: 2  errors: 0"
+# while zero PNGs had actually been written. Two independent counts, either one enough to fail on
+# its own - `tour_manifest.py verify` raises `StepCountMismatch`/`PulledCountMismatch` for exactly
+# these, covered by `tools/ui-audit/tests/test_tour_manifest.py`'s `R_1103_...` cases:
 #   - the manifest itself must report one result per step this invocation actually requested
-#     (never fewer - a step the device silently dropped, or a stale/short manifest that slipped
-#     past the runId check above some other way);
+#     (never fewer or more - a step the device silently dropped, or a stale/short manifest that
+#     slipped past the runId check above some other way);
 #   - every step the manifest reported ok must have actually been pulled to disk - a base64 pull
 #     failure above only warns, by design (one bad pull should not lose every other screenshot),
 #     so this is the one place that turns "some pulls failed" into a failed run overall.
-if ($stepLines.Count -ne $steps.Count) {
-    throw "run '$runId' reported $($stepLines.Count) step result(s) in its manifest but $($steps.Count) " +
-        "step(s) were requested from $tourPath - the device produced fewer results than asked for. " +
-        "Check 'adb -s $serial logcat -d' for a crash partway through the run."
-}
-if ($pulledCount -ne $okCount) {
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& python $tourManifestPy verify --run-id $runId --out-dir $outDir `
+    --requested-count $steps.Count --step-count $stepCount --ok-count $okCount --pulled-count $pulledCount `
+    | Out-Null
+$verifyExitCode = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+if ($verifyExitCode -eq 2) {
+    throw "run '$runId' reported $stepCount step result(s) in its manifest but $($steps.Count) " +
+        "step(s) were requested from $tourPath - the device produced a different number of results " +
+        "than asked for. Check 'adb -s $serial logcat -d' for a crash partway through the run."
+} elseif ($verifyExitCode -eq 3) {
     throw "run '$runId' reported $okCount ok screenshot(s) but only $pulledCount were actually pulled to " +
         "$outDir - see the 'could not pull' warning(s) above for which step(s) and why."
+} elseif ($verifyExitCode -ne 0) {
+    throw "tools/ui-audit/tour_manifest.py verify exited $verifyExitCode unexpectedly for run '$runId' - " +
+        "this should only ever be 0, 2 or 3."
 }
