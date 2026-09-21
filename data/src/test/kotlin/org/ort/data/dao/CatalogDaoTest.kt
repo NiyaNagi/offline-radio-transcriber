@@ -399,30 +399,30 @@ public class CatalogDaoTest {
         assertEquals(1_000L, station.firstHeardAt)
         assertEquals(1_000L, station.lastHeardAt)
         assertEquals(1, station.transmissionCount)
+        // Register R-1134: no transmission row backs this observation, so the derived count is
+        // honestly zero -- overCountsByAttributionState is no longer a stored increment (see
+        // R_1134 tests below for the real, transmission-row-backed derivation).
         assertEquals(
-            "CONFIRMED=0,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0",
+            "CONFIRMED=0,INFERRED=0,AMBIGUOUS=0,UNKNOWN=0",
             station.overCountsByAttributionState,
         )
     }
 
     @Test
     @Requirement("R-1132", "FR-DIG-7")
-    public fun R_1132_recordStationObservation_updates_an_existing_station_and_accumulates_counts(): Unit = runTest {
-        val dao = db.catalogDao()
-        dao.recordStationObservation("K7ABC", AttributionState.AMBIGUOUS, observedAt = 1_000L)
+    public fun R_1132_recordStationObservation_updates_an_existing_stations_lastHeardAt_and_transmissionCount(): Unit =
+        runTest {
+            val dao = db.catalogDao()
+            dao.recordStationObservation("K7ABC", AttributionState.AMBIGUOUS, observedAt = 1_000L)
 
-        dao.recordStationObservation("K7ABC", AttributionState.CONFIRMED, observedAt = 2_000L)
+            dao.recordStationObservation("K7ABC", AttributionState.CONFIRMED, observedAt = 2_000L)
 
-        val station = dao.getStation("K7ABC")!!
-        // firstHeardAt never moves once set -- the birth timestamp, not the latest one.
-        assertEquals(1_000L, station.firstHeardAt)
-        assertEquals(2_000L, station.lastHeardAt)
-        assertEquals(2, station.transmissionCount)
-        assertEquals(
-            "CONFIRMED=1,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0",
-            station.overCountsByAttributionState,
-        )
-    }
+            val station = dao.getStation("K7ABC")!!
+            // firstHeardAt never moves once set -- the birth timestamp, not the latest one.
+            assertEquals(1_000L, station.firstHeardAt)
+            assertEquals(2_000L, station.lastHeardAt)
+            assertEquals(2, station.transmissionCount)
+        }
 
     @Test
     @Requirement("R-1132")
@@ -444,4 +444,173 @@ public class CatalogDaoTest {
 
         assertEquals("Dave", dao.getStation("K7ABC")!!.userName)
     }
+
+    // ---- Register R-1134 (FR-DIG-7, FR-DIG-8, constitution I, III) ----
+    //
+    // overCountsByAttributionState is now derived from the transmission (and, for an uncorrected
+    // AMBIGUOUS over, callsign_candidate) rows it is a fact about, rather than incremented in
+    // place with no corresponding decrement. See CatalogDao.getStation's own doc comment.
+
+    @Test
+    @Requirement("R-1134", "FR-DIG-7", "FR-DIG-8")
+    public fun R_1134_overCounts_are_derived_from_real_transmission_rows_a_confirmed_and_an_ambiguous_over(): Unit =
+        runTest {
+            val dao = db.catalogDao()
+            dao.recordStationObservation("K7ABC", AttributionState.AMBIGUOUS, observedAt = 1_000L)
+            db.sessionDao().insert(TestFixtures.session())
+            // A CONFIRMED over: stationId already names the station directly.
+            db.transmissionDao().insert(
+                TestFixtures.transmission("TX1", stationId = "K7ABC")
+                    .copy(attributionState = AttributionState.CONFIRMED),
+            )
+            // An AMBIGUOUS over: stationId is null (R-1110), so it is only found via its
+            // top-ranked candidate.
+            db.transmissionDao().insert(
+                TestFixtures.transmission("TX2", stationId = null)
+                    .copy(attributionState = AttributionState.AMBIGUOUS),
+            )
+            dao.insert(topRankedCandidateFor("TX2", "K7ABC"))
+
+            val station = dao.getStation("K7ABC")!!
+
+            assertEquals(
+                "CONFIRMED=1,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0",
+                station.overCountsByAttributionState,
+            )
+        }
+
+    @Test
+    @Requirement("R-1134", "FR-DIG-7", "FR-DIG-8")
+    public fun R_1134_an_UNKNOWN_over_is_never_counted_even_if_it_once_had_a_top_ranked_candidate(): Unit = runTest {
+        val dao = db.catalogDao()
+        dao.recordStationObservation("K7ABC", AttributionState.AMBIGUOUS, observedAt = 1_000L)
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(
+            TestFixtures.transmission("TX1", stationId = null).copy(attributionState = AttributionState.UNKNOWN),
+        )
+        dao.insert(topRankedCandidateFor("TX1", "K7ABC"))
+
+        val station = dao.getStation("K7ABC")!!
+
+        assertEquals(
+            "CONFIRMED=0,INFERRED=0,AMBIGUOUS=0,UNKNOWN=0",
+            station.overCountsByAttributionState,
+        )
+    }
+
+    @Test
+    @Requirement("R-1134", "FR-DIG-7", "FR-DIG-8")
+    public fun R_1134_a_transmission_with_two_historical_rank_0_candidate_rows_counts_once_not_twice(): Unit = runTest {
+        val dao = db.catalogDao()
+        dao.recordStationObservation("K7ABC", AttributionState.AMBIGUOUS, observedAt = 1_000L)
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(
+            TestFixtures.transmission("TX1", stationId = null).copy(attributionState = AttributionState.AMBIGUOUS),
+        )
+        // DataPassBResultSink.persistCandidates never overwrites -- a re-run for the same
+        // transmission adds a second rank-0 row rather than replacing the first (constitution
+        // III). A JOIN-based derivation would fan this transmission out into two rows and
+        // double the count; EXISTS must not.
+        dao.insert(topRankedCandidateFor("TX1", "K7ABC").copy(id = "CAND-TX1-a"))
+        dao.insert(topRankedCandidateFor("TX1", "K7ABC").copy(id = "CAND-TX1-b"))
+
+        val station = dao.getStation("K7ABC")!!
+
+        assertEquals(
+            "CONFIRMED=0,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0",
+            station.overCountsByAttributionState,
+        )
+    }
+
+    @Test
+    @Requirement("R-1134", "FR-DIG-7", "FR-DIG-8", "FR-DIG-13")
+    public fun R_1134_splitting_a_voiceprint_cluster_stops_counting_the_moved_over_for_its_old_station(): Unit =
+        runTest {
+            val dao = db.catalogDao()
+            dao.recordStationObservation("N7DAVE", AttributionState.AMBIGUOUS, observedAt = 1_000L)
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(
+                TestFixtures.transmission("TX1", stationId = "N7DAVE")
+                    .copy(attributionState = AttributionState.CONFIRMED, voiceprintId = "V1"),
+            )
+            dao.insert(
+                org.ort.data.entity.VoiceprintEntity(
+                    id = "V1",
+                    embedding = ByteArray(0),
+                    memberCount = 1,
+                    centroidUpdatedAt = null,
+                    boundStationId = "N7DAVE",
+                    bindingConfidence = null,
+                    lastConfirmedAt = null,
+                    isEnrolled = false,
+                    enrolmentObservationCount = 0,
+                    enrolmentSessionIds = null,
+                    enrolledAt = null,
+                    lastMatchedAt = null,
+                    bindingSource = null,
+                    embeddingModelId = null,
+                    embeddingModelVersion = null,
+                ),
+            )
+            dao.insert(
+                org.ort.data.entity.VoiceprintEntity(
+                    id = "V2",
+                    embedding = ByteArray(0),
+                    memberCount = 0,
+                    centroidUpdatedAt = null,
+                    boundStationId = null,
+                    bindingConfidence = null,
+                    lastConfirmedAt = null,
+                    isEnrolled = false,
+                    enrolmentObservationCount = 0,
+                    enrolmentSessionIds = null,
+                    enrolledAt = null,
+                    lastMatchedAt = null,
+                    bindingSource = null,
+                    embeddingModelId = null,
+                    embeddingModelVersion = null,
+                ),
+            )
+            assertEquals(
+                "CONFIRMED=1,INFERRED=0,AMBIGUOUS=0,UNKNOWN=0",
+                dao.getStation("N7DAVE")!!.overCountsByAttributionState,
+            )
+
+            // "Pick the overs that are not Dave" -- TX1 turns out not to be N7DAVE after all.
+            db.stationIdentityDao().splitVoiceprint(
+                fromVoiceprintId = "V1",
+                intoVoiceprintId = "V2",
+                members = listOf(
+                    org.ort.data.dao.VoiceprintSplitMember(transmissionId = "TX1", correctionId = "C1"),
+                ),
+                splitAt = 2_000L,
+            )
+
+            // No inverse decrement was written anywhere -- the count is simply re-derived and
+            // TX1 no longer contributes to it, because splitVoiceprint already moved it to
+            // UNKNOWN with no stationId (constitution III: nothing deleted, the old attribution
+            // stays reachable as a CorrectionEntity row -- StationIdentityDaoTest covers that).
+            assertEquals(
+                "CONFIRMED=0,INFERRED=0,AMBIGUOUS=0,UNKNOWN=0",
+                dao.getStation("N7DAVE")!!.overCountsByAttributionState,
+            )
+        }
+
+    /** R-1134: a rank-0 [CallsignCandidateEntity] for [transmissionId] naming [callsign] -- the
+     * exact candidate `CatalogDao.overCountRowsFor` reads for an uncorrected `AMBIGUOUS` over
+     * (`stationId IS NULL`), the same one `DataPassBResultSink.recordStationObservation` itself
+     * keys on. */
+    private fun topRankedCandidateFor(transmissionId: String, callsign: String) = CallsignCandidateEntity(
+        id = "CAND-$transmissionId",
+        transmissionId = transmissionId,
+        callsign = callsign,
+        rank = 0,
+        score = 0.9,
+        grammarValid = true,
+        ituPrefix = callsign.take(1),
+        ituCountry = "United States",
+        priorBreakdown = null,
+        databaseHit = true,
+        selected = false,
+    )
 }

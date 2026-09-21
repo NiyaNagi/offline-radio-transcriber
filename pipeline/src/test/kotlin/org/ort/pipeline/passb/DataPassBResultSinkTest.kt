@@ -297,6 +297,71 @@ class DataPassBResultSinkTest {
         assertNull(db.transmissionDao().getById("TX1")!!.processedTier)
     }
 
+    // Register R-1133 (FR-ASR-5, FR-ASR-6; AC-6; constitution I, VI): before this,
+    // PassBOutcome.inertControls -- which hallucination controls could not evaluate on this pass
+    // -- was computed on every run and thrown away the instant this sink read it. Inertness was
+    // representable (R-1121) but not inspectable: no debug dump could show that AC-6 ran on five
+    // controls rather than six for a given over.
+
+    @Test
+    fun `R_1133 inertControls is persisted on an accepted outcome`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(
+            acceptedResult().copy(
+                outcome = PassBOutcome.Accepted(
+                    FakeAsrEngine.defaultResult(text = "kilo seven alpha bravo charlie"),
+                    inertControls = setOf(org.ort.asrapi.rules.RejectionRuleId.NO_SPEECH_PROB),
+                ),
+            ),
+        )
+
+        assertEquals("NO_SPEECH_PROB", db.transmissionDao().getById("TX1")!!.inertControls)
+    }
+
+    @Test
+    fun `R_1133 inertControls is persisted on a rejected outcome`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(
+            rejectedResult().copy(
+                outcome = PassBOutcome.Rejected(
+                    rule = org.ort.asrapi.rules.RejectionRuleId.REPETITION,
+                    detail = "repeated too much",
+                    partialResult = null,
+                    inertControls = setOf(org.ort.asrapi.rules.RejectionRuleId.NO_SPEECH_PROB),
+                ),
+            ),
+        )
+
+        assertEquals("NO_SPEECH_PROB", db.transmissionDao().getById("TX1")!!.inertControls)
+    }
+
+    @Test
+    fun `R_1133 inertControls is the honest empty string, never a fabricated null, when every control ran`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        // A pre-decode reject (TOO_SHORT) never reaches the post-decode controls at all, so
+        // its inertControls is genuinely empty -- distinct from "unknown" (null).
+        sink.record(rejectedResult())
+
+        assertEquals("", db.transmissionDao().getById("TX1")!!.inertControls)
+    }
+
+    @Test
+    fun `R_1133 inertControls is left untouched -- null -- on a failed outcome, the same gate as processedTier`() =
+        runTest {
+            val db = freshDb()
+            val sink = DataPassBResultSink(db)
+
+            sink.record(failedResult())
+
+            assertNull(db.transmissionDao().getById("TX1")!!.inertControls)
+        }
+
     // Register R-1132, D56: before this, no production code path ever inserted a StationEntity --
     // every construction lived in src/test or src/debug, so the Stations screen and CatalogDao's
     // own database-presence/recency priors (R-1124) always read cold on a real device. D56 sets
@@ -363,10 +428,16 @@ class DataPassBResultSinkTest {
     @Test
     fun `R_1132 a second over for the same callsign updates the station rather than duplicating it`() = runTest {
         val db = freshDb()
+        // Register R-1134: a genuine second *over* is a second transmission -- re-running Pass B
+        // on the *same* transmission id would overwrite TX1's own current attribution, which is
+        // exactly the "derive from the transmission's real, current state" behaviour R-1134 fixed
+        // overCountsByAttributionState to have (a stale AMBIGUOUS write on TX1 must stop counting
+        // as CONFIRMED, not accumulate as though both were still true).
+        db.transmissionDao().insert(PipelineTestFixtures.transmission("TX2"))
         val sink = DataPassBResultSink(db)
 
         sink.record(acceptedResult())
-        sink.record(acceptedResult().copy(attribution = Attribution.ambiguous()))
+        sink.record(acceptedResult(transmissionId = "TX2").copy(attribution = Attribution.ambiguous()))
 
         val station = db.catalogDao().getStation("K7ABC")!!
         assertEquals(2, station.transmissionCount)

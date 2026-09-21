@@ -137,6 +137,20 @@ public interface TransmissionDao {
     public suspend fun setExecutionProvider(id: String, provider: String)
 
     /**
+     * Register R-1133 (FR-ASR-5, FR-ASR-6; AC-6; constitution I, VI): stamps
+     * [org.ort.data.entity.TransmissionEntity.inertControls] — see that column's own doc comment
+     * for the full reasoning and for why [inertControls] is a plain-text signature, not a hash.
+     * Written by [org.ort.pipeline.passb.DataPassBResultSink.record] for `Accepted` and
+     * `Rejected` outcomes only, the same "a genuine attempt" gate
+     * [org.ort.data.entity.TransmissionEntity.processedTier]'s own doc comment states for
+     * [setProcessedTier] — a `Failed` outcome never reached this point. Unconditional, no
+     * `corrected`-style guard: which controls were live for a pass run is a fact about the
+     * pipeline attempt, never an attribution a human correction should block.
+     */
+    @Query("UPDATE transmission SET inertControls = :inertControls WHERE id = :id")
+    public suspend fun setInertControls(id: String, inertControls: String)
+
+    /**
      * Every transmission not yet processed at any tier at or above the caller's target — i.e.
      * still a genuine reprocessing candidate. Never processed at all
      * ([org.ort.data.entity.TransmissionEntity.processedTier] `IS NULL`) always qualifies,

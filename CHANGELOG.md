@@ -32,6 +32,99 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (R-1133/R-1134: inert-control provenance persisted; a station's over counts are derived, not incremented)
+
+### `<pending>` — R-1133/R-1134: `inertControls` persisted beside pass provenance; `overCountsByAttributionState` derived from the transmission log
+
+**Scope:** `:pipeline`'s `passb/` package (`PassBFingerprintBuilder`, `DataPassBResultSink`, plus
+their test files) and `:data`'s catalog DAO/entities and correction DAO (`CatalogDao`,
+`CorrectionDao`, `TransmissionDao`, `TransmissionEntity`, `CatalogEntities.kt`, `OrtDatabase`
+schema v15→v16, `MigrationTest`, `TestFixtures`). No files outside these touched.
+
+**Requirements/ACs:** FR-ASR-5, FR-ASR-6, AC-6, FR-DIG-7, FR-DIG-8, FR-SPK-10; constitution I, III,
+VI; D56.
+
+**What changed:**
+
+1. **R-1133 — inert hallucination controls are now inspectable, not just representable.**
+   `PassBFingerprintBuilder.inertControlsSignature(Set<RejectionRuleId>)` renders
+   `PassBOutcome.inertControls` as a deterministic, sorted, comma-joined plain-text string (e.g.
+   `"NO_SPEECH_PROB"`, `""` when every control ran) — the same canonical-construction discipline
+   `configHash` already uses, deliberately **not** SHA-256-hashed: unlike `configHash`, this
+   value's only job is to be read, and a hash of a six-member closed enum would defeat that.
+   `TransmissionEntity` gains a new `inertControls: String?` column (schema v16, `MIGRATION_15_16`)
+   next to `executionProvider`/`processedTier`; `TransmissionDao.setInertControls` writes it.
+   `DataPassBResultSink.record` calls it for both `Accepted` and `Rejected` outcomes (both carry
+   `inertControls`; `Failed` never evaluated any control, so it is left `null`, the same gate
+   `processedTier` already uses). A debug dump reading `TransmissionEntity` directly (e.g.
+   `DebugDumpBuilder.kt` in `:app`, out of this change's scope) can now show which controls ran
+   for a given over — before this, `inertControls` was computed on every pass and thrown away the
+   instant this sink read it.
+2. **R-1134 — a station's `overCountsByAttributionState` is now derived, never incremented.**
+   `CatalogDao.getStation` recomputes the count, on every read, from the current
+   `TransmissionEntity`/`CallsignCandidateEntity` rows it is a fact about — the same "which
+   callsign does this over count toward" rule `recordStationObservation` always used (a
+   transmission whose own `stationId` names the station directly, or, for an uncorrected
+   `AMBIGUOUS` over with no `stationId` (register R-1110), its top-ranked (`rank = 0`) candidate)
+   — via a new `overCountRowsFor` query, using `EXISTS` rather than `JOIN` against
+   `callsign_candidate` so a transmission with more than one historical candidate row (a
+   re-run/reprocess never overwrites, per `persistCandidates`'s own kdoc) is counted once, not
+   fanned out. `touchStationObservation`/`.ForCorrection` no longer increment a stored count at
+   all; a freshly born station's own column is written as `OverCountsByAttributionState.EMPTY`'s
+   serialized placeholder, which `getStation` always overwrites before any caller sees it — the
+   stored value is never read as truth (never a second source of truth). Because the derivation
+   reads the transmission's *current* `attributionState`/`stationId`, both bugs the row named fix
+   for free, with no inverse-decrement code anywhere: `CorrectionDao.restoreAttribution` (undo)
+   already writes the pre-correction state back, so the very next `getStation` read re-derives the
+   old station's count correctly; `StationIdentityDao.splitVoiceprint` already moves a transmission
+   to `UNKNOWN`/`stationId = NULL`, which the derivation's own `!= 'UNKNOWN'` filter already
+   excludes. Neither `StationIdentityDao.kt` nor `restoreAttribution` itself needed any code
+   change. `recordStationObservation`'s `state` parameter is now enforced with `require(state !=
+   UNKNOWN)` rather than silently unused, since it no longer drives a stored write.
+   **Left as-is, on purpose:** `firstHeardAt` (set once, never moved), `lastHeardAt`,
+   `transmissionCount`, `userName`, `notes` — none of these changed shape or write path.
+   **Known, documented gap:** `ActivityDao.listStations()` (the Stations list screen's read path)
+   does not go through `getStation` and still returns the raw placeholder for this one column —
+   confirmed harmless today only because nothing in `:app` reads `overCountsByAttributionState`
+   from that path (`ScreenFrameCapturer.kt`'s own redaction-derivation table found "no view state
+   carries it"); documented on `OverCountsByAttributionState`'s own kdoc as a MUST-NOT-trust note
+   for a future caller, not silently left.
+3. **Performance, measured rather than assumed cached.** `overCountRowsFor` has no supporting
+   index today (`transmission.stationId`, `callsign_candidate.callsign` are both unindexed for
+   this access pattern). Measured with a throwaway Robolectric benchmark (deleted before this
+   report, not committed): one station's `getStation()` read against 5,000 backing transmissions
+   averaged **2.6 ms/call**; against 50,000, **22 ms/call** — consistent with a near-linear
+   unindexed scan. Both are fine for a single station-detail read; neither was cached back into a
+   column. If a future caller needs this at list-scale (one `getStation()` per row across many
+   stations), the fix is `Index("stationId")` on `transmission` and `Index("callsign", "rank")` on
+   `callsign_candidate`, not a cache — left open, not built, since nothing in `:app` calls
+   `getStation()` in a loop today.
+
+**Verified:** `.\gradlew.bat :data:testDebugUnitTest :pipeline:testDebugUnitTest` — green, every
+new and updated test passing (`PassBFingerprintBuilderTest` new; `DataPassBResultSinkTest`'s new
+`R_1133 *` cases and one updated `R_1132` case; `CatalogDaoTest`'s new `R_1134 *` cases and two
+updated `R_1132` cases; `CorrectionDaoTest`'s new `R_1134_an_undone_correction_...` case — the
+central regression test — and one updated `R_1132` case; `MigrationTest`'s new
+`migration_from_v15_to_v16_...` case plus both widened v1→head sweeps).
+`.\gradlew.bat :data:ktlintCheck :pipeline:ktlintCheck :data:detekt :pipeline:detekt` — green.
+Discrimination, three separate reverts, each confirmed red for the stated reason then restored
+green: (a) `inertControlsSignature` forced to always return `""` — 4 tests failed exactly where a
+non-empty signature was expected; (b) `getStation` forced to return the raw, un-derived row — 6
+tests failed, including the central undo-regression test; (c) the `EXISTS` arm reverted to a
+`JOIN` — exactly the one "two historical candidate rows" fan-out test failed.
+
+**Left open / not done:** `ActivityDao.listStations()` gap (above) — not fixed, out of the two
+named DAOs' ownership and not currently reachable by any `:app` read path. The supporting indices
+named above — not added, since the measured cost does not justify the schema churn today; revisit
+if a caller starts reading `getStation()` per-row across a station list. `:pipeline`'s
+`detektDebugUnitTest`/`detektTest` (the type-resolution variant) reported 6 pre-existing findings
+in files this change never touched (`AlertEvaluationCoordinatorTest.kt`, `PassBTest.kt`,
+`ReprocessWorkerTest.kt`, `RigSupervisorSquelchTest.kt`, `RigSupervisorTest.kt`,
+`RealCaptureServiceHeartbeatTest.kt`) — confirmed pre-existing and out of scope; the plain
+`:data:detekt`/`:pipeline:detekt` AGENTS.md documents as the gate task is green.
+
+---
+
 ## 2026-09-20 (R-1121: hallucination control 3 made honestly inert; no acoustic confidence is fabricated anywhere)
 
 ### `<pending>` — R-1121: `NoSpeechProbRule` stops accepting on `null`; `Hypothesis`/`TokenScore.logProb` stop being fabricated `0f`
