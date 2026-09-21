@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .fingerprint import run_fingerprint
+from .fingerprint import execution_provider, machine_descriptor, run_fingerprint, thread_count
 from .gate import load_fold_sessions
 from .manifest import Manifest
 from .metrics import (
@@ -79,10 +79,23 @@ def evaluate(
     per_source = {src: _metrics_for(ts) for src, ts in sorted(by_source.items())}
     aggregate = _metrics_for(scored)
 
+    # R-1122: computed once and handed to both the fingerprint hash and the report's own visible
+    # fields, so a reader never sees one machine/provider/thread-count on the report while the
+    # fingerprint silently describes another (constitution VI; the "two implementations of one
+    # fact" pattern this register keeps finding, e.g. R-1099).
+    machine = machine_descriptor()
+    provider = execution_provider()
+    threads = thread_count()
+
     return Report(
         fold=fold,
-        fingerprint=run_fingerprint(m.to_dict(), fold, config),
+        fingerprint=run_fingerprint(
+            m.to_dict(), fold, config, machine=machine, provider=provider, threads=threads,
+        ),
         per_source=per_source,
         aggregate=aggregate,
+        provider=provider,
+        machine=machine,
+        thread_count=threads,
         config=config,
     )
