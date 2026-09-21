@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (R-1021/R-1146: two more tour-vs-code drifts — both the code, not the tour steps, over R-1021's own reopening)
 
-### `<pending>` — R-1021: the live bar's tap-and-await mechanism retired for `overnight-live-monitor`, since its own target screen is now unreachable by design; R-1146: the C10 playback-survives-navigation assertion replaced with the real, restored stop-on-leave contract
+### `8c36cc46` — R-1021: the live bar's tap-and-await mechanism retired for `overnight-live-monitor`, since its own target screen is now unreachable by design; R-1146: the C10 playback-survives-navigation assertion replaced with the real, restored stop-on-leave contract
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`,
 `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt`,
