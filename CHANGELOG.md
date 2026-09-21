@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (R-1147: the "unidentified voices" headline and an inert voice-match checkbox both overclaimed a capability this build does not have)
 
-### `<pending>` — R-1147: Digest/Stations/Now no longer call an over "a voice" when all they know is it has no attributed station; Improve-Select's voice-match row states the honest not-built fact instead of an inert checkbox
+### `acb0101d` — R-1147: Digest/Stations/Now no longer call an over "a voice" when all they know is it has no attributed station; Improve-Select's voice-match row states the honest not-built fact instead of an inert checkbox
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt`,
 `app/src/main/kotlin/org/ort/app/ui/improve/ImproveScreens.kt`,
