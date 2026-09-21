@@ -970,7 +970,7 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   capture of a real bundle shows the redaction; the licences screen renders Gemma's terms and its
   prohibited-use policy.
 
-- [ ] **P37 · Evidence tooling — make `diff.py` able to fail** *(`tools/ui-audit/`)* —
+- [x] **P37 · Evidence tooling — make `diff.py` able to fail** *(`tools/ui-audit/`)* —
   constitution VIII. **Beta blocker, and it gates the evidence value of every other unit.**
 
   **Read first:** `tools/ui-audit/diff.py` — it returns 0 except when a manifest file is missing,
@@ -983,7 +983,13 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
 
   **Done when:** a **live tour invocation against a deliberately stale manifest exits non-zero**,
   with the transcript committed. Until this lands, no `diff.py` "unchanged" counts as evidence
-  anywhere in this plan.
+  anywhere in this plan. **`diff.py` side done** (CHANGELOG.md, R-1116): the comparison is now a
+  per-pixel difference fraction with a manifest-level `runId`/`apkHash` self-consistency gate,
+  measured and tested; `tools/ui-audit/R-1116-stale-manifest-proof.md` runs it against the real
+  committed `results/ui-audit/` captures with a deliberately mixed-run manifest and gets exit 3,
+  transcript committed. **Still open:** the same proof from a live `tour.ps1` invocation against a
+  device/emulator, which this session's working rules kept it from running (no install to any of
+  the three attached emulators) — left to the lead.
 
 - [ ] **P38 · Packaging and the model mirror** *(buildSrc, release workflow)* — FR-AST-10..14,
   D44. **Beta blocker.**
