@@ -3,26 +3,25 @@ package org.ort.app.fieldreport.recorder
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.ort.app.BuildConfig
 import org.ort.testing.Requirement
 import org.ort.testing.TestClock
 import java.io.File
 import java.nio.file.Files
 
 /**
- * FR-OBS-6: the debug-build session recorder — bounded ring buffer, off the audio frame path
- * (proven structurally by [FieldReportRecorder.record]'s own non-suspending signature, not by a
- * test here — a test cannot observe "never blocks" directly), absent from release builds.
+ * FR-OBS-6: the session recorder — bounded ring buffer, off the audio frame path (proven
+ * structurally by [FieldReportRecorder.record]'s own non-suspending signature, not by a test here
+ * — a test cannot observe "never blocks" directly). D55 supersedes FR-OBS-6's original "absent
+ * from release builds" text: the recorder now runs in every build (`FieldReportRecorderTest`
+ * carries no build-type gate any more — see `FieldReportAppWiring`'s own doc comment for why).
  */
 class FieldReportRecorderTest {
 
     @AfterEach
     fun tearDown() {
         FieldReportRecorder.shutdown()
-        FieldReportRecorder.isDebugBuild = { BuildConfig.DEBUG }
     }
 
     private fun tempFilesDir(): File = Files.createTempDirectory("field-report-recorder-test").toFile()
@@ -81,15 +80,18 @@ class FieldReportRecorderTest {
 
     @Test
     @Requirement("FR-OBS-6")
-    fun `FR_OBS_6_a release build never configures, never records, never accumulates anything`() {
-        FieldReportRecorder.isDebugBuild = { false }
+    fun `D55_configure always creates the field-report directory and records, with no build-type gate`() {
         val filesDir = tempFilesDir()
 
         FieldReportRecorder.configure(filesDir, TestClock())
         FieldReportRecorder.record(RecorderEvent.DestinationChanged(RecorderDestination.NOW))
+        runBlocking { FieldReportRecorder.flush() }
 
-        assertTrue(FieldReportRecorder.events().isEmpty())
-        assertFalse(File(filesDir, "field-report").exists(), "a release build must not even create the directory")
+        assertTrue(
+            File(filesDir, "field-report").exists(),
+            "D55: the recorder ships in every build now — the directory must exist",
+        )
+        assertEquals(listOf(RecorderEvent.DestinationChanged(RecorderDestination.NOW)), FieldReportRecorder.events())
     }
 
     @Test
@@ -142,5 +144,46 @@ class FieldReportRecorderTest {
             listOf(RecorderEvent.DestinationChanged(RecorderDestination.SETTINGS)),
             FieldReportRecorder.events(),
         )
+    }
+
+    /**
+     * D55/FR-OBS-7: redaction happens at capture, not at bundle time — see
+     * `ScreenFrameCapturer.kt`'s own `mayRenderUserSuppliedContent` doc comment.
+     * [RecorderDestination.STATION_DETAIL] is [org.ort.app.ui.screens.StationIdentityScreen], whose
+     * "Given by you" fields can carry an operator-typed station name or note (FR-SPK-25,
+     * FR-DIG-13). The capturer must never even be asked for a frame there — this is the
+     * discriminating test for the fix in [FieldReportRecorder.onDestinationChanged]: before the
+     * fix, [FakeScreenFrameCapturer.callCount] here would be 1, exactly like the LOG case above.
+     */
+    @Test
+    @Requirement("FR-OBS-7")
+    fun `D55_a station-detail destination is recorded but never requests a frame capture`() {
+        val filesDir = tempFilesDir()
+        val capturer = FakeScreenFrameCapturer(FakeScreenFrameCapturer.Mode.Success(byteArrayOf(4, 5, 6)))
+        FieldReportRecorder.configure(filesDir, TestClock(), frameCapturer = capturer)
+
+        FieldReportRecorder.onDestinationChanged(RecorderDestination.STATION_DETAIL)
+        runBlocking {
+            FieldReportRecorder.flush()
+            FieldReportRecorder.awaitFrameCapture()
+        }
+
+        assertEquals(
+            listOf(RecorderEvent.DestinationChanged(RecorderDestination.STATION_DETAIL)),
+            FieldReportRecorder.events(),
+            "the destination change itself is still safe to log — FR-OBS-6's vocabulary carries no name",
+        )
+        assertEquals(
+            0,
+            capturer.callCount,
+            "a destination that can show an operator-typed name must never even be asked for a frame",
+        )
+    }
+
+    @Test
+    @Requirement("FR-OBS-7")
+    fun `RecorderDestination_mayRenderUserSuppliedContent is true only for STATION_DETAIL`() {
+        val flagged = RecorderDestination.entries.filter { it.mayRenderUserSuppliedContent() }
+        assertEquals(listOf(RecorderDestination.STATION_DETAIL), flagged)
     }
 }

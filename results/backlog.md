@@ -12,11 +12,11 @@ process, polish, open questions and coverage debt are P2.
 |---|---:|---:|---:|---:|
 | UI / defect register | 110 | 22 | 49 | 39 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
-| Build-plan units | 13 | 6 | 7 | 0 |
+| Build-plan units | 12 | 5 | 7 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 2 | 0 | 0 | 2 |
-| **Total** | **165** | **43** | **71** | **51** |
+| **Total** | **164** | **42** | **71** | **51** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -25,7 +25,6 @@ process, polish, open questions and coverage debt are P2.
 | P33 | Pass B honesty — wire the evidence priors, stop asserting `CONFIRMED` uncalibrated | build-plan | not started | beta gate |
 | P34 | Capture route and sample rate | build-plan | not started | beta gate |
 | P35 | Durability — stale leases and the migration guard | build-plan | not started | beta gate |
-| P36 | Outbound channels — field reports in release, private and redacted; Gemma notices | build-plan | not started | beta gate |
 | P37 | Evidence tooling — make `diff.py` able to fail | build-plan | not started | beta gate |
 | P38 | Packaging and the model mirror | build-plan | not started | beta gate |
 | H1 | protocol step never run | hardware | unrun | no results/e2e-audit/hardware/H1.md |

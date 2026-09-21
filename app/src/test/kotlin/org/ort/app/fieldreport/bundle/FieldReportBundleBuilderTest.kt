@@ -2,17 +2,22 @@ package org.ort.app.fieldreport.bundle
 
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.fieldreport.recorder.FakeScreenFrameCapturer
+import org.ort.app.fieldreport.recorder.FieldReportRecorder
+import org.ort.app.fieldreport.recorder.RecorderDestination
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.SessionEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.testing.TestClock
 import org.robolectric.RobolectricTestRunner
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -36,6 +41,11 @@ class FieldReportBundleBuilderTest {
     @Before
     fun openDatabase() {
         db = OrtDatabase.create(context)
+    }
+
+    @After
+    fun shutdownRecorder() {
+        FieldReportRecorder.shutdown()
     }
 
     private fun session(id: String) = SessionEntity(
@@ -193,5 +203,65 @@ class FieldReportBundleBuilderTest {
         val frameEntry = preview.entries.single { it.fileName == "frames/0000000001.png" }
         assertEquals(FieldReportGatedCategory.SCREEN_FRAMES, frameEntry.category)
         assertFalse(preview.entries.any { it.fileName != "frames/0000000001.png" && it.category != null })
+    }
+
+    /**
+     * D55/FR-OBS-7/FR-OBS-8: the literal "Tests first" case — a bundle built from a screen showing
+     * an operator-typed station name must contain that name in **no** frame. Redaction happens at
+     * capture ([org.ort.app.fieldreport.recorder.ScreenFrameCapturer]'s own
+     * `mayRenderUserSuppliedContent`), not at bundle time: this drives the real
+     * [FieldReportRecorder] through a [RecorderDestination.STATION_DETAIL] destination change with
+     * a capturer that would (if ever called) hand back bytes standing in for a captured pixel of
+     * the name, then asserts the bundle's own SCREEN_FRAMES entries never carry them — proving the
+     * redaction holds end to end, from the recorder down through the real bundle builder, not only
+     * at the unit that decides whether to call the capturer.
+     */
+    @Test
+    fun `D55 a bundle built from STATION_DETAIL never carries a frame from that destination`() = runTest {
+        val stationNameMarker = "OPERATOR-TYPED-STATION-NAME".toByteArray()
+        val capturer = FakeScreenFrameCapturer(FakeScreenFrameCapturer.Mode.Success(stationNameMarker))
+        FieldReportRecorder.configure(context.filesDir, TestClock(), frameCapturer = capturer)
+
+        FieldReportRecorder.onDestinationChanged(RecorderDestination.STATION_DETAIL)
+        FieldReportRecorder.flush()
+        FieldReportRecorder.awaitFrameCapture()
+
+        val (_, entries) = writeBundle(categories = setOf(FieldReportGatedCategory.SCREEN_FRAMES))
+
+        assertTrue(
+            "a STATION_DETAIL destination must never produce a stored frame at all",
+            entries.keys.none { it.startsWith("frames/") },
+        )
+        assertTrue(
+            "the operator-typed name marker must appear in no bundle entry",
+            entries.values.none { it.toString(Charsets.UTF_8).contains("OPERATOR-TYPED-STATION-NAME") },
+        )
+        assertEquals(
+            "the capturer must never even have been asked for a frame on this destination",
+            0,
+            capturer.callCount,
+        )
+    }
+
+    /** Control for the test above: a non-sensitive destination's frame reaches the bundle exactly
+     * as `AC_148` already proves for a frame placed on disk directly — this drives it through the
+     * real recorder instead, so the control and the redacted case above exercise the identical
+     * path. */
+    @Test
+    fun `control D55 a NOW destination's captured frame does reach the bundle`() = runTest {
+        val capturer = FakeScreenFrameCapturer(FakeScreenFrameCapturer.Mode.Success(byteArrayOf(1, 2, 3)))
+        FieldReportRecorder.configure(context.filesDir, TestClock(), frameCapturer = capturer)
+
+        FieldReportRecorder.onDestinationChanged(RecorderDestination.NOW)
+        FieldReportRecorder.flush()
+        FieldReportRecorder.awaitFrameCapture()
+
+        val (_, entries) = writeBundle(categories = setOf(FieldReportGatedCategory.SCREEN_FRAMES))
+
+        assertTrue(
+            "a non-sensitive destination's frame must reach the bundle",
+            entries.keys.any { it.startsWith("frames/") },
+        )
+        assertEquals(1, capturer.callCount)
     }
 }

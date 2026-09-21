@@ -51,6 +51,18 @@ class SettingsLicensesScreenTest {
     }
 
     @Test
+    @Requirement("NFR-6d")
+    fun `D55 tapping Gemma also renders the full Terms of Use and the Prohibited Use Policy, not just a link`() {
+        composeTestRule.setContent { OrtTheme { SettingsLicensesScreen(context = context, onBack = {}) } }
+
+        composeTestRule.onNodeWithContentDescription("Gemma 3 1B. Gemma Terms of Use").performClick()
+
+        composeTestRule.onNodeWithText("GEMMA TERMS OF USE", substring = true).assertExists()
+        composeTestRule.onNodeWithText("GEMMA PROHIBITED USE POLICY", substring = true).assertExists()
+        composeTestRule.onNodeWithText("Generate Sexually Explicit Content", substring = true).assertExists()
+    }
+
+    @Test
     @Requirement("AC-167")
     fun `AC_167 tapping sherpa-onnx opens the real Apache License 2 dot 0 text`() {
         composeTestRule.setContent { OrtTheme { SettingsLicensesScreen(context = context, onBack = {}) } }

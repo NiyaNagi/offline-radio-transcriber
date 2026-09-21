@@ -6,17 +6,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
-import org.ort.app.BuildConfig
 import org.ort.core.Clock
 import org.ort.core.SystemClock
 import java.io.File
 import java.time.Instant
 
 /**
- * FR-OBS-6: the debug-build session recorder. A bounded ring buffer of [RecorderEvent] — the
- * closed vocabulary that file's own doc comment specifies — kept entirely off the audio frame
- * path, absent from release builds, and rendered to the one file FR-OBS-8 names as part of the
- * field-report bundle's ungated set.
+ * FR-OBS-6: the session recorder. A bounded ring buffer of [RecorderEvent] — the closed
+ * vocabulary that file's own doc comment specifies — kept entirely off the audio frame path, and
+ * rendered to the one file FR-OBS-8 names as part of the field-report bundle's ungated set.
  *
  * **Never on the audio frame path (FR-OBS-6, FR-RUN-1).** [record] only builds a [RecorderEvent]
  * (already built by the caller — this function does no work of its own beyond that) and offers it
@@ -29,12 +27,13 @@ import java.time.Instant
  * forbids). No destination-change call site this recorder is wired from is on that path either,
  * but the discipline is the same discipline regardless of which call site happens to use it today.
  *
- * **Absent from release builds (FR-OBS-6).** [isDebugBuild] gates both [configure] and [record] —
- * a release build that somehow still called either does no work at all, the same seam
- * `org.ort.app.ui.failures.DebugFailureOverride` already uses and for the same reason: Robolectric
- * only ever compiles this module's **debug** variant, so `BuildConfig.DEBUG` is `true` in every
- * unit test regardless of what this object does — proving "ignored when not debug" needs a seam a
- * test can flip.
+ * **Ships in every build (D55).** FR-OBS-6's original text said "absent from release builds";
+ * D55 supersedes that for the whole field-report channel, this recorder included — see
+ * `FieldReportAppWiring`'s own doc comment for the full reasoning. This object never gates on
+ * `BuildConfig.DEBUG` at all now: the recorder is purely local (a ring buffer plus, optionally,
+ * locally-stored frames) until an operator explicitly triggers an upload, and that upload's own
+ * gate ([org.ort.app.fieldreport.upload.FieldReportUploadClientFactory]) is what actually decides
+ * whether a destination is configured.
  *
  * **Bounded ring buffer (FR-OBS-6, tested by exceeding it, not by asserting the constant —
  * `FieldReportRecorderTest`'s `FR_OBS_6_...` bound test).** [events] never returns more than
@@ -54,10 +53,6 @@ public object FieldReportRecorder {
      * `DiagnosticsBundleSpec`'s seven scrubbed files — this package produces it, it does not
      * package it (see this package's own report for the contract). */
     public const val LOG_FILE_NAME: String = "session-recorder.log"
-
-    /** Test seam (mirrors [org.ort.app.ui.failures.DebugFailureOverride.isDebugBuild] exactly, same
-     * reason): production code never assigns this. */
-    internal var isDebugBuild: () -> Boolean = { BuildConfig.DEBUG }
 
     private sealed interface Message {
         data class Record(val event: RecorderEvent) : Message
@@ -83,8 +78,8 @@ public object FieldReportRecorder {
 
     /**
      * Configures (or reconfigures) where this session's recorder log and frames live, and starts
-     * the single consumer coroutine. A no-op in a release build ([isDebugBuild] false) — no
-     * directory is created, no consumer starts, [record] will do nothing either.
+     * the single consumer coroutine. D55: this runs in every build now — no `BuildConfig.DEBUG`
+     * check — since the recorder is purely local until an operator explicitly uploads it.
      *
      * [frameCapturer], when non-null, is what [onDestinationChanged] uses to satisfy FR-OBS-7 —
      * left `null` by every call this change makes (no in-scope call site constructs a real
@@ -100,13 +95,6 @@ public object FieldReportRecorder {
         maxFrameBytes: Long = FrameStore.DEFAULT_MAX_TOTAL_BYTES,
     ) {
         consumerJob?.cancel()
-        if (!isDebugBuild()) {
-            logDir = null
-            channel = null
-            frameStore = null
-            this.frameCapturer = null
-            return
-        }
         val dir = File(filesDir, LOG_DIR_NAME)
         dir.mkdirs()
         this.logDir = dir
@@ -144,11 +132,10 @@ public object FieldReportRecorder {
 
     /**
      * FR-OBS-6's one recording entry point. Takes only [RecorderEvent] — see that type's own doc
-     * comment for the structural guarantee this makes possible. A no-op in a release build or
-     * before [configure] has run.
+     * comment for the structural guarantee this makes possible. A no-op only before [configure]
+     * has run (D55: no longer gated on build type).
      */
     public fun record(event: RecorderEvent) {
-        if (!isDebugBuild()) return
         channel?.trySend(Message.Record(event))
     }
 
@@ -159,10 +146,18 @@ public object FieldReportRecorder {
      * coroutine, so a slow or hung capturer (see [FakeScreenFrameCapturer]) cannot delay
      * navigation. A capture failure (`null` bytes) is recorded nowhere else; [FrameStore] simply
      * gains one fewer frame than it might have.
+     *
+     * **D55: redaction happens here, at capture, not at bundle time.** Constitution V puts a
+     * user-supplied name and station knowledge in no channel and no tier at all (FR-SPK-25,
+     * FR-DIG-13); a screen frame is pixels, so nothing downstream can find and remove a name from
+     * one the way `CallsignScrubber` can from a log line. [RecorderDestination.mayRenderUserSuppliedContent]
+     * (`ScreenFrameCapturer.kt`) names the destinations that can show that content —
+     * [ScreenFrameCapturer.capture] is never even called for one of them, so a redacted
+     * destination produces zero frames, never a frame with something removed from it afterward.
      */
     public fun onDestinationChanged(destination: RecorderDestination) {
         record(RecorderEvent.DestinationChanged(destination))
-        if (!isDebugBuild()) return
+        if (destination.mayRenderUserSuppliedContent()) return
         val capturer = frameCapturer ?: return
         val store = frameStore ?: return
         lastFrameCaptureJob = captureScope.launch {

@@ -1087,10 +1087,13 @@ private fun localSaveSectionViewState(
  * [SettingsDiagnosticsSubScreen] purely to keep that function under detekt's length limit.
  *
  * When the consent screen is not open, [content] is invoked with the current
- * [FieldReportSectionViewState] (`null` in a release build, FR-OBS-6) and the two actions that
- * open it / flip the FR-OBS-10 switch — [SettingsDiagnosticsSubScreen] renders its own
- * `SettingsDiagnosticsScreen` there. When it is open, this function renders
- * [FieldReportConsentScreen] itself instead, so [content] is never composed underneath it.
+ * [FieldReportSectionViewState] — non-`null` in every build now (D55 superseded FR-OBS-6's
+ * original "absent from release builds": this section renders regardless of build type, and it is
+ * [FieldReportUploadClientFactory.create] alone, below, that decides whether `Send` is actually
+ * reachable, per D49) — and the two actions that open it / flip the FR-OBS-10 switch —
+ * [SettingsDiagnosticsSubScreen] renders its own `SettingsDiagnosticsScreen` there. When it is
+ * open, this function renders [FieldReportConsentScreen] itself instead, so [content] is never
+ * composed underneath it.
  */
 @Composable
 private fun FieldReportHost(
@@ -1117,10 +1120,11 @@ private fun FieldReportHost(
     var fieldReportDestination by remember(fieldReportConsentOpen) {
         mutableStateOf<FieldReportDestination?>(null)
     }
-    // WPR3 (FR-OBS-11/FR-OBS-12): `null` is the honest "not configured" state
+    // WPR3 (FR-OBS-11/FR-OBS-12), D49/D55: `null` is the honest "not configured" state
     // `SettingsContributeScreen.kt` already uses for its own not-yet-built upload client, never a
     // fabricated destination — see `FieldReportUploadClientFactory`'s own doc comment for exactly
-    // when that is (a release build, or a debug build with no token in the environment).
+    // when that is (no token, no destination repository, or neither configured at build time —
+    // never a build-type check any more).
     val fieldReportClient: FieldReportUploadClient? = remember { FieldReportUploadClientFactory.create() }
 
     // R-1053: same fix, same reason — `FieldReportBundleBuilder.preview` (real file I/O) and a real
@@ -1137,16 +1141,16 @@ private fun FieldReportHost(
     }
 
     if (!fieldReportConsentOpen) {
-        val fieldReport = if (BuildConfig.DEBUG) {
-            FieldReportSectionViewState(
-                publicGuardEnabled = run {
-                    fieldReportGuardVersion // see this function's own doc comment on the field above
-                    fieldReportSettingsStore.publicDestinationGuardEnabled
-                },
-            )
-        } else {
-            null
-        }
+        // D55: this section renders in every build now — see this function's own doc comment.
+        // `FieldReportUploadClientFactory.create()` above is what still returns `null` (and
+        // therefore keeps `Send` unreachable) whenever no destination is configured; the section
+        // itself is no longer hidden by `BuildConfig.DEBUG`.
+        val fieldReport = FieldReportSectionViewState(
+            publicGuardEnabled = run {
+                fieldReportGuardVersion // see this function's own doc comment on the field above
+                fieldReportSettingsStore.publicDestinationGuardEnabled
+            },
+        )
         content(
             fieldReport,
             FieldReportSectionActions(

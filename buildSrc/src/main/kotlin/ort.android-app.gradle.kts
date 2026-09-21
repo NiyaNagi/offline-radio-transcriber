@@ -56,10 +56,40 @@ extensions.configure<BaseAppModuleExtension> {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
 
-        // FR-OBS-12: the default every variant gets unless `buildTypes { debug { ... } }` below
-        // overrides it — see that block's own comment for why the field must exist for both
-        // variants. Blank, never a placeholder that could be mistaken for a real value.
-        buildConfigField("String", "FIELD_REPORT_TOKEN", "\"\"")
+        // D55/FR-OBS-12: the field-report upload token, read from the `ORT_FIELD_REPORT_TOKEN`
+        // environment variable in EVERY build type/variant — D55 removed the previous debug-build-
+        // only restriction (`buildTypes { debug { ... } }` used to be the only place this ever got
+        // a real value). A build-type-shaped gate was exactly the kind of accident this codebase
+        // otherwise refuses to rely on: it happened to work for the artifact this project actually
+        // ships (an AGP "debug"-type APK signed with the release key, `release.yml`) purely because
+        // that artifact's `BuildConfig.DEBUG` is `true`, and it would have silently gone dark the
+        // moment a genuine `release` build type variant shipped instead. A plain local build, or
+        // any CI job that does not set the environment variable, still sees the blank default here
+        // in every variant — indistinguishable from "not configured"
+        // (`RealFieldReportUploadClient`'s own contract), never a placeholder that could be
+        // mistaken for a real value.
+        buildConfigField(
+            "String",
+            "FIELD_REPORT_TOKEN",
+            "\"${providers.environmentVariable("ORT_FIELD_REPORT_TOKEN").getOrElse("")}\"",
+        )
+        // D49/D55: the field-report destination repository, likewise build-configurable rather
+        // than a source literal (`FieldReportUploadClientFactory`, app/.../fieldreport/upload,
+        // refuses to construct a real client whenever this is blank — D49's "a build with no
+        // configured destination must refuse, not default"). Gradle property
+        // `-PortFieldReportRepository=owner/repo` or the `ORT_FIELD_REPORT_REPOSITORY` environment
+        // variable. The operator has not created the private destination yet (D49: it moves to a
+        // private repository before public launch), so this stays blank in every build until they
+        // do — no URL is invented or committed here.
+        buildConfigField(
+            "String",
+            "FIELD_REPORT_REPOSITORY",
+            "\"${
+                providers.gradleProperty("ortFieldReportRepository")
+                    .orElse(providers.environmentVariable("ORT_FIELD_REPORT_REPOSITORY"))
+                    .getOrElse("")
+            }\"",
+        )
     }
 
     // Debug-fix session (2026-09-19, operator report: "App not installed. Package appears to be
@@ -107,24 +137,11 @@ extensions.configure<BaseAppModuleExtension> {
         getByName("release") {
             isMinifyEnabled = false
         }
-        // FR-OBS-12: the field-report upload token, scoped to the one destination repository,
-        // present only in a debug build. Injected at build time from the `ORT_FIELD_REPORT_TOKEN`
-        // user-scope environment variable exactly as `HF_TOKEN` is (FetchBundledAssetsTask below) —
-        // never committed, never printed. The field is declared for both build types (below,
-        // `defaultConfig`) because AGP compiles `:app`'s one shared main source set against each
-        // variant's own generated `BuildConfig`, so a field that existed only for `debug` would
-        // fail `compileReleaseKotlin` the moment any code referenced it — but only this `debug`
-        // block ever gives it a real value; a release build always sees the empty-string default,
-        // indistinguishable from "not configured" (`RealFieldReportUploadClient`'s own contract).
-        // `FieldReportUploadClientFactory` (app/.../fieldreport/upload) additionally gates on
-        // `BuildConfig.DEBUG` before ever reading this field, so a release build never constructs a
-        // real client regardless.
+        // D55: the field-report token/repository (FIELD_REPORT_TOKEN, FIELD_REPORT_REPOSITORY) are
+        // now declared once in `defaultConfig` above, read from the environment/Gradle property in
+        // every build type — see that block's own comment for why a debug-only override no longer
+        // exists here.
         getByName("debug") {
-            buildConfigField(
-                "String",
-                "FIELD_REPORT_TOKEN",
-                "\"${providers.environmentVariable("ORT_FIELD_REPORT_TOKEN").getOrElse("")}\"",
-            )
             // See this block's own top-of-file comment: only present when release.yml has decoded
             // the release-signing secrets into the environment; absent for every local build.
             if (releaseSigningStoreFile.isPresent) {

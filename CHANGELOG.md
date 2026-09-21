@@ -411,6 +411,87 @@ unknown cause made `create()` fail after that first call already succeeded; rewr
 of those call sites was outside this unit's ownership (`:data`, `:app` startup, and the failure
 screen's wiring only).
 
+### `a6200da8` — P36: the field-report channel ships in release, its destination is build-configurable, names are redacted at capture, and the licences screen carries Gemma's terms in full
+
+**Scope:** `app/src/main/kotlin/org/ort/app/fieldreport/**` (wiring, upload factory, recorder,
+`ScreenFrameCapturer.kt`), `app/src/main/kotlin/org/ort/app/ui/settings/{SettingsContent,
+SettingsDiagnosticsScreen,SettingsLicensesScreen}.kt`, `buildSrc/src/main/kotlin/ort.android-app
+.gradle.kts`, `app/src/main/assets/licenses/gemma.txt`, and the matching test files. `:net` was
+read (`RealFieldReportUploadClient.kt`) but not modified — its FR-OBS-10 visibility guard is
+untouched, as directed.
+
+**Requirements/ACs:** D55, D49 (completed), FR-OBS-6..12, FR-OBS-10, FR-SPK-25, FR-DIG-13,
+constitution V, NFR-6d.
+
+**What changed:** three launch blockers R-1112/D55 named, closed in the code:
+
+1. **The field-report channel no longer depends on `BuildConfig.DEBUG`.**
+   `FieldReportAppWiring.configureOnce`/`attachWindow` and `FieldReportRecorder.configure`/
+   `record`/`onDestinationChanged` dropped their debug-only gates (the `internal var
+   isDebugBuild` seam is gone from `FieldReportRecorder`). `SettingsContent.kt`'s `FieldReportHost`
+   no longer nulls out `FieldReportSectionViewState` on a release build, and
+   `SettingsDiagnosticsScreen.kt`'s section header dropped the now-false "(debug builds only)"
+   suffix. The recorder is purely local (a ring buffer plus, optionally, on-disk frames) until an
+   operator explicitly uploads it, so running it in every build carries none of the risk an upload
+   would — only the upload factory decides whether a real destination exists.
+2. **The destination is build-configurable, and a build with none refuses rather than
+   defaulting.** `FieldReportUploadClientFactory.DESTINATION_REPOSITORY` (a hardcoded literal) is
+   gone; `create()` now reads `BuildConfig.FIELD_REPORT_REPOSITORY` alongside the existing
+   `FIELD_REPORT_TOKEN`, and `shouldCreate(token, repository)` requires both non-blank — no
+   `debugBuild` parameter any more. `ort.android-app.gradle.kts` declares both `BuildConfig`
+   fields once in `defaultConfig` (previously `FIELD_REPORT_TOKEN` was only set inside the
+   `debug` buildType block), each read from an environment variable/Gradle property
+   (`ORT_FIELD_REPORT_TOKEN`; `ORT_FIELD_REPORT_REPOSITORY` or `-PortFieldReportRepository`), blank
+   by default in every build type. No destination URL is invented or committed — the operator has
+   not created the private repository yet (D49).
+3. **Redaction of user-supplied names happens at capture, not at bundle time.**
+   `RecorderDestination.mayRenderUserSuppliedContent()` (new, `ScreenFrameCapturer.kt`) names
+   `STATION_DETAIL` — reached at `org.ort.app.ui.screens.StationIdentityScreen`, whose "Given by
+   you" fields can carry an operator-typed station name and note (FR-SPK-25, FR-DIG-13).
+   `FieldReportRecorder.onDestinationChanged` checks this before it ever calls
+   `ScreenFrameCapturer.capture()`, so a redacted destination produces **zero** frames — never a
+   frame that is later scrubbed, which a bitmap does not support the way `CallsignScrubber`
+   supports a log line.
+4. **The licences screen renders Gemma's full Terms of Use and Prohibited Use Policy, not just
+   a link.** `app/src/main/assets/licenses/gemma.txt` gained the complete text of both documents
+   (fetched from `ai.google.dev/gemma/terms` and `ai.google.dev/gemma/prohibited_use_policy` on
+   2026-09-20), reproduced for offline reading per NFR-6d, alongside the existing required-notice
+   sentence and use-restriction summary. No Kotlin/layout change — only the bundled asset grew.
+
+**Verified:** `./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.fieldreport.*" --tests
+"org.ort.app.ui.settings.SettingsLicensesScreenTest" --tests
+"org.ort.app.ui.settings.SettingsLicensesScreenLayoutTest" --tests
+"org.ort.app.ui.settings.SettingsLicensesCoverageTest" --tests
+"org.ort.app.ui.settings.SettingsDiagnosticsScreenTest" --tests
+"org.ort.app.ui.settings.SettingsContentTest" --tests "org.ort.app.ui.settings.SettingsRootScreenTest"
+--max-workers=2` — green (all new and pre-existing tests pass). `./gradlew :net:test` — green,
+unaffected (confirms `RealFieldReportUploadClient.kt` was not touched). `./gradlew
+:app:ktlintCheck` — green. **Discrimination, each shown red then green by hand before this
+report:** the `STATION_DETAIL` redaction check, `FieldReportUploadClientFactory.shouldCreate`'s
+repository requirement, and the Gemma licence text — each production line was temporarily
+reverted, the new test(s) observed to fail for the stated reason, then restored and re-verified
+green (see the new tests: `FieldReportRecorderTest."D55_a station-detail destination is recorded
+but never requests a frame capture"`, `FieldReportBundleBuilderTest."D55 a bundle built from
+STATION_DETAIL never carries a frame from that destination"`,
+`FieldReportUploadClientFactoryTest."D49 a build with no destination repository configured
+refuses..."`, `SettingsLicensesScreenTest."D55 tapping Gemma also renders the full Terms of Use
+and the Prohibited Use Policy..."`).
+
+**Left open / not done — both explicitly operator work, per this unit's own "Done when":**
+an actual upload from a signed build landing in the named private repository (the repository does
+not exist yet — D49 says it must be private and the operator has not created it; no URL is
+invented here), and a device capture of a real bundle showing the redaction (this session verified
+the redaction in Robolectric only, end to end through the real `FieldReportRecorder` and
+`FieldReportBundleBuilder`, never on a device). The Gemma licence text was reproduced via an
+AI-mediated fetch of the live pages, not copied byte-for-byte from a downloaded source file — the
+lead/operator should sanity-check it against `ai.google.dev/gemma/terms` and
+`ai.google.dev/gemma/prohibited_use_policy` before this ships in a release. The licences screen
+(Gemma notice detail) and the Settings diagnostics screen (field-report section header text)
+both touch UI surface per constitution VIII and need re-capture by the lead's tour — this unit did
+not capture them itself, per its own instructions. `tour.json` has no step that drills into an
+individual licence notice's detail screen at all (only the list, `overnight/CF12-settings-licenses`
+and its `@2x`); recommend the lead add one so the expanded Gemma text is ever actually captured.
+
 ### `<pending>` — roadmap research lands as D51–D55, build-plan Wave L, R-1109..R-1123 and a generated `results/backlog.md`
 
 **Scope:** `spec/functional-spec.md` (§3 decisions and §16 traceability), `spec/build-plan.md`
