@@ -22,6 +22,44 @@ class ImproveScreensTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
+    /**
+     * R-1147 (register): `Improve-Select.dc.html`'s "Match voices to stations heard here" row was
+     * a `CheckboxRow` fixed `checked = true` with `onCheckedChange = {}` — an inert control that
+     * looks like an opt-out and does nothing, for a pass no production code path in this build has
+     * ever run (`:identity` is an empty stub; `RealCaptureService` writes `voiceprintId = null`
+     * unconditionally). The other two rows in [PassCheckboxRows] (Pass B, Pass C) stay fixed on
+     * for the same reason this screen's own doc comment already gives — there is no per-pass
+     * runner toggle yet — but both of those are real passes that do run; naming a third that
+     * cannot run at all as if it were the same kind of thing is the overclaim this row fixes.
+     */
+    @Test
+    fun `R_1147 the voice-match row is an honest not-built fact, never an inert checkbox`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ImproveSelectScreen(
+                    state = ImproveSelectViewState(
+                        group = ImproveGroupViewState(
+                            id = "G1",
+                            headline = "Field, Thu 3 Sep",
+                            subLine = "64 overs at tier 1",
+                            overCount = 64,
+                            transmissionIds = listOf("TX1"),
+                            tierOrdinal = 1,
+                        ),
+                        estimatedSeconds = null,
+                        correctionsToReapply = 0,
+                    ),
+                    onBack = {},
+                    onStart = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Match voices to stations heard here").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Voice matching").assertExists()
+        composeTestRule.onNodeWithText("not built", substring = true).assertExists()
+    }
+
     @Test
     @Requirement("FR-REP-6")
     fun `FR_REP_6_paused_state_is_shown`() {

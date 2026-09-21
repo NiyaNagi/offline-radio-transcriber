@@ -997,8 +997,8 @@ class DigestPollingTest {
 
         val digest = DigestPolling.digest(context, "S1")!!
 
-        val item = digest.notKnown.single { it.headline.contains("unidentified voices") }
-        assert(item.headline == "2 overs from unidentified voices") { "got '${item.headline}'" }
+        val item = digest.notKnown.single { it.headline.contains("no callsign heard") }
+        assert(item.headline == "2 overs with no callsign heard") { "got '${item.headline}'" }
         assert(!item.headline.contains("(s)")) { "got '${item.headline}'" }
     }
 
@@ -1015,11 +1015,28 @@ class DigestPollingTest {
 
         val digest = DigestPolling.digest(context, "S1")!!
 
-        val item = digest.notKnown.single { it.headline.contains("unidentified voices") }
+        val item = digest.notKnown.single { it.headline.contains("no callsign heard") }
         assert(!item.subLine.contains("voice", ignoreCase = true)) { "got '${item.subLine}'" }
         assert(item.subLine == "no callsign heard, and nothing else resolved it — they stay findable") {
             "got '${item.subLine}'"
         }
+    }
+
+    /**
+     * R-1147 (register): "N over(s) from unidentified voices" claimed a voice-clustering result
+     * this build has never computed — the count is real (every `UNKNOWN` over), the word "voices"
+     * was not. The headline now names the real fact the subLine right beneath it already states.
+     */
+    @Test
+    fun `R_1147 the not-known headline names the real fact — no callsign — never a voice claim`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L, endedAt = 3_600_000L))
+        db.transmissionDao().insert(transmission("TX1", "S1", state = AttributionState.UNKNOWN))
+
+        val digest = DigestPolling.digest(context, "S1")!!
+
+        val item = digest.notKnown.single { it.headline.contains("no callsign heard") }
+        assert(!item.headline.contains("voice", ignoreCase = true)) { "got '${item.headline}'" }
+        assert(item.headline == "1 over with no callsign heard") { "got '${item.headline}'" }
     }
 
     @Test

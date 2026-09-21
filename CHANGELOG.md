@@ -282,6 +282,89 @@ R-1025, R-1146.
   `tour.json` — flagged in its own doc comments so a future caller does not point it at the
   now-orphaned `LIVE_MONITOR_TOP_BAR_TEST_TAG` again.
 
+## 2026-09-21 (R-1147: the "unidentified voices" headline and an inert voice-match checkbox both overclaimed a capability this build does not have)
+
+### `acb0101d` — R-1147: Digest/Stations/Now no longer call an over "a voice" when all they know is it has no attributed station; Improve-Select's voice-match row states the honest not-built fact instead of an inert checkbox
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/digest/DigestPolling.kt`,
+`app/src/main/kotlin/org/ort/app/ui/improve/ImproveScreens.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/StationScreen.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/NowViewState.kt` (feeds `NowScreen.kt`), their four test
+files, and the matching artboard text in `design/canvas/Digest.dc.html`, `Stations.dc.html`,
+`Main.dc.html`, `Main-Room-Audio.dc.html`, `Improve-Select.dc.html`.
+
+**Requirements/ACs:** constitution I; FR-SPK-10; R-1137 (the finding this row came out of), R-176,
+R-070.
+
+**What changed:** R-1137 established the fact both defects rest on: `RealCaptureService` writes
+`voiceprintId = null` unconditionally, no over ever carries a voiceprint, and `:identity` is an
+empty stub — this build does no voice analysis at all. Four wording sites and one dead control
+survived that finding's own relabelling from "same voice" to "same callsign":
+
+- **`DigestPolling.kt`.** `unidentifiedVoicesItem` (renamed `noCallsignHeardItem`) built a
+  headline reading "N over(s) from unidentified voices" directly above a `subLine` that already
+  stated the honest fact ("no callsign heard, and nothing else resolved it — they stay
+  findable"). The count was always real (every `UNKNOWN` transmission); only "voices" was wrong.
+  Headline is now "N over(s) with no callsign heard"; the `subLine` and the count are unchanged.
+- **`StationScreen.kt`'s `UnidentifiedVoicesRow`.** `UnidentifiedVoicesSummary.voiceCount` is
+  non-null only when built from real distinct `voiceprintId`s — unreachable in this build — so
+  production always took the `null` branch, which still read "unidentified voices · M overs"
+  with no number attached: "voices" with nothing behind it. That branch now reads "M overs with
+  no callsign heard". The `voiceCount != null` branch (real, once `:identity` ships) is
+  unchanged, per this row's own warning not to relabel a count genuinely derived from a
+  voiceprint field.
+- **`NowViewState.kt`'s `unidentifiedVoicesLabel`** (renamed `unattributedOversLabel`, feeds
+  `NowScreen.kt`'s `StationsHeardSection`). Its own prior doc comment defended "voices" as "the
+  board's own literal wording... not a claim this code verifies" — exactly the shape constitution
+  I forbids. The count (`details.size - attributed.size`) mixes `UNKNOWN` and `AMBIGUOUS` overs,
+  so even "no callsign heard" would overclaim for the `AMBIGUOUS` half (a heard candidate that
+  simply was not confirmed) — the label now says "N over(s) not attributed to a station", the one
+  fact true of both.
+- **`ImproveScreens.kt`'s `PassCheckboxRows`.** The third row, "Match voices to stations heard
+  here", was a `CheckboxRow` fixed `checked = true` with `onCheckedChange = {}` — indistinguishable
+  from the two real, always-on passes above it (Pass B, Pass C), but naming a pass
+  (voice-matching) no production code path in this build can run at any tier. **Decision: replaced
+  with a `KeyValueRow`** stating "Voice matching · not built · no over in this build has ever
+  carried a voice signature to match" — not deletion. This screen already uses exactly that
+  convention two rows below (Battery/Storage read "not estimated"/"not measured in this build"),
+  the app's established drawer/placeholder-screen pattern is "not built" stated plainly rather
+  than hidden (`Drawer.kt`, `PlaceholderScreen.kt`, `ThreadScreen.kt`), and a `KeyValueRow` has no
+  checkbox glyph — it cannot be mistaken for a toggle the way a fixed-on `CheckboxRow` can. Fixing
+  it "honestly disabled" in the stricter sense (a visually dimmed, non-interactive checkbox) would
+  have required adding an `enabled` parameter to `CheckboxRow` in `components/Controls.kt`, outside
+  this unit's ownership; the `KeyValueRow` swap needed no file this unit does not own. The unused
+  `VOICE_MATCH_TIER` constant was removed with it.
+- Matching artboard text updated in `Digest.dc.html` (the "Not known tonight" line only —
+  a separate, unrelated "4 unidentified voices" sub-line on the ambiguous item does not match any
+  string this code actually renders and was left alone), `Stations.dc.html`, `Main.dc.html`,
+  `Main-Room-Audio.dc.html` and `Improve-Select.dc.html` (the checkbox row redrawn using the
+  board's own existing `.est` key/value style, the same one Time/Battery/Storage/Corrections
+  already use).
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.digest.DigestPollingTest" --tests "org.ort.app.ui.screens.StationScreenTest" --tests "org.ort.app.ui.data.NowViewStateMapperTest" --tests "org.ort.app.ui.improve.ImproveScreensTest"` — all green, including four new/updated `R_1147` cases:
+  `DigestPollingTest.R_1147 the not-known headline names the real fact — no callsign — never a voice claim`,
+  `StationScreenTest.R_1147 with no voice data the row never says voices, only the real over count`,
+  `NowViewStateMapperTest.R_1147 the unidentified label never says voices, for any count`,
+  `ImproveScreensTest.R_1147 the voice-match row is an honest not-built fact, never an inert checkbox`.
+- `.\gradlew.bat :app:smokeTestFullDebugUnitTest` — all 18 isolated Compose-idle-poisoning classes
+  green (R-1140), including `StationsContentTest`, `StationDetailContentTest` and `NowContentTest`,
+  which exercise the two mapper/composable files this change touches through their real hosts.
+- `.\gradlew.bat :app:detekt :app:ktlintCheck --max-workers=2` — no findings.
+
+**Left open / not done:**
+- The same phrase or a related one also appears in files this unit does not own —
+  `DetailViewState.kt` ("Kept as an unidentified voice" — a per-attempt step title, a
+  different claim shape, tied to `DetailWhyScreen.kt`/`DetailRevisionsScreen.kt` which this unit
+  was told not to touch), `ThreadViewData.kt` (`pluralize(sorted.size, "unidentified voice")`),
+  `StationPolling.kt` and `StationIdentityScreen.kt` ("they become a new unidentified voice" —
+  describes the real split mechanism, a different claim from a headline overclaim), and their
+  matching artboards `Detail-Unknown.dc.html`, `Threads.dc.html`, `Session.dc.html`,
+  `Frequency-Change.dc.html`, `Fail-Cluster.dc.html`, `Station-Identity.dc.html`. Not fixed here —
+  none of their owning code files are on this unit's owns list — flagged for the lead to route.
+- No device evidence; this is a Robolectric/JVM-only change to static strings, no behavioural
+  runtime path touched.
+
 ## 2026-09-21 (R-1135/R-1136: two more artboard/code drifts closed from the R-1130 audit; R-1143 verified already conformant except Thread-Detail's header shape)
 
 ## 2026-09-21 (o-ui-honesty: R-1141 wires the Settings tier override as a shed-level floor; R-1142 gates a revision card's corrected marker on the real flag; R-1137 verified already fixed)

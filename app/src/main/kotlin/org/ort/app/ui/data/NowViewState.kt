@@ -385,21 +385,22 @@ public object NowViewStateMapper {
         return NowStationsSection(
             totalCount = rows.size,
             rows = rows,
-            unidentifiedLabel = if (unidentifiedCount > 0) unidentifiedVoicesLabel(unidentifiedCount) else null,
+            unidentifiedLabel = if (unidentifiedCount > 0) unattributedOversLabel(unidentifiedCount) else null,
             emptyMessage = if (rows.isEmpty() && unidentifiedCount == 0) "None yet." else null,
         )
     }
 
     /**
-     * R-176: `Main.dc.html` says "voices", not "overs" — every over from an unattributed
-     * transmission is, on the air, one speaker, so counting overs here is the same count the
-     * board's wording implies. It is not a distinct-voice/voiceprint-clustering count (this
-     * package reads no such signal — [NowStationsSection]'s own doc comment says so), so two
-     * unidentified overs from what was actually the same unknown speaker still read as
-     * "2 unidentified voices" here, same as the board's own literal wording — a labelling choice
-     * made by the design lead (R-176), not a claim this code verifies.
+     * R-176, corrected by R-1147 (register): `Main.dc.html` originally drew "voices", and this
+     * label matched it — but [unidentifiedCount] is `details.size - attributed.size`, every over
+     * with no `stationId`, which mixes `UNKNOWN` and `AMBIGUOUS` overs (this package reads no
+     * voiceprint signal at all — [NowStationsSection]'s own doc comment says so). "Voices" claimed
+     * a clustering result nothing computed; even "no callsign heard" would overclaim, since an
+     * `AMBIGUOUS` over may carry a heard candidate that simply was not confirmed. The one fact
+     * common to both is that neither carries a resolved station, so that is what this says.
      */
-    private fun unidentifiedVoicesLabel(count: Int): String = "$count unidentified voice" + if (count == 1) "" else "s"
+    private fun unattributedOversLabel(count: Int): String =
+        "$count over" + (if (count == 1) "" else "s") + " not attributed to a station"
 
     private fun notListeningLabel(gaps: List<GapWindow>): String? {
         val totalSeconds = gaps.sumOf { ((it.endedAt ?: it.startedAt) - it.startedAt) / 1000 }

@@ -206,9 +206,14 @@ private fun ImproveGroupRow(group: ImproveGroupViewState, onClick: () -> Unit, m
     }
 }
 
-/** `Improve-Select.dc.html`: scope + estimate. The three passes are fixed on (transcribe, resolve,
- * identity) — there is nothing to opt out of yet, since this build has no real per-pass toggle
+/** `Improve-Select.dc.html`: scope + estimate. The two real passes (transcribe, resolve) are
+ * fixed on — there is nothing to opt out of yet, since this build has no real per-pass toggle
  * wired to a runner that would honour it; offering an unwired checkbox would be dishonest.
+ * R-1147 (register): a third row used to offer the same fixed-on checkbox for "match voices to
+ * stations heard here" — but that is not a pass this build can run at any tier, fixed on or not
+ * (`:identity` is an empty stub), so [PassCheckboxRows] states it as the honest fact it is
+ * instead: not built, the same convention this screen already uses for its own unmeasured
+ * Battery/Storage estimates below.
  *
  * R-151 (round 4, System validator, "R02" half): the action bar and the scrolling body above it
  * are two siblings in one [Column] — the body takes [Modifier.weight] (whatever space the bar
@@ -303,20 +308,13 @@ private fun PassCheckboxRows(tierOrdinal: Int, modifier: Modifier = Modifier) {
                 "already ran at tier $tierOrdinal · re-resolves from the audio itself"
             },
         )
-        CheckboxRow(
-            label = "Match voices to stations heard here",
-            checked = true,
-            onCheckedChange = {},
-            subLine = "Identity · " + if (tierOrdinal < VOICE_MATCH_TIER) {
-                "not run at tier $tierOrdinal · matches voices heard in this capture"
-            } else {
-                "already ran at tier $tierOrdinal · re-matches voices heard in this capture"
-            },
+        KeyValueRow(
+            key = "Voice matching",
+            value = "not built",
+            subLine = "no over in this build has ever carried a voice signature to match",
         )
     }
 }
-
-private const val VOICE_MATCH_TIER = 2
 private const val PASS_C_TIER = 3
 
 /** `Improve-Running.dc.html`: progress, pausable, capture unaffected. No fabricated per-item diff

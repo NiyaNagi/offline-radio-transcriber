@@ -324,7 +324,7 @@ public object DigestPolling {
         ambiguousItem(transmissions)?.let { items += it }
 
         val notKnown = mutableListOf<DigestNotKnownItemViewState>()
-        unidentifiedVoicesItem(transmissions)?.let { notKnown += it }
+        noCallsignHeardItem(transmissions)?.let { notKnown += it }
         val gaps = db.captureGapDao().listBySession(sessionId)
         notKnown += gaps.map { gapNotKnownItem(it) }
 
@@ -551,12 +551,18 @@ public object DigestPolling {
      * `UNKNOWN` over was never checked against a voice at all; it simply had no callsign and
      * nothing else resolved it, the same honest fact `DetailViewStateMapper.bodyFor`'s own
      * `AttributionState.UNKNOWN` branch now states.
+     *
+     * R-1147 (register): the follow-up itself shipped with the same overclaim in its own headline
+     * — "N over(s) from unidentified voices" named a voice-clustering result this build has never
+     * computed, directly under a `subLine` that already states the honest fact. The count itself
+     * ([unknown]) was always real; only the word "voices" was wrong, so the fix renames the
+     * headline to what the count actually is, and leaves the count and the subLine untouched.
      */
-    private fun unidentifiedVoicesItem(transmissions: List<TransmissionEntity>): DigestNotKnownItemViewState? {
+    private fun noCallsignHeardItem(transmissions: List<TransmissionEntity>): DigestNotKnownItemViewState? {
         val unknown = transmissions.count { it.attributionState == AttributionState.UNKNOWN }
         if (unknown == 0) return null
         return DigestNotKnownItemViewState(
-            headline = "${Plurals.count(unknown, "over")} from unidentified voices",
+            headline = "${Plurals.count(unknown, "over")} with no callsign heard",
             subLine = "no callsign heard, and nothing else resolved it — they stay findable",
         )
     }

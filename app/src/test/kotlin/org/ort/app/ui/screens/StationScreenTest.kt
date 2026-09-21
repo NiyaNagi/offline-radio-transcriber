@@ -158,7 +158,31 @@ class StationScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithContentDescription("unidentified voices · 12 overs").assertExists()
+        composeTestRule.onNodeWithContentDescription("12 overs with no callsign heard").assertExists()
+    }
+
+    /**
+     * R-1147 (register): with no distinct-voice data ([UnidentifiedVoicesSummary.voiceCount]
+     * `null`, the only case this build ever produces — `:identity` is an empty stub and no over
+     * ever carries a voiceprint), the row must not say "voices" at all: that word claims a
+     * clustering result nothing computed. The real fact is the over count and that none of them
+     * carry a heard callsign.
+     */
+    @Test
+    fun `R_1147 with no voice data the row never says voices, only the real over count`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                StationsListScreen(
+                    state = StationsListState(
+                        stations = listOf(fixtureRow()),
+                        unidentified = UnidentifiedVoicesSummary(voiceCount = null, overCount = 12),
+                    ),
+                    onOpen = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithContentDescription("voices", substring = true).assertDoesNotExist()
     }
 
     @Test
