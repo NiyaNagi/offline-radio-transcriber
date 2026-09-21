@@ -32,7 +32,87 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-21 (R-1149/R-1145: `diff.py` refuses a geometry-mismatched pair instead of reporting noise, `tour.ps1` asserts the `wm size` override is set, and Thread-Detail's artboard header matches the shared `DrillInHeader`)
+## 2026-09-21 (R-770: R02 Improve-Select and R03 Improve-Running get seed seams, closing the tour-coverage umbrella)
+
+### `1a0e82e3` — q-improve-seams: R-770's last two screens (R02 `Improve-Select`, R03 `Improve-Running`) reachable through `NavSeed`, mirroring R-1127/R-350's own `Improve-Done` seam
+
+**Scope:** `app/src/debug/**` (`TourIds.kt`, `TourSpec.kt`), `tools/ui-audit/tour.json`,
+`app/src/main/kotlin/org/ort/app/ui/improve/ImproveContent.kt`,
+`app/src/main/kotlin/org/ort/app/ui/navigation/NavSeed.kt`, and (needed to wire the seam through,
+not touched by R-1127's own commit but unavoidable for the identical reason it wasn't)
+`app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`. `ImproveScreens.kt`,
+`tools/ui-audit/{diff.py,tour.ps1,tour_manifest.py}` and `ui/theme/` deliberately untouched —
+outside this round's ownership.
+
+**Requirements/ACs:** R-770 (register — the row this closes the last two named screens for);
+R-1127 (fixed the other seven screens the same umbrella named, same pattern); R-350 (the
+`Improve-Done` seam this mirrors byte for byte); constitution VIII (a screen is not verified
+until captured and compared — this is what made R02/R03 uncapturable at all).
+
+**What changed:**
+
+- **`NavSeed.kt`.** Two new nullable `Boolean` fields, `improveSelectPreview` and
+  `improveRunningPreview`, following `improveDonePreview`'s own shape exactly: a named
+  `EXTRA_IMPROVE_SELECT_PREVIEW`/`EXTRA_IMPROVE_RUNNING_PREVIEW` intent extra each,
+  `putRemainingExtras`/`fromIntent` round-tripping, and `initialDestination()` routing either one
+  to `ReaderDestination.IMPROVE_RECORDS`.
+- **`ImproveContent.kt`.** `ImprovePage.Running` gains a `preview: Boolean = false` field
+  (encoded/decoded in `ImprovePageSaver` as a fourth flat field, defaulting `false` for any
+  previously-saved value with no such field). When `true`, `RunningPage` never calls
+  `runner.run`/`runner.observeState`/`runner.cancel` — a fabricated transmission-id list could not
+  usefully drive a real `WorkManager` job, so the screen shows a static, internally-consistent
+  snapshot instead (3 of 6 "All groups", the same run `donePreviewPage()` already shows finished,
+  now shown mid-flight). `selectPreviewGroup()` seeds a real-shaped `ImproveGroupViewState`
+  ("Captured at tier 1", 6 overs, clearly synthetic `improve-preview-select-tx*` ids) for
+  `ImprovePage.Select` — `ImprovePolling.select` still runs for real against those ids, honestly
+  resolving to 0 duration/corrections for ids this device does not have, never a fabricated
+  number. The three preview flags are bundled into one new `ImprovePreviewSeed` data class
+  (`donePreview`/`selectPreview`/`runningPreview`) rather than three scalar `ImproveContent`
+  parameters — both `ImproveContent` itself and `OrtNavHost.kt`'s `DestinationContent` dispatch
+  tripped detekt's `LongMethod` threshold (80 lines) as plain scalars; bundling, the same fix
+  shape `DestinationInitialState`/`NavHostLayout` already use in `OrtNavHost.kt`, fixed both
+  without suppressing the check.
+- **`OrtNavHost.kt`.** `DestinationInitialState` gains the two new booleans (read from `NavSeed`
+  in `buildNavHostIds`, same as `improveDonePreview` already was). `DestinationContent`'s
+  `IMPROVE_RECORDS` branch passes the whole `initialState` to `ImproveRecordsContent` (rather than
+  three separate scalars) — the LongMethod fix described above — which then constructs the real
+  `ImprovePreviewSeed` and passes it to `ImproveContent`.
+- **`TourIds.kt`/`TourSpec.kt`.** `improveSelectPreview`/`improveRunningPreview` drillIn keys,
+  resolved and documented identically to `improveDonePreview` (no session/transmission lookup
+  needed, both added to `SUPPORTED_DRILL_IN_KEYS`).
+- **`tools/ui-audit/tour.json`.** Six new steps —
+  `overnight/R02-improve-select`/`@2x`/`@2x-end` and
+  `overnight/R03-improve-running`/`@2x`/`@2x-end` — inserted immediately before the existing R04
+  block, same `overnight` scenario, same three-variant shape.
+
+**Verified:** `:app:test` (all flavors, `BUILD SUCCESSFUL in 30m 10s`), `:app:detekt` and
+`:app:ktlintCheck` (`BUILD SUCCESSFUL`, after fixing the two `LongMethod` findings described
+above and one ktlint blank-line finding in `ImproveContent.kt`), and
+`:app:smokeTestFullDebugUnitTest --max-workers=2` (`BUILD SUCCESSFUL in 3m 37s` — this is the
+task `NavSeedTest` actually runs under; confirmed explicitly per this round's own warning that
+`:app:test`/the ordinary task silently skips it). New cases: `NavSeedTest`
+`"improveSelectPreview lands on Improve-Select with a real-shaped group"` and
+`"improveRunningPreview lands on Improve-Running with a real-shaped progress state"`, both
+passing under `smokeTestFullDebugUnitTest`; `TourIdsTest.R_770_IMPROVE_SELECT_PREVIEW`/
+`R_770_IMPROVE_RUNNING_PREVIEW`; `TourSpecTest`'s existing `tour.json` structural checks
+(unique ids, known scenario, known destination, every drillIn key resolvable) cover the six new
+steps with no new cases needed. **On-device capture** (constitution VIII — a passing test is not
+this evidence): `emulator-5568` (not `5554`, which holds the lead's canonical run), `wm size`
+override `1260x2772` set to match `emulator-5554`'s own reference geometry,
+`tools\ui-audit\install.ps1 -Port 5568 -Clear` then
+`tools\ui-audit\tour.ps1 -Port 5568 -Only "overnight/R0[23]-improve-*" -Out <scratch>` — `wm size
+override confirmed`, `steps: 6  ok: 6  errors: 0`. Both screens inspected directly: R02 renders
+the full `Improve-Select` layout including `PassCheckboxRows`' honest "Voice matching: not
+built" row (R-1147's recent fix — confirms this seam reflects the screen as built, not a stale
+artboard assumption) and a real `Corrections: 0` computed by `ImprovePolling.select` against the
+synthetic ids; R03 renders `"Improving" / "All groups · 3 of 6"` with a half-filled progress bar
+and working Pause/Cancel affordances.
+
+**Left open / not done:** the scoped capture above lives in a scratch directory, not
+`results/ui-audit/` — per this round's own instruction, only the lead's full canonical tour run
+replaces that directory. Register row R-770 itself is the lead's to judge and close against this
+evidence, not this commit's to close. `ImproveScreens.kt` was read but not edited (owned by a
+different builder this round).
 
 ### `784bcbb5` — p-evidence-guards: R-1149 cross-run capture-geometry guard in `diff.py` + `wm size` override assertion in `tour.ps1`; R-1145 Thread-Detail.dc.html header redrawn to match `Station`/`Digest`
 
