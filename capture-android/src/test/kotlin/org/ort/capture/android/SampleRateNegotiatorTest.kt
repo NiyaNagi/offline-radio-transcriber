@@ -42,7 +42,8 @@ class SampleRateNegotiatorTest {
     @Test
     @Requirement("FR-CAP-2")
     fun `when the preferred rate is unsupported the highest supported rate is chosen deterministically`() {
-        val negotiated = SampleRateNegotiator.negotiate(preferred = 96_000, supported = intArrayOf(16_000, 44_100, 22_050))
+        val negotiated =
+            SampleRateNegotiator.negotiate(preferred = 96_000, supported = intArrayOf(16_000, 44_100, 22_050))
 
         assertEquals(44_100, negotiated, "the highest offered rate must be picked, regardless of array order")
     }
@@ -53,7 +54,11 @@ class SampleRateNegotiatorTest {
         val ascending = SampleRateNegotiator.negotiate(preferred = 8_000, supported = intArrayOf(22_050, 44_100))
         val descending = SampleRateNegotiator.negotiate(preferred = 8_000, supported = intArrayOf(44_100, 22_050))
 
-        assertEquals(ascending, descending, "the same supported set must negotiate to the same rate regardless of order")
+        assertEquals(
+            ascending,
+            descending,
+            "the same supported set must negotiate to the same rate regardless of order",
+        )
         assertEquals(44_100, ascending)
     }
 }

@@ -1,10 +1,12 @@
 package org.ort.capture.android
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import org.ort.captureapi.AudioFormat
@@ -130,62 +132,27 @@ public class AudioRecordSource(
 
             try {
                 while (!stopRequested) {
-                    var haltedByMismatch = false
-                    while (true) {
-                        val ev = pending.poll() ?: break
-                        when (ev) {
-                            AudioIoEvent.RouteChanged -> {
-                                emit(CaptureEvent.RouteChanged)
-                                lastRouted = io.routedDevice()
-                                val verdict = RouteVerifier.verify(selection, lastRouted)
-                                if (verdict is RouteVerdict.Mismatch) {
-                                    emit(CaptureEvent.Failed("route mismatch: ${verdict.reason}"))
-                                    haltedByMismatch = true
-                                }
-                            }
-                            is AudioIoEvent.Interrupted -> {
-                                emit(CaptureEvent.Interrupted(ev.cause))
-                                if (!recoverFromInterruption()) {
-                                    // stop() was called while recovering — a clean stop, not a failure.
-                                    io.close()
-                                    return@coroutineScope
-                                }
-                                emit(CaptureEvent.Resumed)
-                                firstReadVerified = false // re-verify the route on the next read after recovery
-                                // The outage just closed is already reported as its own gap; do not
-                                // let the elapsed time it took also read as an undetected drop below.
-                                lastFrameWallMillis = clock.wallMillis()
-                            }
-                        }
-                        if (haltedByMismatch) {
-                            io.close()
-                            return@coroutineScope
-                        }
+                    val drained = drainPendingEvents(pending, firstReadVerified, lastFrameWallMillis)
+                    firstReadVerified = drained.firstReadVerified
+                    lastFrameWallMillis = drained.lastFrameWallMillis
+                    if (drained.shouldStop) {
+                        // Either a route mismatch (FR-CAP-3) or a clean stop() requested mid-
+                        // recovery — drainPendingEvents' own kdoc has already emitted whichever of
+                        // Failed/nothing applies; both close the device the same way.
+                        io.close()
+                        return@coroutineScope
                     }
 
-                    // P34: fire-and-forget only — this never suspends the loop below waiting for
-                    // the probe. A verifier that never returns simply never reports back; it costs
-                    // this loop nothing (see `AudioRecordSourcePeriodicReverificationTest`).
-                    if (firstReadVerified &&
-                        reverificationJob?.isActive != true &&
-                        clock.wallMillis() - lastRouteVerifyWallMillis >= routeReverifyIntervalMillis
-                    ) {
-                        lastRouteVerifyWallMillis = clock.wallMillis()
-                        // UNDISPATCHED: starts synchronously on this same call (so the probe is
-                        // genuinely invoked before this loop moves on, not merely queued behind it —
-                        // see AudioRecordSourcePeriodicReverificationTest for why that distinction
-                        // matters under a cooperative test scheduler) and then suspends like any
-                        // other coroutine the instant routeProbe() itself does. The real routeProbe
-                        // (`{ io.routedDevice() }`) never actually suspends, so in production this
-                        // is indistinguishable from a plain synchronous call that merely happens not
-                        // to block the flow's own suspension point.
-                        reverificationJob = launch(start = CoroutineStart.UNDISPATCHED) {
-                            val routed = routeProbe()
-                            if (routed != null && RouteVerifier.verify(selection, routed) is RouteVerdict.Mismatch) {
-                                pending.add(AudioIoEvent.RouteChanged)
-                            }
-                        }
-                    }
+                    // P34: see maybeStartRouteReverification's own kdoc — fire-and-forget only,
+                    // never suspends this loop waiting for the probe.
+                    val (updatedJob, updatedVerifyMillis) = maybeStartRouteReverification(
+                        active = reverificationJob,
+                        lastVerifyWallMillis = lastRouteVerifyWallMillis,
+                        firstReadVerified = firstReadVerified,
+                        pending = pending,
+                    )
+                    reverificationJob = updatedJob
+                    lastRouteVerifyWallMillis = updatedVerifyMillis
 
                     val n = io.read(raw)
                     when {
@@ -239,6 +206,102 @@ public class AudioRecordSource(
                 reverificationJob?.cancel()
             }
         }
+    }
+
+    /** [drainPendingEvents]'s own kdoc explains each field. */
+    private data class DrainResult(
+        val firstReadVerified: Boolean,
+        val lastFrameWallMillis: Long,
+        val shouldStop: Boolean,
+    )
+
+    /**
+     * Gate fallout (detekt `LongMethod` on [start], its companion extraction alongside
+     * [maybeStartRouteReverification]): drains every [AudioIoEvent] already queued, applying
+     * exactly the same policy [start] always has — a route mismatch halts (FR-CAP-3), an
+     * interruption recovers via [recoverFromInterruption] or, failing that (a clean [stop] mid-
+     * recovery), also halts, and a successful recovery clears [DrainResult.firstReadVerified] so
+     * the very next read re-verifies the route.
+     *
+     * Returns rather than mutates [start]'s own `var`s directly — the two exit points that used to
+     * flip `haltedByMismatch` now describe a single [DrainResult.shouldStop] that the caller acts
+     * on with `start`'s own `io.close(); return@coroutineScope`, unchanged from before this
+     * extraction. When the queue is already empty this returns immediately, `shouldStop = false`,
+     * exactly as falling straight through the old inline `while (true) { ... ?: break }` did.
+     */
+    private suspend fun FlowCollector<CaptureEvent>.drainPendingEvents(
+        pending: ConcurrentLinkedQueue<AudioIoEvent>,
+        firstReadVerified: Boolean,
+        lastFrameWallMillis: Long,
+    ): DrainResult {
+        var verified = firstReadVerified
+        var frameWallMillis = lastFrameWallMillis
+        while (true) {
+            val ev = pending.poll() ?: return DrainResult(verified, frameWallMillis, shouldStop = false)
+            when (ev) {
+                AudioIoEvent.RouteChanged -> {
+                    emit(CaptureEvent.RouteChanged)
+                    lastRouted = io.routedDevice()
+                    val verdict = RouteVerifier.verify(selection, lastRouted)
+                    if (verdict is RouteVerdict.Mismatch) {
+                        emit(CaptureEvent.Failed("route mismatch: ${verdict.reason}"))
+                        return DrainResult(verified, frameWallMillis, shouldStop = true)
+                    }
+                }
+                is AudioIoEvent.Interrupted -> {
+                    emit(CaptureEvent.Interrupted(ev.cause))
+                    if (!recoverFromInterruption()) {
+                        // stop() was called while recovering — a clean stop, not a failure.
+                        return DrainResult(verified, frameWallMillis, shouldStop = true)
+                    }
+                    emit(CaptureEvent.Resumed)
+                    verified = false // re-verify the route on the next read after recovery
+                    // The outage just closed is already reported as its own gap; do not let the
+                    // elapsed time it took also read as an undetected drop below.
+                    frameWallMillis = clock.wallMillis()
+                }
+            }
+        }
+    }
+
+    /**
+     * P34 (register R-1113, constitution IV, gate fallout from detekt's `CyclomaticComplexMethod`/
+     * `LongMethod` on [start] — extracted, not merely reshuffled, so the guarantees below stay in
+     * one named, testable place rather than inline in an already-long loop): starts the periodic
+     * route re-verification job when [firstReadVerified], none is already [active], and
+     * [routeReverifyIntervalMillis] has elapsed since [lastVerifyWallMillis] — otherwise returns
+     * [active] and [lastVerifyWallMillis] unchanged, so the call site can assign the result back
+     * to its own `var`s uniformly whether or not a new job actually started.
+     *
+     * The three properties `AudioRecordSourcePeriodicReverificationTest` pins all live here:
+     * - **Launched, never awaited** — this function returns the [Job] immediately; [start]'s own
+     *   read loop never suspends on it, so a stalled [routeProbe] costs nothing.
+     * - **`CoroutineStart.UNDISPATCHED`** — the probe is genuinely *invoked* before this function
+     *   returns (not merely queued behind the read loop), which is what lets the "never blocks"
+     *   test observe the probe having started even though it then stalls forever.
+     * - **Cancelled in a `finally` on every exit path** — deliberately *not* this function's job:
+     *   the returned [Job] is still owned by [start]'s own `try`/`finally`, which is where a probe
+     *   stalled forever must be cut loose so it can never keep the flow alive after capture itself
+     *   is done. Moving the cancellation in here as well would hide that guarantee behind a second
+     *   call site instead of the one `finally` already visible in [start].
+     */
+    private fun CoroutineScope.maybeStartRouteReverification(
+        active: Job?,
+        lastVerifyWallMillis: Long,
+        firstReadVerified: Boolean,
+        pending: ConcurrentLinkedQueue<AudioIoEvent>,
+    ): Pair<Job?, Long> {
+        val dueForReverification = clock.wallMillis() - lastVerifyWallMillis >= routeReverifyIntervalMillis
+        if (!firstReadVerified || active?.isActive == true || !dueForReverification) {
+            return active to lastVerifyWallMillis
+        }
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
+            val routed = routeProbe()
+            if (routed != null && RouteVerifier.verify(selection, routed) is RouteVerdict.Mismatch) {
+                pending.add(AudioIoEvent.RouteChanged)
+            }
+        }
+        return job to clock.wallMillis()
     }
 
     /** Retries on [BackoffLadder] until the device reopens with a matching route, or [stop] is called. */

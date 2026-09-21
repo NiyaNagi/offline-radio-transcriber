@@ -34,6 +34,63 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P37: `diff.py` can fail)
 
+### `<pending>` — P34 gate fix: `AudioRecordSource.start` split so detekt's LongMethod/CyclomaticComplexMethod hold, plus two line-length fixes
+
+**Scope:** `:capture-android` only — `AudioRecordSource.kt` (production), plus two pre-existing
+P34 test files whose lines were over `MaxLineLength` (`AndroidAudioIoInterruptionGapTest.kt`,
+`SampleRateNegotiatorTest.kt`). No behaviour change anywhere; no `:pipeline` or `:app` file
+touched.
+
+**Requirements/ACs:** FR-CAP-2, FR-CAP-2a, FR-CAP-3, FR-RUN-11, constitution IV, constitution II
+(test integrity — the extraction is proven by the same tests, unchanged, not by new ones written
+to match whatever the refactor happened to produce). Gate fallout from this session's own P34 unit
+(commit `a1cdd665`, merged to `main` at `a3223270`): the batch gate's `:capture-android:detekt`
+failed with four issues, all from that change — `AudioRecordSource.start` at 100 lines against an
+80-line `LongMethod` ceiling and complexity 23 against a 20 threshold, plus two `MaxLineLength`
+hits in tests. `:capture-android:test` was run before that merge; `:capture-android:detekt` was
+not, which is how this got through.
+
+**What changed:** `start`'s periodic-reverification block and its pending-event-drain loop are
+now two private named functions, `maybeStartRouteReverification` and `drainPendingEvents`, chosen
+over reshuffling lines because the coordinator was explicit that `LongMethod`/
+`CyclomaticComplexMethod` tripping here is the metric doing its job — `start` had already grown
+large across P8/P9/P11/P12/WPC2/WPC3/P34, and burying the extraction in whitespace changes would
+have hidden that instead of answering it.
+- **`maybeStartRouteReverification`** (a `private fun CoroutineScope.` member, so it can `launch`
+  without a parameter for the scope) owns the "should a new probe start" decision and the
+  `launch(start = CoroutineStart.UNDISPATCHED) { ... }` call itself. The three properties
+  `AudioRecordSourcePeriodicReverificationTest` pins are named explicitly in its kdoc and held
+  exactly as before: launched and returned immediately (never awaited inline), started
+  `UNDISPATCHED` (so the probe is genuinely invoked, not merely queued, before the function
+  returns — what lets the "never blocks" test observe it having started), and *not* the one that
+  cancels it — the returned `Job` is still cancelled in `start`'s own `try`/`finally`, deliberately
+  left there rather than moved into the extraction, so that guarantee stays visible at the one call
+  site it always had.
+- **`drainPendingEvents`** (a `private suspend fun FlowCollector<CaptureEvent>.` member, so it can
+  `emit` without a parameter for the collector) owns draining `RouteChanged`/`Interrupted` events
+  and applies the identical policy `start` always has (a mismatch halts per FR-CAP-3; a failed
+  recovery halts as a clean stop; a successful recovery clears `firstReadVerified`). It returns a
+  small `DrainResult(firstReadVerified, lastFrameWallMillis, shouldStop)` instead of mutating
+  `start`'s `var`s directly — `start` assigns the two fields back and does its own
+  `io.close(); return@coroutineScope` when `shouldStop`, unchanged from the inline version.
+- The two `MaxLineLength` hits in `AndroidAudioIoInterruptionGapTest.kt` and
+  `SampleRateNegotiatorTest.kt` were reformatted only (wrapped a `runTest` signature, wrapped two
+  `assertTrue`/`assertEquals` calls, reindented the one function body that needed it) — no
+  assertion, fixture value or test name changed.
+
+**Verified:** `.\gradlew.bat :capture-android:test --max-workers=2 --rerun-tasks` — full module
+green, forced (not cached), and `AudioRecordSourcePeriodicReverificationTest`'s two cases and
+`AndroidAudioIoInterruptionGapTest`'s one case confirmed passing **unchanged** (no assertion
+touched) in that forced run. `.\gradlew.bat :capture-android:detekt --max-workers=2 --rerun-tasks`
+— green, forced. No `@Suppress` added to either rule and no threshold in
+`config/detekt/detekt.yml` changed — both were ruled out explicitly rather than reached for.
+
+**Left open / not done:** none for this gate fix specifically — H4 and the 8-hour device run
+remain outstanding from P34 itself, unaffected by this refactor (no behaviour changed). Commit
+hash `<pending>` — replace on commit.
+
+---
+
 ### `1718a87b` — R-1128: the field-report redaction allowlist is derived and fail-closed, not a second guess
 
 **Scope:** `app/src/main/kotlin/org/ort/app/fieldreport/recorder/ScreenFrameCapturer.kt` (the
