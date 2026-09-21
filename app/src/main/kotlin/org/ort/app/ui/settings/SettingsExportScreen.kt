@@ -140,14 +140,12 @@ public fun SettingsExportScreen(
     previewCount: suspend (Context, ExportRequest) -> ExportCountPreview = ExportCoordinator::previewCount,
     previewSizeBytes: suspend (Context, ExportRequest) -> Long = ExportCoordinator::previewSizeBytes,
     suggestedFileName: (ExportRequest) -> String = { ExportCoordinator.suggestedFileName(it) },
-    // P30 (FR-EXP-3, FR-EXP-7): `buildPotaActivity` already existed and was unit-tested but had no
-    // caller anywhere — wired in beside the four format chips, as its own action rather than a
-    // fifth [ExportFileFormat] chip (see that enum's own kdoc for why: POTA is "not one of the
-    // four format chips — a distinct export"). The three share-sheet actions are user-initiated
-    // only — see [org.ort.app.export.ShareCoordinator]'s own kdoc for exactly what "the most
-    // recent" means for each and why (this screen is reached from Settings, not from inside an
-    // already-open digest/thread/detail screen). Bundled into one action holder for the detekt
-    // `LongParameterList` reason [SettingsExportShareActions]'s own kdoc states.
+    // P30 (FR-EXP-3): `buildPotaActivity` already existed and was unit-tested but had no caller
+    // anywhere — wired in beside the four format chips, as its own action rather than a fifth
+    // [ExportFileFormat] chip (see that enum's own kdoc for why: POTA is "not one of the four
+    // format chips — a distinct export"). R-1096: the share-sheet actions this screen used to also
+    // hold (digest/thread transcript/over audio) moved to the actual open screen each is about —
+    // see [SettingsExportShareActions]'s own kdoc.
     shareActions: SettingsExportShareActions = SettingsExportShareActions(),
 ) {
     var scope by remember { mutableStateOf(ExportScope.TONIGHT) }
@@ -241,7 +239,6 @@ public fun SettingsExportScreen(
                 enabled = scope != ExportScope.RANGE,
                 onExportPota = { shareActions.onExportPota(scope.toRequestScope()) },
             )
-            ExportShareSection(shareActions)
 
             ExportFooter(
                 scope = scope,
@@ -438,69 +435,6 @@ private fun ExportPotaSection(enabled: Boolean, onExportPota: () -> Unit) {
         contentAlignment = Alignment.CenterStart,
     ) {
         Text(text = label, style = OrtType.control, color = fg)
-    }
-}
-
-/**
- * P30 (FR-EXP-7). Three share-sheet actions — a digest, a thread transcript, a single over's
- * audio clip — each user-initiated only, each disabled by nothing here (a tap that finds nothing
- * to share yet is handled honestly one layer up, in `SettingsContent.kt`'s own real handler —
- * see [org.ort.app.export.ShareCoordinator]'s own kdoc: every builder there answers `null` rather
- * than fabricating an empty file).
- */
-@Composable
-private fun ExportShareSection(shareActions: SettingsExportShareActions) {
-    SectionHeader(label = "Share", modifier = Modifier.padding(top = OrtSpacing.md))
-    Text(
-        text = "Through your phone's own share sheet — the most recent digest, thread and over's " +
-            "audio. Never automatic; nothing is sent until you choose where.",
-        style = OrtType.subLine,
-        color = OrtColors.textDim,
-        modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
-    )
-    ShareRow(
-        label = "Share the most recent digest",
-        onClick = shareActions.onShareDigest,
-        testTag = "share-digest-button",
-    )
-    ShareRow(
-        label = "Share the most recent thread transcript",
-        onClick = shareActions.onShareThreadTranscript,
-        testTag = "share-thread-button",
-    )
-    ShareRow(
-        label = "Share the most recent over's audio",
-        onClick = shareActions.onShareOverAudio,
-        testTag = "share-audio-button",
-    )
-}
-
-// R-1090 (FR-A11Y-2, the R-380/R-543 pattern this file's own sibling buttons already carry — see
-// [ExportSaveFileButton]'s own doc comment): this row carried no `semantics` of its own at all,
-// the confirmed-broken shape.
-@Composable
-private fun ShareRow(label: String, onClick: () -> Unit, testTag: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .requiredHeightIn(min = 44.dp)
-            .background(OrtColors.bgCard, RoundedCornerShape(8.dp))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = OrtSpacing.md)
-            .testTag(testTag)
-            .padding(vertical = OrtSpacing.xs)
-            .clearAndSetSemantics {
-                contentDescription = label
-                text = AnnotatedString(label)
-                role = Role.Button
-                onClick(label = null) {
-                    onClick()
-                    true
-                }
-            },
-        contentAlignment = Alignment.CenterStart,
-    ) {
-        Text(text = label, style = OrtType.control, color = OrtColors.textBody)
     }
 }
 

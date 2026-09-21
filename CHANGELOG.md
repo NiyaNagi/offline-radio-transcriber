@@ -770,6 +770,193 @@ overnight-survival check remains `:data`-session-history-based, not the richer h
 another builder is landing in `:pipeline` tonight (R-1115) — if that trail lands, this fast-path
 check should move onto it too, in a follow-up.
 
+## 2026-09-20 (R-1096: share wired from the open screen, not "most recent"; R-1099 re-verified already fixed)
+
+### `<pending>` — R-1096 `ShareCoordinator` shares the digest/thread/over the operator has open, never a database-wide "most recent" guess
+
+**Scope:** `app/src/main/kotlin/org/ort/app/export/{ShareCoordinator,ShareIntentLauncher}.kt`
+(new file), `app/src/main/kotlin/org/ort/app/ui/digest/{DigestContent,DigestScreens,
+SessionsContent}.kt`, `app/src/main/kotlin/org/ort/app/ui/screens/{ThreadDetailScreen,
+TransmissionDetailContent}.kt`, `app/src/main/kotlin/org/ort/app/ui/navigation/OrtNavHost.kt`,
+`app/src/main/kotlin/org/ort/app/ui/settings/{SettingsContent,SettingsExportScreen,
+SettingsViewData}.kt`; tests: `app/src/test/kotlin/org/ort/app/export/ShareCoordinatorTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/digest/DigestScreensTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/screens/{ThreadDetailScreenTest,
+TransmissionDetailContentTest}.kt`, `app/src/test/kotlin/org/ort/app/ui/settings/
+SettingsContentBackupAndShareTest.kt`.
+
+**Requirements/ACs:** FR-EXP-7, AC-171, constitution V (share sheet is user-initiated only;
+station knowledge/names/location never attach beyond what the shared content already carries),
+constitution VII (a rule a person must remember is a rule that will eventually be forgotten — the
+FileProvider/ACTION_SEND intent now has exactly one builder), R-1096.
+
+**What changed:**
+
+1. **`ShareCoordinator`'s three builders now take the real subject id** —
+   `buildDigestShareFile(context, sessionId)`, `buildThreadTranscriptShareFile(context, threadId)`,
+   `resolveOverAudioShareFile(context, transmissionId)` — and look each one up directly
+   (`SessionDao.getById`/a `threadId` filter/`TransmissionDao.getById`), never by scanning for the
+   newest row. Before this, all three resolved "the most recent" digest/thread/over by real-time
+   timestamp regardless of which one a caller actually meant, because P30 wired the share sheet
+   from Settings > Export, which has no open screen to take a subject from. The closed field list
+   and the attribution vocabulary (never a user-supplied name, station-knowledge field, or location
+   beyond what the transcript text itself carries) are unchanged — only the selection was ever
+   wrong.
+2. **Share moved to the actual open screen for each subject**, each behind the existing
+   `DrillInHeader` kebab affordance (the same one `StationScreen`'s own `onOpenIdentity` already
+   uses for a single header action — no new icon, no new component):
+   - `DigestScreen`/`DigestContent` gained `onShare: (() -> Unit)? = null`; `SessionsContent`'s own
+     `DigestPage` (split out of `SessionsContent` itself to keep it under detekt's `LongMethod`
+     limit — R-1096's addition is what pushed it over) wires it from the session id already open.
+   - `ThreadDetailScreen` gained `onShare: (() -> Unit)? = null`; `OrtNavHost.kt`'s own
+     `ThreadDetailContent` wires it from the thread id already open.
+   - `TransmissionDetailContent`'s `MainDestination` wires the header's kebab directly from its own
+     `transmissionId` (this screen already renders its own `DrillInHeader`, no screen-level `onShare`
+     parameter needed).
+   `null` (the default) hides the kebab entirely rather than wiring a dead action, so no existing
+   caller of any of the three screens needed to change.
+3. **The Settings > Export screen's "Share the most recent ..." rows are gone** — `ExportShareSection`/
+   `ShareRow`, `SettingsExportShareActions.onShareDigest/.onShareThreadTranscript/.onShareOverAudio`,
+   and `SettingsContent.kt`'s own `shareFile`/`shareUriResolverForTest` are all deleted. Settings had
+   no way to know which digest/thread/over the operator meant, and the register's own words are
+   explicit: wire from the surface the operator is actually looking at. `Export POTA activity`
+   (a distinct, scoped SAF write, not a share-sheet hand-off) is unaffected and is now the one field
+   left on `SettingsExportShareActions`.
+4. **The FileProvider/ACTION_SEND intent has exactly one builder now: `ShareIntentLauncher`** (new
+   file, `org.ort.app.export`), extracted from `SettingsContent.kt`'s own `shareFile`/
+   `shareUriResolverForTest` so the three new call sites (Digest, Thread Detail, Transmission
+   Detail) share the identical intent-construction path rather than each hand-rolling its own copy
+   — the exact "two implementations of one rule" shape register R-1099 names elsewhere (see that
+   row's own note below), applied here before a second copy could ever exist.
+
+**Privacy note read before wiring this (per the session brief):** `ScreenFrameCapturer.kt`'s
+`mayRenderUserSuppliedContent` derivation (D55/R-1128) names `TRANSMISSION_DETAIL` as unsafe for
+*frame capture* specifically because `CorrectionSheet`'s station-search rows can render
+`StationEntity.userName` while that sheet is open — a fact about that destination's screen
+*pixels*, not about `ShareCoordinator`'s text payload. `resolveOverAudioShareFile` never reads
+`StationEntity` at all (the over-audio share is raw retained bytes; the digest/thread text builders
+read only `TransmissionEntity`/`TranscriptEntity`/`SessionEntity` fields, per `ShareCoordinator`'s
+own closed-field-list kdoc, proved by `ShareCoordinatorTest`'s seeded-forbidden-field tests), so
+wiring a share action onto `TransmissionDetailContent` does not reopen that leak. Flagged here
+rather than silently assumed safe, per the brief's own instruction.
+
+**Tests, named for the id they establish, each shown to discriminate** (reverted the production
+change, confirmed the new/updated test fails for the right reason, restored, confirmed green):
+- `ShareCoordinatorTest`: `R_1096 buildDigestShareFile shares the requested session, not whichever
+  one is most recent`, `R_1096 buildThreadTranscriptShareFile shares the requested thread, not
+  whichever one is most recent`, `R_1096 resolveOverAudioShareFile shares the requested over, not
+  whichever one is most recent` — each reverted to the old "most recent" query, confirmed red,
+  restored, confirmed green (the thread revert also turned the pre-existing
+  `AC_171 a shared thread transcript covers every over...` test red, evidence the two are testing
+  the same real selection logic, not a coincidence).
+- `DigestScreensTest`/`ThreadDetailScreenTest`: `R_1096 tapping the header kebab invokes onShare for
+  this exact screen's own session/thread` — reverted `onKebab` to `null` (dropping the wiring),
+  confirmed the tap-and-assert test fails (`Failed to inject touch input` — the button no longer
+  exists), restored.
+- `TransmissionDetailContentTest`: `R_1096 the header share action shares this exact over's own
+  audio, not a more recent one` (via `:app:smokeTestFullDebugUnitTest` — this class is one of the
+  `forkEvery=1`-isolated `*ContentTest` classes `build.gradle.kts` routes to that task, not
+  `testFullDebugUnitTest`) — seeds TX1 (opened) and a genuinely later TX2 with its own retained
+  audio, asserts the real `ACTION_SEND` intent's `Uri` names `TX1.flac`; reverted
+  `resolveOverAudioShareFile` to the old "most recent" query, confirmed red, restored, confirmed
+  green.
+- `SettingsContentBackupAndShareTest`: the removed `AC_171 Share the most recent over's audio...`
+  test (and its now-dead `seedOneOverWithAudio` fixture) deleted outright rather than adapted — the
+  affordance it covered no longer exists on this screen; `TransmissionDetailContentTest`'s own
+  `R_1096` test above is its replacement, proving the identical real intent from the screen that
+  replaced it.
+
+**Verified:**
+```
+.\gradlew.bat :app:ktlintCheck :app:detekt --max-workers=2
+.\gradlew.bat :app:testFullDebugUnitTest --max-workers=2 --tests "org.ort.app.export.*" `
+  --tests "org.ort.app.ui.digest.*" --tests "org.ort.app.ui.screens.ThreadDetailScreenTest" `
+  --tests "org.ort.app.ui.settings.*"
+.\gradlew.bat :app:smokeTestFullDebugUnitTest --max-workers=2 `
+  --tests "org.ort.app.ui.screens.TransmissionDetailContentTest"
+```
+All green (198/22 tasks respectively, 0 failures). Every `R_1096`-named test shown to discriminate
+per this entry's own list above.
+
+**Left open / not done:**
+- **The full `build` gate and the tour were not run**, per this unit's scope (the lead runs one
+  tour for the whole batch). Screens changed and needing re-capture at font scale 1.0 and 2.0:
+  `Digest.dc.html` (new header kebab, `overnight`'s own `EARLIER_NIGHTS` digest scenario steps),
+  `Thread-Detail.dc.html` (new header kebab, `overnight/T02-thread-detail`), the transmission
+  detail screen (new header kebab, every `*-transmission-detail*`/detail-drilldown tour step —
+  `TransmissionDetailContent` renders the header for every attribution state). No artboard in
+  `design/canvas/` currently draws a share kebab on any of these three screens — the lead's own
+  comparison will need to judge the new icon against the artboard or file the gap, since this unit
+  had no drawn artboard to build to and none was made outside the tour/design ownership map.
+  Reported, not silently assumed acceptable.
+- `:app:testFullDebugUnitTest`'s own broader run (every module test beyond the targeted classes
+  above) was not run in full — the module is large and this unit's own touched files are covered by
+  the targeted invocations above; the lead's batch gate is the place a full-module regression would
+  surface.
+
+---
+
+### `<pending>` — R-1099 re-verified: already fixed by `e69c5979`, 68 commits before this branch point; a related, undiscovered duplicate found nearby and flagged separately
+
+**Scope:** no production or test files changed for this row — investigation only.
+
+**Requirements/ACs:** FR-SPK-10, constitution I, VII, R-1099.
+
+**What changed:** Read the register row fresh (`results/ui-audit/register.md`'s R-1099: "two
+implementations still rebuild a corrected attribution... unify them, or state in both why they must
+differ... no tour scenario seeds a corrected transmission on Live Monitor, Recording Session or
+Threads"). Neither half is still true at this branch's `main` ancestor
+(`8b1fabcd`): `git log` shows commit `e69c5979` ("R-1098/R-1099: persist a thread's join reason;
+unify the corrected-attribution reconstruction"), 68 commits before `8b1fabcd`
+(`git merge-base --is-ancestor e69c5979 HEAD` confirms it), already:
+- extracted the shared rule into `ReaderTransmissionViewStateMapper.correctedAttributionOrNull
+  (entity)`, called by both `attributionFrom` and `CorrectionPolling.currentAttribution` — read at
+  HEAD (`app/src/main/kotlin/org/ort/app/ui/data/{TransmissionDetail,CorrectionPolling}.kt`) and
+  confirmed the delegation is real, not reverted since;
+- pinned the one deliberate remaining difference (`currentAttribution` trusts a caller-supplied
+  `fallback` for the *uncorrected* case rather than re-deriving it) with
+  `CorrectionPollingTest`'s own `R_189_currentAttribution_leaves_an_uncorrected_row_to_the_resolvers_
+  own_fallback`;
+- seeded a corrected transmission on `overnightLiveMonitor` (an eighth transmission, `corrected =
+  true`) and on `overnight`'s own QSO thread (a fifth transmission, `corrected = true`) — confirmed
+  at HEAD in `app/src/debug/kotlin/org/ort/app/debug/{Scenarios,OvernightScenario}.kt` (read-only;
+  `app/src/debug/**` is outside this unit's file-ownership map) — and its own commit message notes
+  Recording Session needed no scenario change at all, since `RecordingSessionPolling.state` already
+  lists every transmission in a session unfiltered, so the pre-existing `tx6` corrected transmission
+  was already reachable there; `tools/ui-audit/tour.json` (read-only, same reason) already has
+  steps against `overnight/T01-threads`, `overnight/T02-thread-detail`,
+  `overnight/RC02-recording-session`, and `overnight-live-monitor/N07-live-monitor` that should
+  reach these seeded rows.
+
+  This unit made no code change because none was needed — the register row is stale relative to
+  `main`'s current `HEAD`, not because the row's original concern was unfounded.
+
+  **A related, still-real duplicate was found nearby, out of this unit's file-ownership map**:
+  `app/src/main/kotlin/org/ort/app/ui/screens/DetailRevisionsScreen.kt`'s per-version card
+  (`version.stationId?.let { AttributionRow(attribution = Attribution.unknown()
+  .withCorrection(stationId)) }`) builds the corrected-attribution shape unconditionally whenever a
+  version carries a `stationId`, never gated on `version.corrected` — so an uncorrected, naturally-
+  resolved transmission's revision cards would show the INFERRED-and-corrected ring even though
+  `TranscriptVersionViewState`'s own kdoc says every card should show "the transmission's real,
+  *current* attribution." This is the identical duplication shape R-1099 was filed against
+  (a third, independent inlined copy of the reconstruction rule, diverged from
+  `correctedAttributionOrNull`'s own gate), just not the file the register row named. Not fixed
+  here: `ui/screens/DetailRevisionsScreen.kt` is outside `:app`'s export/share coordinator and the
+  `ui/data` attribution/correction polling files this unit owns, and is not one of the screens a
+  share action needed adding to. Flagged via a separate background task
+  (`mcp__ccd_session__spawn_task`) rather than fixed in this branch.
+
+**Verified:** `git log --oneline -- app/src/main/kotlin/org/ort/app/ui/data/{CorrectionPolling,
+TransmissionDetail}.kt`, `git merge-base --is-ancestor e69c5979 HEAD`, and a direct read of both
+files plus `CorrectionPollingTest.kt`/`ReaderTransmissionViewStateMapperTest.kt` at HEAD. No test
+run needed — no code changed.
+
+**Left open / not done:** the lead should reconcile `results/ui-audit/register.md`'s R-1099 row
+against this finding (close it on the `e69c5979` evidence above, or reopen it narrowly against
+`DetailRevisionsScreen.kt` if that is judged the same row's concern rather than a new one) — this
+unit does not edit that register itself, per the working agreement ("only the session lead edits
+it"). The `DetailRevisionsScreen.kt` finding itself is unfixed, tracked by the spawned task instead.
+
 ---
 
 ## 2026-09-20 (P37: `diff.py` can fail)

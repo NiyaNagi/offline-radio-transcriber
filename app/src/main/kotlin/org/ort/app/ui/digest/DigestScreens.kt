@@ -45,7 +45,13 @@ import org.ort.app.ui.theme.OrtType
 
 /** `Digest.dc.html` (FR-DIG-1..6): the night's digest, salience-ordered, with `Full log`.
  * [DigestViewState.items]/[DigestViewState.notKnown] are exactly what [DigestPolling] could derive
- * for real — see that object's own doc comment for which item kinds it does not invent. */
+ * for real — see that object's own doc comment for which item kinds it does not invent.
+ *
+ * [onShare] (R-1096, FR-EXP-7): this session's own digest, through the platform share sheet —
+ * `null` (default) hides the header's kebab entirely rather than wiring a dead action; the real
+ * caller ([DigestContent]) supplies one built from this exact screen's own
+ * [DigestViewState.sessionId], never a guessed "most recent" session — see
+ * [org.ort.app.export.ShareCoordinator]'s own kdoc for the defect this replaces. */
 @Composable
 public fun DigestScreen(
     state: DigestViewState,
@@ -58,9 +64,16 @@ public fun DigestScreen(
     // already uses (R-276) — never a new filtering mechanism. Defaulted so every existing caller
     // keeps compiling unchanged.
     onReadOvers: (fromMillis: Long, toMillis: Long) -> Unit = { _, _ -> },
+    onShare: (() -> Unit)? = null,
 ) {
     Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        DrillInHeader(parentLabel = "Session", onBack = onBack)
+        DrillInHeader(
+            parentLabel = "Session",
+            onBack = onBack,
+            onKebab = onShare,
+            kebabDescription = "Share this session's digest",
+            kebabTestTag = "digest-share-button",
+        )
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
             Text(text = state.headline, style = OrtType.screenTitle, color = OrtColors.textHigh)
             Text(

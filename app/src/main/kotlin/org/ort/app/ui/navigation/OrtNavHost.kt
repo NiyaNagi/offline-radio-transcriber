@@ -40,6 +40,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.analytics.FeatureUsageAnalytics
+import org.ort.app.export.ShareCoordinator
+import org.ort.app.export.ShareIntentLauncher
 import org.ort.app.fieldreport.recorder.FieldReportRecorder
 import org.ort.app.fieldreport.recorder.RecorderDestination
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
@@ -2085,6 +2087,7 @@ private fun ThreadDetailContent(
     }
     val current = detail
     if (current != null) {
+        val scope = rememberCoroutineScope()
         ThreadDetailScreen(
             state = current,
             onBack = onBack,
@@ -2092,6 +2095,17 @@ private fun ThreadDetailContent(
             onOpenSourceOver = onOpenOver,
             modifier = modifier,
             backLabel = backLabel,
+            // R-1096: this thread's own transcript, not a guessed "most recent" one — see
+            // [ThreadDetailScreen.onShare]'s own kdoc and
+            // [org.ort.app.export.ShareCoordinator]'s own kdoc for the defect this replaces.
+            onShare = {
+                scope.launch {
+                    ShareIntentLauncher.launchShare(
+                        context,
+                        ShareCoordinator.buildThreadTranscriptShareFile(context, threadId),
+                    )
+                }
+            },
         )
     } else {
         Text(

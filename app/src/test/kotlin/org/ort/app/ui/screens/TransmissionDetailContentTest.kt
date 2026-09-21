@@ -15,11 +15,14 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TestRule
 import org.junit.runner.RunWith
+import org.ort.app.export.ShareIntentLauncher
 import org.ort.app.testing.ortComposeTestRule
 import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
 import org.ort.app.ui.theme.OrtTheme
@@ -35,6 +38,7 @@ import org.ort.data.entity.TransmissionEntity
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 
 /**
  * ui-conformance WP6: the content composable [org.ort.app.ui.navigation.OrtNavHost] dispatches to
@@ -68,6 +72,11 @@ class TransmissionDetailContentTest {
     @Before
     fun openDatabase() {
         db = OrtDatabase.create(context)
+    }
+
+    @After
+    fun clearShareUriResolver() {
+        ShareIntentLauncher.uriResolverForTest = null
     }
 
     private fun session(captureMode: String? = null, audioRouteKind: String? = null) = SessionEntity(
@@ -995,5 +1004,60 @@ class TransmissionDetailContentTest {
         composeTestRule.waitUntilTextExists("The reason is not recorded.")
         composeTestRule.onNodeWithText("Pruned by the retention budget", substring = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("Removed by the operator", substring = true).assertDoesNotExist()
+    }
+
+    /**
+     * R-1096 (FR-EXP-7, AC-171): the header's own share action shares *this* over's own audio,
+     * never a database-wide "most recent" pick — the exact defect this register row named
+     * (`ShareCoordinator` used to resolve the newest retained clip regardless of which over the
+     * operator was actually reading). TX2 is seeded as the real, later over with retained audio;
+     * this screen is opened on TX1 — proving the share still resolves TX1's own bytes.
+     */
+    @Test
+    fun `R_1096 the header share action shares this exact over's own audio, not a more recent one`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            val tx1 = transmission("TX1", stationId = "K7LWH")
+            // TX2 is the real, later over with retained audio (a bare "most recent" pick — the
+            // pre-fix behaviour — would resolve to this one); the screen below opens on TX1.
+            val tx2 = transmission("TX2", stationId = "W7NPC").copy(startedAtUtc = 60_000L, endedAtUtc = 61_000L)
+            db.transmissionDao().insert(tx1)
+            db.transmissionDao().insert(tx2)
+            java.io.File(context.filesDir, tx1.audioPath()).apply {
+                parentFile?.mkdirs()
+                writeBytes(byteArrayOf(1))
+            }
+            java.io.File(context.filesDir, tx2.audioPath()).apply {
+                parentFile?.mkdirs()
+                writeBytes(byteArrayOf(2))
+            }
+        }
+        ShareIntentLauncher.uriResolverForTest = { _, authority, file ->
+            android.net.Uri.parse("content://$authority/${file.name}")
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTagExists("transmission-detail-share-button")
+        composeTestRule.onNodeWithTag("transmission-detail-share-button").performClick()
+
+        val application = ApplicationProvider.getApplicationContext<android.app.Application>()
+        composeTestRule.waitUntil(5_000) { shadowOf(application).peekNextStartedActivity() != null }
+        val started = shadowOf(application).nextStartedActivity
+        val sendIntent = started.getParcelableExtra<android.content.Intent>(android.content.Intent.EXTRA_INTENT)
+        assertEquals(android.content.Intent.ACTION_SEND, sendIntent!!.action)
+        val uri = sendIntent.getParcelableExtra<android.net.Uri>(android.content.Intent.EXTRA_STREAM)
+        // The real, on-disk file name (`TransmissionEntity.audioPath()`'s own `$id.flac` shape) —
+        // TX1's own, never TX2's — not [ShareFile.suggestedName], which only labels the chooser.
+        assertEquals("TX1.flac", uri!!.lastPathSegment)
     }
 }

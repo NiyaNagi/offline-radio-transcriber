@@ -33,6 +33,10 @@ public fun DigestContent(
     // time window, distinct from `onFullLog`'s unfiltered destination. Defaulted so every existing
     // caller keeps compiling unchanged.
     onReadOvers: (fromMillis: Long, toMillis: Long) -> Unit = { _, _ -> },
+    // R-1096 (FR-EXP-7): defaulted to `null` (no share affordance) so every existing caller keeps
+    // compiling unchanged; the real caller (`SessionsContent.kt`) supplies one built from this
+    // exact [sessionId] — see [DigestScreen.onShare]'s own kdoc.
+    onShare: (() -> Unit)? = null,
 ) {
     var state by remember(sessionId) { mutableStateOf<DigestViewState?>(null) }
     LaunchedEffect(sessionId) { state = DigestPolling.digest(context, sessionId) }
@@ -46,6 +50,7 @@ public fun DigestContent(
             onFullLog = onFullLog,
             onReadOvers = onReadOvers,
             modifier = modifier,
+            onShare = onShare,
         )
     } else {
         // Register R-1022/R-1051 (halt, constitution I/IV): the shared, tagged [LoadingState] —

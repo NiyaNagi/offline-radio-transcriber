@@ -51,6 +51,12 @@ import org.ort.app.ui.theme.OrtType
  * and renders this screen — see its own doc comment). [backLabel] (R-017: the chevron names where
  * the operator came from) defaults to the common case but the host may override it with the real
  * navigation origin (`ids.openedFrom.label`).
+ *
+ * [onShare] (R-1096, FR-EXP-7): this thread's own transcript, through the platform share sheet —
+ * `null` (default) hides the header's kebab entirely rather than wiring a dead action; the real
+ * caller (`OrtNavHost.kt`'s own `ThreadDetailContent`) supplies one built from this exact screen's
+ * own [ThreadDetailViewState.threadId], never a guessed "most recent" thread — see
+ * [org.ort.app.export.ShareCoordinator]'s own kdoc for the defect this replaces.
  */
 @Composable
 public fun ThreadDetailScreen(
@@ -60,9 +66,16 @@ public fun ThreadDetailScreen(
     onOpenSourceOver: (String) -> Unit,
     modifier: Modifier = Modifier,
     backLabel: String = "Threads",
+    onShare: (() -> Unit)? = null,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
-        DrillInHeader(parentLabel = backLabel, onBack = onBack)
+        DrillInHeader(
+            parentLabel = backLabel,
+            onBack = onBack,
+            onKebab = onShare,
+            kebabDescription = "Share this thread's transcript",
+            kebabTestTag = "thread-detail-share-button",
+        )
 
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             // R-161: "QSO · 145.230 · FM" — kind and mode render only when the data supports them

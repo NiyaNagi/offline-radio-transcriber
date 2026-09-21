@@ -267,17 +267,14 @@ public data class SettingsExportViewState(
     val allOverCount: Int,
 )
 
-/** P30 (FR-EXP-3, FR-EXP-7): [SettingsExportScreen]'s own POTA and share-sheet callbacks, bundled
- * together for the identical detekt `LongParameterList` reason [SettingsCaptureToggleActions]
- * already exists for — lives here, not in `SettingsExportScreen.kt`, for the identical
- * `MatchingDeclarationName` reason that file's own kdoc states: that file's one top-level
- * declaration is the `SettingsExportScreen` function itself. */
-public data class SettingsExportShareActions(
-    val onExportPota: (ExportRequestScope) -> Unit = {},
-    val onShareDigest: () -> Unit = {},
-    val onShareThreadTranscript: () -> Unit = {},
-    val onShareOverAudio: () -> Unit = {},
-)
+/** P30 (FR-EXP-3): [SettingsExportScreen]'s own POTA export callback — a `data class` of one field
+ * kept for the identical detekt `MatchingDeclarationName` reason [SettingsExportScreen.kt]'s own
+ * kdoc states (that file's one top-level declaration is the `SettingsExportScreen` function
+ * itself), and for parity with this file's sibling action-bundle classes. **R-1096:** this used to
+ * also carry `onShareDigest`/`onShareThreadTranscript`/`onShareOverAudio` — moved to the actual
+ * open screen each is about (digest, thread detail, transmission detail) once Settings turned out
+ * to have no "which one" to share from; see [org.ort.app.export.ShareCoordinator]'s own kdoc. */
+public data class SettingsExportShareActions(val onExportPota: (ExportRequestScope) -> Unit = {})
 
 /** P30 (FR-STO-6, FR-STO-9): [SettingsBackupScreen]'s own action bundle — kept together for the
  * identical detekt `LongParameterList` reason [SettingsCaptureToggleActions]/[LocalSaveActions]
