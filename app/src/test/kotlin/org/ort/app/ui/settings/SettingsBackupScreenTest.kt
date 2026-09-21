@@ -49,6 +49,24 @@ class SettingsBackupScreenTest {
     }
 
     @Test
+    fun `R_1094 the real station, voiceprint and thread counts render before Save backup is tapped`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsBackupScreen(
+                    state = SettingsBackupViewState(
+                        preview = preview().copy(stationCount = 12, voiceprintCount = 4, threadCount = 9),
+                    ),
+                    onBack = {},
+                    actions = SettingsBackupActions(),
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("12 stations", substring = true).assertExists()
+        composeTestRule.onNodeWithText("4 voiceprints", substring = true).assertExists()
+        composeTestRule.onNodeWithText("9 threads", substring = true).assertExists()
+    }
+
+    @Test
     fun `P30 tapping Save backup invokes the real handler`() {
         var saved = false
         composeTestRule.setContent {
@@ -107,6 +125,42 @@ class SettingsBackupScreenTest {
         composeTestRule.onNodeWithTag("restore-conflict-summary").assertExists()
         composeTestRule.onNodeWithTag("restore-confirm-button").assertExists()
         composeTestRule.onNodeWithTag("restore-cancel-button").assertExists()
+    }
+
+    @Test
+    fun `R_1094 a plan naming stations, voiceprints and threads states those counts too`() {
+        val plan = SettingsRestorePlanViewState(
+            sessionsToAddCount = 1,
+            sessionConflictCount = 0,
+            transmissionsToAddCount = 1,
+            transmissionConflictCount = 0,
+            correctionsToAddCount = 0,
+            correctionConflictCount = 0,
+            audioToAddCount = 0,
+            audioConflictCount = 0,
+            hasConflicts = true,
+            stationsToAddCount = 3,
+            stationConflictCount = 1,
+            voiceprintsToAddCount = 2,
+            voiceprintConflictCount = 1,
+            threadsToAddCount = 5,
+            threadConflictCount = 1,
+        )
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsBackupScreen(
+                    state = SettingsBackupViewState(preview = preview(), restorePlan = plan),
+                    onBack = {},
+                    actions = SettingsBackupActions(),
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("3 stations", substring = true).assertExists()
+        composeTestRule.onNodeWithText("2 voiceprints", substring = true).assertExists()
+        composeTestRule.onNodeWithText("5 threads", substring = true).assertExists()
+        composeTestRule.onNodeWithText("1 stations", substring = true).assertExists()
+        composeTestRule.onNodeWithText("1 voiceprints", substring = true).assertExists()
+        composeTestRule.onNodeWithText("1 threads", substring = true).assertExists()
     }
 
     @Test

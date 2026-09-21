@@ -13,11 +13,17 @@ import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CorrectionEntity
+import org.ort.data.entity.OverCountsByAttributionState
 import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TerminationReason
+import org.ort.data.entity.ThreadEntity
+import org.ort.data.entity.ThreadKind
+import org.ort.data.entity.ThreadKindSource
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.VoiceprintEntity
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 import java.util.zip.ZipEntry
@@ -114,6 +120,55 @@ class BackupRestoreCoordinatorTest {
         createdAt = 0L,
     )
 
+    private fun station(id: String, userName: String? = null) = StationEntity(
+        id = id,
+        callsign = id,
+        firstHeardAt = 0L,
+        lastHeardAt = 0L,
+        transmissionCount = 1,
+        isUserPinned = false,
+        notes = null,
+        userName = userName,
+        frequenciesHeard = null,
+        activityByHourDow = null,
+        potaRefs = null,
+        spokenGrids = null,
+        ituRegionFromPrefix = null,
+        overCountsByAttributionState = OverCountsByAttributionState.EMPTY.serialize(),
+    )
+
+    private fun voiceprint(id: String, boundStationId: String? = null) = VoiceprintEntity(
+        id = id,
+        embedding = byteArrayOf(1, 2, 3),
+        memberCount = 1,
+        centroidUpdatedAt = null,
+        boundStationId = boundStationId,
+        bindingConfidence = null,
+        lastConfirmedAt = null,
+        isEnrolled = false,
+        enrolmentObservationCount = 0,
+        enrolmentSessionIds = null,
+        enrolledAt = null,
+        lastMatchedAt = null,
+        bindingSource = null,
+        embeddingModelId = null,
+        embeddingModelVersion = null,
+    )
+
+    private fun thread(id: String, sessionId: String) = ThreadEntity(
+        id = id,
+        sessionId = sessionId,
+        startedAt = 0L,
+        endedAt = null,
+        frequencyHz = null,
+        transmissionCount = 1,
+        participantStationIds = null,
+        digestText = null,
+        kind = ThreadKind.QSO,
+        kindSource = ThreadKindSource.DETECTED,
+        participantOrder = null,
+    )
+
     private fun writeAudio(transmission: TransmissionEntity, bytes: ByteArray) {
         val file = File(context.filesDir, transmission.audioPath())
         file.parentFile?.mkdirs()
@@ -131,6 +186,9 @@ class BackupRestoreCoordinatorTest {
         transmissions: List<TransmissionEntity> = emptyList(),
         transcripts: List<TranscriptEntity> = emptyList(),
         corrections: List<CorrectionEntity> = emptyList(),
+        stations: List<StationEntity> = emptyList(),
+        voiceprints: List<VoiceprintEntity> = emptyList(),
+        threads: List<ThreadEntity> = emptyList(),
         audioFiles: List<Pair<String, ByteArray>> = emptyList(),
     ): File {
         val file = File(context.cacheDir, "test-backup-$testId.zip")
@@ -145,6 +203,9 @@ class BackupRestoreCoordinatorTest {
             jsonEntry(BACKUP_TRANSMISSIONS_ENTRY, JSONArray(transmissions.map(TransmissionCodec::toJson)))
             jsonEntry(BACKUP_TRANSCRIPTS_ENTRY, JSONArray(transcripts.map(TranscriptCodec::toJson)))
             jsonEntry(BACKUP_CORRECTIONS_ENTRY, JSONArray(corrections.map(CorrectionCodec::toJson)))
+            jsonEntry(BACKUP_STATIONS_ENTRY, JSONArray(stations.map(StationCodec::toJson)))
+            jsonEntry(BACKUP_VOICEPRINTS_ENTRY, JSONArray(voiceprints.map(VoiceprintCodec::toJson)))
+            jsonEntry(BACKUP_THREADS_ENTRY, JSONArray(threads.map(ThreadCodec::toJson)))
             for ((entryName, bytes) in audioFiles) {
                 zip.putNextEntry(ZipEntry(entryName))
                 zip.write(bytes)
@@ -294,6 +355,150 @@ class BackupRestoreCoordinatorTest {
             stillLiveAudio.readBytes().contentEquals(byteArrayOf(9, 9, 9)),
         )
     }
+
+    /**
+     * Register R-1095's own judgement, made concrete: the coarse "device always wins" rule is
+     * safe wherever a whole record either matches or is left alone -- but before this fix, a
+     * **new** correction (a fresh id the device had never seen) belonging to a transmission that
+     * *itself* conflicted still slipped through [BackupRestorePlan.correctionsToAdd], because
+     * [correctionExists] only checks the correction's own id, never its transmission's. [apply]
+     * would then insert that correction row with a bare `CorrectionDao.insert` -- never
+     * `recordCorrection`, so the transmission's own `attributionState`/`stationId`/`corrected`
+     * columns are never touched -- landing a correction *history entry* on a transmission whose
+     * live attribution never actually changed to match it. That is not "limited," it is wrong:
+     * the restored record would show correction history for a callsign it was never actually
+     * corrected to (constitution I). The fix folds a transmission-conflict correction into
+     * [BackupRestorePlan.correctionConflicts] instead, the same "left exactly as it was" outcome
+     * [transcriptsToAdd] already gives an orphaned transcript.
+     */
+    @Test
+    fun `R_1095 a new correction for a conflicting transmission is never inserted orphaned against it`() = runTest {
+        val t1 = transmission(t1Id, s1, "KI7ABC")
+        val newCorrectionId = "C-NEW-$testId"
+        val bundle = bundleFile(
+            sessions = listOf(session(s1)),
+            transmissions = listOf(t1),
+            // A correction made on the source device *after* the two devices diverged -- its own
+            // id has never been seen on the restoring device, only its transmission has.
+            corrections = listOf(
+                CorrectionEntity(
+                    id = newCorrectionId,
+                    transmissionId = t1Id,
+                    field = "stationId",
+                    previousValue = "OLD",
+                    newValue = "KI7ABC",
+                    correctedAt = 999L,
+                ),
+            ),
+        )
+
+        // The restoring device already has its own T1 (a real prior transmission -- the ordinary
+        // conflict case) but has never recorded any correction for it at all.
+        val restoring = OrtDatabase.create(context)
+        restoring.sessionDao().insert(session(s1))
+        restoring.transmissionDao().insert(t1)
+
+        val plan = BackupRestoreCoordinator.analyze(context, bundle)
+        assertTrue("expected T1 to conflict -- it already exists on the restoring device", plan.hasConflicts)
+        assertEquals(listOf(t1Id), plan.transmissionConflicts.map { it.id })
+        assertTrue(
+            "expected the new correction never to be queued for insertion against an untouched transmission",
+            plan.correctionsToAdd.isEmpty(),
+        )
+        assertEquals(listOf(newCorrectionId), plan.correctionConflicts.map { it.id })
+
+        val result = BackupRestoreCoordinator.apply(context, bundle, plan)
+        assertEquals(0, result.correctionsAdded)
+        assertEquals(1, result.correctionsSkipped)
+
+        // The device gains no orphaned correction history -- and T1's own attribution is
+        // untouched, exactly as constitution III promises for a conflicting record.
+        assertTrue(restoring.correctionDao().correctionsFor(t1Id).isEmpty())
+        assertEquals(t1, restoring.transmissionDao().getById(t1Id))
+    }
+
+    /**
+     * Register R-1094's own centrepiece: write a bundle from a populated database, restore into
+     * an empty one, and assert that sessions, corrections, audio, the station catalog, a thread
+     * **and both a transmission's current and superseded transcript** all arrive intact — nothing
+     * silently merged away (constitution III). [t1Id]'s transcript is superseded once
+     * ([trSuperseded] -> [tr1]), the same append-then-flip shape [org.ort.data.dao.TranscriptDao
+     * .supersede] uses in production, so a restore that returned only the current row would be
+     * exactly the quiet deletion this row exists to catch.
+     */
+    @Test
+    fun `R_1094 restoring into an empty device reproduces the station catalog, threads and superseded transcripts`() =
+        runTest {
+            val trSuperseded = "TR0-$testId"
+            val t1 = transmission(t1Id, s1, "KI7ABC")
+            val bundle = bundleFile(
+                sessions = listOf(session(s1)),
+                transmissions = listOf(t1),
+                transcripts = listOf(
+                    transcript(trSuperseded, t1Id, "partial guess").copy(isCurrent = false, createdAt = 0L),
+                    transcript(tr1, t1Id, "this is KI7ABC").copy(createdAt = 100L),
+                ),
+                corrections = listOf(
+                    CorrectionEntity(
+                        id = c1,
+                        transmissionId = t1Id,
+                        field = "stationId",
+                        previousValue = "OLD",
+                        newValue = "KI7ABC",
+                        correctedAt = 0L,
+                    ),
+                ),
+                stations = listOf(station("KI7ABC", userName = "Alex")),
+                voiceprints = listOf(voiceprint("VP1-$testId", boundStationId = "KI7ABC")),
+                threads = listOf(thread("TH1-$testId", s1)),
+                audioFiles = listOf("audio/$s1/$t1Id.flac" to byteArrayOf(1, 2, 3)),
+            )
+
+            val plan = BackupRestoreCoordinator.analyze(context, bundle)
+            assertFalse("expected no conflicts against an empty device", plan.hasConflicts)
+            assertEquals(2, plan.transcriptsToAdd.size)
+            assertEquals(1, plan.stationsToAdd.size)
+            assertEquals(1, plan.voiceprintsToAdd.size)
+            assertEquals(1, plan.threadsToAdd.size)
+
+            val result = BackupRestoreCoordinator.apply(context, bundle, plan)
+            assertEquals(2, result.transcriptsAdded)
+            assertEquals(1, result.stationsAdded)
+            assertEquals(1, result.voiceprintsAdded)
+            assertEquals(1, result.threadsAdded)
+
+            val restoredDb = OrtDatabase.create(context)
+            // Both transcript versions are reachable -- current and superseded.
+            val allVersions = restoredDb.transcriptDao().getAllVersions(t1Id)
+            assertEquals(setOf(trSuperseded, tr1), allVersions.map { it.id }.toSet())
+            assertEquals("this is KI7ABC", restoredDb.transcriptDao().getCurrent(t1Id)?.text)
+            assertEquals(
+                "partial guess",
+                allVersions.first { it.id == trSuperseded }.text,
+            )
+            assertFalse(
+                "expected the superseded row to stay marked superseded, not silently promoted",
+                allVersions.first { it.id == trSuperseded }.isCurrent,
+            )
+
+            // The station catalog -- carried in full, including the operator's own userName --
+            // except overCountsByAttributionState, which the restore path never trusts (see
+            // StationCodec's own kdoc); it lands as the honest EMPTY placeholder, not the bundle's
+            // stale copy, and the very next getStation() read re-derives it from T1 (CONFIRMED).
+            val restoredStationRaw = restoredDb.catalogDao().getStationRaw("KI7ABC")
+            assertEquals("Alex", restoredStationRaw?.userName)
+            val emptyCounts = OverCountsByAttributionState.EMPTY.serialize()
+            assertEquals(emptyCounts, restoredStationRaw?.overCountsByAttributionState)
+            val restoredStation = requireNotNull(restoredDb.catalogDao().getStation("KI7ABC"))
+            val restoredCounts = OverCountsByAttributionState.parse(restoredStation.overCountsByAttributionState)
+            assertEquals(1, restoredCounts.countFor(AttributionState.CONFIRMED))
+
+            // The voiceprint -- biometric data, carried only for this device-to-device transfer.
+            assertEquals("KI7ABC", restoredDb.catalogDao().getVoiceprint("VP1-$testId")?.boundStationId)
+
+            // The thread.
+            assertEquals(s1, restoredDb.catalogDao().getThread("TH1-$testId")?.sessionId)
+        }
 
     @Test
     fun `AC_170 restoring an empty bundle changes nothing and never throws`() = runTest {

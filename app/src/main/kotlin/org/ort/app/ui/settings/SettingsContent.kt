@@ -783,6 +783,9 @@ private fun SettingsBackupSubScreen(context: Context, onBack: () -> Unit, modifi
                 correctionCount = real.correctionCount,
                 audioFileCount = real.audioFileCount,
                 sizeLabel = formatBackupSize(real.totalSizeBytes),
+                stationCount = real.stationCount,
+                voiceprintCount = real.voiceprintCount,
+                threadCount = real.threadCount,
             )
         }
     }
@@ -873,15 +876,24 @@ private fun org.ort.app.backup.BackupRestorePlan.toViewState(): SettingsRestoreP
         audioToAddCount = audioEntriesToAdd.size,
         audioConflictCount = audioConflicts.size,
         hasConflicts = hasConflicts,
+        stationsToAddCount = stationsToAdd.size,
+        stationConflictCount = stationConflicts.size,
+        voiceprintsToAddCount = voiceprintsToAdd.size,
+        voiceprintConflictCount = voiceprintConflicts.size,
+        threadsToAddCount = threadsToAdd.size,
+        threadConflictCount = threadConflicts.size,
     )
 
 private fun org.ort.app.backup.BackupRestoreResult.toSummary(): String = buildString {
-    append("Added $sessionsAdded sessions, $transmissionsAdded overs, $correctionsAdded corrections ")
+    append("Added $sessionsAdded sessions, $transmissionsAdded overs, $correctionsAdded corrections, ")
+    append("$stationsAdded stations, $voiceprintsAdded voiceprints, $threadsAdded threads ")
     append("and $audioFilesAdded audio files.")
-    val skipped = sessionsSkipped + transmissionsSkipped + correctionsSkipped + audioFilesSkipped
+    val skipped = sessionsSkipped + transmissionsSkipped + correctionsSkipped + stationsSkipped +
+        voiceprintsSkipped + threadsSkipped + audioFilesSkipped
     if (skipped > 0) {
         append(
-            " $sessionsSkipped sessions, $transmissionsSkipped overs, $correctionsSkipped corrections " +
+            " $sessionsSkipped sessions, $transmissionsSkipped overs, $correctionsSkipped corrections, " +
+                "$stationsSkipped stations, $voiceprintsSkipped voiceprints, $threadsSkipped threads " +
                 "and $audioFilesSkipped audio files already existed on this device and were left alone.",
         )
     }

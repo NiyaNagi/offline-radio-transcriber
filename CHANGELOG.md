@@ -32,6 +32,108 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (p-backup-record: R-1094's backup now round-trips the station catalog, voiceprints, threads and superseded transcript history; R-1095 judged safe-but-limited after fixing one orphaned-correction defect)
+
+### `<pending>` — R-1094: backup/restore carries the station catalog, voiceprints, threads and every transcript version; R-1095: fixed an orphaned-correction defect in the conflict rule, judged the rest safe-but-limited
+
+**Scope:** `app/src/main/kotlin/org/ort/app/backup/**` (`BackupBundleBuilder.kt`, `BackupRecordCodecs.kt`,
+`BackupRestoreCoordinator.kt`), the backup-only sections of `app/src/main/kotlin/org/ort/app/ui/settings/SettingsBackupScreen.kt`, `SettingsViewData.kt` and `SettingsContent.kt`, `data/src/main/kotlin/org/ort/data/dao/CatalogDao.kt` (two new read queries), and matching tests under `app/src/test/kotlin/org/ort/app/backup/**`, `app/src/test/kotlin/org/ort/app/ui/settings/SettingsBackupScreenTest.kt` and `data/src/test/kotlin/org/ort/data/dao/CatalogDaoTest.kt`.
+
+**Requirements/ACs:** FR-STO-6, FR-STO-9, AC-170, D56, FR-SPK-20, FR-DIG-13, FR-SPK-25, constitution
+I ("an attribution without its confidence state is a bug"), constitution III ("nothing is deleted
+quietly"), constitution V (the four declared outbound channels; the device-to-device transfer
+carve-out FR-SPK-20's own text states for `FR-STO-6`).
+
+**What changed:**
+
+- **R-1094.** The backup bundle (`BackupBundleBuilder`) and restore coordinator
+  (`BackupRestoreCoordinator`) now carry three more tables — the station catalog (`StationEntity`
+  via a new `StationCodec`), voiceprints (`VoiceprintEntity` via a new `VoiceprintCodec`, the
+  embedding Base64-encoded) and threads (`ThreadEntity` via a new `ThreadCodec`) — and **every**
+  transcript version, current and superseded (`TranscriptDao.getAllVersions`, not `.getCurrent`),
+  closing the exact gap constitution III names. New zip entries `stations.json`/`voiceprints.json`/
+  `threads.json`; new manifest/preview/plan counts `stationCount`/`voiceprintCount`/`threadCount`.
+- `StationEntity.overCountsByAttributionState` (D56/R-1134's own derived column) is **deliberately
+  never carried as a trusted value**: `StationCodec.toJson` omits the field, and `fromJson` always
+  writes `OverCountsByAttributionState.EMPTY`'s placeholder — the identical honest-birth value
+  `CatalogDao.recordStationObservation` already writes for a brand-new station. The next real
+  `CatalogDao.getStation` read re-derives the true counts from the transmissions the same restore
+  also carries. Carrying the bundle's own stale copy would have reintroduced the second source of
+  truth D56 removed.
+- Voiceprints are biometric data. Both the code (`VoiceprintCodec`'s own kdoc) and the screen say
+  explicitly that they travel only because this is the operator's own device-to-device transfer —
+  never through the corpus contribution channel, the field-report channel, or any analytics tier,
+  none of which call this codec — discharging FR-SPK-20's own "and SHALL say so."
+- `:data` gained two read-only queries the restore path needed: `CatalogDao.getVoiceprint(id)`
+  (single-row conflict check) and `CatalogDao.listAllThreads()` ("every thread" — no prior caller
+  needed one); `ActivityDao.listStations()` and `CatalogDao.allVoiceprints()` already existed and
+  are reused as-is.
+- **R-1095 judgement.** The coarse "device always wins" rule is genuinely **safe** — it never
+  overwrites or deletes an existing device record, matching AC-170's own text. It is **not**,
+  however, entirely limited-only: found and fixed one real defect along the way. A *new* correction
+  (a fresh id the restoring device had never seen) belonging to a transmission that itself
+  conflicted still slipped through `BackupRestorePlan.correctionsToAdd`, because the existence
+  check looked only at the correction's own id, never its transmission's. `apply()` would then
+  insert that correction row with a bare `CorrectionDao.insert` (never `recordCorrection`), landing
+  a correction *history entry* on a transmission whose own `attributionState`/`stationId` never
+  actually changed to match it — a record that looks corrected without being corrected, which is
+  worse than not restoring it at all (constitution I). Fixed by folding a transmission-conflicting
+  correction into `correctionConflicts` instead — the identical "left exactly as it was" scoping
+  `transcriptsToAdd` already applied to a conflicting transmission's superseded transcript. The
+  remaining, genuine limitation — no per-record "keep mine / take theirs" picker, so an operator
+  cannot cherry-pick one corrected callsign out of an otherwise-conflicting bundle — is left filed:
+  it is safe (never destroys anything), only limited, and this session's own instructions were bugs
+  before features.
+- `SettingsBackupScreen`'s copy updated to match: "In the backup" now names every transcript
+  version, the station catalog, voiceprints and threads, with an explicit biometric-data disclosure
+  line; "Not yet in the backup" narrowed to what genuinely remains (digest summaries, lattice/
+  candidate detail, other schema-only tables). The backup preview line and the restore plan/
+  conflict summaries show real station/voiceprint/thread counts, never a placeholder.
+
+**Verified:**
+- `./gradlew :data:test :data:detekt :data:ktlintCheck` — green, including two new `CatalogDaoTest`
+  cases (`R_1094_getVoiceprint_returns_the_matching_row_and_null_for_an_unknown_id`,
+  `R_1094_listAllThreads_returns_every_thread_across_every_session`).
+- `./gradlew :app:testFullDebugUnitTest :app:detekt :app:ktlintCheck` — green (the 18
+  Compose-idle-poisoning classes `app/build.gradle.kts` isolates are unaffected by this change and
+  were not touched; `smokeTestFullDebugUnitTest` was not run because none of the files this unit
+  touched match that list).
+- Discriminating tests, by name: `BackupRecordCodecsTest` — six new cases (`R_1094 StationCodec...`
+  ×3 including the "never writes overCountsByAttributionState" case, `R_1094 VoiceprintCodec...` ×2,
+  `R_1094 ThreadCodec...` ×2). `BackupBundleBuilderTest` — `R_1094 write carries every transcript
+  version, not only the current one`, `R_1094 write carries the station catalog, voiceprints and
+  threads, and the manifest counts them`, `R_1094 preview reports the real station, voiceprint and
+  thread counts`. `BackupRestoreCoordinatorTest` — `R_1094 restoring into an empty device reproduces
+  the station catalog, threads and superseded transcripts` (the round-trip centrepiece: writes a
+  bundle from a populated database, restores into an empty one, asserts sessions/corrections/audio/
+  station catalog/thread/both transcript versions all arrive, nothing merged away — discriminated by
+  temporarily removing the station/thread/voiceprint insert lines from `apply()`, which turned this
+  test red at its station-catalog assertion; restored, green again) and `R_1095 a new correction for
+  a conflicting transmission is never inserted orphaned against it` (discriminated by reverting the
+  `correctionsToAdd` transmission-scoping to the pre-fix "id-only" check, which turned this test red
+  at its "never queued for insertion" assertion; restored, green again). `SettingsBackupScreenTest`
+  — two new cases asserting the real counts render in both the preview and the restore-plan/conflict
+  summaries.
+
+**Left open / not done:**
+- Digest summaries (`StationSummaryEntity`), the phonetic lattice/candidate detail, calibration,
+  assets, operator location, the contribution queue, lexicon-version history, station-identity/
+  voiceprint-binding history and prior adjustments are still not carried — a stated limitation on
+  the screen, not a silent gap.
+- R-1095's per-record conflict picker is a real, separate feature, deliberately not built this
+  round.
+- This change touches `app/src/main/kotlin/org/ort/app/ui/**` (`SettingsBackupScreen.kt`, and the
+  shared `SettingsContent.kt`/`SettingsViewData.kt`), so per constitution VIII it is not visually
+  re-verified yet — no capture was taken in this session. The lead re-captures `Settings-Backup`
+  (`settings-backup/*`) at font scale 1.0 and 2.0 against `design/canvas/Settings-Backup.dc.html`,
+  whose own copy does not yet reflect the new "In the backup"/"Not yet in the backup" text, the
+  biometric-data disclosure line, or the station/voiceprint/thread counts in both the preview and
+  the restore-plan/conflict summaries.
+- Did not run the full `./gradlew build` gate, `gradlew --stop`, or install to an emulator, per this
+  session's own instructions.
+
+---
+
 ## 2026-09-21 (R-220/R-280/R-340/R-612/R-985: the oldest open setup-2x rows re-verified against fresh captures; R-985 closed, the ghost/occlusion family corroborated absent but left open for hardware)
 
 ### `<pending>` — o-setup-2x: register rows R-220, R-280, R-340, R-612, R-985 re-verified against fresh 1.0/2.0 captures on the current build
