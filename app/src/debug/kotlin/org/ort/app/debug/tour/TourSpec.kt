@@ -74,6 +74,30 @@ import org.json.JSONObject
  * visible showing whichever mode the taps left it in — the on-device proof R-1006's reversal
  * needed and no Robolectric test can substitute for (constitution VIII).
  *
+ * **R-1117/R-1127 (register, tour-coverage unit)**: `whyOpen` (a companion to `transmission`, the
+ * same relationship `revisionsOpen` already has) — `true` opens D05 (`Detail-Why.dc.html`) on the
+ * resolved transmission via [org.ort.app.ui.navigation.NavSeed.openTransmissionWhy]. `labelOpen`
+ * (the same companion shape): `true` opens the labelled-sample form (R-056) via
+ * [org.ort.app.ui.navigation.NavSeed.openTransmissionLabel]. `correctionStep` (the same companion
+ * shape): `MAIN` (D08) / `SEARCH` (D09) / `TYPE` (D10) opens the correction sheet directly on that
+ * tier via [org.ort.app.ui.navigation.NavSeed.correctionStep] — D08-D11's own seam, since these are
+ * genuinely interaction-only sheets with no destination of their own.
+ *
+ * **R-350/R-1127**: `improveDonePreview` (`"true"`) — a *destination*-step-only key (no
+ * `transmission` companion; meaningful only on an `IMPROVE_RECORDS` destination step) starts
+ * `ImproveContent` already on R04 (`Improve-Done.dc.html`) with a real-shaped summary, via
+ * [org.ort.app.ui.navigation.NavSeed.improveDonePreview] — the tour cannot drive a real reprocess
+ * run to completion.
+ *
+ * **R-1129**: `tapLicenseNotice` (a licence's bundled asset file name, e.g. `"gemma.txt"`) — a
+ * *destination*-step-only key (meaningful only on a `SETTINGS` destination step with
+ * `settingsScreen: "LICENSES"`), read directly by [ScreenshotTourActivity] exactly like
+ * `tapLiveBar` (never through [TourIds.resolveSeed]): taps the named notice's own stable
+ * `"license-row-<file>"` testTag (`org.ort.app.ui.settings.SettingsLicensesScreen.kt`'s own seam,
+ * this round) and waits for its detail screen's own `"license-detail"` testTag to appear — the
+ * detail screen is reachable by an ordinary tap in production, so this is a tour-only capture seam,
+ * not a product navigation seam.
+ *
  * A step naming a [drillIn] key outside this set fails loudly (recorded as one
  * `error` line in the manifest, per
  * this file's own contract with [ScreenshotTourActivity] — never a silent skip and never an
@@ -163,6 +187,13 @@ public data class TourStep(
             // WPUI follow-up (R-1006's on-device proof) — see this class's own doc comment above.
             "playThenNavigate",
             "pauseThenNavigate",
+            // R-1117/R-1127/R-350/R-1129 (register, tour-coverage unit) — see this class's own doc
+            // comment above for each.
+            "whyOpen",
+            "labelOpen",
+            "correctionStep",
+            "improveDonePreview",
+            "tapLicenseNotice",
         )
     }
 }

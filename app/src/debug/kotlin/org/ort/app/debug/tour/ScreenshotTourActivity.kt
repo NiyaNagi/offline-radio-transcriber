@@ -314,6 +314,16 @@ public class ScreenshotTourActivity : ComponentActivity() {
             }
             awaitLiveMonitorVisible(step.id)
         }
+        // R-1129 (register): the tour's own seam for a licence notice's own detail screen — reached
+        // by an ordinary tap in production, so this is a capture-only mechanism, the same "real tap
+        // via testTag" shape `tapLiveBar` above already established, never a `NavSeed` field (the
+        // detail screen's own `selected` state is genuinely local and not worth seeding).
+        step.drillIn["tapLicenseNotice"]?.let { assetFileName ->
+            val rowTag = "license-row-$assetFileName"
+            awaitTagPresent(step.id, rowTag)
+            tapTaggedNodeOrFail(step.id, rowTag)
+            awaitTagPresent(step.id, LICENSE_DETAIL_TEST_TAG)
+        }
         // WPUI follow-up (R-1006's on-device proof, coordinator round): see `TourStep`'s own doc
         // comment for the full contract. Meaningful only alongside `transmission` in the same
         // step's own `drillIn` (the drill-in this just settled on, above) — a step naming either
@@ -687,6 +697,10 @@ public class ScreenshotTourActivity : ComponentActivity() {
         private const val WAVEFORM_PLAY_TEST_TAG = "waveform-glyph-play"
         private const val WAVEFORM_PAUSE_TEST_TAG = "waveform-glyph-pause"
         private const val TRANSPORT_BAR_PLAYBACK_TEST_TAG = "transport-bar-playback"
+
+        /** R-1129: `org.ort.app.ui.settings.SettingsLicensesScreen.kt`'s own stable testTag on its
+         * notice-detail screen — see `tapLicenseNotice`'s own doc comment (`TourStep`). */
+        private const val LICENSE_DETAIL_TEST_TAG = "license-detail"
 
         /** R-803 (halt): the bound `awaitDestinationSettled`/`renderSetupStep`'s own settle-wait use
          * before giving up and reporting an honest error — generous (well past a single dropped

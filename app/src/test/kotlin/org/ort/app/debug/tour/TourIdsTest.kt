@@ -271,6 +271,50 @@ class TourIdsTest {
         assertEquals(true, seed?.openCaptureLevelMeter)
     }
 
+    // R-1117/R-1127 (register): mirrors `revisionsOpen`'s own boolean-parsing test exactly.
+    @Test
+    fun `R_1127_WHY_OPEN parses the literal true string to a real Boolean`() = runTest {
+        val seed = TourIds.resolveSeed(context, sessionId = null, mapOf("whyOpen" to "true"))
+        assertEquals(true, seed?.openTransmissionWhy)
+    }
+
+    // R-056/R-1127 (register): mirrors `revisionsOpen`'s own boolean-parsing test exactly.
+    @Test
+    fun `R_1127_LABEL_OPEN parses the literal true string to a real Boolean`() = runTest {
+        val seed = TourIds.resolveSeed(context, sessionId = null, mapOf("labelOpen" to "true"))
+        assertEquals(true, seed?.openTransmissionLabel)
+    }
+
+    // R-052/R-1127 (register): D08-D11's own seam.
+    @Test
+    fun `R_1127_CORRECTION_STEP each named tier resolves to the real enum value`() = runTest {
+        for ((name, expected) in listOf(
+            "MAIN" to org.ort.app.ui.screens.CorrectionTierStep.MAIN,
+            "SEARCH" to org.ort.app.ui.screens.CorrectionTierStep.SEARCH,
+            "TYPE" to org.ort.app.ui.screens.CorrectionTierStep.TYPE,
+        )) {
+            val seed = TourIds.resolveSeed(context, sessionId = null, mapOf("correctionStep" to name))
+            assertEquals("'$name' should resolve to $expected", expected, seed?.correctionStep)
+        }
+    }
+
+    @Test
+    fun `R_1127_CORRECTION_STEP_UNKNOWN throws a clear error rather than a silent null`() = runTest {
+        try {
+            TourIds.resolveSeed(context, sessionId = null, mapOf("correctionStep" to "NOT_A_REAL_STEP"))
+            fail("expected an exception for an unrecognised correctionStep value")
+        } catch (expected: IllegalStateException) {
+            assertNotNull(expected.message)
+        }
+    }
+
+    // R-350/R-1127 (register): mirrors `captureLevelMeter`'s own boolean-parsing test exactly.
+    @Test
+    fun `R_1127_IMPROVE_DONE_PREVIEW parses the literal true string to a real Boolean`() = runTest {
+        val seed = TourIds.resolveSeed(context, sessionId = null, mapOf("improveDonePreview" to "true"))
+        assertEquals(true, seed?.improveDonePreview)
+    }
+
     @Test
     fun `R_TOUR_IDS_UNRESOLVABLE_STATE throws a clear error rather than a silent empty seed`() = runTest {
         // "empty" seeds no transmissions at all, so every attribution-state lookup must fail loudly

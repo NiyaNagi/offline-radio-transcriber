@@ -2,6 +2,7 @@ package org.ort.app.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontStyle
@@ -58,6 +60,15 @@ import org.ort.core.AttributionState
  *
  * Both merge their accessibility semantics into one node (FR-A11Y-2): a screen reader hears the
  * shape, the state and, where present, the confidence or alternate — never a bare colour swatch.
+ *
+ * **R-1117 (register): [onOpenWhy], on all three composables in this file.** Before this, none of
+ * them carried an `onClick` at all, so the only way to reach [org.ort.app.ui.screens.DetailWhyScreen]
+ * — the screen that explains *why* the app believes a callsign, "the strongest thing this product
+ * has built" — was the small "Full lattice" text action buried inside an already-open detail
+ * screen; no marker anywhere else (a Log row, a Search result, a Thread row) offered a way in.
+ * `null` (every existing caller) renders exactly as before — no clickable modifier at all, not even
+ * an inert one — so nothing about layout, semantics merging or hit-testing changes for a caller
+ * that does not opt in.
  */
 @Composable
 public fun AttributionMarker(
@@ -67,11 +78,14 @@ public fun AttributionMarker(
     // on INFERRED). Defaults true only so today's callers and their own tests keep today's
     // behaviour unchanged until they migrate to AttributionRow; prefer that for any new call site.
     showConfidence: Boolean = true,
+    onOpenWhy: (() -> Unit)? = null,
 ) {
     Row(
-        modifier = modifier.semantics(mergeDescendants = true) {
-            contentDescription = legacyMarkerDescription(attribution, showConfidence)
-        },
+        modifier = modifier
+            .thenAttributionMarkerClick(onOpenWhy)
+            .semantics(mergeDescendants = true) {
+                contentDescription = legacyMarkerDescription(attribution, showConfidence)
+            },
     ) {
         AttributionShape(state = attribution.state, size = MARKER_ROW_SIZE)
         if (showConfidence) {
@@ -129,11 +143,18 @@ public fun AttributionRow(
     modifier: Modifier = Modifier,
     size: Dp = MARKER_ROW_SIZE,
     showScore: Boolean = true,
+    // R-1117 — see [AttributionMarker]'s own doc comment for what this is and why `null` (every
+    // existing caller) changes nothing.
+    onOpenWhy: (() -> Unit)? = null,
 ) {
     val state = attribution.state
     val description = attributionRowDescription(attribution, callsign, alternate)
 
-    Row(modifier = modifier.semantics(mergeDescendants = true) { contentDescription = description }) {
+    Row(
+        modifier = modifier
+            .thenAttributionMarkerClick(onOpenWhy)
+            .semantics(mergeDescendants = true) { contentDescription = description },
+    ) {
         AttributionShape(state = state, size = size)
         Spacer(modifier = Modifier.width(OrtSpacing.xs))
         when (state) {
@@ -220,12 +241,20 @@ public fun TitleAttributionRow(
     attribution: Attribution,
     callsign: String? = attribution.stationId,
     modifier: Modifier = Modifier,
+    // R-1117 — see [AttributionMarker]'s own doc comment for what this is and why `null` (every
+    // existing caller) changes nothing. [TransmissionDetailScreen]'s own header is the one real
+    // wiring today: tapping the callsign at the top of the detail screen opens
+    // [org.ort.app.ui.screens.DetailWhyScreen] directly, a second, larger-target way in beside the
+    // existing "Full lattice" text action.
+    onOpenWhy: (() -> Unit)? = null,
 ) {
     val state = attribution.state
     val description = attributionRowDescription(attribution, callsign, null)
 
     Row(
-        modifier = modifier.semantics(mergeDescendants = true) { contentDescription = description },
+        modifier = modifier
+            .thenAttributionMarkerClick(onOpenWhy)
+            .semantics(mergeDescendants = true) { contentDescription = description },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AttributionShape(state = state, size = MARKER_TITLE_SIZE)
@@ -386,6 +415,16 @@ private fun shapeDescription(state: AttributionState): String = when (state) {
     AttributionState.INFERRED -> "outlined circle"
     AttributionState.AMBIGUOUS -> "half-filled circle"
     AttributionState.UNKNOWN -> "small dot"
+}
+
+/** R-1117: the one `clickable` wiring shared by [AttributionMarker]/[AttributionRow]/
+ * [TitleAttributionRow] — `null` (every existing caller) is a plain no-op `Modifier`, not merely a
+ * clickable with an empty lambda, so nothing about this row's semantics or hit-testing changes for
+ * a caller that never opts in. */
+private fun Modifier.thenAttributionMarkerClick(onOpenWhy: (() -> Unit)?): Modifier = if (onOpenWhy != null) {
+    this.clickable(role = Role.Button, onClickLabel = "Why this callsign", onClick = onOpenWhy)
+} else {
+    this
 }
 
 private fun stateProse(state: AttributionState): String = when (state) {

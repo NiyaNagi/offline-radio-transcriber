@@ -198,6 +198,8 @@ every row a previous scenario wrote first (see `Scenarios.kt`'s own doc comment 
 | `setup-level` | The same verified-input base as `setup-verified`, but `levelInBand`/`levelPeakDbfs` are left honestly unset so `stepFor` lands at `SetupStep.LEVEL` (S07) directly, from a cold launch (register R-264) — see "Reaching S07/S12" below. Also publishes a real `LevelStatus` (peak −14 dBFS, noise floor −58, no clipping) so S07's own meter has real bars/facts to render on a clean install instead of the honest-but-empty "no bars, noise —" state (register R-411) — independent of `levelInBand` itself, which stays unset on purpose so `stepFor` still resumes here. |
 | `setup-radio` | The same verified-input/level/overnight base as `setup-verified`, but `radioChoice`/`manualFrequencyHz` are left honestly unset (explicitly cleared — `SharedPreferences` persist across scenario loads, unlike `:data`) so `stepFor` lands at `SetupStep.RADIO` (S09) directly, from a cold launch (register R-285) — see "Reaching S07/S09/S12" below. |
 | `setup-verified-local-mic` | E2-J04: the one local-mic-mode setup base — `setup-verified`/`setup-level`/`setup-radio` all share a `USB_RADIO`/`usb-1` base, so no scenario reached S07..S12 under `LOCAL_MICROPHONE` before this. `stepFor` resumes at `SetupStep.READY` (S12); Mode row reads "Local microphone · frequency by hand" (`radioChoice = NONE`), no Rig rows at all (`needsRigTransport` gates on `radioChoice`, never `captureMode`). |
+| `setup-mic-denied` | R-1127/R-1107/R-085 (register), S02b: welcome/jurisdiction seen, `captureMode = LOCAL_MICROPHONE`, then `DebugMicPermissionOverride.show()` — makes `SetupActivity.currentPermissionsState`/`micPermanentlyDenied` both report a genuine, permanent denial regardless of what `install.ps1` actually granted at the OS level, so `SetupStateMachine.stepFor`'s own honest re-derivation agrees with a cold `EXTRA_STEP=MICROPHONE_DENIED` launch on every call instead of stomping it on the next `onResume`. See "v10 update" below for the full account. |
+| `setup-route-mismatch` | R-1127/R-282 (register), S06: `verifiedInputStore` alone (no `levelInBand`/`overnightStepSeen`/`radioChoice`, unlike `setup-verified`) so `stepFor`'s natural resolution lands on `SetupStep.LEVEL` — past `ROUTE_MISMATCH`'s own ordinal position, which is what lets a cold `EXTRA_STEP=ROUTE_MISMATCH` launch be honoured at all — then `DebugRouteCheckOverride.show(RouteCheckState.Mismatch(...))`, the identical seam `setup-verified` already uses for S05. See "v10 update" below. |
 | `clock-dst` | F14 (`Fail-Clock.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Clock`. No runtime signal exists; see "Known gaps" below. |
 | `usb-permission` | F16 (`Fail-Usb.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Usb`. No runtime signal exists. |
 | `interrupted-pass` | F17 (`Fail-Interrupted.dc.html`) — `DebugFailureOverride` set to `FailurePresentation.Interrupted`. No runtime signal exists. |
@@ -832,6 +834,67 @@ now stale and corrected here rather than rewritten in place, so the history abov
   `install.ps1`/`tour.ps1` (owned by another builder this wave) — reported to the register rather
   than faked here, per this file's own established convention for every other genuinely-unreachable
   id above.
+
+**v10 update (m-seed-seams, register R-1127/R-1107/R-1117/R-1129/R-1091/R-085/R-282/R-052/R-056/
+R-350): every one of v9's own "confirmed still not reachable" items above involving a `src/main`
+seed seam is now closed — several claims above are stale, corrected here rather than rewritten in
+place:**
+
+- **S02b (`Setup-Mic-Denied`) is now reached** by `setup-mic-denied` (+ `@2x`). The seam v9 called
+  for exists: `org.ort.app.ui.setup.DebugMicPermissionOverride` (`src/main`) makes
+  `SetupActivity.currentPermissionsState`/`micPermanentlyDenied` both report a genuine, permanent
+  denial when active, so `SetupStateMachine.stepFor`'s own honest re-derivation *agrees* with a
+  debug-forced `EXTRA_STEP=MICROPHONE_DENIED` on every call (`tryOpenAtRequestedStep`, the ordinary
+  `refreshStep`, and `onResume`'s own re-check) instead of disagreeing and overwriting it — no
+  bypass logic was added to `shouldRefreshStepOnResume`, and `install.ps1`'s unconditional
+  `RECORD_AUDIO` grant needed no change, since the override makes it irrelevant for this one
+  scenario. R-1091 was independently verified at HEAD while adding this: `SetupStep.isHalted()`
+  already includes `MICROPHONE_DENIED` and `Setup-Mic-Denied.dc.html` already draws it halted —
+  the two already agree; this capture is the missing evidence, not a fix.
+- **S06 (`Setup-Route-Mismatch`) is now reached** by `setup-route-mismatch` (+ `@2x`), correcting
+  the "remain correctly excluded" claim above. `RenderRouteMismatch` now backfills `verifyState`
+  from `DebugRouteCheckOverride.activeOverride` (a `LaunchedEffect`, not through
+  `onVerifyStateChanged`, which would also push a redundant `ROUTE_MISMATCH -> ROUTE_MISMATCH`
+  backstack entry) when landing on this step cold — the identical override S05 already uses for the
+  identical reason (no real hardware to run `RealRouteCheck` against). The scenario's own
+  `verifiedInputStore` base deliberately does *not* also set `levelInBand`/`overnightStepSeen`, so
+  `SetupStateMachine.stepFor`'s natural resolution lands on `LEVEL` — past `ROUTE_MISMATCH`'s own
+  ordinal position, which is what `SetupActivity.tryOpenAtRequestedStep`'s "never skip ahead of the
+  natural step" guard requires to honour the cold `EXTRA_STEP` at all. The selected input's own
+  `typeLabel` reads "Unknown" in this capture (`inputRoutes` is never populated on a cold launch —
+  the same accepted gap `RouteMismatchScreen`'s own doc comment already names as "never reachable
+  through the ordinary flow", which this synthetic entry point necessarily is).
+- **D05 (`Detail-Why`) is now reached** by `overnight/D05-why` (+ `@2x`/`@2x-end`), via
+  `NavSeed.openTransmissionWhy` (mirrors `openTransmissionRevisions`). This is also now a *real*
+  product affordance, not only a tour seam: `AttributionMarker`/`AttributionRow`/
+  `TitleAttributionRow` (`ui/components/AttributionMarker.kt`) accept a nullable `onClick`, and
+  `TransmissionDetailScreen`'s own header wires it to `onOpenWhy` — tapping the callsign at the top
+  of the detail screen opens `Detail-Why` directly now, beside the pre-existing "Full lattice" text
+  action (register R-1117).
+- **The labelled-sample form (`Detail.dc.html`'s "Record labelled sample", register R-056) is now
+  reached expanded** by `overnight/detail-label-open` (+ `@2x-end`), via
+  `NavSeed.openTransmissionLabel`.
+- **D08-D11 the correction sheets (register R-052) are now reached** by `overnight/D08-correct-a`,
+  `D09-correct-b`, `D10-correct-c` (each + `@2x`), via a newly-public `CorrectionTierStep`
+  (`ui/screens/CorrectionSheet.kt`) and `NavSeed.correctionStep`. D11 (`Detail-Propagated`) needed
+  no new seam — it was already reachable through `onChooseCandidate`'s own real flow and already had
+  tour coverage; v9's grouping of "D08-D11" together was the correction-sheet family, not a claim
+  that D11 itself was blocked.
+- **R04 (`Improve-Done`, register R-350) is now reached** by `overnight/R04-improve-done` (+
+  `@2x`/`@2x-end`), via `NavSeed.improveDonePreview` — `ImproveContent`'s own `page` local state
+  starts on a real-shaped `ImprovePage.Done` fixture (one distinct failure reason, the literal
+  `AsrEngineProvisioning` message, so R-350's own "Install" action renders too) rather than
+  requiring a live reprocess run the tour cannot drive to completion. **R02/R03 (`Improve-Select`/
+  `Improve-Running`) remain unseeded** — only `Done` got a seam this round; `ImprovePage` is still
+  otherwise private, file-local state.
+- **The Gemma licence notice detail screen (register R-1129) is now reached** by
+  `overnight/CF12-settings-licenses-gemma` (+ `@2x`/`@2x-end`, the last per R-1129's own explicit
+  ask since the notice grew to the full Terms of Use and Prohibited Use Policy). This needed no
+  `src/main` seam — the detail screen is an ordinary tap in production — so it is a tour-only
+  mechanism: a new `tapLicenseNotice` drillIn key taps `SettingsLicensesScreen`'s own new
+  `"license-row-<assetFileName>"` testTag and waits for its detail screen's own new
+  `"license-detail"` testTag, the identical "real tap via stable testTag" shape `tapLiveBar`
+  already established.
 
 ### `diff.py`
 

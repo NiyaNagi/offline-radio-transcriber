@@ -4,6 +4,7 @@ import android.content.Intent
 import org.ort.app.ui.data.FrequencyDetailView
 import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.data.StationSubScreen
+import org.ort.app.ui.screens.CorrectionTierStep
 import org.ort.app.ui.settings.SettingsScreenId
 
 /**
@@ -92,6 +93,21 @@ public data class NavSeed(
     // deliberately separate fields, not a shared one, because they land on two different sub-
     // screens of the same destination (`EarlierNightsDestinationContent`'s own doc comment).
     val pendingRecordingSessionId: String? = null,
+    // R-1117/R-1127 (register): the tour's own seam for D05 (`Detail-Why.dc.html`) — mirrors
+    // [openTransmissionRevisions] exactly, and is the *capture* half of R-1117's fix; the *product*
+    // half is the real `onOpenWhy` callback [org.ort.app.ui.components.TitleAttributionRow]/
+    // [org.ort.app.ui.components.AttributionRow]/[org.ort.app.ui.components.AttributionMarker] now
+    // accept (`AttributionMarker.kt`'s own doc comment).
+    val openTransmissionWhy: Boolean? = null,
+    // R-056/R-1127: mirrors [openTransmissionRevisions] for the labelled-sample form.
+    val openTransmissionLabel: Boolean? = null,
+    // R-052/R-1127: D08-D11's own seam (the correction sheets) — non-null opens the sheet already on
+    // the named tier. `null` (every existing caller) is unchanged.
+    val correctionStep: CorrectionTierStep? = null,
+    // R-350/R-1127: R04's own seam (`Improve-Done.dc.html`) — `ImprovePage` is unseeded local state
+    // with no destination of its own; `true` starts `ImproveContent` already on a real-shaped
+    // `Done` preview rather than requiring a live reprocess run the tour cannot drive to completion.
+    val improveDonePreview: Boolean? = null,
 ) {
     /**
      * The [ReaderDestination] this seed's own state is actually read under. The four drill-in ids
@@ -115,6 +131,7 @@ public data class NavSeed(
         pendingRecordingSessionId != null -> ReaderDestination.EARLIER_NIGHTS
         settingsScreen != null -> ReaderDestination.SETTINGS
         searchQuery != null || searchSubmit == true || searchFiltersOpen == true -> ReaderDestination.SEARCH
+        improveDonePreview == true -> ReaderDestination.IMPROVE_RECORDS
         else -> null
     }
 
@@ -163,6 +180,10 @@ public data class NavSeed(
         openTransmissionRevisions?.let { intent.putExtra(EXTRA_OPEN_TRANSMISSION_REVISIONS, it) }
         openDrawer?.let { intent.putExtra(EXTRA_OPEN_DRAWER, it) }
         reviewSessionView?.let { intent.putExtra(EXTRA_REVIEW_SESSION_VIEW, it.name) }
+        openTransmissionWhy?.let { intent.putExtra(EXTRA_OPEN_TRANSMISSION_WHY, it) }
+        openTransmissionLabel?.let { intent.putExtra(EXTRA_OPEN_TRANSMISSION_LABEL, it) }
+        correctionStep?.let { intent.putExtra(EXTRA_CORRECTION_STEP, it.name) }
+        improveDonePreview?.let { intent.putExtra(EXTRA_IMPROVE_DONE_PREVIEW, it) }
     }
 
     public companion object {
@@ -214,6 +235,19 @@ public data class NavSeed(
         // nav_review_session_view DIGEST` lands directly on that session's Digest.
         public const val EXTRA_REVIEW_SESSION_VIEW: String = "nav_review_session_view"
 
+        // R-1117/R-1127 — see [openTransmissionWhy]'s own doc comment.
+        public const val EXTRA_OPEN_TRANSMISSION_WHY: String = "nav_open_transmission_why"
+
+        // R-056/R-1127 — see [openTransmissionLabel]'s own doc comment.
+        public const val EXTRA_OPEN_TRANSMISSION_LABEL: String = "nav_open_transmission_label"
+
+        // R-052/R-1127 — see [correctionStep]'s own doc comment. Named extra value is the enum's
+        // own name (`MAIN`/`SEARCH`/`TYPE`).
+        public const val EXTRA_CORRECTION_STEP: String = "nav_correction_step"
+
+        // R-350/R-1127 — see [improveDonePreview]'s own doc comment.
+        public const val EXTRA_IMPROVE_DONE_PREVIEW: String = "nav_improve_done_preview"
+
         /**
          * Parses [intent]'s own seed extras (any subset, including none) into a [NavSeed] — `null`
          * only when *no* seed extra at all is present, so a caller that never seeded anything gets
@@ -260,6 +294,11 @@ public data class NavSeed(
                 openDrawer = intent.getBooleanExtraOrNull(EXTRA_OPEN_DRAWER),
                 reviewSessionView = intent.getStringExtra(EXTRA_REVIEW_SESSION_VIEW)
                     ?.let { name -> ReviewSessionView.entries.firstOrNull { it.name == name } },
+                openTransmissionWhy = intent.getBooleanExtraOrNull(EXTRA_OPEN_TRANSMISSION_WHY),
+                openTransmissionLabel = intent.getBooleanExtraOrNull(EXTRA_OPEN_TRANSMISSION_LABEL),
+                correctionStep = intent.getStringExtra(EXTRA_CORRECTION_STEP)
+                    ?.let { name -> CorrectionTierStep.entries.firstOrNull { it.name == name } },
+                improveDonePreview = intent.getBooleanExtraOrNull(EXTRA_IMPROVE_DONE_PREVIEW),
             )
             return if (seed == NavSeed()) null else seed
         }

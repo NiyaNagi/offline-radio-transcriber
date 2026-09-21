@@ -1,6 +1,8 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import org.junit.Rule
 import org.junit.Test
@@ -84,5 +86,33 @@ class DetailWhyScreenTest {
         }
 
         composeTestRule.onNodeWithText("Did not parse as a valid callsign grammar.").assertExists()
+    }
+
+    /** R-1117 (register): `why.runnerUp` is always one of the entries `why.candidates` already
+     * carries in full (`DetailViewStateMapper.whyFor`'s own construction) — a second, separate
+     * "Runner-up · ..." line duplicated a row the candidates list had just drawn, a defect against
+     * `Detail-Why.dc.html`, which lists every surviving candidate once and has no separate
+     * runner-up callout at all. */
+    @Test
+    fun `R_1117_a_runner_up_candidate_is_never_rendered_twice`() {
+        val runnerUp = RankedCandidateViewState(callsign = "KA7LWH", scoreLabel = "score 4.4", chosen = false)
+        val whyWithRunnerUp = DetailWhyViewState(
+            hasData = true,
+            latticeSummary = "ACOUSTIC · model whisper-small",
+            candidates = listOf(
+                RankedCandidateViewState(callsign = "K7LWH", scoreLabel = "score 8.6", chosen = true),
+                runnerUp,
+            ),
+            priors = emptyList(),
+            runnerUp = runnerUp,
+            winningSlots = emptyList(),
+            winningGrammarValid = true,
+        )
+        composeTestRule.setContent {
+            OrtTheme { DetailWhyScreen(callsignLabel = "K7LWH", why = whyWithRunnerUp, onBack = {}) }
+        }
+
+        composeTestRule.onAllNodesWithText("KA7LWH", substring = true).assertCountEquals(1)
+        composeTestRule.onNodeWithText("Runner-up", substring = true).assertDoesNotExist()
     }
 }

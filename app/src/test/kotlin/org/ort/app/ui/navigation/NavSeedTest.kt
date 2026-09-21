@@ -7,6 +7,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelected
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -20,6 +21,7 @@ import org.junit.runner.RunWith
 import org.ort.app.debug.Scenarios
 import org.ort.app.ui.data.FrequencyDetailView
 import org.ort.app.ui.data.LogFilterSelection
+import org.ort.app.ui.screens.CorrectionTierStep
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.AttributionState
@@ -149,6 +151,108 @@ class NavSeedTest {
         // `NavSeed.openedFromDestination`: a transmission detail reached by seed reads "Back to
         // Log" — the same origin R-333's own real-tap case establishes.
         composeTestRule.waitUntilContentDescriptionExists("Back to Log")
+    }
+
+    // R-1117 (register): the real, shipped product affordance — before this, `AttributionMarker`/
+    // `AttributionRow`/`TitleAttributionRow` carried no `onClick` at all, so no marker anywhere
+    // (this one included) opened the screen that explains the callsign; the only way in was the
+    // small "Full lattice" text action further down the same screen. This seeds nothing beyond the
+    // ordinary drill-in — the click itself is what proves the fix, not a `NavSeed` field.
+    @Test
+    fun `R_1117 tapping the title attribution marker opens Detail-Why`() {
+        composeTestRule.setContent {
+            OrtTheme { OrtNavHost(sessionId = SESSION_ID, seed = NavSeed(openTransmissionId = TRANSMISSION_ID)) }
+        }
+        composeTestRule.waitUntilContentDescriptionExists("Back to Log")
+        composeTestRule.onNodeWithContentDescription("Confirmed", substring = true).performClick()
+        composeTestRule.waitUntilTextExists("Everything the resolver saw")
+    }
+
+    // R-1117/R-1127 (register): D05 (`Detail-Why.dc.html`) had no seed of its own at all before
+    // this — the tour could only reach it by simulating the real "Full lattice" tap.
+    @Test
+    fun `openTransmissionId with openTransmissionWhy lands directly on Detail-Why`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(
+                    sessionId = SESSION_ID,
+                    seed = NavSeed(openTransmissionId = TRANSMISSION_ID, openTransmissionWhy = true),
+                )
+            }
+        }
+        // `DetailWhyScreen`'s own subtitle — present only on the exhaustive screen, never on
+        // `TransmissionDetailScreen`'s own inline "Why this callsign" preview, which shares that
+        // section's own header label but not this sentence.
+        composeTestRule.waitUntilTextExists("Everything the resolver saw")
+    }
+
+    // R-056/R-1127 (register): the labelled-sample form is interaction-only local state with no
+    // seed of its own before this.
+    @Test
+    fun `openTransmissionId with openTransmissionLabel lands with the labelled-sample form already open`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(
+                    sessionId = SESSION_ID,
+                    seed = NavSeed(openTransmissionId = TRANSMISSION_ID, openTransmissionLabel = true),
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Labelled callsign")
+    }
+
+    // R-052/R-1127 (register): D08-D11 the correction sheets — genuinely interaction-only, no
+    // destination of their own, so each tier needs its own direct seed.
+    @Test
+    fun `openTransmissionId with correctionStep MAIN lands directly on the correction sheet`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(
+                    sessionId = SESSION_ID,
+                    seed = NavSeed(openTransmissionId = TRANSMISSION_ID, correctionStep = CorrectionTierStep.MAIN),
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Who was it?")
+    }
+
+    @Test
+    fun `openTransmissionId with correctionStep SEARCH lands directly on Tier B`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(
+                    sessionId = SESSION_ID,
+                    seed = NavSeed(openTransmissionId = TRANSMISSION_ID, correctionStep = CorrectionTierStep.SEARCH),
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("A station heard before")
+    }
+
+    @Test
+    fun `openTransmissionId with correctionStep TYPE lands directly on Tier C`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                OrtNavHost(
+                    sessionId = SESSION_ID,
+                    seed = NavSeed(openTransmissionId = TRANSMISSION_ID, correctionStep = CorrectionTierStep.TYPE),
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Type a callsign")
+    }
+
+    // R-350/R-1127 (register): `ImprovePage` is unseeded local state — R04 could only ever be
+    // reached by driving a real reprocess run to completion.
+    @Test
+    fun `improveDonePreview lands on Improve-Done with a real-shaped summary`() {
+        composeTestRule.setContent {
+            OrtTheme { OrtNavHost(sessionId = null, seed = NavSeed(improveDonePreview = true)) }
+        }
+        composeTestRule.waitUntilTextExists("All groups")
+        // The one failure reason and its "Install" action (R-350's own fix) — proves this is a
+        // real-shaped summary, not merely `ImprovePage.Done` with a null one.
+        composeTestRule.waitUntilTextExists("No transcription model installed")
     }
 
     @Test

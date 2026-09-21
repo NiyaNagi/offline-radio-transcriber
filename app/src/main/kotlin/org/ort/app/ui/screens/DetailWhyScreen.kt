@@ -158,14 +158,13 @@ private fun CandidatesSection(why: DetailWhyViewState) {
                 )
             }
         }
-        why.runnerUp?.let {
-            Text(
-                text = "Runner-up · ${it.callsign} (${it.scoreLabel})",
-                style = OrtType.cardBody,
-                color = OrtColors.textFaint,
-                modifier = Modifier.padding(top = OrtSpacing.sm),
-            )
-        }
+        // R-1117 (register): `why.runnerUp` is always one of the entries already rendered above —
+        // `DetailViewStateMapper.whyFor` builds it from the same `ranked` list `candidates` maps in
+        // full (`ranked.firstOrNull { it !== chosen }`), so a second, separate "Runner-up · ..."
+        // line here duplicated a row the list just drew, a defect against `Detail-Why.dc.html` (the
+        // artboard lists every surviving candidate once, chosen or not, with no separate runner-up
+        // callout at all). Removed rather than deduplicated in the mapper — `why.runnerUp` is still
+        // real data other callers (`TransmissionDetailScreen`'s own inline preview) legitimately use.
     }
 }
 
