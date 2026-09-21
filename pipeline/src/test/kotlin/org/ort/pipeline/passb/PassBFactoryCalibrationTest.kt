@@ -154,7 +154,14 @@ public class PassBFactoryCalibrationTest {
             db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-NOCAL"))
             stageAudio("TX-NOCAL")
 
-            val pass = PassBFactory.create(filesDir, db, resolvableEngine(), modelRef, provider = "cpu", calibrator = null)
+            val pass = PassBFactory.create(
+                filesDir,
+                db,
+                resolvableEngine(),
+                modelRef,
+                provider = "cpu",
+                calibrator = null,
+            )
             val queue = WorkQueue(db, TestClock())
             queue.enqueue("TX-NOCAL", PassId.B_OFFLINE)
             val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1"), pass)
@@ -196,30 +203,40 @@ public class PassBFactoryCalibrationTest {
 
     @Test
     @Requirement("FR-LEX-17", "FR-LEX-18", "FR-SPK-10")
+    @Suppress("MaxLineLength", "ktlint:standard:max-line-length") // the test name itself is the long token; renaming
+    // it is out of scope for a style-only gate fix (r1124b, not this test's own change -- P33's).
     public fun `R_1110 with a calibrator present, CONFIRMED is reachable and the fingerprint carries calibrationVersion`():
-        Unit = runBlocking {
-        db.sessionDao().insert(PipelineTestFixtures.session())
-        db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-CAL"))
-        stageAudio("TX-CAL")
+        Unit =
+        runBlocking {
+            db.sessionDao().insert(PipelineTestFixtures.session())
+            db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-CAL"))
+            stageAudio("TX-CAL")
 
-        val calibrationVersion = AssetRef("dev-fold-calibration", "2026-09-20")
-        val calibrator = FakeCalibrator(confirmThreshold = -1f, calibrationVersion = calibrationVersion)
-        val pass = PassBFactory.create(filesDir, db, resolvableEngine(), modelRef, provider = "cpu", calibrator = calibrator)
-        val queue = WorkQueue(db, TestClock())
-        queue.enqueue("TX-CAL", PassId.B_OFFLINE)
-        val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1"), pass)
+            val calibrationVersion = AssetRef("dev-fold-calibration", "2026-09-20")
+            val calibrator = FakeCalibrator(confirmThreshold = -1f, calibrationVersion = calibrationVersion)
+            val pass = PassBFactory.create(
+                filesDir,
+                db,
+                resolvableEngine(),
+                modelRef,
+                provider = "cpu",
+                calibrator = calibrator,
+            )
+            val queue = WorkQueue(db, TestClock())
+            queue.enqueue("TX-CAL", PassId.B_OFFLINE)
+            val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1"), pass)
 
-        loop.drainOnce()
+            loop.drainOnce()
 
-        val transmission = db.transmissionDao().getById("TX-CAL")!!
-        assertEquals(AttributionState.CONFIRMED, transmission.attributionState)
-        assertEquals("K7ABC", transmission.stationId)
-        assertEquals(
-            "the pass's own fingerprint must carry the calibrator's version, not null",
-            calibrationVersion,
-            pass.fingerprint.calibrationVersion,
-        )
-    }
+            val transmission = db.transmissionDao().getById("TX-CAL")!!
+            assertEquals(AttributionState.CONFIRMED, transmission.attributionState)
+            assertEquals("K7ABC", transmission.stationId)
+            assertEquals(
+                "the pass's own fingerprint must carry the calibrator's version, not null",
+                calibrationVersion,
+                pass.fingerprint.calibrationVersion,
+            )
+        }
 
     // --- R-1124: the priors P33 wired must read a real, non-empty RankingContext through the
     // production factory path -- not the combiner called directly with a hand-built context
@@ -230,98 +247,99 @@ public class PassBFactoryCalibrationTest {
     @Test
     @Requirement("FR-LEX-9", "FR-LEX-31")
     public fun `R_1124 database presence, recency and conversation context read real data through the factory path`():
-        Unit = runBlocking {
-        db.sessionDao().insert(PipelineTestFixtures.session())
+        Unit =
+        runBlocking {
+            db.sessionDao().insert(PipelineTestFixtures.session())
 
-        // Database presence + recency: a real StationEntity for the callsign the fixture
-        // transcript resolves to ("K7ABC"), heard a minute ago -- both priors' real `:data` source
-        // (DataRankingContextSource, via the same CatalogDao.getStation every other production
-        // caller in this module already uses).
-        db.catalogDao().insert(
-            StationEntity(
-                id = "K7ABC",
-                callsign = "K7ABC",
-                firstHeardAt = 0L,
-                lastHeardAt = System.currentTimeMillis() - 60_000L,
-                transmissionCount = 1,
-                isUserPinned = false,
-                notes = null,
-                userName = null,
-                frequenciesHeard = null,
-                activityByHourDow = null,
-                potaRefs = null,
-                spokenGrids = null,
-                ituRegionFromPrefix = null,
-                overCountsByAttributionState = null,
-            ),
-        )
+            // Database presence + recency: a real StationEntity for the callsign the fixture
+            // transcript resolves to ("K7ABC"), heard a minute ago -- both priors' real `:data` source
+            // (DataRankingContextSource, via the same CatalogDao.getStation every other production
+            // caller in this module already uses).
+            db.catalogDao().insert(
+                StationEntity(
+                    id = "K7ABC",
+                    callsign = "K7ABC",
+                    firstHeardAt = 0L,
+                    lastHeardAt = System.currentTimeMillis() - 60_000L,
+                    transmissionCount = 1,
+                    isUserPinned = false,
+                    notes = null,
+                    userName = null,
+                    frequenciesHeard = null,
+                    activityByHourDow = null,
+                    potaRefs = null,
+                    spokenGrids = null,
+                    ituRegionFromPrefix = null,
+                    overCountsByAttributionState = null,
+                ),
+            )
 
-        // Conversation context: a prior transmission on the same frequency, already threaded, with
-        // an identified participant -- the real `:data` shape ThreadRepository.priorContextFor/
-        // CatalogDao.getThread reads (the same seam ThreadGroupingCoordinator already uses).
-        db.transmissionDao().insert(
-            PipelineTestFixtures.transmission("TX-1124-PRIOR").copy(
-                frequencyHz = 146_520_000L,
-                threadId = "THREAD-1124",
-                samplePosition = 0L,
-            ),
-        )
-        db.catalogDao().insert(
-            ThreadEntity(
-                id = "THREAD-1124",
-                sessionId = "SESSION01",
-                startedAt = 0L,
-                endedAt = 1_000L,
-                frequencyHz = 146_520_000L,
-                transmissionCount = 1,
-                participantStationIds = listOf("K7XYZ"),
-                digestText = null,
-                kind = ThreadKind.QSO,
-                kindSource = ThreadKindSource.DETECTED,
-                participantOrder = listOf("K7XYZ"),
-            ),
-        )
+            // Conversation context: a prior transmission on the same frequency, already threaded, with
+            // an identified participant -- the real `:data` shape ThreadRepository.priorContextFor/
+            // CatalogDao.getThread reads (the same seam ThreadGroupingCoordinator already uses).
+            db.transmissionDao().insert(
+                PipelineTestFixtures.transmission("TX-1124-PRIOR").copy(
+                    frequencyHz = 146_520_000L,
+                    threadId = "THREAD-1124",
+                    samplePosition = 0L,
+                ),
+            )
+            db.catalogDao().insert(
+                ThreadEntity(
+                    id = "THREAD-1124",
+                    sessionId = "SESSION01",
+                    startedAt = 0L,
+                    endedAt = 1_000L,
+                    frequencyHz = 146_520_000L,
+                    transmissionCount = 1,
+                    participantStationIds = listOf("K7XYZ"),
+                    digestText = null,
+                    kind = ThreadKind.QSO,
+                    kindSource = ThreadKindSource.DETECTED,
+                    participantOrder = listOf("K7XYZ"),
+                ),
+            )
 
-        // The transmission under test: same frequency (continues THREAD-1124), later samplePosition.
-        db.transmissionDao().insert(
-            PipelineTestFixtures.transmission("TX-1124-CURRENT").copy(
-                frequencyHz = 146_520_000L,
-                samplePosition = 1_000L,
-            ),
-        )
-        stageAudio("TX-1124-CURRENT")
+            // The transmission under test: same frequency (continues THREAD-1124), later samplePosition.
+            db.transmissionDao().insert(
+                PipelineTestFixtures.transmission("TX-1124-CURRENT").copy(
+                    frequencyHz = 146_520_000L,
+                    samplePosition = 1_000L,
+                ),
+            )
+            stageAudio("TX-1124-CURRENT")
 
-        val pass = PassBFactory.create(filesDir, db, resolvableEngine(), modelRef, provider = "cpu")
-        val queue = WorkQueue(db, TestClock())
-        queue.enqueue("TX-1124-CURRENT", PassId.B_OFFLINE)
-        val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1124"), pass)
+            val pass = PassBFactory.create(filesDir, db, resolvableEngine(), modelRef, provider = "cpu")
+            val queue = WorkQueue(db, TestClock())
+            queue.enqueue("TX-1124-CURRENT", PassId.B_OFFLINE)
+            val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1124"), pass)
 
-        loop.drainOnce()
+            loop.drainOnce()
 
-        val winner = db.catalogDao().candidatesFor("TX-1124-CURRENT").first()
-        assertEquals("K7ABC", winner.callsign)
-        val priors = requireNotNull(winner.priorBreakdown) { "priorBreakdown must be persisted" }
+            val winner = db.catalogDao().candidatesFor("TX-1124-CURRENT").first()
+            assertEquals("K7ABC", winner.callsign)
+            val priors = requireNotNull(winner.priorBreakdown) { "priorBreakdown must be persisted" }
 
-        assertTrue(
-            "database presence must be non-zero: K7ABC is a real, seeded StationEntity",
-            (priors.getValue("database")) > 0.0,
-        )
-        assertTrue(
-            "recency must be non-zero: K7ABC was heard 60s ago per the seeded StationEntity",
-            (priors.getValue("recency")) > 0.0,
-        )
-        assertTrue(
-            "conversation context must be non-zero: THREAD-1124 already has an identified participant",
-            (priors.getValue("conversation")) > 0.0,
-        )
+            assertTrue(
+                "database presence must be non-zero: K7ABC is a real, seeded StationEntity",
+                (priors.getValue("database")) > 0.0,
+            )
+            assertTrue(
+                "recency must be non-zero: K7ABC was heard 60s ago per the seeded StationEntity",
+                (priors.getValue("recency")) > 0.0,
+            )
+            assertTrue(
+                "conversation context must be non-zero: THREAD-1124 already has an identified participant",
+                (priors.getValue("conversation")) > 0.0,
+            )
 
-        // R-1124's own honesty requirement: the remaining four priors have no on-device data
-        // source at all yet (see DataRankingContextSource's own kdoc for exactly why each one is
-        // still cold) -- they must read as genuinely cold (zero), never a fabricated non-zero
-        // value that would misreport this row as fully done.
-        assertEquals(0.0, priors.getValue("frequency"), 0.0)
-        assertEquals(0.0, priors.getValue("band-plausibility"), 0.0)
-        assertEquals(0.0, priors.getValue("geographic"), 0.0)
-        assertEquals(0.0, priors.getValue("my-stations"), 0.0)
-    }
+            // R-1124's own honesty requirement: the remaining four priors have no on-device data
+            // source at all yet (see DataRankingContextSource's own kdoc for exactly why each one is
+            // still cold) -- they must read as genuinely cold (zero), never a fabricated non-zero
+            // value that would misreport this row as fully done.
+            assertEquals(0.0, priors.getValue("frequency"), 0.0)
+            assertEquals(0.0, priors.getValue("band-plausibility"), 0.0)
+            assertEquals(0.0, priors.getValue("geographic"), 0.0)
+            assertEquals(0.0, priors.getValue("my-stations"), 0.0)
+        }
 }
