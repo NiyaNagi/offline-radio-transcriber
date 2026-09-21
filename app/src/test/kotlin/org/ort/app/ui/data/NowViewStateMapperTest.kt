@@ -222,12 +222,13 @@ class NowViewStateMapperTest {
             missingModel = missingModel(),
             listeningOnLabel = null,
         )
-        assertEquals("2 unidentified voices", view.stations.unidentifiedLabel)
+        assertEquals("2 overs not attributed to a station", view.stations.unidentifiedLabel)
+        assertFalse(view.stations.unidentifiedLabel!!.contains("voice", ignoreCase = true))
     }
 
     @Test
     @Requirement("R-176")
-    fun `R_176 the unidentified count reads voices per the board, singular for exactly one`() {
+    fun `R_176 the unidentified count reads overs per the board, singular for exactly one`() {
         val plural = NowViewStateMapper.active(
             details = listOf(detail("TX1", Attribution.unknown()), detail("TX2", Attribution.ambiguous())),
             gaps = emptyList(),
@@ -239,7 +240,7 @@ class NowViewStateMapperTest {
             missingModel = missingModel(),
             listeningOnLabel = null,
         )
-        assertEquals("2 unidentified voices", plural.stations.unidentifiedLabel)
+        assertEquals("2 overs not attributed to a station", plural.stations.unidentifiedLabel)
 
         val singular = NowViewStateMapper.active(
             details = listOf(detail("TX1", Attribution.unknown())),
@@ -252,7 +253,32 @@ class NowViewStateMapperTest {
             missingModel = missingModel(),
             listeningOnLabel = null,
         )
-        assertEquals("1 unidentified voice", singular.stations.unidentifiedLabel)
+        assertEquals("1 over not attributed to a station", singular.stations.unidentifiedLabel)
+    }
+
+    /**
+     * R-1147 (register): [NowViewStateMapper]'s own prior doc comment on this label defended
+     * "voices" as "the board's own literal wording... not a claim this code verifies" — but a
+     * label that is not a claim the code can verify is exactly the thing constitution I forbids.
+     * This count is `details.size - attributed.size`: every over with no `stationId`, `UNKNOWN`
+     * and `AMBIGUOUS` alike (an `AMBIGUOUS` over may carry a heard candidate callsign that simply
+     * was not confirmed), so "no callsign heard" would itself overclaim for that half of the
+     * count — the only fact common to both is that neither carries a resolved station.
+     */
+    @Test
+    fun `R_1147 the unidentified label never says voices, for any count`() {
+        val view = NowViewStateMapper.active(
+            details = listOf(detail("TX1", Attribution.unknown()), detail("TX2", Attribution.ambiguous())),
+            gaps = emptyList(),
+            sessionStartedAtUtc = 0L,
+            sessionEndedAtUtc = null,
+            nowMillis = 0L,
+            firstHeardStationIds = emptySet(),
+            asrAvailable = true,
+            missingModel = missingModel(),
+            listeningOnLabel = null,
+        )
+        assertFalse(view.stations.unidentifiedLabel!!.contains("voice", ignoreCase = true))
     }
 
     @Test

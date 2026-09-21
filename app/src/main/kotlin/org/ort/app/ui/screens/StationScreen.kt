@@ -238,13 +238,24 @@ private fun badgeLabel(badge: StationListBadge): String = when (badge) {
     StationListBadge.CORRECTED -> "corrected"
 }
 
-/** `Stations.dc.html`'s trailing "N unidentified voices · M overs" row — a real aggregate, never a station row. */
+/**
+ * `Stations.dc.html`'s trailing "N unidentified voices · M overs" row — a real aggregate, never a
+ * station row.
+ *
+ * R-1147 (register): [summary.voiceCount] is only ever non-null when it was built from real
+ * distinct `voiceprintId`s ([summary.voiceCount] doc comment) — a case this build cannot reach
+ * today (`:identity` is an empty stub, so `voiceprintId` is `null` on every transmission). The
+ * `null` branch is therefore the only one production ever renders, and it used to still say
+ * "voices" with no number attached — a claim of voice clustering with nothing behind it. It now
+ * names the one thing this build actually knows: the over count, and that none of them carry a
+ * heard callsign.
+ */
 @Composable
 private fun UnidentifiedVoicesRow(summary: UnidentifiedVoicesSummary, modifier: Modifier = Modifier) {
     val label = if (summary.voiceCount != null) {
         "${summary.voiceCount} unidentified voices · ${summary.overCount} overs"
     } else {
-        "unidentified voices · ${summary.overCount} overs"
+        "${summary.overCount} overs with no callsign heard"
     }
     Row(
         modifier = modifier
