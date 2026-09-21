@@ -382,6 +382,65 @@ public class CatalogDaoTest {
     }
 
     /**
+     * Register R-1094: [org.ort.app.backup.BackupRestoreCoordinator]'s own conflict check needs a
+     * single-row lookup by id — neither [CatalogDao.voiceprintsForStation] nor [CatalogDao
+     * .allVoiceprints] answers "does this exact id already exist" without a full scan.
+     */
+    @Test
+    @Requirement("R-1094")
+    public fun R_1094_getVoiceprint_returns_the_matching_row_and_null_for_an_unknown_id(): Unit = runTest {
+        val dao = db.catalogDao()
+        dao.insert(voiceprint("V1", boundStationId = null))
+
+        assertEquals("V1", dao.getVoiceprint("V1")?.id)
+        assertEquals(null, dao.getVoiceprint("NOT-A-REAL-ID"))
+    }
+
+    /**
+     * Register R-1094: the backup bundle builder's own "every thread" read — no prior caller
+     * needed every thread across every session at once.
+     */
+    @Test
+    @Requirement("R-1094")
+    public fun R_1094_listAllThreads_returns_every_thread_across_every_session(): Unit = runTest {
+        val dao = db.catalogDao()
+        dao.insert(
+            org.ort.data.entity.ThreadEntity(
+                id = "TH1",
+                sessionId = "S1",
+                startedAt = 0L,
+                endedAt = null,
+                frequencyHz = null,
+                transmissionCount = 1,
+                participantStationIds = null,
+                digestText = null,
+                kind = org.ort.data.entity.ThreadKind.QSO,
+                kindSource = org.ort.data.entity.ThreadKindSource.DETECTED,
+                participantOrder = null,
+            ),
+        )
+        dao.insert(
+            org.ort.data.entity.ThreadEntity(
+                id = "TH2",
+                sessionId = "S2",
+                startedAt = 0L,
+                endedAt = null,
+                frequencyHz = null,
+                transmissionCount = 1,
+                participantStationIds = null,
+                digestText = null,
+                kind = org.ort.data.entity.ThreadKind.NET,
+                kindSource = org.ort.data.entity.ThreadKindSource.DETECTED,
+                participantOrder = null,
+            ),
+        )
+
+        val all = dao.listAllThreads()
+
+        assertEquals(setOf("TH1", "TH2"), all.map { it.id }.toSet())
+    }
+
+    /**
      * Register R-1132, D56 (FR-SPK-1, FR-SPK-10, FR-LEX-25..27, FR-DIG-7, constitution I): the
      * first production write path for [org.ort.data.entity.StationEntity] — before this, every
      * construction of that entity lived in `src/test` or `src/debug`, so the catalog was

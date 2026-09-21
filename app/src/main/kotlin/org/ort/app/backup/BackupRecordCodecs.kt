@@ -7,32 +7,48 @@ import org.ort.core.Tier
 import org.ort.core.TransmissionState
 import org.ort.core.capture.VadDetectorKind
 import org.ort.data.entity.CorrectionEntity
+import org.ort.data.entity.OverCountsByAttributionState
 import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.StationEntity
 import org.ort.data.entity.TerminationReason
+import org.ort.data.entity.ThreadEntity
+import org.ort.data.entity.ThreadKind
+import org.ort.data.entity.ThreadKindSource
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.VoiceprintBindingSource
+import org.ort.data.entity.VoiceprintEntity
+import java.util.Base64
 
 /**
- * FR-STO-6/FR-STO-9. Every field of [SessionEntity], [TransmissionEntity], [TranscriptEntity] and
- * [CorrectionEntity] the backup bundle carries, read back exactly — no library is on `:app`'s
- * classpath for this (`org.json`, already used by this package's own [org.ort.app.export
- * .DebugDumpBuilder] for the identical reason: it ships in the Android platform, so no new
- * dependency, and Robolectric shadows it under test).
+ * FR-STO-6/FR-STO-9. Every field of [SessionEntity], [TransmissionEntity], [TranscriptEntity],
+ * [CorrectionEntity], [StationEntity], [VoiceprintEntity] and [ThreadEntity] the backup bundle
+ * carries, read back exactly — no library is on `:app`'s classpath for this (`org.json`, already
+ * used by this package's own [org.ort.app.export.DebugDumpBuilder] for the identical reason: it
+ * ships in the Android platform, so no new dependency, and Robolectric shadows it under test).
  *
- * **Deliberately scoped to four tables**, not the whole schema: FR-STO-9's own text names exactly
- * "sessions, corrections and audio" as what a restore must round-trip; transmissions are the
- * structural join between the two ([TransmissionEntity.audioPath] is *how* an audio file is found
- * again), and a transmission with no transcript is not a usable log record, so the current
- * transcript rides along too. Everything else the schema carries — the station catalog,
- * voiceprints, threads, lattice/candidate detail, the work queue, calibration, assets, prior
- * adjustments, prose summaries, transmission labels — is **not yet in this bundle**, a stated
- * limitation (`SettingsBackupScreen`'s own "what this backup does not yet carry" list), not a
- * silent gap: broadening it is real, separate future work, not a shortcut taken here to look done.
+ * **Register R-1094 widened this from four tables to seven.** FR-STO-9's own text names "sessions,
+ * corrections and audio" as the round-trip floor; transmissions are the structural join between
+ * the two ([TransmissionEntity.audioPath] is *how* an audio file is found again). What R-1094
+ * added:
  *
- * Superseded transcript versions are also not carried — only the row a transmission's own
- * `isCurrent = true` names — the same "current version" scoping `Settings-Export.dc.html`'s own
- * "Transcripts, current version" checkbox already uses for the flat export formats.
+ * - **Every transcript version, not only the current one** ([TranscriptCodec], via
+ *   [org.ort.data.dao.TranscriptDao.getAllVersions]) — constitution III: "nothing is deleted
+ *   quietly," and a restore that returned only current transcripts would quietly have deleted the
+ *   superseded history the source device still had reachable.
+ * - **The station catalog** ([StationCodec]) and **threads** ([ThreadCodec]) — the operator's own
+ *   accumulated log of their own stations and QSOs/nets, lost otherwise on a reinstall or a new
+ *   phone.
+ * - **Voiceprints** ([VoiceprintCodec]) — biometric data, carried only because FR-SPK-20's own
+ *   text already states the exception this bundle is: "Export (FR-STO-6) MAY include them only
+ *   for the user's own device-to-device transfer, and SHALL say so." See [VoiceprintCodec]'s own
+ *   kdoc for where "and SHALL say so" is discharged.
+ *
+ * Still **not** in this bundle: lattice/candidate detail, the work queue, calibration, assets,
+ * prior adjustments, prose summaries (digests), transmission labels, station-identity/voiceprint-
+ * binding history — a stated limitation (`SettingsBackupScreen`'s own "what this backup does not
+ * yet carry" list), not a silent gap: broadening it further is real, separate future work.
  *
  * A nullable field is always written, explicitly, as `JSONObject.NULL` (`putNullable` below) —
  * `org.json.JSONObject.put(String, Any?)` silently *removes* the key for a plain Kotlin `null`
@@ -51,6 +67,18 @@ private fun JSONObject.nullableLong(key: String): Long? = if (isNull(key)) null 
 private fun JSONObject.nullableInt(key: String): Int? = if (isNull(key)) null else getInt(key)
 private fun JSONObject.nullableDouble(key: String): Double? = if (isNull(key)) null else getDouble(key)
 private fun JSONObject.nullableBoolean(key: String): Boolean? = if (isNull(key)) null else getBoolean(key)
+
+private fun JSONObject.nullableStringList(key: String): List<String>? = if (isNull(key)) {
+    null
+} else {
+    getJSONArray(key).let { array -> (0 until array.length()).map { array.getString(it) } }
+}
+
+private fun JSONObject.nullableLongList(key: String): List<Long>? = if (isNull(key)) {
+    null
+} else {
+    getJSONArray(key).let { array -> (0 until array.length()).map { array.getLong(it) } }
+}
 
 /** [SessionEntity] <-> JSON, every constructor field, in schema-v14 shape. */
 public object SessionCodec {
@@ -190,7 +218,11 @@ public object TransmissionCodec {
     )
 }
 
-/** [TranscriptEntity] <-> JSON — the current-version row only (this file's own top-of-file kdoc). */
+/** [TranscriptEntity] <-> JSON — **every version**, current and superseded (register R-1094;
+ * this file's own top-of-file kdoc). [TranscriptEntity.isCurrent] rides along unchanged, so a
+ * restored transmission ends up with exactly the same current/superseded shape it had on the
+ * source device — never two rows both claiming `isCurrent = true` for one transmission, since the
+ * source database's own partial unique index already guaranteed that before this was ever read. */
 public object TranscriptCodec {
 
     public fun toJson(entity: TranscriptEntity): JSONObject = JSONObject().apply {
@@ -253,5 +285,148 @@ public object CorrectionCodec {
         previousAttributionConfidence = json.nullableDouble("previousAttributionConfidence"),
         previousAttributionSourceTransmissionId = json.nullableString("previousAttributionSourceTransmissionId"),
         previousCorrected = json.nullableBoolean("previousCorrected"),
+    )
+}
+
+/**
+ * [StationEntity] <-> JSON (register R-1094, FR-STO-9, D56, constitution III). Every column is
+ * carried **except** [StationEntity.overCountsByAttributionState] — R-1134/D56 already made that
+ * column *derived*, recomputed by [org.ort.data.dao.CatalogDao.getStation] from the transmission
+ * rows it is a fact about, never trusted from storage. Carrying the bundle's own stale copy of a
+ * derived value into a restore would create exactly the second source of truth D56 removed, so
+ * [toJson] never writes the field at all, and [fromJson] always returns
+ * [OverCountsByAttributionState.EMPTY]'s own serialized form — the identical honest placeholder
+ * [org.ort.data.dao.CatalogDao.recordStationObservation] already writes at a station's real birth.
+ * The next real [org.ort.data.dao.CatalogDao.getStation] read on the restored row recomputes the
+ * true counts from the transmissions this same restore also carries.
+ *
+ * [StationEntity.userName]/`.notes` and the station-knowledge facts (`frequenciesHeard` etc.) ARE
+ * carried, in full: FR-SPK-20's own text — echoed by FR-DIG-13's "on the same reasoning as
+ * voiceprints" — permits a station's user-supplied name and knowledge to travel through FR-STO-6's
+ * export path specifically because it is "the user's own device-to-device transfer," never a
+ * third-party channel. What FR-SPK-25/FR-DIG-13 actually forbid is the *contribution* payload and
+ * the *diagnostic* bundle — neither of which this object, or anything in this package, writes.
+ */
+public object StationCodec {
+
+    public fun toJson(entity: StationEntity): JSONObject = JSONObject().apply {
+        put("id", entity.id)
+        putNullable("callsign", entity.callsign)
+        putNullable("firstHeardAt", entity.firstHeardAt)
+        putNullable("lastHeardAt", entity.lastHeardAt)
+        put("transmissionCount", entity.transmissionCount)
+        put("isUserPinned", entity.isUserPinned)
+        putNullable("notes", entity.notes)
+        putNullable("userName", entity.userName)
+        putNullable("frequenciesHeard", entity.frequenciesHeard?.let { JSONArray(it) })
+        putNullable("activityByHourDow", entity.activityByHourDow)
+        putNullable("potaRefs", entity.potaRefs?.let { JSONArray(it) })
+        putNullable("spokenGrids", entity.spokenGrids?.let { JSONArray(it) })
+        putNullable("ituRegionFromPrefix", entity.ituRegionFromPrefix)
+        // overCountsByAttributionState deliberately absent -- see this object's own kdoc.
+    }
+
+    public fun fromJson(json: JSONObject): StationEntity = StationEntity(
+        id = json.getString("id"),
+        callsign = json.nullableString("callsign"),
+        firstHeardAt = json.nullableLong("firstHeardAt"),
+        lastHeardAt = json.nullableLong("lastHeardAt"),
+        transmissionCount = json.getInt("transmissionCount"),
+        isUserPinned = json.getBoolean("isUserPinned"),
+        notes = json.nullableString("notes"),
+        userName = json.nullableString("userName"),
+        frequenciesHeard = json.nullableLongList("frequenciesHeard"),
+        activityByHourDow = json.nullableString("activityByHourDow"),
+        potaRefs = json.nullableStringList("potaRefs"),
+        spokenGrids = json.nullableStringList("spokenGrids"),
+        ituRegionFromPrefix = json.nullableString("ituRegionFromPrefix"),
+        overCountsByAttributionState = OverCountsByAttributionState.EMPTY.serialize(),
+    )
+}
+
+/**
+ * [VoiceprintEntity] <-> JSON (register R-1094, FR-SPK-20, D38, constitution V). [VoiceprintEntity
+ * .embedding] is biometric data — the constitution treats voiceprints as leaving the device
+ * **almost never**; this object's own existence is the stated exception FR-SPK-20 already carries
+ * in its own text: "Export (FR-STO-6) MAY include them only for the user's own device-to-device
+ * transfer, and SHALL say so." This *is* that device-to-device transfer, never the corpus
+ * contribution channel, the field-report channel, or any analytics tier — none of those call this
+ * codec, and `SettingsBackupScreen`'s own "In the backup" copy says so in words, not only in a
+ * code comment, discharging FR-SPK-20's "and SHALL say so" at the one surface the operator
+ * actually decides from, so this bundle is never mistaken for a contribution or a field report.
+ *
+ * [VoiceprintEntity.embedding]'s raw bytes are Base64-encoded ([Base64], available since minSdk
+ * 26 — no new dependency) since `org.json` has no binary type.
+ */
+public object VoiceprintCodec {
+
+    public fun toJson(entity: VoiceprintEntity): JSONObject = JSONObject().apply {
+        put("id", entity.id)
+        put("embedding", Base64.getEncoder().encodeToString(entity.embedding))
+        put("memberCount", entity.memberCount)
+        putNullable("centroidUpdatedAt", entity.centroidUpdatedAt)
+        putNullable("boundStationId", entity.boundStationId)
+        putNullable("bindingConfidence", entity.bindingConfidence)
+        putNullable("lastConfirmedAt", entity.lastConfirmedAt)
+        put("isEnrolled", entity.isEnrolled)
+        put("enrolmentObservationCount", entity.enrolmentObservationCount)
+        putNullable("enrolmentSessionIds", entity.enrolmentSessionIds?.let { JSONArray(it) })
+        putNullable("enrolledAt", entity.enrolledAt)
+        putNullable("lastMatchedAt", entity.lastMatchedAt)
+        putNullable("bindingSource", entity.bindingSource?.name)
+        putNullable("embeddingModelId", entity.embeddingModelId)
+        putNullable("embeddingModelVersion", entity.embeddingModelVersion)
+    }
+
+    public fun fromJson(json: JSONObject): VoiceprintEntity = VoiceprintEntity(
+        id = json.getString("id"),
+        embedding = Base64.getDecoder().decode(json.getString("embedding")),
+        memberCount = json.getInt("memberCount"),
+        centroidUpdatedAt = json.nullableLong("centroidUpdatedAt"),
+        boundStationId = json.nullableString("boundStationId"),
+        bindingConfidence = json.nullableDouble("bindingConfidence"),
+        lastConfirmedAt = json.nullableLong("lastConfirmedAt"),
+        isEnrolled = json.getBoolean("isEnrolled"),
+        enrolmentObservationCount = json.getInt("enrolmentObservationCount"),
+        enrolmentSessionIds = json.nullableStringList("enrolmentSessionIds"),
+        enrolledAt = json.nullableLong("enrolledAt"),
+        lastMatchedAt = json.nullableLong("lastMatchedAt"),
+        bindingSource = json.nullableString("bindingSource")?.let(VoiceprintBindingSource::valueOf),
+        embeddingModelId = json.nullableString("embeddingModelId"),
+        embeddingModelVersion = json.nullableString("embeddingModelVersion"),
+    )
+}
+
+/** [ThreadEntity] <-> JSON, every constructor field (register R-1094, FR-STO-9, FR-SPK-5). No FK
+ * ties [org.ort.data.entity.TransmissionEntity.threadId] to this table (`TransmissionEntity`'s own
+ * schema — see that file), so a restore may insert threads and transmissions in either order. */
+public object ThreadCodec {
+
+    public fun toJson(entity: ThreadEntity): JSONObject = JSONObject().apply {
+        put("id", entity.id)
+        put("sessionId", entity.sessionId)
+        put("startedAt", entity.startedAt)
+        putNullable("endedAt", entity.endedAt)
+        putNullable("frequencyHz", entity.frequencyHz)
+        put("transmissionCount", entity.transmissionCount)
+        putNullable("participantStationIds", entity.participantStationIds?.let { JSONArray(it) })
+        putNullable("digestText", entity.digestText)
+        put("kind", entity.kind.name)
+        put("kindSource", entity.kindSource.name)
+        putNullable("participantOrder", entity.participantOrder?.let { JSONArray(it) })
+    }
+
+    public fun fromJson(json: JSONObject): ThreadEntity = ThreadEntity(
+        id = json.getString("id"),
+        sessionId = json.getString("sessionId"),
+        startedAt = json.getLong("startedAt"),
+        endedAt = json.nullableLong("endedAt"),
+        frequencyHz = json.nullableLong("frequencyHz"),
+        transmissionCount = json.getInt("transmissionCount"),
+        participantStationIds = json.nullableStringList("participantStationIds"),
+        digestText = json.nullableString("digestText"),
+        kind = ThreadKind.valueOf(json.getString("kind")),
+        kindSource = ThreadKindSource.valueOf(json.getString("kindSource")),
+        participantOrder = json.nullableStringList("participantOrder"),
     )
 }

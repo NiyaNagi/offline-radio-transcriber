@@ -95,21 +95,31 @@ public fun SettingsBackupScreen(
 
 /** Constitution I's honesty about scope, the same "Not in the bundle" idiom
  * `Settings-Diagnostics.dc.html`/[org.ort.app.diagnostics.DiagnosticsBundleBuilder] already use —
- * this bundle's own real, stated limitation (`BackupRecordCodecs.kt`'s own top-of-file kdoc): four
- * tables today, not the whole schema. */
+ * this bundle's own real, stated limitation (`BackupRecordCodecs.kt`'s own top-of-file kdoc):
+ * seven tables today (register R-1094 widened this from four), not the whole schema. */
 @Composable
 private fun BackupWhatsInSection() {
     SectionHeader(label = "In the backup", modifier = Modifier.padding(top = OrtSpacing.md))
     Text(
-        text = "Sessions, overs, their current transcripts, and every correction you've made, " +
+        text = "Sessions, overs, every transcript version (including any superseded by a later " +
+            "pass), every correction you've made, the station catalog, voiceprints and threads, " +
             "plus the retained audio for each over.",
         style = OrtType.cardBody,
         color = OrtColors.textBody,
         modifier = Modifier.padding(top = OrtSpacing.xs),
     )
     Text(
-        text = "Not yet in the backup: the station catalog, voiceprints, threads, digests and " +
-            "superseded transcript history — real, separate future work.",
+        text = "Voiceprints are biometric data. They travel in this backup only because it is " +
+            "your own device-to-device transfer, on the same terms as everything else here — " +
+            "never through a contribution or a field report.",
+        style = OrtType.subLine,
+        color = OrtColors.textDim,
+        modifier = Modifier.padding(top = OrtSpacing.xs),
+    )
+    Text(
+        text = "Not yet in the backup: digest summaries, the phonetic lattice and candidate " +
+            "detail behind each over, and other schema-only bookkeeping tables — real, separate " +
+            "future work.",
         style = OrtType.subLine,
         color = OrtColors.textDim,
         modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm),
@@ -122,8 +132,9 @@ private fun BackupSection(preview: SettingsBackupPreviewViewState?, onSaveBackup
     if (preview != null) {
         Text(
             text = "${preview.sessionCount} sessions · ${preview.transmissionCount} overs · " +
-                "${preview.correctionCount} corrections · ${preview.audioFileCount} audio files · " +
-                preview.sizeLabel,
+                "${preview.correctionCount} corrections · ${preview.stationCount} stations · " +
+                "${preview.voiceprintCount} voiceprints · ${preview.threadCount} threads · " +
+                "${preview.audioFileCount} audio files · " + preview.sizeLabel,
             style = OrtType.subLine,
             color = OrtColors.textDim,
             modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.sm).testTag("backup-preview"),
@@ -196,8 +207,9 @@ private fun RestorePlanSummary(plan: SettingsRestorePlanViewState) {
     Column(modifier = Modifier.testTag("restore-plan")) {
         Text(
             text = "${plan.sessionsToAddCount} sessions, ${plan.transmissionsToAddCount} overs, " +
-                "${plan.correctionsToAddCount} corrections and ${plan.audioToAddCount} audio files " +
-                "will be added.",
+                "${plan.correctionsToAddCount} corrections, ${plan.stationsToAddCount} stations, " +
+                "${plan.voiceprintsToAddCount} voiceprints, ${plan.threadsToAddCount} threads and " +
+                "${plan.audioToAddCount} audio files will be added.",
             style = OrtType.cardBody,
             color = OrtColors.textBody,
             modifier = Modifier.padding(top = OrtSpacing.xs),
@@ -205,8 +217,10 @@ private fun RestorePlanSummary(plan: SettingsRestorePlanViewState) {
         if (plan.hasConflicts) {
             Text(
                 text = "${plan.sessionConflictCount} sessions, ${plan.transmissionConflictCount} overs, " +
-                    "${plan.correctionConflictCount} corrections and ${plan.audioConflictCount} audio " +
-                    "files already exist on this device and will be left exactly as they are.",
+                    "${plan.correctionConflictCount} corrections, ${plan.stationConflictCount} stations, " +
+                    "${plan.voiceprintConflictCount} voiceprints, ${plan.threadConflictCount} threads and " +
+                    "${plan.audioConflictCount} audio files already exist on this device and will be left " +
+                    "exactly as they are.",
                 style = OrtType.subLine,
                 color = OrtColors.accentAmberDim,
                 modifier = Modifier.padding(top = OrtSpacing.xs).testTag("restore-conflict-summary"),

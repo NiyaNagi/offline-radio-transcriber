@@ -298,6 +298,12 @@ public data class SettingsBackupPreviewViewState(
     val correctionCount: Int,
     val audioFileCount: Int,
     val sizeLabel: String,
+    /** Register R-1094. Defaulted to `0` so an existing caller that only knew about the original
+     * four tables still compiles — every real production caller (`SettingsContent.kt`'s own
+     * `refreshPreview`) always passes the real count. */
+    val stationCount: Int = 0,
+    val voiceprintCount: Int = 0,
+    val threadCount: Int = 0,
 )
 
 /** P30 (FR-STO-9, AC-170): one line of what a picked restore bundle *would* do — real counts from
@@ -313,6 +319,13 @@ public data class SettingsRestorePlanViewState(
     val audioToAddCount: Int,
     val audioConflictCount: Int,
     val hasConflicts: Boolean,
+    /** Register R-1094 — see [SettingsBackupPreviewViewState]'s own note on the `= 0` default. */
+    val stationsToAddCount: Int = 0,
+    val stationConflictCount: Int = 0,
+    val voiceprintsToAddCount: Int = 0,
+    val voiceprintConflictCount: Int = 0,
+    val threadsToAddCount: Int = 0,
+    val threadConflictCount: Int = 0,
 )
 
 /** P30's own state for [org.ort.app.ui.settings.SettingsBackupScreen]. [preview] is `null` only

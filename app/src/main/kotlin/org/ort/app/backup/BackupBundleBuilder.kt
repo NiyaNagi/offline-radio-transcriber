@@ -8,8 +8,11 @@ import org.json.JSONObject
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.StationEntity
+import org.ort.data.entity.ThreadEntity
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.VoiceprintEntity
 import java.io.File
 import java.io.OutputStream
 import java.time.Instant
@@ -28,6 +31,9 @@ public const val BACKUP_SESSIONS_ENTRY: String = "sessions.json"
 public const val BACKUP_TRANSMISSIONS_ENTRY: String = "transmissions.json"
 public const val BACKUP_TRANSCRIPTS_ENTRY: String = "transcripts.json"
 public const val BACKUP_CORRECTIONS_ENTRY: String = "corrections.json"
+public const val BACKUP_STATIONS_ENTRY: String = "stations.json"
+public const val BACKUP_VOICEPRINTS_ENTRY: String = "voiceprints.json"
+public const val BACKUP_THREADS_ENTRY: String = "threads.json"
 public const val BACKUP_AUDIO_ENTRY_PREFIX: String = "audio/"
 
 /** [BackupBundleBuilder.preview]'s own real counts and total byte size — never a second,
@@ -39,6 +45,9 @@ public data class BackupPreview(
     val transmissionCount: Int,
     val correctionCount: Int,
     val audioFileCount: Int,
+    val stationCount: Int,
+    val voiceprintCount: Int,
+    val threadCount: Int,
     val totalSizeBytes: Long,
 )
 
@@ -47,19 +56,26 @@ public data class BackupPreview(
  * **Genuinely new** — not a rename or extension of [org.ort.app.diagnostics.localsave
  * .LocalSaveBundleBuilder], which writes *rendered, scrubbed diagnostics* for a human to read
  * after a failed field session (see that object's own kdoc); this object writes the real
- * `session`/`transmission`/`transcript`/`correction` rows (via [BackupRecordCodecs.kt]'s own
- * codecs — see that file's top-of-file kdoc for exactly which four tables and why only those) plus
- * every retained over-audio file, so a reinstall or a new phone can get the log back, not a log
- * report about it.
+ * `session`/`transmission`/`transcript`/`correction`/`station`/`voiceprint`/`thread` rows (via
+ * [BackupRecordCodecs.kt]'s own codecs — see that file's top-of-file kdoc for exactly which
+ * tables and why only those) plus every retained over-audio file, so a reinstall or a new phone
+ * can get the log back, not a log report about it.
  *
  * **Unlike every export writer in `org.ort.app.export`, this bundle is not filtered against the
  * export screen's own "never included" promise** — `Settings-Export.dc.html`'s banner is about
  * what leaves the device through *export*; a backup the operator restores onto their own next
  * phone is the "your own device-to-device transfer" case FR-SPK-20 states voiceprints/embeddings
  * MAY travel through, and station knowledge/user-supplied names are the operator's own log of
- * their own station, not a third party's. Even so, **this bundle does not carry the station
- * catalog, voiceprints or any other table beyond the four named above this round** — the
- * limitation is about scope (see `BackupRecordCodecs.kt`), not privacy.
+ * their own station, not a third party's.
+ *
+ * **Register R-1094 widened this bundle to seven tables**: sessions, transmissions, every
+ * transcript version (current and superseded — constitution III), corrections, the station
+ * catalog, voiceprints and threads — see `BackupRecordCodecs.kt`'s own top-of-file kdoc for
+ * exactly which columns of each, and why [org.ort.data.entity.StationEntity
+ * .overCountsByAttributionState] specifically is never carried as a trusted value. What remains
+ * out of scope (lattice/candidate detail, calibration, assets, digests, and the rest) is a stated
+ * limitation (`SettingsBackupScreen`'s own "what this backup does not yet carry" list), not a
+ * silent gap.
  *
  * A zip, written with [ZipOutputStream] directly onto the caller's [OutputStream] — the identical
  * shape [LocalSaveBundleBuilder][org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder] and
@@ -102,6 +118,9 @@ public object BackupBundleBuilder {
             transmissionCount = bundle.transmissions.size,
             correctionCount = bundle.corrections.size,
             audioFileCount = bundle.audioFiles.size,
+            stationCount = bundle.stations.size,
+            voiceprintCount = bundle.voiceprints.size,
+            threadCount = bundle.threads.size,
             totalSizeBytes = estimateSizeBytes(bundle),
         )
     }
@@ -128,6 +147,13 @@ public object BackupBundleBuilder {
                     BACKUP_CORRECTIONS_ENTRY,
                     JSONArray(bundle.corrections.map(CorrectionCodec::toJson)),
                 )
+                writeJsonEntry(zip, BACKUP_STATIONS_ENTRY, JSONArray(bundle.stations.map(StationCodec::toJson)))
+                writeJsonEntry(
+                    zip,
+                    BACKUP_VOICEPRINTS_ENTRY,
+                    JSONArray(bundle.voiceprints.map(VoiceprintCodec::toJson)),
+                )
+                writeJsonEntry(zip, BACKUP_THREADS_ENTRY, JSONArray(bundle.threads.map(ThreadCodec::toJson)))
                 for ((entryName, source) in bundle.audioFiles) {
                     zip.putNextEntry(storedEntry(entryName, source))
                     source.inputStream().use { it.copyTo(zip) }
@@ -143,6 +169,9 @@ public object BackupBundleBuilder {
         put("transmissionCount", bundle.transmissions.size)
         put("transcriptCount", bundle.transcripts.size)
         put("correctionCount", bundle.corrections.size)
+        put("stationCount", bundle.stations.size)
+        put("voiceprintCount", bundle.voiceprints.size)
+        put("threadCount", bundle.threads.size)
         put("audioFileCount", bundle.audioFiles.size)
     }
 
@@ -181,6 +210,9 @@ public object BackupBundleBuilder {
             JSONArray(bundle.transmissions.map(TransmissionCodec::toJson)).toString(),
             JSONArray(bundle.transcripts.map(TranscriptCodec::toJson)).toString(),
             JSONArray(bundle.corrections.map(CorrectionCodec::toJson)).toString(),
+            JSONArray(bundle.stations.map(StationCodec::toJson)).toString(),
+            JSONArray(bundle.voiceprints.map(VoiceprintCodec::toJson)).toString(),
+            JSONArray(bundle.threads.map(ThreadCodec::toJson)).toString(),
         ).sumOf { it.toByteArray(Charsets.UTF_8).size.toLong() }
         val audioBytes = bundle.audioFiles.sumOf { it.second.length() }
         return jsonBytes + audioBytes
@@ -191,6 +223,9 @@ public object BackupBundleBuilder {
         val transmissions: List<TransmissionEntity>,
         val transcripts: List<TranscriptEntity>,
         val corrections: List<CorrectionEntity>,
+        val stations: List<StationEntity>,
+        val voiceprints: List<VoiceprintEntity>,
+        val threads: List<ThreadEntity>,
         val audioFiles: List<Pair<String, File>>,
     )
 
@@ -203,15 +238,25 @@ public object BackupBundleBuilder {
      * add one to) — gathered instead by walking every transmission's own
      * `CorrectionDao.correctionsFor(id)`, exactly the shape build-plan P29's own report already
      * used this round for an equivalent `:data`-DAO gap ([org.ort.app.fieldreport.bundle
-     * .VoiceprintEmbeddingsProducer]'s own precedent, cited there).
+     * .VoiceprintEmbeddingsProducer]'s own precedent, cited there). Transcripts are gathered the
+     * same way, via `TranscriptDao.getAllVersions(id)` — register R-1094: every version, current
+     * and superseded, not only the current one [TranscriptDao.getCurrent] would return.
+     *
+     * Stations ([org.ort.data.dao.ActivityDao.listStations]), voiceprints
+     * ([org.ort.data.dao.CatalogDao.allVoiceprints]) and threads
+     * ([org.ort.data.dao.CatalogDao.listAllThreads]) are each already a real "every row" query —
+     * register R-1094 added the latter two.
      *
      * Takes an already-open [db] directly (see [writeFrom]/[previewFrom]'s own kdoc for why).
      */
     private suspend fun collect(context: Context, db: OrtDatabase): CollectedBackup {
         val sessions = db.sessionDao().listAll()
         val transmissions = sessions.flatMap { db.transmissionDao().listBySession(it.id) }
-        val transcripts = transmissions.mapNotNull { db.transcriptDao().getCurrent(it.id) }
+        val transcripts = transmissions.flatMap { db.transcriptDao().getAllVersions(it.id) }
         val corrections = transmissions.flatMap { db.correctionDao().correctionsFor(it.id) }
+        val stations = db.activityDao().listStations()
+        val voiceprints = db.catalogDao().allVoiceprints()
+        val threads = db.catalogDao().listAllThreads()
         val audioFiles = transmissions.mapNotNull { transmission ->
             val source = File(context.filesDir, transmission.audioPath())
             if (source.isFile) {
@@ -220,7 +265,16 @@ public object BackupBundleBuilder {
                 null
             }
         }
-        return CollectedBackup(sessions, transmissions, transcripts, corrections, audioFiles)
+        return CollectedBackup(
+            sessions = sessions,
+            transmissions = transmissions,
+            transcripts = transcripts,
+            corrections = corrections,
+            stations = stations,
+            voiceprints = voiceprints,
+            threads = threads,
+            audioFiles = audioFiles,
+        )
     }
 
     private const val STREAM_BUFFER_BYTES = 64 * 1024

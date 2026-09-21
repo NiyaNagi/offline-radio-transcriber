@@ -12,10 +12,16 @@ import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.CorrectionEntity
+import org.ort.data.entity.OverCountsByAttributionState
 import org.ort.data.entity.SessionEntity
+import org.ort.data.entity.StationEntity
+import org.ort.data.entity.ThreadEntity
+import org.ort.data.entity.ThreadKind
+import org.ort.data.entity.ThreadKindSource
 import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.entity.TransmissionEntity
+import org.ort.data.entity.VoiceprintEntity
 import org.robolectric.RobolectricTestRunner
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
@@ -78,6 +84,23 @@ class BackupBundleBuilderTest {
         utcOffsetMinutes = 0,
         calibrationId = null,
         executionProvider = null,
+    )
+
+    private fun station(id: String, userName: String? = null) = StationEntity(
+        id = id,
+        callsign = id,
+        firstHeardAt = 0L,
+        lastHeardAt = 0L,
+        transmissionCount = 1,
+        isUserPinned = false,
+        notes = null,
+        userName = userName,
+        frequenciesHeard = null,
+        activityByHourDow = null,
+        potaRefs = null,
+        spokenGrids = null,
+        ituRegionFromPrefix = null,
+        overCountsByAttributionState = OverCountsByAttributionState.EMPTY.serialize(),
     )
 
     private fun zipEntries(bytes: ByteArray): Map<String, ByteArray> {
@@ -206,5 +229,105 @@ class BackupBundleBuilderTest {
         val entries = zipEntries(out.toByteArray())
         val manifest = org.json.JSONObject(String(entries.getValue(BACKUP_MANIFEST_ENTRY), Charsets.UTF_8))
         assertEquals(0, manifest.getInt("sessionCount"))
+    }
+
+    @Test
+    fun `R_1094 write carries every transcript version, not only the current one`() = runTest {
+        db.sessionDao().insert(session("S1"))
+        db.transmissionDao().insert(transmission("T1", "S1"))
+        db.transcriptDao().supersede(
+            TranscriptEntity(
+                id = "TR1", transmissionId = "T1", pass = TranscriptPass.A, text = "partial guess",
+                modelId = "whisper-tiny", modelVersion = "1.0", quantization = null, decodeParams = null,
+                noSpeechProb = null, confidence = null, isCurrent = true, createdAt = 0L,
+            ),
+        )
+        db.transcriptDao().supersede(
+            TranscriptEntity(
+                id = "TR2", transmissionId = "T1", pass = TranscriptPass.B, text = "this is KI7ABC",
+                modelId = "whisper-small", modelVersion = "1.2.0", quantization = null, decodeParams = null,
+                noSpeechProb = null, confidence = null, isCurrent = true, createdAt = 100L,
+            ),
+        )
+
+        val out = ByteArrayOutputStream()
+        BackupBundleBuilder.write(context, out)
+        val entries = zipEntries(out.toByteArray())
+        val transcripts = JSONArray(String(entries.getValue(BACKUP_TRANSCRIPTS_ENTRY), Charsets.UTF_8))
+        assertEquals(2, transcripts.length())
+        val ids = (0 until transcripts.length()).map { transcripts.getJSONObject(it).getString("id") }.toSet()
+        assertEquals(setOf("TR1", "TR2"), ids)
+        val manifest = org.json.JSONObject(String(entries.getValue(BACKUP_MANIFEST_ENTRY), Charsets.UTF_8))
+        assertEquals(2, manifest.getInt("transcriptCount"))
+    }
+
+    @Test
+    fun `R_1094 write carries the station catalog, voiceprints and threads, and the manifest counts them`() = runTest {
+        db.catalogDao().insert(station("KI7ABC", userName = "Alex"))
+        db.catalogDao().insert(
+            VoiceprintEntity(
+                id = "VP1",
+                embedding = byteArrayOf(1, 2, 3),
+                memberCount = 1,
+                centroidUpdatedAt = null,
+                boundStationId = "KI7ABC",
+                bindingConfidence = null,
+                lastConfirmedAt = null,
+                isEnrolled = false,
+                enrolmentObservationCount = 0,
+                enrolmentSessionIds = null,
+                enrolledAt = null,
+                lastMatchedAt = null,
+                bindingSource = null,
+                embeddingModelId = null,
+                embeddingModelVersion = null,
+            ),
+        )
+        db.catalogDao().insert(
+            ThreadEntity(
+                id = "TH1",
+                sessionId = "S1",
+                startedAt = 0L,
+                endedAt = null,
+                frequencyHz = null,
+                transmissionCount = 1,
+                participantStationIds = null,
+                digestText = null,
+                kind = ThreadKind.QSO,
+                kindSource = ThreadKindSource.DETECTED,
+                participantOrder = null,
+            ),
+        )
+
+        val out = ByteArrayOutputStream()
+        BackupBundleBuilder.write(context, out)
+        val entries = zipEntries(out.toByteArray())
+
+        val stations = JSONArray(String(entries.getValue(BACKUP_STATIONS_ENTRY), Charsets.UTF_8))
+        assertEquals(1, stations.length())
+        assertEquals("KI7ABC", stations.getJSONObject(0).getString("id"))
+
+        val voiceprints = JSONArray(String(entries.getValue(BACKUP_VOICEPRINTS_ENTRY), Charsets.UTF_8))
+        assertEquals(1, voiceprints.length())
+        assertEquals("VP1", voiceprints.getJSONObject(0).getString("id"))
+
+        val threads = JSONArray(String(entries.getValue(BACKUP_THREADS_ENTRY), Charsets.UTF_8))
+        assertEquals(1, threads.length())
+        assertEquals("TH1", threads.getJSONObject(0).getString("id"))
+
+        val manifest = org.json.JSONObject(String(entries.getValue(BACKUP_MANIFEST_ENTRY), Charsets.UTF_8))
+        assertEquals(1, manifest.getInt("stationCount"))
+        assertEquals(1, manifest.getInt("voiceprintCount"))
+        assertEquals(1, manifest.getInt("threadCount"))
+    }
+
+    @Test
+    fun `R_1094 preview reports the real station, voiceprint and thread counts`() = runTest {
+        db.catalogDao().insert(station("KI7ABC"))
+
+        val preview = BackupBundleBuilder.preview(context)
+        assertEquals(1, preview.stationCount)
+        assertEquals(0, preview.voiceprintCount)
+        assertEquals(0, preview.threadCount)
     }
 }

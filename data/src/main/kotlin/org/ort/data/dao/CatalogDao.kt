@@ -180,6 +180,15 @@ public interface CatalogDao {
     @Insert
     public suspend fun insert(entity: VoiceprintEntity)
 
+    /**
+     * Register R-1094 (FR-STO-9): the single-row lookup [org.ort.app.backup
+     * .BackupRestoreCoordinator]'s own conflict check needs — "does a voiceprint with this id
+     * already exist on the restoring device" — that [voiceprintsForStation]/[allVoiceprints]
+     * cannot answer without a full-table scan and a filter.
+     */
+    @Query("SELECT * FROM voiceprint WHERE id = :id")
+    public suspend fun getVoiceprint(id: String): VoiceprintEntity?
+
     @Query("SELECT * FROM voiceprint WHERE boundStationId = :stationId")
     public suspend fun voiceprintsForStation(stationId: String): List<VoiceprintEntity>
 
@@ -200,6 +209,15 @@ public interface CatalogDao {
 
     @Query("SELECT * FROM thread WHERE id = :id")
     public suspend fun getThread(id: String): ThreadEntity?
+
+    /**
+     * Register R-1094 (FR-STO-9): every thread ever grouped, across every session — the backup
+     * bundle builder's own read. No other caller needs "every thread" today (`:app`'s Threads
+     * screen and `ThreadRepository` both read scoped to a session or a closure window instead),
+     * which is why this did not already exist.
+     */
+    @Query("SELECT * FROM thread")
+    public suspend fun listAllThreads(): List<ThreadEntity>
 
     @Insert
     public suspend fun insert(entity: ContributionItemEntity)
