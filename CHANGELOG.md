@@ -492,6 +492,91 @@ not capture them itself, per its own instructions. `tour.json` has no step that 
 individual licence notice's detail screen at all (only the list, `overnight/CF12-settings-licenses`
 and its `@2x`); recommend the lead add one so the expanded Gemma text is ever actually captured.
 
+### `a1cdd665` — P34: AndroidAudioIo's route/interruption callback actually fires, and sample rate is negotiated
+
+**Scope:** `:capture-android` only (`AndroidAudioIo.kt`, `AudioRecordSource.kt`, new
+`SampleRateNegotiator.kt`, `fake/FakeAudioIo.kt` — one new test-only helper — plus new test files).
+No `:pipeline` or `:app` file touched, per this unit's ownership map.
+
+**Requirements/ACs:** FR-CAP-2, FR-CAP-2a, FR-CAP-3, FR-RUN-11, constitution IV. Closes register
+rows R-1113 and R-1114.
+
+**What changed:** two defects, both filed by the 2026-09-20 roadmap audit.
+(1) `AndroidAudioIo.setEventListener` stored its callback and nothing in production ever invoked
+it — the only real interruption signal was `io.read() < 0`, and nothing re-verified the route
+after the first successful read. `AndroidAudioIo` now registers a real
+`android.media.AudioDeviceCallback` (`registerDeviceCallback`/`unregisterDeviceCallback`,
+API ≥ 23) that reports `AudioIoEvent.Interrupted("device removed")` the moment the OS says the
+selected device disappeared — proactively, not only after a failed read. That covers "the device
+is gone"; it cannot cover "the OS silently rerouted while the device is still present" (no Android
+callback reliably reports that for input routing), so `AudioRecordSource` now also polls
+`routeProbe` (default `{ io.routedDevice() }`) every `ROUTE_REVERIFY_INTERVAL_MILLIS` (30 s,
+gated on `clock`, not `delay()`) as a background job that is only ever `launch`ed —
+`CoroutineStart.UNDISPATCHED`, immediately cancelled in a `finally` on every exit path — never
+awaited by the read loop. A mismatch found this way is pushed back onto the same event queue and
+halts exactly as an OS-driven `RouteChanged` already did (FR-CAP-3). The event queue itself moved
+from `ArrayDeque` to `java.util.concurrent.ConcurrentLinkedQueue`, because the OS callback and the
+periodic verifier are now both producers that are not guaranteed to run on the read loop's own
+thread. (2) `AndroidAudioIo` always opened at a fixed 48 000 Hz; a new pure `SampleRateNegotiator`
+(preferred rate kept if the device offers it, else the device's own highest offered rate, else the
+preferred rate unchanged when the device reports no restriction) is now consulted inside `select()`
+against the selected device's real `AudioDeviceInfo.getSampleRates()`, so `deviceSampleRate` — read
+by `AudioRecordSource`'s constructor before `open()` is ever called — already reflects the
+negotiated rate by the time `RealCaptureService`'s existing `io.select(device)` →
+`AudioRecordSource(io, device)` call sequence runs (no `:pipeline` change needed).
+
+**Verified:** `.\gradlew.bat :capture-android:test --max-workers=2` — full module green, including
+five new files: `SampleRateNegotiatorTest` (5 cases, plain JVM, no Android), `AndroidAudioIoSampleRateTest`
+(3 cases, Robolectric `@Config(sdk=[31])`, a real `android.media.AudioDeviceInfo` built via
+Robolectric's own `AudioDeviceInfoBuilder` then patched one field further via `ReflectionHelpers`
+for `mSamplingRates`, since decompiling the real API 31 `android-all` jar showed
+`AudioDeviceInfoBuilder.setProfiles` does not feed `getSampleRates()` at all — that method reads
+`AudioPort.mSamplingRates` directly), `AndroidAudioIoInterruptionTest` (2 cases, Robolectric
+`@Config(sdk=[30])`, a real `AudioDeviceCallback` actually fired via
+`ShadowAudioManager.removeInputDevice(info, true)`), `AndroidAudioIoInterruptionGapTest` (1 case,
+same real callback driving `AudioRecordSource` + `GapTracker` end to end, asserting the recorded
+gap's `endWallMillis - startWallMillis` equals the exact simulated 7 000 ms outage), and
+`AudioRecordSourcePeriodicReverificationTest` (2 cases: a `routeProbe` that awaits a
+`CompletableDeferred` that is never completed, proving 6 frames still deliver with zero dropped-
+sample events while the probe is provably invoked and provably stuck; and a periodic check that
+finds a real mismatch with no `RouteChanged` event ever raised, proving it halts per FR-CAP-3).
+Every one of the four production changes (`SampleRateNegotiator.negotiate`'s real logic,
+`AndroidAudioIo.select`'s call to it, `registerDeviceCallback`'s real reporting, and
+`AudioRecordSource`'s periodic-check trigger condition) was individually reverted, run red for the
+stated reason, then restored and re-run green — see this entry's "discrimination" note below for
+what each red looked like. One additional discrimination case — replacing the `launch(...)` with an
+inline, awaited call to `routeProbe()` — was run to confirm the architecture itself is what the
+"never blocks" test is checking: with the probe awaited inline, the same test hangs indefinitely
+(killed manually after ~60 s; not a timeout-based pass). Discrimination reds, verbatim:
+`SampleRateNegotiator` reverted to `return preferred` → 3 of 5 tests failed with `expected:<44100>
+but was:<48000>`-shaped assertions; `AndroidAudioIo.select` with negotiation call removed →
+`AndroidAudioIoSampleRateTest`'s 44.1 kHz case failed the same way; `registerDeviceCallback`'s body
+emptied → `AndroidAudioIoInterruptionTest`'s positive case failed with
+`AssertionError: a real AudioDeviceCallback firing ... must surface as an interruption`; the
+periodic-check `if` gated behind a literal `false` → the "never blocks" test failed
+`expected:<true> but was:<false>` on `probeCalls`, and the "finds a real mismatch" test hung (no
+`CaptureEvent.Failed` ever emitted, confirmed by manually terminating the stuck JVM after
+observing no progress) because nothing else in the fake ever raises the event that check exists to
+supply.
+
+**Left open / not done:** **H4 and the 8-hour device run are explicitly out of this session's
+scope and remain outstanding** — this is operator work per the debug-fix protocol; nothing here
+should be read as claiming the device proof. Specifically unproven without hardware: whether a
+real USB adapter that only offers 44.1 kHz actually opens successfully end to end (Robolectric's
+`AudioRecord`/`AudioManager` shadows are permissive and cannot fail the way real hardware can —
+`AndroidAudioIoSampleRateTest` proves the negotiation *decision* reads a real `getSampleRates()`
+correctly, not that `open()` then succeeds on real silicon); whether `AudioDeviceCallback` fires
+promptly and reliably on the reference (ColorOS) device, which is known to be aggressive about
+killing/throttling background work; whether 30 seconds is the right re-verification interval in
+practice, or whether a real silent reroute (the built-in mic taking over from a disconnected-but-
+not-`onAudioDevicesRemoved`-reported USB adapter) is caught by this poll at all on that device.
+`AudioRecordSourcePeriodicReverificationTest`'s "never blocks" proof is real but is a
+`FakeAudioIo`/virtual-time proof of the *architecture* (fire-and-forget, cancelled on exit); it
+does not and cannot prove a real `AudioManager`/`AudioDeviceInfo` call is itself always cheap on
+every device, only that this code's structure cannot be blocked by one that is not.
+
+---
+
 ### `<pending>` — roadmap research lands as D51–D55, build-plan Wave L, R-1109..R-1123 and a generated `results/backlog.md`
 
 **Scope:** `spec/functional-spec.md` (§3 decisions and §16 traceability), `spec/build-plan.md`

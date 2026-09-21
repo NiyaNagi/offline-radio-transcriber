@@ -84,6 +84,19 @@ public class FakeAudioIo(
         listener?.invoke(AudioIoEvent.RouteChanged)
     }
 
+    /**
+     * P34 (register R-1113): changes what [routedDevice] reports **without** raising any
+     * [AudioIoEvent] at all — the exact shape of a real route drift no Android callback reliably
+     * reports (see [org.ort.capture.android.AndroidAudioIo]'s own kdoc on why periodic
+     * re-verification exists rather than relying only on an OS-driven event). [forceRoutedDevice]
+     * already covers the "the OS tells us" case via [AudioIoEvent.RouteChanged]; this covers "the
+     * OS never tells us at all," which only a caller polling [routedDevice] on its own schedule —
+     * [org.ort.capture.android.AudioRecordSource]'s periodic re-verification — can ever catch.
+     */
+    public fun silentlyReroute(device: AudioDeviceDescriptor?) {
+        routed = device
+    }
+
     public fun raiseInterruption(cause: String) {
         listener?.invoke(AudioIoEvent.Interrupted(cause))
     }
