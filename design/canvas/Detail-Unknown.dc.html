@@ -34,7 +34,9 @@
     <!-- This task (constitution I/VIII, D45): "the voice matched no one heard before" claimed a
          voice-matching mechanism `:identity` (an empty stub) has never run — amended to name no
          mechanism, since the "Voice match against N stations" tried-step below already states the
-         real, honest fact (a voiceprint was or was not extracted). -->
+         real, honest fact (a voiceprint was or was not extracted). Register R-1150 (2026-09-21):
+         the final "kept" step and its trailing caption carried the same claim — see the comments
+         beside each below. -->
     <div style="font-size: 13.5px; color: oklch(0.66 0.008 250); margin-top: 7px; line-height: 1.45;">No callsign heard, and nothing else resolved it. Nothing is claimed.</div>
     <div style="display: flex; gap: 14px; margin-top: 11px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.58 0.008 250);">
       <div>02:16:12</div><div>146.960</div><div>2.4 s</div><div>S2</div>
@@ -96,12 +98,17 @@
     <div class="tried" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
       <div style="width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; flex-shrink: 0; margin-top: 4px;"></div>
       <div style="flex-grow: 1;">
-        <div class="tn">Kept as an unidentified voice</div>
-        <div class="tr">If this voice is heard again with a callsign, this over will be re-attributed by inference and marked as such.</div>
+        <div class="tn">Kept as an over with no callsign heard</div>
+        <div class="tr">Stays this way unless a callsign is heard directly in a later pass, or an operator corrects it.</div>
       </div>
     </div>
 
-    <div style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5; margin-top: 14px; text-wrap: pretty;">If you know who this was, naming them here teaches the voice match — the next over from this voice will be inferred, not unknown.</div>
+    <!-- Register R-1150 (constitution I): this caption used to read "naming them here teaches the
+         voice match — the next over from this voice will be inferred, not unknown", claiming a
+         voice-tracking mechanism `:identity` (an empty stub, D45) never runs — `voiceprintId` is
+         unconditionally null in production (R-1137). Amended to name the one real, reachable path:
+         a typed correction. -->
+    <div style="font-size: 12.5px; color: oklch(0.62 0.008 250); line-height: 1.5; margin-top: 14px; text-wrap: pretty;">If you know who this was, naming them here resolves this over. It does not change any other over.</div>
   </div>
 
   <div style="border-top: 1px solid oklch(0.26 0.010 250); padding: 12px 16px 16px; display: flex; gap: 9px;">

@@ -177,7 +177,7 @@ class DetailViewStateMapperTest {
         assertTrue(body.explanation.contains("Nothing is claimed"), body.explanation)
         assertFalse(body.explanation.contains("voice", ignoreCase = true), body.explanation)
         assertTrue(body.tried.any { it.title.contains("grammar", ignoreCase = true) })
-        assertTrue(body.tried.any { it.title.contains("unidentified voice", ignoreCase = true) })
+        assertTrue(body.tried.any { it.title.contains("no callsign heard", ignoreCase = true) })
     }
 
     @Test
@@ -229,7 +229,7 @@ class DetailViewStateMapperTest {
         assertTrue(voiceStep.detail.orEmpty().contains("confidence floor"), voiceStep.detail.orEmpty())
         val threadStep = body.tried.first { it.title.equals("Thread context", ignoreCase = true) }
         assertTrue(threadStep.detail.orEmpty().contains("No conversation thread"), threadStep.detail.orEmpty())
-        assertTrue(body.tried.any { it.title.contains("unidentified voice", ignoreCase = true) })
+        assertTrue(body.tried.any { it.title.contains("no callsign heard", ignoreCase = true) })
     }
 
     @Test
@@ -256,6 +256,25 @@ class DetailViewStateMapperTest {
         check(body is DetailBodyViewState.Unknown)
         val threadStep = body.tried.first { it.title.equals("Thread context", ignoreCase = true) }
         assertTrue(threadStep.detail.orEmpty().contains("ongoing conversation"), threadStep.detail.orEmpty())
+    }
+
+    // ---- R-1150: the always-true "kept" step used to claim "this voice" would be tracked across
+    // overs and "heard again" — a mechanism `:identity` (an empty stub, D45) never runs, since
+    // `voiceprintId` is unconditionally null in production (R-1137). Reworded to name no voice
+    // mechanism, the same technique [R_057 D45] already applied to the explanation sentence. ----
+
+    @Test
+    fun `R_1150 the kept step never claims this over's voice will be tracked or heard again`() {
+        val body = DetailViewStateMapper.from(detail(Attribution.unknown())).body
+        check(body is DetailBodyViewState.Unknown)
+        val keptStep = body.tried.first { it.resolved }
+        assertEquals("Kept as an over with no callsign heard", keptStep.title)
+        assertFalse(keptStep.detail.orEmpty().contains("this voice", ignoreCase = true), keptStep.detail.orEmpty())
+        assertFalse(keptStep.detail.orEmpty().contains("heard again", ignoreCase = true), keptStep.detail.orEmpty())
+        // The replacement names only real, reachable mechanisms: a later pass resolving the
+        // callsign directly from audio, or an operator correction — never voice re-identification.
+        assertTrue(keptStep.detail.orEmpty().contains("later pass"), keptStep.detail.orEmpty())
+        assertTrue(keptStep.detail.orEmpty().contains("operator"), keptStep.detail.orEmpty())
     }
 
     // ---- R-051/FR-UI-8: the "why this callsign" surface, built from real data only ----

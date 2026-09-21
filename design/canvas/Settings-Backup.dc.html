@@ -29,25 +29,38 @@
     <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px; line-height: 1.4;">A device-to-device transfer — a file you save yourself and restore onto another phone, or this one after a reinstall.</div>
   </div>
 
+  <!-- Register R-1151 (constitution VIII), redrawn against `SettingsBackupScreen.kt` line by
+       line, reported stale by the R-1094 builder: that unit widened the backup bundle from four
+       tables to seven (every transcript version, the station catalog, voiceprints and threads)
+       and added a biometric-data disclosure and real station/voiceprint/thread counts to the
+       preview and restore-plan summaries, but this board still drew the old four-table copy. Each
+       block below is justified against its own composable, cited in place. -->
   <div style="flex-grow: 1; overflow: hidden;">
 
     <div class="lbl">In the backup</div>
     <div style="padding: 6px 20px 0;">
-      <div style="font-size: 12.5px; color: oklch(0.86 0.006 250); line-height: 1.5;">Sessions, overs, their current transcripts, and every correction you've made, plus the retained audio for each over.</div>
-      <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; margin-top: 6px;">Not yet in the backup: the station catalog, voiceprints, threads, digests and superseded transcript history — real, separate future work.</div>
+      <!-- BackupWhatsInSection's first Text (SettingsBackupScreen.kt:103-110) -->
+      <div style="font-size: 12.5px; color: oklch(0.86 0.006 250); line-height: 1.5;">Sessions, overs, every transcript version (including any superseded by a later pass), every correction you've made, the station catalog, voiceprints and threads, plus the retained audio for each over.</div>
+      <!-- BackupWhatsInSection's biometric-data disclosure (SettingsBackupScreen.kt:111-118) -->
+      <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; margin-top: 6px;">Voiceprints are biometric data. They travel in this backup only because it is your own device-to-device transfer, on the same terms as everything else here — never through a contribution or a field report.</div>
+      <!-- BackupWhatsInSection's "Not yet" Text, narrowed now that R-1094 widened the bundle (SettingsBackupScreen.kt:119-126) -->
+      <div style="font-size: 11.5px; color: oklch(0.58 0.008 250); line-height: 1.5; margin-top: 6px;">Not yet in the backup: digest summaries, the phonetic lattice and candidate detail behind each over, and other schema-only bookkeeping tables — real, separate future work.</div>
     </div>
 
     <div class="lbl">Save a backup</div>
-    <div style="padding: 4px 20px 0;"><div class="m" style="font-size: 11.5px; color: oklch(0.58 0.008 250);">6 sessions · 214 overs · 3 corrections · 200 audio files · 1.2 GB</div></div>
+    <!-- BackupSection's preview Text (SettingsBackupScreen.kt:133-141) now carries station/voiceprint/thread counts between corrections and audio files, matching SettingsBackupPreviewViewState's own field order -->
+    <div style="padding: 4px 20px 0;"><div class="m" style="font-size: 11.5px; color: oklch(0.58 0.008 250);">6 sessions · 214 overs · 3 corrections · 5 stations · 3 voiceprints · 4 threads · 200 audio files · 1.2 GB</div></div>
     <div style="margin: 10px 20px 0; display: flex; align-items: center; justify-content: center; height: 44px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Save backup</div></div>
 
     <div class="lbl" style="padding-top: 20px;">Restore from a backup</div>
     <div style="padding: 4px 20px 0;"><div style="font-size: 12px; color: oklch(0.58 0.008 250); line-height: 1.5;">Nothing already on this device is ever deleted or overwritten by a restore — a record that already exists here is shown to you, not merged.</div></div>
     <div style="margin: 10px 20px 0; display: flex; align-items: center; justify-content: center; height: 44px; background: oklch(0.195 0.009 250); border-radius: 8px; border: 1px solid oklch(0.30 0.010 250);"><div style="font-size: 15px; font-weight: 500; color: oklch(0.86 0.006 250);">Choose a backup file</div></div>
 
+    <!-- RestorePlanSummary (SettingsBackupScreen.kt:206-230): both lines now carry the same
+         station/voiceprint/thread counts SettingsRestorePlanViewState adds, in its own field order -->
     <div style="margin: 16px 20px 0; background: oklch(0.195 0.009 250); border-radius: 10px; padding: 13px 16px;">
-      <div style="font-size: 12.5px; color: oklch(0.86 0.006 250); line-height: 1.5;">2 sessions, 214 overs, 3 corrections and 200 audio files will be added.</div>
-      <div style="font-size: 11.5px; color: oklch(0.74 0.14 70); line-height: 1.5; margin-top: 6px;">1 session, 4 overs, 0 corrections and 4 audio files already exist on this device and will be left exactly as they are.</div>
+      <div style="font-size: 12.5px; color: oklch(0.86 0.006 250); line-height: 1.5;">2 sessions, 214 overs, 3 corrections, 2 stations, 1 voiceprint, 1 thread and 200 audio files will be added.</div>
+      <div style="font-size: 11.5px; color: oklch(0.74 0.14 70); line-height: 1.5; margin-top: 6px;">1 session, 4 overs, 0 corrections, 1 station, 0 voiceprints, 0 threads and 4 audio files already exist on this device and will be left exactly as they are.</div>
       <div style="display: flex; gap: 9px; margin-top: 12px;">
         <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 40px; border: 1px solid oklch(0.30 0.010 250); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.86 0.006 250);">Cancel</div></div>
         <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; height: 40px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 14px; font-weight: 500; color: oklch(0.16 0.01 150);">Restore</div></div>

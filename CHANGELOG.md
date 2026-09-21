@@ -32,6 +32,116 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (q-voice-wording: R-1150's six remaining "unidentified voice" overclaims fixed across `DetailViewState.kt`/`ThreadViewData.kt`/`StationPolling.kt` and their artboards; R-1151 redraws `Settings-Backup.dc.html` to match the real seven-table backup)
+
+### `<pending>` — R-1150: `Detail-Unknown.dc.html`'s "kept" step and caption, `Threads.dc.html`'s all-UNKNOWN thread title, and `Frequency-Change.dc.html`'s unidentified cause no longer claim voice clustering nothing computed; `StationIdentityScreen.kt`/`Station-Identity.dc.html`/`Fail-Cluster.dc.html` checked and left alone, the claim they carry is real; R-1151: `Settings-Backup.dc.html` redrawn line by line against `SettingsBackupScreen.kt`'s real seven-table copy
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/{DetailViewState,ThreadViewData,StationPolling}.kt`
+and their tests; `design/canvas/{Detail-Unknown,Threads,Session,Frequency-Change,Settings-Backup}.dc.html`.
+`StationIdentityScreen.kt`, `Fail-Cluster.dc.html` and `Station-Identity.dc.html` were read and
+deliberately left unchanged (see below). `DigestPolling.kt`, `ImproveScreens.kt`, `StationScreen.kt`,
+`NowViewState.kt` (R-1147's own files), `ui/theme/`, `tools/`, `app/src/debug/**` and
+`design/canvas/Thread-Detail.dc.html` were not touched, as instructed.
+
+**Requirements/ACs:** FR-SPK-10; constitution I, VIII; R-1150, R-1151, R-1147, R-1137, R-1094/R-1095,
+D45.
+
+**What changed:**
+- **`DetailViewState.kt`'s `triedStepsFor`.** The always-true "kept" step (`Detail-Unknown.dc.html`'s
+  fourth "what was tried" row) read title `"Kept as an unidentified voice"` and detail `"If this
+  voice is heard again with a callsign, this over will be re-attributed by inference and marked as
+  such."` — claiming a voice-tracking mechanism `:identity` (an empty stub, D45) never runs, since
+  `voiceprintId` is unconditionally null in production (R-1137). Now title `"Kept as an over with no
+  callsign heard"`, detail `"Stays this way unless a callsign is heard directly in a later pass, or
+  an operator corrects it."` — naming only the two real, reachable paths (a later pass resolving the
+  callsign from audio directly, or a typed correction), never voice re-identification.
+- **`ThreadViewData.kt`'s `cardFor` title.** The all-UNKNOWN branch (reached only when `stationIds`
+  is empty and `ambiguousCount == 0`, i.e. every over in the thread is UNKNOWN) read
+  `pluralize(sorted.size, "unidentified voice")` — the plain over count relabelled as a distinct-voice
+  count; nothing in this function reads `voiceprintId`. Now `"No callsign heard"`, matching the
+  sibling `"Ambiguous stations"` branch's own uncounted style (the over count is already shown in the
+  card's `kind` line).
+- **`StationPolling.kt`'s `FrequencyPolling.frequencyChange`.** The unidentified cause computed a real
+  `distinctVoices` count but **still said "voices" in its fallback** (`if (distinctVoices > 0)
+  distinctVoices else unidentifiedTonight.size`) — since `distinctVoices` is 0 for every over in
+  production, the fallback (the only path production ever takes) called the plain over count "N
+  unidentified voices" with nothing behind it. Mirrors `StationScreen.kt`'s own `UnidentifiedVoicesRow`
+  fix (R-1147): now `"N unidentified voices, M overs"` only when `distinctVoices > 0` (real, once
+  `:identity` ships), else `"N overs with no callsign heard"`. `unidentifiedSummary` in the same file
+  was already honest (returns `voiceCount = null` with no clustering data, per its own R-070 test) and
+  was not touched.
+- **`StationIdentityScreen.kt` checked, left alone.** Its two "they become a new unidentified voice"
+  sentences (the split-dialog description and `StationSplitScreen`'s subtitle) describe
+  `StationPolling.splitVoiceprint`'s real, tested mechanism: splitting overs away from a station's
+  bound cluster creates a genuine new, unbound `VoiceprintEntity` (`boundStationId = null`) for them —
+  a real `:data`-layer database operation, not the `:identity` voice-matching stub. The sentence is
+  true of what the code does when reached (a station must already carry a bound voiceprint, which
+  nothing in production creates yet — a reachability gap, not a wording defect), so it was left
+  unchanged per this row's own instruction to check rather than rename reflexively.
+- **Artboards, justified line by line:**
+  - `Detail-Unknown.dc.html` — the "kept" step and its trailing caption ("naming them here teaches
+    the voice match — the next over from this voice will be inferred, not unknown") redrawn to match
+    the code above; the caption now reads "If you know who this was, naming them here resolves this
+    over. It does not change any other over."
+  - `Threads.dc.html` — "4 unidentified voices" → "No callsign heard", matching the code's own dropped
+    count.
+  - `Frequency-Change.dc.html` — "4 unidentified voices, weak, 03:10–04:40" → "4 overs with no
+    callsign heard, weak, 03:10–04:40" (only the wording segment; the pre-existing structural
+    mismatch between this cause's board shape and its built label was left alone, out of this row's
+    scope).
+  - `Session.dc.html` — a separate, larger deviation found while checking this board (it is also
+    named in R-1150's list): the Stations fact read "14 · 1 new · 2 unidentified voices", but
+    `SessionDetailScreen` (`SessionsScreens.kt`, not owned by this unit) renders only
+    `KeyValueRow(key = "Stations", value = "${state.stationCount}")` — `SessionDetailViewState` never
+    carried a new-station or unidentified-voice count at all, so neither clause was ever built, and
+    "voices" additionally claimed a clustering result nothing computes. Redrawn to the one real fact
+    ("14" alone), with a comment flagging that a real breakdown, if wanted, needs new fields in
+    `DigestPolling.kt`/`SessionsScreens.kt` first.
+  - `Station-Identity.dc.html`, `Fail-Cluster.dc.html` — checked, left alone; same real mechanism as
+    `StationIdentityScreen.kt` above. `Fail-Cluster.dc.html`'s separate "pre-ticked as a suggestion"
+    line (a different, pre-existing deviation — `StationPolling.kt`'s own doc comment already states
+    no pre-ticked suggestion is built) was noticed but is out of this row's scope and was not touched.
+- **R-1151: `Settings-Backup.dc.html` redrawn against `SettingsBackupScreen.kt`.** "In the backup" now
+  draws all three real `Text`s — the widened seven-table body (line 103-110: sessions, overs, every
+  transcript version including superseded ones, corrections, station catalog, voiceprints, threads,
+  audio), the biometric-data disclosure (111-118), and the narrowed "Not yet" line (119-126: digest
+  summaries, phonetic lattice/candidate detail, other schema-only tables) — replacing the stale
+  single-sentence body and the old four-table "Not yet" line. The "Save a backup" preview
+  (`BackupSection`, 133-141) and the restore-plan summary (`RestorePlanSummary`, 208-227) both gain
+  station/voiceprint/thread counts between corrections and audio files, in
+  `SettingsBackupPreviewViewState`/`SettingsRestorePlanViewState`'s own field order. The title,
+  subtitle, "Restore from a backup" empty-state text and all four button labels already matched the
+  code exactly and were left unchanged.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.data.DetailViewStateMapperTest" --tests "org.ort.app.ui.data.ThreadViewDataTest" --tests "org.ort.app.ui.data.StationPollingTest"` —
+  all green, including the discriminating new/updated cases:
+  `DetailViewStateMapperTest.R_1150 the kept step never claims this over's voice will be tracked or heard again`,
+  `DetailViewStateMapperTest.R_057 D45 UNKNOWN explains itself with the definitional sentence, never a fabricated voice match` (updated assertion),
+  `DetailViewStateMapperTest.R_721 UNKNOWN with a real context renders all four steps, each with a real not fabricated outcome` (updated assertion),
+  `ThreadViewDataTest.R_1150 an all-UNKNOWN thread is titled honestly, never a fabricated voice count`,
+  `StationPollingTest.R_1150 frequencyChange never calls a plain over count voices`,
+  `StationPollingTest.R_1150 frequencyChange says voices only for a genuinely clustered count`.
+  Each new/changed assertion was confirmed to fail for the right reason against the pre-fix
+  production code before the fix landed (strict TDD).
+- `.\gradlew.bat :app:detekt :app:ktlintCheck --max-workers=2` — no findings.
+- `.\gradlew.bat :app:testFullDebugUnitTest` (whole `:app` module, ~1200 tests) — run for regression;
+  see the commit that fills in this entry's hash for the result, since it was still running when this
+  entry was written.
+
+**Left open / not done:**
+- No device evidence and no visual re-capture — this changes only artboards and static strings behind
+  a Robolectric/JVM test surface. This diff touches `design/**` and view-state/mapper files under
+  `:app` (constitution VIII, working agreement item 7), so it is not done until the lead re-runs the
+  tour at font scale 1.0 and 2.0 for: Log > Detail (unknown over, `Detail-Unknown.dc.html`), Threads
+  (an all-UNKNOWN card, `Threads.dc.html`), Digest/Sessions > a session detail
+  (`Session.dc.html`), Frequency > busier-than-usual (`Frequency-Change.dc.html`), and Settings >
+  Backup and restore (`Settings-Backup.dc.html`), each compared against its artboard.
+- `Fail-Cluster.dc.html`'s "pre-ticked as a suggestion" line (a pre-existing deviation, unrelated to
+  the voice-wording claim) and `Session.dc.html`'s missing new/unidentified station breakdown (needs
+  new fields in `DigestPolling.kt`/`SessionsScreens.kt`, outside this unit's ownership) are flagged
+  for the lead to route, not fixed here.
+
 ## 2026-09-21 (R-1149/R-1145: `diff.py` refuses a geometry-mismatched pair instead of reporting noise, `tour.ps1` asserts the `wm size` override is set, and Thread-Detail's artboard header matches the shared `DrillInHeader`)
 
 ### `784bcbb5` — p-evidence-guards: R-1149 cross-run capture-geometry guard in `diff.py` + `wm size` override assertion in `tour.ps1`; R-1145 Thread-Detail.dc.html header redrawn to match `Station`/`Digest`

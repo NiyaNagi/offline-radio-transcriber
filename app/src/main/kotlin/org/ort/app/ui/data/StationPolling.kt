@@ -637,13 +637,19 @@ public object FrequencyPolling {
         val unidentifiedTonight = tonightTx.filter { it.attributionState == AttributionState.UNKNOWN }
         if (unidentifiedTonight.isNotEmpty()) {
             val distinctVoices = unidentifiedTonight.mapNotNull { it.voiceprintId }.toSet().size
-            val voiceLabel = if (distinctVoices > 0) distinctVoices else unidentifiedTonight.size
-            causes.add(
-                FrequencyChangeCause(
-                    "${pluralize(voiceLabel, "unidentified voice")}, ${pluralize(unidentifiedTonight.size, "over")}",
-                    isUnidentified = true,
-                ),
-            )
+            // Register R-1150: mirrors `StationScreen.kt`'s own `UnidentifiedVoicesRow` fix
+            // (R-1147) — [distinctVoices] is only ever genuinely non-zero when real distinct
+            // `voiceprintId`s were clustered, a case production cannot reach today (`:identity`
+            // is an empty stub, so `voiceprintId` is unconditionally null). The old fallback still
+            // called the plain over count "unidentified voices" — a voice-clustering claim with
+            // nothing behind it. The real, always-taken production path now says the one thing
+            // this build actually knows.
+            val label = if (distinctVoices > 0) {
+                "${pluralize(distinctVoices, "unidentified voice")}, ${pluralize(unidentifiedTonight.size, "over")}"
+            } else {
+                pluralize(unidentifiedTonight.size, "over with no callsign heard", "overs with no callsign heard")
+            }
+            causes.add(FrequencyChangeCause(label, isUnidentified = true))
         }
 
         val overCount = tonightTx.size

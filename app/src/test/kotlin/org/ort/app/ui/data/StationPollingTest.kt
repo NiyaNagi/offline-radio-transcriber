@@ -513,4 +513,47 @@ class StationPollingTest {
             !change.explanationParagraph.contains("see What made it busy above"),
         )
     }
+
+    // ---- R-1150: `frequencyChange`'s unidentified cause mirrors `StationScreen.kt`'s own
+    // `UnidentifiedVoicesRow` fix (R-1147) — the old fallback still said "voices" for the case
+    // production always takes (`voiceprintId` unconditionally null, `:identity` an empty stub),
+    // relabelling the plain over count as a voice-clustering result nothing computed. ----
+
+    @Test
+    fun `R_1150 frequencyChange never calls a plain over count voices`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        val unknown = { voiceprintId: String? ->
+            FixtureAttribution(state = AttributionState.UNKNOWN, voiceprintId = voiceprintId)
+        }
+        db.transmissionDao().insert(tx("TX1", "S1", 0L, attribution = unknown(null)))
+        db.transmissionDao().insert(tx("TX2", "S1", 1_000L, attribution = unknown(null)))
+
+        val change = FrequencyPolling.frequencyChange(context, 146_960_000L)
+
+        val cause = change.causes.single { it.isUnidentified }
+        assertFalse(
+            "must not claim voice clustering with no distinct voiceprints: ${cause.label}",
+            cause.label.contains("voice", ignoreCase = true),
+        )
+        assertTrue("expected the real over count: ${cause.label}", cause.label.contains("2"))
+        assertTrue("expected the honest fact: ${cause.label}", cause.label.contains("no callsign heard"))
+    }
+
+    @Test
+    fun `R_1150 frequencyChange says voices only for a genuinely clustered count`(): Unit = runTest {
+        db.sessionDao().insert(session("S1", startedAt = 0L))
+        val unknown = { voiceprintId: String? ->
+            FixtureAttribution(state = AttributionState.UNKNOWN, voiceprintId = voiceprintId)
+        }
+        db.transmissionDao().insert(tx("TX1", "S1", 0L, attribution = unknown("V1")))
+        db.transmissionDao().insert(tx("TX2", "S1", 1_000L, attribution = unknown("V2")))
+
+        val change = FrequencyPolling.frequencyChange(context, 146_960_000L)
+
+        val cause = change.causes.single { it.isUnidentified }
+        assertTrue(
+            "expected the real distinct-voiceprint count named as voices: ${cause.label}",
+            cause.label.contains("2 unidentified voices"),
+        )
+    }
 }

@@ -169,6 +169,28 @@ class ThreadViewDataTest {
     }
 
     @Test
+    fun `R_1150 an all-UNKNOWN thread is titled honestly, never a fabricated voice count`() {
+        // Register R-1150: the old title, `pluralize(sorted.size, "unidentified voice")`, relabelled
+        // the plain over count as a distinct-voice count — this branch is reached only when every
+        // over in the thread is UNKNOWN (no stationId, so CONFIRMED/INFERRED are absent; ambiguousCount
+        // is 0), and nothing here ever reads `voiceprintId`, so "voices" claimed a clustering result
+        // this mapper never computed.
+        val details = listOf(
+            detail("TX1", 0L, threadId = "T1", attribution = Attribution.unknown()),
+            detail("TX2", 1_000L, threadId = "T1", attribution = Attribution.unknown()),
+        )
+
+        val state = ThreadListMapper.listState(details, emptySet(), currentTier = 3) as ThreadListViewState.Grouped
+
+        val card = state.cards.single()
+        assertFalse(
+            "must not claim voice clustering: ${card.titleText}",
+            card.titleText.contains("voice", ignoreCase = true),
+        )
+        assertEquals("No callsign heard", card.titleText)
+    }
+
+    @Test
     fun `R_044 a first-heard station in the thread carries the NEW flag`() {
         val details = listOf(detail("TX1", 0L, threadId = "T1", attribution = Attribution.confirmed("W7NPC", 0.9)))
 
