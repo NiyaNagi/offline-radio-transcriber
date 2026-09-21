@@ -32,6 +32,85 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (q-coverage-orphans: all twelve orphan-tagged tests diagnosed — none is a typo, a lost requirement, or a missing one; the tag is a legitimate cross-reference the coverage tool doesn't yet recognise, and every carrying file is owned by another package)
+
+### `867bfdd5` — q-coverage-orphans: diagnosis only, no test or spec edit; tooling gap flagged for the coverage-matrix owner
+
+**Scope:** none (investigation only). Explicitly did not touch any file under
+`app/src/test/kotlin/org/ort/app/**` (owned by the `:app` screens and debug-scenarios builders
+working in parallel) or `buildSrc/src/main/kotlin/org/ort/gradle/CoverageMatrix.kt` (tooling —
+outside this unit's "test annotations + `spec/functional-spec.md`" ownership).
+
+**Requirements/ACs:** none new. Constitution II ("tests are named for the requirement they
+establish, so the coverage matrix is generated rather than maintained") and the working
+agreement's routing rule ("a builder that needs a file outside its package stops and reports")
+both bear on this session: the orphan list turned out not to need either kind of fix this unit
+is authorised to make.
+
+**What changed:** nothing in the tree. `./gradlew coverageMatrix` then `coverageMatrixCheck` (run
+as separate invocations) were used to regenerate and confirm `results/coverage-matrix.md`, which
+was already byte-identical to the committed copy (344/548 covered, 12 orphan-tagged tests, no
+drift). Each of the twelve orphan ids — `C10`, `CONSTITUTION I`, `CONSTITUTION I: A LABEL NEVER
+CHANGES AN ATTRIBUTION`, `CONSTITUTION II`, `CONSTITUTION IV`, `CONSTITUTION VI`, `CONSTITUTION
+VIII`, `IA-3`, `N08`, `P9`, `RC01`, `RC02` — was traced to its `@Requirement(...)` call site and
+diagnosed individually:
+
+- **`C10`, `N08`, `RC01`, `RC02`** are `design/design-intent.md` screen-catalogue ids
+  (`Transport-Bar.dc.html`, `Capture.dc.html`, `Recordings.dc.html`, `Recording-Session.dc.html`
+  respectively), cited the same way the design-intent rows themselves cite each other.
+- **`IA-3`** is the information-architecture review's decision id (the Log-filter-origin
+  generalisation), confirmed against the 2026-09-12 WPNAV entry below (`7584d1cc`) and its
+  pervasive use across `OrtNavHost.kt`, `SessionsContent.kt`, `LogViewData.kt` and others.
+- **`P9`** is the build-plan unit id, cited exactly the way
+  `.specify/memory/constitution.md` Principle III cites it itself ("Rejected segments,
+  superseded transcripts and overwritten attributions remain reachable (P9)") and the way
+  `design/design-intent.md`'s own RC01/RC02/N08 rows cite it.
+- **`CONSTITUTION I`, `CONSTITUTION I: A LABEL NEVER CHANGES AN ATTRIBUTION`, `CONSTITUTION II`,
+  `CONSTITUTION IV`, `CONSTITUTION VI`, `CONSTITUTION VIII`** are citations of the named
+  principle in `.specify/memory/constitution.md`, each verified against the actual test body:
+  the `CONSTITUTION II` tests assert a refusal's copy switches on the sealed type rather than
+  `:pipeline`'s own message text (Principle II's own "assertions MUST NOT depend on ... a
+  library's message text" clause); the `CONSTITUTION VI` tests assert an "estimated" label until
+  a real measurement exists (Principle VI's provenance discipline); the `CONSTITUTION VIII` tests
+  are the `w390dp-h844dp-420dpi` native-graphics bounds tests Principle VIII itself requires, with
+  a doc comment quoting the principle verbatim.
+
+None of the twelve is case 1 (typo/stale id — checked against the D56/D57 renumbering and the
+analytics/alerts requirement groups named in this unit's brief; none of the twelve resembles an
+`FR-`/`AC-`/`NFR-`/`CON-` id at all, so there is nothing to renumber), case 2 (a requirement the
+spec lost — none of the twelve was ever a spec requirement id), or case 3 (the spec missing a
+requirement the test is right to want — adding `P9`, `RC02` or `CONSTITUTION VIII` as new
+`spec/functional-spec.md` requirement ids would misrepresent them: each already has exactly one
+authoritative home — the build plan, `design/design-intent.md`, or the constitution — and
+duplicating it into the requirements list as a new `FR-`/`AC-` id would be false bookkeeping, not
+a fix. `CHANGELOG.md`'s own 2026-09-13 WPRC02 entries (`65de4cb3`, `7cf63ffb`) already call this
+same five-item set (`C10`/`IA-3`/`P9`/`RC01`/`RC02` plus the `CONSTITUTION *` tags) "pre-existing,
+none new" — this is a long-standing, deliberate `:app` citation convention, not a defect
+introduced recently.
+
+The real gap is in `buildSrc/src/main/kotlin/org/ort/gradle/CoverageMatrix.kt`: its
+`CROSS_REFERENCE` regex (`^[FDRQ]-?\d+[A-Z]?$`) recognises bare `F`/`D`/`R`/`Q` ids (failure
+modes, decisions, risks, questions) as legitimate non-requirement citations but not `P`\d+
+(build-plan units — the same citation the constitution's own text uses), the design-intent
+screen-catalogue families (`C`\d+, `N`\d+, `RC`\d+, etc.), `IA-`\d+, or the `constitution
+<roman numeral>` form. Fixing that is a tooling change outside this unit's ownership (test
+annotations in any module, and `spec/functional-spec.md`), so it is flagged for its owner
+rather than made here, per the working agreement's routing rule.
+
+**Verified:** `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (separate
+invocations) — `coverageMatrixCheck: up to date (344 covered of 548)`, unchanged before and
+after this session (no file edited). No test file under another package's ownership was
+touched; no id was renamed or deleted from an `@Requirement(...)` annotation.
+
+**Left open / not done:** the twelve orphan tags themselves are not resolved — they are correct
+as written and need no test-side change. What is open is the `CoverageMatrix.kt`
+`CROSS_REFERENCE` widening described above (flagged as a background task rather than actioned
+here, since it is production/tooling code this unit must not touch) and, separately,
+`coverage-uncovered` (204 requirement ids with no test), which this unit was not scoped to
+address.
+
+---
+
 ## 2026-09-21 (R-1149/R-1145: `diff.py` refuses a geometry-mismatched pair instead of reporting noise, `tour.ps1` asserts the `wm size` override is set, and Thread-Detail's artboard header matches the shared `DrillInHeader`)
 
 ### `784bcbb5` — p-evidence-guards: R-1149 cross-run capture-geometry guard in `diff.py` + `wm size` override assertion in `tour.ps1`; R-1145 Thread-Detail.dc.html header redrawn to match `Station`/`Digest`
