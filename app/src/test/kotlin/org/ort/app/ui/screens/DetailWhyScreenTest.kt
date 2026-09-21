@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -114,5 +115,47 @@ class DetailWhyScreenTest {
 
         composeTestRule.onAllNodesWithText("KA7LWH", substring = true).assertCountEquals(1)
         composeTestRule.onNodeWithText("Runner-up", substring = true).assertDoesNotExist()
+    }
+
+    /**
+     * Register R-1144, `Detail-Why.dc.html`'s own bottom bar: reused, not a hand-rolled pair of
+     * buttons — real clicks reach the real callbacks a caller supplies.
+     */
+    @Test
+    fun `R_1144_the_bottom_action_bar_renders_and_reaches_its_real_callbacks`() {
+        var notRightTapped = false
+        var confirmTapped = false
+        composeTestRule.setContent {
+            OrtTheme {
+                DetailWhyScreen(
+                    callsignLabel = "K7LWH",
+                    why = why(),
+                    onBack = {},
+                    onNotRight = { notRightTapped = true },
+                    onConfirm = { confirmTapped = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Not right?").performClick()
+        composeTestRule.onNodeWithText("Confirm").performClick()
+
+        assert(notRightTapped) { "expected onNotRight to have been invoked" }
+        assert(confirmTapped) { "expected onConfirm to have been invoked" }
+    }
+
+    /**
+     * Register R-1144: every caller before this row (every other test in this file included) never
+     * passes [DetailWhyScreen.onNotRight]/[DetailWhyScreen.onConfirm] at all — the bar must not
+     * appear unless a caller wires *both*, never a half-wired guess.
+     */
+    @Test
+    fun `R_1144_no_action_bar_when_the_caller_supplies_neither_callback`() {
+        composeTestRule.setContent {
+            OrtTheme { DetailWhyScreen(callsignLabel = "K7LWH", why = why(), onBack = {}) }
+        }
+
+        composeTestRule.onNodeWithText("Not right?").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Confirm").assertDoesNotExist()
     }
 }
