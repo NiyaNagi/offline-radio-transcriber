@@ -34,6 +34,105 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (R-1091/R-1092: the mic-denied halt indicator and the FAILED models row's colour)
 
+### tour-coverage unit · Wave L's 29 `fixed`-status rows: coverage audit, plus the tour steps this unit could add without touching product code
+
+**Scope:** `tools/ui-audit/tour.json`, `results/ui-audit/README.md`,
+`app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt` (one marker line, to keep that test
+green against the new `ST04-split` step it now must classify). No `app/src/main` file touched.
+
+**Requirements/ACs:** constitution VIII; R-1107, R-770, R-1021, R-1025 (the four rows this unit
+answers); R-106, R-177, R-188, R-262, R-272, R-320, R-371, R-431, R-720, R-721, R-760, R-761,
+R-771, R-801, R-1090's own sibling row R-1108 (untouched — flagged only), plus every row of the
+29-row `fixed`-status list the prompt named — see the coverage table below for each one's
+disposition.
+
+**What changed:**
+- **Half 1, the coverage audit.** Read all 279 (now 297) tour steps against the 29 register rows
+  awaiting the lead's canonical-tour re-run. Full per-row table in this unit's own report to the
+  lead (not duplicated here in full — the table is large; the disposition summary below is the
+  actionable part). Net: 8 rows were already fully covered (no action); 12 rows had a real,
+  closeable gap in `tour.json` alone; 1 row (R-543) is inherently outside tour scope (a semantics
+  defect already correctly verified by a `uiautomator` dump, not a screenshot); 8 rows are
+  genuinely not coverable without a change to `app/src/main` or to `install.ps1`/`tour.ps1`
+  (both outside this unit's file ownership), matching `tour.json`'s own pre-existing "still not
+  reachable" list almost exactly — one entry in that list (`DG01`) was found to be **stale**: R-840
+  already fixed it in an earlier wave and the top `_comment` was simply never updated to say so.
+- **Half 2, closed the 12 reachable gaps**, all via `tools/ui-audit/tour.json` alone (no
+  `app/src/debug` scenario code needed — every gap reused an existing scenario or an existing,
+  previously-unused `drillIn`/`stationSubScreen` value):
+  - R-272 (`ST04 Split`): `StationDetailContent.initialSubScreen` already accepts
+    `StationSubScreen.SPLIT` (`TourIds.resolveSeed` already validated the name; nothing used it).
+    Added `stations-14-nights/ST04-split` (+`@2x`/`@2x-end`) — no tap, no new code path, closes a
+    `halt`-severity-descended row with a pure data seed.
+  - R-720/R-721/R-188 (`D01`/`D03`/`D04`): added the missing `@2x`/`@2x-end` siblings (only `D02`
+    had them before).
+  - R-106 (log gap row): added `gap-call/L01-log-gap@2x`/`@2x-end` (the row's own complaint was
+    that the gap row "scrolls out of frame" and no scrolled/2x capture existed to check it).
+  - R-760 (CF03 empty store): added `empty/CF03-settings-storage-empty` (+`@2x`) — the `empty`
+    scenario is the one base that genuinely drives every storage category to (rounded) zero,
+    which `overnight`'s configured-device state never does.
+  - R-371 (frequency-shaped search): added `search-corpus/Q03-frequency-146960` (+`@2x`) —
+    `TextQueryRouter`'s frequency-column routing had a fix but no capture proving a frequency
+    query actually returns the corpus's many 146.960 overs.
+  - R-177 (Fail-Thermal banner): added `thermal/F07-thermal-now@2x` and a same-scenario
+    `thermal/F07-thermal-now-t6s` (`waitMillis: 6000`) — comparing the "since HH:MM:SS" text
+    between the two lets a reviewer confirm the transition instant is fixed, not recomputed from
+    "now" on every poll, without a second tour run.
+  - R-801 (board fixes): added `llm-enabled-prose/DG05-digest-prose@2x-end`, the one missing
+    scale/scroll combination on an already-reachable board in that reviewer round's list.
+  - Corrected `results/ui-audit/README.md`'s own stale claims in the same pass (S05 now reachable,
+    `EXTRA_FONT_SCALE` now exists, `Search` results now render, and — the one substantive
+    correction — `Station`'s Split sub-screen is **not** actually unreachable, contrary to what
+    that file said).
+- **R-1107/R-085 (`Setup-Mic-Denied`, S02b) — investigated in full, confirmed NOT closeable within
+  this unit's file ownership, not faked.** Two independent, code-confirmed blockers (both found by
+  reading `SetupActivity.kt`, not assumed): (1) `SetupStateMachine.stepFor`'s `MICROPHONE_DENIED`
+  gate reads live `PackageManager`/`shouldShowRequestPermissionRationale` state that no debug
+  scenario can seed, and `install.ps1` grants `RECORD_AUDIO` unconditionally before every scenario
+  in the canonical run, so the real gate can never fire; (2) unlike `VERIFY`/`RADIO` (S05/S09),
+  which a debug `EXTRA_STEP` can force past a live gate via `tryOpenAtRequestedStep`'s ordinal
+  check, `MICROPHONE_DENIED` is one of the four steps `SetupActivity.shouldRefreshStepOnResume`
+  unconditionally re-derives on every `onResume` (by design — it is how a real "Open Settings"
+  round-trip re-checks the permission), so a forced `EXTRA_STEP` entry is overwritten by the very
+  next `onResume`, before `ScreenshotTourActivity`'s own settle-poll ever observes it. Closing this
+  needs either a debug-only permission/step-force override seam in `SetupActivity.kt` (`src/main`,
+  outside this unit's ownership) or a change to `install.ps1`/`tour.ps1` (owned by another builder
+  this wave). Documented in `results/ui-audit/README.md` and reported to the lead rather than
+  shipping a step that would fail every canonical run.
+- **R-320/R-180 (`D05 Detail-Why`) — deliberately left uncovered, per this unit's own brief**: no
+  `initialWhyOpen`/drill-in seam was added. `AttributionMarker`/`AttributionRow`/
+  `TitleAttributionRow` carry no `onClick` at all (R-1117), a product decision owned by a later
+  wave and being actively edited by another builder this round.
+- **R-543** (filter-chip dismiss icon semantics) is not a tour gap at all — it is a semantics-tree
+  defect with no screenshot signature, already correctly verified by a `uiautomator` dump per
+  AGENTS.md's own working-agreement item 7, not by the tour. No action needed.
+- **R-262, R-611, R-550/R-613, R-771/R-320(D02 half)** were already fully covered by existing
+  `tour.json` steps at both scales (and scrolled-to-end where applicable) — confirmed, no action.
+- **R-052, R-056** (correction sheets D08–D11, the labelled-sample form) and **R-350** (R02–R04
+  Improve-Select/Running/Done) remain genuinely interaction-only / unseeded local Compose state,
+  exactly as `tour.json`'s own top `_comment` already documented — confirmed, not re-litigated.
+- **R-431** (FQ02 "always listening" caption) was investigated but **not closed this round**: the
+  always-listening branch (`FrequencyScreen.kt`'s `hasNotListeningHours`) needs a frequency whose
+  seeded sessions cover every hour the pattern chart displays with zero gaps — a real fixture
+  addition to `FrequencyChangeFixtures.kt`, not a one-line tour step, and out of scope for the time
+  this unit had; left for a follow-up rather than gamed with an unrealistic fixture.
+
+**Verified:** `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.debug.tour.TourSpecTest" --tests "org.ort.app.debug.tour.TourStepsTest" --tests "org.ort.app.debug.tour.TourIdsTest" --max-workers=2`
+— all three suites green, including `TourStepsTest`'s `R_TOUR_STEPS every destination step in tour
+json lands on the screen it claims to` (proves the 18 new destination steps, including
+`ST04-split`, each land on the real screen they claim to — `TourSpecTest` proves `tour.json` itself
+stays well-formed: 297 steps, all ids unique, every scenario/destination/settingsScreen/drillIn key
+real). Not run: the full `./gradlew build` gate (not needed for a `tools/ui-audit`+test-only
+change) and the real device/canonical tour itself (no emulator install performed, per this unit's
+own working rule — three emulators are attached and a batch install would collide with the lead's
+gate).
+
+**Left open / not done:** R-431's fixture (flagged above); R-1107/R-085's product-code fix
+(flagged above, needs `SetupActivity.kt` or `install.ps1`/`tour.ps1`, both outside this unit's
+ownership); R-1108 (`ImproveScreens.kt`/`FrequencyScreen.kt`'s empty-`content-desc` defect) was
+noticed in passing while reading `FrequencyScreen.kt` for R-431 but is untouched here — it already
+has its own register row.
+
 ### R-1091, R-1092 · `SetupStep.isHalted()` now agrees with `Setup-Mic-Denied.dc.html`; the FAILED models row renders amber, not dim
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/SetupStep.kt`,

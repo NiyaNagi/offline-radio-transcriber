@@ -166,6 +166,11 @@ class TourStepsTest {
         // this station is known") are the honest check here, not a guessed one.
         drillIn["stationSubScreen"] == "PATTERN" -> Expected.Text("When they are around")
         drillIn["stationSubScreen"] == "IDENTITY" -> Expected.Text("How this station is known")
+        // tour-coverage unit (register R-272/R-770): `SplitSubScreen`'s own real, unconditional
+        // title (`StationIdentityScreen.kt`'s `StationSplitScreen`, "Split this voice") - checked
+        // before the bare `station` branch below for the identical reason PATTERN/IDENTITY already
+        // are: the split screen's own `DrillInHeader` shows the station's callsign, not "Stations".
+        drillIn["stationSubScreen"] == "SPLIT" -> Expected.Text("Split this voice")
         drillIn.containsKey("station") -> Expected.Text("Stations")
         drillIn.containsKey("thread") -> Expected.Text("Threads")
         drillIn.containsKey("frequency") -> Expected.Text("Frequencies")

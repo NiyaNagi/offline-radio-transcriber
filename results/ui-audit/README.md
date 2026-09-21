@@ -786,6 +786,53 @@ initial `Search` screen (`Q01`) — the query field starts empty and nothing sub
 A validator still drives every one of the states above by hand, exactly as `results/ui-audit/README.md`'s
 existing sections describe; the tour is additive, not a replacement for validation.
 
+**v9 update (tour-coverage unit, register R-1107/R-770/R-1021/R-1025 — several paragraphs above are
+now stale and corrected here rather than rewritten in place, so the history above stays legible):**
+
+- **Several claims above are out of date.** S05 (`VERIFY`) *is* now reached (v7, via `setup-verified`'s
+  fully-resolved store — see `tour.json`'s own top `_comment`); `SetupActivity` *does* now have an
+  `EXTRA_FONT_SCALE` seam (used by every `setup` step's own `fontScale`); and `Search` results *do*
+  now render (`search-corpus/Q03-*` steps, `searchQuery`/`searchSubmit`). S06 (`ROUTE_MISMATCH`),
+  S10/S11 (`RADIO_USB`/`RADIO_VERIFIED`) remain correctly excluded for the reasons already stated.
+- **`Station`'s Split sub-screen is reachable after all** — the paragraph above is wrong that it has
+  "no step": `StationDetailContent.initialSubScreen` (the same WP8 seam that already reaches
+  `PATTERN`/`IDENTITY`) accepts `StationSubScreen.SPLIT` too (`TourIds.resolveSeed`'s own
+  `stationSubScreen` validation already named it as a legal value; nothing was reading it). Added
+  `stations-14-nights/ST04-split` (+ `@2x`/`@2x-end`), closing register R-272's coverage gap with no
+  code change beyond the tour step itself and one `TourStepsTest` marker (`"Split this voice"`,
+  `StationSplitScreen`'s own real title).
+- **Added:** `overnight/D01-confirmed`/`D03-ambiguous`/`D04-unknown` now each have `@2x`/`@2x-end`
+  siblings (previously 1.0-only, unlike `D02-inferred`) — R-720/R-721/R-188; `gap-call/L01-log-gap`
+  now has `@2x`/`@2x-end` siblings — R-106; `empty/CF03-settings-storage-empty` (+`@2x`) exercises the
+  genuinely-empty storage bar `overnight`'s own configured-device state never could — R-760;
+  `search-corpus/Q03-frequency-146960` (+`@2x`) exercises the frequency-shaped query path
+  (`TextQueryRouter`) that no step previously captured — R-371; `thermal/F07-thermal-now@2x` and a
+  same-scenario `thermal/F07-thermal-now-t6s` (`waitMillis: 6000`, no scroll) let a reviewer diff the
+  "dropped to tier N at HH:MM:SS" text against the un-delayed capture to confirm it is a fixed
+  transition instant, not something that advances on every poll — R-177;
+  `llm-enabled-prose/DG05-digest-prose@2x-end` fills the one missing scale/scroll combination on an
+  already-reachable screen — part of R-801's own board list.
+- **Confirmed still not reachable, and why it is a product-code question, not a tour gap:**
+  **S02b (`Setup-Mic-Denied`, register R-1107/R-085).** `design/canvas/Setup-Mic-Denied.dc.html`
+  exists and is a genuine, shipped halt (R-1091), but no scenario can make the tour land on it and
+  stay there. Two independent blockers, both confirmed by reading `SetupActivity.kt`, not assumed:
+  (1) `SetupStateMachine.stepFor`'s own `MICROPHONE_DENIED` gate reads live `PackageManager`
+  permission state and `ActivityCompat.shouldShowRequestPermissionRationale` — neither is a
+  preference a debug scenario can honestly seed, and `install.ps1` grants `RECORD_AUDIO`
+  unconditionally before every scenario in the canonical run, so the real gate can never fire.
+  (2) Unlike `VERIFY`/`RADIO` (S05/S09), which a debug `EXTRA_STEP` can force open regardless of the
+  live gate (`SetupActivity.tryOpenAtRequestedStep`'s ordinal check), `MICROPHONE_DENIED` is one of
+  the four steps `SetupActivity.shouldRefreshStepOnResume` unconditionally re-derives on every
+  `onResume` — by production design, so a real "Open Settings" round-trip re-checks the permission —
+  which means the instant a forced `EXTRA_STEP` entry lands, the very next `onResume` (already fired
+  before `ScreenshotTourActivity`'s own settle-poll ever observes the activity) recomputes the honest
+  live step and overwrites it. Closing this needs either a debug-only permission/step-force override
+  seam analogous to `DebugRouteCheckOverride`/`DebugRigLinkPortOverride` (in `SetupActivity.kt`,
+  `src/main`, outside `tools/ui-audit`'s and `app/src/debug`'s own ownership) or a change to
+  `install.ps1`/`tour.ps1` (owned by another builder this wave) — reported to the register rather
+  than faked here, per this file's own established convention for every other genuinely-unreachable
+  id above.
+
 ### `diff.py`
 
 ```powershell
