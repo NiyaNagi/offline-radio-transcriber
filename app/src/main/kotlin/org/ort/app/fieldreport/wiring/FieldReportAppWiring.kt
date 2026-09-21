@@ -1,7 +1,6 @@
 package org.ort.app.fieldreport.wiring
 
 import android.view.Window
-import org.ort.app.BuildConfig
 import org.ort.app.fieldreport.recorder.FieldReportRecorder
 import org.ort.app.fieldreport.recorder.RealScreenFrameCapturer
 import org.ort.app.fieldreport.recorder.ScreenFrameCapturer
@@ -30,10 +29,16 @@ import java.io.File
  * activity attaches one, it simply returns `null`, [ScreenFrameCapturer.capture]'s own legitimate
  * "cannot capture right now" contract, never a thrown exception.
  *
- * **Debug builds only** ([BuildConfig.DEBUG]), matching FR-OBS-6's "absent from release builds" —
- * checked here, at the call site, in addition to (never instead of) [FieldReportRecorder.configure]'s
- * own internal debug-build gate, so a release build never even constructs the `field-report`
- * directory [File] this object would otherwise build.
+ * **Ships in every build (D55), not debug builds only.** FR-OBS-6's original text said "absent
+ * from release builds"; D55 supersedes that — the product owner's own framing was "the beta
+ * should just be the actual app, no special treatment" — because a mechanism gated on
+ * `BuildConfig.DEBUG` is exactly the kind of build-type-shaped accident this codebase otherwise
+ * refuses to rely on (constitution VII: guarantees are structural, not a property one build
+ * variant happens to have today). The session recorder itself never leaves the device on its
+ * own — it is a local ring buffer plus, optionally, locally-stored frames — so running it in
+ * every build carries none of the risk an *upload* would; only [FieldReportUploadClientFactory]
+ * (app/.../fieldreport/upload) decides whether a real destination is configured, and it refuses
+ * outright when one is not (D49), never falling back to a default.
  *
  * **The `HandlerThread` leak WPR1 flagged and WPR2 could only bound — now actually closed.**
  * [RealScreenFrameCapturer] started its own [android.os.HandlerThread] lazily and never quit it;
@@ -54,14 +59,12 @@ public object FieldReportAppWiring {
     /** [org.ort.app.OrtApplication]'s own `filesDir`-shaped seam — a plain [File] rather than a
      * `Context`, so this stays trivially testable with a temp directory. */
     public fun configureOnce(filesDir: File) {
-        if (!BuildConfig.DEBUG) return
         FieldReportRecorder.configure(filesDir = filesDir, frameCapturer = delegatingCapturer)
     }
 
     /** [org.ort.app.ui.ReaderActivity.onCreate]'s own call — see this object's own doc comment for
      * why this never calls [FieldReportRecorder.configure] again. */
     public fun attachWindow(window: Window) {
-        if (!BuildConfig.DEBUG) return
         delegatingCapturer.delegate = RealScreenFrameCapturer(window)
     }
 

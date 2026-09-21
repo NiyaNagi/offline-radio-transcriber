@@ -948,7 +948,7 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
 
   **Done when:** both are observed on a device, not in Robolectric.
 
-- [ ] **P36 · Outbound channels — field reports in release, private and redacted; Gemma notices**
+- [x] **P36 · Outbound channels — field reports in release, private and redacted; Gemma notices**
   *(`:app` fieldreport, `:net`, licences screen)* — D55, D49, FR-OBS-6..12, FR-OBS-10,
   constitution V. **Beta blocker.**
 

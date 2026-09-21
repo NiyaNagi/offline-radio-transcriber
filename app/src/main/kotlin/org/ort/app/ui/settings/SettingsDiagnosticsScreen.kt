@@ -227,8 +227,9 @@ private fun LocalSaveCategoryRow(
 }
 
 /**
- * WPR2 (FR-OBS-6..12, D37/D38): the debug-only field report section — a `Send field report…`
- * entry into [FieldReportConsentScreen] (FR-OBS-9), and the FR-OBS-10 Settings switch itself.
+ * WPR2 (FR-OBS-6..12, D37/D38), no longer debug-only per D55: the field report section — a
+ * `Send field report…` entry into [FieldReportConsentScreen] (FR-OBS-9), and the FR-OBS-10
+ * Settings switch itself.
  * [state.publicGuardEnabled] `true` is the safe position: the switch reads *checked* when the
  * guard is explicitly turned **off** (`!publicGuardEnabled`), matching this screen's own label
  * ("Allow …") — [onSetPublicDestinationGuardEnabled] receives the resulting guard-enabled value
@@ -243,7 +244,7 @@ private fun FieldReportSection(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg)) {
-        SectionHeader(label = "Field report (debug builds only)")
+        SectionHeader(label = "Field report")
         Text(
             text = "A closed-vocabulary session log plus, on request, retained audio, voiceprint " +
                 "embeddings or screen frames — shown in full before every send (FR-OBS-6..12).",

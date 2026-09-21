@@ -22,6 +22,25 @@ public interface ScreenFrameCapturer {
 }
 
 /**
+ * D55/FR-OBS-7: which [RecorderDestination]s can render an operator-typed station name or note on
+ * screen — [org.ort.app.ui.screens.StationIdentityScreen]'s own "Given by you" name/note fields
+ * (FR-SPK-25, FR-DIG-13), reached at [RecorderDestination.STATION_DETAIL]. Constitution V puts a
+ * user-supplied name and station knowledge in **no** channel and **no** tier at all — the
+ * field-report exception (FR-OBS-9, FR-OBS-10, D38) covers voiceprints and embeddings only, never
+ * names — so a screen frame captured here would already be a breach the moment it existed.
+ *
+ * A screen frame is pixels, not [RecorderEvent]'s closed, name-free vocabulary (FR-OBS-6): nothing
+ * downstream (`CallsignScrubber`, FR-OBS-8's ungated-set scrubbing) can find and remove a name from
+ * a bitmap the way it can from a log line. **The only correct mechanism is never capturing the
+ * frame at all** — [FieldReportRecorder.onDestinationChanged] checks this predicate *before* it
+ * ever calls [ScreenFrameCapturer.capture], so a redacted destination produces zero frames, not a
+ * frame with something removed from it afterward. Scrubbing a bundle at upload time (FR-OBS-8's own
+ * discipline for the *text* files) is deliberately not how this is done: a frame that ever held the
+ * name is already the breach, regardless of what a later step does to the bytes.
+ */
+public fun RecorderDestination.mayRenderUserSuppliedContent(): Boolean = this == RecorderDestination.STATION_DETAIL
+
+/**
  * The real, device-touching [ScreenFrameCapturer]: [PixelCopy] against [window], downscaled to
  * roughly the artboard's own width (~390 px, `design/design-guide.md` — [targetWidthPx]), encoded
  * as PNG.
