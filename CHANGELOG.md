@@ -32,6 +32,87 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (q-coverage-crossrefs: `CoverageMatrix`'s cross-reference regex extended to recognise `P<n>` build-plan units, `IA-<n>` decisions, `CONSTITUTION <numeral>` citations and design-intent.md's screen-id families — the orphan count from the q-coverage-orphans diagnosis (867bfdd5) goes to zero honestly)
+
+### `<pending>` — q-coverage-crossrefs: CoverageMatrix.kt recognises P/IA-/CONSTITUTION/screen-id citations as cross-references, not orphans
+
+**Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/CoverageMatrix.kt`,
+`buildSrc/src/test/kotlin/org/ort/gradle/CoverageMatrixTest.kt`, `results/coverage-matrix.md`
+(regenerated), `results/backlog.md` (regenerated). No test annotation, no
+`spec/functional-spec.md` id, and nothing under `app/`, `:pipeline` or `:capture-*` touched.
+
+**Requirements/ACs:** F-023, F-027, F-029 (the existing cross-reference mechanism this extends);
+none new — this is tooling, not a requirement.
+
+**What changed:** the q-coverage-orphans diagnosis (867bfdd5) traced all 12 ids in the orphan
+list to legitimate homes outside `spec/functional-spec.md` and found the real gap was
+`CoverageMatrix.kt`'s `CROSS_REFERENCE` regex, which already special-cased bare `F`/`D`/`R`/`Q`
+ids but not the other four families actually in use. Split the single regex into four, each with
+its own doc comment naming the family and a real call site:
+
+- `BARE_REGISTER_REFERENCE` — the original `^[FDRQ]-?\d+[A-Z]?$`, now `^[FDPRQ]-?\d+[A-Z]?$`:
+  `P` joined the set, so `P9` (a `spec/build-plan.md` unit, cited bare the way the constitution's
+  own text cites build-plan units) is recognised.
+- `IA_DECISION_REFERENCE` — new, `^IA-\d+[A-Z]?$`: `IA-3`, and the `IA-1`/`IA-2`/`IA-6` already
+  cited inline in `design/design-intent.md`'s own `Serves` columns.
+- `CONSTITUTION_REFERENCE` — new, `^CONSTITUTION [IVXLCDM]+(:\s.+)?$`: covers both the bare form
+  (`constitution I`, `constitution VIII`) and the long form with its clause text
+  (`constitution I: a label never changes an attribution`), matched against the id *after*
+  `normalise()` upper-cases it.
+- `SCREEN_ID_REFERENCE` — new, `^(ST|FQ|DG|RC|CF|FL|C|S|N|L|T)\d{1,3}[A-Z]?$`: the prefixes
+  `design/design-intent.md` actually uses for its screen-id table (`C`=Foundations §1,
+  `S`=Setup §2, `N`=Now §3, `L`=Log §4, `T`=Threads §5, `ST`=Stations §8, `FQ`=Frequencies §8,
+  `DG`=Digest §9, `RC`=Recordings §9, `CF`=Settings §11, `FL`=Flows §13 — Digest §6/Search §7's
+  own `D`/`Q` prefixes were already covered by `BARE_REGISTER_REFERENCE`, a real and harmless
+  overlap between two different registers), plus the optional trailing sub-step letter
+  (`S02c`, `N01b`) design-intent.md itself uses. Deliberately enumerated by prefix rather than a
+  generic "letters then digits" shape, and deliberately *not* validated against
+  `design/design-intent.md`'s actual row list — the KDoc above `SCREEN_ID_REFERENCE` argues why:
+  a real content check would mean threading a new input directory through
+  `CoverageMatrixTask`/`CoverageMatrixCheckTask`/`build.gradle.kts`, none of which this unit
+  owns, to catch a narrower failure mode (a shaped-right screen id that doesn't exist) the orphan
+  list was never asked to catch. None of the four new prefixes/shapes can collide with a real
+  `FR-`/`AC-`/`NFR-`/`CON-` id, which always carries its own two/three/four-letter prefix and a
+  hyphen the new patterns don't produce.
+
+Added discriminating tests to `CoverageMatrixTest.kt`, one per family plus the boundary case:
+`P9 a bare build-plan unit id is a cross-reference, not an orphan`,
+`` IA-3 an information-architecture decision id is a cross-reference, not an orphan``,
+`a CONSTITUTION principle citation, bare or with its clause text, is a cross-reference`,
+`` design-intent screen ids C10, N08, RC01 and RC02 are cross-references, not orphans``,
+`a screen id with a sub-step letter, like S02c, is a cross-reference`, and — the boundary the
+task exists to protect — `a plausible typo of a real requirement id still reports as an orphan`,
+which plants `FR-LEX-99` and `AC-9999` beside a real `FR-LEX-8`/`AC-9` and asserts both still
+orphan. That last test's ids and its `@Requirement(...)` text are assembled at runtime by string
+concatenation (the F-029 fixture technique already used elsewhere in this file), never written
+as one contiguous literal anywhere in the file including comments — `buildSrc/src/test/kotlin`
+is itself one of the real `coverageMatrix` task's scanned roots (F-027), and a literal
+`FR-LEX-99` sitting in this file's own source text was caught leaking into the real generated
+`results/coverage-matrix.md` as a false orphan during verification, before being fixed.
+
+**Verified:**
+- `./gradlew -p buildSrc test` — BUILD SUCCESSFUL, all `CoverageMatrixTest` cases green including
+  the six new ones.
+- `./gradlew coverageMatrix` then `./gradlew coverageMatrixCheck` (separate invocations, per
+  AGENTS.md — together they trip Gradle validation): `coverageMatrix` now logs no orphan warning
+  at all (previously `orphan tests naming unknown requirements: [...12 ids...]`);
+  `coverageMatrixCheck` reports "up to date (344 covered of 548)". `results/coverage-matrix.md`'s
+  "Tests naming a requirement id not in the spec" count is **12 → 0**; all twelve moved into the
+  "Cross-referenced" section with their real `@Requirement(...)` citations preserved.
+- `python tools/backlog/backlog.py` — the `coverage-orphans` row is gone from
+  `results/backlog.md` (its "Coverage matrix" surface count drops from 2 to 1 open item); total
+  open items **149 → 148**.
+
+**Left open / not done:** the `SCREEN_ID_REFERENCE` prefix list is a deliberate, static
+enumeration of what `design/design-intent.md` uses *today*; a future section added to that
+inventory with a genuinely new prefix will need this list extended by hand (same maintenance
+burden as `BARE_REGISTER_REFERENCE` already has for F/D/R/Q). Validating screen ids against the
+document's actual content, so a shaped-right-but-nonexistent screen id is still caught, was
+considered and argued against above rather than built — flagged, not fixed, and out of this
+unit's file ownership regardless (`CoverageMatrixTask.kt`/`build.gradle.kts`).
+
+---
+
 ## 2026-09-21 (R-1149/R-1145: `diff.py` refuses a geometry-mismatched pair instead of reporting noise, `tour.ps1` asserts the `wm size` override is set, and Thread-Detail's artboard header matches the shared `DrillInHeader`)
 
 ### `784bcbb5` — p-evidence-guards: R-1149 cross-run capture-geometry guard in `diff.py` + `wm size` override assertion in `tour.ps1`; R-1145 Thread-Detail.dc.html header redrawn to match `Station`/`Digest`

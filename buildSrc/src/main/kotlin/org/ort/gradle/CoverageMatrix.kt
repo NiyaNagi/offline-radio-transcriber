@@ -39,8 +39,63 @@ object CoverageMatrix {
      * `@Requirement("FR-UI-7", "F-005")`-style annotations use that form — the bare-only regex
      * rejected it, so a correctly-cited audit id fell through to "orphan" in the generated
      * matrix. The hyphen is now optional.
+     *
+     * q-coverage-crossrefs: `P` joined this set. `P9` (`@Requirement("FR-STO-3", "P9")` and
+     * others) is a build-plan unit id from `spec/build-plan.md`, cited bare the same way the
+     * constitution's own text cites build-plan units — not a requirement, and not new: it was
+     * always meant to live alongside F/D/R/Q here, it was simply left out.
      */
-    private val CROSS_REFERENCE = Regex("""^[FDRQ]-?\d+[A-Z]?$""")
+    private val BARE_REGISTER_REFERENCE = Regex("""^[FDPRQ]-?\d+[A-Z]?$""")
+
+    /**
+     * q-coverage-crossrefs: `IA-3` (`@Requirement("IA-3")` in RecordingSessionScreenTest) is an
+     * information-architecture decision id — the same family as `IA-1`, `IA-2`, `IA-6` cited
+     * throughout `design/design-intent.md`'s own `Serves` columns (e.g. C10's row cites
+     * `IA-1, IA-2`; RC02's cites `IA-6`). It is a cross-reference for the same reason `D<n>` is:
+     * a decision id, not a requirement id.
+     */
+    private val IA_DECISION_REFERENCE = Regex("""^IA-\d+[A-Z]?$""")
+
+    /**
+     * q-coverage-crossrefs: `constitution I`, `constitution VIII`, and the long form
+     * `constitution I: a label never changes an attribution` (normalised upper-case by
+     * [normalise]) are citations of a `.specify/memory/constitution.md` principle by its roman
+     * numeral, optionally followed by a colon and the clause text the test is pinning — e.g.
+     * RecordingSessionScreenTest's `"constitution I: a label never changes an attribution"`. Not
+     * a requirement id; the constitution is binding but is not `spec/functional-spec.md`.
+     */
+    private val CONSTITUTION_REFERENCE = Regex("""^CONSTITUTION [IVXLCDM]+(:\s.+)?$""")
+
+    /**
+     * q-coverage-crossrefs: `C10`, `N08`, `RC01`, `RC02` (and `S00`..`S12`/`S01a` etc., `L01`,
+     * `T01`, `ST01`, `FQ01`, `DG01`, `CF01`, `FL1`) are `design/design-intent.md` screen ids —
+     * that inventory's own `#` column, one row per artboard, grouped by section: `C`oncept/
+     * foundations (§1), `S`etup (§2), `N`ow (§3), `L`og (§4), `T`hreads (§5) — Digest (§6) and
+     * Search (§7) reuse the `D`/`Q` prefixes already covered by [BARE_REGISTER_REFERENCE] above,
+     * which is a real, harmless overlap: both are cross-references, just from different
+     * registers — `ST`ations/frequencies (§8, `ST`/`FQ`), Digest-and-nights (§9, `DG`/`RC`),
+     * `CF` settings (§11), and `FL` flows (§13) round out the set. A screen id may carry a
+     * trailing sub-step letter (`S02c`, `N01b`, `S11a`) the way requirement ids carry a trailing
+     * letter, so that is optional here too.
+     *
+     * Deliberately enumerated, not a generic "letters then digits" shape: `AC`, `FR`, `NFR` and
+     * `CON` (the real requirement prefixes) never appear in this list, so a typo'd requirement id
+     * such as `AC-9999` or `FR-LEX-99` cannot land here by accident — it still has no match among
+     * these prefixes and correctly falls through to "orphan". This is matched by *shape* against
+     * the prefixes design-intent.md is known to use today, not validated against that file's
+     * actual row list — see this unit's report for why: wiring a `design/` read into a pure,
+     * Gradle-independent, easily-unit-tested object would mean threading a new input directory
+     * through [CoverageMatrixTask]/[CoverageMatrixCheckTask]/`build.gradle.kts`, none of which
+     * this unit owns, to catch one narrower failure mode (a screen id that is shaped right but
+     * does not exist) that the orphan list was never the tool asked to catch in the first place.
+     */
+    private val SCREEN_ID_REFERENCE = Regex("""^(ST|FQ|DG|RC|CF|FL|C|S|N|L|T)\d{1,3}[A-Z]?$""")
+
+    /** Every pattern that marks an id as a cross-reference rather than a requirement or an orphan. */
+    private val CROSS_REFERENCE_PATTERNS =
+        listOf(BARE_REGISTER_REFERENCE, IA_DECISION_REFERENCE, CONSTITUTION_REFERENCE, SCREEN_ID_REFERENCE)
+
+    private fun isCrossReference(id: String): Boolean = CROSS_REFERENCE_PATTERNS.any { it.matches(id) }
 
     /**
      * F-027: `corpus/` is Python (its own `pyproject.toml`, pytest under `corpus/tests/`), not a
@@ -58,9 +113,9 @@ object CoverageMatrix {
         val covered: Set<String> get() = testsByRequirement.keys.filter { it in requirements }.toSet()
         val uncovered: List<String> get() = requirements.filterNot { it in testsByRequirement }
         val orphanTests: Map<String, List<String>>
-            get() = testsByRequirement.filterKeys { it !in requirements && !CROSS_REFERENCE.matches(it) }
+            get() = testsByRequirement.filterKeys { it !in requirements && !isCrossReference(it) }
         val crossReferencedTests: Map<String, List<String>>
-            get() = testsByRequirement.filterKeys { it !in requirements && CROSS_REFERENCE.matches(it) }
+            get() = testsByRequirement.filterKeys { it !in requirements && isCrossReference(it) }
     }
 
     fun requirementsFrom(specDir: File): List<String> {

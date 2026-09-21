@@ -171,6 +171,173 @@ class CoverageMatrixTest {
         assertFalse(rendered.contains("## Orphan tests"), rendered)
     }
 
+    // q-coverage-crossrefs: results/backlog.md flagged 12 tests naming an id the spec does not
+    // define. All twelve were diagnosed (commit 867bfdd5) as legitimate citations to a home
+    // outside spec/functional-spec.md — a constitution principle, a design-intent.md screen id,
+    // an information-architecture decision, or a build-plan unit — not typos and not a spec gap.
+    // These pin each newly-recognised family as a cross-reference, never an orphan.
+
+    @Test
+    fun `P9 a bare build-plan unit id is a cross-reference, not an orphan`(@TempDir dir: Path) {
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("AC-1 exists.")
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        File(tests, "T.kt").writeText(
+            """
+            class T {
+                @Requirement("FR-STO-3", "P9")
+                @Test fun something() {}
+            }
+            """.trimIndent(),
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        assertFalse(coverage.orphanTests.containsKey("P9"), coverage.orphanTests.toString())
+        assertTrue(coverage.crossReferencedTests.containsKey("P9"), coverage.crossReferencedTests.toString())
+    }
+
+    @Test
+    fun `IA-3 an information-architecture decision id is a cross-reference, not an orphan`(@TempDir dir: Path) {
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("AC-1 exists.")
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        File(tests, "T.kt").writeText(
+            """
+            class T {
+                @Requirement("IA-3")
+                @Test fun something() {}
+            }
+            """.trimIndent(),
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        assertFalse(coverage.orphanTests.containsKey("IA-3"), coverage.orphanTests.toString())
+        assertTrue(coverage.crossReferencedTests.containsKey("IA-3"), coverage.crossReferencedTests.toString())
+    }
+
+    @Test
+    fun `a CONSTITUTION principle citation, bare or with its clause text, is a cross-reference`(
+        @TempDir dir: Path,
+    ) {
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("AC-1 exists.")
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        File(tests, "T.kt").writeText(
+            """
+            class T {
+                @Requirement("constitution I")
+                @Test fun bare() {}
+
+                @Requirement("constitution VIII")
+                @Test fun roman_eight() {}
+
+                @Requirement("constitution I: a label never changes an attribution")
+                @Test fun with_clause_text() {}
+            }
+            """.trimIndent(),
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        assertFalse(coverage.orphanTests.containsKey("CONSTITUTION I"), coverage.orphanTests.toString())
+        assertFalse(coverage.orphanTests.containsKey("CONSTITUTION VIII"), coverage.orphanTests.toString())
+        assertFalse(
+            coverage.orphanTests.containsKey("CONSTITUTION I: A LABEL NEVER CHANGES AN ATTRIBUTION"),
+            coverage.orphanTests.toString(),
+        )
+        assertTrue(coverage.crossReferencedTests.containsKey("CONSTITUTION I"))
+        assertTrue(coverage.crossReferencedTests.containsKey("CONSTITUTION VIII"))
+        assertTrue(
+            coverage.crossReferencedTests.containsKey("CONSTITUTION I: A LABEL NEVER CHANGES AN ATTRIBUTION"),
+        )
+    }
+
+    @Test
+    fun `design-intent screen ids C10, N08, RC01 and RC02 are cross-references, not orphans`(
+        @TempDir dir: Path,
+    ) {
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("AC-1 exists.")
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        File(tests, "T.kt").writeText(
+            """
+            class T {
+                @Requirement("C10")
+                @Test fun a() {}
+
+                @Requirement("FR-UI-7", "N08")
+                @Test fun b() {}
+
+                @Requirement("RC01", "FR-STO-3")
+                @Test fun c() {}
+
+                @Requirement("RC02", "FR-RUN-12")
+                @Test fun d() {}
+            }
+            """.trimIndent(),
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        listOf("C10", "N08", "RC01", "RC02").forEach { id ->
+            assertFalse(coverage.orphanTests.containsKey(id), "$id: ${coverage.orphanTests}")
+            assertTrue(coverage.crossReferencedTests.containsKey(id), "$id: ${coverage.crossReferencedTests}")
+        }
+    }
+
+    @Test
+    fun `a screen id with a sub-step letter, like S02c, is a cross-reference`(@TempDir dir: Path) {
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("AC-1 exists.")
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        File(tests, "T.kt").writeText(
+            """
+            class T {
+                @Requirement("S02c")
+                @Test fun something() {}
+            }
+            """.trimIndent(),
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        assertFalse(coverage.orphanTests.containsKey("S02C"), coverage.orphanTests.toString())
+        assertTrue(coverage.crossReferencedTests.containsKey("S02C"), coverage.crossReferencedTests.toString())
+    }
+
+    @Test
+    fun `a plausible typo of a real requirement id still reports as an orphan`(@TempDir dir: Path) {
+        // The boundary this unit exists to protect: the new families must not be so permissive
+        // that a mistyped FR-/AC- id is silently swallowed as "probably a cross-reference". A
+        // real stale/typo'd id must keep surfacing so traceability rot is still caught.
+        //
+        // audit F-029's fixture technique applies here, and for the same reason it did in
+        // "an orphan test naming an unknown requirement is surfaced" above: buildSrc's own test
+        // sources are one of the real coverageMatrix task's scanned roots (F-027), so a literal
+        // requirement-annotation-shaped string sitting in *this file's* own source text —
+        // including inside a comment — would be picked up as a genuine (fake) citation and
+        // rendered into the committed results/coverage-matrix.md as false orphans. The ids and
+        // the annotation text are therefore assembled at runtime by concatenation, never written
+        // as one contiguous literal anywhere in this file, comments included.
+        val spec = dir.resolve("spec").toFile().apply { mkdirs() }
+        File(spec, "s.md").writeText("**FR-LEX-8 (M)** the real requirement. AC-9 also exists.")
+        val tests = dir.resolve("t").toFile().apply { mkdirs() }
+        val frTypo = "FR-LEX-" + "99"
+        val acTypo = "AC-" + "9999"
+        val requirementAnnotation = "@" + "Requirement"
+        File(tests, "T.kt").writeText(
+            "class T {\n" +
+                "    $requirementAnnotation(\"$frTypo\")\n" +
+                "    @Test fun a() {}\n\n" +
+                "    $requirementAnnotation(\"$acTypo\")\n" +
+                "    @Test fun b() {}\n" +
+                "}\n",
+        )
+
+        val coverage = CoverageMatrix.analyse(spec, listOf(tests))
+        assertTrue(coverage.orphanTests.containsKey(frTypo), coverage.orphanTests.toString())
+        assertTrue(coverage.orphanTests.containsKey(acTypo), coverage.orphanTests.toString())
+        assertFalse(coverage.crossReferencedTests.containsKey(frTypo), coverage.crossReferencedTests.toString())
+        assertFalse(coverage.crossReferencedTests.containsKey(acTypo), coverage.crossReferencedTests.toString())
+    }
+
     // F-014: results/coverage-matrix.md is committed but nothing failed CI when it went stale.
     // contentMatches() is the comparison `coverageMatrixCheck` uses to fail loudly instead.
 

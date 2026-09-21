@@ -15,8 +15,8 @@ process, polish, open questions and coverage debt are P2.
 | Build-plan units | 9 | 2 | 7 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
-| Coverage matrix | 2 | 0 | 0 | 2 |
-| **Total** | **149** | **30** | **48** | **71** |
+| Coverage matrix | 1 | 0 | 0 | 1 |
+| **Total** | **148** | **30** | **48** | **70** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -110,7 +110,6 @@ process, polish, open questions and coverage debt are P2.
 
 | id | what | source | state | refs / note |
 |---|---|---|---|---|
-| coverage-orphans | 12 tests name a requirement id the spec does not have | coverage | open | ./gradlew coverageMatrix |
 | coverage-uncovered | 204 requirement ids have no test | coverage | open | ./gradlew coverageMatrix |
 | T1 | Speaker embedding separation on narrowband off-air audio | questions | open |  |
 | T2 | Phonetic-unit KWS accuracy on radio audio | questions | open |  |
