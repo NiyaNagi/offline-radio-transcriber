@@ -101,8 +101,13 @@ public object OrtColors {
     /** Unselected chip border. oklch(0.30 0.010 250) */
     public val lineChip: Color = Color(0xFF2A2E33)
 
-    /** Unselected radio and checkbox border. oklch(0.40 0.008 250) */
-    public val lineControl: Color = Color(0xFF44484C)
+    /** Unselected radio and checkbox border. oklch(0.49 0.008 250)
+     *
+     * R-1089: raised from oklch(0.40 0.008 250) (`0x44484C`) — measured at 2.12:1 against
+     * `bg/screen`, against the 3:1 floor SC 1.4.11 sets for a UI component's border (an unselected
+     * checkbox/radio must be perceivable as a control, not just guessed at). 0.49 clears 3:1 with
+     * margin (3.12:1). */
+    public val lineControl: Color = Color(0xFF5D6165)
 
     /** The bottom-sheet drag handle. oklch(0.34 0.010 250) */
     public val lineHandle: Color = Color(0xFF34383D)
@@ -153,20 +158,65 @@ public object OrtColors {
     /** Section labels, secondary sub-lines. oklch(0.58 0.008 250) */
     public val textFaint: Color = Color(0xFF777B7F)
 
-    /** Score chips, counts beside a list row. oklch(0.55 0.008 250) */
-    public val textFigure: Color = Color(0xFF6E7276)
+    /** Score chips, counts beside a list row. oklch(0.63 0.008 250)
+     *
+     * R-1089: raised from oklch(0.55 0.008 250) (`0x6E7276`) — measured (P32, computed WCAG 2.2)
+     * at 3.39:1 against `bg/score` (its harder ground: a score chip sits on `bg/score`, which is
+     * lighter than `bg/screen`), against a 4.5:1 floor, because this token renders real prose at
+     * normal sizes (`Drawer.kt`'s trailing counts, `Controls.kt`'s badge counts, `FrequencyScreen`/
+     * `StationScreen`'s `timeFreq` last-heard values — none of them large text). 0.63 clears both
+     * grounds with a small margin: 4.71:1 on `bg/score`, higher still on `bg/screen`. See
+     * `OrtColorsContrastTest.R_1089` for the computed proof against both. */
+    public val textFigure: Color = Color(0xFF868A8E)
 
-    /** "unknown station", axis labels, artboard ids. oklch(0.52 0.008 250) */
-    public val textLow: Color = Color(0xFF66696D)
+    /** "unknown station", axis labels, artboard ids. oklch(0.605 0.008 250)
+     *
+     * R-1089: raised from oklch(0.52 0.008 250) (`0x66696D`) — measured at 3.55:1 against
+     * `bg/screen`, against a 4.5:1 floor, because `AttributionRow`/`TitleAttributionRow` render
+     * "unknown station" as real 13sp/27sp prose (well under WCAG's large-text threshold), not a
+     * decorative glyph. Chosen over raising that call site's type size: 13sp would need to grow to
+     * roughly 19sp to cross into "large text" territory, which changes row height and wraps
+     * differently at font scale 2.0 in already-dense log/list rows — a layout cost for every
+     * caller, for every screen, to spare one token a lightness bump. This token's other use as
+     * `ActivityPatternChart`'s bar fill (3:1, non-text) only gets a larger margin from the raise;
+     * `OrtColorsContrastTest` still proves that pair explicitly. 0.605 clears 4.5:1 on `bg/screen`
+     * with margin (5.03:1). */
+    public val textLow: Color = Color(0xFF7E8286)
 
-    /** Signal figures, chevrons, recent-search icon. oklch(0.50 0.008 250) */
-    public val textSignal: Color = Color(0xFF606468)
+    /** Signal figures, chevrons, recent-search icon. oklch(0.595 0.008 250)
+     *
+     * R-1089: raised from oklch(0.50 0.008 250) (`0x606468`) — measured at 3.27:1 against
+     * `bg/screen`, against a 4.5:1 floor, because this token also renders real prose at a normal
+     * size: `Controls.kt`'s 14sp search-field placeholder. (Its icon/knob/ring uses — chevrons,
+     * the toggle knob, `InProgressRing` — are graphical, not text, and only gain margin from the
+     * raise.) Same reasoning as `textLow` for not growing the type instead: a placeholder needing
+     * ~19sp to become "large text" would no longer fit its field at any density this app ships.
+     * 0.595 clears 4.5:1 on `bg/screen` with margin (4.83:1). */
+    public val textSignal: Color = Color(0xFF7B7F83)
 
-    /** Column headers, disabled text actions. oklch(0.46 0.008 250) */
-    public val textDisabled: Color = Color(0xFF55585C)
+    /** Column headers, disabled text actions. oklch(0.585 0.008 250)
+     *
+     * R-1089: raised from oklch(0.46 0.008 250) (`0x55585C`) — measured at 2.75:1 against
+     * `bg/screen`, against a 4.5:1 floor, because this token is not only "disabled text" (which an
+     * inert control could arguably be exempt for) but the live, load-bearing column-header text on
+     * Stations/Thread-Detail/Frequency (`OrtType.columnHeader`, 9.5sp) — text an operator actually
+     * reads every time the screen renders, at a size nowhere near WCAG's large-text floor. 0.585
+     * clears 4.5:1 on `bg/screen` with margin (4.63:1). */
+    public val textDisabled: Color = Color(0xFF787C80)
 
-    /** The UNKNOWN attribution dot. oklch(0.45 0.008 250) */
-    public val markerUnknown: Color = Color(0xFF52565A)
+    /** The UNKNOWN attribution dot. oklch(0.495 0.008 250)
+     *
+     * R-1089: raised from oklch(0.45 0.008 250) (`0x52565A`) — measured at 2.63:1 against
+     * `bg/screen`, against the 3:1 floor SC 1.4.11 sets for a graphical object required to
+     * understand content: this dot is the one mark that tells the operator the app does not know
+     * who is speaking, so it must clear the non-text floor on its own, not lean on the 5/9-scaled
+     * size or the other three states' colour difference. 0.495 clears 3:1 with margin (3.17:1) and
+     * stays a neutral grey (hue 250, chroma 0.008, unchanged) — nowhere near `accent/green`'s or
+     * `accent/amber`'s hue, so the four attribution states remain mutually distinguishable by hue
+     * and shape exactly as before ([AttributionShape]'s own doc comment: "colour-independent
+     * because it differs in size, not just shade" still holds — only the size difference), not
+     * merely distinguishable from the background. */
+    public val markerUnknown: Color = Color(0xFF5E6266)
 
     // ---------------------------------------------------------------------------------------
     // Green accent family — CONFIRMED, live, nominal (guide §3 "Accents").
