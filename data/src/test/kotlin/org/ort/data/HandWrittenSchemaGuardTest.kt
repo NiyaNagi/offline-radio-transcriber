@@ -53,6 +53,7 @@ public class HandWrittenSchemaGuardTest {
 
     @Test
     @Requirement("R-1120", "FR-STO-7")
+    @Suppress("MaxLineLength", "ktlint:standard:max-line-length")
     public fun opening_a_database_with_two_current_transcripts_for_one_transmission_does_not_throw_and_keeps_both_reachable() {
         buildBareFixture { db ->
             db.sessionDao().insert(TestFixtures.session())
@@ -82,6 +83,7 @@ public class HandWrittenSchemaGuardTest {
 
     @Test
     @Requirement("R-1120", "FR-STO-7")
+    @Suppress("MaxLineLength", "ktlint:standard:max-line-length")
     public fun opening_a_database_with_two_active_work_queue_items_for_one_pass_does_not_throw_and_keeps_both_reachable() {
         buildBareFixture { db ->
             db.sessionDao().insert(TestFixtures.session())
@@ -130,6 +132,7 @@ public class HandWrittenSchemaGuardTest {
 
     @Test
     @Requirement("R-1120", "FR-STO-7")
+    @Suppress("MaxLineLength", "ktlint:standard:max-line-length")
     public fun opening_a_database_with_two_current_prior_adjustments_for_one_station_does_not_throw_and_keeps_both_reachable() {
         buildBareFixture { db ->
             // No foreign key covers prior_adjustment.stationId (see that entity's own kdoc), so no

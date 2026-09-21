@@ -126,8 +126,7 @@ public class WorkQueue(
      * a session id ([org.ort.core.Ulid]'s own kdoc) — which means *every* row still `LEASED` at
      * this point belongs, unconditionally, to a run that is no longer alive.
      */
-    public suspend fun recoverStaleLeasesAtLaunch(): Int =
-        recoverStaleLeases(currentRunId = Ulid.generate(clock).value)
+    public suspend fun recoverStaleLeasesAtLaunch(): Int = recoverStaleLeases(currentRunId = Ulid.generate(clock).value)
 
     /**
      * The pass succeeded: the row is deleted (the queue is not a history — §7.1) and the

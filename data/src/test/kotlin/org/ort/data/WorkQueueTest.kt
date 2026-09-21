@@ -88,31 +88,32 @@ public class WorkQueueTest {
      */
     @Test
     @Requirement("AC-47", "FR-RUN-8")
-    public fun killing_the_process_mid_pass_is_recovered_by_the_launch_entry_point_and_the_over_completes(): Unit = runTest {
-        db.sessionDao().insert(TestFixtures.session())
-        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
-        val queue = WorkQueue(db, clock)
-        queue.enqueue("TX1", PassId.B_OFFLINE)
+    public fun killing_the_process_mid_pass_is_recovered_by_the_launch_entry_point_and_the_over_completes(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+            val queue = WorkQueue(db, clock)
+            queue.enqueue("TX1", PassId.B_OFFLINE)
 
-        // Run A leases it and "crashes" — never completes, never calls any recovery itself.
-        val leasedByRunA = queue.leaseBatch("run-A", limit = 10) { 60_000L }.single()
-        assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX1")!!.processingState)
+            // Run A leases it and "crashes" — never completes, never calls any recovery itself.
+            val leasedByRunA = queue.leaseBatch("run-A", limit = 10) { 60_000L }.single()
+            assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX1")!!.processingState)
 
-        // The app relaunches — OrtApplication.onCreate's own call site, not a fresh capture
-        // session — and recovers run-A's dangling lease with no run id of its own yet.
-        val recovered = queue.recoverStaleLeasesAtLaunch()
-        assertEquals(1, recovered)
-        assertEquals(TransmissionState.CAPTURED, db.transmissionDao().getById("TX1")!!.processingState)
-        assertEquals(WorkQueueState.READY, db.workQueueDao().getById(leasedByRunA.id)!!.state)
+            // The app relaunches — OrtApplication.onCreate's own call site, not a fresh capture
+            // session — and recovers run-A's dangling lease with no run id of its own yet.
+            val recovered = queue.recoverStaleLeasesAtLaunch()
+            assertEquals(1, recovered)
+            assertEquals(TransmissionState.CAPTURED, db.transmissionDao().getById("TX1")!!.processingState)
+            assertEquals(WorkQueueState.READY, db.workQueueDao().getById(leasedByRunA.id)!!.state)
 
-        // The over completes: a fresh capture session leases and finishes it normally.
-        val leasedAfterRecovery = queue.leaseBatch("run-B", limit = 10) { 60_000L }.single()
-        assertEquals(leasedByRunA.id, leasedAfterRecovery.id)
-        queue.completePass(leasedAfterRecovery, TransmissionState.COMPLETE)
+            // The over completes: a fresh capture session leases and finishes it normally.
+            val leasedAfterRecovery = queue.leaseBatch("run-B", limit = 10) { 60_000L }.single()
+            assertEquals(leasedByRunA.id, leasedAfterRecovery.id)
+            queue.completePass(leasedAfterRecovery, TransmissionState.COMPLETE)
 
-        assertEquals(TransmissionState.COMPLETE, db.transmissionDao().getById("TX1")!!.processingState)
-        assertNull(db.workQueueDao().getById(leasedAfterRecovery.id))
-    }
+            assertEquals(TransmissionState.COMPLETE, db.transmissionDao().getById("TX1")!!.processingState)
+            assertNull(db.workQueueDao().getById(leasedAfterRecovery.id))
+        }
 
     @Test
     @Requirement("AC-99")
