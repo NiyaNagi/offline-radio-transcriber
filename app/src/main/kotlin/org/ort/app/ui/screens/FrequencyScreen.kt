@@ -16,9 +16,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.ActivityPatternChart
@@ -131,18 +136,50 @@ private fun FrequencyRow(entry: FrequencyListEntryViewState, onOpen: (Long) -> U
     // row's own summary and its content description (the same fact, said twice) now match it.
     val summary = "${pluralize(entry.tonightCount, "over")} tonight · " +
         "${pluralize(entry.tonightStationCount, "station")}"
+    val busyLabel = if (entry.busierThanUsual) " · busier than usual" else ""
+    // The real, visible sub-line (`summary` + [busyLabel]) and the row's own mono title — each
+    // computed once so both the row's exported semantics below and the child `Text`s that actually
+    // render them stay byte-identical; see this composable's own R-1108 comment for why that
+    // identity matters.
+    val summaryLine = "$summary$busyLabel"
+    val frequencyLabel = entry.label.removeSuffix(" MHz")
     val busyNote = if (entry.busierThanUsual) ", busier than usual" else ""
     val description = "${entry.label}, ${entry.whatItIs}, $summary$busyNote"
+    // R-1108 (register; R-1090's own sweep left this file out of its list): the same `clickable` +
+    // trailing `semantics(mergeDescendants = true)` shape a real device dump (`CheckboxRow`/
+    // `ToggleRow`'s own R-1090 finding, `Controls.kt`'s doc comment) proved exports an *empty*
+    // `content-desc` on the clickable node, stranding the real label on a non-clickable child.
+    // `clearAndSetSemantics` with an explicit, multi-entry `SemanticsProperties.Text` list is the
+    // confirmed fix — see `ImproveScreens.kt`'s `ImproveGroupRow` for the identical repair. The
+    // list below repeats [frequencyLabel]/[summaryLine], not `entry.label`/plain `summary`,
+    // because `clearAndSetSemantics` erases the child `Text`s that actually render them from the
+    // default merged tree — this is what keeps `onNodeWithText(...)` (this file's own existing
+    // tests, including the busier-than-usual case and the row-tap test) exact-matching on that
+    // tree, the same R-380 correction every other `clearAndSetSemantics` row in this codebase
+    // already carries.
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .testTag("frequency-row-${entry.frequencyHz}")
             .clickable(role = Role.Button, onClick = { onOpen(entry.frequencyHz) })
-            .semantics(mergeDescendants = true) { contentDescription = description }
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = listOfNotNull(
+                    AnnotatedString(frequencyLabel),
+                    entry.whatItIs.takeIf { it.isNotBlank() }?.let { AnnotatedString(it) },
+                    AnnotatedString(summaryLine),
+                )
+                role = Role.Button
+                onClick(label = null) {
+                    onOpen(entry.frequencyHz)
+                    true
+                }
+            }
             .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text = entry.label.removeSuffix(" MHz"),
+            text = frequencyLabel,
             style = OrtType.figure,
             color = OrtColors.textHigh,
             modifier = Modifier.width(72.dp),
@@ -151,9 +188,8 @@ private fun FrequencyRow(entry: FrequencyListEntryViewState, onOpen: (Long) -> U
             if (entry.whatItIs.isNotBlank()) {
                 Text(text = entry.whatItIs, style = OrtType.subtitle, color = OrtColors.textBody)
             }
-            val busyLabel = if (entry.busierThanUsual) " · busier than usual" else ""
             Text(
-                text = "$summary$busyLabel",
+                text = summaryLine,
                 style = OrtType.subLine,
                 color = if (entry.busierThanUsual) OrtColors.accentAmber else OrtColors.textFaint,
             )
@@ -321,12 +357,24 @@ private fun netLabel(net: FrequencyNetViewState): String {
 @Composable
 private fun RegularRow(entry: FrequencyRegularViewState, onOpen: (String) -> Unit) {
     val description = "${entry.label}, ${entry.countContext}"
+    // R-1108: the same confirmed-broken shape as `FrequencyRow` above — see that row's own comment.
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("regular-${entry.stationId}")
             .clickable(role = Role.Button, onClick = { onOpen(entry.stationId) })
-            .semantics(mergeDescendants = true) { contentDescription = description }
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = listOf(
+                    AnnotatedString(entry.label),
+                    AnnotatedString(entry.countContext),
+                )
+                role = Role.Button
+                onClick(label = null) {
+                    onOpen(entry.stationId)
+                    true
+                }
+            }
             .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
         verticalAlignment = Alignment.CenterVertically,
     ) {

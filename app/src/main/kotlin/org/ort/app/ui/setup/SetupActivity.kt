@@ -379,10 +379,12 @@ public class SetupActivity : ComponentActivity() {
      * still only need to fire once per launch to let the rest of this already-complete flow proceed
      * normally, with no risk of looping back to [SetupStep.OVERNIGHT] again within the same launch.
      *
-     * This reruns Setup's own walk whenever [SetupActivity] is entered for any reason — it does
-     * **not** force `MainActivity`'s already-permitted fast path to reopen Setup purely to recheck
-     * survival, which is `MainActivity.kt`'s own file, outside this unit's ownership; see this
-     * package's own report for that open item.
+     * This reruns Setup's own walk whenever [SetupActivity] is entered for any reason. **R-1104**:
+     * an operator who completes setup once and always launches through `MainActivity`'s
+     * already-permitted fast path never entered `SetupActivity` again, so this function alone never
+     * ran for them — `MainActivity`'s own `overnightSurvivalStillUnproven` (that file's own doc
+     * comment) now runs the identical check from that fast path and hands off here whenever
+     * survival is still unproven, closing the gap this comment used to name as open.
      */
     private fun reconcileOvernightSurvival() {
         if (!store.setupComplete || store.overnightSurvivalProven) return

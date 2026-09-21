@@ -19,8 +19,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.CheckboxRow
 import org.ort.app.ui.components.DrillInHeader
@@ -146,15 +150,41 @@ public fun ImproveScreen(
     }
 }
 
+// R-1108 (register; R-1090's own sweep left this file out of its list): this row carried the
+// same `clickable` + trailing `semantics(mergeDescendants = true)` shape a real device dump
+// (`CheckboxRow`/`ToggleRow`'s own R-1090 finding, `Controls.kt`'s doc comment) proved exports an
+// *empty* `content-desc` on the clickable node, stranding the real label on a non-clickable
+// child — a plain merge boundary that only adds a description alongside an automatically-merged
+// descendant `Text` is not reliably exported to a real device's `AccessibilityNodeInfo` tree, even
+// though it satisfies Robolectric. `clearAndSetSemantics` with an explicit, multi-entry
+// `SemanticsProperties.Text` list (rather than the single-string `text = AnnotatedString(...)`
+// every plain button in this codebase uses) is the confirmed fix: it keeps [ImproveGroupViewState
+// .headline]/[ImproveGroupViewState.subLine] independently exact-matchable by `onNodeWithText` on
+// the default merged tree while declaring a real, non-empty `contentDescription` on the clickable
+// node itself — the same shape `SearchScreen.kt`'s `RecentRow` and `Controls.kt`'s `CheckboxRow`/
+// `ToggleRow` already established for the identical defect.
 @Composable
 private fun ImproveGroupRow(group: ImproveGroupViewState, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val description = "${group.headline}. ${group.subLine}"
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 44.dp)
+            .testTag("improve-group-row-${group.id}")
             .clickable(role = Role.Button, onClick = onClick)
             .padding(vertical = OrtSpacing.sm)
-            .semantics(mergeDescendants = true) { contentDescription = "${group.headline}. ${group.subLine}" },
+            .clearAndSetSemantics {
+                contentDescription = description
+                this[SemanticsProperties.Text] = listOf(
+                    AnnotatedString(group.headline),
+                    AnnotatedString(group.subLine),
+                )
+                role = Role.Button
+                onClick(label = null) {
+                    onClick()
+                    true
+                }
+            },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
