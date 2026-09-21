@@ -87,6 +87,14 @@ validators drive one scenario set on one emulator and file findings; reviewers c
 to artboards with no device. A builder that needs a file outside its package stops and reports.
 Never `git stash`; never `gradlew --stop`; never merge while a gate is mid-build.
 
+**Why `gradlew --stop`, and what to do instead.** The daemon is shared across every worktree, so
+stopping it kills whatever the other builders and the lead's gate are running — on 2026-09-20 one
+`--stop` cost another builder a completed full-module run, which is R-1131. If a test process is
+genuinely hung, kill that one process and nothing else:
+`Get-Process java | Where-Object { $_.Path -like "*<your-worktree>*" } | Stop-Process` — or take the
+PID from the run's own output. Prefer waiting first: a build that looks stuck is usually a build
+contending with five others.
+
 ## Stack
 
 Kotlin · Compose · Room + FTS5 · Coroutines/Flow · **constructor injection by hand, not Hilt**
