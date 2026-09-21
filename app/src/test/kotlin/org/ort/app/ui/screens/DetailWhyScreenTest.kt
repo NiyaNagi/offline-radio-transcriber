@@ -158,4 +158,35 @@ class DetailWhyScreenTest {
         composeTestRule.onNodeWithText("Not right?").assertDoesNotExist()
         composeTestRule.onNodeWithText("Confirm").assertDoesNotExist()
     }
+
+    /**
+     * Register R-1148: a candidate carrying a real, derived reason renders it; a candidate with
+     * `reason == null` (nothing honest to say) renders no reason line at all -- never a generic
+     * filler in its place.
+     */
+    @Test
+    fun `R_1148_a_candidates_real_reason_renders_and_an_absent_reason_renders_nothing`() {
+        val whyWithReasons = DetailWhyViewState(
+            hasData = true,
+            latticeSummary = "ACOUSTIC · model whisper-small",
+            candidates = listOf(
+                RankedCandidateViewState(callsign = "K7LWH", scoreLabel = "score 8.6", chosen = true, reason = null),
+                RankedCandidateViewState(
+                    callsign = "KA7LWH",
+                    scoreLabel = "score 4.4",
+                    chosen = false,
+                    reason = "needs a A at position 2 the lattice never offered (its own pick there was 7)",
+                ),
+            ),
+            priors = emptyList(),
+            runnerUp = null,
+            winningSlots = emptyList(),
+            winningGrammarValid = true,
+        )
+        composeTestRule.setContent {
+            OrtTheme { DetailWhyScreen(callsignLabel = "K7LWH", why = whyWithReasons, onBack = {}) }
+        }
+
+        composeTestRule.onNodeWithText("needs a A at position 2", substring = true).assertExists()
+    }
 }

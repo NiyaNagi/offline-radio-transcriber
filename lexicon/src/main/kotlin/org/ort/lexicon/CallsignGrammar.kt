@@ -21,6 +21,12 @@ public data class GrammarConfig(
  *    `CONFIRMED` (AC-11).
  *  - **Edit costs are confusion-weighted** (FR-LEX-10), so a near-miss along a plausible
  *    acoustic axis (`B`↔`D`) outranks one along an implausible axis.
+ *
+ * **Register R-1148.** Besides [slotDetailsFor]'s per-*lattice* facts (identical for every
+ * candidate), each emitted [CallsignCandidate] also carries its own [SlotAlignment] list — a
+ * genuinely per-*candidate* record of which slot each of its units came from, built live inside
+ * [expand] as that candidate's own path is walked, never reconstructed afterward by comparing
+ * text. See [SlotAlignment]'s own doc comment for what that makes it possible to say honestly.
  */
 public class CallsignGrammar(
     private val itu: ItuPrefixTable,
@@ -32,6 +38,9 @@ public class CallsignGrammar(
         val acoustic: Float,
         val penalty: Float,
         val deletions: Int,
+        /** R-1148: one [SlotAlignment] per lattice slot visited so far, in slot order — see that
+         * type's own doc comment. Built live, one entry per [expand] call, never re-derived. */
+        val alignment: List<SlotAlignment> = emptyList(),
     ) {
         val score: Float get() = acoustic - penalty
     }
@@ -40,9 +49,9 @@ public class CallsignGrammar(
     public fun parse(lattice: PhoneticLattice): List<CallsignCandidate> {
         if (lattice.isEmpty) return emptyList()
         var frontier = listOf(Path(emptyList(), 0f, 0f, 0))
-        for (slot in lattice.slots) {
+        for ((slotIndex, slot) in lattice.slots.withIndex()) {
             frontier = frontier
-                .flatMap { expand(it, slot) }
+                .flatMap { expand(it, slot, slotIndex) }
                 .sortedByDescending { it.score }
                 .take(config.beamWidth)
         }
@@ -56,14 +65,21 @@ public class CallsignGrammar(
             .take(config.topK)
     }
 
-    private fun expand(path: Path, slot: LatticeSlot): List<Path> {
+    private fun expand(path: Path, slot: LatticeSlot, slotIndex: Int): List<Path> {
         val out = ArrayList<Path>()
+        val latticeUnit = slot.top.unit.symbol.toString()
         for (alt in slot.alts) {
             for (v in listOf(alt.unit) + confusion.confusableWith(alt.unit)) {
                 out += path.copy(
                     units = path.units + v,
                     acoustic = path.acoustic + alt.logProb,
                     penalty = path.penalty + confusion.substitutionCost(alt.unit, v),
+                    alignment = path.alignment + SlotAlignment(
+                        slotIndex = slotIndex,
+                        latticeUnit = latticeUnit,
+                        candidateUnit = v.symbol.toString(),
+                        offeredByLattice = slot.alts.any { it.unit == v },
+                    ),
                 )
             }
         }
@@ -71,6 +87,12 @@ public class CallsignGrammar(
             out += path.copy(
                 penalty = path.penalty + config.deletionCost,
                 deletions = path.deletions + 1,
+                alignment = path.alignment + SlotAlignment(
+                    slotIndex = slotIndex,
+                    latticeUnit = latticeUnit,
+                    candidateUnit = null,
+                    offeredByLattice = false,
+                ),
             )
         }
         return out
@@ -81,7 +103,7 @@ public class CallsignGrammar(
         val allocation = itu.allocationFor(parsed.core)
             ?: parsed.secondaryPrefix?.let { itu.allocationFor(it) }
             ?: return null
-        return CallsignCandidate(parsed, allocation, path.acoustic, path.penalty, span, slotDetails)
+        return CallsignCandidate(parsed, allocation, path.acoustic, path.penalty, span, slotDetails, path.alignment)
     }
 
     /**

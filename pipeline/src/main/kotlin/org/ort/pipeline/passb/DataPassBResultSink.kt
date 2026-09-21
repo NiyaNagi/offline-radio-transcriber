@@ -12,6 +12,7 @@ import org.ort.data.entity.TranscriptEntity
 import org.ort.data.entity.TranscriptPass
 import org.ort.data.inWriteTransaction
 import org.ort.lexicon.PhoneticLattice
+import org.ort.lexicon.SlotAlignment
 import org.ort.lexicon.SlotDetail
 import org.ort.pipeline.alerts.AlertEvaluationTrigger
 import org.ort.pipeline.alerts.AlertMatchInput
@@ -48,6 +49,13 @@ import org.ort.pipeline.threading.ThreadGroupingCoordinator
  * — per-slot score/kept-alternate for D05, and the char span for D01/D03's transcript highlight —
  * is persisted alongside it, into `:data`'s new `lattice_slot` table
  * ([org.ort.data.entity.LatticeSlotEntity]), in the same transaction. See [persistSlotDetails].
+ *
+ * **Register R-1148.** The same call also persists each candidate's own
+ * [org.ort.lexicon.CallsignCandidate.slotAlignment] onto the identical `lattice_slot` rows —
+ * `:data` schema v17's new `candidateUnit`/`offeredByLattice` columns — so D05's per-candidate
+ * "why" reason is finally grounded in a fact about *that* candidate's own fit to the lattice,
+ * rather than the lattice's shared top-pick list every candidate previously carried identically.
+ * See [persistSlotDetails]'s own doc comment for how the two lists are matched.
  *
  * **Register R-1032/R-1033 (constitution VI: "no number without ... execution provider"):
  * [result]'s own [PassBResult.fingerprint] is the one production source of both facts, for every
@@ -248,19 +256,42 @@ public class DataPassBResultSink(
                         result.attribution.stationId == ranked.candidate.text,
                 ),
             )
-            persistSlotDetails(result.transmissionId, candidateId, ranked.candidate.slotDetails)
+            persistSlotDetails(
+                result.transmissionId,
+                candidateId,
+                ranked.candidate.slotDetails,
+                ranked.candidate.slotAlignment,
+            )
         }
     }
 
     /**
-     * Register R-320, R-182: one [LatticeSlotEntity] per [org.ort.lexicon.SlotDetail] the lexicon
-     * side already computed for this candidate — see that type's own doc comment for what each
-     * field means and when it is genuinely `null` versus fabricated. `slotDetails` is empty for
-     * every candidate CallsignGrammar produced before this existed (an older jar, or an outcome
-     * with no lattice at all), so this loop is a no-op then, not an error.
+     * Register R-320, R-182, R-1148: one [LatticeSlotEntity] per [org.ort.lexicon.SlotDetail] the
+     * lexicon side already computed for this candidate — see that type's own doc comment for what
+     * each field means and when it is genuinely `null` versus fabricated. `slotDetails` is empty
+     * for every candidate CallsignGrammar produced before this existed (an older jar, or an
+     * outcome with no lattice at all), so this loop is a no-op then, not an error.
+     *
+     * **Register R-1148.** [slotAlignment] is [org.ort.lexicon.CallsignCandidate]'s own
+     * per-candidate counterpart, over the identical index domain [slotDetails] already spans (both
+     * `0 until lattice.slots.size` — see [org.ort.lexicon.CallsignGrammar.parse]'s own doc
+     * comment), so [alignmentByIndex] never fails to find a match for a real [detail.index] once
+     * [org.ort.lexicon.CallsignGrammar] produced both lists together — matched by index rather
+     * than zipped positionally, since neither list's own ordering is a promise this file should
+     * lean on. `alignment` is `null` only for a candidate CallsignGrammar produced before this
+     * field existed, in which case [LatticeSlotEntity.candidateUnit]/`.offeredByLattice` are
+     * written `null` — genuinely not recorded, never a fabricated fact — the identical honest
+     * default a pre-migration row already carries (see that entity's own doc comment).
      */
-    private suspend fun persistSlotDetails(transmissionId: String, candidateId: String, slotDetails: List<SlotDetail>) {
+    private suspend fun persistSlotDetails(
+        transmissionId: String,
+        candidateId: String,
+        slotDetails: List<SlotDetail>,
+        slotAlignment: List<SlotAlignment>,
+    ) {
+        val alignmentByIndex = slotAlignment.associateBy { it.slotIndex }
         slotDetails.forEach { detail ->
+            val alignment = alignmentByIndex[detail.index]
             db.catalogDao().insert(
                 LatticeSlotEntity(
                     id = Ulid.generate().value,
@@ -272,6 +303,8 @@ public class DataPassBResultSink(
                     keptAlternate = detail.keptAlternate,
                     charStart = detail.charStart,
                     charEnd = detail.charEnd,
+                    candidateUnit = alignment?.candidateUnit,
+                    offeredByLattice = alignment?.offeredByLattice,
                 ),
             )
         }

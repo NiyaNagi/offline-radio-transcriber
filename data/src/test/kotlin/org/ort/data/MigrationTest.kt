@@ -1051,17 +1051,106 @@ public class MigrationTest {
     }
 
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v15 — walks forward through
-     * the *entire* migration chain to v16 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v15,
+     * Register R-1148 (split from R-1144/R-1117; FR-UI-8, constitution I): v16 → v17 adds
+     * `lattice_slot.candidateUnit` and `.offeredByLattice` — see
+     * [org.ort.data.entity.LatticeSlotEntity.candidateUnit]'s own doc comment. Proves both halves
+     * of FR-AST-5/6: a pre-existing `lattice_slot` row (written before this column pair existed)
+     * survives with its old fields intact and both new columns `NULL` — genuinely not recorded,
+     * never a fabricated unit or a fabricated `false` — and the new write/read path is immediately
+     * usable for a fresh row afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-UI-8", "R-1148")
+    public fun migration_from_v16_to_v17_preserves_existing_rows_and_adds_the_candidate_alignment_columns() {
+        val dbName = "migration-test-db-v17-candidate-alignment"
+        val v16 = helper.createDatabase(dbName, 16)
+        v16.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, vadDetector) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 16, 0, 0, 'UNKNOWN')",
+        )
+        v16.execSQL(
+            "INSERT INTO transmission (id, sessionId, threadId, startedAtUtc, endedAtUtc, durationMs, " +
+                "audioFormat, preRollMs, postRollMs, frequencyHz, frequencyProvenance, mode, signalStrength, " +
+                "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
+                "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
+                "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
+                "isReprocessCandidate, processedTier, rigStateChangedMidTransmission, vadDetector, " +
+                "vadDetectorVersion, rigSquelchFusionApplied, threadJoinReason, inertControls) VALUES " +
+                "('TX1', 'S1', NULL, 0, 1000, 1000, 'flac/16k/mono', 200, 200, NULL, 'measured', NULL, NULL, " +
+                "NULL, NULL, 'CONFIRMED', 'K7ABC', 0.9, NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, " +
+                "NULL, 0, 'UNKNOWN', NULL, 0, NULL, NULL)",
+        )
+        v16.execSQL(
+            "INSERT INTO callsign_candidate (id, transmissionId, callsign, `rank`, score, grammarValid, " +
+                "ituPrefix, ituCountry, priorBreakdown, databaseHit, selected) VALUES " +
+                "('C1', 'TX1', 'K7ABC', 0, 0.9, 1, 'K', 'United States', NULL, 1, 1)",
+        )
+        v16.execSQL(
+            "INSERT INTO lattice_slot (id, transmissionId, candidateId, `index`, unit, score, " +
+                "keptAlternate, charStart, charEnd) VALUES " +
+                "('SL1', 'TX1', 'C1', 0, 'K', 0.95, NULL, 0, 1)",
+        )
+        v16.close()
+
+        helper.runMigrationsAndValidate(dbName, 17, true, OrtDatabase.MIGRATION_16_17)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val slots = runBlocking { db.catalogDao().slotDetailsFor("TX1") }
+            val preExisting = slots.single { it.id == "SL1" }
+            assertEquals("K", preExisting.unit) // pre-existing row survives
+            assertEquals(0.95, preExisting.score, 1e-9)
+            assertEquals(
+                "the new column must default to NULL, never a fabricated unit",
+                null,
+                preExisting.candidateUnit,
+            )
+            assertEquals(
+                "the new column must default to NULL, never a fabricated false",
+                null,
+                preExisting.offeredByLattice,
+            )
+
+            runBlocking {
+                db.catalogDao().insert(
+                    org.ort.data.entity.LatticeSlotEntity(
+                        id = "SL2",
+                        transmissionId = "TX1",
+                        candidateId = "C1",
+                        index = 1,
+                        unit = "7",
+                        score = 0.99,
+                        keptAlternate = null,
+                        charStart = 1,
+                        charEnd = 2,
+                        candidateUnit = "7",
+                        offeredByLattice = true,
+                    ),
+                )
+            }
+            val fresh = runBlocking { db.catalogDao().slotDetailsFor("TX1") }.single { it.id == "SL2" }
+            assertEquals("7", fresh.candidateUnit) // new write/read path usable post-migration
+            assertEquals(true, fresh.offeredByLattice)
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v16 — walks forward through
+     * the *entire* migration chain to v17 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v16,
      * so the same insert works unmodified against every fixture version; what varies is only which
      * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
      * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v15_migrates_forward_to_v16_preserving_its_session_row() {
-        for (fixtureVersion in 1..15) {
+    public fun every_prior_fixture_from_v1_to_v16_migrates_forward_to_v17_preserving_its_session_row() {
+        for (fixtureVersion in 1..16) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             // R-1098: a *freshly created* v14 schema (this is, exactly what `createDatabase` builds
@@ -1096,7 +1185,7 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v16",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v17",
                     "test",
                     migrated!!.appVersion,
                 )
@@ -1167,18 +1256,18 @@ public class MigrationTest {
      * itself: the same factory function, with the same [androidx.sqlite.driver.bundled
      * .BundledSQLiteDriver], the shipped app and every other production caller use. `fixtureVersion`
      * 9 is the version named in the halt report (`data/schemas/org.ort.data.OrtDatabase/9.json`);
-     * the loop also covers every earlier released version (v15 added, R-1133, head v16), since
+     * the loop also covers every earlier released version (v16 added, R-1148, head v17), since
      * each is an on-disk shape a real device could still be carrying. Widening the range by one is
      * the one change each new head version needs here.
      */
     @Test
     @Requirement("R-885", "AC-53", "FR-AST-5", "FR-AST-6")
-    public fun r_885_every_fixture_from_v1_to_v15_opens_through_OrtDatabase_create_and_reads_its_session_row() {
-        for (fixtureVersion in 1..15) {
+    public fun r_885_every_fixture_from_v1_to_v16_opens_through_OrtDatabase_create_and_reads_its_session_row() {
+        for (fixtureVersion in 1..16) {
             val dbName = "r885-real-open-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             // R-1098: see the identical branch's own comment in
-            // `every_prior_fixture_from_v1_to_v15_migrates_forward_to_v16_preserving_its_session_row`
+            // `every_prior_fixture_from_v1_to_v16_migrates_forward_to_v17_preserving_its_session_row`
             // — a freshly created v14 schema's `session.vadDetector` is `NOT NULL` with no SQL-level
             // default.
             if (fixtureVersion >= 14) {
@@ -1233,6 +1322,11 @@ public class MigrationTest {
                 // MIGRATION_15_16 through this connection-based path -- proven by writing through
                 // the new setInertControls write path, not just "did not crash".
                 if (fixtureVersion == 15) runBlocking { verifyInertControlsUsableThroughRealOpen(db) }
+                // R-1148: fixtureVersion 16 is the one whose real open runs exactly
+                // MIGRATION_16_17 through this connection-based path -- proven by writing a real
+                // per-candidate alignment through the new lattice_slot write path, not just "did
+                // not crash".
+                if (fixtureVersion == 16) runBlocking { verifyCandidateAlignmentUsableThroughRealOpen(db) }
             } finally {
                 db.close()
             }
@@ -1361,6 +1455,49 @@ public class MigrationTest {
                 "connection-based open, not just Room's legacy SupportSQLiteDatabase path",
             "NO_SPEECH_PROB",
             transmission?.inertControls,
+        )
+    }
+
+    /** R-1148: [org.ort.data.entity.LatticeSlotEntity.candidateUnit] and `.offeredByLattice`,
+     * exercised through a real [OrtDatabase.create] open — see the caller's own doc comment. */
+    private suspend fun verifyCandidateAlignmentUsableThroughRealOpen(db: OrtDatabase) {
+        db.transmissionDao().insert(TestFixtures.transmission("TX-R885-V16", sessionId = "S1"))
+        db.catalogDao().insert(
+            org.ort.data.entity.CallsignCandidateEntity(
+                id = "C-R885-V16",
+                transmissionId = "TX-R885-V16",
+                callsign = "K7ABC",
+                rank = 0,
+                score = 0.9,
+                grammarValid = true,
+                ituPrefix = "K",
+                ituCountry = "United States",
+                priorBreakdown = null,
+                databaseHit = false,
+                selected = true,
+            ),
+        )
+        db.catalogDao().insert(
+            org.ort.data.entity.LatticeSlotEntity(
+                id = "SL-R885-V16",
+                transmissionId = "TX-R885-V16",
+                candidateId = "C-R885-V16",
+                index = 0,
+                unit = "K",
+                score = 0.95,
+                keptAlternate = null,
+                charStart = 0,
+                charEnd = 1,
+                candidateUnit = "K",
+                offeredByLattice = true,
+            ),
+        )
+        val slot = db.catalogDao().slotDetailsFor("TX-R885-V16").single()
+        assertEquals(
+            "MIGRATION_16_17's candidateUnit/offeredByLattice columns must be usable through the " +
+                "real connection-based open, not just Room's legacy SupportSQLiteDatabase path",
+            "K" to true,
+            slot.candidateUnit to slot.offeredByLattice,
         )
     }
 }
