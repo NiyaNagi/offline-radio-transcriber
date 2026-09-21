@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P37: `diff.py` can fail)
 
-### `<pending>` — P35 gate fix: `FailureMapperTest.kt` split for detekt's `LargeClass`, no test content changed
+### `cdd41060` — P35 gate fix: `FailureMapperTest.kt` split for detekt's `LargeClass`, no test content changed
 
 **Scope:** `app/src/test/kotlin/org/ort/app/ui/failures/` only — `FailureMapperTest.kt`, plus two
 new files, `RigFailureMapperTest.kt` and `ThermalAndBacklogFailureMapperTest.kt`. No production
