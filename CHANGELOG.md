@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (R-1102/AC-193: checked whether an emulator can supply the alert-path packet-capture proof — the capture technique does, driving a genuine alert firing does not)
 
-### (uncommitted at entry time) — q-alert-silence: AC-193 investigated on `emulator-5560`; capture technique confirmed viable, alert-firing prerequisite confirmed unreachable without a code change
+### `a85e82d0` — q-alert-silence: AC-193 investigated on `emulator-5560`; capture technique confirmed viable, alert-firing prerequisite confirmed unreachable without a code change
 
 **Scope:** `results/e2e-audit/R-1102-alert-silence-investigation.md` (new). No product code touched
 (per this unit's own instructions: a code change would be needed to close this and was out of
