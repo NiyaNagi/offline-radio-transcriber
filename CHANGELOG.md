@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (R-1148: a genuinely per-candidate slot alignment, so Detail-Why's per-candidate reason is finally honest)
 
-### `<pending>` — q-candidate-reasons: R-1148 per-candidate `SlotAlignment` computed live in `:lexicon`'s beam search, persisted by `:pipeline`/`:data` (schema v17), rendered as `Detail-Why`'s per-candidate reason
+### `a7bde78e` — q-candidate-reasons: R-1148 per-candidate `SlotAlignment` computed live in `:lexicon`'s beam search, persisted by `:pipeline`/`:data` (schema v17), rendered as `Detail-Why`'s per-candidate reason
 
 **Scope:** `:lexicon` (`CallsignGrammar`'s grammar/slot-detail computation), `:pipeline`'s
 `passb/` persistence of candidates, `:data`'s `lattice_slot` entity and schema v16→v17
