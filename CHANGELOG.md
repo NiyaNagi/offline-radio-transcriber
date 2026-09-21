@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P37: `diff.py` can fail)
 
-### `<pending>` — P34 gate fix: `AudioRecordSource.start` split so detekt's LongMethod/CyclomaticComplexMethod hold, plus two line-length fixes
+### `4df86464` — P34 gate fix: `AudioRecordSource.start` split so detekt's LongMethod/CyclomaticComplexMethod hold, plus two line-length fixes
 
 **Scope:** `:capture-android` only — `AudioRecordSource.kt` (production), plus two pre-existing
 P34 test files whose lines were over `MaxLineLength` (`AndroidAudioIoInterruptionGapTest.kt`,
@@ -86,8 +86,7 @@ touched) in that forced run. `.\gradlew.bat :capture-android:detekt --max-worker
 `config/detekt/detekt.yml` changed — both were ruled out explicitly rather than reached for.
 
 **Left open / not done:** none for this gate fix specifically — H4 and the 8-hour device run
-remain outstanding from P34 itself, unaffected by this refactor (no behaviour changed). Commit
-hash `<pending>` — replace on commit.
+remain outstanding from P34 itself, unaffected by this refactor (no behaviour changed).
 
 ---
 
