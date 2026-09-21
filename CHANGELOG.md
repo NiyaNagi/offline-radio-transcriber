@@ -32,6 +32,105 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (D56: a station is finally born — R-1132 halt fixed; R-1126 calibration re-fit now reprocesses Pass B)
+
+### `<pending>` — R-1132 (halt): no production code path ever created a station; R-1126: a calibration re-fit never marked Pass B rows for reprocessing
+
+**Scope:** `:pipeline`'s `passb/DataPassBResultSink.kt`; `:data`'s `dao/CatalogDao.kt`,
+`dao/CorrectionDao.kt`, `entity/CatalogEntities.kt`; `:core`'s `PassFingerprint.kt` (the
+`Materiality` table); `spec/functional-spec.md`, `spec/open-questions.md`.
+
+**Requirements/ACs:** D56 (new decision, recorded this change), FR-SPK-1, FR-SPK-10,
+FR-LEX-25..27, FR-DIG-7, FR-REP-4, constitution I ("an attribution without its confidence state
+is a bug ... at the data layer"), constitution III ("nothing is deleted quietly"). Register
+R-1132 (halt), R-1126, closes against R-1109/R-1124/R-1110's own follow-up notes.
+
+**What changed:**
+- **D56 recorded** (`spec/functional-spec.md` §3 decisions table and §16 traceability;
+  `spec/open-questions.md`'s 2026-09-20 update note): a station record is created or updated at
+  Pass B closure for the top-ranked resolved callsign candidate of any over that parsed a
+  callsign and survived the rejection pipeline — `AMBIGUOUS` or better, never a rejected or
+  failed over — and by an operator correction, which always creates or rebinds the record. The
+  bar is deliberately not `CONFIRMED` (R-1110 already made that state unreachable in production
+  without a fitted calibrator; requiring it here would re-create the exact bug) and is the only
+  bar under which FR-DIG-7's "over counts by attribution state" fact means anything.
+- **`org.ort.data.entity.OverCountsByAttributionState`** (new, in `CatalogEntities.kt`): the wire
+  format for `StationEntity.overCountsByAttributionState` — one `STATE=count` pair per closed
+  `AttributionState`, in enum order, comma-separated, so the column is legible without a parser
+  (constitution I). `increment` only ever adds; nothing already counted is ever removed
+  (constitution III).
+- **`CatalogDao.recordStationObservation(callsign, state, observedAt)`** (new): the first
+  production write path for a `StationEntity` — gets the existing row by id (`id == callsign`,
+  the convention every existing fixture already used) and either inserts a fresh one or updates
+  `lastHeardAt`/`transmissionCount`/`overCountsByAttributionState` in place, never touching
+  `userName`, `notes`, or any other operator-owned column. `firstHeardAt` is set once, on birth,
+  and never moves.
+- **`DataPassBResultSink.recordStationObservation`** (new, called from `record()`): the Pass B
+  closure half of D56. Gated on `result.attribution.state != AttributionState.UNKNOWN`, which
+  already excludes every rejected/failed over (both always resolve to `Attribution.unknown()` in
+  `PassB.run`) with no separate outcome check needed. Keyed on the top-ranked candidate's own
+  text (`result.ranked.firstOrNull()?.candidate?.text`), the same source R-1125 already uses for
+  `AlertMatchInput.resolvedCallsign` — never `result.attribution.stationId`, which is `null` for
+  `AMBIGUOUS` (R-1110).
+- **`CorrectionDao.recordCorrection`** (extended): the operator-correction half of D56, called
+  unconditionally after `applyCorrectedAttribution` for both `FIELD_STATION` and
+  `FIELD_STATION_UNVERIFIED` corrections (a correction always resolves to `INFERRED`, which
+  already clears the "`AMBIGUOUS` or better" bar). Room's per-`@Dao`-interface model does not let
+  `CorrectionDao` call `CatalogDao`'s abstract methods directly, so this DAO gets its own small
+  `getStationForCorrection`/`insertStationForCorrection`/`touchStationObservationForCorrection`
+  shell duplicating the same get-then-insert-or-update shape — the existing precedent for this is
+  `correctionsFor`, already declared verbatim in both `CatalogDao` and `CorrectionDao`. The
+  merge *rule* has exactly one implementation (`OverCountsByAttributionState`); only the thin
+  CRUD shell is repeated.
+- **R-1126**: `Materiality.table`'s `PassId.B_OFFLINE` entry now includes
+  `FingerprintField.CALIBRATION_VERSION`, alongside `MODEL_IDS`/`PROVIDER`. `PassBFactory` already
+  stamps `fingerprint.calibrationVersion` from the real `Calibrator?` it builds with — this was
+  the one field the reprocess-materiality table forgot to name for Pass B, so a fitted calibrator
+  shipping today would have left every existing `AMBIGUOUS` row `AMBIGUOUS` forever, with no
+  reprocess prompt (FR-REP-4).
+
+**Verified:**
+- `.\gradlew.bat :core:test :core:detekt :core:ktlintCheck :data:testDebugUnitTest :data:detekt
+  :data:ktlintCheck :pipeline:testDebugUnitTest :pipeline:detekt :pipeline:ktlintCheck
+  --max-workers=2` — green (`:core:test` 8/8, `:data:testDebugUnitTest` and
+  `:pipeline:testDebugUnitTest` both green including every new test below, all three modules'
+  `detekt`/`ktlintCheck` clean).
+- New tests, all named for R-1132/D56/R-1126 and passing:
+  `PassFingerprintTest.R_1126 a calibration re-fit makes a Pass B row a reprocess candidate too`;
+  `OverCountsByAttributionStateTest` (6 cases: serialize/increment/accumulate/parse round-trip/
+  null-blank/unparseable-pair); `CatalogDaoTest.R_1132_recordStationObservation_creates_a_station_...`,
+  `..._updates_an_existing_station_and_accumulates_counts`,
+  `..._never_overwrites_an_operators_userName_or_notes`;
+  `CorrectionDaoTest.R_1132_recordCorrection_creates_a_station_for_a_callsign_never_seen_before`,
+  `..._rebinds_rather_than_duplicates_an_existing_station`; six `DataPassBResultSinkTest` cases
+  covering accepted/AMBIGUOUS/UNKNOWN/rejected/failed outcomes and a second-over accumulation.
+- **Discriminated** every production change by hand: reverted the `Materiality` fix (only the new
+  `R_1126` case went red), no-opped `CatalogDao.recordStationObservation` (only its 3 new
+  `CatalogDaoTest` cases went red), removed the `recordStationObservation` call from
+  `CorrectionDao.recordCorrection` (only its 2 new cases went red), and removed the call from
+  `DataPassBResultSink.record` (only its 3 station-creating cases went red; the never-births
+  cases passed trivially either way, as expected) — then restored each fix and confirmed green
+  again.
+- `python tools/spec-check/spec_check.py` — `spec-check: OK` (all 8 checks pass, including
+  "every decision Dn has a §16 traceability row" for the new D56).
+
+**Left open / not done:**
+- No device evidence yet — this is a Robolectric/JVM-only change. A device run should show a
+  populated Stations screen after a real session with no seeded debug scenario, and
+  `CatalogDao.getStation` returning real rows for R-1124's database-presence/recency priors.
+- `results/backlog.md` is not regenerated here — outside this unit's ownership (`tools/`).
+- D56's "operator correction always creates or rebinds" is implemented for both `FIELD_STATION`
+  and `FIELD_STATION_UNVERIFIED` corrections (both already write `transmission.stationId`
+  identically); it is *not* wired for `StationIdentityDao.splitVoiceprint`'s
+  `FIELD_VOICEPRINT_SPLIT` correction, which deliberately un-attributes a transmission rather than
+  naming a station, or for `CorrectionDao.restoreAttribution` (`Undo all`), which restores a prior
+  state rather than recording a new observation — decrementing a count there would itself be a
+  quiet deletion (constitution III).
+- Did not touch `RealCaptureService.kt`, `:pipeline`'s `threading/`/`alerts/`, `:app`, `:capture-*`,
+  the theme or `tools/`, per this unit's ownership boundary.
+
+---
+
 ## 2026-09-20 (P37: `diff.py` can fail)
 
 ### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change

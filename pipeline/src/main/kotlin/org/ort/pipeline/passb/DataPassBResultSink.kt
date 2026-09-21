@@ -122,6 +122,9 @@ public class DataPassBResultSink(
             }
             is PassBOutcome.Failed -> Unit
         }
+        // D56 (register R-1132): the first production write path for a StationEntity -- see
+        // recordStationObservation's own kdoc for the gate.
+        recordStationObservation(result)
         persistLattice(result)
         persistCandidates(result)
         // P31 (FR-ALR-3, FR-ALR-4, AC-194, AC-195): fires only from this Pass B closure point,
@@ -154,6 +157,35 @@ public class DataPassBResultSink(
         transcriptText = (result.outcome as? PassBOutcome.Accepted)?.result?.text,
         frequencyHz = db.transmissionDao().getById(result.transmissionId)?.frequencyHz,
     )
+
+    /**
+     * D56 (register R-1132, R-1109, R-1124, R-1110; FR-SPK-1, FR-SPK-10, FR-LEX-25..27, FR-DIG-7,
+     * constitution I): the first production write path that ever creates a
+     * [org.ort.data.entity.StationEntity] row — before this, every construction of that entity in
+     * the tree lived in `src/test` or `src/debug`, so the Stations screen, every station-detail
+     * surface, and [org.ort.pipeline.passb.DataRankingContextSource]'s own database-presence and
+     * recency reads (R-1124) were all permanently cold on a real device.
+     *
+     * Gated on `result.attribution.state != AttributionState.UNKNOWN` — exactly D56's own
+     * "`AMBIGUOUS` or better", never `CONFIRMED`-only: [CallsignResolver] only ever returns
+     * `CONFIRMED` with a real, fitted calibrator, which does not exist in production yet
+     * (register R-1110) — a bar set at `CONFIRMED` would keep the catalog empty and re-create
+     * this exact bug. [CallsignResolver.resolve] only ever returns `UNKNOWN` when [PassBResult.ranked]
+     * is empty (no candidate survived parsing/separation) or, with a calibrator, below its
+     * confirm threshold — and every [PassBOutcome.Rejected]/[PassBOutcome.Failed] outcome already
+     * resolves to [Attribution.unknown] in [PassB.run] — so this one guard alone already excludes
+     * every rejected or failed over; no separate outcome check is needed here.
+     *
+     * Keyed on the *top-ranked* candidate's own text ([PassBResult.ranked]'s first entry, already
+     * best-first — [alertMatchInputFor]'s identical reasoning for R-1125), never on
+     * `result.attribution.stationId`, which is `null` for `AMBIGUOUS` (register R-1110) — the
+     * exact case this row exists to stop discarding.
+     */
+    private suspend fun recordStationObservation(result: PassBResult) {
+        if (result.attribution.state == AttributionState.UNKNOWN) return
+        val callsign = result.ranked.firstOrNull()?.candidate?.text ?: return
+        db.catalogDao().recordStationObservation(callsign, result.attribution.state, SystemClock.wallMillis())
+    }
 
     /** [PassBResult.lattice] is non-null exactly when Pass B produced one (see its own doc
      * comment) — never silently dropped, always inspectable (constitution I, FR-UI-8). */

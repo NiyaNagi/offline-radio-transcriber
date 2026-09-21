@@ -85,6 +85,54 @@ public data class StationEntity(
     val overCountsByAttributionState: String?,
 )
 
+/**
+ * The wire format for [StationEntity.overCountsByAttributionState] (FR-DIG-7's "over counts by
+ * attribution state", register R-1132, D56): one `STATE=count` pair per closed
+ * [AttributionState], in enum order, comma-separated — deterministic and legible without a
+ * parser, per constitution I's "every machine conclusion MUST be inspectable". [UNKNOWN][AttributionState.UNKNOWN]
+ * is carried at `0` forever in production: [org.ort.data.dao.CatalogDao.recordStationObservation]
+ * (D56) is never called for an `UNKNOWN` outcome — a station is born only at `AMBIGUOUS` or
+ * better — so the column can still name all four states without ever claiming a real `UNKNOWN`
+ * observation happened. [increment] only ever adds, never removes, a count — constitution III:
+ * "nothing is deleted quietly", so a station once observed at a weaker state keeps that count
+ * even after a later over resolves the same callsign more strongly.
+ */
+public data class OverCountsByAttributionState(private val counts: Map<AttributionState, Int>) {
+
+    public fun increment(state: AttributionState): OverCountsByAttributionState =
+        OverCountsByAttributionState(counts + (state to (countFor(state) + 1)))
+
+    public fun countFor(state: AttributionState): Int = counts[state] ?: 0
+
+    /** [AttributionState.entries] order, always, so two builds encode the same map identically. */
+    public fun serialize(): String =
+        AttributionState.entries.joinToString(SEPARATOR) { "${it.name}$ASSIGN${countFor(it)}" }
+
+    public companion object {
+        private const val SEPARATOR = ","
+        private const val ASSIGN = "="
+
+        public val EMPTY: OverCountsByAttributionState = OverCountsByAttributionState(emptyMap())
+
+        /** The inverse of [serialize]. An unparseable or unknown-state pair is dropped rather than
+         * thrown on — a forward-compatible reader, not a strict one, since this column's only
+         * writer is this same class. `null`/blank (never written by [recordStationObservation],
+         * but the honest starting point for a station schema-migrated from an older row) parses
+         * to [EMPTY]. */
+        public fun parse(raw: String?): OverCountsByAttributionState {
+            if (raw.isNullOrBlank()) return EMPTY
+            val counts = raw.split(SEPARATOR).mapNotNull { pair ->
+                val parts = pair.split(ASSIGN)
+                if (parts.size != 2) return@mapNotNull null
+                val state = AttributionState.entries.find { it.name == parts[0] } ?: return@mapNotNull null
+                val count = parts[1].toIntOrNull() ?: return@mapNotNull null
+                state to count
+            }.toMap()
+            return OverCountsByAttributionState(counts)
+        }
+    }
+}
+
 public enum class VoiceprintBindingSource { AUTO, MANUAL }
 
 @Entity(tableName = "voiceprint", indices = [Index("boundStationId")])

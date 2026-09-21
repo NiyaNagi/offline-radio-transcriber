@@ -6,6 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.core.AttributionState
 import org.ort.data.OrtDatabase
 import org.ort.data.TestFixtures
 import org.ort.data.entity.CallsignCandidateEntity
@@ -378,5 +379,69 @@ public class CatalogDaoTest {
         val all = dao.allVoiceprints()
 
         assertEquals(setOf("V-BOUND", "V-UNBOUND"), all.map { it.id }.toSet())
+    }
+
+    /**
+     * Register R-1132, D56 (FR-SPK-1, FR-SPK-10, FR-LEX-25..27, FR-DIG-7, constitution I): the
+     * first production write path for [org.ort.data.entity.StationEntity] — before this, every
+     * construction of that entity lived in `src/test` or `src/debug`, so the catalog was
+     * permanently empty on a real device.
+     */
+    @Test
+    @Requirement("R-1132", "FR-DIG-7")
+    public fun R_1132_recordStationObservation_creates_a_station_the_first_time_a_callsign_resolves(): Unit = runTest {
+        val dao = db.catalogDao()
+
+        dao.recordStationObservation("K7ABC", AttributionState.AMBIGUOUS, observedAt = 1_000L)
+
+        val station = dao.getStation("K7ABC")!!
+        assertEquals("K7ABC", station.callsign)
+        assertEquals(1_000L, station.firstHeardAt)
+        assertEquals(1_000L, station.lastHeardAt)
+        assertEquals(1, station.transmissionCount)
+        assertEquals(
+            "CONFIRMED=0,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0",
+            station.overCountsByAttributionState,
+        )
+    }
+
+    @Test
+    @Requirement("R-1132", "FR-DIG-7")
+    public fun R_1132_recordStationObservation_updates_an_existing_station_and_accumulates_counts(): Unit = runTest {
+        val dao = db.catalogDao()
+        dao.recordStationObservation("K7ABC", AttributionState.AMBIGUOUS, observedAt = 1_000L)
+
+        dao.recordStationObservation("K7ABC", AttributionState.CONFIRMED, observedAt = 2_000L)
+
+        val station = dao.getStation("K7ABC")!!
+        // firstHeardAt never moves once set -- the birth timestamp, not the latest one.
+        assertEquals(1_000L, station.firstHeardAt)
+        assertEquals(2_000L, station.lastHeardAt)
+        assertEquals(2, station.transmissionCount)
+        assertEquals(
+            "CONFIRMED=1,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0",
+            station.overCountsByAttributionState,
+        )
+    }
+
+    @Test
+    @Requirement("R-1132")
+    public fun R_1132_recordStationObservation_never_overwrites_an_operators_userName_or_notes(): Unit = runTest {
+        val dao = db.catalogDao()
+        dao.recordStationObservation("K7ABC", AttributionState.AMBIGUOUS, observedAt = 1_000L)
+        db.stationIdentityDao().renameStation(
+            org.ort.data.entity.StationIdentityHistoryEntity(
+                id = "H1",
+                stationId = "K7ABC",
+                field = StationIdentityDao.FIELD_NAME,
+                previousValue = null,
+                newValue = "Dave",
+                changedAt = 1_500L,
+            ),
+        )
+
+        dao.recordStationObservation("K7ABC", AttributionState.CONFIRMED, observedAt = 2_000L)
+
+        assertEquals("Dave", dao.getStation("K7ABC")!!.userName)
     }
 }

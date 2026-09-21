@@ -95,7 +95,17 @@ public object Materiality {
     private val table: Map<PassId, Set<FingerprintField>> = mapOf(
         PassId.ENH to common + setOf(FingerprintField.MODEL_IDS, FingerprintField.PROVIDER),
         PassId.A_STREAM to common + setOf(FingerprintField.MODEL_IDS, FingerprintField.PROVIDER),
-        PassId.B_OFFLINE to common + setOf(FingerprintField.MODEL_IDS, FingerprintField.PROVIDER),
+        // Register R-1126 (FR-REP-4, constitution VI): CALIBRATION_VERSION is material here too,
+        // not only to D_RESOLVE. PassBFactory stamps `fingerprint.calibrationVersion` from the
+        // real Calibrator it built with (null today -- P33/R-1110, no dev-fold data yet), so
+        // every over Pass B resolved before a calibrator existed would otherwise keep its
+        // AMBIGUOUS/UNKNOWN state permanently once a fitted one ships, with no reprocess prompt --
+        // the exact gap this row exists to close.
+        PassId.B_OFFLINE to common + setOf(
+            FingerprintField.MODEL_IDS,
+            FingerprintField.PROVIDER,
+            FingerprintField.CALIBRATION_VERSION,
+        ),
         PassId.FUSE to common + setOf(FingerprintField.MODEL_IDS),
         PassId.C_SPOT to common + setOf(FingerprintField.MODEL_IDS, FingerprintField.PROVIDER),
         PassId.D_RESOLVE to common + setOf(
