@@ -58,11 +58,19 @@ public fun interface Enhancer {
     public fun enhance(audio: FloatArray): FloatArray
 }
 
-/** One decode hypothesis retained in the n-best list (technical design §8.1). */
-public data class Hypothesis(val text: String, val logProb: Float, val tokens: List<TokenScore>)
+/**
+ * One decode hypothesis retained in the n-best list (technical design §8.1). [logProb] is `null`
+ * when the wired decoder's binding does not produce a per-hypothesis log-probability at all
+ * (register R-1121) — never a fabricated `0f`, which would read as the single most confident
+ * value possible for a value nothing computed (constitution I).
+ */
+public data class Hypothesis(val text: String, val logProb: Float?, val tokens: List<TokenScore>)
 
-/** Per-token score, kept for Pass D's per-token agreement signal (§8.3, FR-ASR-14). */
-public data class TokenScore(val token: String, val logProb: Float, val startMs: Int, val endMs: Int)
+/**
+ * Per-token score, kept for Pass D's per-token agreement signal (§8.3, FR-ASR-14). [logProb] is
+ * `null`, not `0f`, when the decoder never produced one (register R-1121) — see [Hypothesis].
+ */
+public data class TokenScore(val token: String, val logProb: Float?, val startMs: Int, val endMs: Int)
 
 /**
  * Pass B's raw output, before any [org.ort.asrapi.rules.RejectionRule] runs. `noSpeechProb` and

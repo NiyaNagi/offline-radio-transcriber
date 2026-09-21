@@ -32,6 +32,128 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (R-1121: hallucination control 3 made honestly inert; no acoustic confidence is fabricated anywhere)
+
+### `<pending>` — R-1121: `NoSpeechProbRule` stops accepting on `null`; `Hypothesis`/`TokenScore.logProb` stop being fabricated `0f`
+
+**Scope:** `:asr-api` (`rules/RejectionRule.kt`, `rules/NoSpeechProbRule.kt`, `RejectionPipeline.kt`,
+`PassBOutcome.kt`, `AsrEngine.kt`, `fake/FakeAsrEngine.kt`) and `:asr-sherpa`
+(`real/RealSherpaDecoder.kt`, `fake/FakeSherpaDecoder.kt`,
+`real/RealSherpaDecoderRealModelTest.kt`, new `real/DecodeTokensTest.kt`). No files outside these
+two modules touched.
+
+**Requirements/ACs:** FR-ASR-5, FR-ASR-6, AC-6, AC-7, AC-8; constitution I (uncertainty is
+content), constitution VI (no number without its fold/machine/provider).
+
+**What changed:** register row R-1121 asked, in order: (1) investigate whether sherpa-onnx's
+binding can give a real `noSpeechProb`/per-token score before assuming it cannot; (2) if it
+genuinely cannot, make the absence explicit rather than silently accepting; (3) do not invent a
+refitted threshold tonight.
+
+1. **Investigated first.** Decompiled the resolved `sherpa-onnx-jvm-1.13.7.jar` with `javap -p`
+   (upstream does not publish this binding's source). `OfflineRecognizer.getResult()` — the only
+   decode result `RealSherpaDecoder` ever sees — returns `OfflineRecognizerResult`, whose entire
+   field set is `text`, `tokens: String[]`, `timestamps`/`durations: float[]`, `lang`, `emotion`,
+   `event`. No `no_speech_prob`, no per-hypothesis or per-token log-probability, no n-best list —
+   this offline/Whisper recognizer produces exactly one hypothesis. For contrast,
+   `OnlineRecognizerResult` (the *streaming* Pass A path, not used for Pass B here) does carry a
+   per-token `ysProbs: float[]`, so the gap is specific to the offline recognizer this module
+   wraps, not to the JVM binding as a whole. Conclusion: the binding genuinely exposes nothing
+   `RealSherpaDecoder` could wire through for AC-6's hallucination control 3 today.
+2. **Made the absence explicit and visible, not silently accepted.** `RejectionVerdict` gains a
+   third case, `Indeterminate(rule, reason)`, distinct from `Accept` — a control that cannot
+   evaluate did not clear the segment, it never got to look. `NoSpeechProbRule.evaluate` now
+   returns `Indeterminate` on a `null` `noSpeechProb` instead of `Accept`. `RejectionPipeline`
+   accumulates every `Indeterminate` rule id it sees (pre- and post-decode) into a new
+   `inertControls: Set<RejectionRuleId>` field on both `PassBOutcome.Accepted` and `.Rejected`
+   (additive, defaulted to `emptySet()` — no call site outside these two modules needed a change,
+   confirmed by compiling `:pipeline`'s debug and unit-test source sets clean). A pass's own
+   outcome now says, every time, which hallucination controls actually ran versus which were
+   inert — the fact is attached to the result, not left discoverable only by reading
+   `RealSherpaDecoder`'s source.
+3. **No new ceiling invented.** `NoSpeechProbRule.DEFAULT_CEILING` (Whisper's `0.60`) is
+   untouched; its doc comment already recorded it as unrefitted (Q2/Q16, no development noise tape
+   yet) and now also explains why refitting is orthogonal to this fix.
+4. **`Hypothesis.logProb`/`TokenScore.logProb` become `Float?`.** Every real construction site
+   (`RealSherpaDecoder.decode`/`decodeTokens`) now writes `null`, not a fabricated `0f` —
+   `0f` is log-probability 1.0, absolute certainty, which misrepresents a value nothing computed
+   (constitution I). Confirmed by grep that no production code outside `:asr-sherpa` ever
+   constructs a `Hypothesis`/`TokenScore` (only `RealSherpaDecoder` does), so this is a
+   module-local, additive-in-effect change; `FakeAsrEngine`/`FakeSherpaDecoder` never construct
+   these types either (`nBest`/`tokens` stay `emptyList()` in every fake), so no fake needed a
+   change beyond `FakeAsrEngine.defaultResult`'s `noSpeechProb` parameter widening to `Float?` so
+   tests can script the `null` case.
+5. **`decodeTokens` extracted to a top-level `internal` function** in `RealSherpaDecoder.kt`
+   (previously a private method) specifically so it is unit-testable against a directly
+   constructed `com.k2fsa.sherpa.onnx.OfflineRecognizerResult` — confirmed a plain constructor
+   call with no native method, so this is a genuine test of the real binding's shape, not a fake
+   standing in for it, with no native library or model required.
+6. `FakeSherpaDecoder.defaultHypothesis`'s `noSpeechProb = 0.05f` default is now documented as
+   illustrative, not representative — `RealSherpaDecoder` can never produce a non-null value today.
+
+**What this means for AC-6:** hallucination control 3 is not live. It is **explicitly inert** —
+recorded as such on every `PassBOutcome`, both `Accepted` and `Rejected` — rather than silently
+absent while a passing `NoSpeechProbRule` test suite and a clean AC-6 checklist implied otherwise.
+AC-6 rests on five live controls plus one honestly-inert one, not six live ones and not five
+silently miscounted as six.
+
+**What acoustic confidence would need to become real:** the offline/Whisper path used for Pass B
+has no upstream signal to wire, full stop — this is not a wiring gap, it is a binding gap. Making
+it real needs one of: (a) upstream sherpa-onnx adding a no-speech/confidence output to
+`OfflineRecognizerResult` for the Whisper decoder specifically; (b) switching Pass B to a decoder
+family whose sherpa-onnx binding does expose per-token probabilities (unclear which offline model
+families do, if any — not investigated tonight, out of scope for a binding-surface check); or (c)
+computing an out-of-band confidence proxy from the audio/decode independently of this binding
+(e.g. energy-based VAD confidence, encoder-output entropy) — a design decision, not a bug fix, and
+not attempted here since it would be inventing a new signal, not wiring an existing one. Separately
+and pre-existing (not touched here): `PhoneticLattice.ofUnits`'s `UnitScore(unit, 0f)` for
+`TEXT_DERIVED` slots is mathematically correct as-is (one alternative, log(1.0) = 0 = certain by
+construction, not a fabricated score) — the real gap there is that Pass C (acoustic keyword
+spotting) has no production implementation at all yet (only `FakeUnitSpotter`), which is the
+M4 fork decision, not this row's scope.
+
+**Verified:**
+- `./gradlew :asr-api:test :asr-sherpa:test --max-workers=2` — all tests green, including three
+  new/changed `R_1121`-named tests in `NoSpeechProbRuleTest`, two new in `RejectionPipelineTest`,
+  and a new `DecodeTokensTest` (3 tests) exercising the real binding's own result type directly.
+  `RealSherpaDecoderRealModelTest`/`RealSileroVadRealModelTest` correctly SKIPPED (no
+  `ORT_RUN_REAL_SHERPA`, no cached model — ungated per constitution: no unit test reads a real
+  bundled model). That gated test's assertions were extended (`noSpeechProb`/`avgLogProb`/
+  `nBest[0].logProb`/`tokens[0].logProb` all `null`) but **could not be executed this session** —
+  no model downloaded locally; a future session with `ORT_RUN_REAL_SHERPA=1` and the model cached
+  is what proves them for real.
+- `./gradlew :asr-api:detekt :asr-api:ktlintCheck :asr-sherpa:detekt :asr-sherpa:ktlintCheck --max-workers=2`
+  — green.
+- Discrimination, both fixes: (1) reverted `NoSpeechProbRule`'s null-branch back to `Accept` and
+  `RejectionPipeline`'s `Indeterminate` handling to a no-op — `RejectionPipelineTest`'s two new
+  `R_1121` cases failed for exactly the right reason (`inertControls` empty instead of containing
+  `NO_SPEECH_PROB`); restored, green again. (2) reverted `decodeTokens`'s `logProb = null` back to
+  `0f` — `DecodeTokensTest`'s fabrication-check failed (`expected: <null> but was: <0.0>`);
+  restored, green again.
+- `./gradlew :pipeline:compileDebugKotlin :pipeline:compileDebugUnitTestKotlin --max-workers=2` —
+  green (read-only check that the additive `PassBOutcome`/`Hypothesis`/`TokenScore` signature
+  changes do not break the one other module that depends on `:asr-api`; no `:pipeline` file
+  edited, per this unit's file-ownership boundary).
+- `./gradlew :lexicon:compileTestKotlin` — green (confirms `UnitScore`, deliberately left
+  unchanged, still compiles against everything that reads it).
+
+**Left open / not done:**
+- The three items under "What acoustic confidence would need to become real" above — all are
+  either an upstream dependency, a model-family decision, or a new-signal design call, none of
+  which this unit was scoped or asked to make tonight.
+- `RealSherpaDecoderRealModelTest`'s extended assertions are unexecuted pending a real cached
+  model (see "Verified").
+- `PassBOutcome.inertControls` is populated by `RejectionPipeline` but **nothing downstream
+  persists it yet** — `PassBFingerprintBuilder`/`DataPassBResultSink` (`:pipeline`, explicitly out
+  of this unit's file ownership tonight) would need to read and store it for "the fingerprint
+  records the control was inert" to be true end-to-end on a device, not just true of the in-memory
+  result the pipeline hands back. Flagging for whoever owns that seam next.
+- Whether `FrequencyDetail`-adjacent acoustic paths (Pass C acoustic keyword spotting,
+  `FakeUnitSpotter`'s real counterpart) should also carry this same `Indeterminate`-shaped honesty
+  once built is a question for whoever builds Pass C, not answered here.
+
+---
+
 ## 2026-09-20 (P37: `diff.py` can fail)
 
 ### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change

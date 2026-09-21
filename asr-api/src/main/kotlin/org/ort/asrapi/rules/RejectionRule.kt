@@ -27,6 +27,16 @@ public enum class RejectionRuleId {
 public sealed interface RejectionVerdict {
     public data object Accept : RejectionVerdict
     public data class Reject(val rule: RejectionRuleId, val detail: String) : RejectionVerdict
+
+    /**
+     * The rule genuinely cannot evaluate this decode — the signal it depends on was never
+     * produced, not merely absent by chance this once (register R-1121). Deliberately distinct
+     * from [Accept]: an indeterminate control did not clear the segment, it never got to look at
+     * it. Folding this into [Accept] recreates exactly the defect this case exists to prevent — a
+     * hallucination control that is permanently inert and indistinguishable from one that is
+     * healthy (constitution I: uncertainty must be content, never silently treated as a pass).
+     */
+    public data class Indeterminate(val rule: RejectionRuleId, val reason: String) : RejectionVerdict
 }
 
 /**

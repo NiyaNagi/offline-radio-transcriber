@@ -1,6 +1,7 @@
 package org.ort.asrapi.rules
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.asrapi.AsrResult
 import org.ort.core.AssetRef
@@ -33,8 +34,12 @@ class NoSpeechProbRuleTest {
     }
 
     @Test
-    fun `a decode with no no_speech_prob at all is accepted by this rule (nothing to check)`() {
+    @Requirement("FR-ASR-5", "FR-ASR-6")
+    fun `R_1121 a decode with no no_speech_prob at all is Indeterminate, not silently accepted`() {
         val rule = NoSpeechProbRule()
-        assertEquals(RejectionVerdict.Accept, rule.evaluate(result(noSpeechProb = null)))
+        val verdict = rule.evaluate(result(noSpeechProb = null))
+        val indeterminate = verdict as RejectionVerdict.Indeterminate
+        assertEquals(RejectionRuleId.NO_SPEECH_PROB, indeterminate.rule)
+        assertTrue(indeterminate.reason.isNotBlank(), "the reason the control could not run must be recorded")
     }
 }

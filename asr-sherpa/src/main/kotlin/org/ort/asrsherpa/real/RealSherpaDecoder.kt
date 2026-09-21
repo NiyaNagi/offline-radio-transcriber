@@ -35,6 +35,23 @@ import org.ort.asrsherpa.SherpaDecoder
  * `AsrModelLocator.modelsDir(filesDir)` themselves. The gated real-model test still constructs
  * this class directly, from explicit file paths, independent of that provider.
  *
+ * **Register R-1121: what this binding actually exposes, checked rather than assumed.**
+ * `OfflineRecognizer.getResult()` — the only source of a decode here — returns a
+ * [OfflineRecognizerResult] whose entire field set (confirmed by decompiling the resolved
+ * `sherpa-onnx-jvm-1.13.7.jar` with `javap -p`, since upstream does not publish this binding's
+ * source alongside the jar) is `text`, `tokens: String[]`, `timestamps: float[]`,
+ * `durations: float[]`, `lang`, `emotion` and `event`. There is no `no_speech_prob`, no
+ * per-hypothesis or per-token log-probability of any kind, and no n-best list — this offline
+ * recognizer produces exactly one hypothesis, never several. (The *streaming* path this module
+ * does not use, `OnlineRecognizerResult`, does carry a per-token `ysProbs: float[]` — so the gap
+ * is specific to the offline/Whisper recognizer wrapped here, not to the JVM binding as a whole.)
+ * `noSpeechProb`/`avgLogProb` are therefore genuinely `null` below, and every [TokenScore]'s and
+ * [Hypothesis]'s `logProb` is `null` too (see [decodeTokens]) — never a fabricated `0f`, which
+ * would read as log-probability 1.0, absolute certainty, for a value nothing here computed
+ * (constitution I). [org.ort.asrapi.rules.NoSpeechProbRule] treats that `null` as
+ * [org.ort.asrapi.rules.RejectionVerdict.Indeterminate] rather than silently accepting it, which
+ * is what makes hallucination control 3 visibly inert instead of quietly absent.
+ *
  * @param encoderOnnxPath path to the Whisper encoder `.onnx` file.
  * @param decoderOnnxPath path to the Whisper decoder `.onnx` file.
  * @param tokensPath path to the model's `tokens.txt`.
@@ -78,7 +95,7 @@ public class RealSherpaDecoder(
             val tokens = decodeTokens(result)
             return DecodedHypothesis(
                 text = text,
-                nBest = listOf(Hypothesis(text = text, logProb = 0f, tokens = tokens)).takeIf { opts.nBest > 0 }
+                nBest = listOf(Hypothesis(text = text, logProb = null, tokens = tokens)).takeIf { opts.nBest > 0 }
                     ?: emptyList(),
                 noSpeechProb = null,
                 avgLogProb = null,
@@ -94,20 +111,31 @@ public class RealSherpaDecoder(
         recognizer.release()
     }
 
-    private fun decodeTokens(result: OfflineRecognizerResult): List<TokenScore> {
-        val tokenTexts = result.tokens ?: return emptyList()
-        val timestamps = result.timestamps
-        val durations = result.durations
-        return tokenTexts.mapIndexed { i, token ->
-            val startMs = timestamps?.getOrNull(i)?.let { (it * MILLIS_PER_SECOND).toInt() } ?: 0
-            val durationMs = durations?.getOrNull(i)?.let { (it * MILLIS_PER_SECOND).toInt() } ?: 0
-            TokenScore(token = token, logProb = 0f, startMs = startMs, endMs = startMs + durationMs)
-        }
-    }
-
     public companion object {
         /** The pipeline's one fixed sample rate (`SampleClock.DEFAULT_SAMPLE_RATE`, FR-RUN-16). */
         public const val SAMPLE_RATE_HZ: Int = 16_000
-        private const val MILLIS_PER_SECOND: Float = 1000f
     }
 }
+
+/**
+ * Maps sherpa-onnx's raw per-token text/timing arrays onto [TokenScore], with `logProb = null` —
+ * see [RealSherpaDecoder]'s class doc for exactly what the binding does and does not expose, and
+ * why `null` rather than a fabricated `0f`.
+ *
+ * A top-level function rather than a method on [RealSherpaDecoder] specifically so it is
+ * unit-testable against a directly constructed [OfflineRecognizerResult] — a plain data holder
+ * with a public constructor and no native methods of its own — without needing a real recognizer,
+ * real model files, or the native library at all. See `DecodeTokensTest`.
+ */
+internal fun decodeTokens(result: OfflineRecognizerResult): List<TokenScore> {
+    val tokenTexts = result.tokens ?: return emptyList()
+    val timestamps = result.timestamps
+    val durations = result.durations
+    return tokenTexts.mapIndexed { i, token ->
+        val startMs = timestamps?.getOrNull(i)?.let { (it * MILLIS_PER_SECOND).toInt() } ?: 0
+        val durationMs = durations?.getOrNull(i)?.let { (it * MILLIS_PER_SECOND).toInt() } ?: 0
+        TokenScore(token = token, logProb = null, startMs = startMs, endMs = startMs + durationMs)
+    }
+}
+
+private const val MILLIS_PER_SECOND: Float = 1000f
