@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (m-capture-liveness: R-1111 device tier, R-1115 heartbeat trail)
 
-### `<pending>` — R-1111/R-1115: a real session records its device tier, and the heartbeat keeps a trail
+### `457243ee` — R-1111/R-1115: a real session records its device tier, and the heartbeat keeps a trail
 
 **Scope:** `:pipeline` — `RealCaptureService.kt`'s session-entity and heartbeat paths, new
 `HeartbeatTrail.kt` (`HeartbeatTrailEntry`, `HeartbeatTrailRotation`, `HeartbeatTrailStore`,
