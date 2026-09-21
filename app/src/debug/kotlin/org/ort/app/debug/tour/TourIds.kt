@@ -6,6 +6,7 @@ import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.data.StationSubScreen
 import org.ort.app.ui.navigation.NavSeed
 import org.ort.app.ui.navigation.ReviewSessionView
+import org.ort.app.ui.screens.CorrectionTierStep
 import org.ort.app.ui.settings.SettingsScreenId
 import org.ort.core.AttributionState
 import org.ort.core.TransmissionState
@@ -73,6 +74,12 @@ import org.ort.data.OrtDatabase
  *   [sessionId]) or a literal session id — the identical "self" shortcut `reviewSession` above
  *   already has, into the separate [NavSeed.pendingRecordingSessionId] field (RC02, not the old
  *   `Session` detail `reviewSession` seeds).
+ * - `whyOpen` / `labelOpen` (R-1117/R-056/R-1127): companions to `transmission`, the same
+ *   relationship `revisionsOpen` has — `true` opens D05/the labelled-sample form.
+ * - `correctionStep` (R-052/R-1127): a companion to `transmission` — a [CorrectionTierStep] name
+ *   (`MAIN`/`SEARCH`/`TYPE`) opens D08/D09/D10 directly on that tier.
+ * - `improveDonePreview` (R-350/R-1127): `true` (on an `IMPROVE_RECORDS` destination step, no
+ *   `transmission` companion) starts R04 already on a real-shaped `Done` summary.
  *
  * A key naming a symbolic value this table does not recognise, and that also does not resolve as a
  * literal id/number, throws — caught by [TourRunner] the same as any other per-step failure, never
@@ -116,6 +123,17 @@ public object TourIds {
             // WPRC02: mirrors `reviewSession`'s own "self" shortcut exactly — RC02 needs a session
             // id the identical way `Settings-Storage`'s own Review link does.
             pendingRecordingSessionId = drillIn["recordingSession"]?.let { if (it == "self") sessionId else it },
+            // R-1117/R-1127: mirrors `revisionsOpen` above exactly.
+            openTransmissionWhy = drillIn["whyOpen"]?.let { it.equals("true", ignoreCase = true) },
+            // R-056/R-1127: mirrors `revisionsOpen` above exactly.
+            openTransmissionLabel = drillIn["labelOpen"]?.let { it.equals("true", ignoreCase = true) },
+            // R-052/R-1127: D08-D11's own seam.
+            correctionStep = drillIn["correctionStep"]?.let { name ->
+                CorrectionTierStep.entries.firstOrNull { it.name == name }
+                    ?: error("unknown correctionStep '$name' — expected MAIN, SEARCH or TYPE")
+            },
+            // R-350/R-1127: `IMPROVE_RECORDS`'s own seam — no session/transmission lookup needed.
+            improveDonePreview = drillIn["improveDonePreview"]?.let { it.equals("true", ignoreCase = true) },
         )
     }
 

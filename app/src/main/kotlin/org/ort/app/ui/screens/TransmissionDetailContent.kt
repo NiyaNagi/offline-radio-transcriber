@@ -74,12 +74,18 @@ import java.io.File
  * composable already on [DetailDestination.Revisions] instead of [DetailDestination.Main], so a
  * screenshot tour can capture D07 (`Detail-Revisions.dc.html`) directly by intent extra, without
  * simulating the real tap sequence (open the over, then its own "N earlier versions" link) a
- * `Log-Rejected`-style deep link cannot express. `Why` and the rejected state need no equivalent
- * seam: `Why` is [DetailDestination.Why], reachable the same real way any tour already reaches
- * `Revisions` (a tap on "Full lattice"), and rejected is not a *destination* at all — it is
- * [DetailViewState.rejected], derived automatically from the polled transmission's own real
- * `processingState`, so a tour reaches F04 simply by opening a genuinely rejected transmission,
- * the same as any other real state.
+ * `Log-Rejected`-style deep link cannot express. The rejected state needs no equivalent seam: it is
+ * not a *destination* at all — it is [DetailViewState.rejected], derived automatically from the
+ * polled transmission's own real `processingState`, so a tour reaches F04 simply by opening a
+ * genuinely rejected transmission, the same as any other real state.
+ *
+ * **R-1117/R-1127 (register), the identical shape one round later.** [initialWhyOpen] starts this
+ * composable already on [DetailDestination.Why] (D05, `Detail-Why.dc.html`) — this class's own
+ * earlier doc comment used to say `Why` needed no equivalent seam, reachable the same way any tour
+ * already reaches `Revisions` (a tap on "Full lattice"); that was true only for a tour, never for a
+ * real operator with no prior tap sequence to simulate at all, which is what R-1117 asks this seam
+ * to fix. [initialLabelOpen] (R-056) and [initialCorrectionStep] (R-052, D08-D11) are the same
+ * shape again, for two more states with no destination of their own.
  */
 @Suppress("LongParameterList") // IA-6's onOpenStation is one more seam in the same shape every
 // other cross-package drill-in callback here already is — see this file's own `MainDestination`/
@@ -97,6 +103,17 @@ public fun TransmissionDetailContent(
     onOpenStation: (String) -> Unit = {},
     backLabel: String = "Log",
     initialRevisionsOpen: Boolean = false,
+    // R-1117/R-1127 (register): the screenshot tour's own seam for D05 (`Detail-Why.dc.html`) —
+    // `tour.json`'s own comment named this as the one drill-in with "no seam at all". Mirrors
+    // [initialRevisionsOpen] exactly; `false` (every existing caller) is unchanged.
+    initialWhyOpen: Boolean = false,
+    // R-056/R-1127: mirrors [initialRevisionsOpen] for the labelled-sample form
+    // ([TransmissionDetailScreen.initialLabelExpanded]) — `false` (every existing caller) unchanged.
+    initialLabelOpen: Boolean = false,
+    // R-052/R-1127: D08-D11's own seam — non-null starts this composable already on
+    // [DetailDestination.Correcting], on the named tier (`MAIN` == D08, `SEARCH` == D09, `TYPE` ==
+    // D10). `null` (every existing caller) is unchanged.
+    initialCorrectionStep: CorrectionTierStep? = null,
     // R-1041 (D11, `LogFilterOrigin.Transmission`): `Detail-Propagated.dc.html`'s own "View the N
     // affected overs" — needs the Log, which this package cannot reach on its own (the nav host
     // owns `LogFilterOrigin`/`openLogFiltered`). Defaulted to a no-op so every existing caller
@@ -118,7 +135,12 @@ public fun TransmissionDetailContent(
     var audioAbsenceReason by remember(transmissionId) { mutableStateOf<AudioAbsenceReason?>(null) }
     var destination by remember(transmissionId) {
         mutableStateOf<DetailDestination>(
-            if (initialRevisionsOpen) DetailDestination.Revisions else DetailDestination.Main,
+            when {
+                initialRevisionsOpen -> DetailDestination.Revisions
+                initialWhyOpen -> DetailDestination.Why
+                initialCorrectionStep != null -> DetailDestination.Correcting
+                else -> DetailDestination.Main
+            },
         )
     }
     val scope = rememberCoroutineScope()
@@ -181,6 +203,8 @@ public fun TransmissionDetailContent(
         onDestinationChange = { destination = it },
         refresh = ::refresh,
         onViewAffectedOvers = onViewAffectedOvers,
+        initialLabelOpen = initialLabelOpen,
+        initialCorrectionStep = initialCorrectionStep,
         modifier = modifier,
     )
 }
@@ -210,6 +234,8 @@ private fun DetailDestinationContent(
     onDestinationChange: (DetailDestination) -> Unit,
     refresh: suspend () -> Unit,
     onViewAffectedOvers: (Set<String>) -> Unit,
+    initialLabelOpen: Boolean,
+    initialCorrectionStep: CorrectionTierStep?,
     modifier: Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -226,6 +252,7 @@ private fun DetailDestinationContent(
                 onDestinationChange = onDestinationChange,
                 refresh = refresh,
                 backLabel = backLabel,
+                initialLabelOpen = initialLabelOpen,
                 // R-261: while the correction sheet is open, the dimmed detail beneath it — its
                 // own `DrillInHeader`'s `Back to Log` included — must not be focusable or reachable
                 // by TalkBack traversal, and must not appear in the merged semantics tree at all.
@@ -269,6 +296,7 @@ private fun DetailDestinationContent(
                 viewState = viewState,
                 dest = dest,
                 onDestinationChange = onDestinationChange,
+                initialStep = initialCorrectionStep ?: CorrectionTierStep.MAIN,
             )
         }
     }
@@ -288,6 +316,7 @@ private fun MainDestination(
     onDestinationChange: (DetailDestination) -> Unit,
     refresh: suspend () -> Unit,
     backLabel: String,
+    initialLabelOpen: Boolean,
     modifier: Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -344,6 +373,7 @@ private fun MainDestination(
             // R-153: "Keep the partial" writes nothing — the over already reads exactly as it is
             // (the honest partial, or "(transcription failed)"); there is no state left to change.
             onKeepPartial = {},
+            initialLabelExpanded = initialLabelOpen,
             modifier = Modifier.weight(1f),
         )
     }
@@ -404,6 +434,9 @@ private fun CorrectingOverlay(
     viewState: DetailViewState,
     dest: DetailDestination,
     onDestinationChange: (DetailDestination) -> Unit,
+    // R-052/R-1127: the tour's own D08/D09/D10 seam — see [TransmissionDetailContent
+    // .initialCorrectionStep]'s own doc comment.
+    initialStep: CorrectionTierStep,
 ) {
     val scope = rememberCoroutineScope()
     var everyOverCount by remember(transmissionId) { mutableStateOf(1) }
@@ -450,6 +483,7 @@ private fun CorrectingOverlay(
             onApply = ::apply,
             onDismiss = onDismiss,
             modifier = Modifier.testTag("correction-sheet"),
+            initialStep = initialStep,
         )
     }
 }

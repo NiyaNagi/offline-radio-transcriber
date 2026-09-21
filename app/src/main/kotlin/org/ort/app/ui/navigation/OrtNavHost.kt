@@ -376,27 +376,7 @@ public fun OrtNavHost(
                         contentTopPadding = contentTopPadding,
                         onLiveBarHeightChanged = { liveBarHeight = it },
                     ),
-                    ids = NavHostIds(
-                        current,
-                        navState.openedFrom.value,
-                        navState.openTransmissionId.value,
-                        navState.openStationId.value,
-                        navState.openFrequencyHz.value,
-                        navState.openThreadId.value,
-                        DestinationInitialState(
-                            navigator.settingsScreenState.value,
-                            navState.openCaptureLevelMeter.value,
-                            navState.openCaptureLiveMonitor.value,
-                            navState.pendingLogFilter.value,
-                            navState.pendingReviewSessionId.value,
-                            seed?.logSheetOpen ?: false,
-                            navState.reviewSessionView.value,
-                            navState.openRecordingSessionId.value,
-                        ),
-                        navState.frequencyInitialView.value,
-                        navState.openStationSubScreen.value,
-                        seed?.openTransmissionRevisions ?: false,
-                    ),
+                    ids = buildNavHostIds(current, navigator, navState, seed),
                     callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
                     sessionId = sessionId,
                     context = context,
@@ -1042,6 +1022,41 @@ private data class DestinationInitialState(
     val reviewSessionView: ReviewSessionView,
     // WPRC02 — see `NavHostNavState.openRecordingSessionId`'s own doc comment.
     val recordingSessionId: String?,
+    // R-350/R-1127 — see `NavSeed.improveDonePreview`'s own doc comment.
+    val improveDonePreview: Boolean,
+)
+
+/** [OrtNavHost]'s own [NavHostIds] construction, split out purely to keep that function under
+ * detekt's `LongMethod` threshold — a plain data move, not a behaviour change. */
+private fun buildNavHostIds(
+    current: ReaderDestination,
+    navigator: ReaderNavigator,
+    navState: NavHostNavState,
+    seed: NavSeed?,
+): NavHostIds = NavHostIds(
+    current,
+    navState.openedFrom.value,
+    navState.openTransmissionId.value,
+    navState.openStationId.value,
+    navState.openFrequencyHz.value,
+    navState.openThreadId.value,
+    DestinationInitialState(
+        navigator.settingsScreenState.value,
+        navState.openCaptureLevelMeter.value,
+        navState.openCaptureLiveMonitor.value,
+        navState.pendingLogFilter.value,
+        navState.pendingReviewSessionId.value,
+        seed?.logSheetOpen ?: false,
+        navState.reviewSessionView.value,
+        navState.openRecordingSessionId.value,
+        seed?.improveDonePreview ?: false,
+    ),
+    navState.frequencyInitialView.value,
+    navState.openStationSubScreen.value,
+    seed?.openTransmissionRevisions ?: false,
+    seed?.openTransmissionWhy ?: false,
+    seed?.openTransmissionLabel ?: false,
+    seed?.correctionStep,
 )
 
 /** [NavHostBody]'s destination/drill-in identity, bundled to keep that composable's own parameter count down. */
@@ -1064,6 +1079,13 @@ private data class NavHostIds(
     // comment. Only meaningful alongside `transmissionId`, the same companion relationship
     // `frequencyInitialView` already has to `frequencyHz`.
     val transmissionInitialRevisionsOpen: Boolean,
+    // R-1117/R-1127 — see `NavSeed.openTransmissionWhy`'s own doc comment. Same companion
+    // relationship as `transmissionInitialRevisionsOpen` above.
+    val transmissionInitialWhyOpen: Boolean,
+    // R-056/R-1127 — see `NavSeed.openTransmissionLabel`'s own doc comment.
+    val transmissionInitialLabelOpen: Boolean,
+    // R-052/R-1127 — see `NavSeed.correctionStep`'s own doc comment.
+    val transmissionInitialCorrectionStep: org.ort.app.ui.screens.CorrectionTierStep?,
 )
 
 /**
@@ -1490,19 +1512,8 @@ private fun NavHostDispatch(
 ) {
     val scope = rememberCoroutineScope()
     when {
-        ids.transmissionId != null -> TransmissionDetailContent(
-            context = context,
-            transmissionId = ids.transmissionId,
-            player = audioPlayer,
-            onBack = callbacks.onCloseDrillIns,
-            onOpenTransmission = callbacks.onOpenTransmission,
-            // IA-6: real now — the transmission's own attributed station, one tap away.
-            onOpenStation = callbacks.onOpenAttributedStation,
-            backLabel = ids.openedFrom.label,
-            initialRevisionsOpen = ids.transmissionInitialRevisionsOpen,
-            // R-1041 (D11): real now — `Detail-Propagated.dc.html`'s "View the N affected overs".
-            onViewAffectedOvers = { overIds -> callbacks.onViewAffectedOvers(ids.transmissionId, overIds) },
-        )
+        ids.transmissionId != null ->
+            TransmissionDetailBranch(ids.transmissionId, ids, callbacks, context, audioPlayer)
 
         ids.stationId != null -> StationDetailContent(
             context = context,
@@ -1612,6 +1623,36 @@ private fun NavHostDispatch(
             }
         }
     }
+}
+
+/** [NavHostDispatch]'s own `transmissionId != null` branch, split out purely to keep that
+ * function under detekt's `LongMethod` threshold — a plain data move, not a behaviour change.
+ * [transmissionId] is [ids]'s own non-null field, passed separately only so the smart-cast at the
+ * call site is not lost across the function-call boundary. */
+@Composable
+private fun TransmissionDetailBranch(
+    transmissionId: String,
+    ids: NavHostIds,
+    callbacks: NavHostCallbacks,
+    context: android.content.Context,
+    audioPlayer: org.ort.app.ui.audio.TransmissionAudioPlayer,
+) {
+    TransmissionDetailContent(
+        context = context,
+        transmissionId = transmissionId,
+        player = audioPlayer,
+        onBack = callbacks.onCloseDrillIns,
+        onOpenTransmission = callbacks.onOpenTransmission,
+        // IA-6: real now — the transmission's own attributed station, one tap away.
+        onOpenStation = callbacks.onOpenAttributedStation,
+        backLabel = ids.openedFrom.label,
+        initialRevisionsOpen = ids.transmissionInitialRevisionsOpen,
+        initialWhyOpen = ids.transmissionInitialWhyOpen,
+        initialLabelOpen = ids.transmissionInitialLabelOpen,
+        initialCorrectionStep = ids.transmissionInitialCorrectionStep,
+        // R-1041 (D11): real now — `Detail-Propagated.dc.html`'s "View the N affected overs".
+        onViewAffectedOvers = { overIds -> callbacks.onViewAffectedOvers(transmissionId, overIds) },
+    )
 }
 
 /**
@@ -1844,7 +1885,14 @@ private fun DestinationContent(
         // above. Call itself extracted to [ImproveRecordsContent] purely to keep this function
         // under detekt's `LongMethod` limit.
         ReaderDestination.IMPROVE_RECORDS ->
-            ImproveRecordsContent(context, onOpenDrawer, content, callbacks.onOpenModels, callbacks.onOpenChangedOvers)
+            ImproveRecordsContent(
+                context,
+                onOpenDrawer,
+                content,
+                callbacks.onOpenModels,
+                callbacks.onOpenChangedOvers,
+                initialState.improveDonePreview,
+            )
     }
 }
 
@@ -1969,6 +2017,8 @@ private fun ImproveRecordsContent(
     onOpenModels: () -> Unit,
     // R-1041 (R04): `Improve-Done`'s "Review the N changes", real now.
     onOpenChangedOvers: (Set<String>) -> Unit,
+    // R-350/R-1127: the tour's own seam — see `NavSeed.improveDonePreview`'s own doc comment.
+    initialDonePreview: Boolean,
 ) {
     org.ort.app.ui.improve.ImproveContent(
         context = context,
@@ -1976,6 +2026,7 @@ private fun ImproveRecordsContent(
         modifier = modifier,
         onOpenModels = onOpenModels,
         onOpenChangedOvers = onOpenChangedOvers,
+        initialDonePreview = initialDonePreview,
     )
 }
 

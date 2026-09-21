@@ -128,9 +128,14 @@ public fun TransmissionDetailScreen(
     onRecordLabel: suspend (LabelledSample) -> Unit = {},
     onRetryPass: () -> Unit = {},
     onKeepPartial: () -> Unit = {},
+    // R-056/R-1127 (register): the screenshot tour's own seam — the labelled-sample form
+    // ([LabelSampleSection] below) is interaction-only local state with no destination of its own,
+    // so a tour step needs to start it already expanded rather than simulate the "Record labelled
+    // sample" tap. `false` (every existing caller) is today's unseeded behaviour, unchanged.
+    initialLabelExpanded: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    var labelExpanded by remember(state.detail.id) { mutableStateOf(false) }
+    var labelExpanded by remember(state.detail.id) { mutableStateOf(initialLabelExpanded) }
     // R-422: a `Column(weight(1f)) { scroll } + Column(bar)` sibling pair — this screen's own shape
     // before this fix — is the same "first-frame clipping" class `FailureActionBarScaffold.kt`'s
     // own doc comment already diagnosed at R-292/R-151: correct once settled, but at a large font
@@ -160,7 +165,7 @@ public fun TransmissionDetailScreen(
             when {
                 rejected != null -> RejectedHeaderSection(state.detail, rejected)
                 passFailure != null -> FailedPassHeaderSection(state.detail, passFailure)
-                else -> HeaderSection(state, onOpenTransmission)
+                else -> HeaderSection(state, onOpenTransmission, onOpenWhy)
             }
             PlaybackSection(state.detail, player, state.audioAbsenceReason)
             when {
@@ -210,7 +215,7 @@ public fun TransmissionDetailScreen(
 }
 
 @Composable
-private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -> Unit) {
+private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -> Unit, onOpenWhy: () -> Unit) {
     val detail = state.detail
     val ambiguous = state.body as? DetailBodyViewState.Ambiguous
     val alternate = ambiguous?.alternateCallsign
@@ -222,7 +227,11 @@ private fun HeaderSection(state: DetailViewState, onOpenTransmission: (String) -
     val primaryCallsign = ambiguous?.candidates?.firstOrNull()?.callsign ?: detail.attribution.stationId
     Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TitleAttributionRow(attribution = detail.attribution, callsign = primaryCallsign)
+            // R-1117 (register): a real, larger-target way into `DetailWhyScreen` beside the
+            // existing "Full lattice" text action further down this same screen (`WhySection`) —
+            // see `AttributionMarker.kt`'s own doc comment for the full account of why this needed
+            // an `onClick` seam at all.
+            TitleAttributionRow(attribution = detail.attribution, callsign = primaryCallsign, onOpenWhy = onOpenWhy)
             // TitleAttributionRow has no `alternate` param — the AMBIGUOUS "or QRF" runner-up is
             // added here, in AttributionRow's own style for the same fact (guide §6.1).
             if (alternate != null) {

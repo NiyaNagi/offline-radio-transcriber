@@ -69,8 +69,13 @@ public fun CorrectionSheet(
     onApply: (callsign: String, tier: CorrectionTier, scope: CorrectionScope) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    // R-1127 (register): the screenshot tour's own seam for D08/D09/D10 (`Detail-Correct-A/B/C
+    // .dc.html`) — these are genuinely interaction-only sheets with no destination of their own, so
+    // the tour needs to land directly on a given tier rather than simulate the "Someone else" taps
+    // that reach B/C from A. `MAIN` (every existing caller) is unchanged — today's real entry point.
+    initialStep: CorrectionTierStep = CorrectionTierStep.MAIN,
 ) {
-    var tier by remember { mutableStateOf(CorrectionTierStep.MAIN) }
+    var tier by remember { mutableStateOf(initialStep) }
 
     Column(modifier = modifier.fillMaxHeight(0.85f).verticalScroll(rememberScrollState())) {
         Sheet(title = "Who was it?") {
@@ -105,7 +110,9 @@ public fun CorrectionSheet(
     }
 }
 
-private enum class CorrectionTierStep { MAIN, SEARCH, TYPE }
+/** [CorrectionSheet]'s own three tiers — public (R-1127) so the tour's `NavSeed`/`TourIds` seam
+ * (`ui/navigation`) can name a starting tier without a second, parallel enum. */
+public enum class CorrectionTierStep { MAIN, SEARCH, TYPE }
 
 /** Tier A: the resolver's other candidates, then the two "someone else" doors into tier B/C. */
 @Composable

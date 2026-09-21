@@ -1012,7 +1012,11 @@ public class SetupActivity : ComponentActivity() {
     private fun currentPermissionsState(): PermissionsState {
         val pm = getSystemService(POWER_SERVICE) as PowerManager
         return PermissionsState(
-            recordAudioGranted = granted(Manifest.permission.RECORD_AUDIO),
+            // R-1127/R-1107 (register): see `DebugMicPermissionOverride`'s own kdoc — a debug
+            // scenario can make this report a genuine denial regardless of what `install.ps1`
+            // actually granted, so `SetupStateMachine.stepFor`'s `MICROPHONE_DENIED` gate (which
+            // requires both this and `micPermanentlyDenied()` below) can fire honestly in the tour.
+            recordAudioGranted = !DebugMicPermissionOverride.active && granted(Manifest.permission.RECORD_AUDIO),
             notificationsGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                 granted(Manifest.permission.POST_NOTIFICATIONS) ||
                 store.notificationsSkipped,
@@ -1027,6 +1031,8 @@ public class SetupActivity : ComponentActivity() {
     }
 
     private fun micPermanentlyDenied(): Boolean {
+        // R-1127/R-1107 — see `DebugMicPermissionOverride`'s own kdoc.
+        if (DebugMicPermissionOverride.active) return true
         if (granted(Manifest.permission.RECORD_AUDIO)) return false
         val canShowRationale =
             ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)
@@ -1256,9 +1262,21 @@ public class SetupActivity : ComponentActivity() {
      * `"Unknown"` only when the route list is somehow empty at this point (never reachable through
      * the ordinary S04 -> S05 -> S06 flow, since [onStartVerify] cannot fire without a selection
      * already present in that same list) — never a crash, and never a fabricated specific type.
+     *
+     * **R-1127/R-282 (register).** A cold `EXTRA_STEP=ROUTE_MISMATCH` launch (the tour's own debug
+     * entry — the same shape [RenderVerify] already handles for S05, R-943) never visits
+     * [RenderVerify] at all, so [verifyState] was never set by a real check and this composable
+     * used to render nothing. Backfills it from [DebugRouteCheckOverride.activeOverride] directly,
+     * in a [LaunchedEffect] rather than through [onVerifyStateChanged] — that function also calls
+     * [navigateForward], which would push a redundant `ROUTE_MISMATCH -> ROUTE_MISMATCH` backstack
+     * entry when landing here cold already on this step.
      */
     @Composable
     private fun RenderRouteMismatch() {
+        val override = DebugRouteCheckOverride.activeOverride
+        if (verifyState == null && override != null) {
+            LaunchedEffect(override) { verifyState = override }
+        }
         val mismatch = verifyState as? RouteCheckState.Mismatch ?: return
         val selectedTypeLabel = inputRoutes.firstOrNull { it.id == mismatch.selected.id }?.typeLabel ?: "Unknown"
         RouteMismatchScreen(

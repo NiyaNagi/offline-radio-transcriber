@@ -174,9 +174,17 @@ public fun ImproveContent(
     // to a no-op so every existing caller keeps compiling unchanged; the host is expected to wire
     // it the same way it wires [onOpenModels].
     onOpenChangedOvers: (Set<String>) -> Unit = {},
+    // R-350/R-1127 (register): the screenshot tour's own seam — [page] is `rememberSaveable` local
+    // state with no seed of its own, so R04 (`Improve-Done.dc.html`) could only ever be reached by
+    // actually driving a reprocess run to completion, which the tour cannot do. `true` starts this
+    // composable already on [ImprovePage.Done] with a real-shaped summary — a failure reason that
+    // is the literal message `AsrEngineProvisioning` emits (so R-350's own "Install" action is
+    // exercised too), never fabricated data this build cannot produce. `false` (every existing
+    // caller) is unchanged.
+    initialDonePreview: Boolean = false,
 ) {
     val runner = remember { RealImproveRunner(context) }
-    var page by rememberSaveable(stateSaver = ImprovePageSaver) { mutableStateOf<ImprovePage>(ImprovePage.Root) }
+    var page by rememberSaveable(stateSaver = ImprovePageSaver) { mutableStateOf(pageFor(initialDonePreview)) }
     var root by remember { mutableStateOf<ImproveRootViewState?>(null) }
     var refreshToken by remember { mutableStateOf(0) }
     var justFinished by remember { mutableStateOf<JustFinishedRun?>(null) }
@@ -440,5 +448,33 @@ private fun Loading(modifier: Modifier = Modifier) {
         Text(text = "Loading…", modifier = Modifier.semantics { contentDescription = "Loading improve records" })
     }
 }
+
+/** [ImproveContent]'s own initial [page] value — a plain function, pulled out purely so the
+ * `rememberSaveable` call site stays one line (detekt's `LongMethod` threshold). */
+private fun pageFor(initialDonePreview: Boolean): ImprovePage =
+    if (initialDonePreview) donePreviewPage() else ImprovePage.Root
+
+/**
+ * [ImproveContent]'s own `initialDonePreview` fixture — see that parameter's own kdoc. Every count
+ * is internally consistent (`transcriptsChanged + attributionsChanged == changedTransmissionIds
+ * .size`, `failed == failureReasons`' own implied count) and the one failure reason is the real,
+ * literal `AsrEngineProvisioning` message `isMissingModelReason`/`humanizeFailureReason`
+ * (`ImproveScreens.kt`, outside this package's ownership tonight) already know how to recognise —
+ * never a paraphrase this fixture invents on its own.
+ */
+private fun donePreviewPage(): ImprovePage.Done = ImprovePage.Done(
+    headline = "All groups",
+    clearedCount = 6,
+    summary = ReprocessStatus.Summary(
+        total = 6,
+        transcriptsChanged = 3,
+        attributionsChanged = 2,
+        rejected = 0,
+        failed = 1,
+        correctedCount = 1,
+        failureReasons = listOf("ASR unavailable: no ASR model installed"),
+        changedTransmissionIds = setOf("improve-preview-tx1", "improve-preview-tx2"),
+    ),
+)
 
 private const val AUTO_PAUSE_POLL_INTERVAL_MILLIS = 200L

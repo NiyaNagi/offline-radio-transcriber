@@ -32,7 +32,113 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-20 (P37: `diff.py` can fail)
+## 2026-09-20 (m-seed-seams: seven screens get a real seed seam, one of them a real product affordance)
+
+### `<pending>` — R-1127's seven screens (R-052/R-056/R-085/R-1107/R-282/R-350/R-1117), plus R-1129's licence-notice tour step and R-1091's verification
+
+**Scope:** `app/src/debug/**` (`Scenarios.kt`, `tour/TourSpec.kt`, `tour/TourIds.kt`,
+`tour/ScreenshotTourActivity.kt`), `tools/ui-audit/tour.json`, `results/ui-audit/README.md`, and
+the `src/main` navigation/seed seams these screens needed:
+`app/src/main/kotlin/org/ort/app/ui/navigation/NavSeed.kt` and `OrtNavHost.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/{TransmissionDetailContent,TransmissionDetailScreen,
+CorrectionSheet,DetailWhyScreen}.kt`, `app/src/main/kotlin/org/ort/app/ui/components/
+AttributionMarker.kt`, `app/src/main/kotlin/org/ort/app/ui/improve/ImproveContent.kt`,
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsLicensesScreen.kt`, and a new
+`app/src/main/kotlin/org/ort/app/ui/setup/DebugMicPermissionOverride.kt` plus two small fixes in
+`app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt`. Did not touch `tools/ui-audit/
+diff.py`/`tour.ps1`, `ui/theme/`, `:pipeline`, `:capture-*`, `:data`, the analytics/field-report
+packages, or `ImproveScreens.kt`/`FrequencyScreen.kt` (other builders' rows tonight).
+
+**Requirements/ACs:** constitution VIII; R-1127, R-1107, R-1117, R-1129, R-1091, R-085, R-282,
+R-052, R-056, R-350, R-770; FR-UI-8.
+
+**What changed:**
+- **D08-D11 the correction sheets (R-052).** `CorrectionSheet`'s private `CorrectionTierStep` enum
+  is now public; a new `initialStep` parameter (default `MAIN`, every existing caller unchanged)
+  starts the sheet directly on Tier A/B/C. Threaded through a new `NavSeed.correctionStep` field
+  and `TransmissionDetailContent.initialCorrectionStep`. D11 (`Detail-Propagated`) needed nothing —
+  it was already reachable through `onChooseCandidate`'s own real flow.
+- **Detail › label (R-056).** `TransmissionDetailScreen` gains `initialLabelExpanded` (default
+  `false`); `NavSeed.openTransmissionLabel` and `TransmissionDetailContent.initialLabelOpen` thread
+  it through.
+- **Setup › mic denied (R-085, R-1107).** New `DebugMicPermissionOverride` (mirrors
+  `DebugRouteCheckOverride`'s shape exactly): `SetupActivity.currentPermissionsState`/
+  `micPermanentlyDenied` both consult it, so a debug scenario can make the *real* permission-state
+  functions report a genuine, permanent denial regardless of what `install.ps1`'s unconditional
+  `RECORD_AUDIO` grant actually left the OS in. Because both halves of `SetupStateMachine.stepFor`'s
+  `MICROPHONE_DENIED` gate now agree, `shouldRefreshStepOnResume`'s honest re-derivation stops
+  disagreeing with a debug-forced `EXTRA_STEP` and stomping it — no bypass logic was added to that
+  function at all, and `install.ps1` needed no change. New scenario `setup-mic-denied`.
+- **S06 Setup-Route-Mismatch (R-282).** `RenderRouteMismatch` backfills `verifyState` from
+  `DebugRouteCheckOverride.activeOverride` (a `LaunchedEffect`, not through `onVerifyStateChanged`,
+  which would also push a redundant `ROUTE_MISMATCH -> ROUTE_MISMATCH` backstack entry) when
+  landing on a cold `EXTRA_STEP=ROUTE_MISMATCH` launch — the identical seam `setup-verified`
+  already established for S05 (R-943). New scenario `setup-route-mismatch`
+  (`verifiedInputStore` alone, deliberately not `levelInBand`/etc., so `stepFor`'s natural
+  resolution lands past `ROUTE_MISMATCH`'s own ordinal and `tryOpenAtRequestedStep` honours it).
+- **R04 Improve-Done (R-350).** `ImproveContent` gains `initialDonePreview` (default `false`):
+  `page`'s `rememberSaveable` local state starts on a real-shaped `ImprovePage.Done` fixture (one
+  distinct failure reason — the literal `AsrEngineProvisioning` message — so R-350's own "Install"
+  action renders too) rather than requiring a live reprocess run the tour cannot drive to
+  completion. Threaded through `NavSeed.improveDonePreview`.
+- **D05 Detail-Why (R-180, R-320, R-1117) — the capture seam and the real product fix.**
+  `NavSeed.openTransmissionWhy`/`TransmissionDetailContent.initialWhyOpen` give the tour a direct
+  seed. Separately and more importantly: `AttributionMarker`, `AttributionRow` and
+  `TitleAttributionRow` (`ui/components/AttributionMarker.kt`) now accept a nullable `onClick`
+  (`null` for every existing caller — no behaviour change, not even an inert `clickable`).
+  `TransmissionDetailScreen`'s own header wires `TitleAttributionRow`'s `onClick` to `onOpenWhy`, so
+  tapping the callsign at the top of the detail screen opens `DetailWhyScreen` directly — a second,
+  larger-target way in beside the pre-existing "Full lattice" text action, which stays. Also fixed
+  on `DetailWhyScreen` itself, against the artboard: `why.runnerUp` is always one of the entries
+  `why.candidates` already renders in full (`DetailViewStateMapper.whyFor`'s own construction), so
+  the separate "Runner-up · ..." line duplicated a row the candidates list had just drawn —
+  removed; `Detail-Why.dc.html` has no such separate callout. **Left open, reported rather than
+  fixed**: the built screen is still missing the artboard's per-candidate reasons (e.g. "needs an A
+  the lattice did not hear") — real work needing new derived data no current API returns — and its
+  bottom action bar (`Not right?`/`Confirm`), which needs the same correction callbacks
+  `MainDestination` builds inline and was not safe to duplicate or refactor out under this unit's
+  own time budget without risking the correction flow it already implements.
+- **R-1129 (Gemma licence notice, no `src/main` seam needed — the detail screen is an ordinary
+  tap in production).** `SettingsLicensesScreen` gains stable testTags (`"license-row-<file>"`,
+  `"license-detail"`); a new tour-only `tapLicenseNotice` drillIn key
+  (`TourSpec`/`ScreenshotTourActivity`) taps the named row and waits for the detail screen, the
+  same "real tap via testTag" shape `tapLiveBar` already established. `tour.json` gains
+  `overnight/CF12-settings-licenses-gemma` (+`@2x`/`@2x-end`, the last per R-1129's own explicit
+  ask since the notice grew to the full Terms of Use/Prohibited Use Policy).
+- **R-1091, verified, not changed.** `SetupStep.isHalted()` already includes `MICROPHONE_DENIED`
+  (landed earlier tonight, `SetupStepTest`'s own `R_1091` cases) and `Setup-Mic-Denied.dc.html`
+  already draws segment 2 halted — the two already agree at HEAD. The register row is stale; the
+  new `setup-mic-denied` capture above is the missing evidence to close it on, not a code fix.
+- `tour.json`: 297 → 318 steps. Its own top `_comment` gets a `v9` entry replacing the stale
+  "confirmed genuinely NOT reachable" list for these seven screens with what closed each gap.
+  `results/ui-audit/README.md` gets a `v10 update` block doing the same for its own older claims
+  about S02b/S06, plus two new scenario-catalogue rows.
+
+**Verified:**
+- `.\gradlew.bat :app:ktlintFormat --max-workers=2` then `:app:ktlintCheck :app:detekt
+  --max-workers=2` — green (two `LongMethod` findings from added lines in `ImproveContent`/
+  `OrtNavHost.NavHostDispatch`/`OrtNavHost.OrtNavHost` fixed by extraction —
+  `TransmissionDetailBranch`/`buildNavHostIds`/`pageFor`/`donePreviewPage` — not by suppression).
+- `.\gradlew.bat :app:testFullDebugUnitTest --max-workers=2` — **BUILD SUCCESSFUL, 2743 tests
+  across 280 classes, 0 failures** (`app/build/test-results/testFullDebugUnitTest/TEST-*.xml`
+  summed directly). Includes the existing generic tour-integrity tests, which cover the new
+  surface without a hand-written test: `TourSpecTest`'s `R_TOUR_DRILL_IN_KEYS`/`R_TOUR_SETUP_IDS`
+  (every new drillIn key and setup id is recognised) and `ScenariosTest`'s `R_110 every declared
+  scenario name loads without throwing` (the two new scenarios). New/extended tests, each shown to
+  discriminate: `NavSeedTest` (six new cases — one per new `NavSeed` field, plus `R_1117 tapping
+  the title attribution marker opens Detail-Why` with **no** seed at all, proving the real
+  product affordance); `TourIdsTest` (five new cases for the four new `drillIn` keys);
+  `DetailWhyScreenTest`'s `R_1117_a_runner_up_candidate_is_never_rendered_twice`; a new
+  `DebugMicPermissionOverrideTest` (mirrors `DebugRouteCheckOverrideTest`); a new
+  `SetupActivityMicDeniedOverrideTest` (three cases, including a discrimination case that
+  reproduces the pre-fix stomp with no override active, `RECORD_AUDIO` genuinely granted); a new
+  `SetupActivityRouteMismatchOverrideTest` (mirrors `SetupActivityVerifyOverrideTest`).
+
+**Left open / not done:** Detail-Why's missing per-candidate reasons and bottom action bar (see
+above — filed, not fixed). R02/R03 Improve-Select/Running remain unseeded (only R04/Done got a
+seam this round, per R-1127's own named list). No device/tour run was performed — this unit writes
+the steps and seams; the lead runs the canonical tour. `gradlew --stop` was not run; no `git
+stash` was used.
 
 ### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change
 

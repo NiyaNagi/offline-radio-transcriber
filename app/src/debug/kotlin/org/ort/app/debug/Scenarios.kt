@@ -28,6 +28,7 @@ import org.ort.app.ui.failures.ReconcileRecord
 import org.ort.app.ui.failures.ReconcileViewState
 import org.ort.app.ui.failures.UsbViewState
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
+import org.ort.app.ui.setup.DebugMicPermissionOverride
 import org.ort.app.ui.setup.DebugModelsSetupOverride
 import org.ort.app.ui.setup.DebugRigLinkPortOverride
 import org.ort.app.ui.setup.DebugRouteCheckOverride
@@ -245,6 +246,10 @@ public object Scenarios {
         // doc comments.
         "setup-rig-bluetooth-identify-timed-out",
         "setup-rig-bluetooth-verify-timed-out",
+        // R-1127/R-1107/R-085/R-1091 (register): S02b — see [setupMicDenied]'s own doc comment.
+        "setup-mic-denied",
+        // R-1127/R-282 (register): S06 — see [setupRouteMismatch]'s own doc comment.
+        "setup-route-mismatch",
         "mode-local-mic",
         "mode-usb",
         "mode-bluetooth",
@@ -359,6 +364,8 @@ public object Scenarios {
             "setup-rig-bluetooth-dropped" -> setupRigBluetoothDropped(context)
             "setup-rig-bluetooth-identify-timed-out" -> setupRigBluetoothIdentifyTimedOut(context)
             "setup-rig-bluetooth-verify-timed-out" -> setupRigBluetoothVerifyTimedOut(context)
+            "setup-mic-denied" -> setupMicDenied(context)
+            "setup-route-mismatch" -> setupRouteMismatch(context)
             "mode-local-mic" -> modeLocalMic(context, db)
             "mode-usb" -> modeUsb(context, db)
             "mode-bluetooth" -> modeBluetooth(context, db)
@@ -798,6 +805,10 @@ public object Scenarios {
         // prior `setup-models` load's own S11a render must not leak into a later scenario's own
         // MODELS board.
         DebugModelsSetupOverride.clear()
+        // R-1127 (this round's own seam — see `DebugMicPermissionOverride`'s own kdoc): a forced
+        // permanent-denial from a prior `setup-mic-denied` load must not leak into a later
+        // scenario's own microphone-permission render.
+        DebugMicPermissionOverride.clear()
         // R-807 (register, coordinator round): [DebugBundledAssetSourceOverride] is deliberately
         // NOT cleared here, unlike every override above — it exists to survive across a whole
         // *sequence* of [load] calls within one test (`ScenariosTest`'s own R_110 stress-repeat
@@ -2896,6 +2907,66 @@ public object Scenarios {
         store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.bluetoothPermissionDeclined = false
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-mic-denied` — R-1127/R-1107/R-085/R-1091 (register), S02b: the operator denied
+     * `RECORD_AUDIO` twice and the platform will not show the rationale dialog again.
+     * `install.ps1` grants `RECORD_AUDIO` unconditionally before every scenario (`setup-bt-permission`'s
+     * own doc comment above states the identical constraint for `BLUETOOTH_CONNECT`), so the OS
+     * permission itself cannot be revoked from here — [DebugMicPermissionOverride] reaches the same
+     * real gate a different way, by making [org.ort.app.ui.setup.SetupActivity.currentPermissionsState]/
+     * [org.ort.app.ui.setup.SetupActivity.micPermanentlyDenied] report a genuine, permanent denial
+     * regardless of what the OS actually granted — see that object's own kdoc for why this also
+     * closes the *second* half of the gap (a debug-forced `EXTRA_STEP=MICROPHONE_DENIED` used to be
+     * stomped on the very next `onResume`).
+     */
+    private fun setupMicDenied(context: Context): LoadResult {
+        val store = freshSetupStore(context)
+        store.welcomeSeen = true
+        // P22 regression fix (NFR-6c, AC-166) — see [SetupSnapshot.jurisdictionNoticeSeen]'s own
+        // kdoc for why every fixture resuming past WELCOME must set this too.
+        store.jurisdictionNoticeSeen = true
+        // P28 regression fix (D42, FR-ANL-10, AC-180) — see [SetupSnapshot.analyticsConsentSeen]'s
+        // own kdoc for the identical reason.
+        store.analyticsConsentSeen = true
+        store.captureMode = CaptureMode.LOCAL_MICROPHONE
+        store.micRequested = true
+        DebugMicPermissionOverride.show()
+        return LoadResult(0, 0, null)
+    }
+
+    /**
+     * `setup-route-mismatch` — R-1127/R-282 (register), S06: the OS routed audio somewhere other
+     * than the operator's own selection. Reached the same real way [setupVerified] reaches S05
+     * (R-943's own seam, `DebugRouteCheckOverride`) — a live `RealRouteCheck` needs hardware the
+     * tour's AVD does not have. [verifiedInputStore] alone (no further `levelInBand`/
+     * `overnightStepSeen`/`radioChoice`) leaves [SetupStateMachine.stepFor]'s own natural
+     * resolution at [org.ort.app.ui.setup.SetupStep.LEVEL] — past [org.ort.app.ui.setup.SetupStep
+     * .ROUTE_MISMATCH]'s own ordinal position, which is what lets `SetupActivity
+     * .tryOpenAtRequestedStep` honour a cold `EXTRA_STEP=ROUTE_MISMATCH` launch at all (that
+     * function's own "never skip ahead of the natural step" guard — [org.ort.app.ui.setup.SetupStep
+     * .VERIFY]/`.ROUTE_MISMATCH` are deliberately never returned by `stepFor` itself, so the guard
+     * can only ever pass by the natural step already having advanced past them).
+     */
+    private fun setupRouteMismatch(context: Context): LoadResult {
+        verifiedInputStore(context)
+        DebugRouteCheckOverride.show(
+            RouteCheckState.Mismatch(
+                selected = AudioDeviceDescriptor(
+                    id = "usb-1",
+                    kind = AudioDeviceKind.USB_DEVICE,
+                    label = "USB Audio Device",
+                ),
+                routed = AudioDeviceDescriptor(
+                    id = "builtin-mic",
+                    kind = AudioDeviceKind.BUILT_IN_MIC,
+                    label = "Built-in microphone",
+                ),
+                reason = "AudioIo.routedDevice() reported the built-in microphone while usb-1 was selected",
+            ),
+        )
         return LoadResult(0, 0, null)
     }
 

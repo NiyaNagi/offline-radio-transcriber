@@ -16,6 +16,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.NavRow
 import org.ort.app.ui.components.OrtIcons
@@ -127,6 +128,12 @@ public fun SettingsLicensesScreen(context: Context, onBack: () -> Unit, modifier
                 // own `iconFor` already falls back to this exact icon for TIER/ABOUT) — reused here
                 // rather than inventing an association `OrtIcons` does not carry.
                 icon = OrtIcons.settings,
+                // R-1129 (register): a stable tap target for the screenshot tour — no tour step
+                // could drill into one notice's own detail screen at all before this, since the
+                // detail screen is reached by an ordinary tap on real, non-seedable local state
+                // (`selected` above), the same shape `tapLiveBar`'s own testTag-driven tap already
+                // established for a real interaction the tour cannot otherwise reach.
+                modifier = Modifier.testTag("license-row-${entry.assetFileName}"),
             )
         }
     }
@@ -135,7 +142,13 @@ public fun SettingsLicensesScreen(context: Context, onBack: () -> Unit, modifier
 @Composable
 private fun SettingsLicenseDetail(context: Context, notice: LicenceNotice, onBack: () -> Unit, modifier: Modifier) {
     val text = remember(notice.assetFileName) { readLicenceAsset(context, notice.assetFileName) }
-    Column(modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            // R-1129: the tour's own settle target after tapping a "license-row-*" entry above.
+            .testTag("license-detail"),
+    ) {
         DrillInHeader(parentLabel = "Licences", onBack = onBack)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             Text(text = notice.name, style = OrtType.screenTitle, color = OrtColors.textHigh)
