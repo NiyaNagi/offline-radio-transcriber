@@ -139,7 +139,7 @@ process, polish, open questions and coverage debt are P2.
 | id | what | source | state | refs / note |
 |---|---|---|---|---|
 | coverage-orphans | 12 tests name a requirement id the spec does not have | coverage | open | ./gradlew coverageMatrix |
-| coverage-uncovered | 213 requirement ids have no test | coverage | open | ./gradlew coverageMatrix |
+| coverage-uncovered | 211 requirement ids have no test | coverage | open | ./gradlew coverageMatrix |
 | T1 | Speaker embedding separation on narrowband off-air audio | questions | open |  |
 | T2 | Phonetic-unit KWS accuracy on radio audio | questions | open |  |
 | T3 | Whether CB-Whisper's encoder-hidden-state approach ports to sherpa-onnx on Android | questions | open |  |
