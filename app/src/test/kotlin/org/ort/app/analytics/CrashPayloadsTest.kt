@@ -42,4 +42,26 @@ class CrashPayloadsTest {
 
         assertNull(payload.isAnr)
     }
+
+    /**
+     * R-1123: [CrashPayloads.fromMainThreadStall] is the one path where `isAnr` is a genuine,
+     * measured `true` — a real stall was observed by [AnrWatchdog], not inferred from an
+     * exception that was never thrown, which is why `exceptionClass` here is a synthetic, closed
+     * label rather than a real `Throwable`'s class name.
+     */
+    @Test
+    fun `R_1123_fromMainThreadStall reports a genuine isAnr true, never the unmeasured null`() {
+        val stackTrace = listOf(
+            StackTraceElement("org.ort.app.Foo", "bar", "Foo.kt", 42),
+            StackTraceElement("org.ort.app.Foo", "baz", "Foo.kt", 10),
+        )
+
+        val payload = CrashPayloads.fromMainThreadStall(stackTrace)
+
+        assertEquals(true, payload.isAnr)
+        assertEquals("main", payload.threadName)
+        assertEquals("MainThreadAnr", payload.exceptionClass)
+        assertTrue(payload.stackTrace.contains("org.ort.app.Foo.bar(Foo.kt:42)"))
+        assertTrue(payload.stackTrace.contains("org.ort.app.Foo.baz(Foo.kt:10)"))
+    }
 }

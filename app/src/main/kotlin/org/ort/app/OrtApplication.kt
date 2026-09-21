@@ -1,7 +1,10 @@
 package org.ort.app
 
+import android.app.ActivityManager
 import android.app.Application
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -9,8 +12,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.ort.app.analytics.AnalyticsAppWiring
 import org.ort.app.analytics.AnalyticsUploadWorker
+import org.ort.app.analytics.AnrWatchdog
 import org.ort.app.analytics.CrashCaptureHandler
 import org.ort.app.analytics.CrashPayloads
+import org.ort.app.analytics.ProcessExitReasonReporter
+import org.ort.app.analytics.SharedPreferencesExitReasonWatermarkStore
 import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetState
@@ -85,6 +91,47 @@ class OrtApplication : Application() {
                 )
             },
         )
+        // R-1123: a live main-thread-stall watchdog — the ANR half `CrashPayloads`' own doc
+        // comment already named as missing. `Handler(Looper.getMainLooper())::post` is the one
+        // real "ask the main thread to prove it is alive" primitive Android offers; a stall's own
+        // stack trace comes from `Looper.getMainLooper().thread` itself, read from this background
+        // thread the instant the stall is detected, never from the (stuck) main thread's own
+        // call stack.
+        AnrWatchdog(
+            postToMainThread = { runnable -> Handler(Looper.getMainLooper()).post(runnable) },
+            onStallDetected = {
+                AnalyticsAppWiring.submit(
+                    AnalyticsEventFactory.tier1(
+                        AnalyticsAppWiring.baseProvenance(),
+                        CrashPayloads.fromMainThreadStall(Looper.getMainLooper().thread.stackTrace.toList()),
+                    ),
+                )
+            },
+        ).start(backgroundScope)
+        // R-1123: the retrospective half — what the OS itself believes killed the *previous*
+        // process instance, including a native abort (`REASON_CRASH_NATIVE`) and a low-memory kill
+        // (`REASON_LOW_MEMORY`), neither of which a `Thread.UncaughtExceptionHandler` can ever see
+        // (see `ProcessExitReasonReporter`'s own doc comment). API 30+ only — a real, stated gap on
+        // older OS versions, not a silent one, since `readExitReasonSamples` returns empty there.
+        val exitReasonPrefs = getSharedPreferences(
+            SharedPreferencesExitReasonWatermarkStore.PREFS_NAME,
+            MODE_PRIVATE,
+        )
+        val exitReasonWatermark = SharedPreferencesExitReasonWatermarkStore(exitReasonPrefs)
+        val activityManager = getSystemService(ActivityManager::class.java)
+        if (activityManager != null) {
+            val samples = ProcessExitReasonReporter.readExitReasonSamples(activityManager)
+            val classified = ProcessExitReasonReporter.buildCrashPayloads(
+                samples,
+                exitReasonWatermark.lastReportedMillis(),
+            )
+            for (exit in classified) {
+                AnalyticsAppWiring.submit(
+                    AnalyticsEventFactory.tier1(AnalyticsAppWiring.baseProvenance(), exit.payload),
+                )
+            }
+            classified.maxOfOrNull { it.sample.timestampMillis }?.let(exitReasonWatermark::recordReported)
+        }
         // FR-ANL-7: the periodic drain-and-upload chain — a no-op today (D48) until
         // ORT_ANALYTICS_ENDPOINT is configured, since AnalyticsUploadRunner reports NotConfigured
         // and never drains the queue. Scheduling it regardless costs nothing and means a later

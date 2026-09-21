@@ -40,8 +40,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.analytics.FeatureUsageAnalytics
+<<<<<<< HEAD
 import org.ort.app.export.ShareCoordinator
 import org.ort.app.export.ShareIntentLauncher
+=======
+import org.ort.app.analytics.UsageAction
+>>>>>>> m-analytics-crash
 import org.ort.app.fieldreport.recorder.FieldReportRecorder
 import org.ort.app.fieldreport.recorder.RecorderDestination
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
@@ -378,8 +382,33 @@ public fun OrtNavHost(
                         contentTopPadding = contentTopPadding,
                         onLiveBarHeightChanged = { liveBarHeight = it },
                     ),
+<<<<<<< HEAD
                     ids = buildNavHostIds(current, navigator, navState, seed),
                     callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
+=======
+                    ids = NavHostIds(
+                        current,
+                        navState.openedFrom.value,
+                        navState.openTransmissionId.value,
+                        navState.openStationId.value,
+                        navState.openFrequencyHz.value,
+                        navState.openThreadId.value,
+                        DestinationInitialState(
+                            navigator.settingsScreenState.value,
+                            navState.openCaptureLevelMeter.value,
+                            navState.openCaptureLiveMonitor.value,
+                            navState.pendingLogFilter.value,
+                            navState.pendingReviewSessionId.value,
+                            seed?.logSheetOpen ?: false,
+                            navState.reviewSessionView.value,
+                            navState.openRecordingSessionId.value,
+                        ),
+                        navState.frequencyInitialView.value,
+                        navState.openStationSubScreen.value,
+                        seed?.openTransmissionRevisions ?: false,
+                    ),
+                    callbacks = instrumentedCallbacksFor(navigator, scope, drawerState, navState),
+>>>>>>> m-analytics-crash
                     sessionId = sessionId,
                     context = context,
                     drawerLive = drawerLive,
@@ -436,6 +465,21 @@ private fun ReportScreenViewed(current: ReaderDestination) {
         FeatureUsageAnalytics.screenViewed(current)
     }
 }
+
+/** R-1100: builds [OrtNavHost]'s own `callbacks` argument — split out purely to keep that
+ * function under detekt's `LongMethod` limit, the same reason every other small builder in this
+ * file ([navHostCallbacks], [searchHostState], [drawerOnSelect]) already exists. See
+ * [instrumentedNavHostCallbacks]'s own doc comment for what wrapping [navHostCallbacks] here
+ * actually does. */
+private fun instrumentedCallbacksFor(
+    navigator: ReaderNavigator,
+    scope: CoroutineScope,
+    drawerState: DrawerState,
+    navState: NavHostNavState,
+): NavHostCallbacks = instrumentedNavHostCallbacks(
+    navHostCallbacks(navigator, scope, drawerState, navState),
+    currentDestination = { navigator.currentState.value },
+)
 
 @Composable
 private fun OrtNavHostBackHandler(
@@ -1105,7 +1149,7 @@ private fun NavHostIds.recorderDestination(): RecorderDestination = when {
 }
 
 /** [NavHostBody]'s navigation actions, bundled for the same reason as [NavHostIds]. */
-private data class NavHostCallbacks(
+internal data class NavHostCallbacks(
     val onOpenDrawer: () -> Unit,
     val onSearchDestination: () -> Unit,
     val onCloseDrillIns: () -> Unit,
@@ -1148,6 +1192,90 @@ private data class NavHostCallbacks(
     // dependency this filter shape carries.
     val onOpenRecordingSessionLog: (sessionId: String, overIds: Set<String>) -> Unit,
 )
+
+/**
+ * R-1100's own table shape, one arity per real [NavHostCallbacks] field signature: reports
+ * [action] against whatever screen [reportAction] resolves it against (built once per
+ * [instrumentedNavHostCallbacks] call, from that call's own `currentDestination`), then always
+ * runs [real] with its own argument(s), unconditionally. Pulled out to three tiny, one-line
+ * functions — rather than repeating `{ ...; real(...) }` 23 times inline — is what keeps
+ * [instrumentedNavHostCallbacks] itself under detekt's `LongMethod` limit: that repeated shape is
+ * exactly what a table of 23 (action, real-callback) pairs *is*, so a table is the fix, not a
+ * suppression.
+ */
+private fun wrap0(action: UsageAction, reportAction: (UsageAction) -> Unit, real: () -> Unit): () -> Unit = {
+    reportAction(action)
+    real()
+}
+
+private fun <A> wrap1(action: UsageAction, reportAction: (UsageAction) -> Unit, real: (A) -> Unit): (A) -> Unit = { a ->
+    reportAction(action)
+    real(a)
+}
+
+private fun <A, B> wrap2(
+    action: UsageAction,
+    reportAction: (UsageAction) -> Unit,
+    real: (A, B) -> Unit,
+): (A, B) -> Unit = { a, b ->
+    reportAction(action)
+    real(a, b)
+}
+
+/**
+ * R-1100: wraps every field of [callbacks] so each one also reports its own [UsageAction] through
+ * [FeatureUsageAnalytics.actionInvoked] before running the real callback — this is the "central
+ * action dispatch" [FeatureUsageAnalytics]'s own doc comment says the app never had, applied at
+ * the one place it is genuinely unavoidable to reach every navigation-shaped action without
+ * touching the dozen-plus screens that each trigger one. [currentDestination] is read fresh
+ * inside each wrapper, at the moment the operator actually took the action — never captured once
+ * when this function is called — since [navHostCallbacks] itself is rebuilt on every recomposition
+ * of [OrtNavHost] and the destination a tap fires from is exactly the "screen" FR-ANL-2's event
+ * shape (`Usage(screen, action)`) already requires.
+ *
+ * A pure, `@Composable`-free wrapping function — no Compose state, no side effect of its own
+ * beyond what each wrapped lambda does when *it* is invoked — so it is unit-testable with a plain
+ * fake [report] and no Robolectric, the same reason [resolveTransportBarState] and
+ * [shouldStopPlaybackOnTransmissionLeave] are already `internal fun`s in this file rather than
+ * private ones buried inside a `@Composable`.
+ */
+internal fun instrumentedNavHostCallbacks(
+    callbacks: NavHostCallbacks,
+    currentDestination: () -> ReaderDestination,
+    report: (ReaderDestination, UsageAction) -> Unit = FeatureUsageAnalytics::actionInvoked,
+): NavHostCallbacks {
+    val reportAction: (UsageAction) -> Unit = { action -> report(currentDestination(), action) }
+    return NavHostCallbacks(
+        onOpenDrawer = wrap0(UsageAction.OPEN_DRAWER, reportAction, callbacks.onOpenDrawer),
+        onSearchDestination = wrap0(UsageAction.OPEN_SEARCH, reportAction, callbacks.onSearchDestination),
+        onCloseDrillIns = wrap0(UsageAction.CLOSE_DRILL_INS, reportAction, callbacks.onCloseDrillIns),
+        onOpenCapture = wrap0(UsageAction.OPEN_CAPTURE, reportAction, callbacks.onOpenCapture),
+        onOpenLog = wrap0(UsageAction.OPEN_LOG, reportAction, callbacks.onOpenLog),
+        onOpenTransmission = wrap1(UsageAction.OPEN_TRANSMISSION, reportAction, callbacks.onOpenTransmission),
+        onOpenStation = wrap1(UsageAction.OPEN_STATION, reportAction, callbacks.onOpenStation),
+        onOpenFrequency = wrap1(UsageAction.OPEN_FREQUENCY, reportAction, callbacks.onOpenFrequency),
+        onOpenThread = wrap1(UsageAction.OPEN_THREAD, reportAction, callbacks.onOpenThread),
+        onOpenStations = wrap0(UsageAction.OPEN_STATIONS, reportAction, callbacks.onOpenStations),
+        onOpenModels = wrap0(UsageAction.OPEN_MODELS, reportAction, callbacks.onOpenModels),
+        onOpenSettingsStorage =
+        wrap0(UsageAction.OPEN_SETTINGS_STORAGE, reportAction, callbacks.onOpenSettingsStorage),
+        onOpenLevelMeter = wrap0(UsageAction.OPEN_LEVEL_METER, reportAction, callbacks.onOpenLevelMeter),
+        onOpenOvers = wrap2(UsageAction.OPEN_OVERS, reportAction, callbacks.onOpenOvers),
+        onReviewSession = wrap1(UsageAction.OPEN_REVIEW_SESSION, reportAction, callbacks.onReviewSession),
+        onOpenActivationThread =
+        wrap1(UsageAction.OPEN_ACTIVATION_THREAD, reportAction, callbacks.onOpenActivationThread),
+        onOpenStationOvers = wrap1(UsageAction.OPEN_STATION_OVERS, reportAction, callbacks.onOpenStationOvers),
+        onOpenAttributedStation =
+        wrap1(UsageAction.OPEN_ATTRIBUTED_STATION, reportAction, callbacks.onOpenAttributedStation),
+        onOpenHour = wrap2(UsageAction.OPEN_HOUR, reportAction, callbacks.onOpenHour),
+        onViewAffectedOvers = wrap2(UsageAction.VIEW_AFFECTED_OVERS, reportAction, callbacks.onViewAffectedOvers),
+        onOpenChangedOvers = wrap1(UsageAction.OPEN_CHANGED_OVERS, reportAction, callbacks.onOpenChangedOvers),
+        onOpenRecordingSession =
+        wrap1(UsageAction.OPEN_RECORDING_SESSION, reportAction, callbacks.onOpenRecordingSession),
+        onOpenRecordingSessionLog =
+        wrap2(UsageAction.OPEN_RECORDING_SESSION_LOG, reportAction, callbacks.onOpenRecordingSessionLog),
+    )
+}
 
 /**
  * R-017: WP7's [SearchContent]'s `input`/`result`, owned by [OrtNavHost] — see that function's doc
