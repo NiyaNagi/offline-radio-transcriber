@@ -917,8 +917,10 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   carries that re-capture explicitly: constitution VIII's path trigger does not fire for
   `:pipeline`, yet this change alters what every one of those screens states.
 
-- [x] **P34 · Capture route and sample rate** *(`:capture-android`)* — FR-CAP-2, FR-CAP-2a,
-  FR-CAP-3, FR-RUN-11, constitution IV. **Beta blocker.**
+- [ ] **P34 · Capture route and sample rate** *(`:capture-android`)* — FR-CAP-2, FR-CAP-2a,
+  FR-CAP-3, FR-RUN-11, constitution IV. **Beta blocker.** *(Code and tests landed `a1cdd665`, merged.
+  Unticked by the lead: this unit's "Done when" is H4 and the 8-hour run, and neither has happened.
+  Robolectric cannot fail the way a real 44.1 kHz-only adapter can. See R-1113, R-1114.)*
 
   **Read first:** `AndroidAudioIo.kt` — `setEventListener` stores the lambda and nothing invokes
   it, and the class defaults to 48 000 Hz with no negotiation; `AudioRecordSource.kt`'s
