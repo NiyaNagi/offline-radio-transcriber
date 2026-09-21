@@ -40,12 +40,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.ort.app.analytics.FeatureUsageAnalytics
-<<<<<<< HEAD
+import org.ort.app.analytics.UsageAction
 import org.ort.app.export.ShareCoordinator
 import org.ort.app.export.ShareIntentLauncher
-=======
-import org.ort.app.analytics.UsageAction
->>>>>>> m-analytics-crash
 import org.ort.app.fieldreport.recorder.FieldReportRecorder
 import org.ort.app.fieldreport.recorder.RecorderDestination
 import org.ort.app.ui.audio.RealTransmissionAudioPlayer
@@ -382,33 +379,8 @@ public fun OrtNavHost(
                         contentTopPadding = contentTopPadding,
                         onLiveBarHeightChanged = { liveBarHeight = it },
                     ),
-<<<<<<< HEAD
                     ids = buildNavHostIds(current, navigator, navState, seed),
-                    callbacks = navHostCallbacks(navigator, scope, drawerState, navState),
-=======
-                    ids = NavHostIds(
-                        current,
-                        navState.openedFrom.value,
-                        navState.openTransmissionId.value,
-                        navState.openStationId.value,
-                        navState.openFrequencyHz.value,
-                        navState.openThreadId.value,
-                        DestinationInitialState(
-                            navigator.settingsScreenState.value,
-                            navState.openCaptureLevelMeter.value,
-                            navState.openCaptureLiveMonitor.value,
-                            navState.pendingLogFilter.value,
-                            navState.pendingReviewSessionId.value,
-                            seed?.logSheetOpen ?: false,
-                            navState.reviewSessionView.value,
-                            navState.openRecordingSessionId.value,
-                        ),
-                        navState.frequencyInitialView.value,
-                        navState.openStationSubScreen.value,
-                        seed?.openTransmissionRevisions ?: false,
-                    ),
                     callbacks = instrumentedCallbacksFor(navigator, scope, drawerState, navState),
->>>>>>> m-analytics-crash
                     sessionId = sessionId,
                     context = context,
                     drawerLive = drawerLive,
