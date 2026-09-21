@@ -34,6 +34,52 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P37: `diff.py` can fail)
 
+### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change
+
+**Scope:** `:pipeline` only, test sources — `CallsignResolverTest.kt`, `SpotterComparisonTest.kt`,
+`DataPassBResultSinkAlertsTest.kt`, `DataRankingContextSourceTest.kt`,
+`PassBFactoryCalibrationTest.kt`. No production code, no assertion, fixture value, threshold or
+test name changed anywhere.
+
+**Requirements/ACs:** none new. Gate fallout from the R-1124/R-1125 unit (commit `2c627ea8`, merged
+to `main` at `56623975`) and, in the same file, from P33 before it — `:pipeline:test` was run and
+green for both, but neither ran the batch gate's style tasks (`detekt`, `ktlintCheck`), which is
+how twelve weighted `MaxLineLength`/`argument-list-wrapping`/`property-wrapping` issues reached
+`main`.
+
+**What changed:** every flagged line was reformatted, not rewritten:
+- `CallsignResolverTest.kt`: the repeated `CallsignResolver(separationThreshold = ...,
+  calibrator = FakeCalibrator(confirmThreshold = ...))` construction (five call sites, P33's own
+  code) is now a private `resolver(confirmThreshold, separationThreshold = 0.5f)` helper — chosen
+  over five separate wraps because the construction was identical five times over; each call
+  site still states its own `confirmThreshold` explicitly (the value that distinguishes the
+  cases), so no case's intent is hidden behind the helper.
+- `SpotterComparisonTest.kt`, `DataPassBResultSinkAlertsTest.kt`, `DataRankingContextSourceTest.kt`:
+  each single-occurrence long line (a `CallsignResolver`/`ParsedCallsign` construction, two long
+  `assertFalse`/`assertNull` calls) wrapped one argument per line, ktlint's own preferred shape.
+  `DataRankingContextSourceTest.kt` also picks up an import-ordering fix (`org.ort.core.PassId`
+  before `org.ort.data.*`) and a function-signature fix (`station(id, lastHeardAt = null)` back
+  onto one line — ktlint's `function-signature` rule wants a short parameter list either fully
+  inline or fully multi-line, not the partial wrap it was in).
+- `PassBFactoryCalibrationTest.kt`: `ktlintTestSourceSetFormat`'s auto-corrector fixed every
+  wrapping issue except one it could not — the R-1110 "with a calibrator present..." test name
+  (P33's own, not this unit's) is 123 characters by itself before any signature decoration, over
+  the 120-column limit with no wrapping able to shrink an unbreakable backtick-quoted identifier.
+  Renaming it was out of scope for a style-only fix (the coordinator's own instruction), so it
+  carries `@Suppress("MaxLineLength", "ktlint:standard:max-line-length")`, the same
+  `@Suppress("LargeClass")` escape hatch `RealCaptureServiceTest.kt` already uses for an
+  analogous unavoidable-metric case.
+
+**Verified:** `.\gradlew.bat :pipeline:detekt :pipeline:ktlintCheck :pipeline:test --max-workers=2`
+— all three green in one invocation (300 tasks, no `FAILED`). Test result count and content
+unchanged: 100 test-result files, zero failures, same as before this fix — confirmed by diffing
+every changed file (`git diff`) to rule out anything but re-indentation/re-wrapping/import order/
+one `@Suppress`.
+
+**Left open / not done:** the full `build` gate (`dependencyRules platformGuards build`) is the
+coordinator's own to run, not repeated here. `gradlew --stop` was not run (register R-1131).
+No file outside `:pipeline` test sources touched, so no other module's gate is affected.
+
 ### `4df86464` — P34 gate fix: `AudioRecordSource.start` split so detekt's LongMethod/CyclomaticComplexMethod hold, plus two line-length fixes
 
 **Scope:** `:capture-android` only — `AudioRecordSource.kt` (production), plus two pre-existing

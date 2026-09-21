@@ -30,7 +30,10 @@ class SpotterComparisonTest {
 
     private val grammar = CallsignGrammar(ItuPrefixTable.bundled(), ConfusionCostMatrix.bundled())
     private val combiner = PriorCombiner(emptyList())
-    private val resolver = CallsignResolver(separationThreshold = 0.01f, calibrator = FakeCalibrator(confirmThreshold = -1f))
+    private val resolver = CallsignResolver(
+        separationThreshold = 0.01f,
+        calibrator = FakeCalibrator(confirmThreshold = -1f),
+    )
 
     private fun attributionFor(spotter: UnitSpotter, audio: FloatArray): AttributionState {
         val lattice = spotter.spot(audio)

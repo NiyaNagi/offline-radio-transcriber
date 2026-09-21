@@ -59,7 +59,11 @@ class DataPassBResultSinkAlertsTest {
 
     /** The same shape [CallsignResolverTest.fakeRanked] builds. */
     private fun fakeRanked(text: String): RankedCandidate {
-        val parsed = ParsedCallsign(prefix = text.dropLast(4), areaDigit = text[text.length - 4], suffix = text.takeLast(3))
+        val parsed = ParsedCallsign(
+            prefix = text.dropLast(4),
+            areaDigit = text[text.length - 4],
+            suffix = text.takeLast(3),
+        )
         val candidate = CallsignCandidate(
             parsed = parsed,
             allocation = ItuAllocation(parsed.prefix, "Test Entity", "TT"),

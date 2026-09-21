@@ -9,14 +9,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.core.PassId
 import org.ort.data.OrtDatabase
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.ThreadEntity
 import org.ort.data.entity.ThreadKind
 import org.ort.data.entity.ThreadKindSource
-import org.ort.data.entity.WorkQueueState
-import org.ort.core.PassId
 import org.ort.data.entity.WorkQueueItemEntity
+import org.ort.data.entity.WorkQueueState
 import org.ort.pipeline.PipelineTestFixtures
 import org.robolectric.RobolectricTestRunner
 
@@ -43,10 +43,7 @@ public class DataRankingContextSourceTest {
         enqueuedAt = 0L,
     )
 
-    private fun station(
-        id: String,
-        lastHeardAt: Long? = null,
-    ) = StationEntity(
+    private fun station(id: String, lastHeardAt: Long? = null) = StationEntity(
         id = id,
         callsign = id,
         firstHeardAt = lastHeardAt,
@@ -98,7 +95,10 @@ public class DataRankingContextSourceTest {
         val context = source.forCandidates(item("TX1"), setOf("K7ABC"))
 
         assertTrue("recency itself must be non-null (a real, warm subsystem answered)", context.recency != null)
-        assertFalse("a station that exists but was never heard must not appear in the map", "K7ABC" in context.recency!!)
+        assertFalse(
+            "a station that exists but was never heard must not appear in the map",
+            "K7ABC" in context.recency!!,
+        )
     }
 
     @Test
@@ -172,7 +172,10 @@ public class DataRankingContextSourceTest {
         val context = source.forCandidates(item("TX1"), setOf("K7ABC"))
 
         assertNull("no Rig Module repeater roster exists on device -- must not be guessed", context.repeater)
-        assertNull("no operator/candidate centroid distance can be computed -- must not be guessed", context.propagation)
+        assertNull(
+            "no operator/candidate centroid distance can be computed -- must not be guessed",
+            context.propagation,
+        )
         assertNull(
             "a non-null function that always returns null would look wired while contributing " +
                 "nothing -- the exact defect this row fixes, not repeats",
