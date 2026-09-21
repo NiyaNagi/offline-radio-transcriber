@@ -685,10 +685,30 @@ public object DetailViewStateMapper {
                 "uses ${mismatch.candidateUnit} at position $position, the lattice's own kept alternate " +
                     "to ${mismatch.latticeUnit}"
             else ->
-                "needs a ${mismatch.candidateUnit} at position $position the lattice never offered " +
-                    "(its own pick there was ${mismatch.latticeUnit})"
+                "needs ${article(mismatch.candidateUnit)} ${mismatch.candidateUnit} at position $position " +
+                    "the lattice never offered (its own pick there was ${mismatch.latticeUnit})"
         }
     }
+
+    /**
+     * Coordinator review of R-1148: the article for a letter or digit *name* in the "needs a/an
+     * X..." clause [reasonFor] builds — the only one of its three branches that needs one at all
+     * ("drops the X..." and "uses X..., the lattice's own kept alternate to Y" never take an
+     * article). English picks "a" or "an" by how the *name* is spoken, not by whether the written
+     * glyph looks like a vowel: "H" is spoken "aitch" (vowel-initial, "an H"), "U" is spoken "you"
+     * (consonant-initial, "a U"), and every digit is spoken as its number word, all consonant-
+     * initial except "eight". [AN_UNITS] is the closed set of glyphs whose *spoken name* starts
+     * with a vowel sound — everything else, including every digit but `8`, takes "a".
+     */
+    private val AN_UNITS: Set<String> = setOf(
+        // Letters whose spoken name is vowel-initial: A (ay), E (ee), F (eff), H (aitch), I (eye),
+        // L (ell), M (em), N (en), O (oh), R (ar), S (ess), X (ex).
+        "A", "E", "F", "H", "I", "L", "M", "N", "O", "R", "S", "X",
+        // The one digit whose spoken name ("eight") is vowel-initial.
+        "8",
+    )
+
+    private fun article(unit: String): String = if (unit in AN_UNITS) "an" else "a"
 
     /**
      * FR-LEX-31/constitution I: a cold-start prior contributes **exactly** zero and gets no bar at

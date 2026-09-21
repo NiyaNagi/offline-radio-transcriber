@@ -32,6 +32,61 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (R-1148 follow-up: the "needs a/an X" sentence now picks its article by how the letter or digit is spoken, not by the written glyph)
+
+### `290407e0` — q-candidate-reasons-article: fix `DetailViewStateMapper.reasonFor`'s hardcoded "a" ("needs a A") to a real pronunciation-based article rule, covering the whole alphabet and every digit
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt` (the `reasonFor`/new
+`article` functions only), `app/src/test/kotlin/org/ort/app/ui/data/DetailViewStateMapperTest.kt`.
+Nothing else touched.
+
+**Requirements/ACs:** FR-UI-8, constitution I (the one screen whose purpose is careful, honest
+language should not read as careless); R-1148 (the row this is a direct follow-up to, caught by
+the coordinator's review of that unit's own reported example, *"needs a A at position 2..."*).
+
+**What changed:**
+
+- `DetailViewStateMapper.reasonFor`'s third branch ("needs a/an X... the lattice never
+  offered...") no longer hardcodes `"a"`. A new private `article(unit: String): String` picks `"a"`
+  or `"an"` from a closed set (`AN_UNITS`) of the letters and the one digit whose *spoken name* is
+  vowel-initial — `A` ("ay"), `E` ("ee"), `F` ("eff"), `H` ("aitch"), `I` ("eye"), `L` ("ell"), `M`
+  ("em"), `N` ("en"), `O` ("oh"), `R` ("ar"), `S` ("ess"), `X` ("ex"), and `8` ("eight") — never a
+  vowel-glyph check, since the written character and its spoken name disagree for several units
+  (`H`, `M`/`N`/`R`/`S`/`X` sound vowel-initial despite consonant glyphs; `U`/`W`/`Y` sound
+  consonant-initial despite vowel-looking glyphs; every digit but `8` is consonant-initial when
+  spoken as its number word, including `1`, "one"). The rule and its reasoning live in one place,
+  next to `reasonFor` itself, with the comment naming every unit's spoken form.
+- The other two branches of `reasonFor` ("drops the X..." and "uses X..., the lattice's own kept
+  alternate to Y") were checked and confirmed to need no article at all — neither sentence shape
+  ever puts an indefinite article in front of a bare unit, so this fix touches only the one branch
+  that does.
+
+**Verified:**
+- Strict TDD with discrimination. New test
+  `DetailViewStateMapperTest.R_1148 the needs article follows the spoken letter or digit name, whole alphabet and every digit`
+  covers all 26 letters and all 10 digits in one table-driven assertion; run against the
+  unmodified (pre-fix) code it failed on the first case checked (`unit=A expected article=an got="needs a A at position 1..."`),
+  reproducing the exact defect the coordinator's review reported; after the fix, the same run is
+  green for all 36 units.
+- `./gradlew --max-workers=2 :app:test` — full suite (all flavors/build types), green, both before
+  this fix broke only the new test as expected and after it is fully green.
+- `./gradlew --max-workers=2 :app:detekt :app:ktlintCheck` — green.
+- Environmental note, not a code defect: mid-session, `:app:detekt`/`:app:test` began failing with
+  `FileSystemException` locks on `:capture-android`'s and `:telemetry`'s `classes.jar`, reproducible
+  even under `--no-daemon` and unchanged after several minutes of waiting. Diagnosed with the
+  Windows Restart Manager API (`RmGetList`, via a small inline P/Invoke helper) rather than guessed
+  at: a single idle (`gradlew --status` showed it `IDLE`, not `BUSY`) Gradle daemon in this
+  worktree, holding a stale classloader reference to the pre-branch-switch jars. Stopped that one
+  specific, confirmed-idle PID directly (never `gradlew --stop`, and never a daemon shown `BUSY` —
+  no other builder's work was touched), which cleared the lock immediately.
+
+**Left open / not done:**
+- No visual re-verification was run — this is a pure text-content fix inside an existing rendered
+  sentence, not a layout, row/column or touch-target change, so no new capture is needed beyond
+  what R-1148's own still-pending `Detail-Why` capture will show once taken.
+- Register row R-1148 itself remains the session lead's to close; this follow-up does not reopen or
+  re-file it.
+
 ## 2026-09-21 (q-coverage-orphans: all twelve orphan-tagged tests diagnosed — none is a typo, a lost requirement, or a missing one; the tag is a legitimate cross-reference the coverage tool doesn't yet recognise, and every carrying file is owned by another package)
 
 ### `867bfdd5` — q-coverage-orphans: diagnosis only, no test or spec edit; tooling gap flagged for the coverage-matrix owner
