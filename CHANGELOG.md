@@ -80,6 +80,42 @@ one `@Suppress`.
 coordinator's own to run, not repeated here. `gradlew --stop` was not run (register R-1131).
 No file outside `:pipeline` test sources touched, so no other module's gate is affected.
 
+### `cdd41060` — P35 gate fix: `FailureMapperTest.kt` split for detekt's `LargeClass`, no test content changed
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/failures/` only — `FailureMapperTest.kt`, plus two
+new files, `RigFailureMapperTest.kt` and `ThermalAndBacklogFailureMapperTest.kt`. No production
+code touched.
+
+**Requirements/ACs:** none new — gate fallout from the P35 durability commit (`0b10bf56`), whose
+two `R-1120` cases pushed `FailureMapperTest.kt` past detekt's `LargeClass` threshold. The `:app`
+tests run for that unit's own report did not include `:app:detekt`, which the full `build` gate
+does.
+
+**What changed:** moved, not rewrote. `RigFailureMapperTest.kt` takes F9 — the stale-rig banner
+(`FailurePresentation.Rig`, R-870/FR-RIG-15), a self-contained family already. `ThermalAndBacklogFailureMapperTest.kt`
+takes F7/F8 together — the thermal banner and the backlog banner (R-149/R-177/R-254) — kept in one
+file rather than split further because both share the shed-level mechanism and one priority test
+(`F7 thermal outranks backlog when both are true`) genuinely needs both signals in the same case.
+Every moved test kept its exact name, its `@Requirement` annotation and its assertions unchanged;
+each new file duplicates the `signals(...)` fixture builder rather than sharing it, the same choice
+this codebase's own `CorrectionPollingPassAndRevisionsTest.kt` split already made. Route, Disconnect,
+StorageHalt, Migration, BluetoothAudioDropped (F23), Level, the gap banners (Killed/Call), Storage
+Warning, AssetSwap and the priority/None tests found no comparably clean seam and stayed in
+`FailureMapperTest.kt`.
+
+**Verified:** `./gradlew :app:detekt --max-workers=2` — the `LargeClass` finding on
+`FailureMapperTest.kt` is gone (a separate, pre-existing `MaxLineLength` finding in
+`ScreenFrameCapturer.kt`, from an unrelated commit this change never touched, still fails the task
+as a whole — left to whoever owns that file). `./gradlew :app:testFullDebugUnitTest --tests
+"org.ort.app.ui.failures.FailureMapper*" --tests "org.ort.app.ui.failures.RigFailureMapperTest"
+--tests "org.ort.app.ui.failures.ThermalAndBacklogFailureMapperTest" --max-workers=2
+--rerun-tasks` — all 48 tests pass (30 + 6 + 12), the identical count `@Test` occurrences on
+`main`'s own copy of the original file already showed before the split — nothing lost in the move.
+
+**Left open / not done:** the pre-existing `ScreenFrameCapturer.kt` `MaxLineLength` finding (not
+introduced by this change, not touched by it) still fails `:app:detekt` as a whole; flagged to the
+coordinator rather than fixed here, since it is outside this unit's scope.
+
 ### `4df86464` — P34 gate fix: `AudioRecordSource.start` split so detekt's LongMethod/CyclomaticComplexMethod hold, plus two line-length fixes
 
 **Scope:** `:capture-android` only — `AudioRecordSource.kt` (production), plus two pre-existing
