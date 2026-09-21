@@ -253,6 +253,114 @@ R-1132 (halt), R-1126, closes against R-1109/R-1124/R-1110's own follow-up notes
 
 ## 2026-09-20 (P37: `diff.py` can fail)
 
+## 2026-09-20 (R-1130: artboard token drift — `text/figure`/`text/low`/`text/signal` value-by-value audit)
+
+### `<pending>` — R-1130: artboards corrected to the token the built code actually reads, not a blanket value swap
+
+**Scope:** `design/canvas/**` and `design/design-guide.md` only. No Kotlin file touched, per this
+unit's ownership boundary — anywhere the audit suggested the *code* might be wrong rather than
+the board, it is reported below instead of changed.
+
+**Requirements/ACs:** constitution VIII; R-1130 (this row); R-1089 (the token-value change this
+row's drift was found while propagating).
+
+**What changed:** `States.dc.html`'s UNKNOWN dot was already fixed in place before this unit
+started (noted in the row); everything below is new. Audited every occurrence of `text/figure`
+(`oklch(0.55 0.008 250)` pre-R-1089), `text/low` (`oklch(0.52 0.008 250)`) and `text/signal`
+(`oklch(0.50 0.008 250)`) across `design/canvas/`, traced each to the Kotlin call site that
+renders the equivalent built element, and set the value to whichever token the code actually
+reads — never a find-and-replace by literal value, since those three old values are reused for
+unrelated generic captions and icon strokes in the same files (left untouched below). Full
+justification table:
+
+| File | Element | Old value (wrong token) | New value (correct token) | Justified by |
+|---|---|---|---|---|
+| `Main.dc.html` | Now's activity-chart hour axis (`22:00`/`06:00`) | `text/signal` | `text/low` | `ActivityPatternChart.kt:238,242` |
+| `Main.dc.html` | "4 unidentified voices" (Stations heard) | `text/figure` | `text/low` | `NowScreen.kt:519` |
+| `Main-Room-Audio.dc.html` | activity-chart hour axis (`19:00`/`20:12`) | `text/signal` | `text/low` | `ActivityPatternChart.kt:238,242` |
+| `Main-Room-Audio.dc.html` | "2 unidentified voices" | `text/figure` | `text/low` | `NowScreen.kt:519` |
+| `Stations.dc.html` | "4 unidentified voices · 36 overs" | `text/figure` | `text/low` | `StationScreen.kt:260` (`UnidentifiedVoicesRow`) |
+| `Charts.dc.html` | hour axis (`22:00`/`06:00`) | `text/signal` | `text/low` | `ActivityPatternChart.kt:238,242` |
+| `Charts.dc.html` | day-of-week labels `M`/`W`/`T`/`F`/`S` (non-highlighted) | `text/signal` | `text/low` | `ActivityPatternChart.kt:170` (`barLabels`) |
+| `Type.dc.html` | the "axis" type-style sample row (`22:00   06:00`) | `text/signal` | `text/low` | same — this row is explicitly labelled "… axis" |
+| `Frequency.dc.html` | activity-chart hour axis (`18:00`/`10:00`) | `text/signal` | `text/low` | `ActivityPatternChart.kt:238,242` |
+| `Frequency-Change.dc.html` | hour axis (`22:00`/`06:00`) | `text/signal` | `text/low` | `FrequencyChangeScreen.kt:181,208` |
+| `Station.dc.html` | activity-chart hour axis (`12:00`/`04:00`) | `text/signal` | `text/low` | `ActivityPatternChart.kt:238,242` |
+| `Level-Meter.dc.html` | level-envelope axis (`−60 s`/`now`) | `text/signal` | `text/low` | `LevelMeterScreen.kt:311,312` |
+| `Fail-Level.dc.html` | same axis, failure variant | `text/signal` | `text/low` | `LevelMeterScreen.kt:311,312` |
+| `Recording-Session.dc.html` | timeline axis (`22 00 02 04 06`) | `text/signal` | `text/low` | `RecordingSessionScreen.kt:348` |
+| `Session.dc.html` | activity-chart hour axis (`22:50`/`05:58`) | `text/signal` | `text/low` | `ActivityPatternChart.kt:238,242` |
+| `Fail-Backlog.dc.html` | queue-history axis (`18:50`/`19:20`) | `text/signal` | `text/low` | `FailureBanners.kt:377,378` |
+| `Fail-Disconnect.dc.html` | not-listening chart axis (`23:32`/`07:00`) | `text/signal` | `text/low` | `ActivityPatternChart.kt:238,242` |
+| `Fail-Killed.dc.html` | not-listening chart axis (`23:05`/`09:00`) | `text/signal` | `text/low` | `ActivityPatternChart.kt:238,242` |
+| `Setup-Verify.dc.html` | "noise floor −58 dBFS" caption | `text/signal` | `text/low` | `VerifyScreen.kt:349-351` |
+| `Threads.dc.html` | six per-thread-row disclosure chevrons | `text/signal` | `text/low` | `ThreadScreen.kt:178,190` (`ThreadCard`) |
+| `Threads-Ungrouped.dc.html` | two per-frequency-row disclosure chevrons | `text/signal` | `text/low` | `ThreadScreen.kt:330` (meanwhile row) |
+| `Search.dc.html` | three recent-search clock icons | `text/signal` | `text/low` | `SearchScreen.kt:582` (`OrtIcons.recent` tint) |
+| `Icons.dc.html` | the "recent · time" icon reference swatch | `text/signal` | `text/low` | same — kept in sync with the actual usage above |
+| `Now-First.dc.html` | flat-baseline axis (`23:32`/`07:00`) and its "the chart fills…" caption | `text/signal` and pre-R-1089 `text/low` | `text/faint` (`oklch(0.58 0.008 250)`, unchanged by R-1089) | `NowScreen.kt:563-571` (`FirstSessionChartBaseline` — a deliberately different, muted component that does **not** reuse `ActivityPatternChart`'s axis colour; R-174) |
+
+`design/design-guide.md`'s own token table was corrected in the same spirit (documentation, not a
+board): it named "recent-search icon" under `text/signal` and said nothing about the
+search-field placeholder; the actual call sites are the reverse
+(`SearchScreen.kt:582` → `textLow`, `Controls.kt:988` → `textSignal`), so the two descriptions
+were swapped rather than left to keep misleading the next reader.
+
+**Boards deliberately left alone, and why (an unjustified change is worse than none here):**
+- `Editorial.dc.html`'s "4 unidentified voices" line (same `text/figure`-for-`text/low` drift) —
+  `design/canvas/README.md` marks this board **superseded**, with no build target; there is no
+  Kotlin element left to justify a change against.
+- `Station-Pattern.dc.html`'s day-label column (`Mon`/`Tue`/…) in the hour×day heat-map — no
+  Kotlin code implements that grid at all (`StationPatternScreen.kt` only wraps
+  `ActivityPatternChart`, the bar view); the board draws a toggle state the app does not build.
+- The many other `oklch(0.50 0.008 250)` chevrons, toggle knobs, resolving rings and the
+  search-field placeholder (`Search.dc.html`, `Controls.dc.html`) — confirmed against
+  `Controls.kt:988,1024`, `Rows.kt:1113`, `ModelsScreen.kt:991`, `SessionsScreens.kt:164`,
+  `ImproveScreens.kt:171` — are **already the correct token** (`text/signal`), just still the
+  pre-R-1089 value; that is a plain value refresh, a different and much larger job than this
+  row's wrong-*token* drift, and doing it here would have been exactly the blanket
+  find-and-replace the brief says not to do.
+- Drawer counts (`Menu.dc.html`), `Controls.dc.html`'s badge counts and the `Stations`/`Frequency`
+  detail "last heard" figures are correctly `text/figure`, also just pre-R-1089 stale — same
+  reasoning, left alone.
+- `Stations.dc.html`'s `.last` column, `Frequency.dc.html`'s `Regulars` list and
+  `Timeline.dc.html`'s revision timestamp render at `oklch(0.56 0.008 250)` — a distinct legacy
+  value that is **not** any current token's pre- or post-R-1089 value (old or new `text/figure`
+  is `0.55`/`0.63`). `StationScreen.kt:232`/`FrequencyScreen.kt:341` say this element should be
+  `text/figure`, so this is real drift, but against a different, unnamed value outside the three
+  tokens R-1130 scopes — flagging rather than fixing, so as not to silently expand this row's
+  scope.
+- `Rows.dc.html`'s "S7"/"S9"-style S-meter column draws at the old `text/signal` value, but no
+  production code renders a signal-strength figure at all (`Rows.kt`, `LogRow`) — nothing to
+  justify a change against.
+
+**Where the board looks right and the code looks questionable (reported, not fixed):**
+`OrtColors.kt`'s own doc comment for `textSignal` claims it covers the "recent-search icon", but
+the actual call site (`SearchScreen.kt:582`) uses `textLow`. The comment, not the board, is stale;
+the board is now corrected to match what the app actually renders (`textLow`), and the design
+guide's table text was brought in line with it. Filing this as a documentation-only note rather
+than a design defect, since the rendered behaviour and the design intent shown in `Search.dc.html`
+pre-fix actually agreed with each other — it is `OrtColors.kt`'s comment that disagrees with its
+own code.
+
+**Verified:** visual inspection only — there is no unit test for an HTML artboard (constitution
+VIII). Every row in the table above was traced to its exact Kotlin call site and file:line before
+being changed; no `oklch(...)` value was changed without a corresponding, cited call site. Did
+not run `./gradlew build` (not required — no Kotlin, resource or Gradle file touched) and did not
+touch `app/src/debug/**` or `tools/`.
+
+**Left open / not done:**
+- The re-verification this touches (constitution VIII item 7) is a capture-and-compare pass on a
+  device/emulator, which this unit does not have — the boards are now correct against the code,
+  but no tour capture has confirmed the *built app* still matches these artboards post-fix (it
+  should, since none of these changes altered layout, only a documented colour token).
+- Three new observations above (the `0.56` "last heard"/S-meter value drift, the unbuilt
+  `Station-Pattern.dc.html` heat-map, and the `OrtColors.kt` doc-comment/call-site mismatch for
+  `textSignal`) are reported here rather than filed as new register rows — the lead should decide
+  whether each earns its own row.
+
+
+
 ### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change
 
 **Scope:** `:pipeline` only, test sources — `CallsignResolverTest.kt`, `SpotterComparisonTest.kt`,
