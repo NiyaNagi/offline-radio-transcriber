@@ -32,6 +32,115 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (m-capture-liveness: R-1111 device tier, R-1115 heartbeat trail)
+
+### `<pending>` — R-1111/R-1115: a real session records its device tier, and the heartbeat keeps a trail
+
+**Scope:** `:pipeline` — `RealCaptureService.kt`'s session-entity and heartbeat paths, new
+`HeartbeatTrail.kt` (`HeartbeatTrailEntry`, `HeartbeatTrailRotation`, `HeartbeatTrailStore`,
+`FileHeartbeatTrailStore`, `heartbeatGapMillisOrNull`); `:app` — `ImprovePolling.kt`'s class KDoc
+only (no behaviour change there — its filter already worked correctly given a real value).
+
+**Requirements/ACs:** FR-REP-1..11, AC-39 (R-1111); NFR-8, FR-SVC-5b, AC-189 (R-1115);
+constitution I (never fabricate), III (nothing deleted quietly), IV (capture never blocks).
+
+**What changed:**
+- **R-1111 (halt).** `RealCaptureService.buildSessionEntity` wrote `SessionEntity.deviceTier =
+  null` unconditionally, so `ImprovePolling.root`'s whole reprocessing surface (drawer entry,
+  artboard, `RealImproveRunner`, `ReprocessRunner`) was reachable only from seeded debug
+  scenarios, contradicting `ImprovePolling`'s own KDoc. Fixed by reusing the tier-detection logic
+  this class already has for its own notification text — `tierFromShedLevel()`, the identical
+  `(MAX_TIER - ShedStatus.currentLevel)` formula `ReprocessRunner.currentTierFromShedLevel()` and
+  `ImprovePolling.currentTierOrdinal()` each already compute independently — now also stamped
+  onto every session as `Tier.entries[tierFromShedLevel()].name`. No second, competing notion of
+  "current tier" was found anywhere in the tree; all four sites (this class, `ReprocessRunner`,
+  `ImprovePolling`, `ModelsViewData`/`SettingsPolling`) already agreed on the same shed-level
+  formula, so this is reuse, not invention. A T3 (max-tier) session now gets a real, non-null
+  label too — `ImprovePolling.root`'s own `tier.ordinal < currentTierOrdinal` filter requires
+  strictly less, so it simply never qualifies as improvable; writing `null` only below max would
+  have been an equivalent behaviour, not a required one. `ImprovePolling.kt`'s class KDoc, which
+  asserted the old (false) "only non-null below full capability" behaviour, is corrected in the
+  same change. One pre-existing gap noted but not fixed (out of scope for this row): the
+  `:app`-only tier *override* (`SettingsStore.tierOverrideName`, "Held at T0"/"T1"/etc.) is never
+  read by `ShedController`/`AndroidShedSignals`, so an operator-held override has no effect on the
+  shed-level-derived tier any of the four sites above compute — this was already true before this
+  fix and is unrelated to it.
+- **R-1115.** The heartbeat was written only inside `CaptureEvent.Frames` (and a transmission
+  close nested under it), into `FileHeartbeatStore`'s one-line file overwritten every beat — so no
+  trail survived on the device, and a frames-starved stretch (process alive, no frames arriving)
+  was indistinguishable from an OS kill (process gone). Fixed with a new append-only,
+  bounded `FileHeartbeatTrailStore` (`heartbeat-trail.log`, 960 rows = 8 hours at the 30 s cadence,
+  matching NFR-8's own overnight gate) alongside the unchanged single-record `heartbeatStore` —
+  `UncleanEndDetector`'s contract is untouched. Each row carries
+  `framesObservedSinceLastBeat: Boolean`, set from the frame path (a cheap, non-suspending flag
+  write only) and read/cleared only by the write itself. The real fix is a new, independent
+  heartbeat ticker (`runHeartbeatTicker`/`recordHeartbeatTick`) launched once per session in
+  `startCapture()`, ticking on its own schedule (immediately, then every
+  `HEARTBEAT_INTERVAL_MILLIS`) for as long as `source != null` — the same convention
+  `runShedMonitor`'s loop already uses — so a beat lands even when frames stop arriving entirely.
+  The frame path and the transmission-close callback (which, unlike the register's own framing,
+  turned out to run nested inside `Segmenter.onAudio()` — i.e. genuinely on the frame-collecting
+  coroutine) now only set the flag and dispatch `scope.launch { recordHeartbeatTick() }` — never
+  call it inline — so no synchronous file I/O reaches the frame path itself (constitution IV).
+  `FileHeartbeatTrailStore` is `@Synchronized` because it now has two independent writers (the
+  dispatched frame/transmission trigger and the ticker) over the same read-modify-write file.
+  Rotation is bounded but never silent (constitution III): once `append` would push the file past
+  `maxEntries`, the oldest overflow rows are folded into a small `.rotated` sidecar file
+  (`droppedCount`, `oldestDroppedWallMillis`, `newestDroppedWallMillis`, accumulated across every
+  rotation) before being dropped from the main file, so `rotationSummary()` always answers "how
+  many, and from when". `heartbeatGapMillisOrNull` is the real, production wiring for
+  `ProveItAnalyzer` (previously no caller anywhere) and `DiagnosticsLog.logHeartbeatGap`
+  (previously no caller anywhere): every tick compares the new beat against the immediately
+  preceding trail row — which, across a kill and relaunch, is the last row the *previous* process
+  ever wrote, since the trail is a file — and logs whatever real gap `ProveItAnalyzer` finds.
+  **How the trail tells the two apart:** a frames-starved-but-alive stretch keeps landing beats on
+  the ticker's own schedule with `framesObservedSinceLastBeat = false` on every one of them and
+  `heartbeatGapMillisOrNull` reports no gap (on-schedule beats, by definition); an OS kill produces
+  no further beats at all until the process relaunches, at which point the very next beat's
+  `heartbeatGapMillisOrNull` call reports the real elapsed gap against the dead process's last
+  trail row, and `DiagnosticsLog.logHeartbeatGap` records it. D8's 30-minute prove-it test and the
+  8-hour gate now have a real trail to read, `ProveItAnalyzer.analyze()` over `recent()` — this
+  change wires the production writer/reader path; it does not itself run or validate the 30-minute
+  or 8-hour protocol, which stays a device-only exercise (test-plan §7).
+
+**Verified:**
+- `.\gradlew.bat --max-workers=2 :pipeline:testDebugUnitTest` — full `:pipeline` suite green,
+  including the two new test files and every existing `RealCaptureService*Test`/
+  `RealCaptureServiceHeartbeatTest`/`RealCaptureServiceShedTest` (no regression from decoupling
+  the heartbeat write from the frame path — `AC_31`'s heartbeat assertion was changed from a
+  single immediate check to a bounded poll, since the write is now dispatched rather than inline,
+  and still passes).
+- `.\gradlew.bat --max-workers=2 :pipeline:detekt :pipeline:ktlintCheck` — green, no suppressions.
+- `.\gradlew.bat --max-workers=2 :app:testFullDebugUnitTest --tests
+  "org.ort.app.ui.improve.ImprovePollingTest"` — green (KDoc-only change there, behaviour
+  unchanged and already correct).
+- `.\gradlew.bat --max-workers=2 :app:detekt :app:ktlintCheck` — green.
+- **Discrimination, both rows:** each production change was reverted, the corresponding test(s)
+  were confirmed red for the stated reason, then restored and confirmed green again —
+  `RealCaptureServiceDeviceTierTest`'s two cases against `deviceTier = null`;
+  `HeartbeatTrailTest`'s bounding/rotation-summary/OS-kill-gap cases against an unbounded
+  `append` and a stubbed `heartbeatGapMillisOrNull` returning `null` unconditionally (4 of 9 cases
+  failed, exactly the ones exercising the reverted behaviour; the other 5 stayed green).
+
+**Left open / not done:**
+- The ticker's own real-time behaviour (does a beat actually land every 30 s once frames stop, on
+  a real `ServiceController` run) is not covered by an automated test — `HEARTBEAT_INTERVAL_MILLIS`
+  is 30 s of real wall-clock time with no test-dispatcher seam in this class (its own kdoc), and
+  this repo's own established convention for exactly this shape of timing (`RealCaptureServiceShedTest`,
+  its own kdoc) is to test the extracted, decoupled pieces directly rather than run the full real
+  loop under Robolectric. `FileHeartbeatTrailStore` and `heartbeatGapMillisOrNull` are proven at
+  that level; the ticker's wiring into `startCapture()`/`scope.launch` is not independently
+  covered beyond "the full-service tests still pass".
+- D8's 30-minute prove-it test and the 8-hour overnight gate are still device-only exercises
+  (test-plan §7) — this change gives them a real trail and a real analyzer/logger wiring to read,
+  it does not run either protocol.
+- The tier-override gap noted above (`SettingsStore.tierOverrideName` not wired into
+  `ShedController`/`AndroidShedSignals`) is unfixed — out of this row's scope, flagged for a
+  separate row.
+- `results/ui-audit/register.md` is not edited by this change — per AGENTS.md ("only the session
+  lead edits it") and the roles section ("builders... build and report"), filing R-1111/R-1115 as
+  fixed with their evidence is the lead's job, not this builder's.
+
 ## 2026-09-20 (P37: `diff.py` can fail)
 
 ### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change

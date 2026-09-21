@@ -38,6 +38,7 @@ import org.ort.core.AttributionState
 import org.ort.core.PassId
 import org.ort.core.SampleClock
 import org.ort.core.SystemClock
+import org.ort.core.Tier
 import org.ort.core.TransmissionState
 import org.ort.core.Ulid
 import org.ort.core.capture.AudioRouteKind
@@ -251,6 +252,19 @@ public class RealCaptureService : Service() {
     private var startedAtUtcOffsetMinutes = 0
     private lateinit var heartbeatStore: FileHeartbeatStore
 
+    // R-1115: the append-only companion to heartbeatStore's single overwritten record -- see
+    // HeartbeatTrail.kt's own kdoc for why this lives in :pipeline (this builder's brief) rather
+    // than beside heartbeatStore in :capture-android (other work's brief, the same night).
+    private lateinit var heartbeatTrailStore: FileHeartbeatTrailStore
+
+    // R-1115: set (never suspending, never I/O) from the audio-frame path every time a Frames
+    // event or a closed transmission proves frames are actually arriving; read and cleared only by
+    // recordHeartbeatTick(), which runs on its own ticker coroutine, never on the frame path
+    // itself. @Volatile because the two coroutines are not guaranteed to share a thread under
+    // Dispatchers.IO's pool.
+    @Volatile
+    private var framesObservedSinceLastBeat = false
+
     // R-102: the notification's expanded rows need a DB read (last over, frequencies seen) and the
     // selected device's own label -- neither is otherwise available outside startCapture()'s local
     // scope. Nullable because both start unset (before capture ever starts, and in tests that never
@@ -258,9 +272,9 @@ public class RealCaptureService : Service() {
     private var db: OrtDatabase? = null
     private var selectedDeviceLabel: String? = null
 
-    // audit F-005: the only way onHeartbeat() can report the real sample position instead of a
-    // fabricated 0L -- the segmenter is the one thing in this class that knows how much audio has
-    // actually been fed to it (Segmenter.position(), unchanged in :segment).
+    // audit F-005: the only way recordHeartbeatTick() can report the real sample position instead
+    // of a fabricated 0L -- the segmenter is the one thing in this class that knows how much audio
+    // has actually been fed to it (Segmenter.position(), unchanged in :segment).
     private var segmenter: Segmenter? = null
 
     // WPARC (FR-SEG-9, FR-STO-3d, D39): the continuous archive for this session, `null` whenever
@@ -320,6 +334,9 @@ public class RealCaptureService : Service() {
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ort:real-capture")
         ensureChannel()
         heartbeatStore = FileHeartbeatStore(File(filesDir, "heartbeat.txt"))
+        // R-1115: a small, separate file -- rotation (HeartbeatTrail.kt's own kdoc) never touches
+        // heartbeatStore's single-record file or its own unclean-end contract.
+        heartbeatTrailStore = FileHeartbeatTrailStore(File(filesDir, "heartbeat-trail.log"))
         // FR-OBS-1: the one place this service's process configures where its four diagnostics
         // logs live -- see DiagnosticsLog's own kdoc for why this is a plain File, not the :app
         // DiagnosticsLogPaths type the bundle producer reads back with.
@@ -470,6 +487,13 @@ public class RealCaptureService : Service() {
         // `scope`, cancelled by the same `scope.cancel()` onDestroy() already calls.
         scope.launch { startProcessingLoop(db, queue) }
 
+        // R-1115: decoupled from the frame path entirely (constitution IV) -- see this method's
+        // own kdoc for why a heartbeat that only ever fires alongside a frame cannot tell a
+        // frames-starved stretch apart from the process having died outright. Its own coroutine in
+        // the same service-scoped `scope`, same `while (source != null)` teardown convention
+        // startShedMonitor()'s loop already uses.
+        scope.launch { runHeartbeatTicker() }
+
         scope.launch { runCaptureFlow(db, queue, audioSource, gapRelay) }
     }
 
@@ -577,8 +601,8 @@ public class RealCaptureService : Service() {
                 is CaptureEvent.Frames -> {
                     // WPARC (constitution IV "capture never blocks"): read BEFORE feeding the
                     // segmenter -- Segmenter.position() is "the absolute sample position of the
-                    // NEXT sample to be fed" (see onHeartbeat()'s own comment), so this is exactly
-                    // this frame's own starting sample on the session timeline. offer() is a
+                    // NEXT sample to be fed" (see recordHeartbeatTick()'s own comment), so this is
+                    // exactly this frame's own starting sample on the session timeline. offer() is a
                     // plain, non-suspending function (ContinuousArchiveAttachment's own kdoc) --
                     // this call can never block the frame path, whatever the archive writer is
                     // doing. Over audio (builtSegmenter.onAudio below) is unaffected either way.
@@ -597,10 +621,20 @@ public class RealCaptureService : Service() {
                         // otherwise (see the comment just above).
                         writeAudioRouteVerifiedOnce(verified = true)
                     }
+                    // R-1115: a cheap, non-suspending flag write -- proof frames are flowing, read
+                    // and cleared only by recordHeartbeatTick() on whichever coroutine runs it.
+                    framesObservedSinceLastBeat = true
                     val now = SystemClock.wallMillis()
                     if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS) {
                         lastHeartbeatAt = now
-                        onHeartbeat()
+                        // R-1115: dispatched, never called inline -- recordHeartbeatTick() does
+                        // real file I/O (heartbeatStore + heartbeatTrailStore), which must never
+                        // run on this frame-collecting coroutine itself (constitution IV, "capture
+                        // never blocks"). This is still not the fix for R-1115's own defect: the
+                        // ticker launched in startCapture() is what keeps beating when frames
+                        // *stop* arriving -- this dispatch only makes an already-healthy stretch's
+                        // beat land sooner than the ticker's own schedule would.
+                        scope.launch { recordHeartbeatTick() }
                     }
                 }
                 is CaptureEvent.Failed -> {
@@ -673,7 +707,22 @@ public class RealCaptureService : Service() {
             startedAt = startedAtWallMillis,
             endedAt = null,
             profileId = null,
-            deviceTier = null,
+            // R-1111 (register, halt): this used to be an unconditional `null`, so
+            // `ImprovePolling.root`'s whole reprocessing surface -- drawer entry, artboard,
+            // `RealImproveRunner`, `ReprocessRunner` -- was reachable only from seeded debug
+            // scenarios, never a real session, contradicting that class's own KDoc (now fixed
+            // alongside this). `tierFromShedLevel()` is the exact ordinal this class already
+            // computes for its own notification text (`degradedReason()`) and
+            // `ReprocessRunner.currentTierFromShedLevel()` already computes independently for
+            // reprocessing (same `(MAX_TIER - ShedStatus.currentLevel)` formula,
+            // `Tier.entries[ordinal]` here rather than duplicated as a raw Int) -- reused, not a
+            // second, invented notion of "current tier". A session captured at the device's own
+            // max (T3) still gets a real, non-null label; `ImprovePolling.root`'s own
+            // `tier.ordinal < currentTierOrdinal` filter requires strictly less, so a T3 session
+            // simply never qualifies as improvable -- writing null only below max would have
+            // been an equivalent behaviour, not a required one, and always writing the truth is
+            // the simpler contract to reason about.
+            deviceTier = Tier.entries[tierFromShedLevel()].name,
             // R-1031 (constitution VI "no number without ... provenance", constitution I
             // "never fabricate"): every real session was stamped with this v0 wiring's own
             // literal since the class's first commit (see the top of this file's own doc
@@ -809,7 +858,12 @@ public class RealCaptureService : Service() {
             // constructor parameter that used to carry this was removed rather than kept unused.
         ) {
             transmissionCount++
-            onHeartbeat()
+            // R-1115: a closed transmission is itself proof frames were arriving -- see the
+            // Frames branch's identical flag write and dispatch comment; the same reasoning
+            // applies here (never inline on this callback -- RealSegmentSink invokes it from
+            // inside Segmenter.onAudio(), itself on the frame-collecting coroutine).
+            framesObservedSinceLastBeat = true
+            scope.launch { recordHeartbeatTick() }
         }
         // WPSQUELCH (FR-SEG-5): squelchGate is this session's own fusion input (built in
         // startCapture(), before this method is ever called) -- `null` only for the brief window
@@ -1153,13 +1207,55 @@ public class RealCaptureService : Service() {
         }
     }
 
-    private fun onHeartbeat() {
-        // audit F-005: samplePosition used to be a fabricated 0L literal. The segmenter is the
-        // one thing here that knows how much audio has actually been fed to it (Segmenter.position(),
-        // "absolute sample position of the next sample to be fed" -- no :segment change needed). 0L
-        // is honest, not fabricated, in the one case there is genuinely no sample yet: before the
-        // segmenter has been built for this session (the field is only assigned once capture starts).
-        heartbeatStore.write(buildHeartbeatRecord(sessionId) { segmenter?.position() ?: 0L })
+    /**
+     * R-1115: the real liveness signal, on its own schedule -- **not** gated on a frame, a
+     * transmission close, or anything else about the audio path (constitution IV: capture must
+     * never block, and a heartbeat that only fires alongside a frame cannot prove the process is
+     * alive during a stretch where frames stop). Ticks immediately once (so a session that dies in
+     * its first [HEARTBEAT_INTERVAL_MILLIS] still leaves one row), then every
+     * [HEARTBEAT_INTERVAL_MILLIS] for as long as [source] is set -- the identical convention
+     * [runShedMonitor]'s own loop already uses for the same teardown reason.
+     */
+    private suspend fun runHeartbeatTicker() {
+        recordHeartbeatTick()
+        while (source != null) {
+            delay(HEARTBEAT_INTERVAL_MILLIS)
+            if (source != null) recordHeartbeatTick()
+        }
+    }
+
+    /**
+     * R-1115: writes both the existing single-record [heartbeatStore] (unchanged contract --
+     * [UncleanEndDetector] still reads exactly this) and appends the same beat to
+     * [heartbeatTrailStore], carrying whether frames were actually observed since the previous
+     * beat ([framesObservedSinceLastBeat]). [heartbeatGapMillisOrNull] then compares this beat
+     * against the immediately-preceding trail row -- which, across a kill and relaunch, is the
+     * last row the PREVIOUS process ever wrote, since the trail is a file -- and
+     * [DiagnosticsLog.logHeartbeatGap] records whatever real gap [ProveItAnalyzer] finds. A
+     * frames-starved-but-alive stretch keeps landing beats on schedule with
+     * [framesObservedSinceLastBeat] false and reports no gap; an OS kill is exactly what produces
+     * one, the first time capture next resumes.
+     *
+     * audit F-005: samplePosition is read from the segmenter, never fabricated -- unchanged from
+     * before this split (see [buildHeartbeatRecord]'s own kdoc).
+     */
+    private fun recordHeartbeatTick() {
+        val framesObserved = framesObservedSinceLastBeat
+        framesObservedSinceLastBeat = false
+        val record = buildHeartbeatRecord(sessionId) { segmenter?.position() ?: 0L }
+        heartbeatStore.write(record)
+        val previous = heartbeatTrailStore.recent(1).lastOrNull()
+        val entry = HeartbeatTrailEntry(
+            sessionId = record.sessionId,
+            wallMillis = record.wallMillis,
+            monotonicNanos = record.monotonicNanos,
+            samplePosition = record.samplePosition,
+            framesObservedSinceLastBeat = framesObserved,
+        )
+        heartbeatTrailStore.append(entry)
+        heartbeatGapMillisOrNull(previous, entry, HEARTBEAT_INTERVAL_MILLIS)?.let { gapMillis ->
+            DiagnosticsLog.logHeartbeatGap(sessionId, gapMillis)
+        }
         updateNotification(CaptureNotificationContent.State.CAPTURING)
     }
 
