@@ -169,7 +169,7 @@ public object OrtColors {
      * `OrtColorsContrastTest.R_1089` for the computed proof against both. */
     public val textFigure: Color = Color(0xFF868A8E)
 
-    /** "unknown station", axis labels, artboard ids. oklch(0.605 0.008 250)
+    /** "unknown station", axis labels, artboard ids, recent-search icon. oklch(0.605 0.008 250)
      *
      * R-1089: raised from oklch(0.52 0.008 250) (`0x66696D`) — measured at 3.55:1 against
      * `bg/screen`, against a 4.5:1 floor, because `AttributionRow`/`TitleAttributionRow` render
@@ -183,7 +183,7 @@ public object OrtColors {
      * with margin (5.03:1). */
     public val textLow: Color = Color(0xFF7E8286)
 
-    /** Signal figures, chevrons, recent-search icon. oklch(0.595 0.008 250)
+    /** Signal figures, chevrons. oklch(0.595 0.008 250)
      *
      * R-1089: raised from oklch(0.50 0.008 250) (`0x606468`) — measured at 3.27:1 against
      * `bg/screen`, against a 4.5:1 floor, because this token also renders real prose at a normal
