@@ -32,6 +32,89 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (R-1135/R-1136: two more artboard/code drifts closed from the R-1130 audit; R-1143 verified already conformant except Thread-Detail's header shape)
+
+### `<pending>` — R-1135: `OrtColors.kt`'s `textSignal`/`textLow` doc comments corrected to match their real call sites; R-1136: an unnamed legacy colour removed from three boards; R-1143: Digest/Transmission-Detail kebabs confirmed already drawn, Thread-Detail's header shape flagged instead of forced
+
+**Scope:** `design/canvas/Stations.dc.html`, `design/canvas/Frequency.dc.html`, `design/canvas/Rows.dc.html`,
+and `OrtColors.kt`'s doc comments only (no value, no other code, no `ui/theme/` value touched).
+
+**Requirements/ACs:** constitution VIII; design-guide; R-1089, R-1130 (method followed), R-1096
+(R-1143's share-kebab wiring).
+
+**What changed:**
+
+- **R-1135.** `OrtColors.kt`'s `textSignal` doc comment claimed it covers the "recent-search
+  icon", but `SearchScreen.kt:582` renders that icon with `OrtColors.textLow`
+  (`design-guide.md:105` already documents `text/low` correctly this way, from R-1130's earlier
+  pass — only the Kotlin comment had been left out of that fix, per this row's own note that a
+  builder who owned only the boards deliberately did not touch it). Removed "recent-search icon"
+  from `textSignal`'s comment and added it to `textLow`'s, so the comment now names the same call
+  site the code and the guide already agree on. No value changed.
+- **R-1136.** `oklch(0.56 0.008 250)` — an unnamed legacy colour, not the current or any prior
+  value of `text/figure` or any other token — was on three elements, each corrected to the token
+  its own Kotlin call site actually reads:
+  - `Stations.dc.html`'s `.last` class (the *last heard* mono figure on every station row) →
+    `oklch(0.63 0.008 250)` (`text/figure`), justified by `StationScreen.kt:232`
+    (`Text(..., style = OrtType.timeFreq, color = OrtColors.textFigure)` in `StationRow`).
+  - `Frequency.dc.html`'s three *last heard* figures in the Regulars list → the same
+    `oklch(0.63 0.008 250)` (`text/figure`), justified by `FrequencyScreen.kt:389`
+    (`RegularRow`'s `lastHeardLabel` `Text`, `color = OrtColors.textFigure`).
+  - `Rows.dc.html`'s group-header icon (the box+lines icon beside "QSO · 4 overs · 2 stations")
+    → `oklch(0.60 0.008 250)` (`text/time`), justified by `Rows.kt:1211-1216`
+    (`LogGroupHeader`'s `Icon(imageVector = OrtIcons.threads, tint = OrtColors.textTime, ...)`).
+    This is the only literal `oklch(0.56 0.008 250)` this file actually contained — it is **not**
+    on the S-meter ("sig") column as the row's own text names it; see below.
+  - **The S-meter column, argued rather than assumed.** The row asked to decide whether
+    `Rows.dc.html`'s sig column (`S7`/`S5`/… beside every log row) has built code at all, since it
+    named "no built code" as a live possibility. It does: `Rows.kt:966-978`
+    (`LogRowSignalText(text, modifier) { Text(..., style = OrtType.signal, color =
+    OrtColors.textLow, ...) }`) is `LogRow`'s own signal-column text, and `design-guide.md:286`
+    independently documents "Signal is right-aligned mono `text/low`" for exactly this row. The
+    board's sig figures were `oklch(0.50 0.008 250)` — not `0.56` either, but the same class of
+    unnamed legacy value on the same column the row was asking about — so recoloured to
+    `oklch(0.605 0.008 250)` (`text/low`'s current value) rather than deleted, since real,
+    unambiguous built code exists for it.
+- **R-1143, verified rather than drawn.** Checked each of the three screens' boards against the
+  `DrillInHeader`+`onKebab` code that now wires share (`R-1096`):
+  - `Digest.dc.html` (`DigestScreen`, `DigestScreens.kt:70-76`, `onKebab = onShare`) **already**
+    draws the kebab, byte-for-byte the same three-circle pattern as `Station.dc.html`'s reference
+    (`stroke oklch(0.62 0.008 250)`, `r=1.4` circles at `cy=5/12/19`) — present since the canvas's
+    original commit (`3138f761`), not added by this session. No change made.
+  - Transmission Detail's `DrillInHeader`+`onKebab` state (`TransmissionDetailContent.kt:330-338`)
+    is drawn by `Detail.dc.html` (D02), `Detail-Confirmed.dc.html` (D01), `Detail-Ambiguous.dc.html`
+    (D03) and `Detail-Unknown.dc.html` (D04) — all four **already** carry the identical kebab
+    pattern. The sub-destinations that intentionally have no `onKebab` in code
+    (`Detail-Propagated.dc.html`, etc.) correctly draw none. No change made.
+  - `Thread-Detail.dc.html` (T02) is the one board that is actually missing it — but its current
+    header is not the `DrillInHeader` shape the real `ThreadDetailScreen.kt:72-78` draws
+    (back icon tinted `accent/green` + label in `accent/green` + kebab slot). It instead draws
+    `OrtIcons.back`'s path styled near-white with no accent-green label, paired with a live
+    dot + elapsed-time readout on the right — the `ScreenHeader` shape, not `DrillInHeader`'s.
+    There is no kebab-shaped slot to draw into without inventing a second treatment or redrawing
+    the header outright, which is a design decision, not this fix. Left alone and reported rather
+    than forced, per this row's own instruction.
+
+**Verified:** `.\gradlew.bat :app:detekt :app:ktlintCheck` — `:app:ktlintMainSourceSetCheck` and
+detekt reported no findings against `OrtColors.kt` (the only pre-existing failures, in
+`SetupActivityMicDeniedOverrideTest.kt`/`SetupActivityRouteMismatchOverrideTest.kt`, are unrelated
+test-file line-length violations, untouched by this change — confirmed by their absence from any
+diff this session made). No unit test exists for an HTML artboard; the justification table above,
+each row citing its Kotlin call site and line, is this change's evidence, per this row's own
+instruction. `git diff --stat`: `OrtColors.kt` (+2/-2, comments only), `Frequency.dc.html` (+3/-3),
+`Rows.dc.html` (+8/-8), `Stations.dc.html` (+1/-1).
+
+**Left open / not done:**
+- `Thread-Detail.dc.html`'s header shape (not just its kebab) does not match the `DrillInHeader`
+  code `ThreadDetailScreen.kt` actually renders — flagged above as a new finding for the lead to
+  file and route; not fixed here (a redesign decision, out of this row's and this builder's scope).
+- `oklch(0.56 0.008 250)` also appears, unaddressed, in `Main.dc.html`, `Main-Room-Audio.dc.html`,
+  `radio-transcriber-ui.html`, `Timeline.dc.html` and `Log.dc.html` — none named by R-1136, so left
+  untouched per this row's scope; `Editorial.dc.html`'s occurrence was already noted superseded by
+  R-1130. Flagging for the lead rather than sweeping them in unjustified.
+
+---
+
 ## 2026-09-20 (R-1121: hallucination control 3 made honestly inert; no acoustic confidence is fabricated anywhere)
 
 ### `<pending>` — R-1121: `NoSpeechProbRule` stops accepting on `null`; `Hypothesis`/`TokenScore.logProb` stop being fabricated `0f`
