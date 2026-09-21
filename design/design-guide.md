@@ -101,12 +101,12 @@ by "looks about right".
 | `text/dim` | `oklch(0.62 0.008 250)` | Subtitles, metadata, sub-lines |
 | `text/time` | `oklch(0.60 0.008 250)` | Time and frequency columns in a log row |
 | `text/faint` | `oklch(0.58 0.008 250)` | Section labels, secondary sub-lines |
-| `text/figure` | `oklch(0.55 0.008 250)` | Score chips, counts beside a list row |
-| `text/low` | `oklch(0.52 0.008 250)` | "unknown station", axis labels, artboard ids |
-| `text/signal` | `oklch(0.50 0.008 250)` | Signal figures, chevrons, recent-search icon |
-| `text/disabled` | `oklch(0.46 0.008 250)` | Column headers, disabled text actions |
-| `marker/unknown` | `oklch(0.45 0.008 250)` | The UNKNOWN dot |
-| `line/control` | `oklch(0.40 0.008 250)` | Unselected radio and checkbox border |
+| `text/figure` | `oklch(0.63 0.008 250)` | Score chips, counts beside a list row |
+| `text/low` | `oklch(0.605 0.008 250)` | "unknown station", axis labels, artboard ids |
+| `text/signal` | `oklch(0.595 0.008 250)` | Signal figures, chevrons, recent-search icon |
+| `text/disabled` | `oklch(0.585 0.008 250)` | Column headers, disabled text actions |
+| `marker/unknown` | `oklch(0.495 0.008 250)` | The UNKNOWN dot |
+| `line/control` | `oklch(0.49 0.008 250)` | Unselected radio and checkbox border |
 | `line/handle` | `oklch(0.34 0.010 250)` | The bottom-sheet drag handle |
 
 Two more surfaces the boards use beyond §Surfaces: `bg/audio` `oklch(0.20 0.010 250)` (the
@@ -164,6 +164,17 @@ for a listened-but-silent cell in a grid. Waveform quiet bars: `0.46 0.03` and `
 distinguished by shape, fill, size, position or text. The greyscale strip in `States.dc.html`
 is the proof, and it is part of the design, not documentation of it. Contrast meets WCAG 2.2 AA
 for text and 3:1 for state markers (FR-A11Y-4).
+
+**R-1089 (P32 accessibility pass, computed rather than eyeballed — OKLCH → linear sRGB → WCAG
+relative luminance):** `marker/unknown`, `line/control`, `text/disabled`, `text/figure`,
+`text/low` and `text/signal` all measured below their floor and were raised at the token level —
+never patched per screen, or every screen drifts separately. `text/low` and `text/signal` also
+render real prose at 13–14sp (`AttributionRow`'s "unknown station", `Controls.kt`'s search
+placeholder), well under WCAG's large-text threshold, so the fix there is the token, not the type
+size: reaching "large text" from 13sp would mean roughly 19sp, which reflows log/list rows at
+font scale 2.0 for every caller. `OrtColorsContrastTest.kt`'s `R_1089` test proves every token
+pair the guide defines against its real floor, not just these six, so a future edit that
+regresses one fails loudly with the computed ratio.
 
 ---
 
@@ -234,7 +245,7 @@ The most important component in the product. Four states, closed set (§4.1, FR-
 | CONFIRMED | circle | solid `accent/green` | 9px | callsign, mono 600, `text/high` |
 | INFERRED | circle | 1.5px ring, `accent/green`, hollow | 9px | callsign `text/body` + score chip |
 | AMBIGUOUS | circle | half-filled `accent/amber` (left half), 1.5px ring | 9px | callsign + `or QRF` alternate in amber |
-| UNKNOWN | circle | solid `oklch(0.45 0.008 250)` | **5px** | `unknown station`, italic, `text/low` |
+| UNKNOWN | circle | solid `oklch(0.495 0.008 250)` (`marker/unknown`) | **5px** | `unknown station`, italic, `text/low` |
 
 UNKNOWN differs in **size**, not merely shade — that is what carries it in greyscale. The marker
 never appears without its state; a marker with no adjacent identity treatment is incomplete.

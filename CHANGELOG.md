@@ -539,6 +539,101 @@ team asked for does not exist, and 2026-12-15 is uncommittable without it. `back
 is not wired into CI. Waves M–Q are listed but not expanded into prompts. The 213 uncovered
 requirement ids and 12 orphan test ids are reported, not triaged.
 
+## 2026-09-20 (R-1089: six colour tokens raised to clear the WCAG 2.2 AA contrast floor)
+
+### 476f6b6d — R-1089 · raise six contrast tokens to clear WCAG 2.2 AA, prove it for every token pair
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/theme/OrtColors.kt`,
+`app/src/test/kotlin/org/ort/app/ui/theme/OrtColorsContrastTest.kt`, `design/design-guide.md`,
+56 `design/canvas/*.dc.html` artboards plus `States.dc.html`.
+
+**Requirements/ACs:** constitution VII (the accessibility floor); FR-A11Y; design-guide §3, §6.1.
+
+**What changed:** The P32 accessibility pass (computed OKLCH → linear sRGB → WCAG relative
+luminance, not eyeballed) measured six tokens below their AA floor. Each was raised at the token
+level — never per screen, or every screen drifts separately:
+
+| Token | Pair measured | Old value | Old ratio | New value | New ratio | Floor |
+|---|---|---|---|---|---|---|
+| `marker/unknown` | vs `bg/screen` | `oklch(0.45 0.008 250)` | 2.63:1 | `oklch(0.495 0.008 250)` | 3.17:1 | 3:1 |
+| `line/control` | vs `bg/screen` | `oklch(0.40 0.008 250)` | 2.12:1 | `oklch(0.49 0.008 250)` | 3.12:1 | 3:1 |
+| `text/disabled` | vs `bg/screen` | `oklch(0.46 0.008 250)` | 2.75:1 | `oklch(0.585 0.008 250)` | 4.63:1 | 4.5:1 |
+| `text/figure` | vs `bg/score` | `oklch(0.55 0.008 250)` | 3.39:1 | `oklch(0.63 0.008 250)` | 4.71:1 | 4.5:1 |
+| `text/low` | vs `bg/screen` | `oklch(0.52 0.008 250)` | 3.55:1 | `oklch(0.605 0.008 250)` | 5.03:1 | 4.5:1 |
+| `text/signal` | vs `bg/screen` | `oklch(0.50 0.008 250)` | 3.27:1 | `oklch(0.595 0.008 250)` | 4.83:1 | 4.5:1 |
+
+`marker/unknown` and `line/control` are non-text (a graphical state marker and a UI component
+border, SC 1.4.11's 3:1). The other four render real prose at normal sizes — `text/disabled` as
+9.5sp column headers (`StationScreen`/`ThreadDetailScreen`/`FrequencyScreen`) and disabled button
+text, `text/figure` as score-chip values and list counts (harder against `bg/score`, its lighter
+ground, than against `bg/screen`), `text/low` as `AttributionRow`/`TitleAttributionRow`'s 13/27sp
+"unknown station" (plus axis labels and a chart bar fill, already fine at 3:1, now more so),
+`text/signal` as `Controls.kt`'s 14sp search placeholder (plus chevron/knob/ring graphics, also
+already fine at 3:1) — so 4.5:1 is the real floor for those four, not 3:1.
+
+**Decision for `text/low`/`text/signal` (13–14sp real text):** raised the token rather than the
+type size. Reaching WCAG's large-text threshold from 13sp needs roughly 19sp (18.66sp bold or
+24sp regular) — a ~45% jump that reflows every log/list row using `AttributionRow`, doubly so at
+font scale 2.0, to spare two tokens a lightness bump. Raising the token is a pure colour change
+with no layout risk and fixes every use (text and graphic) at once.
+
+The four attribution-state markers stay mutually distinguishable: only `marker/unknown`'s
+lightness moved (hue 250, chroma 0.008 unchanged — still far from `accent/green`'s and
+`accent/amber`'s hue 150/75), and `AttributionShape` already differentiates UNKNOWN by *size*
+(5/9 scale) as well as colour, per its own doc comment. Checked by re-reading `AttributionMarker.kt`
+(no code change needed — callers reference the token, not a literal) and confirming no other
+token's hue/chroma changed.
+
+Added `OrtColorsContrastTest.R_1089`: a data-driven table covering every token pair the guide
+defines (18 text steps + `text/figure`/`text/low`/`text/signal`/`text/disabled` + the 5 non-text
+markers + `text/figure` on `bg/score` + `text/low` as a bar fill), so a future palette edit that
+regresses any pair — not just these six — fails with the computed ratio, not a "looks fine"
+judgement.
+
+Updated 56 `design/canvas/*.dc.html` artboards (plus `States.dc.html`'s UNKNOWN-marker/"unknown
+station" demo) for the three tokens whose literal-value canvas usage was unambiguous —
+`marker/unknown` (every UNKNOWN dot/ring), `line/control` (every unselected checkbox/radio
+border), `text/disabled` (every column header and disabled/inactive button label) — plus
+`Tokens.dc.html`'s `text/low`/`text/disabled` reference-sheet swatch rows. Deliberately **left**
+`text/figure`, `text/low` and `text/signal`'s wider canvas propagation undone: their old literal
+oklch() values coincide with an unrelated generic caption/icon-stroke style reused pervasively
+across the same files (search-icon strokes, dismiss-X icons, `Tokens.dc.html`'s own numeric
+annotations), and spot-checking against the real Compose call sites found at least two
+pre-existing artboard/code drifts (`States.dc.html`'s UNKNOWN dot was drawn in `text/signal`'s
+old value, not `marker/unknown`'s — fixed directly since it is the canonical component-demo
+board; several "N unidentified voices" lines and `Charts.dc.html`'s axis labels render in
+`text/figure`'s or `text/signal`'s value where `StationScreen.kt`/`ActivityPatternChart.kt`
+actually use `textLow`). A blanket find-and-replace would have propagated the wrong colour
+further instead of fixing it, so this is filed as a follow-up rather than guessed at here.
+
+**Verified:**
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.theme.OrtColorsContrastTest"
+  --max-workers=2` — 11 tests, all green, including the new `R_1089` test.
+- Discrimination: reverted `OrtColors.kt` to its pre-fix content (`git show HEAD` of the six
+  tokens), re-ran the same test — `R_1089` fails, naming exactly the same seven pairs (six tokens,
+  `text/figure` twice for its two grounds) at the same computed ratios shown above. Restored the
+  fix, re-ran — green again.
+- `.\gradlew.bat :app:testFullDebugUnitTest --max-workers=2` (the full `:app` unit-test module,
+  beyond what this unit strictly owns, to catch any collateral breakage from a shared theme file):
+  started clean and progressed several hundred tests deep with zero failures before shared-daemon
+  contention from other concurrent builders in this multi-worktree session interrupted it twice
+  (`Gradle build daemon has been stopped: stop command received`, then a locked
+  `test-results/testFullDebugUnitTest/binary` directory from a second concurrent invocation) — not
+  a failure of this change. A `grep` across `app/src/test` for every old token hex value found no
+  other test asserting on them, so no collateral breakage is expected; the scoped run above is the
+  authoritative, fully-completed proof for this unit.
+
+**Left open / not done:**
+- The full `:app:testFullDebugUnitTest` run was not seen to a clean completion end-to-end in this
+  session due to shared-daemon contention (see above); nothing in the portion that did run,
+  compile, or the targeted scoped run suggests a regression.
+- `text/figure`, `text/low` and `text/signal`'s remaining canvas drift (including the two
+  confirmed pre-existing mismatches found above) is unaudited beyond `States.dc.html`; flagged for
+  a follow-up session.
+- No screen was re-captured by this unit per constitution VIII — that step is explicitly reserved
+  for the lead's single batch tour across this wave's parallel builders. See this unit's own report
+  for the full list of screens/artboards to re-capture.
+
 ## 2026-09-20 (R-1091/R-1092: the mic-denied halt indicator and the FAILED models row's colour)
 
 ### tour-coverage unit · Wave L's 29 `fixed`-status rows: coverage audit, plus the tour steps this unit could add without touching product code
