@@ -108,6 +108,18 @@ public data class NavSeed(
     // with no destination of its own; `true` starts `ImproveContent` already on a real-shaped
     // `Done` preview rather than requiring a live reprocess run the tour cannot drive to completion.
     val improveDonePreview: Boolean? = null,
+    // R-770 (register, R-1127's own follow-on): R02's own seam (`Improve-Select.dc.html`) —
+    // mirrors [improveDonePreview] exactly. `ImprovePage.Select` needs a real
+    // [org.ort.app.ui.improve.ImproveGroupViewState], reachable in production only by tapping a
+    // real qualifying group row on the `Improve` root, which no tour fixture seeds one of. `true`
+    // starts `ImproveContent` already on a real-shaped group.
+    val improveSelectPreview: Boolean? = null,
+    // R-770: R03's own seam (`Improve-Running.dc.html`) — mirrors [improveDonePreview] exactly, for
+    // the identical reason [improveDonePreview] itself exists: the tour cannot drive a real
+    // reprocess run to a mid-run progress point any more than it can drive one to completion. `true`
+    // starts `ImproveContent` already on a real-shaped, static progress snapshot — never a real
+    // `WorkManager` job, which a fabricated set of transmission ids could not usefully drive anyway.
+    val improveRunningPreview: Boolean? = null,
 ) {
     /**
      * The [ReaderDestination] this seed's own state is actually read under. The four drill-in ids
@@ -132,6 +144,8 @@ public data class NavSeed(
         settingsScreen != null -> ReaderDestination.SETTINGS
         searchQuery != null || searchSubmit == true || searchFiltersOpen == true -> ReaderDestination.SEARCH
         improveDonePreview == true -> ReaderDestination.IMPROVE_RECORDS
+        improveSelectPreview == true -> ReaderDestination.IMPROVE_RECORDS
+        improveRunningPreview == true -> ReaderDestination.IMPROVE_RECORDS
         else -> null
     }
 
@@ -184,6 +198,8 @@ public data class NavSeed(
         openTransmissionLabel?.let { intent.putExtra(EXTRA_OPEN_TRANSMISSION_LABEL, it) }
         correctionStep?.let { intent.putExtra(EXTRA_CORRECTION_STEP, it.name) }
         improveDonePreview?.let { intent.putExtra(EXTRA_IMPROVE_DONE_PREVIEW, it) }
+        improveSelectPreview?.let { intent.putExtra(EXTRA_IMPROVE_SELECT_PREVIEW, it) }
+        improveRunningPreview?.let { intent.putExtra(EXTRA_IMPROVE_RUNNING_PREVIEW, it) }
     }
 
     public companion object {
@@ -248,6 +264,12 @@ public data class NavSeed(
         // R-350/R-1127 — see [improveDonePreview]'s own doc comment.
         public const val EXTRA_IMPROVE_DONE_PREVIEW: String = "nav_improve_done_preview"
 
+        // R-770 — see [improveSelectPreview]'s own doc comment.
+        public const val EXTRA_IMPROVE_SELECT_PREVIEW: String = "nav_improve_select_preview"
+
+        // R-770 — see [improveRunningPreview]'s own doc comment.
+        public const val EXTRA_IMPROVE_RUNNING_PREVIEW: String = "nav_improve_running_preview"
+
         /**
          * Parses [intent]'s own seed extras (any subset, including none) into a [NavSeed] — `null`
          * only when *no* seed extra at all is present, so a caller that never seeded anything gets
@@ -299,6 +321,8 @@ public data class NavSeed(
                 correctionStep = intent.getStringExtra(EXTRA_CORRECTION_STEP)
                     ?.let { name -> CorrectionTierStep.entries.firstOrNull { it.name == name } },
                 improveDonePreview = intent.getBooleanExtraOrNull(EXTRA_IMPROVE_DONE_PREVIEW),
+                improveSelectPreview = intent.getBooleanExtraOrNull(EXTRA_IMPROVE_SELECT_PREVIEW),
+                improveRunningPreview = intent.getBooleanExtraOrNull(EXTRA_IMPROVE_RUNNING_PREVIEW),
             )
             return if (seed == NavSeed()) null else seed
         }

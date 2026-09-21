@@ -278,6 +278,33 @@ class NavSeedTest {
         composeTestRule.waitUntilTextExists("No transcription model installed", substring = true)
     }
 
+    // R-770 (register, R-1127's own follow-on): mirrors `improveDonePreview` exactly — R02's own
+    // `ImproveGroupViewState` is unseeded local state too, reachable in production only by tapping
+    // a real qualifying group row, which no tour fixture seeds.
+    @Test
+    fun `improveSelectPreview lands on Improve-Select with a real-shaped group`() {
+        composeTestRule.setContent {
+            OrtTheme { OrtNavHost(sessionId = null, seed = NavSeed(improveSelectPreview = true)) }
+        }
+        // `ImproveSelectScreen`'s own `DrillInHeader(parentLabel = "Improve records", ...)`.
+        composeTestRule.waitUntilContentDescriptionExists("Back to Improve records")
+        // `PassCheckboxRows`'s own honest not-built row (R-1147) — proves the real, current screen
+        // rendered, not a stale artboard assumption.
+        composeTestRule.waitUntilTextExists("not built")
+    }
+
+    // R-770 (register): mirrors `improveDonePreview` exactly — R03's own progress state is unseeded
+    // local state too, reachable in production only by driving a real reprocess run, which the tour
+    // cannot do (the same reason R04's own preview exists).
+    @Test
+    fun `improveRunningPreview lands on Improve-Running with a real-shaped progress state`() {
+        composeTestRule.setContent {
+            OrtTheme { OrtNavHost(sessionId = null, seed = NavSeed(improveRunningPreview = true)) }
+        }
+        composeTestRule.waitUntilTextExists("Improving")
+        composeTestRule.waitUntilTagExists("improve-running-action-bar")
+    }
+
     @Test
     fun `openTransmissionId with openTransmissionRevisions lands directly on Earlier versions`() {
         composeTestRule.setContent {

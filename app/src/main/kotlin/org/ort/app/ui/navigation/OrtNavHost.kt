@@ -1042,6 +1042,10 @@ private data class DestinationInitialState(
     val recordingSessionId: String?,
     // R-350/R-1127 — see `NavSeed.improveDonePreview`'s own doc comment.
     val improveDonePreview: Boolean,
+    // R-770 — see `NavSeed.improveSelectPreview`'s own doc comment.
+    val improveSelectPreview: Boolean,
+    // R-770 — see `NavSeed.improveRunningPreview`'s own doc comment.
+    val improveRunningPreview: Boolean,
 )
 
 /** [OrtNavHost]'s own [NavHostIds] construction, split out purely to keep that function under
@@ -1068,6 +1072,8 @@ private fun buildNavHostIds(
         navState.reviewSessionView.value,
         navState.openRecordingSessionId.value,
         seed?.improveDonePreview ?: false,
+        seed?.improveSelectPreview ?: false,
+        seed?.improveRunningPreview ?: false,
     ),
     navState.frequencyInitialView.value,
     navState.openStationSubScreen.value,
@@ -1993,7 +1999,7 @@ private fun DestinationContent(
                 content,
                 callbacks.onOpenModels,
                 callbacks.onOpenChangedOvers,
-                initialState.improveDonePreview,
+                initialState,
             )
     }
 }
@@ -2119,8 +2125,12 @@ private fun ImproveRecordsContent(
     onOpenModels: () -> Unit,
     // R-1041 (R04): `Improve-Done`'s "Review the N changes", real now.
     onOpenChangedOvers: (Set<String>) -> Unit,
-    // R-350/R-1127: the tour's own seam — see `NavSeed.improveDonePreview`'s own doc comment.
-    initialDonePreview: Boolean,
+    // R-350/R-1127/R-770: the tour's own three preview seams — see `NavSeed.improveDonePreview`/
+    // `improveSelectPreview`/`improveRunningPreview`'s own doc comments. The whole
+    // `DestinationInitialState`, not three scalar booleans passed down from `DestinationContent`,
+    // purely to keep that dispatch function under detekt's `LongMethod` threshold — this function
+    // has the headroom that one does not.
+    initialState: DestinationInitialState,
 ) {
     org.ort.app.ui.improve.ImproveContent(
         context = context,
@@ -2128,7 +2138,11 @@ private fun ImproveRecordsContent(
         modifier = modifier,
         onOpenModels = onOpenModels,
         onOpenChangedOvers = onOpenChangedOvers,
-        initialDonePreview = initialDonePreview,
+        previewSeed = org.ort.app.ui.improve.ImprovePreviewSeed(
+            donePreview = initialState.improveDonePreview,
+            selectPreview = initialState.improveSelectPreview,
+            runningPreview = initialState.improveRunningPreview,
+        ),
     )
 }
 

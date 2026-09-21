@@ -94,6 +94,13 @@ import org.json.JSONObject
  * [org.ort.app.ui.navigation.NavSeed.improveDonePreview] — the tour cannot drive a real reprocess
  * run to completion.
  *
+ * **R-770**: `improveSelectPreview` / `improveRunningPreview` (`"true"`) — the identical
+ * destination-step-only shape as `improveDonePreview` above, for R02 (`Improve-Select.dc.html`)
+ * and R03 (`Improve-Running.dc.html`) — both hold unseeded local state the tour cannot otherwise
+ * reach (R02 needs a real qualifying group row to tap; R03 needs a real reprocess run in progress),
+ * via [org.ort.app.ui.navigation.NavSeed.improveSelectPreview]/
+ * [org.ort.app.ui.navigation.NavSeed.improveRunningPreview].
+ *
  * **R-1129**: `tapLicenseNotice` (a licence's bundled asset file name, e.g. `"gemma.txt"`) — a
  * *destination*-step-only key (meaningful only on a `SETTINGS` destination step with
  * `settingsScreen: "LICENSES"`), read directly by [ScreenshotTourActivity] exactly like
@@ -203,6 +210,9 @@ public data class TourStep(
             "labelOpen",
             "correctionStep",
             "improveDonePreview",
+            // R-770 (register) — see this class's own doc comment above.
+            "improveSelectPreview",
+            "improveRunningPreview",
             "tapLicenseNotice",
         )
     }

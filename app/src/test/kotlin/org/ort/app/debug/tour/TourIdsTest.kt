@@ -315,6 +315,20 @@ class TourIdsTest {
         assertEquals(true, seed?.improveDonePreview)
     }
 
+    // R-770 (register): mirrors `improveDonePreview`'s own boolean-parsing test exactly.
+    @Test
+    fun `R_770_IMPROVE_SELECT_PREVIEW parses the literal true string to a real Boolean`() = runTest {
+        val seed = TourIds.resolveSeed(context, sessionId = null, mapOf("improveSelectPreview" to "true"))
+        assertEquals(true, seed?.improveSelectPreview)
+    }
+
+    // R-770 (register): mirrors `improveDonePreview`'s own boolean-parsing test exactly.
+    @Test
+    fun `R_770_IMPROVE_RUNNING_PREVIEW parses the literal true string to a real Boolean`() = runTest {
+        val seed = TourIds.resolveSeed(context, sessionId = null, mapOf("improveRunningPreview" to "true"))
+        assertEquals(true, seed?.improveRunningPreview)
+    }
+
     @Test
     fun `R_TOUR_IDS_UNRESOLVABLE_STATE throws a clear error rather than a silent empty seed`() = runTest {
         // "empty" seeds no transmissions at all, so every attribution-state lookup must fail loudly

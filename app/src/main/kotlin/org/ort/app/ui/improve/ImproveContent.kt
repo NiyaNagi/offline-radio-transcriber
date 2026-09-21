@@ -28,7 +28,16 @@ import org.ort.pipeline.reprocess.ReprocessStatus
 private sealed interface ImprovePage {
     data object Root : ImprovePage
     data class Select(val group: ImproveGroupViewState) : ImprovePage
-    data class Running(val transmissionIds: List<String>, val headline: String) : ImprovePage
+
+    // R-770 (register): [preview] mirrors [Done]'s own shape — `true` only for
+    // [runningPreviewPage]'s own synthetic, static snapshot (the tour's own R03 seam; see
+    // [NavSeed.improveRunningPreview]'s own doc comment), never for a page a real Improve-all/Start
+    // tap builds. [RunningPage] reads it to skip starting or observing a real run entirely — a
+    // fabricated id list could not usefully drive [RealImproveRunner] anyway, and this is the
+    // identical "never a real WorkManager job the tour cannot see through" boundary
+    // [donePreviewPage] already draws for [Done].
+    data class Running(val transmissionIds: List<String>, val headline: String, val preview: Boolean = false) :
+        ImprovePage
     data class Done(val headline: String, val clearedCount: Int, val summary: ReprocessStatus.Summary?) : ImprovePage
 }
 
@@ -81,6 +90,7 @@ private val ImprovePageSaver: Saver<ImprovePage, String> = Saver(
                 "running",
                 page.transmissionIds.joinToString(","),
                 page.headline,
+                page.preview.toString(),
             ).joinToString(IMPROVE_PAGE_FIELD_SEPARATOR)
             is ImprovePage.Done -> listOf(
                 "done",
@@ -114,6 +124,7 @@ private val ImprovePageSaver: Saver<ImprovePage, String> = Saver(
             "running" -> ImprovePage.Running(
                 transmissionIds = parts.getOrNull(1)?.takeIf { it.isNotEmpty() }?.split(",") ?: emptyList(),
                 headline = parts.getOrElse(2) { "" },
+                preview = parts.getOrElse(3) { "false" }.toBoolean(),
             )
             "done" -> ImprovePage.Done(
                 headline = parts.getOrElse(1) { "" },
@@ -174,17 +185,17 @@ public fun ImproveContent(
     // to a no-op so every existing caller keeps compiling unchanged; the host is expected to wire
     // it the same way it wires [onOpenModels].
     onOpenChangedOvers: (Set<String>) -> Unit = {},
-    // R-350/R-1127 (register): the screenshot tour's own seam — [page] is `rememberSaveable` local
-    // state with no seed of its own, so R04 (`Improve-Done.dc.html`) could only ever be reached by
-    // actually driving a reprocess run to completion, which the tour cannot do. `true` starts this
-    // composable already on [ImprovePage.Done] with a real-shaped summary — a failure reason that
-    // is the literal message `AsrEngineProvisioning` emits (so R-350's own "Install" action is
-    // exercised too), never fabricated data this build cannot produce. `false` (every existing
-    // caller) is unchanged.
-    initialDonePreview: Boolean = false,
+    // R-350/R-1127/R-770 (register): the screenshot tour's own seam — [page] is `rememberSaveable`
+    // local state with no seed of its own, so R02/R03/R04 could only ever be reached by actually
+    // driving a real reprocess run (partway or to completion), which the tour cannot do. Bundled
+    // into one [ImprovePreviewSeed] rather than three scalar parameters — see that type's own kdoc
+    // for the full account, including why (detekt's `LongMethod` threshold on this very function,
+    // once R-770 added the second and third preview). A default-constructed
+    // [ImprovePreviewSeed] (every existing caller) is unchanged behaviour.
+    previewSeed: ImprovePreviewSeed = ImprovePreviewSeed(),
 ) {
     val runner = remember { RealImproveRunner(context) }
-    var page by rememberSaveable(stateSaver = ImprovePageSaver) { mutableStateOf(pageFor(initialDonePreview)) }
+    var page by rememberSaveable(stateSaver = ImprovePageSaver) { mutableStateOf(pageFor(previewSeed)) }
     var root by remember { mutableStateOf<ImproveRootViewState?>(null) }
     var refreshToken by remember { mutableStateOf(0) }
     var justFinished by remember { mutableStateOf<JustFinishedRun?>(null) }
@@ -353,8 +364,15 @@ private fun RunningPage(
     coroutineScope: CoroutineScope,
     onDone: (headline: String, doneCount: Int, summary: ReprocessStatus.Summary?) -> Unit,
 ) {
-    var done by remember(current.transmissionIds) { mutableStateOf(0) }
-    var total by remember(current.transmissionIds) { mutableStateOf(current.transmissionIds.size) }
+    // R-770 (register): [ImprovePage.Running.preview] seeds a static, fabricated-but-coherent
+    // snapshot straight into these — never `runner.run`/`runner.observeState`, both skipped below —
+    // the same reason [donePreviewPage] never touches `ImprovePolling`/`ReprocessStatus` either.
+    var done by remember(current.transmissionIds) {
+        mutableStateOf(if (current.preview) PREVIEW_RUNNING_DONE_COUNT else 0)
+    }
+    var total by remember(current.transmissionIds) {
+        mutableStateOf(if (current.preview) PREVIEW_RUNNING_TOTAL_COUNT else current.transmissionIds.size)
+    }
     // R-1067 round 2 (coordinator item 2b): honestly `WorkInfo.State.ENQUEUED` -- a fresh start not
     // yet picked up, or a stopped attempt WorkManager itself requeued for retry (WorkManager's
     // 10-minute execution limit; see ReprocessWorker's own kdoc for the stop-and-reschedule
@@ -363,10 +381,19 @@ private fun RunningPage(
     // R-1067: seeded from the process-wide control, not a hardcoded `false` -- a real Activity
     // recreation must show the operator's own pause exactly as they left it, never silently
     // resume (the same "don't discard operator intent" standard R-1063 already set for the page).
-    var paused by remember(current.transmissionIds) { mutableStateOf(ReprocessPauseControl.paused) }
+    // R-770: a preview never reads the process-wide control either -- it never started a run for
+    // that control to mean anything about.
+    var paused by remember(current.transmissionIds) {
+        mutableStateOf(if (current.preview) false else ReprocessPauseControl.paused)
+    }
     var autoPausedReason by remember(current.transmissionIds) { mutableStateOf<String?>(null) }
 
     LaunchedEffect(current.transmissionIds) {
+        // R-770: a preview shows its static snapshot only -- starting a real WorkManager job over
+        // fabricated ids, or observing one that was never started, would either fail loudly for no
+        // operator-facing reason or simply hang at the seeded numbers forever; skipping both is the
+        // honest choice, not a shortcut.
+        if (current.preview) return@LaunchedEffect
         // Starts (idempotently -- ExistingWorkPolicy.KEEP no-ops onto an already-active run) only
         // when this page actually knows which ids to start with; a reattached run (empty ids --
         // this composition did not start it, see ImproveContent's own top-level LaunchedEffect)
@@ -402,6 +429,8 @@ private fun RunningPage(
     // Pause (both publish `ReprocessStatus.State.Paused` -- see `ReprocessPauseControl`'s own
     // kdoc) by simply checking whether *this* screen is the one that asked for it.
     LaunchedEffect(current.transmissionIds) {
+        // R-770: nothing to poll -- a preview never touches `ReprocessStatus` at all.
+        if (current.preview) return@LaunchedEffect
         while (true) {
             val engineIsPausing = ReprocessStatus.state is ReprocessStatus.State.Paused
             autoPausedReason = if (engineIsPausing && !ReprocessPauseControl.paused) {
@@ -435,7 +464,10 @@ private fun RunningPage(
             // this composable -- RunningPage is disposed the instant onDone below flips the page
             // away from Running, which would otherwise race and could cancel this coroutine before
             // ReprocessWorker.cancel's real WorkManager call ever ran.
-            coroutineScope.launch { runner.cancel() }
+            // R-770: a preview never started a real run, so there is nothing for `runner.cancel()`
+            // to legitimately stop -- calling it anyway would cancel whatever unrelated work, if
+            // any, this device's `ReprocessWorker` unique-work slot happens to hold.
+            if (!current.preview) coroutineScope.launch { runner.cancel() }
             onDone(current.headline, done, null)
         },
         modifier = modifier,
@@ -449,10 +481,33 @@ private fun Loading(modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Register R-350/R-1127/R-770: bundles [ImproveContent]'s own three tour-preview seams into one
+ * parameter — [ImprovePage] is `rememberSaveable` local state the tour cannot otherwise reach for
+ * R02/R03/R04 (each needs either a real qualifying group to tap or a real reprocess run this build
+ * cannot drive from an automated tap sequence; see [NavSeed.improveDonePreview]/
+ * [NavSeed.improveSelectPreview]/[NavSeed.improveRunningPreview]'s own doc comments for each
+ * screen's own reason). Kept as one bundled type, not three scalar `Boolean` parameters, purely to
+ * keep [ImproveContent] and `OrtNavHost.kt`'s own dispatch under detekt's `LongMethod` threshold —
+ * the same reason `OrtNavHost.kt`'s own `DestinationInitialState`/`NavHostLayout` already bundle
+ * their own unrelated scalars. At most one field is ever `true` for a real caller (the tour builds
+ * exactly one [NavSeed] per step); if more than one were somehow set, [donePreview] wins in
+ * [pageFor], matching the check order this file used before this type existed.
+ */
+public data class ImprovePreviewSeed(
+    val donePreview: Boolean = false,
+    val selectPreview: Boolean = false,
+    val runningPreview: Boolean = false,
+)
+
 /** [ImproveContent]'s own initial [page] value — a plain function, pulled out purely so the
  * `rememberSaveable` call site stays one line (detekt's `LongMethod` threshold). */
-private fun pageFor(initialDonePreview: Boolean): ImprovePage =
-    if (initialDonePreview) donePreviewPage() else ImprovePage.Root
+private fun pageFor(preview: ImprovePreviewSeed): ImprovePage = when {
+    preview.donePreview -> donePreviewPage()
+    preview.selectPreview -> ImprovePage.Select(selectPreviewGroup())
+    preview.runningPreview -> runningPreviewPage()
+    else -> ImprovePage.Root
+}
 
 /**
  * [ImproveContent]'s own `initialDonePreview` fixture — see that parameter's own kdoc. Every count
@@ -477,4 +532,42 @@ private fun donePreviewPage(): ImprovePage.Done = ImprovePage.Done(
     ),
 )
 
+/**
+ * [ImproveContent]'s own `initialSelectPreview` fixture (R-770, register) — see that parameter's
+ * own kdoc. A real-shaped group in [donePreviewPage]'s own style ("Captured at tier 1", the same
+ * `ImprovePolling.root`-produced headline a real T1 session below current capability would carry)
+ * with clearly synthetic ids — never a real device's own transmission ids, the same
+ * "improve-preview-" naming [donePreviewPage] already established for exactly this reason. Landing
+ * on [ImproveSelectScreen] still runs the real [ImprovePolling.select] against these ids (this
+ * function only seeds the group [ImprovePage.Select] itself carries, not the polled
+ * [ImproveSelectViewState]) — real code computing a real, honest zero for a group of ids that do
+ * not exist in this device's database, never a fabricated duration/correction count.
+ */
+private fun selectPreviewGroup(): ImproveGroupViewState = ImproveGroupViewState(
+    id = "tier-T1",
+    headline = "Captured at tier 1",
+    subLine = "2 sessions · 6 overs",
+    overCount = PREVIEW_GROUP_OVER_COUNT,
+    transmissionIds = (1..PREVIEW_GROUP_OVER_COUNT).map { "improve-preview-select-tx$it" },
+    tierOrdinal = 1,
+)
+
+/**
+ * [ImproveContent]'s own `initialRunningPreview` fixture (R-770, register) — see that parameter's
+ * own kdoc and [ImprovePage.Running.preview]'s own kdoc for why this never starts or observes a
+ * real run. `transmissionIds` is deliberately empty — [RunningPage]'s own `LaunchedEffect` only
+ * calls [ImproveRunner.run] when it is non-empty, and a preview must never enqueue a real
+ * `WorkManager` job over ids this device does not have. The same "All groups" headline and total
+ * of 6 [donePreviewPage] itself uses, roughly half done — one coherent run, shown mid-flight here
+ * and finished there, not two unrelated fixtures.
+ */
+private fun runningPreviewPage(): ImprovePage.Running = ImprovePage.Running(
+    transmissionIds = emptyList(),
+    headline = "All groups",
+    preview = true,
+)
+
+private const val PREVIEW_GROUP_OVER_COUNT = 6
+private const val PREVIEW_RUNNING_DONE_COUNT = 3
+private const val PREVIEW_RUNNING_TOTAL_COUNT = 6
 private const val AUTO_PAUSE_POLL_INTERVAL_MILLIS = 200L
