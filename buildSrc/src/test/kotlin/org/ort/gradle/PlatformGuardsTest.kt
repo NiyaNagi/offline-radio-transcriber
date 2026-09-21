@@ -314,6 +314,75 @@ class PlatformGuardsTest {
         assertThrows(org.gradle.api.GradleException::class.java) { task.check() }
     }
 
+    // ---- P38 (register R-1105, R-1116, D43, D44) — the same [NativeLibraryPackagingGuardTask] ----
+    // class, now also wired in `ort.android-app.gradle.kts` against the `play`-flavor's `release`
+    // APK (`app-play-release-unsigned.apk`, the artifact `release.yml`'s `build-play-variant` job
+    // actually bundles for the store) as `verifyPlaySherpaNativeLibrariesPackaged` — before this
+    // unit, `verifySherpaNativeLibrariesPackaged` read the `full` flavor's debug APK only, so
+    // nothing here could ever go red for a native library missing from what `play` actually ships.
+    // These two tests are the permanent, hermetic regression coverage for that wiring's own failure
+    // direction; the fix's own build report additionally reproduced this live against a real
+    // assembled `:app:assemblePlayRelease` output — see this unit's CHANGELOG entry.
+
+    @Test
+    fun `R_1105 the play guard task passes a real playRelease-shaped APK with every required native library`(
+        @TempDir dir: File,
+    ) {
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create(
+            "verifyPlaySherpaNativeLibrariesPackaged",
+            NativeLibraryPackagingGuardTask::class.java,
+        )
+        val apk = File(dir, "app-play-release-unsigned.apk")
+        ZipOutputStream(apk.outputStream()).use { zip ->
+            listOf(
+                "lib/arm64-v8a/libsherpa-onnx-jni.so",
+                "lib/arm64-v8a/libonnxruntime.so",
+                "lib/x86_64/libsherpa-onnx-jni.so",
+                "lib/x86_64/libonnxruntime.so",
+                "classes.dex",
+            ).forEach { name ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(byteArrayOf(1, 2, 3))
+                zip.closeEntry()
+            }
+        }
+        task.apkFile.set(apk)
+
+        task.check() // must not throw
+    }
+
+    @Test
+    fun `R_1105 discrimination — the play guard task fails a real playRelease-shaped APK missing a required native library`(
+        @TempDir dir: File,
+    ) {
+        val project = ProjectBuilder.builder().build()
+        val task = project.tasks.create(
+            "verifyPlaySherpaNativeLibrariesPackaged",
+            NativeLibraryPackagingGuardTask::class.java,
+        )
+        val apk = File(dir, "app-play-release-unsigned.apk")
+        ZipOutputStream(apk.outputStream()).use { zip ->
+            listOf(
+                "lib/arm64-v8a/libsherpa-onnx-jni.so",
+                "lib/arm64-v8a/libonnxruntime.so",
+                "lib/x86_64/libsherpa-onnx-jni.so",
+                // x86_64/libonnxruntime.so deliberately missing — the exact shape a `play`-only
+                // packaging regression (a flavor-specific jniLibs source set, an AGP default
+                // change) would take, invisible to the full-flavor-only check that existed before.
+                "classes.dex",
+            ).forEach { name ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(byteArrayOf(1, 2, 3))
+                zip.closeEntry()
+            }
+        }
+        task.apkFile.set(apk)
+
+        val thrown = assertThrows(org.gradle.api.GradleException::class.java) { task.check() }
+        assertTrue(thrown.message!!.contains("lib/x86_64/libonnxruntime.so"))
+    }
+
     // ---- Signing-stability guard — debug-fix session, 2026-09-19 (reworked after coordinator ---
     // review: no keystore may be committed to this public repository) ---------------------------
     // Operator report, currently released build: install fails on-device with "App not installed.

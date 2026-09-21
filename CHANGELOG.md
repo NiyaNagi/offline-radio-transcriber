@@ -246,6 +246,77 @@ whole Wave L batch.
   on the inspection surface), even though constitution VIII's own path trigger does not fire for
   a `:pipeline`-only diff.
 
+### `6e2a9284` — P38: the play APK's native libraries are now proven, and the models-v1 mirror audit is filed
+
+**Scope:** `buildSrc/src/main/kotlin/ort.android-app.gradle.kts` (task wiring only),
+`buildSrc/src/test/kotlin/org/ort/gradle/PlatformGuardsTest.kt`. No `.github/workflows/ci.yml`
+(owned by another builder this wave), no `:app` Kotlin source, no `:pipeline`/`:capture-*`, and no
+publish action taken.
+
+**Requirements/ACs:** FR-AST-10..14, D43, D44; register R-1105, R-1116.
+
+**What changed:** `verifySherpaNativeLibrariesPackaged` read only the `full` flavor's debug APK, so
+nothing structurally proved that the `play` flavor — the slim artifact `release.yml`'s
+`build-play-variant` job actually bundles for the beta and the store (D43) — packages its
+sherpa-onnx native libraries at all. Registered a second instance of the same
+`NativeLibraryPackagingGuardTask` class, `verifyPlaySherpaNativeLibrariesPackaged`, targeting
+`app/build/outputs/apk/play/release/app-play-release-unsigned.apk` (confirmed by direct build,
+below, to be the real, stable output path/name of `:app:assemblePlayRelease` in every environment —
+this project's `release` build type never gets a signing config assigned, only `debug` does, so the
+file is always `-unsigned` regardless of whether release-signing secrets are present) and wired it
+into `:app:check` alongside the existing `full`-flavor check. The check itself is flavor-agnostic;
+only the artifact path and the task-graph wiring are new — see that file's own new comment for why
+this revisits P23's original "not worth doubling this task's own build cost" judgement call
+(R-1105/R-1116 name exactly the silent-regression risk that judgement left open).
+
+Also audited the `models-v1` mirror (D44, FR-AST-14) `bundled-assets.json`'s five `mirrorUrl`
+entries point at, from a clean, unauthenticated client (`Invoke-WebRequest -Method Head` with
+`Cache-Control: no-cache`, no credentials) — **every asset 404s**, and
+`gh api repos/NiyaNagi/offline-radio-transcriber/releases` (also unauthenticated) lists only
+`latest-build` and `v0.1.1`: the `models-v1` release itself has never been created, so nothing was
+ever available to compare against `bundled-assets.json`'s pinned `sizeBytes`/`sha256`. Per asset:
+
+| id | mirrorUrl asset | HTTP status | size/sha256 vs manifest |
+|---|---|---|---|
+| ASR_DECODER | `tiny.en-decoder.int8.onnx` | 404 Not Found | N/A — asset does not exist |
+| ASR_ENCODER | `tiny.en-encoder.int8.onnx` | 404 Not Found | N/A — asset does not exist |
+| ASR_TOKENS | `tiny.en-tokens.txt` | 404 Not Found | N/A — asset does not exist |
+| LLM_GEMMA3_1B | `gemma3-1b-it-int4.task` | 404 Not Found | N/A — asset does not exist |
+| VAD | `silero_vad.onnx` | 404 Not Found | N/A — asset does not exist |
+
+This is exactly R-1105's second half and is reported, not fixed: `:app:publishModelMirror` runs
+only from `release.yml` on a `v*.*.*` tag (D44's own deliberate scoping — "the mirror is meant to
+move only when a numbered version is cut, not on every push to `main`", that file's own top
+comment), so nothing in a builder session may create the `models-v1` release or invoke the
+publish step; that is release-time action for the lead/operator (RELEASING.md), not a `buildSrc`
+fix.
+
+**Verified:** `./gradlew -p buildSrc test --max-workers=2` — green, including two new tests
+(`R_1105 the play guard task passes a real playRelease-shaped APK with every required native
+library`, `R_1105 discrimination — the play guard task fails a real playRelease-shaped APK missing
+a required native library`). Live discrimination against a real artifact, not just the hermetic
+unit tests: ran `./gradlew :app:assemblePlayRelease --max-workers=2` (green, no `HF_TOKEN` set,
+confirming the play variant needs none), inspected the resulting APK's zip entries directly
+(contains `lib/{arm64-v8a,x86_64}/{libsherpa-onnx-jni,libonnxruntime}.so` today), ran
+`:app:verifyPlaySherpaNativeLibrariesPackaged` (OK), then replaced that same file in place with a
+copy missing `lib/x86_64/libonnxruntime.so` and re-ran
+`:app:verifyPlaySherpaNativeLibrariesPackaged -x assemblePlayRelease` — **FAILED**, naming
+`lib/x86_64/libonnxruntime.so   (packaged APK does not contain lib/x86_64/libonnxruntime.so —
+sherpa-onnx's Android JNI binding will fail to load at runtime (register R-1001))` — then restored
+the real artifact and re-ran the same command — OK again. Mirror audit commands and their exact
+404/`releases` output are above; run 2026-09-20, unauthenticated. Did not run the full
+`dependencyRules platformGuards build` gate (batch gate is the lead's, per the working agreement)
+or `./gradlew --stop`.
+
+**Left open / not done:** the `models-v1` release does not exist — publishing it (a `v*.*.*` tag
+push, or a manual `gh release create models-v1` plus `:app:publishModelMirror`) is release/operator
+work, not this unit's. `verifyPlaySherpaNativeLibrariesPackaged` targets `playRelease`, the artifact
+`release.yml` bundles for the store, per this unit's own instructions — `playDebug` is unchecked
+by this task (unchanged from before: neither guard ever checked `playDebug`). This unit did not
+touch `.github/workflows/ci.yml` or `.github/workflows/release.yml` (P23's build-plan entry already
+lists `ci.yml`'s `:app:testDebugUnitTest`/`assembleDebug` ambiguity as broken and unowned by any
+landed unit; still true, still out of this unit's scope).
+
 ### `<pending>` — roadmap research lands as D51–D55, build-plan Wave L, R-1109..R-1123 and a generated `results/backlog.md`
 
 **Scope:** `spec/functional-spec.md` (§3 decisions and §16 traceability), `spec/build-plan.md`

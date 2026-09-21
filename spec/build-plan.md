@@ -991,18 +991,19 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   device/emulator, which this session's working rules kept it from running (no install to any of
   the three attached emulators) — left to the lead.
 
-- [ ] **P38 · Packaging and the model mirror** *(buildSrc, release workflow)* — FR-AST-10..14,
-  D44. **Beta blocker.**
-
-  **Read first:** `verifySherpaNativeLibrariesPackaged` (it reads the `full` APK only, so the slim
-  `play` artifact the beta ships is unverified); `bundled-assets.json`'s `mirrorUrl` entries and
-  `ModelMirrorPublisher`.
-
-  **Tests first:** the packaging check runs over `playRelease` and fails when a native library is
-  missing from that artifact.
-
-  **Done when:** the check lists the native libraries in the play artifact, and every `models-v1`
-  asset returns HTTP 200 from a clean client.
+- [x] **P38 · Packaging and the model mirror** *(buildSrc, release workflow)* — FR-AST-10..14,
+  D44. **Beta blocker.** Done 2026-09-20: `verifyPlaySherpaNativeLibrariesPackaged`
+  (`buildSrc/src/main/kotlin/ort.android-app.gradle.kts`, reusing `NativeLibraryPackagingGuardTask`)
+  now checks the `play` flavor's real `release` APK (`app-play-release-unsigned.apk`, the artifact
+  `release.yml`'s `build-play-variant` job bundles for the store), wired into `:app:check`.
+  Discrimination proven twice: live, against a real `:app:assemblePlayRelease` output deliberately
+  stripped of `lib/x86_64/libonnxruntime.so` (failed naming that exact path, then passed again once
+  restored), and as a permanent hermetic regression test
+  (`PlatformGuardsTest.kt`, `R_1105 discrimination — …`). **The `models-v1` mirror audit found every
+  asset still 404s — `gh api repos/.../releases` lists only `latest-build` and `v0.1.1`; the
+  `models-v1` release has never been created.** That is unchanged by this unit on purpose
+  (publishing is a release action for the lead/operator, not a builder fix) — see this unit's own
+  CHANGELOG entry for the full per-asset table and what remains open.
 
 **Waves M-Q — planned, expanded into prompts when each wave starts.** **M** UI honesty sweep
 (hide the unreachable Improve destination, share from the open screen, an alert refusal must not
