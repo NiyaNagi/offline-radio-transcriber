@@ -402,6 +402,59 @@ class DetailViewStateMapperTest {
         assertTrue(kvReason.contains("kept alternate"), kvReason)
     }
 
+    /**
+     * Coordinator review of R-1148: `reasonFor`'s "needs a/an X..." clause hardcoded "a", so a
+     * candidate needing an `A` read "needs a A" -- caught against the board's own "needs an A the
+     * lattice did not hear". English picks the article by how the letter or digit *name* is
+     * pronounced ("H" is "aitch", vowel-initial; "U" is "you", consonant-initial), not by whether
+     * the written glyph looks like a vowel, so this exercises every one of the 26 letters and 10
+     * digits rather than a couple of examples -- exactly the kind of table that gets
+     * half-remembered later otherwise.
+     */
+    @Test
+    fun `R_1148 the needs article follows the spoken letter or digit name, whole alphabet and every digit`() {
+        val expectedArticle = mapOf(
+            "A" to "an", "B" to "a", "C" to "a", "D" to "a", "E" to "an", "F" to "an", "G" to "a",
+            "H" to "an", "I" to "an", "J" to "a", "K" to "a", "L" to "an", "M" to "an", "N" to "an",
+            "O" to "an", "P" to "a", "Q" to "a", "R" to "an", "S" to "an", "T" to "a", "U" to "a",
+            "V" to "a", "W" to "a", "X" to "an", "Y" to "a", "Z" to "a",
+            "0" to "a", "1" to "a", "2" to "a", "3" to "a", "4" to "a", "5" to "a", "6" to "a",
+            "7" to "a", "8" to "an", "9" to "a",
+        )
+
+        expectedArticle.forEach { (unit, expected) ->
+            val inspection = InspectionViewState(
+                lattice = null,
+                candidates = listOf(
+                    CandidateInspectionViewState(
+                        callsign = "TEST",
+                        rank = 0,
+                        score = 1.0,
+                        grammarValid = true,
+                        databaseHit = false,
+                        selected = false,
+                        priorContributions = emptyList(),
+                        slotMismatches = listOf(
+                            SlotMismatchViewState(
+                                slotIndex = 0,
+                                latticeUnit = "-",
+                                candidateUnit = unit,
+                                offeredByLattice = false,
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            val why = DetailViewStateMapper.from(detail(Attribution.ambiguous(), inspection)).why
+            val reason = why.candidates.single().reason
+
+            assertTrue(
+                reason != null && reason.startsWith("needs $expected $unit "),
+                "unit=$unit expected article=$expected got=$reason",
+            )
+        }
+    }
+
     // -----------------------------------------------------------------------------------------
     // The `bt audio` header mark (checklist row E2-G04, D01-D04), threaded through for all four
     // attribution states the detail header shares one `DetailViewState`/`HeaderSection` for.
