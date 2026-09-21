@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (roadmap: five decisions, Wave L, fifteen findings, and one backlog view)
 
-### `<pending>` — P35 durability: the stale-lease call site nothing invoked, and the schema guard that stops a violating index from bricking launch
+### `0b10bf56` — P35 durability: the stale-lease call site nothing invoked, and the schema guard that stops a violating index from bricking launch
 
 **Scope:** `:data` (`WorkQueue.kt`, `OrtDatabase.kt` and their tests), `:app` startup path
 (`OrtApplication.kt`, new `DatabaseStartupWiring.kt`, new `ui/failures/DatabaseOpenFailure.kt`,
