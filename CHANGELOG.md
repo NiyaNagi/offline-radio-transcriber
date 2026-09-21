@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (R-1133/R-1134: inert-control provenance persisted; a station's over counts are derived, not incremented)
 
-### `<pending>` — R-1133/R-1134: `inertControls` persisted beside pass provenance; `overCountsByAttributionState` derived from the transmission log
+### `f2398c38` — R-1133/R-1134: `inertControls` persisted beside pass provenance; `overCountsByAttributionState` derived from the transmission log
 
 **Scope:** `:pipeline`'s `passb/` package (`PassBFingerprintBuilder`, `DataPassBResultSink`, plus
 their test files) and `:data`'s catalog DAO/entities and correction DAO (`CatalogDao`,
