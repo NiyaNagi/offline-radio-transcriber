@@ -92,7 +92,10 @@ public sealed interface DetailBodyViewState {
 public data class AmbiguousCandidateViewState(val callsign: String, val evidence: String, val scoreLabel: String)
 
 /** One "what was tried" row (`Detail-Unknown.dc.html`). [resolved] marks the final, always-true
- * "kept as an unidentified voice" step distinctly from the attempts that did not resolve. */
+ * "kept as an over with no callsign heard" step distinctly from the attempts that did not resolve.
+ * Register R-1150: this title used to read "kept as an unidentified voice", which claimed the app
+ * clustered the over by voice — it does not; `voiceprintId` is unconditionally null in production
+ * and `:identity` is an empty stub (D45, R-1137). */
 public data class TriedStepViewState(val title: String, val detail: String?, val resolved: Boolean)
 
 /**
@@ -538,7 +541,7 @@ public object DetailViewStateMapper {
 
     /**
      * `Detail-Unknown.dc.html`'s "what was tried". The grammar step and the always-true "kept as
-     * an unidentified voice" step are built from data this mapper always had.
+     * an over with no callsign heard" step are built from data this mapper always had.
      *
      * Register R-721, closed: [context], when supplied, adds the two remaining board steps —
      * "voice match against N stations heard tonight" and "thread context" — from
@@ -589,10 +592,15 @@ public object DetailViewStateMapper {
                 resolved = false,
             )
         }
+        // Register R-1150: the previous detail text — "if this voice is heard again with a
+        // callsign, this over will be re-attributed by inference" — claimed a voice-matching
+        // mechanism that never runs (see the class doc comment above). Named honestly, this
+        // over is reachable only by a later pass resolving the callsign directly from the audio,
+        // or by an operator correction — both real, both already true today.
         val keptStep = TriedStepViewState(
-            title = "Kept as an unidentified voice",
-            detail = "If this voice is heard again with a callsign, this over will be re-attributed by " +
-                "inference and marked as such.",
+            title = "Kept as an over with no callsign heard",
+            detail = "Stays this way unless a callsign is heard directly in a later pass, or an operator " +
+                "corrects it.",
             resolved = true,
         )
         return listOfNotNull(grammarStep, voiceStep, threadStep, keptStep)

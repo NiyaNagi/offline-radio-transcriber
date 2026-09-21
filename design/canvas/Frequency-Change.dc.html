@@ -94,9 +94,15 @@
         <div style="width: 9px; height: 9px; border-radius: 50%; background: oklch(0.72 0.14 150); flex-shrink: 0;"></div>
         <div style="font-size: 13px; color: oklch(0.86 0.006 250); flex-grow: 1;">5 hunters, all regulars on <span style="font-family: 'IBM Plex Mono', monospace;">145.230</span>, moved here to work it</div>
       </div>
+      <!-- Register R-1150 (constitution I): this cause used to read "4 unidentified voices, weak,
+           03:10–04:40". `StationPolling.kt`'s `FrequencyPolling.frequencyChange` only says "voices"
+           when `distinctVoices` (distinct real `voiceprintId`s) is genuinely non-zero — a case
+           production cannot reach today (`voiceprintId` is unconditionally null, `:identity` an
+           empty stub) — and otherwise names the real fact this build has: the plain over count
+           with no callsign heard. -->
       <div class="st" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
         <div style="width: 5px; height: 5px; border-radius: 50%; background: oklch(0.495 0.008 250); flex-shrink: 0; margin: 0 2px;"></div>
-        <div style="font-size: 13px; color: oklch(0.62 0.008 250); flex-grow: 1; font-style: italic;">4 unidentified voices, weak, 03:10–04:40</div>
+        <div style="font-size: 13px; color: oklch(0.62 0.008 250); flex-grow: 1; font-style: italic;">4 overs with no callsign heard, weak, 03:10–04:40</div>
       </div>
     </div>
   </div>

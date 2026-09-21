@@ -82,8 +82,14 @@
     <div class="th">
       <div class="t">03:10</div>
       <div style="flex-grow: 1; min-width: 0;">
+        <!-- Register R-1150 (constitution I): this title used to read "4 unidentified voices" —
+             `ThreadListMapper.cardFor`'s own title branch for an all-UNKNOWN thread counts overs
+             (`sorted.size`), never distinct `voiceprintId`s (`voiceprintId` is unconditionally
+             null in production, `:identity` an empty stub), so "voices" claimed a clustering
+             result nothing computed. The over count is already shown above in the `kind` line
+             ("7 overs"), so the honest title names the fact without repeating the number. -->
         <div class="kind">Activity · 146.960 · 7 overs</div>
-        <div class="ttl" style="color: oklch(0.66 0.008 250); font-style: italic;">4 unidentified voices</div>
+        <div class="ttl" style="color: oklch(0.66 0.008 250); font-style: italic;">No callsign heard</div>
         <div class="meta">weak signals, S1–S3 · 03:10 – 04:40 · not grouped into a conversation</div>
       </div>
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="oklch(0.605 0.008 250)" stroke-width="2" stroke-linecap="round" style="margin-top: 14px;"><path d="M9 18l6-6-6-6"></path></svg>

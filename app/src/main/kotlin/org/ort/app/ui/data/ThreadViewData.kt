@@ -230,10 +230,15 @@ public object ThreadListMapper {
         val inferredCount = sorted.count { it.attribution.state == AttributionState.INFERRED }
         val ambiguousCount = sorted.count { it.attribution.state == AttributionState.AMBIGUOUS }
         val unknownCount = sorted.count { it.attribution.state == AttributionState.UNKNOWN }
+        // Register R-1150: this branch is reached only when every over in the thread is UNKNOWN —
+        // `stationIds` is empty (CONFIRMED/INFERRED always carry one) and `ambiguousCount` is 0, so
+        // `unknownCount == sorted.size`. The old title, `pluralize(sorted.size, "unidentified
+        // voice")`, relabelled that plain over count as a distinct-voice count; nothing here reads
+        // `voiceprintId`, so "voices" claimed a clustering result this mapper never computed.
         val title = when {
             stationIds.isNotEmpty() -> joinWithAnd(stationIds)
             ambiguousCount > 0 -> "Ambiguous stations"
-            else -> pluralize(sorted.size, "unidentified voice")
+            else -> "No callsign heard"
         }
         val counts = buildList {
             if (confirmedCount > 0) add("$confirmedCount confirmed")
