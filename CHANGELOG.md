@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (R-1148 follow-up: the "needs a/an X" sentence now picks its article by how the letter or digit is spoken, not by the written glyph)
 
-### `<pending>` — q-candidate-reasons-article: fix `DetailViewStateMapper.reasonFor`'s hardcoded "a" ("needs a A") to a real pronunciation-based article rule, covering the whole alphabet and every digit
+### `290407e0` — q-candidate-reasons-article: fix `DetailViewStateMapper.reasonFor`'s hardcoded "a" ("needs a A") to a real pronunciation-based article rule, covering the whole alphabet and every digit
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/DetailViewState.kt` (the `reasonFor`/new
 `article` functions only), `app/src/test/kotlin/org/ort/app/ui/data/DetailViewStateMapperTest.kt`.
