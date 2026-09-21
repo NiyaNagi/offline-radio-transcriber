@@ -32,6 +32,106 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (R-1021/R-1146: two more tour-vs-code drifts — both the code, not the tour steps, over R-1021's own reopening)
+
+### `<pending>` — R-1021: the live bar's tap-and-await mechanism retired for `overnight-live-monitor`, since its own target screen is now unreachable by design; R-1146: the C10 playback-survives-navigation assertion replaced with the real, restored stop-on-leave contract
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/Scenarios.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/TourSpec.kt`, `tools/ui-audit/tour.json`. No product
+code (`app/src/main/**`) touched — both rows turned out to be stale tour assertions, not defects
+in `:app`'s navigation.
+
+**Requirements/ACs:** FR-UI-7, FR-UI-12, FR-RUN-12, AC-168; constitution II ("never assert prose",
+extended here to "never assert a superseded destination"), VIII; register R-1007, R-1006, R-1021,
+R-1025, R-1146.
+
+**What changed:**
+
+1. **R-1021 — the real reason `LiveMonitorScreen` never appeared.** Not a navigation defect: `WPCAP`
+   (`3b5d0e0a`, landed after R-1007's own `59894e75` wired the live bar to `LiveMonitorScreen`)
+   merged `CaptureStatusScreen` (N04), `LevelMeterScreen` (N06) and `LiveMonitorScreen` (N07) into
+   one `CaptureScreen` (N08, `design/design-intent.md`'s own N08 row: "Supersedes N04, N06 and N07
+   as separate screens"). `ReaderDestination.CAPTURE` has rendered `CaptureScreen` unconditionally
+   ever since; `CaptureStatusContent`'s `openLiveMonitor` parameter has been an inert,
+   `@Suppress`-ed no-op since that merge, and `LiveMonitorScreen` itself is no longer reachable from
+   any navigation path (kept, untouched, P9). The three `overnight-live-monitor/N07-live-monitor*`
+   tour steps still tapped the live bar anyway: `LiveBar` always self-tags `testTag("live-bar")` on
+   its outer `Column` regardless of a caller's own modifier, so the tap found and clicked
+   `CaptureScreen`'s own embedded copy — whose `onClick` is deliberately `{}` (nothing further to
+   open once already on the merged screen) — and then waited out its full timeout for a screen the
+   app can no longer navigate to. Fixed by dropping the dead `tapLiveBar` drill-in from those three
+   `tools/ui-audit/tour.json` steps: their `destination: "CAPTURE"` already settles on identical
+   content to what N07 rendered (`CaptureScreen`'s own kdoc names the reused
+   `LiveMonitorOversSection`/`LiveMonitorLevelCard`/`LiveMonitorHearingCard` composables), so no tap
+   is needed at all. `ScreenshotTourActivity`'s `tapLiveBar` mechanism itself (the tap-then-await
+   pair, `LIVE_BAR_TEST_TAG`/`awaitLiveMonitorVisible`) is kept, unremoved (P9), as the template for
+   a future real cross-screen tap once `Transport-Bar.dc.html` (C10, not yet built) replaces the
+   plain pinned live bar — every doc comment on the path (`Scenarios.kt`'s `overnightLiveMonitor`,
+   `ScreenshotTourActivity`'s own block and `awaitLiveMonitorVisible`, `TourSpec`'s `tapLiveBar`
+   entry) corrected in place so a future reader does not trust the stale "real route onto
+   `LiveMonitorScreen`" claim.
+2. **R-1146 — the four `overnight-live/C10-*` steps encoded a contract the app no longer has, and
+   it is genuinely gone twice over.** R-1006 originally stopped playback on leaving a transmission;
+   the C10 transport-bar work then deliberately reversed that (the bar was meant to carry playback
+   across navigation); `AC-168`/build-plan `P26` (register R-1006, `684c3abf`, already closed)
+   reversed the reversal, restoring stop-on-leave — but at the nav-host layer
+   (`NavHostBody`'s own `DisposableEffect(ids.transmissionId)` → `shouldStopPlaybackOnTransmissionLeave`)
+   rather than the per-screen layer R-1006 first used, and covering both a genuine back/drawer leave
+   and a same-screen switch to a different over. So `transportPlayback.stop()` genuinely runs by the
+   time each step's `onBackPressedDispatcher.onBackPressed()` returns, `loadedTransmissionId` clears,
+   and `resolveTransportBarState` can never again resolve `Playback` there — the four steps' own
+   trailing `awaitTagPresent(TRANSPORT_BAR_PLAYBACK_TEST_TAG)` was waiting for a state the app cannot
+   re-enter. **Disagreed with the register row's own suggested replacement** ("the transport bar is
+   absent after navigation"): that is false for this specific scenario — `overnight-live` is a
+   genuinely capturing session, so `resolveTransportBarState` falls through to
+   `TransportBarViewState.Live`, not `Hidden`, once the loaded transmission clears. The honest,
+   provable replacement is that the bar reverts to the ordinary `live-bar` tag, confirmed on-device
+   (see Verified) — a real screenshot of `Log` after navigating back shows the plain green "Live"
+   bar, not an absent one and not a playback one. Changed the shared post-back-press wait from
+   `TRANSPORT_BAR_PLAYBACK_TEST_TAG` to `LIVE_BAR_TEST_TAG`; removed the now-fully-unused
+   `TRANSPORT_BAR_PLAYBACK_TEST_TAG` constant; corrected the stale "closes ... without stopping
+   playback, landing ... with the transport bar (C10) now visible" claim in both
+   `ScreenshotTourActivity`'s own comment and `TourSpec`'s `playThenNavigate`/`pauseThenNavigate` doc
+   comment. The pre-navigation half of both steps (tapping play, and for the paused variant, pause)
+   is untouched and still exercises the real, current `WaveformPlayControl` glyph toggle on the
+   transmission detail screen.
+
+**Verified:**
+- `.\gradlew.bat :app:ktlintCheck` — `BUILD SUCCESSFUL`.
+- `.\gradlew.bat :app:detekt` — `BUILD SUCCESSFUL`, no findings.
+- `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.debug.tour.*" --tests "org.ort.app.debug.OvernightLiveMonitorScenarioTest"` — all green, including `TourSpecTest`
+  (`R_TOUR_DRILL_IN_KEYS`, `R_TOUR_SCENARIO_NAMES`), `TourStepsTest.R_TOUR_STEPS`,
+  `TourAccessibilityTapTest.R_1021`/`R_1025`, and both `OvernightLiveMonitorScenarioTest` cases. No
+  file under `app/src/main/**` changed, so `smokeTestFullDebugUnitTest` (register R-1140) does not
+  apply.
+- **Real device, not a report** (constitution VIII): rebuilt (`:app:assembleFullDebug`), installed
+  and cleared on `emulator-5560` (`tools\ui-audit\install.ps1 -Port 5560 -Clear`; the emulator was
+  found wedged from an unrelated prior condition mid-session, recovered with `adb -s emulator-5560
+  reboot`, then installed cleanly). Two scoped tour runs against the pushed working tree:
+  - `tools\ui-audit\tour.ps1 -Port 5560 -Only "overnight-live-monitor/*"` → `steps: 3  ok: 3
+    errors: 0`, all three `N07-live-monitor` steps (1.0, 2.0, 2.0-scrolled-to-end) captured real
+    `CaptureScreen` content — elapsed, level envelope, "Hearing now", Input/Radio/Queue, storage,
+    and "LOGGED TONIGHT · 8 overs · 2 waiting" with `Full log` — with the live bar pinned below.
+  - `tools\ui-audit\tour.ps1 -Port 5560 -Only "overnight-live/C10*"` → `steps: 4  ok: 4  errors: 0`,
+    all four steps (`C10-playing-then-log`, `@2x`, `C10-paused-then-log`, `@2x`) captured `Log` with
+    the plain green "Live" bar pinned at the bottom, confirming playback stopped and the bar
+    reverted rather than either persisting or vanishing.
+  - Captures under the session scratchpad (`ort-tour-r1021-r1146`), not `results/ui-audit/` (only
+    the lead's full canonical run replaces that, per constitution VIII).
+
+**Left open / not done:**
+- `design/design-intent.md`'s N08 row still reads "drawn 2026-09-12 — not yet built", which is
+  itself stale (`WPCAP` built it); left for the lead, since design-intent status is not this row's
+  file ownership.
+- `results/ui-audit/register.md` not edited — only the session lead edits it (AGENTS.md); this
+  entry, the branch and the tour output above are the evidence for the lead to close R-1021 and
+  R-1146 against.
+- The `tapLiveBar` tap-then-await mechanism in `ScreenshotTourActivity.kt` is kept for a future
+  real cross-screen tap (`Transport-Bar.dc.html`, C10, not yet built) but has no current caller in
+  `tour.json` — flagged in its own doc comments so a future caller does not point it at the
+  now-orphaned `LIVE_MONITOR_TOP_BAR_TEST_TAG` again.
+
 ## 2026-09-21 (R-1135/R-1136: two more artboard/code drifts closed from the R-1130 audit; R-1143 verified already conformant except Thread-Detail's header shape)
 
 ### `<pending>` — R-1135: `OrtColors.kt`'s `textSignal`/`textLow` doc comments corrected to match their real call sites; R-1136: an unnamed legacy colour removed from three boards; R-1143: Digest/Transmission-Detail kebabs confirmed already drawn, Thread-Detail's header shape flagged instead of forced

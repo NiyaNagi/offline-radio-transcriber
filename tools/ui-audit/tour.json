@@ -103,9 +103,9 @@
     { "id": "rig-lost/capture-toast-rig", "scenario": "rig-lost", "destination": "CAPTURE", "override": "rig-reconnected" },
     { "id": "storage-warn/capture-toast-storage", "scenario": "storage-warn", "destination": "CAPTURE", "override": "storage-fine" },
 
-    { "id": "overnight-live-monitor/N07-live-monitor", "scenario": "overnight-live-monitor", "destination": "CAPTURE", "drillIn": { "tapLiveBar": "true" } },
-    { "id": "overnight-live-monitor/N07-live-monitor@2x", "scenario": "overnight-live-monitor", "destination": "CAPTURE", "drillIn": { "tapLiveBar": "true" }, "fontScale": 2.0 },
-    { "id": "overnight-live-monitor/N07-live-monitor@2x-end", "scenario": "overnight-live-monitor", "destination": "CAPTURE", "drillIn": { "tapLiveBar": "true" }, "fontScale": 2.0, "scroll": "end" },
+    { "id": "overnight-live-monitor/N07-live-monitor", "scenario": "overnight-live-monitor", "destination": "CAPTURE" },
+    { "id": "overnight-live-monitor/N07-live-monitor@2x", "scenario": "overnight-live-monitor", "destination": "CAPTURE", "fontScale": 2.0 },
+    { "id": "overnight-live-monitor/N07-live-monitor@2x-end", "scenario": "overnight-live-monitor", "destination": "CAPTURE", "fontScale": 2.0, "scroll": "end" },
 
     { "id": "overnight-live/N08-capture", "scenario": "overnight-live", "destination": "CAPTURE" },
     { "id": "overnight-live/N08-capture@2x", "scenario": "overnight-live", "destination": "CAPTURE", "fontScale": 2.0 },
