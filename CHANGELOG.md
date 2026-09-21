@@ -32,6 +32,127 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (R-1100/R-1101/R-1123: action-level analytics, the uploader's TLS path proven, a live ANR watchdog and retrospective native-crash/OOM visibility)
+
+### `<pending>` — m-analytics-crash: action usage events, `RealAnalyticsUploadClient` proven over real TLS, an ANR watchdog and `ApplicationExitInfo`-backed native-crash/ANR/low-memory reporting
+
+**Scope:** `:app`'s `analytics` package (`FeatureUsageAnalytics`, `CrashPayloads`, new `AnrWatchdog`,
+`ProcessExitReasonReporter`, `ExitReasonWatermarkStore`), `:app`'s `OrtApplication` composition
+root, one instrumentation seam in `:app/ui/navigation/OrtNavHost.kt` (`NavHostCallbacks` widened
+from `private` to `internal`, new `instrumentedNavHostCallbacks`), `:net`'s analytics upload
+client test suite (a new TLS-loopback fixture), and a committed, throwaway self-signed test
+certificate under `net/src/test/resources/analytics-tls/` and
+`tools/analytics/tests/fixtures/tls/`. No `:pipeline`, `:capture-*` or other `:app` screen touched.
+
+**Requirements/ACs:** FR-ANL-2, FR-ANL-3, FR-ANL-8, FR-ANL-9, D42, D48, constitution I
+(uncertainty as content — `isAnr` stays honestly absent where it is genuinely unmeasured),
+constitution V (closed field lists, no schema change), constitution VII (only `:net` links an
+HTTP client; the new TLS test never contacts a real network, only a loopback `SSLServerSocket`).
+Register rows R-1100, R-1101, R-1123.
+
+**What changed:**
+
+- **R-1100 — action-level usage events.** `FeatureUsageAnalytics.actionInvoked(destination,
+  action: UsageAction)` submits the existing tier-1 `Usage(screen, action)` event
+  `screenViewed` already uses — no telemetry schema change, no new payload type. `UsageAction` is
+  a new closed enum (23 values, one per `NavHostCallbacks` field: `OPEN_DRAWER`, `OPEN_SEARCH`,
+  `CLOSE_DRILL_INS`, `OPEN_CAPTURE`, `OPEN_LOG`, `OPEN_TRANSMISSION`, `OPEN_STATION`,
+  `OPEN_FREQUENCY`, `OPEN_THREAD`, `OPEN_STATIONS`, `OPEN_MODELS`, `OPEN_SETTINGS_STORAGE`,
+  `OPEN_LEVEL_METER`, `OPEN_OVERS`, `OPEN_REVIEW_SESSION`, `OPEN_ACTIVATION_THREAD`,
+  `OPEN_STATION_OVERS`, `OPEN_ATTRIBUTED_STATION`, `OPEN_HOUR`, `VIEW_AFFECTED_OVERS`,
+  `OPEN_CHANGED_OVERS`, `OPEN_RECORDING_SESSION`, `OPEN_RECORDING_SESSION_LOG`). Wired at the one
+  real navigation-action chokepoint the app has: `OrtNavHost.kt`'s `NavHostCallbacks` (widened
+  `private` -> `internal` so it is unit-testable) is wrapped once, by a new
+  `instrumentedNavHostCallbacks`, so every one of its 23 fields reports its action against the
+  screen the operator was actually on (`navigator.currentState.value`, read live at call time,
+  never captured at wrap time) before running the real callback — one line changed at the call
+  site inside `OrtNavHost`, not dozens of screen files touched. All tier-1, no argument
+  (transmission id, station id, frequency, time window) is ever carried — only the closed action
+  name and the closed screen enum name. Confirmed at HEAD, not fixed (outside this unit's owned
+  area): `DiagnosticsLog.logHeartbeatGap` (`:pipeline`) still has no production caller, and
+  `CaptureHeartbeatAnalytics` still computes gaps independently rather than calling it.
+- **R-1123 — a live ANR watchdog, plus retrospective native-crash/ANR/low-memory visibility.**
+  New `AnrWatchdog`: a dependency-injected, coroutine-based main-thread-stall detector (pings the
+  main thread every 5 s via `Handler(Looper.getMainLooper())::post`, reports once per stall
+  episode rather than once per cycle) started from `OrtApplication.onCreate`. Its report reuses
+  the existing tier-1 `Crash` payload via a new `CrashPayloads.fromMainThreadStall` — the first
+  call site in this codebase where `isAnr` is a genuine, measured `true` rather than the
+  `fromUncaughtException` path's honest, unmeasured `null`. New `ProcessExitReasonReporter` adds
+  the retrospective half: on the *next* launch, `ActivityManager
+  .getHistoricalProcessExitReasons` (API 30+, the same in-process mechanism Play Console's own
+  vitals use) is read and classified into `NATIVE_CRASH`/`ANR`/`LOW_MEMORY`
+  (`ApplicationExitInfo.REASON_CRASH_NATIVE`/`REASON_ANR`/`REASON_LOW_MEMORY` — real values
+  confirmed against `android-34/android.jar` with `javap`, not assumed), each turned into a
+  `Crash` event with a genuinely measured `isAnr`. New `ExitReasonWatermarkStore`
+  (`SharedPreferences`) persists the newest reported timestamp so the OS's own rolling history is
+  never resubmitted on a later launch. A native abort (an uncaught `Ort::Exception` from the
+  sherpa JNI reaching `std::terminate`, `SIGABRT`) still cannot be caught *live* — that needs a
+  native signal handler, genuinely out of scope for this change — but it is no longer invisible:
+  it surfaces as `PreviousProcessExit.NATIVE_CRASH` on the very next launch. Below API 30,
+  `readExitReasonSamples` returns empty — a real, stated gap, not a silent one.
+- **R-1101 — the analytics uploader's TLS path, proven.** `RealAnalyticsUploadClient` was
+  implemented and unit-tested only against `LoopbackHttpFixture` (plain HTTP); nothing ever
+  exercised a real TLS handshake. New `TlsLoopbackHttpFixture` (a real `SSLServerSocket` loopback
+  server, reusing `LoopbackHttpFixture`'s own request-parsing types) backs a new
+  `RealAnalyticsUploadClientTlsTest` proving: a trusted certificate completes a genuine handshake
+  and the upload succeeds; the *default*, unconfigured trust manager refuses this fixture's
+  self-signed certificate and the client fails safely (`PARTIAL_WRITE`), never crashing; a
+  connection that dies immediately after a genuine handshake is a mid-upload failure; `purge`
+  also completes a real handshake. A throwaway, non-secret self-signed test certificate/keystore
+  pair (`CN=localhost`, SAN `dns:localhost,ip:127.0.0.1`, keystore password `changeit`,
+  20-year validity) is committed at `net/src/test/resources/analytics-tls/{server,truststore}.p12`
+  and mirrored as PEM at `tools/analytics/tests/fixtures/tls/{cert,key}.pem` for the Python
+  reference server. Separately, `tools/analytics/server.py` was run locally against this exact
+  certificate on `127.0.0.1:8543` and driven with `curl.exe`: a `--cacert`-trusted `POST /ingest`
+  received a real `200 OK` with the ingest app's own accept/skip counts; the identical request
+  with no `--cacert` override was refused with `schannel: SEC_E_UNTRUSTED_ROOT`; killing the
+  server process mid-upload of a 7 MB body produced `curl: (56) Recv failure: Connection was
+  reset`. This was a one-time, manual, strictly local exercise, not an automated test — see "Left
+  open" for why. Nothing was sent to any external endpoint; no real destination was configured or
+  committed anywhere.
+
+**Verified:**
+- `./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.analytics.FeatureUsageAnalyticsTest" --tests "org.ort.app.ui.navigation.InstrumentedNavHostCallbacksTest" --tests "org.ort.app.analytics.AnrWatchdogTest" --tests "org.ort.app.analytics.ProcessExitReasonReporterTest" --tests "org.ort.app.analytics.CrashPayloadsTest"` — green, 14 tests.
+- `./gradlew :app:testFullDebugUnitTest` (the whole module, every existing test) — green, `BUILD SUCCESSFUL in 20m 44s` (slow: machine shared with several other builders' concurrent Gradle daemons tonight).
+- `./gradlew :app:detekt :app:ktlintCheck` — green.
+- `./gradlew :net:testDebugUnitTest :net:detekt :net:ktlintCheck` — green, including the four new `RealAnalyticsUploadClientTlsTest` cases.
+- `cd tools/analytics && python -m pytest` — green, 36 tests (unchanged; only fixture files were added under `tests/fixtures/tls/`).
+- Discriminated: `AnrWatchdog`'s first implementation (comparing wall-clock deltas via an
+  injected `Clock`) reported 9 false stalls over 10 cycles of an *always-instantly-answered* ping,
+  because a pong sent at the start of a cycle is always exactly one `checkIntervalMillis` old by
+  the time of the next check — caught by
+  `R_1123_a main thread that always answers immediately never reports a stall`, which failed
+  (`expected: <0> but was: <9>`) before the class was rewritten around a per-cycle
+  answered/not-answered flag; all four `AnrWatchdogTest` scenarios (never-stalls, stalls-once,
+  stays-suppressed-while-continuing, reports-again-after-a-real-recovery) pass against the fix.
+  `InstrumentedNavHostCallbacksTest`'s exact-call-count assertion (`assertEquals(23, ...)`) caught
+  a real off-by-one against `NavHostCallbacks`' actual field count before being corrected.
+  `ProcessExitReasonReporterTest`'s reason-code constants were checked against the real
+  `android.app.ApplicationExitInfo` class in `android-34/android.jar` via `javap -constants`
+  before being used, rather than assumed from memory (an earlier guess had `REASON_CRASH_NATIVE`
+  and `REASON_LOW_MEMORY` wrong).
+
+**Left open / not done:**
+- A live-caught native abort remains genuinely impossible without a native (`signal()`) handler —
+  stated plainly per this session's brief, not silently left. `ProcessExitReasonReporter` gives
+  the next-launch retrospective view instead, and only from API 30 up.
+- `FeatureUsageAnalytics.actionInvoked` covers navigation-shaped actions only (the 23
+  `NavHostCallbacks` fields). Other feature actions — a settings toggle, a correction submitted, a
+  share, a recording started/stopped — still have no instrumentation and no central dispatch
+  point exists for them either; wiring those would mean touching each owning screen individually,
+  outside this unit's scope.
+- `DiagnosticsLog.logHeartbeatGap`/`CaptureHeartbeatAnalytics`'s duplicated gap computation (this
+  register row's own related note) is confirmed still true at HEAD but not fixed — it lives
+  entirely in `:pipeline`, outside this unit's owned area.
+- R-1101's refused-certificate and mid-upload-failure proof against the actual
+  `tools/analytics/server.py` process (rather than the hermetic `TlsLoopbackHttpFixture`) was done
+  once, manually, locally — not wired into `:net:test`, since that would make the module's own
+  gate depend on a Python interpreter and `tools/analytics`' dependencies being present wherever
+  `:net:test` runs, which this repository's hosted CI/Release runners are not known to carry.
+- No ANR/OOM/native-crash finding was reproduced on the reference device — everything here is
+  unit-level and, for `ProcessExitReasonReporter`, dependent on Android's own OS behaviour, which
+  only a device can ultimately confirm.
+
 ## 2026-09-20 (P37: `diff.py` can fail)
 
 ### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change
