@@ -2,11 +2,17 @@ package org.ort.pipeline.alerts
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.core.AttributionState
+import org.ort.pipeline.diagnostics.DiagnosticsLog
+import org.ort.testing.TestClock
+import java.io.File
+import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.system.measureTimeMillis
@@ -16,6 +22,16 @@ import kotlin.system.measureTimeMillis
  * (functional spec §7.19), and FR-ALR-4/AC-195's non-blocking guarantee.
  */
 class AlertEvaluationCoordinatorTest {
+
+    @AfterEach
+    fun tearDown() {
+        DiagnosticsLog.shutdown()
+    }
+
+    private fun pipelineLogLines(filesDir: File): List<String> {
+        val file = File(File(filesDir, "diagnostics-logs"), DiagnosticsLog.Category.PIPELINE.fileName)
+        return if (file.isFile) file.readLines() else emptyList()
+    }
 
     private fun input(resolvedCallsign: String? = "K7ABC", state: AttributionState = AttributionState.CONFIRMED) =
         AlertMatchInput(
@@ -151,5 +167,45 @@ class AlertEvaluationCoordinatorTest {
         // No exception must reach this line -- fireAndForget's own runCatching (inside the launched
         // coroutine) is what this asserts.
         coordinator.fireAndForget(input())
+    }
+
+    /**
+     * Register R-1097 (FR-ALR-2, AC-195; constitution I): [AlertEvaluationCoordinator.dispatchCoalesced]
+     * used to discard the `Boolean` [AlertNotificationDispatcher.dispatch] already returned, so a
+     * firing the platform refused was indistinguishable from one that reached the operator. This
+     * proves the refusal is now recorded — see [DiagnosticsLog.logAlertDeliveryFailed]'s own kdoc
+     * for why a durable, exportable trace and not a UI change is the fix at this layer.
+     */
+    @Test
+    fun `R_1097 a dispatch the platform refused is logged, not silently dropped`() {
+        val filesDir = Files.createTempDirectory("alert-coordinator-r1097-test").toFile()
+        DiagnosticsLog.configure(filesDir, TestClock())
+        val store = InMemoryAlertWatchStore(listOf(AlertWatch.Callsign(id = "w1", callsign = "K7ABC")))
+        val refusingDispatcher = object : AlertNotificationDispatcher {
+            override fun canDeliver() = false
+            override fun dispatch(firing: AlertFiring): Boolean = false
+        }
+        val coordinator = AlertEvaluationCoordinator(store, refusingDispatcher)
+
+        coordinator.evaluate(input(resolvedCallsign = "K7ABC"))
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = pipelineLogLines(filesDir)
+        assertEquals(1, written.size, "a refused dispatch must leave exactly one durable trace")
+        assertTrue(written[0].contains("alert_delivery_failed"))
+        assertTrue(written[0].contains("watchId=w1"))
+    }
+
+    @Test
+    fun `R_1097 a dispatch that reaches the operator logs no delivery failure`() {
+        val filesDir = Files.createTempDirectory("alert-coordinator-r1097-test").toFile()
+        DiagnosticsLog.configure(filesDir, TestClock())
+        val store = InMemoryAlertWatchStore(listOf(AlertWatch.Callsign(id = "w1", callsign = "K7ABC")))
+        val coordinator = AlertEvaluationCoordinator(store, FakeAlertNotificationDispatcher())
+
+        coordinator.evaluate(input(resolvedCallsign = "K7ABC"))
+        runBlocking { DiagnosticsLog.flush() }
+
+        assertTrue(pipelineLogLines(filesDir).isEmpty(), "a delivered firing must not be logged as a failure")
     }
 }

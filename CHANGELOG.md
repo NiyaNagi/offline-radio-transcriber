@@ -249,6 +249,133 @@ R-1132 (halt), R-1126, closes against R-1109/R-1124/R-1110's own follow-up notes
 - Did not touch `RealCaptureService.kt`, `:pipeline`'s `threading/`/`alerts/`, `:app`, `:capture-*`,
   the theme or `tools/`, per this unit's ownership boundary.
 
+## 2026-09-20 (m-threads-alerts: a refused alert delivery is now inspectable, a reprocess run's silence about alerts is now a written decision, and a thread's check-in roster no longer drops unattributed overs)
+
+### `b534de7f` — R-1097/R-1118 fixes, R-1098 verified stale at HEAD
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/alerts/AlertEvaluationCoordinator.kt`,
+`pipeline/src/main/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLog.kt`,
+`pipeline/src/main/kotlin/org/ort/pipeline/reprocess/ReprocessRunner.kt`,
+`pipeline/src/main/kotlin/org/ort/pipeline/threading/RoomThreadRepository.kt`, and their tests
+(`pipeline/src/test/kotlin/org/ort/pipeline/alerts/AlertEvaluationCoordinatorTest.kt`,
+`pipeline/src/test/kotlin/org/ort/pipeline/diagnostics/DiagnosticsLogTest.kt`, and a new
+`pipeline/src/test/kotlin/org/ort/pipeline/threading/RoomThreadRepositoryTest.kt`). No file under
+`:app`, `RealCaptureService.kt`, `passb/DataPassBResultSink.kt`, `:capture-*` or `tools/` touched.
+
+**Requirements/ACs:** FR-ALR-2, FR-ALR-3, FR-ALR-4, FR-ALR-5, AC-195; FR-SPK-5, FR-SPK-29, FR-SPK-30,
+AC-164; constitution I ("every machine conclusion MUST be inspectable"; "a weaker device may know
+less; it MUST NOT be more wrong" applied here to a stale timestamp, not just a wrong callsign);
+R-1097, R-1098, R-1118.
+
+**What changed:**
+
+1. **R-1097, second half (act) — a refused alert delivery is now a durable, inspectable fact, not a
+   discarded `Boolean`.** `AlertEvaluationCoordinator.dispatchCoalesced` called
+   `dispatcher.dispatch(firing)` and threw away its return value; `AndroidAlertNotificationDispatcher
+   .dispatch` already reports `false` honestly when POST_NOTIFICATIONS is denied (P31 gate fix,
+   `e773b36d`), so a refused firing was indistinguishable from a delivered one anywhere a caller
+   could look. Added `DiagnosticsLog.logAlertDeliveryFailed(watchId: String)` (`pipeline.log`, WARN,
+   event `alert_delivery_failed`) — `watchId` is the watch's own opaque Ulid, never the watched
+   callsign/keyword/frequency, so this file's structural no-free-text discipline (AC-109) holds for
+   this event too. `dispatchCoalesced` now captures `dispatch()`'s result and logs on `false`. This
+   is additive to, not a replacement for, the Settings screen's existing amber banner
+   (`AlertsAppWiring.notificationsPermissionGranted`): the banner answers "can alerts fire at all
+   right now", this answers "did *this* specific firing reach anyone" — a field report can now show
+   which watch's notification never showed, not just that delivery was generally possible at setup.
+2. **R-1097, first half (decide) — a reprocess run deliberately never fires a live alert; this is now
+   written down, not merely defaulted.** Investigated whether `ReprocessRunner`'s
+   `NoOpAlertEvaluationTrigger` (the register row's own complaint) was really forced by "no
+   `Context`": it is not — `ReprocessWorker`, the one real caller, is a `CoroutineWorker` and does
+   have `applicationContext`, the identical seam `RealCaptureService`'s own
+   `Dependencies.alertEvaluationTrigger` already uses for live capture. Threading a real trigger
+   through was mechanically possible; the decision made here is to **not** do it, for a reason found
+   in `AlertNotificationContentBuilder` rather than assumed: its wording (`"Heard now: <callsign>"`,
+   `"Activity on <freq>"`) is correct for a live Pass B closure but would be a **false claim about
+   *when*** if fired from a reprocess run, which commonly closes transmissions from a session that
+   ended hours or days earlier. Firing today's content from that path would trade one silent gap
+   (never alerts) for a louder, actively misleading one (asserts presence that may be long over) —
+   worse, not better, under constitution I. Documented this reasoning directly in
+   `ReprocessRunner`'s own kdoc, including what the real fix would require (new, reprocess-aware
+   notification content naming the transmission's own timestamp — a content-and-tests unit of its
+   own, not a plumbing change) so the next reader finds a decision, not an accident. No behaviour
+   changed by this half; nothing to discriminate.
+3. **R-1118 — a thread's check-in roster (`participantOrder`) no longer drops an over with no
+   resolved station.** `RoomThreadRepository.startThread`/`.appendToThread` only appended
+   `closure.stationId` to `participantOrder` when it was non-null, so an `UNKNOWN` over was absent
+   from the very roster FR-SPK-30 asks for ("an ordered roster with attribution state per entry").
+   **This matters far more today than when filed**: since R-1110, every real callsign resolution is
+   `AMBIGUOUS` rather than `CONFIRMED` absent a calibrator, and `Attribution.stationId` is `null` for
+   both `AMBIGUOUS` and `UNKNOWN` (confirmed by reading `DataPassBResultSink.updateAttribution`'s own
+   call site and the R-1125 doc comment on `AlertMatchInput.stationId`) — so `TransmissionEntity
+   .stationId` is now `null` for essentially *every* freshly-resolved over in production, not only
+   the small `UNKNOWN` minority the row named. The old filter therefore left `participantOrder`
+   (and, less critically, `participantStationIds`) close to permanently empty for real threads
+   today, not merely incomplete. Fixed by giving every over a slot, in order, never skipped: a new
+   `participantOrderKey(closure)` returns `closure.voiceKey` (a resolved station id, or — when only
+   a voice, not yet a callsign, has been matched — its voiceprint id, so a recurring unresolved voice
+   still reads as one participant across repeats) and falls back to a literal `UNKNOWN_PARTICIPANT`
+   ("UNKNOWN", never a fabricated identity) when neither is known. `participantStationIds` is
+   deliberately left untouched — a distinct field ("which real stations are in this thread") this
+   row does not touch, versus `participantOrder`'s "what was the check-in order," which has an
+   honest answer even when the first does not yet. **Also found and reported, not fixed (out of this
+   row's scope):** voice matching is not wired into production anywhere yet (`voiceprintId` is
+   written as a hardcoded `null` in `RealCaptureService`'s segment-persist and nowhere else), so
+   `closure.voiceKey` is itself `null` for essentially every over today too — meaning a real
+   `participantOrder` will mostly read as a run of `UNKNOWN` entries until either voice matching or a
+   calibrator lands. That is the honest state of the system today, not a defect this fix introduces.
+
+**Also this session — R-1098 verified stale at HEAD, not fixed here:** the row's own primary claim
+(`ThreadGrouper` computes a `ThreadJoinReason` and `:data` has no column for it, `DiagnosticsLog`
+never writes it) is no longer true. Commit `e69c5979` (this same date, earlier in the session) added
+`transmission.threadJoinReason` (schema v15, `MIGRATION_14_15`), and
+`RoomThreadRepository.stampTransmission` already writes it in the same raw `UPDATE` as `threadId` —
+confirmed by reading `TransmissionEntity.threadJoinReason`'s own doc comment, the schema-15 migration
+test, and `RoomThreadRepository.kt` itself at HEAD, not assumed from the commit subject alone. That
+commit's own "Left open" section already states, and this session independently confirms unchanged:
+`ThreadKindSource.USER` has guard code (`ThreadKindClassifier.classify` returns early for it) and no
+writer, which is real `:app` work ("a user-facing 'set this thread's kind' action") this unit does
+not own; and the gap threshold (10 min, `ThreadGroupingConfig`) and the three net-detection
+thresholds (`ThreadKindClassifier`) remain provisional constants awaiting Q16's labelled hour — both
+already documented in their own files as provisional, not silently hardcoded. No number was invented
+here to close either gap (constitution VI: "a number without its derivation is not reportable").
+
+**Tests, named for the id they establish, each shown to discriminate (reverted the production
+change, confirmed the new test fails for the right reason, restored, confirmed green):**
+- `DiagnosticsLogTest.R_1097 an alert dispatch the platform refused is logged to pipeline log, never
+  silently dropped` — new method, red via compile error before it existed, green after.
+- `AlertEvaluationCoordinatorTest.R_1097 a dispatch the platform refused is logged, not silently
+  dropped` / `...a dispatch that reaches the operator logs no delivery failure` — reverted the
+  `if (!delivered) DiagnosticsLog.logAlertDeliveryFailed(...)` line alone; the first test failed
+  (`expected: <1> but was: <0>`), the second stayed green throughout (it asserts the negative); restored.
+- `RoomThreadRepositoryTest.R_1118 an unattributed over still occupies its own slot in the
+  participant order, not dropped` / `...a voice-matched, station-unresolved over is tracked by its
+  voiceprint, not folded into UNKNOWN` / `...a thread starting on an unattributed over still records
+  that first slot` — real (in-memory) `OrtDatabase`, real `RoomThreadRepository`, no fake. Reverted
+  `participantOrderKey` call sites back to the old `closure.stationId`-only expressions in both
+  `startThread` and `appendToThread`; all three failed for the stated reason (`[STATION-K7ABC]` vs
+  expected `[STATION-K7ABC, UNKNOWN]`; `[]` vs `[VOICE-1, VOICE-1]`; `null` vs `[UNKNOWN]`); restored.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:testDebugUnitTest --rerun` — `BUILD SUCCESSFUL`, every suite green,
+  including the full pre-existing `alerts`, `threading` and `reprocess` packages (no regression from
+  the `ReprocessRunner` kdoc-only change, which alters no code path).
+- `.\gradlew.bat :pipeline:detekt :pipeline:ktlintCheck --max-workers=2 --rerun` — `BUILD SUCCESSFUL`.
+
+**Left open / not done:**
+- No UI reads `alert_delivery_failed` from the diagnostics bundle yet, and no UI renders
+  `participantOrder` as a check-in roster yet — both are `:app` surfaces this unit does not own
+  (out of scope: `:pipeline`'s `alerts/`/`threading/` packages, `ReprocessRunner`,
+  `RoomThreadRepository`).
+- Reprocessing still never fires a live alert (R-1097's first half, decided above) — building
+  reprocess-aware notification content that names the transmission's real timestamp, if ever wanted,
+  is real, disclosed follow-up work, not started here.
+- `ThreadKindSource.USER`'s writer and the gap/net-detection thresholds remain exactly as R-1098's
+  own commit left them — confirmed unchanged, not newly flagged.
+- Device verification not run — no emulator/device in this session; both fixes are pure `:pipeline`
+  logic with no UI surface, so constitution VIII's visual re-verification trigger does not apply
+  (no file under `app/src/main/kotlin/org/ort/app/ui/**`, `app/src/main/res/**`, `design/**`, or any
+  `*Content`/`*Screen`/`*ViewState`/`*ViewData`/`*Mapper` file under `:app` was touched).
+
 ---
 
 ## 2026-09-20 (P37: `diff.py` can fail)

@@ -124,6 +124,36 @@ public data class ReprocessTuning(
  * an id (technical design §9.7, M4) but no runner for it exists anywhere in `:pipeline` (grepped
  * the tree before writing this); requesting it throws rather than silently no-opping.
  *
+ * **Register R-1097 — a reprocess run deliberately never fires a live alert, and now this is a
+ * decision, not an accident.** [realPassBFor] calls [org.ort.pipeline.passb.PassBFactory.create]
+ * with no `alertTrigger`, so every Pass B closure this class produces gets the honest-but-inert
+ * [org.ort.pipeline.alerts.NoOpAlertEvaluationTrigger] default — the register row that raised this
+ * found the reason given at the time ("[ReprocessRunner] has no `Context`") accurate but
+ * incomplete: [ReprocessWorker], the one real caller, *does* have a `Context`
+ * (`androidx.work.ListenableWorker.getApplicationContext()`), so threading one through was always
+ * mechanically possible, the same "settable seam, real default" shape
+ * [org.ort.pipeline.capture.RealCaptureService]'s own `Dependencies.alertEvaluationTrigger` already
+ * establishes for live capture. Not doing it is therefore a real decision, made here and reasoned
+ * through, not a limitation:
+ * [org.ort.pipeline.alerts.AlertNotificationContentBuilder] — the one place FR-ALR-5's wording is
+ * decided — writes a `Callsign` watch's title as `"Heard now: <callsign>"` and a `Frequency`
+ * watch's as `"Activity on <freq>"`. Both are correct for live capture, where a Pass B closure
+ * really is (within the pipeline's own latency) something that just happened. A reprocess run
+ * closes transmissions from whatever session the operator picked in Improve — commonly a session
+ * that ended hours or days earlier, sometimes reprocessed as part of an overnight or on-demand
+ * "catch up" batch — so firing the *identical* notification text from that closure would assert
+ * something false: that a station is on frequency **now**, when the transmission the match came
+ * from may be arbitrarily old. Constitution I is explicit that a machine conclusion may state
+ * uncertainty but must never assert something untrue, and "heard now" about a transmission from
+ * three days ago is not hedged uncertainty, it is a wrong claim about *when*, stated with full
+ * confidence. Firing today's alert content from this path would trade one silent gap (R-1097's own
+ * "never alerts") for a louder, actively misleading one — worse, not better. The real fix, if this
+ * is ever wanted, is new notification content that names the reprocess and the transmission's own
+ * timestamp (a second [org.ort.pipeline.alerts.AlertNotificationContent] shape, a UI decision and a
+ * content-and-tests unit of its own) — not a plumbing change to hand this class a `Context`, which
+ * is all R-1097's own wording asked for. Until that content exists,
+ * [org.ort.pipeline.alerts.NoOpAlertEvaluationTrigger] here is correct, not merely convenient.
+ *
  * **Per-record processed tier (register R-204 follow-up, FR-REP-2/9): now persisted.** "Current
  * tier" is threaded into [org.ort.core.PassFingerprint.tier] honestly, and every completed or
  * rejected outcome below also stamps

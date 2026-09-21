@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import org.ort.pipeline.diagnostics.DiagnosticsLog
 
 /**
  * Build-plan P31 (FR-ALR-3, FR-ALR-4): the one call
@@ -88,7 +89,14 @@ public class AlertEvaluationCoordinator(
             lastFired[watch.id] = WatchFireState(now, count)
             AlertFiring(watch, input, occurrenceCount = count, isRepeat = isRepeat)
         }
-        dispatcher.dispatch(firing)
+        // Register R-1097 (constitution I): the `Boolean` dispatch() returns is the platform's own
+        // honest word on whether anything actually reached the operator (POST_NOTIFICATIONS denied
+        // being the one real cause today) -- discarding it made a refused firing indistinguishable
+        // from a delivered one, an "I told you" nobody was actually told. See
+        // DiagnosticsLog.logAlertDeliveryFailed's own kdoc for why a durable, exportable trace, not
+        // a coalescing-state change, is the fix at this layer.
+        val delivered = dispatcher.dispatch(firing)
+        if (!delivered) DiagnosticsLog.logAlertDeliveryFailed(watch.id)
     }
 
     private data class WatchFireState(val atMillis: Long, val count: Int)

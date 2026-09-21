@@ -355,6 +355,27 @@ public object DiagnosticsLog {
         )
     }
 
+    // --- pipeline.log (register R-1097: a refused alert delivery must be inspectable) ----------
+
+    /**
+     * Register R-1097 (FR-ALR-2, AC-195; constitution I — "every machine conclusion MUST be
+     * inspectable"): `AlertEvaluationCoordinator.dispatchCoalesced` used to discard the `Boolean`
+     * `AlertNotificationDispatcher.dispatch` already returned, so a firing the platform refused
+     * (POST_NOTIFICATIONS denied, most commonly) was indistinguishable from one that actually
+     * reached the operator — "I told you" when nobody was told. This line is the durable trace of
+     * that refusal: exported to the diagnostics bundle exactly like every other event in this file,
+     * so a field report can show *which* watch's notification never showed, not just that alerts
+     * were generally possible at setup time (the Settings screen's own amber banner already covers
+     * that general case; this covers the specific one).
+     *
+     * [watchId] is the watch's own opaque [org.ort.core.Ulid] value (`AlertWatch.id`'s own doc
+     * comment: "minted once ... never reused"), never the watched callsign/keyword/frequency
+     * itself — this file's no-free-text discipline holds for this event exactly as for every other.
+     */
+    public fun logAlertDeliveryFailed(watchId: String) {
+        enqueue(Category.PIPELINE, Level.WARN, "alert_delivery_failed", listOf("watchId" to watchId))
+    }
+
     // --- rig.log (FR-OBS-1: "rig connection events"; frequencies are explicitly not private) ----
 
     public fun logRigConnected(bandCount: Int) {

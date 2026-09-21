@@ -243,6 +243,30 @@ class DiagnosticsLogTest {
         assertTrue(written[1].contains("assetId=ASR_DECODER") && written[1].contains("kind=SIZE_MISMATCH"))
     }
 
+    /**
+     * Register R-1097 (FR-ALR-2, AC-195; constitution I): before this, a firing
+     * [org.ort.pipeline.alerts.AlertNotificationDispatcher.dispatch] refused (POST_NOTIFICATIONS
+     * denied) was indistinguishable from one that reached the operator --
+     * [org.ort.pipeline.alerts.AlertEvaluationCoordinator.dispatchCoalesced] discarded the
+     * `Boolean` [dispatch] already returned. [watchId] is the watch's own opaque Ulid (never a
+     * callsign -- [org.ort.pipeline.alerts.AlertWatch.id]'s own doc comment), so this file's
+     * no-free-text discipline holds for this event too.
+     */
+    @Test
+    @Requirement("R-1097")
+    fun `R_1097 an alert dispatch the platform refused is logged to pipeline log, never silently dropped`() {
+        val filesDir = tempFilesDir()
+        DiagnosticsLog.configure(filesDir, TestClock())
+
+        DiagnosticsLog.logAlertDeliveryFailed("WATCH01")
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = lines(filesDir, DiagnosticsLog.Category.PIPELINE)
+        assertEquals(1, written.size)
+        assertWellFormedLine(written[0], "alert_delivery_failed")
+        assertTrue(written[0].contains("watchId=WATCH01"))
+    }
+
     @Test
     @Requirement("R-1058")
     fun `R_1058 a new configure (a new launch) resets the once-per-launch dedupe`() {
