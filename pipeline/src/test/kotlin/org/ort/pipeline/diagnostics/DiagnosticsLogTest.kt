@@ -186,6 +186,70 @@ class DiagnosticsLogTest {
         )
     }
 
+    /**
+     * Register R-1034: `capture.log` carried per-segment `vad_stats` lines (D41/Q20) but never a
+     * session-level rollup, even though FR-OBS-1 promises "VAD statistics" as a category, not only
+     * a per-transmission one. This proves the one `vad_session_summary` line a session end writes
+     * carries the real accumulated counters and durations verbatim, and names the session's one
+     * detector via the existing [VadDetectorKind] signal rather than a second, invented boolean.
+     */
+    @Test
+    @Requirement("FR-OBS-1")
+    fun `FR_OBS_1_vad_session_summary one line per session carries the accumulated counters`() {
+        val filesDir = tempFilesDir()
+        DiagnosticsLog.configure(filesDir, TestClock())
+
+        DiagnosticsLog.logVadSessionSummary(
+            sessionId = "SESSION01",
+            segmentsProposed = 9,
+            segmentsAccepted = 7,
+            segmentsRejected = 2,
+            speechActiveMs = 41_280L,
+            sessionDurationMs = 720_000L,
+            vadDetector = VadDetectorKind.SILERO,
+        )
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = lines(filesDir, DiagnosticsLog.Category.CAPTURE)
+        assertEquals(1, written.size)
+        assertWellFormedLine(written[0], "vad_session_summary")
+        assertTrue(written[0].contains("sessionId=SESSION01"))
+        assertTrue(written[0].contains("segmentsProposed=9"))
+        assertTrue(written[0].contains("segmentsAccepted=7"))
+        assertTrue(written[0].contains("segmentsRejected=2"))
+        assertTrue(written[0].contains("speechActiveMs=41280"))
+        assertTrue(written[0].contains("sessionDurationMs=720000"))
+        assertTrue(
+            "the existing per-session detector signal must be reused, not a second computed flag",
+            written[0].contains("vadDetector=SILERO"),
+        )
+    }
+
+    /** The fallback half of the discrimination above: a session that ran on the RMS-energy
+     * stand-in must name it in the summary line too, never a stale SILERO default. */
+    @Test
+    @Requirement("FR-OBS-1")
+    fun `FR_OBS_1_vad_session_summary names the energy fallback when that is what ran`() {
+        val filesDir = tempFilesDir()
+        DiagnosticsLog.configure(filesDir, TestClock())
+
+        DiagnosticsLog.logVadSessionSummary(
+            sessionId = "SESSION02",
+            segmentsProposed = 1,
+            segmentsAccepted = 0,
+            segmentsRejected = 1,
+            speechActiveMs = 0L,
+            sessionDurationMs = 60_000L,
+            vadDetector = VadDetectorKind.ENERGY,
+        )
+        runBlocking { DiagnosticsLog.flush() }
+
+        val written = lines(filesDir, DiagnosticsLog.Category.CAPTURE)
+        assertEquals(1, written.size)
+        assertTrue(written[0].contains("vadDetector=ENERGY"))
+        assertTrue(written[0].contains("speechActiveMs=0"))
+    }
+
     @Test
     @Requirement("FR-OBS-1")
     fun `FR_OBS_1_pipeline latency, rejections, tier changes and SafePass failures all land in pipeline log`() {
@@ -404,6 +468,15 @@ class DiagnosticsLogTest {
             noiseFloorDbfsAtOnset = -40f,
             vadDetector = VadDetectorKind.SILERO,
             rigSquelchFusionApplied = false,
+        )
+        DiagnosticsLog.logVadSessionSummary(
+            sessionId = "SESSION01",
+            segmentsProposed = 1,
+            segmentsAccepted = 1,
+            segmentsRejected = 0,
+            speechActiveMs = 800L,
+            sessionDurationMs = 1_000L,
+            vadDetector = VadDetectorKind.SILERO,
         )
         DiagnosticsLog.logPassLatency(PassId.B_OFFLINE, Tier.T0, 100L)
         DiagnosticsLog.logRejection(RejectionRuleId.BLOCKLIST)

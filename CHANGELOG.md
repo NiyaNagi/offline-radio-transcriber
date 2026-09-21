@@ -32,6 +32,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+<<<<<<< HEAD
 ## 2026-09-21 (R-1135/R-1136: two more artboard/code drifts closed from the R-1130 audit; R-1143 verified already conformant except Thread-Detail's header shape)
 
 ### `<pending>` — R-1135: `OrtColors.kt`'s `textSignal`/`textLow` doc comments corrected to match their real call sites; R-1136: an unnamed legacy colour removed from three boards; R-1143: Digest/Transmission-Detail kebabs confirmed already drawn, Thread-Detail's header shape flagged instead of forced
@@ -1163,6 +1164,84 @@ Register rows R-1100, R-1101, R-1123.
   unit-level and, for `ProcessExitReasonReporter`, dependent on Android's own OS behaviour, which
   only a device can ultimately confirm.
 
+=======
+## 2026-09-21 (register R-1033/R-1034: a decision recorded for provenance already built, and a session-level VAD summary for the log it was missing from)
+
+### `f4420547` — R-1033/R-1034: D56 records the live-tier decision already shipped, and `capture.log` gains one `vad_session_summary` line per session
+
+**Scope:** `:pipeline` (`RealCaptureService.kt`'s session/diagnostics paths, `DiagnosticsLog.kt`),
+`spec/functional-spec.md`, `spec/open-questions.md`. No `:pipeline/passb/`, `:asr-*`, `:app`,
+`:capture-*`, `tools/` or `design/` file touched.
+
+**Requirements/ACs:** D56 (new), FR-OBS-13 (amendment note), register R-1033; FR-OBS-1 (no
+further amendment — see "What changed" for why), register R-1034.
+
+**What changed:**
+
+- **R-1033 was already fixed in code and spec before this session — verified, not reimplemented.**
+  `org.ort.pipeline.passb.DataPassBResultSink.record` already stamps
+  `TransmissionEntity.processedTier` on a live Pass B's `COMPLETE`/`REJECTED` outcome (commit
+  `54d55543`, merged `342eb475`, "WPPROV"), and `spec/functional-spec.md` §7.13c/FR-OBS-13/AC-154
+  already specify it in full — the register row's own text ("nothing records the tier a live Pass
+  B ran at") is stale, filed from a device dump (build `111e761`) taken before that fix landed.
+  `RealCaptureServiceTest`'s existing `R_1032_R_1033` case and `DataPassBResultSinkTest`'s three
+  `R_1033` cases already prove it end to end; both re-ran green in this session, unmodified. The
+  one real gap was that the fix had never been given a numbered decision: this adds **D56** to
+  `spec/functional-spec.md`'s decision table and its §16 traceability row (attached to
+  FR-OBS-13..14, which previously cited no `D` id), a short amendment note under FR-OBS-13 stating
+  the reasoning (constitution VI: a log that cannot compare a live over's tier against a
+  reprocessed one's defeats the reason for recording tier at all), and a matching entry in
+  `spec/open-questions.md`. **The register row's own text needs a lead's correction** — see "Left
+  open" below; this builder does not edit `results/ui-audit/register.md` (AGENTS.md: only the
+  session lead does).
+- **R-1034: `capture.log` gains a session-level VAD summary, on top of the per-transmission
+  `vad_stats` lines D41/Q20 already built.** FR-OBS-1's amendment note (D41) already specifies and
+  ships a `vad_stats` line per closed segment; what it never had was a per-*session* rollup, so a
+  reader had to replay every line by hand and a long session's tail could rotate the earliest
+  lines out of the 2 MiB file entirely. `DiagnosticsLog.logVadSessionSummary` writes one new
+  `vad_session_summary` event to `capture.log`, once, when a session ends, carrying: segments
+  proposed/accepted/rejected (every closed segment, constitution III), speech-active time (summed
+  from each segment's own `vadSpeechFrameCount × FrameSpec.DURATION_MS`, never re-measured from
+  raw audio), the session's wall-clock duration, and the session's one `VadDetectorKind`. That
+  last field is the **existing** fallback-disclosure signal (`RealCaptureService.resolveVad`'s
+  decision, already carried on `SessionEntity.vadDetector` and every transmission per FR-SEG-10/D50)
+  — reused as-is, not recomputed, so "did this session fall back from Silero to the energy
+  stand-in" can never disagree between the summary line and the record. Accumulation is three
+  `Int` counters and a running `Long` in `RealSegmentSink`, updated once per closed segment at the
+  exact point the existing `logVadStats` call already fires from (never per audio frame, per
+  FR-RUN-1); `RealCaptureService` keeps the sink and the session's resolved detector as two new
+  fields purely so `endSessionRow()` can read them back and log once. The segmenter itself is
+  untouched — it still does not accept a tier, and nothing here changes what it decides.
+- FR-OBS-1's own requirement text is **not** amended this time: it already lists "VAD statistics"
+  as a category (satisfied first by D41's per-segment line, now also by this session-level one);
+  no wording needed correcting, unlike D41's amendment which had to state what the log promised
+  and never wrote.
+
+**Verified:** `.\gradlew.bat :pipeline:test :pipeline:detekt :pipeline:ktlintCheck --max-workers=2`
+— `BUILD SUCCESSFUL`, all `:pipeline` tests green across `testDebugUnitTest`/`testReleaseUnitTest`
+(`RealSegmentSinkTest`: 14/14, `DiagnosticsLogTest`: 13/13, `RealCaptureServiceTest`: 13/13, 0
+failures/errors anywhere in the module). `python tools/spec-check/spec_check.py` — all 8 checks
+`[PASS]`. Discrimination, both new production paths: reverted `RealCaptureService.endSessionRow`'s
+`logVadSessionSummary` call and re-ran `RealCaptureServiceTest.R_1034*` alone — failed
+(`expected:<1> but was:<0>`); restored, passed. Reverted the three accumulation lines in
+`RealSegmentSink.close()` and re-ran `RealSegmentSinkTest.R_1034*` alone — failed
+(`expected:<2> but was:<0>`); restored, passed. Final combined re-run of all three touched test
+classes plus the full module suite and lint, green.
+
+**Left open:** the `results/ui-audit/register.md` rows themselves are not edited here (owned by
+the session lead) — R-1033 should move to `closed` on the evidence above (the fix predates this
+session; nothing new shipped for it but the decision number), and R-1034 should record this
+session-level addition once the lead reviews it. `org.ort.app.diagnostics.localsave.LocalSaveBundleBuilder`
+(`:app`, out of this package's ownership) still captions `capture.log` as "one line per event, not
+per transmission" — that caption was accurate before D41 and is now stale twice over (per-segment
+`vad_stats` lines, and now this per-session summary); flagged for the owning package, not fixed
+here. `app.export.DebugDumpBuilder` (`:app`) reads `capture.log` back for the debug dump's
+per-transmission VAD statistics (FR-OBS-1's dump clause); whether the dump should also surface the
+new session-level summary is that package's call, not addressed here.
+
+---
+
+>>>>>>> n-capture-provenance
 ## 2026-09-20 (P37: `diff.py` can fail)
 
 ## 2026-09-20 (m-seed-seams: seven screens get a real seed seam, one of them a real product affordance)

@@ -70,6 +70,10 @@ public object DiagnosticsLog {
      * (`org.ort.app.export.DebugDumpBuilder`) never hand-copies the literal. */
     public const val EVENT_VAD_STATS: String = "vad_stats"
 
+    /** The event name [logVadSessionSummary] writes — see [EVENT_VAD_STATS]'s own kdoc for why
+     * this is exported rather than left as a string literal for a reader to hand-copy. */
+    public const val EVENT_VAD_SESSION_SUMMARY: String = "vad_session_summary"
+
     /** The event name [logModelVerificationFailed] writes — exported for the same reason as
      * [EVENT_VAD_STATS]. */
     public const val EVENT_MODEL_VERIFICATION_FAILED: String = "model_verification_failed"
@@ -293,6 +297,57 @@ public object DiagnosticsLog {
                 "noiseFloorDbfsAtOnset" to (noiseFloorDbfsAtOnset?.toString() ?: "NONE"),
                 "vadDetector" to vadDetector.name,
                 "rigSquelchFusionApplied" to rigSquelchFusionApplied.toString(),
+            ),
+        )
+    }
+
+    /**
+     * FR-OBS-1's "VAD statistics" (register R-1034): [logVadStats] answers "what happened to
+     * *this* segment", one line at a time; nothing answered "what happened this *session*" — a
+     * reader had to reconstruct that by replaying every `vad_stats` line by hand, and a session
+     * whose tail rotated out of `capture.log` could not answer it at all. This is the session-level
+     * complement, written **once**, when the session ends: how many segments the detector proposed
+     * (accepted and rejected alike, constitution III), how much of the session it called speech —
+     * [speechActiveMs], the sum of each closed segment's own speech-frame time
+     * ([org.ort.segment.SegmentRecord.vadSpeechFrameCount] times [org.ort.segment.FrameSpec.DURATION_MS],
+     * never re-measured from raw audio a second way — and which detector ran the *whole* session.
+     *
+     * [vadDetector] is deliberately the session's one, already-resolved
+     * [org.ort.core.capture.VadDetectorKind] (`RealCaptureService.resolveVad`'s own decision,
+     * the same value [org.ort.data.entity.SessionEntity.vadDetector] and every transmission this
+     * session produced already carry) — **the existing fallback disclosure this line reuses**
+     * rather than computing a second, possibly-disagreeing signal for "did this session fall back
+     * from Silero to the RMS-energy stand-in": that question is already answered by
+     * `vadDetector == ENERGY`, exactly as [org.ort.pipeline.capture.VadAvailability] and D50's own
+     * live-bar disclosure already read it.
+     *
+     * Cheap by construction: [segmentsProposed]/[segmentsAccepted]/[segmentsRejected]/[speechActiveMs]
+     * are running counters the caller accumulates as each segment closes (the same point
+     * [logVadStats] already fires from, off the audio frame path) and this function is called
+     * exactly once per session, from [org.ort.pipeline.capture.RealCaptureService.endSessionRow] —
+     * never per frame, matching FR-RUN-1.
+     */
+    public fun logVadSessionSummary(
+        sessionId: String,
+        segmentsProposed: Int,
+        segmentsAccepted: Int,
+        segmentsRejected: Int,
+        speechActiveMs: Long,
+        sessionDurationMs: Long,
+        vadDetector: VadDetectorKind,
+    ) {
+        enqueue(
+            Category.CAPTURE,
+            Level.INFO,
+            EVENT_VAD_SESSION_SUMMARY,
+            listOf(
+                "sessionId" to sessionId,
+                "segmentsProposed" to segmentsProposed.toString(),
+                "segmentsAccepted" to segmentsAccepted.toString(),
+                "segmentsRejected" to segmentsRejected.toString(),
+                "speechActiveMs" to speechActiveMs.toString(),
+                "sessionDurationMs" to sessionDurationMs.toString(),
+                "vadDetector" to vadDetector.name,
             ),
         )
     }

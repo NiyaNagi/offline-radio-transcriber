@@ -201,6 +201,7 @@ Settled with the product owner. Changing any of these invalidates parts of this 
 | D54 | **Tier-1 analytics ships OFF for the closed beta**, stated plainly on the consent screen, and **no analytics event is emitted before the consent screen has been seen**. Tier 1 returns to its D42 default (on, turnable off) only once the endpoint exists and a real receipt from a signed build has been observed. | Product owner direction, closing a live exposure: the analytics consent step sits nineteenth of twenty in setup, and the endpoint has never been configured in CI or Release, so a default-on channel in a 12-tester beta would collect from third parties before asking and then queue every event into a ring buffer that goes nowhere. Off-and-said-so is the only honest shape while both are true. Amends D42's default for the beta window only, and D48's "unset, events queue locally" stops being a shipping state |
 | D55 | **The field-report channel ships in release builds, to every user.** It is `BuildConfig.DEBUG`-only today, so the operator's decision — "the beta should just be the actual app, no special treatment" — makes three things launch blockers rather than beta options: the channel is built into release; the **destination is private and build-configurable**, completing D49; and **user-supplied names are redacted from screen frames at capture**, not filtered later. | Product owner direction. Field session 1 showed that without the channel a field session returns verbal descriptions and one photograph. The redaction requirement is not a choice: constitution V puts user-supplied names, station knowledge and sub-grid location in **no** channel and **no** tier, and the field-report exception covers voiceprints and embeddings only — so a screen frame carrying an operator-typed station name is an absolute breach the user cannot consent away. Redaction at capture is the only compliant mechanism; "specify an exception" would be a MAJOR constitution amendment and is rejected |
 | D56 | **A station record is created or updated at Pass B closure for the top-ranked resolved callsign candidate of any over where a callsign was parsed and survived the rejection pipeline — that is, at `AMBIGUOUS` or better, and never for a rejected or failed over.** The record accumulates FR-DIG-7's facts column, including **over counts by attribution state**, so a station that has never been confirmed is visibly unconfirmed rather than absent. **An operator correction always creates or rebinds the record**; when a later over disagrees, nothing is deleted — the counts carry both. | Session-lead decision (register R-1132, a halt), taken in the product owner's absence: every `StationEntity(...)` construction in the tree was in `src/test`/`src/debug`, so the Stations screen, every station-detail surface, and `CatalogDao.getStation` (the read R-1124's database-presence and recency priors depend on) were all permanently empty/cold on a real device, and a voiceprint had nothing to bind to. The bar cannot be `CONFIRMED`: R-1110 already made that state unreachable in production without a fitted calibrator, so requiring it here would re-create the exact bug by keeping the catalog empty. `AMBIGUOUS` or better is also the only bar consistent with FR-DIG-7's own "over counts by attribution state" fact, which only means something if an unconfirmed station exists as a record at all. `CONFIRMED` is still never promoted from a voice match or carried across sessions (constitution I); an attribution without its confidence state remains a bug at the data layer; and nothing already written is ever deleted, only added to (constitution III) |
+| D57 | **A live Pass B run records the tier and execution provider it ran at on the transmission's own row, not only a reprocess.** `DataPassBResultSink` stamps `TransmissionEntity.processedTier` for every real Pass B, live or reprocessed, through the one sink, so the two paths cannot drift apart. | Session-lead decision (register R-1033), taken in the product owner's absence. Constitution VI requires every reported figure to carry the configuration that produced it, and the tier is the largest single determinant of what Pass B did; a log in which reprocessed overs carry their tier and live ones do not cannot be compared against itself, which defeats the reason FR-REP-2 asked for tier at all. Note this is a different fact from the session row's own `deviceTier`: shedding can change tier mid-session, so the per-transmission value is what says how *this* over was actually processed. The code had already landed under WPPROV without ever being given a decision number; this records it |
 
 ---
 
@@ -1746,6 +1747,14 @@ provider** that attempted it and the **tier** it ran at. Execution provider SHAL
 provenance is a fact about the attempt, not about whether it succeeded. Tier SHALL be recorded
 on `COMPLETE` and `REJECTED`, the same two outcomes reprocessing already stamps it on; a `FAILED`
 attempt establishes no tier for a later reprocess to compare against.
+
+> **The tier clause is recorded as D56** (register R-1033): a live Pass B ran for the product's
+> entire history without ever writing `TransmissionEntity.processedTier` — only
+> `ReprocessRunner` did — so a log where a reprocessed over carries its tier and a live one does
+> not could never be compared against itself, which defeats the reason for recording tier at all
+> (constitution VI). `org.ort.pipeline.passb.DataPassBResultSink.record` — the one sink every
+> real `PassB`, live or reprocessed, writes through — is the single writer for both facts, so
+> they can never drift apart between the two paths again.
 
 **FR-OBS-14 (M)** — A session's stored record SHALL carry the **actual installed application
 version** at the time it ran, read from the platform's own package information, never a
@@ -3636,6 +3645,7 @@ product; all of them are what make the reference experience world-class.
 | D54 Tier-1 analytics off for the closed beta; consent precedes emission | D42 (amended for the beta), D48, FR-ANL-1..14 |
 | D55 Field-report channel ships in release builds; private destination; names redacted at capture | D49 (completed), D37, D38, FR-OBS-6..12, FR-OBS-10 |
 | D56 A station record is born at Pass B closure (AMBIGUOUS or better) and by operator correction | FR-SPK-1, FR-SPK-10, FR-LEX-25..27, FR-DIG-7, R-1132, R-1109, R-1124, R-1110 |
+| D57 A live Pass B run records the tier it ran at on the transmission's own row, not only a reprocess | FR-OBS-13 (amended), AC-154, register R-1033 |
 
 Requirement groups added in drafts 3 and 3.2, mapped to the goal or property they serve:
 
@@ -3648,7 +3658,7 @@ Requirement groups added in drafts 3 and 3.2, mapped to the goal or property the
 | FR-A11Y-1..6 | G4, P1 — an uncertainty-first UI that cannot be read fails G4 |
 | FR-SEG-7..9, CON-SEG-1 | D8, AC-39 — the precondition cross-tier reprocessing assumed |
 | FR-STO-2a..c, CON-STO-1 | D4, FR-REP-4 — the retained audio must still support the passes |
-| FR-OBS-13..14 | Constitution VI, FR-REP-2, FR-ACC-5 — the same "no number without its provenance" obligation, restated because a live pass and a real session both skipped it in practice (R-1031, R-1032, R-1033) |
+| FR-OBS-13..14 | D56 (the tier clause); constitution VI, FR-REP-2, FR-ACC-5 — the same "no number without its provenance" obligation, restated because a live pass and a real session both skipped it in practice (R-1031, R-1032, R-1033) |
 | FR-ANL-1..14 | D42, D48, constitution VII — the fourth declared outbound channel, closed-field and tiered, with the same provenance discipline FR-OBS-13..14 already holds |
 | FR-AST-10..14 | D43, D44 — model acquisition and the setup gate, once "everything bundled" (D35) stopped being true on every variant |
 | FR-STO-9 | P9 — restore gets the same "nothing deleted quietly" guarantee export already has |

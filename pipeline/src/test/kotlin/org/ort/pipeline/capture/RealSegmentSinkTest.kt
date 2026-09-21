@@ -42,6 +42,10 @@ import java.io.File
  * [SegmentConfig] pre-/post-roll instead of a duplicated literal.
  */
 @RunWith(RobolectricTestRunner::class)
+@Suppress("LargeClass") // register R-1034's two new totals cases pushed this over detekt's
+// threshold -- one class driving RealSegmentSink through every FR-OBS-1/FR-SEG-10 case it must
+// honour, the same established convention RealCaptureServiceTest's own LargeClass suppression
+// documents (and every other *ScreenTest LargeClass suppression in this repo already follows).
 public class RealSegmentSinkTest {
 
     private lateinit var db: OrtDatabase
@@ -283,6 +287,94 @@ public class RealSegmentSinkTest {
         val persisted = db.transmissionDao().getById("$sessionId-0")
         assertNotNull(persisted)
         assertFalse(persisted!!.rigStateChangedMidTransmission)
+    }
+
+    /**
+     * Register R-1034: [RealSegmentSink.vadSessionTotals] must accumulate across every closed
+     * segment this session, accepted and rejected alike (constitution III), with the speech-active
+     * duration derived from each segment's own [SegmentRecord.vadSpeechFrameCount] and the
+     * segmenter's fixed [FrameSpec.DURATION_MS] -- not from wall-clock duration, which would
+     * include the pre-/post-roll and any silence inside the segment's own window. Discriminates
+     * accepted from rejected: one `SPEECH` segment (31 speech frames) and one `REJECTED_TOO_SHORT`
+     * segment (3 speech frames) must land in different counters but the same speech-active total.
+     */
+    @Test
+    @Requirement("FR-OBS-1")
+    fun `R_1034 vadSessionTotals accumulates across accepted and rejected segments`(): Unit = runBlocking {
+        val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+        val sampleClock = SampleClock(
+            anchorMonotonicNanos = clock.monotonicNanos(),
+            anchorWallMillis = clock.wallMillis(),
+            anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        val queue = WorkQueue(db, clock)
+        val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, SegmentConfig()) {}
+
+        val acceptedEnd = FrameSpec.SAMPLE_RATE.toLong()
+        val acceptedWriter = sink.open(SegmentId(0), 0L)
+        acceptedWriter.append(FloatArray(acceptedEnd.toInt()) { 0.2f })
+        acceptedWriter.close(
+            SegmentRecord(
+                id = SegmentId(0),
+                startSample = 0L,
+                endSample = acceptedEnd,
+                vadStartSample = 0L,
+                vadEndSample = acceptedEnd,
+                sampleCount = acceptedEnd,
+                outcome = SegmentOutcome.SPEECH,
+                closeReason = SegmentCloseReason.SILENCE,
+                vadFrameCount = 40,
+                vadSpeechFrameCount = 31,
+            ),
+        )
+
+        val rejectedStart = acceptedEnd
+        val rejectedEnd = rejectedStart + FrameSpec.SAMPLE_RATE / 10L
+        val rejectedWriter = sink.open(SegmentId(1), rejectedStart)
+        rejectedWriter.append(FloatArray((rejectedEnd - rejectedStart).toInt()) { 0.1f })
+        rejectedWriter.close(
+            SegmentRecord(
+                id = SegmentId(1),
+                startSample = rejectedStart,
+                endSample = rejectedEnd,
+                vadStartSample = rejectedStart,
+                vadEndSample = rejectedEnd,
+                sampleCount = rejectedEnd - rejectedStart,
+                outcome = SegmentOutcome.REJECTED_TOO_SHORT,
+                closeReason = SegmentCloseReason.SILENCE,
+                vadFrameCount = 5,
+                vadSpeechFrameCount = 3,
+            ),
+        )
+
+        val totals = sink.vadSessionTotals()
+        assertEquals(2, totals.segmentsProposed)
+        assertEquals(1, totals.segmentsAccepted)
+        assertEquals(1, totals.segmentsRejected)
+        assertEquals((31 + 3).toLong() * FrameSpec.DURATION_MS, totals.speechActiveMs)
+    }
+
+    /** A sink that never closed a segment reports honest zeros, never a fabricated non-zero
+     * default (constitution I). */
+    @Test
+    @Requirement("FR-OBS-1")
+    fun `R_1034 vadSessionTotals is all zero before any segment has closed`() {
+        val clock = TestClock(startMonotonicNanos = 0L, startWallMillis = 1_700_000_000_000L)
+        val sampleClock = SampleClock(
+            anchorMonotonicNanos = clock.monotonicNanos(),
+            anchorWallMillis = clock.wallMillis(),
+            anchorUtcOffsetMinutes = clock.utcOffsetMinutes(),
+            sampleRate = FrameSpec.SAMPLE_RATE,
+        )
+        val queue = WorkQueue(db, clock)
+        val sink = RealSegmentSink(filesDir, sessionId, db, queue, sampleClock, SegmentConfig()) {}
+
+        val totals = sink.vadSessionTotals()
+        assertEquals(0, totals.segmentsProposed)
+        assertEquals(0, totals.segmentsAccepted)
+        assertEquals(0, totals.segmentsRejected)
+        assertEquals(0L, totals.speechActiveMs)
     }
 
     private fun captureLogLines(): List<String> {
