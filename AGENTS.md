@@ -96,6 +96,12 @@ validators drive one scenario set on one emulator and file findings; reviewers c
 to artboards with no device. A builder that needs a file outside its package stops and reports.
 Never `git stash`; never `gradlew --stop`; never merge while a gate is mid-build.
 
+**Why not `git stash`, and what to do instead.** A stash is invisible to the lead and to every
+other worktree, it does not survive being forgotten, and a stash dropped by mistake is
+unrecoverable work — R-1138. If you need a clean tree, **commit on your branch**: commits are
+cheap, visible, and can be amended or reordered later. There is no case in this repo where a
+stash is the right tool.
+
 **Why `gradlew --stop`, and what to do instead.** The daemon is shared across every worktree, so
 stopping it kills whatever the other builders and the lead's gate are running — on 2026-09-20 one
 `--stop` cost another builder a completed full-module run, which is R-1131. If a test process is
