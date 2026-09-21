@@ -245,3 +245,126 @@ def test_R_1116_dimension_mismatch_is_reported_changed_never_unchanged(tmp_path,
     report = (after / "tour-diff.md").read_text(encoding="utf-8")
     assert "- changed: 1" in report
     assert "- unchanged: 0" in report
+
+
+# ---------------------------------------------------------------------------
+# R-1149: two runs captured at different `wm size` geometry are not comparable, even when their
+# screenshots happen to be the same pixel dimensions (a wm size override shifts content within a
+# same-sized canvas rather than resizing it - see diff.py's own R-1149 docstring section). The
+# manifest's own `width`/`height` fields (the captured bitmap's real pixel dimensions,
+# `TourManifestEntry.width`/`.height`) are compared the same way runId/apkHash already are:
+# self-consistency within one manifest, and - new for this row - agreement across the two runs,
+# because unlike runId/apkHash, two runs are never allowed to disagree on capture geometry.
+# ---------------------------------------------------------------------------
+
+
+def test_R_1149_after_manifest_geometry_self_inconsistent_exits_nonzero(tmp_path, monkeypatch):
+    """Two `ok` entries in the SAME manifest disagree on width - not one coherent capture
+    geometry, the same class of problem `check_manifest_run_identity` catches for
+    `runId`/`apkHash`."""
+    after = tmp_path / "after"
+    after.mkdir()
+    (after / "N01-now.png").write_bytes(solid(20, 20, (10, 10, 10)))
+    (after / "N02-log.png").write_bytes(solid(20, 20, (10, 10, 10)))
+    manifest = after / "tour-manifest.json"
+    write_manifest(
+        manifest,
+        [
+            {"id": "N01-now", "ok": True, "apkHash": "h", "runId": "r", "width": 1080, "height": 2400},
+            {"id": "N02-log", "ok": True, "apkHash": "h", "runId": "r", "width": 1260, "height": 2772},
+        ],
+    )
+    before = tmp_path / "before-empty"
+    before.mkdir()
+
+    rc = run_diff(monkeypatch, ["--before", str(before), "--after", str(after), "--manifest", str(manifest)])
+
+    assert rc != 0
+
+
+def test_R_1149_before_after_geometry_mismatch_exits_nonzero_before_comparing_pixels(tmp_path, monkeypatch):
+    """The discriminating case this row exists for: a pair of runs whose entries agree on
+    `runId` and `apkHash` (so the pre-existing R-1116 guard has nothing to say) but disagree on
+    `width`/`height` - the exact 5554-override-vs-5560-physical shape of the finding. The two
+    screenshots are deliberately given identical PIXEL dimensions (1080x2400 both), reproducing
+    the reported symptom that `DimensionMismatch` cannot see this on its own: a wm size override
+    shifts content inside a same-sized canvas, it does not resize the canvas. Must refuse before
+    comparing a single pixel - no report is written."""
+    after = tmp_path / "after"
+    after.mkdir()
+    (after / "N01-now.png").write_bytes(solid(1080, 2400, (10, 10, 10)))
+    manifest = after / "tour-manifest.json"
+    write_manifest(
+        manifest,
+        [{"id": "N01-now", "ok": True, "apkHash": "h", "runId": "r", "width": 1080, "height": 2400}],
+    )
+
+    before = tmp_path / "before"
+    before.mkdir()
+    (before / "N01-now.png").write_bytes(solid(1080, 2400, (10, 10, 10)))
+    write_manifest(
+        before / "tour-manifest.json",
+        [{"id": "N01-now", "ok": True, "apkHash": "h", "runId": "r", "width": 1260, "height": 2772}],
+    )
+
+    rc = run_diff(monkeypatch, ["--before", str(before), "--after", str(after), "--manifest", str(manifest)])
+
+    assert rc != 0
+    assert not (after / "tour-diff.md").exists()
+
+
+def test_R_1149_matching_geometry_across_runs_is_accepted(tmp_path, monkeypatch):
+    """Sanity/regression companion: two runs that genuinely agree on capture geometry must not be
+    refused, so the new guard has not simply become trigger-happy."""
+    after = tmp_path / "after"
+    after.mkdir()
+    (after / "N01-now.png").write_bytes(solid(1080, 2400, (10, 10, 10)))
+    manifest = after / "tour-manifest.json"
+    write_manifest(
+        manifest,
+        [{"id": "N01-now", "ok": True, "apkHash": "h", "runId": "r", "width": 1080, "height": 2400}],
+    )
+
+    before = tmp_path / "before"
+    before.mkdir()
+    (before / "N01-now.png").write_bytes(solid(1080, 2400, (10, 10, 10)))
+    write_manifest(
+        before / "tour-manifest.json",
+        [{"id": "N01-now", "ok": True, "apkHash": "h", "runId": "r", "width": 1080, "height": 2400}],
+    )
+
+    rc = run_diff(monkeypatch, ["--before", str(before), "--after", str(after), "--manifest", str(manifest)])
+
+    assert rc == 0
+    assert (after / "tour-diff.md").exists()
+
+
+def test_R_1149_failed_entries_zero_geometry_does_not_trip_self_consistency(tmp_path, monkeypatch):
+    """A failed step (`ok: false`) always carries `width: 0, height: 0`
+    (`TourManifestEntry.failure`) - that must not be compared against a real capture's own
+    width/height, or every manifest with even one failed step would falsely refuse."""
+    after = tmp_path / "after"
+    after.mkdir()
+    (after / "N01-now.png").write_bytes(solid(1080, 2400, (10, 10, 10)))
+    manifest = after / "tour-manifest.json"
+    write_manifest(
+        manifest,
+        [
+            {"id": "N01-now", "ok": True, "apkHash": "h", "runId": "r", "width": 1080, "height": 2400},
+            {
+                "id": "N02-broken",
+                "ok": False,
+                "apkHash": "h",
+                "runId": "r",
+                "width": 0,
+                "height": 0,
+                "errorMessage": "boom",
+            },
+        ],
+    )
+    before = tmp_path / "before-empty"
+    before.mkdir()
+
+    rc = run_diff(monkeypatch, ["--before", str(before), "--after", str(after), "--manifest", str(manifest)])
+
+    assert rc == 0

@@ -119,6 +119,36 @@ $packageId = "org.ort.app"
 # (R-1116) rather than adding a second test framework.
 $tourManifestPy = Join-Path $repoRoot "tools\ui-audit\tour_manifest.py"
 
+# R-1149 (register, constitution VIII): a `wm size` override present on one emulator and absent
+# on another produces screenshots that can land at the exact same pixel dimensions while every
+# element inside them sits somewhere else (a constant ~48px vertical shift was the measured,
+# reproduced symptom) - diff.py's own R-1149 guard catches the resulting manifest mismatch after
+# the fact, but a run captured at the wrong geometry in the first place is the upstream half of
+# the same defect and should never be allowed to start. Assert an override is actually set on
+# this emulator, rather than assuming `wm size` reports one - `adb shell wm size` prints
+# `Physical size: <w>x<h>` always and an additional `Override size: <w>x<h>` line only when one is
+# set (spec/test-plan.md's own "Reproducing a real device's geometry" section is how one gets set;
+# this script does not set it, only refuses to capture without it).
+$wmSizeOutput = & $adb -s $serial shell wm size
+if ($LASTEXITCODE -ne 0) { throw "adb shell wm size failed on $serial (exit $LASTEXITCODE)" }
+$wmSizeText = ($wmSizeOutput -join "`n")
+# `-match` (not `-notmatch`) so `$Matches` is actually populated in the success branch - PowerShell
+# only fills `$Matches` on a positive `-match`, never on `-notmatch`.
+if ($wmSizeText -match "Override size:\s*(\d+x\d+)") {
+    Write-Output "wm size override confirmed on ${serial}: $($Matches[1])"
+}
+else {
+    throw "emulator-$Port reports no 'wm size' override (only a physical size) - R-1149: a tour " +
+        "captured at physical resolution is not comparable against the canonical reference, which " +
+        "is captured at an override, because the mismatch can shift content within same-sized " +
+        "screenshots rather than resizing them (diff.py's own geometry guard catches this after " +
+        "the fact; this check exists so a scoped run never starts at the wrong geometry at all). " +
+        "Set an override matching the reference geometry first, e.g. " +
+        "'adb -s $serial shell wm size <width>x<height>' (see spec/test-plan.md's own " +
+        "'Reproducing a real device's geometry' section for the override/density recipe), then " +
+        "re-run. Full 'wm size' output was:`n$wmSizeText"
+}
+
 $tourPath = if ([System.IO.Path]::IsPathRooted($Tour)) { $Tour } else { Join-Path $repoRoot $Tour }
 if (-not (Test-Path $tourPath)) { throw "tour spec not found at $tourPath" }
 

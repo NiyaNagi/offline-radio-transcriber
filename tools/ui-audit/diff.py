@@ -69,6 +69,27 @@ magnitude under the old default. A tool that cannot fail, and cannot see the exa
    disagree. When ``--before`` is a directory, its own ``tour-manifest.json`` (if present alongside
    its screenshots, as ``tour.ps1`` always writes one) is read and checked the same way.
 
+3. **R-1149: two runs must also agree on capture *geometry*, and here the check runs the other
+   direction.** Comparing a live scoped run on ``emulator-5560`` against the canonical reference
+   captured on ``emulator-5554`` once reported every screen changed by 7-19%, from a constant ~48px
+   vertical shift, reproduced even on a screen with no seeded date/time content. The cause: ``wm
+   size`` on 5554 reports *Override size: 1260x2772*, while 5560 reports only its physical
+   *1080x2400*. A ``wm size`` override does not resize the captured bitmap - both runs' screenshots
+   can land at the exact same pixel dimensions while every element inside them sits somewhere else -
+   so this is invisible to ``pixel_diff_fraction``'s own ``DimensionMismatch`` guard, which only
+   catches the two images having a genuinely different width or height. The manifest's own
+   ``width``/``height`` fields (``TourManifestEntry.width``/``.height`` - the captured bitmap's real
+   pixel dimensions, stamped on every entry, ``0`` for a failed step) are checked two ways:
+   self-consistency within one manifest (``check_manifest_geometry``, the same shape as
+   ``check_manifest_run_identity`` above, over ``ok`` entries only - a failed step's ``0``/``0``
+   must never be compared against a real capture's own dimensions), and - unlike ``runId``/``apkHash``
+   - **agreement across the two runs** (``check_geometry_agreement``): ``--before`` and ``--after``
+   are expected to differ on which run produced them, never on what geometry they were captured at.
+   Either check raises before a single pixel is compared, naming the field and the two runs'
+   conflicting values. Scope: this cross-run check only runs when ``--before`` is a directory
+   carrying its own ``tour-manifest.json`` (the shape the reported defect actually took); a
+   ``--before`` git ref has no manifest read at all today, unchanged by this fix.
+
 Every step in the manifest lands in exactly one of four lists:
 
 - ``new``     - no ``--before`` image exists for this id at all.
@@ -124,6 +145,16 @@ class RunIdentityError(Exception):
     more than one distinct `runId` or `apkHash` among entries that are supposed to be one
     invocation's output. Never raised for a manifest that simply lacks the fields (all entries
     agreeing on the "unknown" default is self-consistent, just uninformative)."""
+
+
+class GeometryMismatchError(Exception):
+    """R-1149: raised either when a manifest's own `ok` entries disagree on `width`/`height`
+    (not one coherent capture geometry, the self-consistency half - `check_manifest_geometry`),
+    or when `--before` and `--after` agree on `runId`/`apkHash` (or simply come from two
+    different, legitimate runs) but were captured at different `wm size` geometry (the cross-run
+    half - `check_geometry_agreement`). Unlike `RunIdentityError`, the cross-run case is exactly
+    the comparison `--before`/`--after` are NOT allowed to disagree on: two runs are expected to
+    have different run ids, never different screenshot geometry."""
 
 
 def _paeth(a: int, b: int, c: int) -> int:
@@ -283,6 +314,61 @@ def check_manifest_run_identity(entries: list[dict], label: str) -> tuple[str | 
     return agreed["runId"], agreed["apkHash"]
 
 
+def check_manifest_geometry(entries: list[dict], label: str) -> tuple[int | None, int | None]:
+    """R-1149: `width`/`height` are stamped onto every manifest entry from the captured bitmap's
+    own real pixel dimensions (`TourCapture.width`/`.height` via `TourManifestEntry.width`/
+    `.height`, `TourManifest.kt`) - `0`/`0` for a failed step (`TourManifestEntry.failure`), which
+    is why only `ok` entries are considered here; a failed step's placeholder zero must never be
+    compared against a real capture's own dimensions. A manifest whose own `ok` entries disagree on
+    either field is not one coherent capture geometry - the same class of problem
+    `check_manifest_run_identity` catches for `runId`/`apkHash`. Raises `GeometryMismatchError`
+    naming the field and the conflicting values; returns the agreed `(width, height)` - either may
+    be `None` if the manifest has no `ok` entries to measure at all."""
+    ok_entries = [entry for entry in entries if entry.get("ok")]
+    agreed: dict[str, int | None] = {}
+    for field in ("width", "height"):
+        distinct = {entry.get(field, 0) for entry in ok_entries}
+        if len(distinct) > 1:
+            raise GeometryMismatchError(
+                f"{label}: 'ok' entries disagree on '{field}' - found {sorted(distinct)}. This "
+                "manifest was not captured at one coherent screenshot geometry (R-1149)."
+            )
+        agreed[field] = next(iter(distinct)) if distinct else None
+    return agreed["width"], agreed["height"]
+
+
+def check_geometry_agreement(
+    after_dims: tuple[int | None, int | None],
+    before_dims: tuple[int | None, int | None],
+    after_label: str,
+    before_label: str,
+) -> None:
+    """R-1149: unlike `runId`/`apkHash`, `--before` and `--after` are never allowed to disagree on
+    capture geometry - a `wm size` override present on one emulator and not the other produces
+    screenshots that can land at the exact same pixel dimensions while every element inside them
+    sits somewhere else (a constant ~48px vertical shift was the measured, reproduced symptom),
+    which `pixel_diff_fraction`'s own `DimensionMismatch` guard cannot see, because that guard only
+    fires when the two images are a genuinely different width or height. Raises
+    `GeometryMismatchError` naming the field and the two runs' conflicting values; a side with no
+    `ok` entries to measure (`None`) is silently skipped rather than compared, matching
+    `check_manifest_geometry`'s own "nothing to measure" case."""
+    after_width, after_height = after_dims
+    before_width, before_height = before_dims
+    for field, after_value, before_value in (
+        ("width", after_width, before_width),
+        ("height", after_height, before_height),
+    ):
+        if after_value is None or before_value is None:
+            continue
+        if after_value != before_value:
+            raise GeometryMismatchError(
+                f"{after_label} and {before_label} disagree on capture '{field}' - "
+                f"{after_label}={after_value}, {before_label}={before_value}. Two runs captured at "
+                "different screenshot geometry are not comparable (R-1149): re-capture both on "
+                "emulators reporting the same 'adb shell wm size'."
+            )
+
+
 def load_before_bytes(before: str, rel_path: Path, after_dir: Path, is_git_ref: bool) -> bytes | None:
     if is_git_ref:
         # The path git tracks is `<after>/<rel_path>` relative to the repository root - computed
@@ -346,27 +432,51 @@ def main() -> int:
     is_git_ref = looks_like_git_ref(args.before)
 
     # R-1116: refuse before comparing a single pixel if either manifest is not one coherent run.
+    after_label = f"--manifest {manifest_path}"
     try:
-        after_run_id, after_apk_hash = check_manifest_run_identity(entries, f"--manifest {manifest_path}")
+        after_run_id, after_apk_hash = check_manifest_run_identity(entries, after_label)
+        after_width, after_height = check_manifest_geometry(entries, after_label)  # R-1149
     except RunIdentityError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 3
-    print(f"after run: runId={after_run_id} apkHash={after_apk_hash}")
+    except GeometryMismatchError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 4
+    print(
+        f"after run: runId={after_run_id} apkHash={after_apk_hash} "
+        f"width={after_width} height={after_height}"
+    )
 
     before_manifest_path: Path | None = None
     if not is_git_ref:
         candidate = Path(args.before) / "tour-manifest.json"
         if candidate.exists():
             before_manifest_path = candidate
+            before_label = f"--before's own manifest {candidate}"
             try:
                 before_entries = read_manifest(candidate)
-                before_run_id, before_apk_hash = check_manifest_run_identity(
-                    before_entries, f"--before's own manifest {candidate}"
-                )
+                before_run_id, before_apk_hash = check_manifest_run_identity(before_entries, before_label)
+                before_width, before_height = check_manifest_geometry(before_entries, before_label)  # R-1149
             except RunIdentityError as exc:
                 print(f"error: {exc}", file=sys.stderr)
                 return 3
-            print(f"before run: runId={before_run_id} apkHash={before_apk_hash}")
+            except GeometryMismatchError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 4
+            print(
+                f"before run: runId={before_run_id} apkHash={before_apk_hash} "
+                f"width={before_width} height={before_height}"
+            )
+
+            # R-1149: --before and --after are legitimately different runs, but never allowed to
+            # disagree on the geometry they were captured at - refuse before comparing a pixel.
+            try:
+                check_geometry_agreement(
+                    (after_width, after_height), (before_width, before_height), after_label, before_label
+                )
+            except GeometryMismatchError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 4
 
     new_list: list[str] = []
     missing_list: list[str] = []

@@ -32,6 +32,99 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (R-1149/R-1145: `diff.py` refuses a geometry-mismatched pair instead of reporting noise, `tour.ps1` asserts the `wm size` override is set, and Thread-Detail's artboard header matches the shared `DrillInHeader`)
+
+### `784bcbb5` — p-evidence-guards: R-1149 cross-run capture-geometry guard in `diff.py` + `wm size` override assertion in `tour.ps1`; R-1145 Thread-Detail.dc.html header redrawn to match `Station`/`Digest`
+
+**Scope:** `tools/ui-audit/diff.py`, `tools/ui-audit/tests/test_diff.py`, `tools/ui-audit/tour.ps1`,
+`design/canvas/Thread-Detail.dc.html`. `install.ps1` and `results/ui-audit/**` (including the
+register itself) deliberately untouched — outside this unit's ownership; the register rows are
+left for the lead to close against this evidence.
+
+**Requirements/ACs:** constitution VIII; R-1149, R-1145 (both register rows this commit fixes);
+R-1116, R-1083 (the existing `runId`/`apkHash` guard this follows the shape of); R-1143, R-1096
+(the share-kebab work R-1145 was split from, and the `Station.dc.html`/`Digest.dc.html` reference
+pattern it now matches).
+
+**What changed:**
+
+- **R-1149 (`diff.py`).** Two new checks, both raising before a single pixel is compared. (1)
+  `check_manifest_geometry(entries, label)` — the self-consistency half, the same shape as the
+  existing `check_manifest_run_identity`: a manifest's own `ok` entries (failed steps are excluded,
+  since `TourManifestEntry.failure` always stamps `width=0, height=0`, which must never be compared
+  against a real capture) must agree on `width` and `height`; raises `GeometryMismatchError` naming
+  the field and the conflicting values otherwise. (2) `check_geometry_agreement(after_dims,
+  before_dims, after_label, before_label)` — the new, cross-run half: unlike `runId`/`apkHash`,
+  which two different runs are *expected* to disagree on, `--before` and `--after` are never
+  allowed to disagree on the geometry they were captured at. Wired into `main()`: `--after`'s
+  manifest is checked for geometry self-consistency alongside its existing run-identity check; when
+  `--before` is a directory carrying its own `tour-manifest.json` (the shape the reported defect
+  actually took), that manifest is checked the same way and then cross-checked against `--after`'s
+  agreed geometry. A `--before` git ref has no manifest read at all today and this cross-check does
+  not extend to it — noted as scope, not silently dropped, in `diff.py`'s own module docstring. Exit
+  code `4` for either geometry failure (distinct from `3` for a run-identity failure). This closes a
+  real hole the existing `DimensionMismatch` guard could not: a `wm size` override shifts content
+  *within* a same-sized canvas rather than resizing it, so the reported 5554-override-vs-5560-
+  physical pair produced screenshots of identical pixel dimensions that `DimensionMismatch` would
+  have waved through as comparable.
+- **R-1149 (`tour.ps1`).** Right after resolving `$serial`, the script now runs `adb shell wm size`
+  and throws unless its output carries an `Override size: <w>x<h>` line — a run captured at physical
+  resolution is refused before the tour ever starts, rather than producing a manifest `diff.py` has
+  to catch after the fact. `install.ps1` was deliberately left alone: it installs and grants
+  permissions but never captures a screenshot, so the capture-time gate belongs in `tour.ps1`, which
+  every capture goes through regardless of entry point.
+- **R-1145 (`Thread-Detail.dc.html`).** The header row was redrawn byte-for-byte against
+  `Station.dc.html`/`Digest.dc.html`'s own header markup (confirmed identical between those two by
+  R-1143's closure): 20px accent-green back chevron (`oklch(0.72 0.14 150)`), the parent label
+  ("Threads") in the same accent green at 15px, and the accent-green-agnostic three-dot kebab —
+  replacing the near-white back icon, near-white label and live-dot-plus-elapsed-readout the board
+  previously drew, which is the `ScreenHeader` shape (`Main.dc.html`'s own header), not
+  `DrillInHeader`. Justified element-by-element against `ThreadDetailScreen.kt:72-78`, which renders
+  `DrillInHeader(parentLabel = backLabel /* default "Threads" */, onBack, onKebab = onShare,
+  kebabDescription = "Share this thread's transcript", kebabTestTag = "thread-detail-share-button")`
+  — back chevron + label + kebab, and nothing else. The live dot and elapsed readout were dropped
+  rather than relocated: `ThreadDetailScreen.kt` contains no live-bar or elapsed-time element
+  anywhere in the file (grepped for `live`/`elapsed`/`Live`/`Elapsed`, no match), so the board was
+  promising a fact the screen does not show, which R-1145's own brief calls the same defect in the
+  other direction.
+
+**Verified:**
+
+- `python -m pytest tools/ui-audit -q` → 30 passed (26 pre-existing + 4 new `test_R_1149_*` cases).
+  Before the fix, the same suite reported `2 failed, 28 passed` — the 2 discriminating cases below
+  failed for the right reason; the other 2 new cases (both non-discriminating sanity companions)
+  already passed, since pre-fix `diff.py` never looked at `width`/`height` at all.
+- Discrimination, watched red-then-green: `test_R_1149_after_manifest_geometry_self_inconsistent_exits_nonzero`
+  and `test_R_1149_before_after_geometry_mismatch_exits_nonzero_before_comparing_pixels` both failed
+  (`assert 0 != 0`) against pre-fix `diff.py` — the pixel loop ran to completion and reported
+  `unchanged: 1` for the discriminating case (two screenshots of identical pixel dimensions,
+  `runId`/`apkHash` agreeing, only `width`/`height` disagreeing) — then passed once
+  `check_manifest_geometry`/`check_geometry_agreement` were added.
+  `test_R_1149_matching_geometry_across_runs_is_accepted` and
+  `test_R_1149_failed_entries_zero_geometry_does_not_trip_self_consistency` passed throughout
+  (sanity companions, not discriminating).
+- `python -m ruff check tools/ui-audit/diff.py tools/ui-audit/tests/test_diff.py` → 3 pre-existing
+  findings (`EXE005`, `ISC004`, `F401`/`RUF100` in the test file), confirmed present against `HEAD`
+  before this change (`git show HEAD:<path> | ruff check -`) and untouched by this diff; zero new
+  findings.
+- `[System.Management.Automation.Language.Parser]::ParseFile` on `tour.ps1` → no parse errors.
+- `Thread-Detail.dc.html` rendered in a browser and screenshotted: back chevron, "Threads" label and
+  kebab all render in accent green matching `Station.dc.html`/`Digest.dc.html`; no live dot or
+  elapsed readout present.
+
+**Left open / not done:** `results/ui-audit/register.md` rows R-1149 and R-1145 themselves are left
+`open` — `results/ui-audit/**` is explicitly outside this unit's ownership (the lead's canonical
+captures), so the lead closes them against this entry's evidence. `tour.ps1`'s new `wm size` check
+was validated by PowerShell-parsing the script and by reading `adb shell wm size`'s documented
+output shape, not by running it against a real emulator (none available in this environment/task) —
+first real invocation should confirm both the throw and the pass path. The cross-run geometry check
+in `diff.py` does not cover `--before` as a git ref (no manifest is read in that mode today); if a
+future defect surfaces there, extending `load_before_bytes`'s git-ref path to also read a committed
+`tour-manifest.json` would close it. `install.ps1` was not given its own `wm size` assertion — see
+"What changed" for why `tour.ps1` alone was judged sufficient.
+
+---
+
 ## 2026-09-21 (R-220/R-280/R-340/R-612/R-985: the oldest open setup-2x rows re-verified against fresh captures; R-985 closed, the ghost/occlusion family corroborated absent but left open for hardware)
 
 ### `<pending>` — o-setup-2x: register rows R-220, R-280, R-340, R-612, R-985 re-verified against fresh 1.0/2.0 captures on the current build
