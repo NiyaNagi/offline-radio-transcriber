@@ -19,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import kotlinx.coroutines.launch
+import org.ort.app.export.ShareCoordinator
+import org.ort.app.export.ShareIntentLauncher
 import org.ort.app.ui.audio.TransmissionAudioPlayer
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.LoadingState
@@ -292,7 +294,24 @@ private fun MainDestination(
 ) {
     val scope = rememberCoroutineScope()
     Column(modifier = modifier.fillMaxSize()) {
-        DrillInHeader(parentLabel = backLabel, onBack = onBack)
+        // R-1096: this over's own audio clip, through the platform share sheet (FR-EXP-7) — see
+        // [org.ort.app.export.ShareCoordinator]'s own kdoc for why this is wired from the actual
+        // open screen (this one, with its own real [transmissionId]) rather than from Settings,
+        // which had no way to know which over the operator was reading.
+        DrillInHeader(
+            parentLabel = backLabel,
+            onBack = onBack,
+            onKebab = {
+                scope.launch {
+                    ShareIntentLauncher.launchShare(
+                        context,
+                        ShareCoordinator.resolveOverAudioShareFile(context, transmissionId),
+                    )
+                }
+            },
+            kebabDescription = "Share this over's audio",
+            kebabTestTag = "transmission-detail-share-button",
+        )
         TransmissionDetailScreen(
             state = viewState,
             player = player,

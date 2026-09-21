@@ -77,13 +77,32 @@ class ThreadDetailScreenTest {
         backLabel: String = "Threads",
         kindLabel: String? = null,
         modeLabel: String? = null,
+        onShare: (() -> Unit)? = null,
     ) = ThreadDetailScreen(
         state = state(kindLabel = kindLabel, modeLabel = modeLabel),
         onBack = onBack,
         onOpenOver = onOpenOver,
         onOpenSourceOver = onOpenSourceOver,
         backLabel = backLabel,
+        onShare = onShare,
     )
+
+    @Test
+    fun `R_1096 the header kebab is absent when onShare is null, the default`() {
+        composeTestRule.setContent { OrtTheme { screen() } }
+
+        composeTestRule.onNodeWithTag("thread-detail-share-button").assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_1096 tapping the header kebab invokes onShare for this exact screen's own thread`() {
+        var shareTapped = false
+        composeTestRule.setContent { OrtTheme { screen(onShare = { shareTapped = true }) } }
+
+        composeTestRule.onNodeWithTag("thread-detail-share-button").performClick()
+
+        assertEquals(true, shareTapped)
+    }
 
     @Test
     fun `R_044 the how-these-were-attributed card names each station and the source of an inherited match`() {

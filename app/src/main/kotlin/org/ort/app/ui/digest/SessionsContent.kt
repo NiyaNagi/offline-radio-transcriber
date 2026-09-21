@@ -9,10 +9,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.launch
+import org.ort.app.export.ShareCoordinator
+import org.ort.app.export.ShareIntentLauncher
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.data.LogFilterSelection
@@ -265,19 +269,11 @@ public fun SessionsContent(
             }
         }
 
-        is SessionsPage.Digest -> DigestContent(
+        is SessionsPage.Digest -> DigestPage(
+            current = current,
             context = context,
-            sessionId = current.sessionId,
-            onBack = { page = SessionsPage.Detail(current.sessionId) },
+            onBack = { page = it },
             onOpenItem = { item -> page = SessionsPage.DigestItem(current.sessionId, item) },
-            // IA-3: `returnTo = LogReturn.Digest` — back used to always land on `Detail`, silently
-            // discarding the `Digest` the operator actually opened this from.
-            onFullLog = { page = SessionsPage.Log(current.sessionId, "Digest", returnTo = LogReturn.Digest) },
-            // E2-G07 (DG05): a prose card's own `Read the overs` — the Log filtered to that card's
-            // own over time window.
-            onReadOvers = { from, to ->
-                page = SessionsPage.Log(current.sessionId, "Digest", from, to, returnTo = LogReturn.Digest)
-            },
             modifier = modifier,
         )
 
@@ -314,6 +310,49 @@ public fun SessionsContent(
             modifier = modifier,
         )
     }
+}
+
+/** [SessionsContent]'s `is SessionsPage.Digest` branch, split out purely to keep that composable
+ * under detekt's `LongMethod` limit — R-1096's own `onShare` addition is what pushed it over, the
+ * same reason [LogPage] below already exists as its own function for `is SessionsPage.Log`.
+ * [onBack] takes the destination directly (`SessionsPage.Detail`/`.List` are both reachable from
+ * here — see [DigestContent]'s own `onBack`/`onOpenItem` call sites) rather than a bare `() -> Unit`,
+ * so this function does not need `page` itself, only a setter for it. */
+@Composable
+private fun DigestPage(
+    current: SessionsPage.Digest,
+    context: Context,
+    onBack: (SessionsPage) -> Unit,
+    onOpenItem: (DigestItemViewState) -> Unit,
+    modifier: Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    DigestContent(
+        context = context,
+        sessionId = current.sessionId,
+        onBack = { onBack(SessionsPage.Detail(current.sessionId)) },
+        onOpenItem = onOpenItem,
+        // IA-3: `returnTo = LogReturn.Digest` — back used to always land on `Detail`, silently
+        // discarding the `Digest` the operator actually opened this from.
+        onFullLog = { onBack(SessionsPage.Log(current.sessionId, "Digest", returnTo = LogReturn.Digest)) },
+        // E2-G07 (DG05): a prose card's own `Read the overs` — the Log filtered to that card's own
+        // over time window.
+        onReadOvers = { from, to ->
+            onBack(SessionsPage.Log(current.sessionId, "Digest", from, to, returnTo = LogReturn.Digest))
+        },
+        // R-1096: this session's own digest, not a guessed "most recent" one — see
+        // [org.ort.app.ui.digest.DigestScreen.onShare]'s own kdoc and
+        // [org.ort.app.export.ShareCoordinator]'s own kdoc for the defect this replaces.
+        onShare = {
+            scope.launch {
+                ShareIntentLauncher.launchShare(
+                    context,
+                    ShareCoordinator.buildDigestShareFile(context, current.sessionId),
+                )
+            }
+        },
+        modifier = modifier,
+    )
 }
 
 /** [SessionsContent]'s `is SessionsPage.Log` branch, split out purely to keep that composable

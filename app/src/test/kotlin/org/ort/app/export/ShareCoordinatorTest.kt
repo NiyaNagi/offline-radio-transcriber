@@ -87,22 +87,97 @@ class ShareCoordinatorTest {
     )
 
     @Test
-    fun `AC_171 buildDigestShareFile returns null when there is no session yet`() = runTest {
-        assertNull(ShareCoordinator.buildDigestShareFile(context))
+    fun `AC_171 buildDigestShareFile returns null for a session id that does not exist`() = runTest {
+        assertNull(ShareCoordinator.buildDigestShareFile(context, "no-such-session"))
     }
 
     @Test
-    fun `AC_171 buildThreadTranscriptShareFile returns null when nothing has a thread yet`() = runTest {
+    fun `AC_171 buildThreadTranscriptShareFile returns null for a thread id that does not exist`() = runTest {
         db.sessionDao().insert(session("S1", 0L))
         db.transmissionDao().insert(transmission("T1", "S1", threadId = null))
-        assertNull(ShareCoordinator.buildThreadTranscriptShareFile(context))
+        assertNull(ShareCoordinator.buildThreadTranscriptShareFile(context, "no-such-thread"))
     }
 
     @Test
-    fun `AC_171 resolveOverAudioShareFile returns null when nothing is retained on disk`() = runTest {
+    fun `AC_171 resolveOverAudioShareFile returns null when the named over has no retained audio`() = runTest {
         db.sessionDao().insert(session("S1", 0L))
         db.transmissionDao().insert(transmission("T1", "S1"))
-        assertNull(ShareCoordinator.resolveOverAudioShareFile(context))
+        assertNull(ShareCoordinator.resolveOverAudioShareFile(context, "T1"))
+    }
+
+    @Test
+    fun `AC_171 resolveOverAudioShareFile returns null for a transmission id that does not exist`() = runTest {
+        assertNull(ShareCoordinator.resolveOverAudioShareFile(context, "no-such-transmission"))
+    }
+
+    @Test
+    fun `R_1096 buildDigestShareFile shares the requested session, not whichever one is most recent`() = runTest {
+        // The exact defect this test discriminates: before R-1096, ShareCoordinator picked
+        // `sessionDao().listAll().firstOrNull()` (real-time most-recent) regardless of which
+        // session the operator actually asked to share. S2 is the real, later session; S1 is the
+        // one the caller names — an operator reading S1's own digest and tapping share must get
+        // S1, never S2's, however recent S2 is.
+        db.sessionDao().insert(session("S1", 0L, endedAt = 10_000L))
+        db.sessionDao().insert(session("S2", 20_000L, endedAt = 30_000L))
+        db.transmissionDao().insert(transmission("T1", "S1", stationId = "KI7ABC", startedAtUtc = 1_000L))
+        db.transmissionDao().insert(transmission("T2", "S2", stationId = "W7NPC", startedAtUtc = 21_000L))
+
+        val shared = ShareCoordinator.buildDigestShareFile(context, "S1")
+
+        assertTrue(shared != null)
+        val text = shared!!.file.readText(Charsets.UTF_8)
+        assertTrue("expected S1's own callsign", text.contains("KI7ABC"))
+        assertTrue("expected S1's own session id in the header", text.contains("session S1"))
+        assertTrue("must not silently share S2's own callsign instead", !text.contains("W7NPC"))
+    }
+
+    @Test
+    fun `R_1096 buildThreadTranscriptShareFile shares the requested thread, not whichever one is most recent`() =
+        runTest {
+            // Same defect, the thread axis: TH2 is the real, later thread; TH1 is the one named.
+            db.sessionDao().insert(session("S1", 0L))
+            db.transmissionDao().insert(
+                transmission("T1", "S1", threadId = "TH1", stationId = "KI7ABC", startedAtUtc = 1_000L),
+            )
+            db.transmissionDao().insert(
+                transmission("T2", "S1", threadId = "TH2", stationId = "W7NPC", startedAtUtc = 9_000L),
+            )
+
+            val shared = ShareCoordinator.buildThreadTranscriptShareFile(context, "TH1")
+
+            assertTrue(shared != null)
+            val text = shared!!.file.readText(Charsets.UTF_8)
+            assertTrue("expected TH1's own thread id in the header", text.contains("thread TH1"))
+            assertTrue("expected TH1's own callsign", text.contains("KI7ABC"))
+            assertTrue("must not silently share TH2's own callsign instead", !text.contains("W7NPC"))
+        }
+
+    @Test
+    fun `R_1096 resolveOverAudioShareFile shares the requested over, not whichever one is most recent`() = runTest {
+        // Same defect, the over axis: T2 is the real, later over with retained audio; T1 is the
+        // one named — an operator reading T1's own detail screen and tapping share must get T1's
+        // own audio bytes, never T2's, however recent T2 is.
+        db.sessionDao().insert(session("S1", 0L))
+        val older = transmission("T1", "S1", startedAtUtc = 1_000L)
+        val newer = transmission("T2", "S1", startedAtUtc = 2_000L)
+        db.transmissionDao().insert(older)
+        db.transmissionDao().insert(newer)
+        File(context.filesDir, older.audioPath()).apply {
+            parentFile?.mkdirs()
+            writeBytes(byteArrayOf(1))
+        }
+        File(context.filesDir, newer.audioPath()).apply {
+            parentFile?.mkdirs()
+            writeBytes(byteArrayOf(2))
+        }
+
+        val shared = ShareCoordinator.resolveOverAudioShareFile(context, "T1")
+
+        assertTrue(shared != null)
+        assertTrue(
+            "expected T1's own audio bytes, not T2's more recent ones",
+            shared!!.file.readBytes().contentEquals(byteArrayOf(1)),
+        )
     }
 
     @Test
@@ -143,7 +218,7 @@ class ShareCoordinatorTest {
                 ),
             )
 
-            val shared = ShareCoordinator.buildDigestShareFile(context)
+            val shared = ShareCoordinator.buildDigestShareFile(context, "S1")
             assertTrue(shared != null && shared.file.isFile)
             val text = shared!!.file.readText(Charsets.UTF_8)
 
@@ -160,8 +235,8 @@ class ShareCoordinatorTest {
     fun `AC_171 a shared thread transcript covers every over in that thread, ordered, and only that thread`() =
         runTest {
             db.sessionDao().insert(session("S1", 0L))
-            // TH1 (T1/T2) is the *most recent* thread — both later than TH2's own single over —
-            // so ShareCoordinator's own "most recent thread" pick resolves to TH1, not TH2.
+            // TH2 is the real, later thread; TH1 (T1/T2) is the one named — proves the share still
+            // covers only the requested thread even when a genuinely more recent one exists.
             db.transmissionDao().insert(
                 transmission("T1", "S1", threadId = "TH1", stationId = "KI7ABC", startedAtUtc = 3_000L),
             )
@@ -169,7 +244,7 @@ class ShareCoordinatorTest {
                 transmission("T2", "S1", threadId = "TH1", stationId = "W7NPC", startedAtUtc = 2_000L),
             )
             db.transmissionDao().insert(
-                transmission("T3", "S1", threadId = "TH2", stationId = "N7ZZZ", startedAtUtc = 1_000L),
+                transmission("T3", "S1", threadId = "TH2", stationId = "N7ZZZ", startedAtUtc = 9_000L),
             )
             db.transcriptDao().insert(
                 TranscriptEntity(
@@ -193,7 +268,7 @@ class ShareCoordinatorTest {
                 ),
             )
 
-            val shared = ShareCoordinator.buildThreadTranscriptShareFile(context)
+            val shared = ShareCoordinator.buildThreadTranscriptShareFile(context, "TH1")
             assertTrue(shared != null)
             val text = shared!!.file.readText(Charsets.UTF_8)
 
@@ -207,7 +282,7 @@ class ShareCoordinatorTest {
         }
 
     @Test
-    fun `AC_171 resolveOverAudioShareFile finds the most recent retained audio file, real bytes`() = runTest {
+    fun `AC_171 resolveOverAudioShareFile returns the named over's own retained audio, real bytes`() = runTest {
         db.sessionDao().insert(session("S1", 0L))
         val older = transmission("T1", "S1", startedAtUtc = 1_000L)
         val newer = transmission("T2", "S1", startedAtUtc = 2_000L)
@@ -222,7 +297,7 @@ class ShareCoordinatorTest {
             writeBytes(byteArrayOf(2))
         }
 
-        val shared = ShareCoordinator.resolveOverAudioShareFile(context)
+        val shared = ShareCoordinator.resolveOverAudioShareFile(context, "T2")
         assertTrue(shared != null)
         assertEquals("audio/flac", shared!!.mimeType)
         assertTrue(shared.file.readBytes().contentEquals(byteArrayOf(2)))

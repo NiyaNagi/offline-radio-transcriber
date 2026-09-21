@@ -34,7 +34,6 @@ import org.ort.app.diagnostics.localsave.LocalSavePreview
 import org.ort.app.export.ExportCoordinator
 import org.ort.app.export.ExportRequest
 import org.ort.app.export.ExportRequestScope
-import org.ort.app.export.ShareCoordinator
 import org.ort.app.fieldreport.bundle.FieldReportBundleBuilder
 import org.ort.app.fieldreport.bundle.FieldReportBundlePreview
 import org.ort.app.fieldreport.bundle.FieldReportGatedCategory
@@ -736,19 +735,15 @@ private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifi
                 pendingExportRequest = request
                 saveLauncher.launch(ExportCoordinator.suggestedFileName(request))
             },
+            // R-1096: the three "share the most recent ..." actions this screen used to wire moved
+            // to the actual open surface each one is about — see [ShareCoordinator]'s own kdoc.
+            // `Export POTA activity` is a genuinely different action (a scoped SAF write, not a
+            // share-sheet hand-off) and stays here, the one real field left in
+            // [SettingsExportShareActions].
             shareActions = SettingsExportShareActions(
                 onExportPota = { potaScope ->
                     pendingPotaScope = potaScope
                     potaSaveLauncher.launch(ExportCoordinator.suggestedPotaFileName(potaScope))
-                },
-                onShareDigest = {
-                    scope.launch { shareFile(context, ShareCoordinator.buildDigestShareFile(context)) }
-                },
-                onShareThreadTranscript = {
-                    scope.launch { shareFile(context, ShareCoordinator.buildThreadTranscriptShareFile(context)) }
-                },
-                onShareOverAudio = {
-                    scope.launch { shareFile(context, ShareCoordinator.resolveOverAudioShareFile(context)) }
                 },
             ),
             modifier = modifier,
@@ -756,48 +751,6 @@ private fun SettingsExportSubScreen(context: Context, onBack: () -> Unit, modifi
     } else {
         LoadingSettings(modifier = modifier)
     }
-}
-
-/**
- * Test-only seam for [shareFile]'s own [androidx.core.content.FileProvider.getUriForFile] call —
- * every production caller keeps the real default. Exists because the *real* `FileProvider`'s own
- * root-matching cannot be exercised reliably under this Windows/Robolectric combination (a known,
- * environment-specific path-canonicalisation gap, not a real-device concern — confirmed against
- * the merged manifest and the packaged `res/xml/file_paths.xml`, both correct); this is exactly
- * the "a fake `FileProvider`-backed share target for the instrumented/Robolectric test" build-plan
- * P30 itself asks this unit to ship. A Robolectric/instrumented test supplies a fake here that
- * still returns a `content://<authority>/...` shaped [android.net.Uri], so the real assertions
- * that matter (the intent's action, type, flags, and the authority the real manifest declares)
- * stay meaningful without depending on the real path-matching this environment cannot prove.
- */
-internal var shareUriResolverForTest: ((Context, String, java.io.File) -> android.net.Uri)? = null
-
-/** FR-EXP-7's own `FileProvider`/`ACTION_SEND` wiring — the one place this round's file-ownership
- * map puts it (`SettingsExportScreen.kt`'s own kdoc names "the share-sheet action" as that
- * screen's to own; the actual [Intent]/[android.net.Uri] construction lives here because building
- * one needs Android platform APIs [org.ort.app.export.ShareCoordinator] deliberately has none of —
- * that object has no Android UI dependency, only [Context] for real IO).
- *
- * [share] is `null` exactly when [org.ort.app.export.ShareCoordinator] found nothing to share yet
- * (no session, no thread, no retained audio) — handled by simply not opening a chooser, logged
- * rather than silently swallowed; a share action is user-initiated and discretionary, not a
- * data-integrity claim a missing result could misstate (constitution I still applies to what *is*
- * shared, never to whether an optional convenience action happened to find something this time).
- */
-private fun shareFile(context: Context, share: org.ort.app.export.ShareFile?) {
-    if (share == null) {
-        android.util.Log.i("SettingsContent", "share tapped but ShareCoordinator found nothing to share yet")
-        return
-    }
-    val authority = "${context.packageName}.fileprovider"
-    val resolveUri = shareUriResolverForTest ?: androidx.core.content.FileProvider::getUriForFile
-    val uri = resolveUri(context, authority, share.file)
-    val intent = Intent(Intent.ACTION_SEND).apply {
-        type = share.mimeType
-        putExtra(Intent.EXTRA_STREAM, uri)
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    }
-    context.startActivity(Intent.createChooser(intent, share.suggestedName).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
 /**

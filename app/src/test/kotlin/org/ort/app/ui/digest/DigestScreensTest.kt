@@ -154,6 +154,39 @@ class DigestScreensTest {
     }
 
     @Test
+    @Requirement("FR-EXP-7")
+    fun `R_1096 the header kebab is absent when onShare is null, the default`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                DigestScreen(state = baseState(null), onBack = {}, onOpenItem = {}, onFullLog = {})
+            }
+        }
+
+        composeTestRule.onNodeWithTag("digest-share-button").assertDoesNotExist()
+    }
+
+    @Test
+    @Requirement("FR-EXP-7")
+    fun `R_1096 tapping the header kebab invokes onShare for this exact screen's own session`() {
+        var shareTapped = false
+
+        composeTestRule.setContent {
+            OrtTheme {
+                DigestScreen(
+                    state = baseState(null),
+                    onBack = {},
+                    onOpenItem = {},
+                    onFullLog = {},
+                    onShare = { shareTapped = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("digest-share-button").performClick()
+        assertTrue("expected the screen's own onShare to fire, not a guessed subject", shareTapped)
+    }
+
+    @Test
     @Requirement("FR-DIG-3a")
     fun `FR_DIG_3a the section is absent entirely when prose is null, never an empty header`() {
         composeTestRule.setContent {
