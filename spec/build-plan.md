@@ -575,7 +575,7 @@ free.
   the governance commit) is now true rather than aspirational; `dependencyRules` still shows no
   `:pipeline/threading` edge into `:capture-*` or `:segment`.
 
-- [ ] **P25 · VAD fallback disclosure** *(`:app` — `LiveBar.kt`, `LiveBarPolling.kt`, a session
+- [x] **P25 · VAD fallback disclosure** *(Landed `386b8313` - the live bar chip and the session's own durable record - with its scenario built in `21e22471`. Its disclosure signal is now reused rather than recomputed by `vad_session_summary` (R-1034), which is the cross-check that it is real.)* *(`:app` — `LiveBar.kt`, `LiveBarPolling.kt`, a session
   record)* — D50, Q22 closed, FR-SEG-10.
 
   **Read first:** D50, FR-SEG-10 (already built at the data layer — `core/src/main/kotlin/org/ort/core/capture/VadDetectorKind.kt`,
@@ -605,7 +605,7 @@ free.
   records; captured again by the tour at 1.0/2.0 for `Now` and the session-review screen
   (constitution VIII — this touches `*Content`/`*ViewState` files).
 
-- [ ] **P26 · Playback stops on navigation, plus five small defects** *(`:app` — navigation,
+- [x] **P26 · Playback stops on navigation, plus five small defects** *(Landed `684c3abf`. AC-168 holds at the transport-bar layer via a `DisposableEffect`, and the judgement that a same-screen switch to a different over also stops playback is recorded. Closed R-1006, R-1012 and R-1079; R-1080 was found already fixed on a later reading; R-1074 needed files outside the unit and landed separately. Note this contract change later invalidated four tour steps that still asserted the old behaviour - R-1146, now fixed.)* *(`:app` — navigation,
   transport bar, several screens; `:asr-sherpa` KDoc)* — R-1006, AC-168, R-1074, R-1079, R-1080,
   R-1012, and the known-red `ImproveDestinationStatePreservationTest`.
 
@@ -810,7 +810,7 @@ released by P27; P22's setup steps released for P28 to extend).
 
 **Wave J — needs Wave I** (the Settings hot files released by P30).
 
-- [ ] **P31 · Live alerts** *(new `:pipeline` alerts package, `:app` Settings)* — FR-ALR-1..6,
+- [x] **P31 · Live alerts** *(Landed `c1196a1d` with the real coordinator wired into Pass B's closure point, and `e773b36d` making the dispatcher honour `canDeliver()`. Completed afterwards by R-1097 - a refused delivery is now logged rather than discarded - and R-1125, which made a callsign watch fire on the resolved candidate once `CONFIRMED` became unreachable without a calibration. Reprocess-triggered alerts are deliberately not wired, with the reasoning in `ReprocessRunner`'s KDoc.)* *(new `:pipeline` alerts package, `:app` Settings)* — FR-ALR-1..6,
   AC-192..197. Needs Wave I (the Settings hot files pass to this unit next).
 
   **Read first:** §7.19 FR-ALR-1..6 in full, AC-192..197; `pipeline/src/main/kotlin/org/ort/pipeline/passb/DataPassBResultSink.kt`
@@ -848,7 +848,7 @@ released by P27; P22's setup steps released for P28 to extend).
 **Wave K — needs Waves G-J** (every screen this wave-set touched must already be in its final
 shape before an accessibility pass sweeps it).
 
-- [ ] **P32 · Accessibility pass — WCAG 2.2 AA, FR-A11Y** *(`:app`, every screen)* — FR-A11Y-1..6.
+- [x] **P32 · Accessibility pass — WCAG 2.2 AA, FR-A11Y** *(Landed across `90a4f331` and `b9d916e8`. The token-level contrast failures it measured were fixed separately as R-1089, and the last two screens carrying the empty-label shape as R-1108. **One thing it cannot settle remains open as R-1090**: a live TalkBack pass on a device, which is the only way to know whether `uiautomator`'s split-node dump is ground truth for a small icon inside a clickable box - Robolectric demonstrably passes the broken shape too.)* *(`:app`, every screen)* — FR-A11Y-1..6.
   Last, deliberately, after every other screen change in this wave-set has landed.
 
   **Partial progress, 2026-09-20 (see `CHANGELOG.md`'s own entry):** two shared-component fixes

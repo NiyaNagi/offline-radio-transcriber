@@ -12,11 +12,11 @@ process, polish, open questions and coverage debt are P2.
 |---|---:|---:|---:|---:|
 | UI / defect register | 98 | 13 | 26 | 59 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
-| Build-plan units | 9 | 2 | 7 | 0 |
+| Build-plan units | 5 | 2 | 3 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 2 | 0 | 0 | 2 |
-| **Total** | **149** | **30** | **48** | **71** |
+| **Total** | **145** | **30** | **44** | **71** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -60,10 +60,6 @@ process, polish, open questions and coverage debt are P2.
 | P9 | GATE: 8-hour run on the reference device | build-plan | not started |  |
 | P11 | End-to-end, then the M4 fork | build-plan | not started |  |
 | P12 | Make capture actually work end to end on a device | build-plan | not started |  |
-| P25 | VAD fallback disclosure | build-plan | not started |  |
-| P26 | Playback stops on navigation, plus five small defects | build-plan | not started |  |
-| P31 | Live alerts | build-plan | not started |  |
-| P32 | Accessibility pass — WCAG 2.2 AA, FR-A11Y | build-plan | not started |  |
 | E2-A06 | FR-RIG-6, FR-CAP-5, FR-RIG-3 | e2e | **owed data/descriptor additions found while wiring** (wpc2 report): transmissionentity.rigstatechangedmidtransmission (v9), capturegapcause.bluetooth_audio_lost (v9), transportspec.usbvendorid/usbproductid/lineterminator on :rig descriptors (then defaultrigtransportfactory reads the descriptor before |  |
 | E2-I06 | D36 | e2e | hardware |  |
 | E2-L01 | H1 | e2e | hardware |  |
