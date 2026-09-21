@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (m-feedback-host: R-1008's push channel for `FailureHost`'s toast slot; R-1080 confirmed already fixed)
 
-### `<pending>` — R-1008: `PushedToastChannel` lets a screen hand `FailureHost` a result toast (with a safe-by-contract Undo) that survives the operator already navigating away; R-1080 verified already fixed on `main`, not re-done
+### `f4c1fd2e` — R-1008: `PushedToastChannel` lets a screen hand `FailureHost` a result toast (with a safe-by-contract Undo) that survives the operator already navigating away; R-1080 verified already fixed on `main`, not re-done
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/` (`PushedToastChannel.kt` new,
 `RecoveryAnnouncer.kt`, `FailureHost.kt`), `app/src/test/kotlin/org/ort/app/ui/failures/`
