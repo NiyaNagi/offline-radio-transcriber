@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (roadmap: five decisions, Wave L, fifteen findings, and one backlog view)
 
-### `<pending>` — P34: AndroidAudioIo's route/interruption callback actually fires, and sample rate is negotiated
+### `a1cdd665` — P34: AndroidAudioIo's route/interruption callback actually fires, and sample rate is negotiated
 
 **Scope:** `:capture-android` only (`AndroidAudioIo.kt`, `AudioRecordSource.kt`, new
 `SampleRateNegotiator.kt`, `fake/FakeAudioIo.kt` — one new test-only helper — plus new test files).
@@ -115,8 +115,7 @@ not-`onAudioDevicesRemoved`-reported USB adapter) is caught by this poll at all 
 `AudioRecordSourcePeriodicReverificationTest`'s "never blocks" proof is real but is a
 `FakeAudioIo`/virtual-time proof of the *architecture* (fire-and-forget, cancelled on exit); it
 does not and cannot prove a real `AudioManager`/`AudioDeviceInfo` call is itself always cheap on
-every device, only that this code's structure cannot be blocked by one that is not. Commit hash
-`<pending>` — replace on commit.
+every device, only that this code's structure cannot be blocked by one that is not.
 
 ---
 
