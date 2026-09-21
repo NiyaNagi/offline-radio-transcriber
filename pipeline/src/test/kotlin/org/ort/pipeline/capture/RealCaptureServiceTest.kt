@@ -36,6 +36,7 @@ import org.ort.pipeline.alerts.AlertEvaluationTrigger
 import org.ort.pipeline.alerts.AlertWatch
 import org.ort.pipeline.alerts.FakeAlertNotificationDispatcher
 import org.ort.pipeline.alerts.InMemoryAlertWatchStore
+import org.ort.pipeline.diagnostics.DiagnosticsLog
 import org.ort.pipeline.passb.AsrEngineAvailability
 import org.ort.pipeline.shed.FakeShedSignals
 import org.ort.testing.Requirement
@@ -379,6 +380,85 @@ public class RealCaptureServiceTest {
         } finally {
             controller.destroy()
         }
+    }
+
+    private fun captureLogLines(filesDir: File): List<String> {
+        val file = File(File(filesDir, "diagnostics-logs"), DiagnosticsLog.Category.CAPTURE.fileName)
+        return if (file.isFile) file.readLines() else emptyList()
+    }
+
+    private fun field(line: String, key: String): String =
+        line.trim().split(" ").single { it.startsWith("$key=") }.substringAfter("=")
+
+    /**
+     * Register R-1034 (FR-OBS-1's session-level "VAD statistics"): before this, `capture.log`
+     * carried a `vad_stats` line per closed segment (D41/Q20) but nothing summarising the session
+     * as a whole -- a reader had to replay every line by hand, and a long session's tail could
+     * rotate out entirely. This proves the real service writes exactly one `vad_session_summary`
+     * line when the session ends, with the real accumulated counters (one accepted segment, from
+     * the one burst this test drives) and the real detector this session actually ran
+     * (`EnergyVadModel`, since no Silero model is installed in this test environment -- see this
+     * class's own kdoc).
+     */
+    @Test
+    @Requirement("R-1034", "FR-OBS-1")
+    public fun `R_1034 the session end writes one vad_session_summary line with the real counters`() {
+        val db = OrtDatabase.create(context, inMemory = true)
+        val device = AudioDeviceDescriptor("fake-mic-1", AudioDeviceKind.USB_DEVICE, "Fake test mic")
+        val fakeIo = FakeAudioIo(deviceSampleRate = 16_000, devices = listOf(device))
+        fakeIo.forceRoutedDevice(device)
+        repeat(5) { fakeIo.enqueueFrames(loudBlock()) }
+        repeat(12) { fakeIo.enqueueFrames(silentBlock()) }
+
+        val engine = FakeAsrEngine(
+            FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = "test transmission received")),
+        )
+        val sessionId = "TEST-SESSION-1034"
+
+        val controller = Robolectric.buildService(RealCaptureService::class.java).create()
+        val service = controller.get()
+        service.dependencies = RealCaptureService.Dependencies(
+            database = { db },
+            audioIo = { _ -> fakeIo to device },
+            asrEngine = { AsrEngineAvailability.Available(engine, AssetRef("fake-asr-model", "1"), "test-fake") },
+            shedSignals = { _, _, _ -> FakeShedSignals() },
+        )
+
+        try {
+            val startIntent = Intent(context, RealCaptureService::class.java)
+                .putExtra(RealCaptureService.EXTRA_SESSION_ID, sessionId)
+            controller.withIntent(startIntent).startCommand(0, 0)
+
+            val transmissionId = "$sessionId-0"
+            waitUntil(20_000) {
+                val state = runBlocking { db.transmissionDao().getById(transmissionId) }?.processingState
+                state == TransmissionState.COMPLETE
+            }
+        } finally {
+            controller.destroy() // triggers stopCaptureInternal -> endSessionRow, exactly once
+        }
+        runBlocking { DiagnosticsLog.flush() }
+
+        val lines = captureLogLines(service.filesDir).filter { it.contains("vad_session_summary") }
+        assertEquals("exactly one summary line, written once at session end", 1, lines.size)
+        val line = lines.single()
+        assertEquals(sessionId, field(line, "sessionId"))
+        assertEquals(
+            "the one burst this test drove produced exactly one proposed segment",
+            "1",
+            field(line, "segmentsProposed"),
+        )
+        assertEquals("1", field(line, "segmentsAccepted"))
+        assertEquals("0", field(line, "segmentsRejected"))
+        assertTrue(
+            "some speech-active time must be recorded for the one accepted segment",
+            field(line, "speechActiveMs").toLong() > 0L,
+        )
+        assertEquals(
+            "no Silero model is installed in this test environment -- the real fallback",
+            "ENERGY",
+            field(line, "vadDetector"),
+        )
     }
 
     @Test

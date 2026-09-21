@@ -47,6 +47,18 @@ channel; moved model download into setup for a new slim `play` build variant (**
 deferred the persistent voice library to post-1.0 (**D45**); fixed M4's fork timing to a
 post-1.0 dev-fold measurement (**D46**); confirmed 1.0 ships free (**D47**); and fixed the
 analytics destination as self-hosted and build-configured (**D48**). See spec §3 for all eight.
+
+**2026-09-21 update.** Register R-1033 asked the same question Q20 later named explicitly for
+`capture.log` — "just build what the sentence says" — but for FR-REP-2/FR-ACC-5's tier and
+execution-provider provenance instead: should a *live* Pass B write
+`TransmissionEntity.processedTier`, the way `ReprocessRunner` already did, or does the spec say
+plainly that a live tier goes unrecorded? The fix (`org.ort.pipeline.passb.DataPassBResultSink`
+stamping both facts for every real `PassB`, live or reprocessed, through the same sink) had
+already landed as part of WPPROV before this was ever given its own decision number — this entry
+closes that gap. **Answer — D56.** Write it; a log that can compare a reprocessed over's tier
+against a live one's, but not against itself, defeats the reason FR-REP-2 asked for tier at all
+(constitution VI). See FR-OBS-13's own amendment note in spec §7.13c for the full reasoning and
+the single writer that keeps the two facts from drifting apart.
 ## Status, 7 September 2026 — the register is nearly empty
 
 **Closed:** Q3–Q11, Q13, Q14, Q15, Q17, Q18, Q19 and Q22, recorded as D19–D32, D49 and D50 in

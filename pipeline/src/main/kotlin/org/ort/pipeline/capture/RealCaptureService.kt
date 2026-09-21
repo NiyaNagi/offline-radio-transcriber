@@ -263,6 +263,19 @@ public class RealCaptureService : Service() {
     // actually been fed to it (Segmenter.position(), unchanged in :segment).
     private var segmenter: Segmenter? = null
 
+    // Register R-1034 (FR-OBS-1's session-level "VAD statistics"): the same sink buildSegmenter()
+    // wires into this session's Segmenter, kept as its own field (unlike segmenter above) purely
+    // so endSessionRow() can read its accumulated vadSessionTotals() back -- Segmenter itself
+    // exposes no such thing. null before startCapture() has run at all, matching every other
+    // session-scoped field in this class.
+    private var segmentSink: RealSegmentSink? = null
+
+    // Register R-1034: this session's own resolveVad() decision, kept alongside segmentSink for
+    // the same reason -- the vad_session_summary line names the detector that ran the *whole*
+    // session (the existing fallback disclosure, see DiagnosticsLog.logVadSessionSummary's own
+    // kdoc), never re-resolved at session end. UNKNOWN before startCapture() has run.
+    private var resolvedVadDetector: VadDetectorKind = VadDetectorKind.UNKNOWN
+
     // WPARC (FR-SEG-9, FR-STO-3d, D39): the continuous archive for this session, `null` whenever
     // the archive is off (ArchiveSettingsStore.archiveEnabled read once at session start, the same
     // freeze-at-start discipline [activeConfiguration] uses). [archiveWriter] is kept alongside
@@ -562,6 +575,9 @@ public class RealCaptureService : Service() {
         // can never disagree about which detector actually cut them. See [resolveVad]'s own kdoc
         // for why a session-scoped resolution (never re-read per segment) is the honest shape here.
         val resolvedVad = resolveVad()
+        // Register R-1034: this session's own detector, kept for endSessionRow()'s
+        // vad_session_summary line -- see [resolvedVadDetector]'s own kdoc.
+        resolvedVadDetector = resolvedVad.detector
         db.sessionDao().insert(buildSessionEntity(audioSource, resolvedVad))
 
         val builtSegmenter = buildSegmenter(db, queue, resolvedVad)
@@ -816,6 +832,9 @@ public class RealCaptureService : Service() {
         // before startCapture() has run at all, which buildSegmenter() itself is never reached
         // during (see runCaptureFlow's own call site). See Segmenter's own kdoc for the exact
         // fusion rule this wires in.
+        // Register R-1034: kept alongside the Segmenter it is wired into so endSessionRow() can
+        // read its accumulated vadSessionTotals() back -- see [segmentSink]'s own kdoc.
+        segmentSink = sink
         return Segmenter(segmentConfig, SileroVad(resolvedVad.model), sink, squelchGate = squelchGate)
     }
 
@@ -1241,6 +1260,23 @@ public class RealCaptureService : Service() {
         val database = db ?: return
         if (sessionId.isEmpty()) return
         val endedAt = SystemClock.wallMillis()
+        // Register R-1034 (FR-OBS-1's session-level "VAD statistics"): written exactly once, here,
+        // reading back the counters segmentSink accumulated as each segment closed -- never
+        // computed per frame. Absent (no line at all) rather than a zero-filled one when no
+        // segmenter ever ran this session (e.g. a session that failed before startCapture()
+        // resolved a VAD at all) -- constitution I never fabricates a session that did not happen.
+        segmentSink?.let { sink ->
+            val totals = sink.vadSessionTotals()
+            DiagnosticsLog.logVadSessionSummary(
+                sessionId = sessionId,
+                segmentsProposed = totals.segmentsProposed,
+                segmentsAccepted = totals.segmentsAccepted,
+                segmentsRejected = totals.segmentsRejected,
+                speechActiveMs = totals.speechActiveMs,
+                sessionDurationMs = endedAt - startedAtWallMillis,
+                vadDetector = resolvedVadDetector,
+            )
+        }
         runBlocking(Dispatchers.IO) {
             database.sessionDao().setEnded(sessionId, endedAt, reason)
             // WPARC (FR-SEG-9): flush the archive's trailing partial chunk and wait for every
@@ -1743,6 +1779,15 @@ internal class EnergyVadModel(private val threshold: Float = 0.02f) : org.ort.se
  * on close and persists a real [TransmissionEntity] + queue entry. [onSegmentPersisted] is called
  * after every successful persist so the caller can update its own counters/heartbeat.
  */
+/** Register R-1034: the session-level VAD counters [RealSegmentSink] accumulates cheaply as each
+ * segment closes -- see [RealSegmentSink.vadSessionTotals]'s own kdoc for how and when. */
+internal data class VadSessionTotals(
+    val segmentsProposed: Int,
+    val segmentsAccepted: Int,
+    val segmentsRejected: Int,
+    val speechActiveMs: Long,
+)
+
 @Suppress("LongParameterList") // every parameter is an independent, real fact this sink needs to
 // persist honestly (the same discipline DiagnosticsLog.logVadStats's own suppression already
 // documents) -- grouping them into a data class would only move the same facts one level down.
@@ -1790,6 +1835,27 @@ internal class RealSegmentSink(
 ) : SegmentSink {
 
     private val flacStore = FlacStore(DeflatePredictiveCodec())
+
+    // Register R-1034 (FR-OBS-1's session-level "VAD statistics"): three running counters and a
+    // duration total, updated once per closed segment at the same point [DiagnosticsLog.logVadStats]
+    // already fires from -- cheap arithmetic off the audio frame path (a segment closes far less
+    // often than a frame arrives), never touched per frame. Segmenter closes one segment at a time
+    // on the audio-processing thread (the same single-writer assumption [logVadStats]'s own call
+    // site already makes), so no synchronization is needed beyond that.
+    private var vadSegmentsProposed = 0
+    private var vadSegmentsAccepted = 0
+    private var vadSegmentsRejected = 0
+    private var vadSpeechActiveMs = 0L
+
+    /** Register R-1034: this session's own VAD totals so far, read once by
+     * [org.ort.pipeline.capture.RealCaptureService.endSessionRow] and written as one
+     * [DiagnosticsLog.logVadSessionSummary] line -- never polled per frame. */
+    internal fun vadSessionTotals(): VadSessionTotals = VadSessionTotals(
+        segmentsProposed = vadSegmentsProposed,
+        segmentsAccepted = vadSegmentsAccepted,
+        segmentsRejected = vadSegmentsRejected,
+        speechActiveMs = vadSpeechActiveMs,
+    )
 
     private companion object {
         /** FR-SEG-6 / AC-72's `rejected:too_short` tag, as the free-text `rejectionReason` value. */
@@ -1940,6 +2006,16 @@ internal class RealSegmentSink(
                     vadDetector = vadDetector,
                     rigSquelchFusionApplied = record.rigSquelchFusionApplied,
                 )
+
+                // Register R-1034: the same in-memory tally [vadSessionTotals] reads back at
+                // session end -- updated unconditionally, right alongside the per-segment
+                // logVadStats call above, so the two can never disagree about what "this segment"
+                // was. speechActiveMs is the segment's own vadSpeechFrameCount converted to
+                // milliseconds via the segmenter's fixed frame duration (FrameSpec.DURATION_MS),
+                // never re-measured from the raw PCM a second way.
+                vadSegmentsProposed++
+                if (record.outcome == SegmentOutcome.SPEECH) vadSegmentsAccepted++ else vadSegmentsRejected++
+                vadSpeechActiveMs += record.vadSpeechFrameCount.toLong() * FrameSpec.DURATION_MS
 
                 val encoded = File(filesDir, entity.audioPath())
 

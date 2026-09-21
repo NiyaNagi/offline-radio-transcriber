@@ -1746,6 +1746,14 @@ provenance is a fact about the attempt, not about whether it succeeded. Tier SHA
 on `COMPLETE` and `REJECTED`, the same two outcomes reprocessing already stamps it on; a `FAILED`
 attempt establishes no tier for a later reprocess to compare against.
 
+> **The tier clause is recorded as D56** (register R-1033): a live Pass B ran for the product's
+> entire history without ever writing `TransmissionEntity.processedTier` — only
+> `ReprocessRunner` did — so a log where a reprocessed over carries its tier and a live one does
+> not could never be compared against itself, which defeats the reason for recording tier at all
+> (constitution VI). `org.ort.pipeline.passb.DataPassBResultSink.record` — the one sink every
+> real `PassB`, live or reprocessed, writes through — is the single writer for both facts, so
+> they can never drift apart between the two paths again.
+
 **FR-OBS-14 (M)** — A session's stored record SHALL carry the **actual installed application
 version** at the time it ran, read from the platform's own package information, never a
 build-time literal and never a placeholder value that happens to look like real data. Where the
@@ -3634,6 +3642,7 @@ product; all of them are what make the reference experience world-class.
 | D53 M4 fork decided inside the 1.0 cycle, after Pass B honesty is restored | D46 (amended), R3, M4, Q2, Q16 |
 | D54 Tier-1 analytics off for the closed beta; consent precedes emission | D42 (amended for the beta), D48, FR-ANL-1..14 |
 | D55 Field-report channel ships in release builds; private destination; names redacted at capture | D49 (completed), D37, D38, FR-OBS-6..12, FR-OBS-10 |
+| D56 A live Pass B run records the tier it ran at on the transmission's own row, not only a reprocess | FR-OBS-13 (amended), AC-154, register R-1033 |
 
 Requirement groups added in drafts 3 and 3.2, mapped to the goal or property they serve:
 
@@ -3646,7 +3655,7 @@ Requirement groups added in drafts 3 and 3.2, mapped to the goal or property the
 | FR-A11Y-1..6 | G4, P1 — an uncertainty-first UI that cannot be read fails G4 |
 | FR-SEG-7..9, CON-SEG-1 | D8, AC-39 — the precondition cross-tier reprocessing assumed |
 | FR-STO-2a..c, CON-STO-1 | D4, FR-REP-4 — the retained audio must still support the passes |
-| FR-OBS-13..14 | Constitution VI, FR-REP-2, FR-ACC-5 — the same "no number without its provenance" obligation, restated because a live pass and a real session both skipped it in practice (R-1031, R-1032, R-1033) |
+| FR-OBS-13..14 | D56 (the tier clause); constitution VI, FR-REP-2, FR-ACC-5 — the same "no number without its provenance" obligation, restated because a live pass and a real session both skipped it in practice (R-1031, R-1032, R-1033) |
 | FR-ANL-1..14 | D42, D48, constitution VII — the fourth declared outbound channel, closed-field and tiered, with the same provenance discipline FR-OBS-13..14 already holds |
 | FR-AST-10..14 | D43, D44 — model acquisition and the setup gate, once "everything bundled" (D35) stopped being true on every variant |
 | FR-STO-9 | P9 — restore gets the same "nothing deleted quietly" guarantee export already has |
