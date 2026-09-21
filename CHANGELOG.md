@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (q-voice-wording: R-1150's six remaining "unidentified voice" overclaims fixed across `DetailViewState.kt`/`ThreadViewData.kt`/`StationPolling.kt` and their artboards; R-1151 redraws `Settings-Backup.dc.html` to match the real seven-table backup)
 
-### `<pending>` — R-1150: `Detail-Unknown.dc.html`'s "kept" step and caption, `Threads.dc.html`'s all-UNKNOWN thread title, and `Frequency-Change.dc.html`'s unidentified cause no longer claim voice clustering nothing computed; `StationIdentityScreen.kt`/`Station-Identity.dc.html`/`Fail-Cluster.dc.html` checked and left alone, the claim they carry is real; R-1151: `Settings-Backup.dc.html` redrawn line by line against `SettingsBackupScreen.kt`'s real seven-table copy
+### `088127d3` — R-1150: `Detail-Unknown.dc.html`'s "kept" step and caption, `Threads.dc.html`'s all-UNKNOWN thread title, and `Frequency-Change.dc.html`'s unidentified cause no longer claim voice clustering nothing computed; `StationIdentityScreen.kt`/`Station-Identity.dc.html`/`Fail-Cluster.dc.html` checked and left alone, the claim they carry is real; R-1151: `Settings-Backup.dc.html` redrawn line by line against `SettingsBackupScreen.kt`'s real seven-table copy
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/data/{DetailViewState,ThreadViewData,StationPolling}.kt`
 and their tests; `design/canvas/{Detail-Unknown,Threads,Session,Frequency-Change,Settings-Backup}.dc.html`.
@@ -125,9 +125,11 @@ D45.
   Each new/changed assertion was confirmed to fail for the right reason against the pre-fix
   production code before the fix landed (strict TDD).
 - `.\gradlew.bat :app:detekt :app:ktlintCheck --max-workers=2` — no findings.
-- `.\gradlew.bat :app:testFullDebugUnitTest` (whole `:app` module, ~1200 tests) — run for regression;
-  see the commit that fills in this entry's hash for the result, since it was still running when this
-  entry was written.
+- `.\gradlew.bat :app:testFullDebugUnitTest` (whole `:app` module, ~1200 tests) — started for a full
+  regression check; still running when this entry was committed (a large multi-fork Robolectric/Compose
+  suite), with no failure observed in everything it had completed so far. None of the classes touched
+  here are among `smokeTestFullDebugUnitTest`'s 18 isolated classes, so that task was not run. The lead
+  should confirm this run's final result rather than take "no failure observed yet" as green.
 
 **Left open / not done:**
 - No device evidence and no visual re-capture — this changes only artboards and static strings behind
