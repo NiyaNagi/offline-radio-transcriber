@@ -936,8 +936,10 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   **Done when:** H4 and the 8-hour run show route-verified lines throughout and a forced mid-run
   switch halts capture rather than recording the room.
 
-- [x] **P35 · Durability — stale leases and the migration guard** *(`:data`, `:app` startup)* —
-  FR-RUN-8, AC-47, FR-REP-4. **Beta blocker.**
+- [ ] **P35 · Durability — stale leases and the migration guard** *(`:data`, `:app` startup)* —
+  FR-RUN-8, AC-47, FR-REP-4. **Beta blocker.** *(Code and tests landed `0b10bf56`, merged. Unticked
+  by the lead on the builder's own flag: this unit's "Done when" is "both are observed on a device,
+  not in Robolectric", and neither has been. See R-1119, R-1120.)*
 
   **Read first:** `WorkQueue.recoverStaleLeases` (implemented, never called);
   `applyHandWrittenSchema`'s unique-index creation; the Migration failure screen.
