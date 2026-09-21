@@ -317,6 +317,100 @@ touch `.github/workflows/ci.yml` or `.github/workflows/release.yml` (P23's build
 lists `ci.yml`'s `:app:testDebugUnitTest`/`assembleDebug` ambiguity as broken and unowned by any
 landed unit; still true, still out of this unit's scope).
 
+### `0b10bf56` — P35 durability: the stale-lease call site nothing invoked, and the schema guard that stops a violating index from bricking launch
+
+**Scope:** `:data` (`WorkQueue.kt`, `OrtDatabase.kt` and their tests), `:app` startup path
+(`OrtApplication.kt`, new `DatabaseStartupWiring.kt`, new `ui/failures/DatabaseOpenFailure.kt`,
+`ui/failures/FailureMapper.kt`, `ui/failures/FailureSignalsPolling.kt` and their tests).
+
+**Requirements/ACs:** FR-RUN-8, AC-47, FR-REP-4, FR-STO-7, constitution I ("uncertainty is
+content") and III ("nothing is deleted quietly"). Register R-1119 and R-1120 (halt).
+
+**What changed:** two beta blockers from the 2026-09-20 roadmap audit.
+
+R-1119 — `WorkQueue.recoverStaleLeases` was implemented and tested (build-plan P5) but nothing
+ever called it: a ColorOS kill mid-Pass-B left the item it was working `LEASED` forever, and the
+next launch never noticed. Added `WorkQueue.recoverStaleLeasesAtLaunch()` — a fresh process
+launch has, by construction, leased nothing yet, so a freshly generated run id makes every
+still-`LEASED` row stale by definition, no comparison run id needed from the caller. Wired from
+`OrtApplication.onCreate()` (the app-process startup path, not `RealCaptureService`, which only
+runs once a capture session starts and would leave a killed night unrecovered until the operator
+happened to relaunch capture) — on a background dispatcher, after a successful database open.
+
+R-1120 (halt) — `OrtDatabase.applyHandWrittenSchema` created its three partial unique indices
+(`idx_transcript_one_current`, `idx_wq_active`, `idx_prior_adjustment_one_current`) with no guard
+against pre-existing violating rows, and a throw from `create()` had no recovery path: an upgrade
+over a database that already violated one crashed on every subsequent launch, permanently, for
+every beta tester who had installed an earlier build. Fixed in two layers:
+
+1. **The actual fix** — three new dedup guard functions (`dedupeCurrentTranscripts`,
+   `dedupeActiveWorkQueueItems`, `dedupeCurrentPriorAdjustments`) each run immediately before the
+   `CREATE UNIQUE INDEX` statement they protect, every `create()` call. Each resolves a violation
+   by keeping the highest-`rowid`/`id` row and demoting the rest — `isCurrent = 0` (the same
+   "superseded" state `TranscriptDao.supersede`/`StationIdentityDao.updatePriorWeight` already
+   produce) for the transcript and prior-adjustment guards, terminal `FAILED` with a recorded
+   `lastError` (`OrtDatabase.DUPLICATE_ACTIVE_ITEM_REASON`) for the work-queue guard — never a
+   `DELETE`, so every row stays exactly as reachable as any other superseded/failed row
+   (constitution III), and the demotion is visible, not silent (constitution I). Idempotent and
+   cheap on a healthy database, the same "always run it" shape `ensureFtsIndex` already uses.
+2. **The safety net** — `DatabaseStartupWiring.openOrRecordFailure` (new, `:app`) opens the
+   database once, early, in `OrtApplication.onCreate()`, where a throw can actually be caught;
+   on any other exception the guard above does not anticipate, it records the real message (or
+   the throwable's class name, never a blank placeholder) on the new `DatabaseOpenFailure` holder
+   instead of letting the crash propagate. `FailureSignalsPolling`/`FailureMapper` now read that
+   holder as a real signal — `FailurePresentation.Migration`, checked first among every takeover
+   (ahead of a route mismatch or a storage floor, since neither reading is trustworthy without a
+   working database) — so `Fail-Migration.dc.html` renders instead of the app failing to launch.
+   `FailMigrationScreen` itself and its `FailureHost` wiring already existed (build-plan WP11b);
+   only the real signal was missing.
+
+**Verified:** `./gradlew :data:testDebugUnitTest --max-workers=2` (full module, green) and
+`./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.DatabaseStartupWiringTest" --tests
+"org.ort.app.ui.failures.FailureMapperTest" --max-workers=2` (green). New tests, each shown to
+discriminate (production change reverted → red for the right reason → restored → green):
+`WorkQueueTest.killing_the_process_mid_pass_is_recovered_by_the_launch_entry_point_and_the_over_completes`
+(AC-47, via the new launch entry point rather than a caller-supplied run id);
+`HandWrittenSchemaGuardTest`'s three cases (R-1120) — each builds a fixture that already violates
+one partial unique index using a bare `Room.databaseBuilder` (no guard has run yet), then opens
+it through the real `OrtDatabase.create()` and asserts no throw, exactly one survivor, and the
+loser still reachable; reverting each `dedupe*` call reproduces the original
+`UNIQUE constraint failed` crash. `DatabaseStartupWiringTest`'s two failure-path cases (R-1120
+safety net) — an injected throwing `opener` is caught, recorded, and never escapes; reverting the
+try/catch reproduces the original uncaught propagation.
+`FailureMapperTest`'s two new `R_1120` cases (a database-open failure maps to `Migration` and
+outranks a route mismatch) — reverting the new check in `mapTakeover` returns `None`/`Route`
+instead.
+
+Robolectric traps hit and worked around, not fought: `HandWrittenSchemaGuardTest`'s three cases
+initially failed with `SQLITE_CANTOPEN` opening the second (real, `OrtDatabase.create()`-driven)
+handle onto the fixture file — this reproduced register R-1043's already-diagnosed Windows
+`MAX_PATH` issue (this class's long, traceability-carrying method names plus Robolectric's own
+per-test sandbox directory naming pushed the resolved `-wal`/`-shm` sidecar path over 260
+characters), not a new driver-switching defect; fixed the same way R-1043 was — shortening only
+the on-disk `dbName` (`hwsg-test.db`), not the test method names.
+
+**Left open / not done:** build-plan P35's own "Done when" requires both fixes **observed on a
+device, not in Robolectric** — that is explicitly not done here and was not attempted (three
+emulators were attached to this session but a batch install was withheld to avoid colliding with
+the lead's own gate). What a device run still needs to show: (1) kill `-9` the app process mid
+real Pass B (not Robolectric's own "close one Room instance, open a fresh one" stand-in),
+relaunch, and confirm via the device log/database that the queue row returned to `READY` and the
+over completed; (2) install a build that predates this fix, seed a genuine duplicate active
+`work_queue_item`/`isCurrent` row through real use (or `adb shell` against the installed `ort.db`),
+upgrade over it to this build, and confirm the app opens normally rather than crashing — and, as a
+second device case, force `DatabaseOpenFailure` some other way (there is no known real path to it
+now that the guard covers the one known violation) to confirm `Fail-Migration.dc.html` actually
+renders on a real screen, since `FailMigrationScreen`'s own capture was never re-run here (this
+change touches no `*Content`/`*Screen` file directly — only the signal feeding an already-built,
+already-captured screen — so the constitution VIII re-capture trigger does not fire, per the
+build-plan prompt's own scope). The `DatabaseStartupWiring` safety net is also, by construction,
+incomplete: it only wraps the one `OrtDatabase.create()` call this task added in
+`OrtApplication.onCreate()` — the several dozen pre-existing `OrtDatabase.create()` call sites
+elsewhere in `:app` are unmodified and would still throw uncaught if some *other*, currently
+unknown cause made `create()` fail after that first call already succeeded; rewriting every one
+of those call sites was outside this unit's ownership (`:data`, `:app` startup, and the failure
+screen's wiring only).
+
 ### `<pending>` — roadmap research lands as D51–D55, build-plan Wave L, R-1109..R-1123 and a generated `results/backlog.md`
 
 **Scope:** `spec/functional-spec.md` (§3 decisions and §16 traceability), `spec/build-plan.md`

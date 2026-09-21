@@ -4,6 +4,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import org.ort.core.Clock
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
+import org.ort.core.Ulid
 import org.ort.data.entity.WorkAttemptEntity
 import org.ort.data.entity.WorkAttemptOutcome
 import org.ort.data.entity.WorkQueueItemEntity
@@ -106,6 +107,27 @@ public class WorkQueue(
         }
         stale.size
     }
+
+    /**
+     * Register R-1119 (beta blocker), FR-RUN-8 → AC-47: the call site [recoverStaleLeases] was
+     * implemented and tested against, and never had. The reference device runs ColorOS, which
+     * kills the app mid-Pass-B routinely (AGENTS.md, "things that will surprise you") — without a
+     * caller, the item it was working stays `LEASED` forever, so a killed night silently loses the
+     * overs it was mid-way through, exactly the pattern build-plan P9's own durable-queue rationale
+     * exists to prevent.
+     *
+     * This is the entry point [org.ort.app.OrtApplication.onCreate] calls, once, at process
+     * launch — not [org.ort.pipeline.capture.RealCaptureService.startCapture], which only runs
+     * when a capture session actually starts and would leave a killed night's stale lease
+     * unrecovered for as long as the operator happens not to relaunch capture. A fresh process
+     * launch has, by construction, leased nothing yet: nothing in this process holds any lease at
+     * the moment this runs, so [currentRunId] only needs to be a value no live lease can already
+     * hold — [Ulid.generate] is unique enough for that same reason it is already unique enough for
+     * a session id ([org.ort.core.Ulid]'s own kdoc) — which means *every* row still `LEASED` at
+     * this point belongs, unconditionally, to a run that is no longer alive.
+     */
+    public suspend fun recoverStaleLeasesAtLaunch(): Int =
+        recoverStaleLeases(currentRunId = Ulid.generate(clock).value)
 
     /**
      * The pass succeeded: the row is deleted (the queue is not a history — §7.1) and the

@@ -77,6 +77,43 @@ public class WorkQueueTest {
         assertNull(db.workQueueDao().getById(leasedByRunB.id))
     }
 
+    /**
+     * Register R-1119 (beta blocker), FR-RUN-8 → AC-47: the same claim as the test above, but
+     * through the actual call site build-plan P35 added — [WorkQueue.recoverStaleLeasesAtLaunch] —
+     * rather than a caller manually supplying a fresh run id. This is the shape a real ColorOS
+     * kill mid-Pass-B produces: the process dies holding a lease under some run id nobody now
+     * remembers, and the *next* launch — [org.ort.app.OrtApplication.onCreate]'s own call, not a
+     * capture session starting — must recover it unconditionally, with no run id of its own to
+     * compare against yet.
+     */
+    @Test
+    @Requirement("AC-47", "FR-RUN-8")
+    public fun killing_the_process_mid_pass_is_recovered_by_the_launch_entry_point_and_the_over_completes(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+        val queue = WorkQueue(db, clock)
+        queue.enqueue("TX1", PassId.B_OFFLINE)
+
+        // Run A leases it and "crashes" — never completes, never calls any recovery itself.
+        val leasedByRunA = queue.leaseBatch("run-A", limit = 10) { 60_000L }.single()
+        assertEquals(TransmissionState.PROCESSING, db.transmissionDao().getById("TX1")!!.processingState)
+
+        // The app relaunches — OrtApplication.onCreate's own call site, not a fresh capture
+        // session — and recovers run-A's dangling lease with no run id of its own yet.
+        val recovered = queue.recoverStaleLeasesAtLaunch()
+        assertEquals(1, recovered)
+        assertEquals(TransmissionState.CAPTURED, db.transmissionDao().getById("TX1")!!.processingState)
+        assertEquals(WorkQueueState.READY, db.workQueueDao().getById(leasedByRunA.id)!!.state)
+
+        // The over completes: a fresh capture session leases and finishes it normally.
+        val leasedAfterRecovery = queue.leaseBatch("run-B", limit = 10) { 60_000L }.single()
+        assertEquals(leasedByRunA.id, leasedAfterRecovery.id)
+        queue.completePass(leasedAfterRecovery, TransmissionState.COMPLETE)
+
+        assertEquals(TransmissionState.COMPLETE, db.transmissionDao().getById("TX1")!!.processingState)
+        assertNull(db.workQueueDao().getById(leasedAfterRecovery.id))
+    }
+
     @Test
     @Requirement("AC-99")
     public fun a_hanging_pass_is_cancelled_at_its_deadline_and_the_queue_keeps_draining(): Unit = runTest {

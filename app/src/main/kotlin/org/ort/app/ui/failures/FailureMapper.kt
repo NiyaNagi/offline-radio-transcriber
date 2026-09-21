@@ -63,6 +63,11 @@ public data class FailureSignals(
      * [FailureSignalsPolling], never derived here). `null` exactly when [stagedActivation] is, or
      * when nothing real is installed yet to compare against. */
     public val stagedActivationActiveLabel: String? = null,
+    /** Register R-1120 (halt), FR-STO-7, constitution III: [DatabaseOpenFailure]'s own real fact —
+     * non-null exactly when [org.ort.data.OrtDatabase.create] threw at this process's startup and
+     * its own dedup guard did not prevent it (see that object's kdoc for why this is the safety
+     * net, not the fix itself). `null` on every healthy launch — never fabricated. */
+    public val databaseOpenFailureReason: String? = null,
 )
 
 /** One observed [org.ort.pipeline.capture.StorageForecast.State] transition, timestamped. */
@@ -143,6 +148,12 @@ public object FailureMapper {
 
     /** "Never continue silently" (constitution IV): at most one takeover, checked before any banner. */
     private fun mapTakeover(signals: FailureSignals): FailurePresentation? {
+        // Register R-1120 (halt): checked first, ahead of every other takeover — a database that
+        // failed to open is more fundamental than a route mismatch or a storage floor (neither of
+        // those readings would even be trustworthy without a working database underneath them).
+        signals.databaseOpenFailureReason?.let { reason ->
+            return FailurePresentation.Migration(migrationFailureViewState(reason))
+        }
         val input = signals.inputStatus
         if (input is InputStatus.State.Mismatch) {
             val startedAt = signals.sessionStartedAtMillis
@@ -175,6 +186,18 @@ public object FailureMapper {
         }
         return null
     }
+
+    /** Register R-1120 (halt), FR-STO-7: [reason] is the real exception message (or class name,
+     * when a throwable carried none) [DatabaseOpenFailure] recorded at the moment
+     * [org.ort.data.OrtDatabase.create] threw — never a hand-written "something went wrong"
+     * placeholder (constitution I). There is exactly one step because there is exactly one thing
+     * this codebase can currently say happened: the database did not open. `ok = false` always —
+     * a [MigrationViewState] only exists here because opening failed. */
+    private fun migrationFailureViewState(reason: String): MigrationViewState = MigrationViewState(
+        versionLabel = "Database",
+        headline = "The database could not be opened after the last update",
+        steps = listOf(MigrationStep(label = "Open database", detail = reason, ok = false)),
+    )
 
     /** FR-AST-4: [staged]'s own real facts (asset, version, staged-at time, and the real reason
      * [ModelsController] itself recorded) become F21's board — never a placeholder. [activeLabel]

@@ -86,6 +86,8 @@ public object FailureSignalsPolling {
             backlogHistory = backlogHistory.toList(),
             stagedActivation = stagedActivation,
             stagedActivationActiveLabel = stagedActivationActiveLabel,
+            // Register R-1120: DatabaseOpenFailure's own real fact — see that object's kdoc.
+            databaseOpenFailureReason = DatabaseOpenFailure.reason,
         )
     }
 
