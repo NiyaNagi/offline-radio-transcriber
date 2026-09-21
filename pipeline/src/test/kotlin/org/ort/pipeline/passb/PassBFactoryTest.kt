@@ -173,6 +173,7 @@ public class PassBFactoryTest {
                 trigger.calls.size,
             )
             assertEquals("K7ABC", trigger.calls.single().stationId)
+            assertEquals("K7ABC", trigger.calls.single().resolvedCallsign)
         }
 
     @Test

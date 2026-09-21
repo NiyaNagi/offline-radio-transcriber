@@ -34,6 +34,138 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (roadmap: five decisions, Wave L, fifteen findings, and one backlog view)
 
+### `<pending>` — R-1124/R-1125: Pass B's ranking context is assembled from real `:data`, and a callsign alert watch is honest about confidence
+
+**Scope:** `:pipeline` only — `pipeline/src/main/kotlin/org/ort/pipeline/passb/` (new
+`RankingContextSource.kt`; `PassB.kt`, `PassBFactory.kt`, `DataPassBResultSink.kt`) and
+`pipeline/src/main/kotlin/org/ort/pipeline/alerts/` (`AlertMatchInput.kt`, `AlertMatcher.kt`,
+`AlertNotificationContent.kt`), plus their tests (new `DataRankingContextSourceTest.kt`; updated
+`PassBTest.kt`, `PassBFactoryCalibrationTest.kt`, `PassBFactoryTest.kt`, `AlertMatcherTest.kt`,
+`AlertEvaluationCoordinatorTest.kt`, `AlertNotificationContentBuilderTest.kt`,
+`AndroidAlertNotificationDispatcherTest.kt`, `DataPassBResultSinkAlertsTest.kt`,
+`RealCaptureServiceTest.kt`). No `:lexicon` prior implementation, `:data` schema/DAO, `:capture-*`
+module or `:app` screen touched.
+
+**Requirements/ACs:** FR-LEX-9, FR-LEX-25..27, FR-LEX-31, FR-ALR-3, AC-194; constitution I
+("every machine conclusion MUST be inspectable", "`CONFIRMED` means heard in *this* transmission")
+and IV ("capture never blocks"). Closes register R-1124 and R-1125, the two halves of R-1109/
+R-1110 P33 left open and its own builder/the lead confirmed at HEAD.
+
+**What changed:**
+
+1. **R-1124 — the priors now read a real, per-over context.** `PassB`'s `contextFor` parameter
+   (a plain, pre-computed `RankingContext`) is replaced by a `contextSource: RankingContextSource`
+   — a `suspend fun interface` `PassB` now calls *after* `CallsignGrammar.parse` has produced this
+   transcript's candidates, scoped to exactly those candidates' callsigns (never before parsing —
+   there would be nothing to scope a lookup to — and never against a full-catalog snapshot).
+   `PassBFactory.create` wires the real implementation, `DataRankingContextSource(db)`. Reading
+   each prior's own implementation in `:lexicon` first (as instructed) settled what each one
+   actually consumes and in what shape before writing any of this.
+
+   Three of the seven priors now read real, live `:data`:
+   - **database presence** and **recency** — `DataRankingContextSource` calls
+     `CatalogDao.getStation(callsign)` once per candidate (the same call every other production
+     caller in this module already makes; no new `:data` query), building `databaseHits`/`recency`
+     scoped to the candidates under consideration.
+   - **conversation context** — reuses `RoomThreadRepository.closureFor`/`.priorContextFor` (the
+     identical seam `ThreadGroupingCoordinator` already reads/writes through) to find the thread
+     the current transmission's own frequency/channel continues, and reads that thread's
+     `participantOrder`/`participantStationIds` for an already-identified station.
+
+   The remaining four are left `null` (honestly cold), each for a distinct, real reason recorded
+   in `DataRankingContextSource`'s own kdoc rather than guessed at:
+   - **frequency** (repeater match) — no Rig Module repeater/memory-channel roster (frequency →
+     expected callsigns) exists anywhere on the device; `RigDescriptor` carries CAT transport/poll
+     specs, not a repeater database, and FR-LEX-32's WWARA-import seed is unbuilt.
+   - **band plausibility** — `PropagationInputs` is all-or-nothing and needs an operator↔candidate
+     `distanceKm`; no ITU-prefix/country-to-location centroid table exists anywhere in this
+     codebase (`ItuPrefixTable` carries only prefix → country name/ISO code).
+   - **geographic** — the identical missing centroid table. Deliberately left `null` outright
+     rather than handed a function that always returns `null` for every prefix — the latter would
+     look wired while contributing nothing, the exact "wired but always cold" shape this pair of
+     rows exists to fix, not repeat.
+   - **my-stations** (FR-LEX-14) — no storage and no Settings surface exists anywhere in `:app` or
+     `:data` for a user-editable "my stations" list (confirmed by search).
+
+   **A load-bearing caveat, disclosed rather than hidden:** `StationEntity` (the `station` table
+   `databaseHits`/`recency` read) is never inserted by any production code path today — confirmed
+   by searching `app/src/main` and `pipeline/src/main` for `StationEntity(`; only debug scenarios
+   and tests seed one. And `conversation`'s real source, `TransmissionEntity.stationId`, is only
+   ever written from `Attribution.stationId`, which is `null` for every `AMBIGUOUS`/`UNKNOWN`
+   attribution — every attribution today without a calibrator (register R-1110). So on a device
+   running today's build, all three of the priors this unit wires will still, structurally, read
+   "no data" every time — not because the wiring is wrong, but because their own upstream writers
+   are either entirely unbuilt (the station catalog) or gated by the same uncalibrated-resolver
+   state R-1110 already describes. Wiring the *read* side now is still correct and necessary: each
+   of the three "comes alive" the moment its own writer exists, with no second change to this class
+   required. Left for the lead to file as its own register row(s) rather than filed here.
+
+2. **R-1125 — a callsign watch fires on the resolved candidate, not the asserted attribution.**
+   `AlertMatchInput` gains `resolvedCallsign: String?` — `PassBResult.ranked`'s own top-ranked
+   candidate's text, populated whenever the grammar parsed a candidate at all, independent of
+   `attributionState`. `AlertMatcher.matches` for `AlertWatch.Callsign` now matches against
+   `resolvedCallsign`, never `AlertMatchInput.stationId` (which stays `null` for `AMBIGUOUS`, so
+   matching on it made the watch permanently inert — the defect this row fixes).
+   `AlertNotificationContentBuilder`'s `stationLine` (the second line of a keyword/frequency
+   watch's own notification) is switched to the same field for the identical reason. **`CONFIRMED`
+   is untouched**: no path anywhere restores an uncalibrated `CONFIRMED`; the watch fires on the
+   candidate and `AlertNotificationContentBuilder` already states the real confidence
+   (`AttributionState`) in every callsign-watch notification, hedged for every state but
+   `CONFIRMED`, per its own pre-existing FR-ALR-5 rule. `RealCaptureServiceTest`'s `FR_ALR_3` case
+   — moved to a keyword-only watch during P33 precisely because the callsign path went dark — now
+   proves both a keyword watch and a real `AlertWatch.Callsign("K7ABC")` watch fire from the same
+   real, end-to-end capture composition, asserting the callsign firing's `resolvedCallsign`,
+   `null` `stationId`, and `AMBIGUOUS` state together.
+
+**Discrimination (constitution II):** every fix below was reverted, confirmed red for the right
+reason, then restored.
+- Reverting `PassBFactory.create`'s `contextSource = DataRankingContextSource(db)` (dropping the
+  parameter, falling back to `PassB`'s cold default) turned
+  `PassBFactoryCalibrationTest`'s `R_1124 database presence, recency and conversation context...`
+  red at its first assertion (`database presence must be non-zero`), while every `R_1109`/`R_1110`
+  test stayed green.
+- Reverting `AlertMatcher.matches`'s `Callsign` branch back to `input.stationId?.equals(...)`
+  turned three tests red for the right reason: `AlertMatcherTest`'s
+  `FR_ALR_1 a callsign watch matches the resolved candidate...`,
+  `R_1125 a callsign watch fires on an AMBIGUOUS resolved candidate`, and
+  `a disabled watch is still a structural match...` — while the keyword/frequency and the "no
+  candidate resolved" cases stayed green.
+- Reverting `DataPassBResultSink.alertMatchInputFor`'s `resolvedCallsign` to a hardcoded `null`
+  turned two tests red for the right reason: `DataPassBResultSinkAlertsTest`'s
+  `R_1125 an AMBIGUOUS attribution still carries its top-ranked candidate as resolvedCallsign`,
+  and — importantly — `RealCaptureServiceTest`'s real end-to-end `FR_ALR_3` case (its callsign
+  firing assertion), proving the restored callsign-path coverage actually exercises this line.
+- The non-blocking claim was checked the other direction: temporarily making the test's own
+  stalling `RankingContextSource` call `Thread.sleep(10_000)` instead of suspending on a
+  `CompletableDeferred` turned `PassBTest`'s
+  `R_1124 context assembly suspends rather than blocks the thread it runs on` red
+  (`TimeoutCancellationException`, the shared single-threaded dispatcher never freed up) —
+  confirming the test would actually catch a real blocking violation, not just a hypothetical one.
+
+**Verified:** `.\gradlew.bat :pipeline:test --max-workers=2` — full suite green (100 test classes,
+zero failures across every result XML), forced re-execution with `--rerun` after the last revert/
+restore cycle, not an up-to-date cache hit. Not run: the full gate
+(`dependencyRules platformGuards build`), `gradlew --stop`, any device or tour capture, and
+`:lexicon:test`/other modules (no file outside `:pipeline` touched) — per this unit's own
+instruction.
+
+**Left open / not done:**
+- **The station catalog (`station` table) is never populated by any production code path** —
+  discovered while wiring database presence/recency, confirmed by search, not a defect this unit's
+  ownership (`:pipeline`'s Pass B construction path, context assembly, `alerts/`) covers fixing.
+  Flagging for the lead to route and file as its own register row.
+- **Frequency (repeater match), band plausibility, geographic and my-stations priors remain
+  cold on every device** — no Rig Module repeater roster, no ITU-prefix/country centroid table,
+  and no my-stations Settings surface exist anywhere in the app today. Building any of the three
+  is real, separate feature work (a repeater database import, a geographic reference table, a new
+  Settings screen with `:data` storage) outside this unit's own scope and ownership boundary.
+- **No device capture or tour re-capture was attempted** — this is a `:pipeline`-only change with
+  no `:app`/`:app` UI/`design/` diff, so constitution VIII's own visual-re-verification trigger
+  does not fire; the inspection surface's *content* (prior contributions, once the station table
+  is populated) is nonetheless something the lead may want captured once that follow-up lands.
+- **AC-193's network-silence packet capture for alerts** (register R-1102) is unrelated to this
+  unit and remains unrun, as before.
+
 ### `<pending>` — P33: Pass B's seven evidence priors are wired, and `CONFIRMED` requires a calibration
 
 **Scope:** `:pipeline`, `pipeline/src/main/kotlin/org/ort/pipeline/passb/` (`PassBFactory.kt`,

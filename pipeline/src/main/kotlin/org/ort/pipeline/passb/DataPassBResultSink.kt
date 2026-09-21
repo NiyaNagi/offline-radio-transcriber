@@ -138,11 +138,19 @@ public class DataPassBResultSink(
      * transaction, from the [org.ort.data.entity.TransmissionEntity] segment-persist already wrote
      * (constitution I: never guessed, `null` when genuinely absent). [AlertMatchInput.transcriptText]
      * is `null` for anything but a [PassBOutcome.Accepted] outcome — a keyword watch has nothing to
-     * match against a rejected or failed decode. */
+     * match against a rejected or failed decode.
+     *
+     * **Register R-1125:** [AlertMatchInput.resolvedCallsign] is [result]'s own top-ranked
+     * candidate's text ([result.ranked]'s first entry — already sorted best-first by
+     * [org.ort.lexicon.PriorCombiner.rank]) — never [result.attribution.stationId], which is
+     * `null` for `AMBIGUOUS`/`UNKNOWN` (every attribution today without a calibrator, register
+     * R-1110). `null` here exactly when Pass B parsed no candidate at all (a rejected/failed
+     * outcome, or accepted text with no callsign-shaped words in it). */
     private suspend fun alertMatchInputFor(result: PassBResult): AlertMatchInput = AlertMatchInput(
         transmissionId = result.transmissionId,
         attributionState = result.attribution.state,
         stationId = result.attribution.stationId,
+        resolvedCallsign = result.ranked.firstOrNull()?.candidate?.text,
         transcriptText = (result.outcome as? PassBOutcome.Accepted)?.result?.text,
         frequencyHz = db.transmissionDao().getById(result.transmissionId)?.frequencyHz,
     )

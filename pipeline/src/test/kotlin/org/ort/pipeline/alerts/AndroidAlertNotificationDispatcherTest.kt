@@ -26,7 +26,7 @@ class AndroidAlertNotificationDispatcherTest {
 
     private fun firing(id: String = "w1", count: Int = 1, repeat: Boolean = false) = AlertFiring(
         watch = AlertWatch.Callsign(id = id, callsign = "K7ABC"),
-        input = AlertMatchInput("TX1", AttributionState.CONFIRMED, "K7ABC", null, null),
+        input = AlertMatchInput("TX1", AttributionState.CONFIRMED, "K7ABC", "K7ABC", null, null),
         occurrenceCount = count,
         isRepeat = repeat,
     )

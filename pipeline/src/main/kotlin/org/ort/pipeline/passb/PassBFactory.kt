@@ -32,6 +32,12 @@ import java.io.File
  * offline harness. Before this fix the combiner here was built from `emptyList()`, so every one
  * of those priors was dead on every real device capture; only `:eval` ever exercised them.
  *
+ * **R-1124 (the other half of R-1109):** wiring the priors was not enough — [PassB]'s own
+ * `contextFor` defaulted to an always-empty [org.ort.lexicon.RankingContext] and this factory
+ * never supplied one, so every prior [defaultPriors] wired still evaluated against no data at
+ * all. [DataRankingContextSource] is the real fix; see its own kdoc for exactly which priors it
+ * makes read real `:data` and which stay honestly cold for lack of any on-device source.
+ *
  * **P33 / R-1110 (constitution I, VI):** [calibrator] is `null` by default — there is no dev-fold
  * data yet to fit a real one against. See [CallsignResolver]'s own doc comment for what a `null`
  * calibrator does to the resolvable attribution states (never `CONFIRMED`), and [Calibrator]'s own
@@ -101,6 +107,10 @@ public object PassBFactory {
             resolution = resolution,
             fingerprint = fingerprint,
             sink = DataPassBResultSink(db, alertTrigger = alertTrigger),
+            // R-1124: the real context source -- see its own kdoc for exactly which of the seven
+            // priors this makes read real `:data`, and which stay honestly cold for lack of any
+            // on-device data source at all.
+            contextSource = DataRankingContextSource(db),
             decodeOptions = decodeOptions,
         )
     }

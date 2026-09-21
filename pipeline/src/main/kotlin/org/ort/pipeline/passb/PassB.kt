@@ -101,7 +101,15 @@ public class PassB(
      */
     public val fingerprint: PassFingerprint,
     private val sink: PassBResultSink,
-    private val contextFor: (WorkQueueItemEntity) -> RankingContext = { RankingContext() },
+    /**
+     * Register R-1124: supplies the [RankingContext] the seven evidence priors read, built
+     * *after* the grammar has parsed this transcript's candidates — see [RankingContextSource]'s
+     * own kdoc for why that ordering matters and [DataRankingContextSource] for the real
+     * implementation [PassBFactory] wires in production. Defaults to a source that always returns
+     * [RankingContext]'s cold-start default, the same honest "no context" behaviour every caller
+     * that supplies nothing got before this row existed.
+     */
+    private val contextSource: RankingContextSource = RankingContextSource { _, _ -> RankingContext() },
     private val decodeOptions: DecodeOptions = DecodeOptions(),
 ) : Pass {
 
@@ -110,7 +118,7 @@ public class PassB(
         val outcome = rejectionPipeline.process(segment.candidate, segment.samples, decodeOptions)
 
         val (lattice, ranked, attribution) = when (outcome) {
-            is PassBOutcome.Accepted -> resolveFromText(outcome.result.text, contextFor(item))
+            is PassBOutcome.Accepted -> resolveFromText(outcome.result.text, item)
             is PassBOutcome.Rejected, is PassBOutcome.Failed -> Triple(null, emptyList(), Attribution.unknown())
         }
 
@@ -145,9 +153,9 @@ public class PassB(
      * `buildAnchored` — an acoustic lattice's slots keep `charStart`/`charEnd` `null` (constitution
      * I: never fabricate a transcript-text relationship a text-derived lattice alone can offer).
      */
-    private fun resolveFromText(
+    private suspend fun resolveFromText(
         text: String,
-        context: RankingContext,
+        item: WorkQueueItemEntity,
     ): Triple<PhoneticLattice?, List<RankedCandidate>, Attribution> {
         val lattice = TextDerivedLatticeBuilder(resolution.variants).buildAnchored(text)
         if (lattice.isEmpty) return Triple(null, emptyList(), Attribution.unknown())
@@ -155,6 +163,11 @@ public class PassB(
         val candidates = resolution.grammar.parse(lattice)
         if (candidates.isEmpty()) return Triple(lattice, emptyList(), Attribution.unknown())
 
+        // R-1124: the context is assembled only now, scoped to exactly the callsigns this
+        // transcript's grammar actually produced -- never before parsing (there would be nothing
+        // to scope a database/recency lookup to) and never against a full-catalog snapshot (see
+        // RankingContextSource's own kdoc for why per-candidate is the correct shape here).
+        val context = contextSource.forCandidates(item, candidates.map { it.text }.toSet())
         val ranked = resolution.combiner.rank(candidates, context)
         return Triple(lattice, ranked, resolution.resolver.resolve(ranked))
     }
