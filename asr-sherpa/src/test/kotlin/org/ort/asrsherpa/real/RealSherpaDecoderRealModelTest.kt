@@ -1,5 +1,6 @@
 package org.ort.asrsherpa.real
 
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
@@ -73,6 +74,21 @@ class RealSherpaDecoderRealModelTest {
             assertTrue(normalized.contains("nightfall"), "expected 'nightfall' in: ${hypothesis.text}")
             assertTrue(normalized.contains("lamps"), "expected 'lamps' in: ${hypothesis.text}")
             assertTrue(hypothesis.tokens.isNotEmpty(), "expected per-token timing to be populated")
+
+            // Register R-1121: the sherpa-onnx offline-recognizer binding exposes no no-speech
+            // probability and no per-hypothesis/per-token log-probability at all (confirmed by
+            // decompiling sherpa-onnx-jvm-1.13.7.jar — see RealSherpaDecoder's class doc). A real
+            // decode must therefore leave these null, never a fabricated 0f (constitution I).
+            assertNull(hypothesis.noSpeechProb, "no_speech_prob is not produced by this binding")
+            assertNull(hypothesis.avgLogProb, "avgLogProb is not produced by this binding")
+            assertNull(
+                hypothesis.nBest.firstOrNull()?.logProb,
+                "no per-hypothesis logProb is produced by this binding — must not be fabricated as 0f",
+            )
+            assertNull(
+                hypothesis.tokens.firstOrNull()?.logProb,
+                "no per-token logProb is produced by this binding — must not be fabricated as 0f",
+            )
         } finally {
             decoder.close()
         }

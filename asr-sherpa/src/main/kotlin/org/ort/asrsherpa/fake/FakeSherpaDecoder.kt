@@ -8,6 +8,13 @@ import org.ort.asrsherpa.SherpaDecoder
  * The behavioural fake for [SherpaDecoder] (constitution II): scriptable to a fixed decode, or
  * to crash, so [org.ort.asrsherpa.SherpaAsrEngine]'s plumbing is testable without a real
  * sherpa-onnx binding.
+ *
+ * **Register R-1121: [defaultHypothesis]'s `noSpeechProb = 0.05f` is illustrative, not
+ * representative.** [org.ort.asrsherpa.real.RealSherpaDecoder] — the one real implementation of
+ * this seam — can never produce a `noSpeechProb` at all today (its binding exposes none); this
+ * fake keeps a non-null default so tests exercising [org.ort.asrapi.rules.NoSpeechProbRule]'s
+ * threshold behaviour (as opposed to its `null`-handling, which needs `noSpeechProb = null`
+ * scripted explicitly) don't all have to opt into a value by hand.
  */
 public class FakeSherpaDecoder(private val behaviour: Behaviour = Behaviour.Returns(defaultHypothesis())) :
     SherpaDecoder {

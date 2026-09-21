@@ -102,6 +102,50 @@ class RejectionPipelineTest {
     }
 
     @Test
+    @Requirement("FR-ASR-5", "FR-ASR-6")
+    fun `R_1121 a decode with no no_speech_prob is Accepted but names the control as inert`() = runTest {
+        val engine = FakeAsrEngine(
+            FakeAsrEngine.Behaviour.Returns(
+                FakeAsrEngine.defaultResult(
+                    text = "kilo seven able baker this is whiskey seven x-ray yankee zulu",
+                    noSpeechProb = null,
+                ),
+            ),
+        )
+        val pipeline = RejectionPipeline(engine)
+
+        val outcome = pipeline.process(
+            SegmentCandidate(durationMs = 2000, vadDetectedSpeech = true),
+            FloatArray(16),
+            DecodeOptions(),
+        )
+
+        val accepted = outcome as PassBOutcome.Accepted
+        assertEquals(setOf(RejectionRuleId.NO_SPEECH_PROB), accepted.inertControls)
+    }
+
+    @Test
+    @Requirement("FR-ASR-5", "FR-ASR-6")
+    fun `R_1121 an inert no_speech_prob control is still named when a later control rejects`() = runTest {
+        val repeated = FakeAsrEngine.defaultResult(
+            text = "go go go go go go go go go go go go",
+            noSpeechProb = null,
+        )
+        val engine = FakeAsrEngine(FakeAsrEngine.Behaviour.Returns(repeated))
+        val pipeline = RejectionPipeline(engine)
+
+        val outcome = pipeline.process(
+            SegmentCandidate(durationMs = 2000, vadDetectedSpeech = true),
+            FloatArray(16),
+            DecodeOptions(),
+        )
+
+        val rejected = outcome as PassBOutcome.Rejected
+        assertEquals(RejectionRuleId.REPETITION, rejected.rule)
+        assertEquals(setOf(RejectionRuleId.NO_SPEECH_PROB), rejected.inertControls)
+    }
+
+    @Test
     fun `the pipeline refuses to be built without exactly the six named controls`() {
         val engine = FakeAsrEngine()
         val ex = runCatching {

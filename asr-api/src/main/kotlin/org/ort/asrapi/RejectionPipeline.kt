@@ -7,6 +7,7 @@ import org.ort.asrapi.rules.CompressionRatioRule
 import org.ort.asrapi.rules.NoSpeechProbRule
 import org.ort.asrapi.rules.PostDecodeRejectionRule
 import org.ort.asrapi.rules.PreDecodeRejectionRule
+import org.ort.asrapi.rules.RejectionRuleId
 import org.ort.asrapi.rules.RejectionVerdict
 import org.ort.asrapi.rules.RepetitionRule
 import org.ort.asrapi.rules.TooShortRule
@@ -36,9 +37,13 @@ public class RejectionPipeline(
     }
 
     public suspend fun process(candidate: SegmentCandidate, audio: FloatArray, opts: DecodeOptions): PassBOutcome {
+        val inertControls = mutableSetOf<RejectionRuleId>()
+
         for (rule in preRules) {
             when (val verdict = rule.evaluate(candidate)) {
-                is RejectionVerdict.Reject -> return PassBOutcome.Rejected(verdict.rule, verdict.detail, null)
+                is RejectionVerdict.Reject ->
+                    return PassBOutcome.Rejected(verdict.rule, verdict.detail, null, inertControls.toSet())
+                is RejectionVerdict.Indeterminate -> inertControls += verdict.rule
                 RejectionVerdict.Accept -> Unit
             }
         }
@@ -49,12 +54,14 @@ public class RejectionPipeline(
 
         for (rule in postRules) {
             when (val verdict = rule.evaluate(result)) {
-                is RejectionVerdict.Reject -> return PassBOutcome.Rejected(verdict.rule, verdict.detail, result)
+                is RejectionVerdict.Reject ->
+                    return PassBOutcome.Rejected(verdict.rule, verdict.detail, result, inertControls.toSet())
+                is RejectionVerdict.Indeterminate -> inertControls += verdict.rule
                 RejectionVerdict.Accept -> Unit
             }
         }
 
-        return PassBOutcome.Accepted(result)
+        return PassBOutcome.Accepted(result, inertControls.toSet())
     }
 
     private sealed interface DecodeOutcome {

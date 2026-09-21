@@ -37,7 +37,7 @@ public class FakeAsrEngine(private val behaviour: Behaviour = Behaviour.Returns(
     private fun Behaviour.HangsFor.result(): AsrResult = defaultResult()
 
     public companion object {
-        public fun defaultResult(text: String = "test transmission received", noSpeechProb: Float = 0.05f): AsrResult =
+        public fun defaultResult(text: String = "test transmission received", noSpeechProb: Float? = 0.05f): AsrResult =
             AsrResult(
                 text = text,
                 nBest = emptyList(),
