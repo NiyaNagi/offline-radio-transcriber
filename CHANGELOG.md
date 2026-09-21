@@ -32,6 +32,90 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (m-a11y-manifest: R-1108/R-1106/R-1104)
+
+### `<pending>` — ImproveGroupRow/FrequencyRow/RegularRow content-desc fix, explicit dataExtractionRules, MainActivity re-checks overnight survival
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/ui/improve/ImproveScreens.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/FrequencyScreen.kt`, `app/src/main/AndroidManifest.xml`,
+new `app/src/main/res/xml/data_extraction_rules.xml`, `app/src/main/kotlin/org/ort/app/MainActivity.kt`,
+and two doc-comment-only corrections (no logic touched) in `app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt`
+and `.../ui/setup/SetupStore.kt`, made stale by the `MainActivity` fix. New tests only, under
+`app/src/test/kotlin/org/ort/app/{structural,ui/improve,ui/screens}` and `MainActivityTest.kt`.
+
+**Requirements/ACs:** FR-A11Y (R-1108, R-1090); technical-design §12.4, NFR-6a, FR-PLT-5, FR-STO-8
+(R-1106); AC-189, NFR-8, constitution IV (R-1104).
+
+**What changed:**
+- **R-1108.** `ImproveGroupRow` (`ImproveScreens.kt`) and `FrequencyRow`/`RegularRow`
+  (`FrequencyScreen.kt`) carried the confirmed-broken `clickable` + trailing
+  `semantics(mergeDescendants = true)` shape (`CheckboxRow`/`ToggleRow`'s own R-1090 finding,
+  `Controls.kt`'s doc comment: exports an empty `content-desc` on a real device although
+  Robolectric passes it). Fixed with `clearAndSetSemantics` plus an explicit, multi-entry
+  `SemanticsProperties.Text` list alongside `contentDescription` — the pattern already
+  established by `Rows.kt`'s `RecentRow` and `Controls.kt`'s `CheckboxRow`/`ToggleRow`, applied
+  unchanged rather than inventing a third shape. `FrequencyRow`'s summary/label locals were
+  hoisted so the exported `SemanticsProperties.Text` entries are byte-identical to what the row's
+  own child `Text`s render (`clearAndSetSemantics` erases descendant text otherwise). Also
+  inspected, per the same R-1090 finding, Search's `WidenRow`, `StruckThroughQueryField` and
+  `UnappliedTextCountLine` (`SearchScreen.kt`) — none carry the defect: none use
+  `mergeDescendants = true`; each sets `contentDescription` directly, in a plain, non-merging
+  `semantics {}` block, on the node that itself carries the fact (or, for
+  `StruckThroughQueryField`, on a non-clickable display-only node), so there is no
+  merge-from-descendants step for the confirmed real-device bug to exploit. Left unchanged.
+- **R-1106.** `AndroidManifest.xml`'s `<application>` now declares
+  `android:dataExtractionRules="@xml/data_extraction_rules"` alongside the pre-existing
+  `android:allowBackup="false"`, per technical-design §12.4. The new resource excludes
+  `domain="root"` — the app's entire private storage tree (files, databases, shared preferences)
+  — from both `<cloud-backup>` and `<device-transfer>`, deliberately excluding everything rather
+  than picking categories apart: audio, the Room database, user-supplied station names,
+  voiceprints and any token are all under that one tree, and the four declared outbound channels
+  (export/share, contribution, field report, analytics) are separate, already-declared,
+  operator-visible paths this file has nothing to do with. `allowBackup="false"` alone already
+  refuses both routes on every API level; this resource is belt-and-suspenders, explicit where the
+  spec calls for it to be explicit, so a future accidental flip of `allowBackup` is not the only
+  thing standing between capture audio and someone's cloud account.
+- **R-1104.** `MainActivity.route()`'s fast path now also calls the new
+  `overnightSurvivalStillUnproven(store)`, which runs the identical check
+  `SetupActivity.reconcileOvernightSurvival()` already runs
+  (`OvernightSurvivalChecker`/`RealOvernightSurvivalChecker` over `:data`'s `SessionDao`, never
+  `isIgnoringBatteryOptimizations()`, which constitution IV already forbids trusting) and persists
+  `SetupStore.overnightSurvivalProven` the same way once proven. Previously only
+  `SetupActivity.onCreate` ran this check, so an operator who completed setup once and always
+  launched through the fast path was never routed back through Setup to re-ask, however long that
+  went unproven — exactly the ColorOS population NFR-8/constitution IV name, since that OS's own
+  battery-exemption flag lies. `DebugOvernightSurvivalOverride` is reused as the test seam,
+  unchanged. Updated `SetupActivity.reconcileOvernightSurvival`'s and
+  `SetupStore.overnightSurvivalProven`'s own doc comments to name both real writers now that this
+  exists — the first already explicitly named this exact gap as open, addressed to whoever owned
+  `MainActivity.kt` next; no logic in either file changed.
+
+**Verified:** `.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.improve.ImproveGroupRowSemanticsTest"
+--tests "org.ort.app.ui.screens.FrequencyScreenSemanticsTest" --tests "org.ort.app.structural.DataExtractionRulesTest"
+--tests "org.ort.app.structural.AllowBackupTest" --tests "org.ort.app.ui.improve.*" --tests "org.ort.app.MainActivityTest"
+--tests "org.ort.app.ui.setup.SetupActivityTest"` and `.\gradlew.bat :app:smokeTestFullDebugUnitTest --tests
+"org.ort.app.ui.screens.FrequencyScreenTest"` (its own pinned isolation task, per this module's
+Compose-idle-poison mitigations) all green, no regressions. `.\gradlew.bat :app:detekt :app:ktlintCheck
+--max-workers=2` green (one `NestedBlockDepth` finding in the new `DataExtractionRulesTest` fixed by
+extracting the XML walk into its own function, not suppressed). Discrimination for all three units:
+each production change was reverted to `HEAD` in turn, its new test(s) re-run and failed for the
+stated reason (`ImproveGroupRowSemanticsTest`/`FrequencyScreenSemanticsTest`'s tag-based assertion;
+`MainActivityTest`'s two R-1104 cases), then restored and re-confirmed green.
+
+**Left open / not done:** the accessibility fixes are proven here only on Robolectric's merged
+semantics tree, which this codebase has already confirmed passes the identical broken shape too —
+a real device `uiautomator`/TalkBack pass (the lead's own batch tour) is the only thing that
+settles R-1108, not this unit's tests. The `android:dataExtractionRules` manifest attribute's own
+wiring (as opposed to the resource it points at) is not unit-testable at all —
+`ApplicationInfo.dataExtractionRulesRes` is not part of the public SDK 34 stub jar this module
+compiles against — so it is reviewed by reading the manifest, not asserted by a test. Neither
+`RealCaptureService` nor the heartbeat store were touched, per this unit's own instruction; the
+overnight-survival check remains `:data`-session-history-based, not the richer heartbeat trail
+another builder is landing in `:pipeline` tonight (R-1115) — if that trail lands, this fast-path
+check should move onto it too, in a follow-up.
+
+---
+
 ## 2026-09-20 (P37: `diff.py` can fail)
 
 ### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change

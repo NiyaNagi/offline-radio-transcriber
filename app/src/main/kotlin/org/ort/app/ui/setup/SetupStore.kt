@@ -89,7 +89,11 @@ public interface SetupStore {
      * backgrounded run — `overnightStepSeen` alone (the OS's `isIgnoringBatteryOptimizations()`
      * exemption flag included) must never satisfy that proof; only real session evidence
      * ([OvernightSurvivalChecker]) may set this, and once true it stays true (AC-189's own
-     * "until"). See [SetupActivity]'s own `reconcileOvernightSurvival` for the one real writer.
+     * "until"). Two real writers, both running the identical check: [SetupActivity]'s own
+     * `reconcileOvernightSurvival` (every time Setup is entered) and, since R-1104,
+     * `org.ort.app.MainActivity`'s own `overnightSurvivalStillUnproven` (the fast path an operator
+     * who never revisits Setup otherwise always takes) — the second exists precisely because the
+     * first alone never runs for that operator.
      */
     public var overnightSurvivalProven: Boolean
 

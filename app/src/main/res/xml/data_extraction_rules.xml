@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     R-1106 (register; technical-design §12.4, NFR-6a, FR-PLT-5, FR-STO-8, constitution V): the
+     manifest already sets `android:allowBackup="false"`, which on its own already refuses both
+     cloud backup and Android's device-to-device (D2D) "Switch"/restore transfer for this app on
+     every API level — but the technical design calls for *both* `allowBackup="false"` **and** an
+     explicit `data_extraction_rules` exclusion, and leaving the second half undeclared is exactly
+     what R-1106 found: an app whose first principle is that audio and its content stay on the
+     device should say so explicitly, in the one place API 31+'s own backup/transfer framework
+     reads, rather than relying on a single flag nobody has to re-read to trust. This file is
+     therefore belt-and-suspenders by design, not a second independent guarantee — if
+     `allowBackup` were ever flipped to `true` by mistake, this file is what would still stop a
+     cloud backup or a device transfer from carrying anything.
+
+     Every category the constitution and functional spec name is covered by excluding the whole
+     app sandbox, deliberately, rather than picked apart field by field:
+       - captured/retained audio (constitution V, FR-PLT-5, FR-STO-8/AC-81 — audio is app-private,
+         never exposed to the system media store, so it lives only under this domain)
+       - the Room database (transmissions, transcripts, attributions, corrections, threads,
+         stations, superseded-transcript history)
+       - user-supplied station names and any station knowledge (FR-DIG-13 — never leaves the
+         device in any channel; a stray backup is exactly such a leave)
+       - voiceprints and embeddings (FR-SPK-20 — the *only* declared exception for these is the
+         operator-invoked, in-app export/restore bundle (FR-STO-6, `:data`'s
+         `BackupRestoreCoordinator`), which the operator triggers and which states what it carries;
+         that is a different, already-declared channel from the OS's own backup/transfer, which
+         must carry none of this by default)
+       - any token, credential or analytics queue held in shared preferences or a keystore-backed
+         file
+
+     `domain="root"` covers the app's entire private storage tree (files, databases, shared
+     preferences) in one exclusion. No `external`, `device_protected` or `media` domain is
+     declared because this app never writes there in the first place (FR-STO-8/AC-81); adding an
+     exclusion for a domain nothing is ever written to would document a false capability rather
+     than a true guarantee, so the exclusion list matches what the app actually does, not merely
+     what would be safe to also list.
+
+     Excluding *everything* is deliberate, not merely the default: this app has nothing in its own
+     storage that is meant to leave the device by this route. The four declared outbound
+     channels (constitution V) — user-initiated export/share, corpus contribution, the field
+     report, and analytics — are each their own explicit, operator-visible, closed-field path with
+     its own consent and its own payload construction; none of them is "restore my phone onto a
+     new one" or "back this app up to my cloud account", which is what this file governs instead.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+    </device-transfer>
+</data-extraction-rules>

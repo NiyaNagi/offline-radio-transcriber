@@ -37,9 +37,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
+    <!-- R-1106 (register; technical-design §12.4, NFR-6a, FR-PLT-5, FR-STO-8): allowBackup alone
+         already refuses cloud backup and device-to-device transfer, but the technical design calls
+         for an explicit data_extraction_rules exclusion too, declared where API 31+'s own
+         backup/transfer framework reads it rather than left implicit — see that resource's own
+         comment for the full reasoning and what it deliberately excludes (everything). -->
     <application
         android:name=".OrtApplication"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="Offline Radio Transcriber"
         android:theme="@style/Theme.Ort">
         <!-- R-001/R-006 (ui-conformance-plan WP1): `Theme.Ort` (res/values/themes.xml) replaces the

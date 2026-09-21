@@ -9,13 +9,18 @@ import android.os.PowerManager
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.runBlocking
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
+import org.ort.app.ui.setup.DebugOvernightSurvivalOverride
+import org.ort.app.ui.setup.RealOvernightSurvivalChecker
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStateMachine
+import org.ort.app.ui.setup.SetupStore
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.app.ui.theme.OrtSystemBarStyle
 import org.ort.core.Ulid
+import org.ort.data.OrtDatabase
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.RealCaptureService
 import org.ort.pipeline.digest.ForegroundActivityTracker
@@ -62,20 +67,53 @@ public class MainActivity : ComponentActivity() {
      * The one decision this activity makes: is setup done and is capture actually still permitted
      * right now ([SetupStateMachine.isComplete] — re-checked on every launch, not just the first,
      * so a permission revoked after setup finished sends the operator back through the guided
-     * sequence rather than silently failing to start capture). `true` runs the unchanged
-     * [startCaptureAndShowStatus] path below; `false` hands off to [SetupActivity], which resumes
-     * at the first unverified step (`Flow-Setup.dc.html`) and returns here once `Start capture` is
-     * tapped.
+     * sequence rather than silently failing to start capture) — and, if so, has overnight survival
+     * actually been proven ([overnightSurvivalStillUnproven]). `true`/`false` respectively run the
+     * unchanged [startCaptureAndShowStatus] path below; either gate failing hands off to
+     * [SetupActivity], which resumes at the first unverified step (`Flow-Setup.dc.html`) and
+     * returns here once `Start capture` is tapped.
      */
     private fun route() {
         val prefs = getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, MODE_PRIVATE)
         val store = SharedPreferencesSetupStore(prefs)
-        if (SetupStateMachine.isComplete(currentPermissionsState(store.notificationsSkipped), store.snapshot())) {
+        val setupComplete =
+            SetupStateMachine.isComplete(currentPermissionsState(store.notificationsSkipped), store.snapshot())
+        if (setupComplete && !overnightSurvivalStillUnproven(store)) {
             startCaptureAndShowStatus()
         } else {
             startActivity(Intent(this, SetupActivity::class.java))
             finish()
         }
+    }
+
+    /**
+     * R-1104 (register; AC-189, NFR-8, constitution IV): [SetupStateMachine.isComplete] alone lets
+     * an operator who finished setup once, and always launches through this fast path, skip
+     * [SetupActivity]'s own `reconcileOvernightSurvival()` forever — the one place that re-derives
+     * [SetupStore.overnightSurvivalProven] from real session evidence
+     * ([org.ort.app.ui.setup.OvernightSurvivalChecker]). On ColorOS, whose
+     * `isIgnoringBatteryOptimizations()` reports wrongly (constitution IV — never trusted as
+     * evidence here either), that is exactly the population this check exists to catch, and this
+     * fast path was its only blind spot: an operator who never revisits Setup was never re-asked.
+     *
+     * This runs the identical check [SetupActivity]'s own `reconcileOvernightSurvival()` runs — a
+     * real session, cleanly ended, at least `OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS` long, never the
+     * OS's own exemption flag — and, once proven, persists it exactly as that function does, so a
+     * device that has already proven survival is never routed through Setup again to re-ask
+     * (AC-189's own "until"; [SetupStore.overnightSurvivalProven]'s own doc comment covers the two
+     * real writers this and [SetupActivity] now are). A no-op, returning `false` immediately, once
+     * already proven — the ordinary case for every later launch on a device that has proven it.
+     *
+     * [DebugOvernightSurvivalOverride] is the same test seam [SetupActivity] uses, checked first so
+     * a test can script this without a real `:data` database.
+     */
+    private fun overnightSurvivalStillUnproven(store: SetupStore): Boolean {
+        if (store.overnightSurvivalProven) return false
+        val checker = DebugOvernightSurvivalOverride.activeOverride
+            ?: RealOvernightSurvivalChecker(OrtDatabase.create(applicationContext).sessionDao())
+        val proven = runBlocking { checker.hasProvenSurvival() }
+        if (proven) store.overnightSurvivalProven = true
+        return !proven
     }
 
     /**

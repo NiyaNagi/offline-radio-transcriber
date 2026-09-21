@@ -15,6 +15,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.navigation.ReaderDestination
+import org.ort.app.ui.setup.DebugOvernightSurvivalOverride
+import org.ort.app.ui.setup.FakeOvernightSurvivalChecker
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.pipeline.capture.CaptureState
@@ -59,6 +61,11 @@ class MainActivityTest {
         // CaptureState is a process-wide singleton; leaving a test's `capturing(...)` call live
         // would leak into the next test the same way an undestroyed Activity does.
         CaptureState.idle(clearSession = true)
+        // R-1104: the same belt-and-suspenders reset `SetupActivityTest` already applies for this
+        // package's own overnight-survival test seam — a process-wide singleton left live would
+        // leak into whichever test runs next in this JVM.
+        DebugOvernightSurvivalOverride.clear()
+        DebugOvernightSurvivalOverride.isDebugBuild = { org.ort.app.BuildConfig.DEBUG }
     }
 
     private fun buildAndResume(): MainActivity {
@@ -89,10 +96,38 @@ class MainActivityTest {
         )
     }
 
+    /**
+     * R-1104: also seeds [SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN] `true` — the
+     * same reasoning `SetupActivityTest.storeSetupAlreadyComplete()` already documents for the
+     * identical shape: every test below that calls this one is exercising something else entirely
+     * (the router split, F-022's same-process guard, R-008's system bar style), and without this,
+     * [MainActivity.overnightSurvivalStillUnproven] would now route every one of them to
+     * [SetupActivity] instead of [ReaderActivity] — a real `RealOvernightSurvivalChecker` reading a
+     * fresh, empty Robolectric `:data` instance always finds no survival evidence. Tests that mean
+     * to exercise the R-1104 gate itself call [markSetupCompleteWithUnprovenSurvival] instead.
+     */
     private fun markSetupComplete() {
         val context = ApplicationProvider.getApplicationContext<Application>()
         context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, true)
+            .apply()
+    }
+
+    /** R-1104: setup complete, but deliberately without [SharedPreferencesSetupStore
+     * .KEY_OVERNIGHT_SURVIVAL_PROVEN] — the state an operator who has never proven overnight
+     * survival is actually in. */
+    private fun markSetupCompleteWithUnprovenSurvival() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit().putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true).apply()
+    }
+
+    private fun overnightSurvivalProvenInPrefs(): Boolean {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        return context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, false)
     }
 
     // --- R-080: the router split -----------------------------------------------------------------
@@ -158,6 +193,87 @@ class MainActivityTest {
         assertTrue(activity.isFinishing)
         val nextActivity = shadowOf(activity).nextStartedActivity
         assertEquals(ReaderActivity::class.java.name, nextActivity?.component?.className)
+    }
+
+    // --- R-1104: the fast path re-checks overnight survival too, not only permissions -----------
+
+    @Test
+    @Requirement("R-1104")
+    fun `R_1104 setup complete and permitted but overnight survival never proven routes to SetupActivity`() {
+        markSetupCompleteWithUnprovenSurvival()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
+
+        val activity = buildAndResume()
+
+        val nextActivity = shadowOf(activity).nextStartedActivity
+        assertEquals(
+            "unproven overnight survival must send the operator back through Setup, never straight " +
+                "into capture, the same as a revoked permission does",
+            SetupActivity::class.java.name,
+            nextActivity?.component?.className,
+        )
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        assertNull("unproven overnight survival must not start capture", shadowOf(app).nextStartedService)
+    }
+
+    @Test
+    @Requirement("R-1104")
+    fun `R_1104 overnight survival already proven and persisted starts capture without consulting the checker again`() {
+        markSetupComplete()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        val checker = FakeOvernightSurvivalChecker(proven = true)
+        DebugOvernightSurvivalOverride.show(checker)
+
+        val activity = buildAndResume()
+
+        val nextActivity = shadowOf(activity).nextStartedActivity
+        assertEquals(ReaderActivity::class.java.name, nextActivity?.component?.className)
+        assertEquals(
+            "AC-189's own \"until\": once already latched true in the store, this must never query " +
+                "the checker again on a later launch",
+            0,
+            checker.callCount,
+        )
+    }
+
+    @Test
+    @Requirement("R-1104")
+    fun `R_1104 overnight survival newly provable this launch latches true and proceeds directly, no detour`() {
+        markSetupCompleteWithUnprovenSurvival()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = true))
+
+        val activity = buildAndResume()
+
+        val nextActivity = shadowOf(activity).nextStartedActivity
+        assertEquals(
+            "survival provable right now must not force an unnecessary detour through Setup",
+            ReaderActivity::class.java.name,
+            nextActivity?.component?.className,
+        )
+        assertTrue(
+            "the newly-proven fact must be persisted so it is never re-checked on a later launch",
+            overnightSurvivalProvenInPrefs(),
+        )
+    }
+
+    @Test
+    @Requirement("R-1104")
+    fun `R_1104 a permission revoked short-circuits before ever consulting the overnight checker`() {
+        markSetupCompleteWithUnprovenSurvival()
+        deny(Manifest.permission.RECORD_AUDIO)
+        val checker = FakeOvernightSurvivalChecker(proven = false)
+        DebugOvernightSurvivalOverride.show(checker)
+
+        buildAndResume()
+
+        assertEquals(
+            "a revoked permission already routes to Setup on its own; the overnight checker (a " +
+                ":data read) must never run when that alone already decided the route",
+            0,
+            checker.callCount,
+        )
     }
 
     /**
