@@ -34,6 +34,82 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P37: `diff.py` can fail)
 
+### `1718a87b` — R-1128: the field-report redaction allowlist is derived and fail-closed, not a second guess
+
+**Scope:** `app/src/main/kotlin/org/ort/app/fieldreport/recorder/ScreenFrameCapturer.kt` (the
+predicate and its derivation), matching test files
+(`FieldReportRecorderTest.kt`, `FieldReportBundleBuilderTest.kt`). No other file touched — this is
+a P36 follow-up, `:app` fieldreport surface only.
+
+**Requirements/ACs:** D55, FR-OBS-7, FR-SPK-25, FR-DIG-13, constitution V, R-1112, R-1128.
+
+**What changed:** P36's `RecorderDestination.mayRenderUserSuppliedContent()` named only
+`STATION_DETAIL`, guessed rather than derived — the lead read the code after that unit merged and
+found the guess wrong the same day: `StationsAndFrequencies.kt`'s `StationViewMapper.listEntry`
+copies `StationEntity.userName` onto `StationListEntryViewState.givenName`, and
+`StationScreen.kt`'s `StationRow` (`:172`, `:198`, `:220`) draws it as visible text and semantics
+on every row of the `STATIONS` list destination — a field-report frame captured there rendered an
+operator-typed station name, an absolute constitution V breach (filed as R-1128, alongside
+R-1129 for a different, licences-screen finding).
+
+The fix is not "add `STATIONS` to the list" — the same kind of guess one screen later, against 14
+possible destinations. `mayRenderUserSuppliedContent`'s doc comment now carries the derivation
+itself: working forward from the three fields constitution V names (user-supplied names FR-SPK-25,
+station knowledge FR-DIG-13, location finer than a grid square FR-LEX-24) through
+`StationEntity`'s own fields, to every view state that copies one, to every destination whose
+`Content`/`Screen` composable renders that view state — a table in the code, not narrative. That
+derivation names three unsafe destinations, not one: `STATIONS` (the new finding),
+`STATION_DETAIL` (P36's original), and `TRANSMISSION_DETAIL` (new: `CorrectionSheet`'s
+`StationSearchRow.userName`, composed inline inside `TransmissionDetailContent` rather than a
+separate nav route — excluded on the derivation's own terms, not on the timing of today's
+one-capture-per-arrival). Every other destination (`NOW`, `LOG`, `SEARCH`, `THREADS`,
+`THREAD_DETAIL`, `FREQUENCIES`, `FREQUENCY_DETAIL`, `EARLIER_NIGHTS`, `CAPTURE`,
+`IMPROVE_RECORDS`, `SETTINGS`) was checked against the same table and carries none of the three
+fields in any view state it renders — `NOW`'s own `NowStationRow` carries only the public
+callsign, never `userName`, which is also why a corrected callsign is argued, on the record, **not**
+to count as "station knowledge": FR-DIG-13 scopes that term to FR-DIG-7's own closed list of
+aggregate behavioural facts (frequencies heard, activity pattern, POTA refs, spoken grids, ITU
+region, attribution-state counts) — a dossier — not the public identifier the whole product exists
+to record and already renders on every reading screen.
+
+**The default direction is also inverted, fail-closed.** `CLEARED_FOR_CAPTURE` is now an allowlist
+— a destination not named there is **not** capturable — the same shape
+`RealFieldReportUploadClient`'s own visibility guard already uses (`UNKNOWN` refused, never assumed
+`PRIVATE`). Before this fix an unnamed destination was capturable by default, which is exactly how
+`STATIONS` leaked: the predicate was right about every destination it had considered and silent
+about the rest, and silence read as permission. The named cost, stated plainly rather than left
+implicit: a brand-new destination now captures nothing at all until a person adds it to
+`CLEARED_FOR_CAPTURE` and extends the derivation table — a real reduction in the field-report
+channel's day-one usefulness for a new screen. Accepted deliberately: constitution V is absolute
+here, a captured frame cannot be un-shipped once a bundle uploads, and the alternative direction
+has now produced one proven leak.
+
+**Tests first, each shown to discriminate** (the whole predicate reverted to P36's original
+`this == STATION_DETAIL`, confirmed red, restored, confirmed green):
+`FieldReportRecorderTest`'s `R_1128_a stations-list destination is recorded but never requests a
+frame capture`, `R_1128_a transmission-detail destination is recorded but never requests a frame
+capture`, and `R_1128_mayRenderUserSuppliedContent blocks exactly STATIONS, STATION_DETAIL,
+TRANSMISSION_DETAIL` (pins the full derived set, both blocked and cleared);
+`FieldReportBundleBuilderTest`'s `R_1128 a bundle built from the stations list never carries a
+frame from that destination` (the literal reproduction: a fake capturer standing in for a captured
+name, driven through the real recorder and the real bundle builder, asserting the marker reaches
+no bundle entry). All four failed for the stated reason against the reverted predicate and passed
+once restored.
+
+**Verified:** `./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.fieldreport.*"
+--max-workers=2` — green (58 tests, including the four new/discriminating ones and every P36
+test unchanged). `./gradlew :app:ktlintCheck` — green.
+
+**Left open / not done:** this is a code-level, Robolectric-verified fix — no device capture of a
+real bundle exists proving the `STATIONS`/`TRANSMISSION_DETAIL` redaction on a physical device
+(same open item P36 already named for `STATION_DETAIL`, now true of all three). The derivation
+table is current as of this fix and is a hand-maintained document, not a statically-enforced one —
+it names exactly what to check when a new screen is added, but nothing fails the build if a future
+change adds a `userName`/station-knowledge field to a new view state without updating it; a
+follow-up worth considering (not filed here, since it is process rather than this fix) is whether
+`RecorderEventVocabularyTest`'s reflection technique could extend to this predicate. R-1129
+(no tour step reaches an individual licence notice) is unrelated to this fix and untouched here.
+
 ### `6a58b994` — P37: `diff.py` reads `runId`/`apkHash` and compares pixels, not a coarse signature
 
 **Scope:** `tools/ui-audit/diff.py`; new `tools/ui-audit/tests/test_diff.py` and

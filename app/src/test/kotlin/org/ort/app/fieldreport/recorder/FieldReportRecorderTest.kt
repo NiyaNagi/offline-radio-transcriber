@@ -157,33 +157,91 @@ class FieldReportRecorderTest {
      */
     @Test
     @Requirement("FR-OBS-7")
-    fun `D55_a station-detail destination is recorded but never requests a frame capture`() {
+    fun `D55_a station-detail destination is recorded but never requests a frame capture`() =
+        assertDestinationNeverCaptures(RecorderDestination.STATION_DETAIL)
+
+    /**
+     * R-1128: the finding that proved the first version of this predicate under-inclusive.
+     * `StationScreen.StationRow` draws `StationEntity.userName` as visible text and semantics on
+     * every row of the `STATIONS` list — `mayRenderUserSuppliedContent`'s derivation table
+     * (`ScreenFrameCapturer.kt`) now names it explicitly. Before that fix this test's
+     * `capturer.callCount` would be 1, identical to [assertDestinationNeverCaptures]'s own
+     * STATION_DETAIL case.
+     */
+    @Test
+    @Requirement("FR-OBS-7")
+    fun `R_1128_a stations-list destination is recorded but never requests a frame capture`() =
+        assertDestinationNeverCaptures(RecorderDestination.STATIONS)
+
+    /**
+     * R-1128: `CorrectionSheet`'s station-search rows (`StationSearchRow.userName`) are composed
+     * inside `TransmissionDetailContent`, not a separate nav route — see the derivation's own note
+     * on why this destination is excluded on the derivation's terms, not on the timing of today's
+     * one capture-per-arrival.
+     */
+    @Test
+    @Requirement("FR-OBS-7")
+    fun `R_1128_a transmission-detail destination is recorded but never requests a frame capture`() =
+        assertDestinationNeverCaptures(RecorderDestination.TRANSMISSION_DETAIL)
+
+    private fun assertDestinationNeverCaptures(destination: RecorderDestination) {
         val filesDir = tempFilesDir()
         val capturer = FakeScreenFrameCapturer(FakeScreenFrameCapturer.Mode.Success(byteArrayOf(4, 5, 6)))
         FieldReportRecorder.configure(filesDir, TestClock(), frameCapturer = capturer)
 
-        FieldReportRecorder.onDestinationChanged(RecorderDestination.STATION_DETAIL)
+        FieldReportRecorder.onDestinationChanged(destination)
         runBlocking {
             FieldReportRecorder.flush()
             FieldReportRecorder.awaitFrameCapture()
         }
 
         assertEquals(
-            listOf(RecorderEvent.DestinationChanged(RecorderDestination.STATION_DETAIL)),
+            listOf(RecorderEvent.DestinationChanged(destination)),
             FieldReportRecorder.events(),
             "the destination change itself is still safe to log — FR-OBS-6's vocabulary carries no name",
         )
         assertEquals(
             0,
             capturer.callCount,
-            "a destination that can show an operator-typed name must never even be asked for a frame",
+            "a destination that can show an operator-typed name or station knowledge must never even " +
+                "be asked for a frame",
         )
     }
 
+    /**
+     * R-1128: pins the full derivation, not just one destination — the fail-closed direction means
+     * a destination this set does not name is unsafe by construction, so this test is the one place
+     * that has to be updated (alongside the derivation table itself) when a screen genuinely earns
+     * its way onto the allowlist.
+     */
     @Test
     @Requirement("FR-OBS-7")
-    fun `RecorderDestination_mayRenderUserSuppliedContent is true only for STATION_DETAIL`() {
-        val flagged = RecorderDestination.entries.filter { it.mayRenderUserSuppliedContent() }
-        assertEquals(listOf(RecorderDestination.STATION_DETAIL), flagged)
+    fun `R_1128_mayRenderUserSuppliedContent blocks exactly STATIONS, STATION_DETAIL, TRANSMISSION_DETAIL`() {
+        val blocked = RecorderDestination.entries.filter { it.mayRenderUserSuppliedContent() }.toSet()
+        assertEquals(
+            setOf(
+                RecorderDestination.STATIONS,
+                RecorderDestination.STATION_DETAIL,
+                RecorderDestination.TRANSMISSION_DETAIL,
+            ),
+            blocked,
+        )
+        val cleared = RecorderDestination.entries.filterNot { it.mayRenderUserSuppliedContent() }.toSet()
+        assertEquals(
+            setOf(
+                RecorderDestination.NOW,
+                RecorderDestination.LOG,
+                RecorderDestination.SEARCH,
+                RecorderDestination.THREADS,
+                RecorderDestination.THREAD_DETAIL,
+                RecorderDestination.FREQUENCIES,
+                RecorderDestination.FREQUENCY_DETAIL,
+                RecorderDestination.EARLIER_NIGHTS,
+                RecorderDestination.CAPTURE,
+                RecorderDestination.IMPROVE_RECORDS,
+                RecorderDestination.SETTINGS,
+            ),
+            cleared,
+        )
     }
 }

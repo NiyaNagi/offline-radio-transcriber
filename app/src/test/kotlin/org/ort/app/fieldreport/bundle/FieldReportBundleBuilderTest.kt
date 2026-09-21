@@ -264,4 +264,38 @@ class FieldReportBundleBuilderTest {
         )
         assertEquals(1, capturer.callCount)
     }
+
+    /**
+     * R-1128: the proven leak, reproduced and closed at the bundle level. `StationScreen.StationRow`
+     * draws `StationEntity.userName` on every row of the `STATIONS` destination — a bundle built
+     * while the recorder was on that destination must carry no frame from it, same discipline as
+     * the STATION_DETAIL case above, now extended to the destination the first version of the
+     * predicate missed.
+     */
+    @Test
+    fun `R_1128 a bundle built from the stations list never carries a frame from that destination`() = runTest {
+        val stationNameMarker = "OPERATOR-TYPED-STATION-NAME".toByteArray()
+        val capturer = FakeScreenFrameCapturer(FakeScreenFrameCapturer.Mode.Success(stationNameMarker))
+        FieldReportRecorder.configure(context.filesDir, TestClock(), frameCapturer = capturer)
+
+        FieldReportRecorder.onDestinationChanged(RecorderDestination.STATIONS)
+        FieldReportRecorder.flush()
+        FieldReportRecorder.awaitFrameCapture()
+
+        val (_, entries) = writeBundle(categories = setOf(FieldReportGatedCategory.SCREEN_FRAMES))
+
+        assertTrue(
+            "a STATIONS destination must never produce a stored frame at all",
+            entries.keys.none { it.startsWith("frames/") },
+        )
+        assertTrue(
+            "the operator-typed name marker must appear in no bundle entry",
+            entries.values.none { it.toString(Charsets.UTF_8).contains("OPERATOR-TYPED-STATION-NAME") },
+        )
+        assertEquals(
+            "the capturer must never even have been asked for a frame on this destination",
+            0,
+            capturer.callCount,
+        )
+    }
 }

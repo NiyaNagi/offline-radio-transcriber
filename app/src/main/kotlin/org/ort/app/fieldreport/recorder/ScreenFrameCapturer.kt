@@ -22,23 +22,100 @@ public interface ScreenFrameCapturer {
 }
 
 /**
- * D55/FR-OBS-7: which [RecorderDestination]s can render an operator-typed station name or note on
- * screen — [org.ort.app.ui.screens.StationIdentityScreen]'s own "Given by you" name/note fields
- * (FR-SPK-25, FR-DIG-13), reached at [RecorderDestination.STATION_DETAIL]. Constitution V puts a
- * user-supplied name and station knowledge in **no** channel and **no** tier at all — the
- * field-report exception (FR-OBS-9, FR-OBS-10, D38) covers voiceprints and embeddings only, never
- * names — so a screen frame captured here would already be a breach the moment it existed.
+ * D55/R-1128/FR-OBS-7: which [RecorderDestination]s are **cleared** for field-report frame capture.
  *
- * A screen frame is pixels, not [RecorderEvent]'s closed, name-free vocabulary (FR-OBS-6): nothing
- * downstream (`CallsignScrubber`, FR-OBS-8's ungated-set scrubbing) can find and remove a name from
- * a bitmap the way it can from a log line. **The only correct mechanism is never capturing the
- * frame at all** — [FieldReportRecorder.onDestinationChanged] checks this predicate *before* it
- * ever calls [ScreenFrameCapturer.capture], so a redacted destination produces zero frames, not a
- * frame with something removed from it afterward. Scrubbing a bundle at upload time (FR-OBS-8's own
- * discipline for the *text* files) is deliberately not how this is done: a frame that ever held the
- * name is already the breach, regardless of what a later step does to the bytes.
+ * **R-1128: the first version of this predicate named only [RecorderDestination.STATION_DETAIL],
+ * and it missed the stations *list*** — `StationsAndFrequencies.kt`'s `StationViewMapper.listEntry`
+ * copies `StationEntity.userName` onto `StationListEntryViewState.givenName`, and `StationScreen
+ * .kt`'s `StationRow` (`:172`, `:198`, `:220`) draws it as visible text and semantics on every row
+ * of the `STATIONS` destination. That is exactly the failure a destination-level allowlist can
+ * produce when the allowlist is a guess rather than a derivation: this file's own prior version
+ * said so honestly ("a destination-level allowlist cannot see a name rendered somewhere it does not
+ * name") and the lead found the somewhere-else the very next read. **The fix is not adding
+ * `STATIONS` to a list of one** — there are 14 destinations and no reason to believe a second guess
+ * fares better than the first. It is deriving the list from where the data actually flows, and
+ * writing the derivation down so the next screen can be checked against it, not guessed at.
+ *
+ * **THE DERIVATION.** Constitution V names three things that leave the device in no channel and no
+ * tier at all: user-supplied names (FR-SPK-25), station knowledge (FR-DIG-13), and location finer
+ * than a grid square (FR-LEX-24). Working forward from [org.ort.data.entity.StationEntity]'s own
+ * fields (the one place these are declared, `data/src/main/kotlin/org/ort/data/entity
+ * /CatalogEntities.kt`) to every view state that copies one, and from each view state to every
+ * `Content`/`Screen` composable that renders it:
+ *
+ * | Field (constitution clause)                                                      | Carried into                                                                   | Rendered at                                     |
+ * |-----------------------------------------------------------------------------------|---------------------------------------------------------------------------------|--------------------------------------------------|
+ * | `StationEntity.userName` (FR-SPK-25)                                              | `StationListEntryViewState.givenName`                                            | `STATIONS` — `StationScreen.StationRow`, text + `contentDescription` |
+ * | `StationEntity.userName` / `.notes` (FR-SPK-25 / FR-DIG-13)                       | `StationGivenByYouViewState`, `StationIdentityViewState.givenByYou`             | `STATION_DETAIL` — `StationIdentityScreen`'s "Given by you" |
+ * | `StationEntity.userName` (FR-SPK-25)                                              | `StationSearchRow.userName`                                                      | `TRANSMISSION_DETAIL` — `CorrectionSheet`'s station-search rows (see note below) |
+ * | `StationEntity.ituRegionFromPrefix` (FR-DIG-7, FR-DIG-13)                          | `StationIdentityViewState.lexiconLabel`                                          | `STATION_DETAIL` |
+ * | `StationEntity.{frequenciesHeard, activityByHourDow, potaRefs, spokenGrids, overCountsByAttributionState}` (FR-DIG-7, FR-DIG-13) | none found | not rendered on any screen today — verified by searching every consumer of `StationEntity` and every `StationPolling`/`StationsAndFrequencies` view-state mapper; `ShareCoordinator`'s own doc comment independently confirms these are excluded from the *contribution* payload for the identical reason |
+ *
+ * That derivation makes exactly three destinations unsafe: `STATIONS`, `STATION_DETAIL`, and
+ * `TRANSMISSION_DETAIL`. Every other destination was checked against the same table and carries
+ * none of these fields in any view state it renders — `NOW`'s own `NowStationRow` carries only
+ * `stationId`/`callsign`, never `userName`; `LOG`/`TRANSMISSION_DETAIL`'s (base screen)
+ * `TransmissionListViewState.stationLabel` is `"Station: $stationId"`, the public identifier, not
+ * the nickname; `THREAD_DETAIL`'s `ThreadViewData` reasons about attribution and callsigns only.
+ *
+ * **A note on `TRANSMISSION_DETAIL`.** `CorrectionSheet` is composed *inside*
+ * `TransmissionDetailContent.kt`, not a separate nav route — opening it does not fire a new
+ * `onDestinationChanged` (capture is keyed on [RecorderDestination], not on in-screen sheet state),
+ * so today's one capture-per-arrival happens to land before the sheet can be open. **This predicate
+ * does not rely on that timing as the safety mechanism.** The derivation's own question is "can this
+ * destination ever render the field while it is current", not "does today's one capture call happen
+ * to race ahead of it" — a later change that captures more than once per destination (on back, on a
+ * timer, on any other trigger) must not silently start leaking a sheet's contents just because the
+ * original implementation never gave it the chance. `TRANSMISSION_DETAIL` is excluded on the
+ * derivation's own terms.
+ *
+ * **A note on a corrected callsign.** Deliberately **not** treated as station knowledge here.
+ * FR-DIG-13 scopes "station knowledge" to FR-DIG-7's own closed field list (the five aggregate,
+ * behavioural facts in the table above, plus first/last-heard) — an accumulating dossier, which is
+ * the constitution's own stated reason for the rule. A callsign is the opposite of a dossier entry:
+ * it is the public identifier this entire product exists to record, already rendered on every
+ * reading screen the app has (`NOW`, `LOG`, `SEARCH`, every list and detail screen), and the
+ * resolver would have written the identical value from a candidate the operator merely confirmed.
+ * Treating a corrected callsign as forbidden would make almost no screen capturable, defeating the
+ * channel D55 exists to restore. This holds even where the operator types a callsign the resolver
+ * never offered as a candidate — the *act* of correcting is the operator's own judgement, but the
+ * *value* recorded is the same public identifier a resolved candidate would also have carried, not
+ * a private fact about the station. Argued on the record because the alternative reading is not
+ * absurd — revisit this note first if a future correction UI ever attaches free-text operator
+ * commentary to a correction, which it does not today.
+ *
+ * **The direction is fail-closed, inverted from this predicate's first version (R-1128's second
+ * finding).** [CLEARED_FOR_CAPTURE] is an allowlist, not a deny-list: a [RecorderDestination] this
+ * file does not name is **not capturable**, the same shape
+ * [org.ort.net.fieldreport.real.RealFieldReportUploadClient]'s own visibility guard already uses
+ * (an unreadable destination is `UNKNOWN`, refused, never assumed `PRIVATE`). Before this fix, an
+ * unnamed destination was capturable by default, which is exactly how `STATIONS` leaked — the
+ * predicate was right about every destination it had considered and silent about the rest, and
+ * silence read as permission. The real cost of the inversion: **a brand-new destination captures
+ * nothing at all until a person adds it to [CLEARED_FOR_CAPTURE] and updates the table above** —
+ * this is a genuine reduction in the field-report channel's day-one usefulness for a new screen,
+ * not a free fix. It is accepted deliberately: constitution V is absolute here, a breach is
+ * unrecoverable the moment a frame is captured (there is no "delete it from the upload" once a
+ * bundle has shipped), and the alternative direction has now produced one proven leak. A screen a
+ * builder forgets to clear is a missing feature; a screen nobody remembered to forbid is a breach.
  */
-public fun RecorderDestination.mayRenderUserSuppliedContent(): Boolean = this == RecorderDestination.STATION_DETAIL
+public fun RecorderDestination.mayRenderUserSuppliedContent(): Boolean = this !in CLEARED_FOR_CAPTURE
+
+/** See [RecorderDestination.mayRenderUserSuppliedContent]'s own doc comment for the derivation this
+ * set is built from, and for why its *absence* — not presence — is what makes a destination unsafe. */
+private val CLEARED_FOR_CAPTURE: Set<RecorderDestination> = setOf(
+    RecorderDestination.NOW,
+    RecorderDestination.LOG,
+    RecorderDestination.SEARCH,
+    RecorderDestination.THREADS,
+    RecorderDestination.THREAD_DETAIL,
+    RecorderDestination.FREQUENCIES,
+    RecorderDestination.FREQUENCY_DETAIL,
+    RecorderDestination.EARLIER_NIGHTS,
+    RecorderDestination.CAPTURE,
+    RecorderDestination.IMPROVE_RECORDS,
+    RecorderDestination.SETTINGS,
+)
 
 /**
  * The real, device-touching [ScreenFrameCapturer]: [PixelCopy] against [window], downscaled to

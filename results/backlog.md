@@ -10,23 +10,20 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 110 | 22 | 49 | 39 |
+| UI / defect register | 116 | 22 | 50 | 44 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
-| Build-plan units | 12 | 5 | 7 | 0 |
+| Build-plan units | 9 | 2 | 7 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 2 | 0 | 0 | 2 |
-| **Total** | **164** | **42** | **71** | **51** |
+| **Total** | **167** | **39** | **72** | **56** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
 | id | what | source | state | refs / note |
 |---|---|---|---|---|
-| P33 | Pass B honesty — wire the evidence priors, stop asserting `CONFIRMED` uncalibrated | build-plan | not started | beta gate |
 | P34 | Capture route and sample rate | build-plan | not started | beta gate |
 | P35 | Durability — stale leases and the migration guard | build-plan | not started | beta gate |
-| P37 | Evidence tooling — make `diff.py` able to fail | build-plan | not started | beta gate |
-| P38 | Packaging and the model mirror | build-plan | not started | beta gate |
 | H1 | protocol step never run | hardware | unrun | no results/e2e-audit/hardware/H1.md |
 | H2 | protocol step never run | hardware | unrun | no results/e2e-audit/hardware/H2.md |
 | H3 | protocol step never run | hardware | unrun | no results/e2e-audit/hardware/H3.md |
@@ -58,12 +55,12 @@ process, polish, open questions and coverage debt are P2.
 | R-1003 | every pinned bottom action bar, all screens | register | halt/fixed / awaiting capture | `Setup-Rig.dc.html`, `Setup-Rig-Transport.dc.html`, `Setup-Rig-Bluetooth.dc.html`, guide S8 |
 | R-1013 | S10b link probe | register | halt/fixed / awaiting capture | FR-RIG-3, FR-RIG-14, FR-RIG-15, constitution I + IV |
 | R-1014 | S10b `Verified` | register | halt/fixed / awaiting capture | FR-RIG-3, constitution I |
-| R-1109 | Production Pass B runs with every evidence prior dead | register | halt/open | FR-LEX-9; FR-LEX-25..27, FR-LEX-31; constitution I |
-| R-1110 | `CONFIRMED` is asserted on an uncalibrated score | register | halt/open | FR-LEX-17..21; FR-SPK-10; constitution I, VI |
 | R-1111 | Improve is unreachable on every real session | register | halt/open | FR-REP-1..11; AC-39 |
-| R-1112 | The field-report channel is absent from every signed build | register | halt/open | FR-OBS-6..12; D55 |
 | R-1113 | Route-change and interruption events never fire in production | register | halt/open | FR-CAP-3; FR-RUN-11; constitution IV |
 | R-1120 | An unguarded index build can brick launch permanently | register | halt/open | FR-STO-7; constitution III |
+| R-1124 | Pass B's ranking context is empty in production, so the wired priors read nothing | register | halt/open | FR-LEX-9; FR-LEX-25..27, FR-LEX-31; constitution I; R-1109 |
+| R-1125 | A callsign alert watch can no longer fire in production at all | register | halt/open | FR-ALR-3; AC-194; R-1110 |
+| R-1128 | The field-report redaction allowlist misses the stations list, and fails open by default | register | halt/open | constitution V; FR-OBS-7, FR-SPK-25, FR-DIG-13; D55; R-1112 |
 
 ## P1 — must be true for 1.0
 
@@ -140,6 +137,7 @@ process, polish, open questions and coverage debt are P2.
 | R-1121 | Hallucination control 3 is inert, and no acoustic confidence exists anywhere | register | spec/open | FR-ASR-5, FR-ASR-6; AC-6 |
 | R-1122 | Every number the corpus harness emits lacks machine and provider | register | spec/open | constitution VI |
 | R-1123 | Native aborts, ANRs and OOM are unreportable | register | spec/open | FR-ANL-3; R-1052 |
+| R-1126 | A calibration re-fit will not mark Pass B rows for reprocessing | register | spec/open | FR-REP-4; constitution VI; R-1110 |
 
 ## P2 — after the beta, or polish
 
@@ -169,7 +167,7 @@ process, polish, open questions and coverage debt are P2.
 | R-612 | S03 Setup-Notify scrolled at 2.0 | register | design/open | `Setup-Notify`, guide §5 |
 | R-721 | D04 Detail-Unknown "what was tried" | register | design/fixed / awaiting capture | `Detail-Unknown` |
 | R-761 | CF04 Settings-Assets grouped model rows | register | design/fixed / awaiting capture | `Settings-Assets`, cf. R-443 |
-| R-770 | Tour coverage of designed screens | register | process/open | `design/design-intent.md`, tour |
+| R-770 | Tour coverage of designed screens | register | process **2026-09-20, narrowed by the tour-coverage unit (`57e17037`, merged):** the tour went from 279 to 297 steps and this umbrella is now blocked on a single, specific cause rather than a general shortfall - see r-1127, which lists the seven screens that need a `src/main` seed seam. everything else this row originally listed is either covered or was added this round./open | `design/design-intent.md`, tour |
 | R-771 | D02 Detail-Inferred lattice slots | register | design/fixed / awaiting capture | `Detail`, cf. R-720/R-320 |
 | R-801 | Second look at the 2026-09-10 boards (read-only reviewer, no device) | register | process/fixed / awaiting capture | `design-guide.md` §3, §6.1, §6.5, §8 |
 | R-838 | F23 Log gap row icon | register | design/closed | `Fail-Bluetooth-Audio.dc.html` |
@@ -182,7 +180,7 @@ process, polish, open questions and coverage debt are P2.
 | R-1016 | S10b title | register | design/fixed / awaiting capture | `Setup-Rig-Bluetooth.dc.html` line 37, R-941 |
 | R-1017 | S10b paired-device rows at 2.0 | register | design/fixed / awaiting capture | `Setup-Rig-Bluetooth.dc.html` lines 44-59, R-874/R-880 |
 | R-1018 | S10b pinned block bottom padding | register | polish/fixed / awaiting capture | `Setup-Rig-Bluetooth.dc.html`, guide 10.1 |
-| R-1021 | `overnight-live-monitor` tour steps | register | process/open | R-1007, constitution II |
+| R-1021 | `overnight-live-monitor` tour steps | register | process **fixed in code, awaiting the capture that proves it** (lead verification 2026-09-20): the status was stale, flagged by the tour-coverage builder and confirmed by the lead reading `screenshottouractivity.kt` at head. `live_bar_test_tag = "live-bar"` is what the tap now matches, exactly as this row asked, and the file's own comment cites r-1021 as the reason - the prose match on `live_bar_label` is gone. the evidence this row still needs is the one thing code cannot supply: the three `overnight-live-monitor` steps actually succeeding in a tour run, which is what failed when the row was filed. rolled into the batch tour./fixed / awaiting capture | R-1007, constitution II |
 | R-1023 | N07 timestamp column at 2.0 | register | design/**fixed, confirmed at 2.0** | `Live-Monitor.dc.html`, R-880/R-1017 family |
 | R-1024 | `overnight-live-monitor` level meter | register | process/**fixed, confirmed at 2.0** | `Live-Monitor.dc.html` lines 44-77 |
 | R-1025 | `overnight-live-monitor/N07-live-monitor` at 1.0 | register | process/**reopened | R-1021 |
@@ -194,5 +192,10 @@ process, polish, open questions and coverage debt are P2.
 | R-1090 | The accessibility sweep is half done | register | spec **2026-09-20, second pass (`b9d916e8`):** the screens the first pass never reached were inventoried on a device and fixed - the correction sheet, search's recent row, threads (card and meanwhile row), thread detail, stations (`stationrow` dumped an empty `content-desc` **and** measured 33.5 dp, under the floor), station identity, digest, sessions, recordings (the budgets card had no semantics at all), capture's own back chevron (the r-1073 shape again, on a screen that draws its own header), settings export and backup, and `feedback.kt`'s `banneraction`, which every banner in the app uses. settings root, storage and licences confirmed clean. **still open:** `improvescreens.kt` and `frequencyscreen.kt` carry the identical defect and were outside the sweep's list; search's `widenrow`/`struckthroughqueryfield`/`unappliedtextcountline` use a different shape that was not device-verified; and no live talkback pass has been run, which is what would settle whether `uiautomator`'s split-node dump is ground truth for a small icon inside a clickable box./open | constitution VII, VIII; FR-A11Y |
 | R-1103 | The tour script itself has no test | register | process/open | constitution II, VIII; R-1083 |
 | R-1107 | The mic-denied setup screen has an artboard and no tour step | register | process/open | constitution VIII; R-770, R-1091 |
+| R-1109 | Production Pass B runs with every evidence prior dead | register | halt **2026-09-20, p33 (`aad0d2db`, merged):** `passbfactory` now builds `priorcombiner(defaultpriors(propagationmodel()))` instead of `priorcombiner(emptylist())`, and `passbfactorycalibrationtest.r_1109` proves all seven priors contribute a non-zero term on a fixture over (discriminated: reverted to `emptylist()`, that case alone went red). **this row stays open, because the fix is structural only.** the lead verified at head that `passbfactory.create` constructs `passb(...)` without passing `contextfor`, so production keeps `passb.kt:104`'s default `{ rankingcontext() }` - an empty context on every over. frequency, band plausibility, database presence, recency, geography, conversation context and my-stations therefore all still read cold-start fields on a real device, and this row's own sentence - every callsign is resolved by grammar and confusion distance alone - remains true in production. split out as r-1124, which is the half that changes a device result./open | FR-LEX-9; FR-LEX-25..27, FR-LEX-31; constitution I |
+| R-1110 | `CONFIRMED` is asserted on an uncalibrated score | register | halt **fixed, awaiting device evidence** (p33 `aad0d2db`, merged): `confirmthreshold = -1f` is gone. `callsignresolver` now takes a `calibrator?` rather than a raw float, and with no calibrator present resolves to `ambiguous` - deliberately not `unknown`, since a real separated candidate exists and claiming nothing would be equally dishonest. no hand-picked constant was substituted, per constitution vi. `passbfingerprintbuilder` hashes the threshold as `float?` so *uncalibrated* is its own honest configuration, and a `fakecalibrator` makes the rule testable in both directions. discriminated: restoring `calibrator ?: confirmed` turned exactly the four r_1110 cases red and left the rest green. **open until a device dump shows no `confirmed` without a calibration version** - the unit names that as its evidence, and a passing test is not it. note the consequence recorded in r-1125./fixed / awaiting capture | FR-LEX-17..21; FR-SPK-10; constitution I, VI |
+| R-1112 | The field-report channel is absent from every signed build | register | halt **fixed, awaiting device evidence** (p36 `0b486cec`, merged): `fieldreportappwiring` and `fieldreportrecorder` no longer consult `buildconfig.debug` at all, and the builder correctly followed the gate into two files its brief did not name - `settingscontent.kt`'s `fieldreporthost`, which nulled the whole section out in a release build, and `settingsdiagnosticsscreen.kt`'s *(debug builds only)* header - without which the fix would have been invisible. `fieldreportuploadclientfactory.destination_repository` is gone; `shouldcreate(token, repository)` requires both non-blank, so a build with no configured destination refuses rather than falling back, per d49. no url was invented or committed. the visibility guard was not touched, as instructed. **open until an upload from a signed build lands in the private repository** - which the operator has not created yet./fixed / awaiting capture | FR-OBS-6..12; D55 |
 | R-1116 | `diff.py` cannot fail, and cannot see a changed line of text | register | process/open | constitution VIII; R-1083, R-1103 |
 | R-1117 | The strongest built differentiator has never been captured | register | design/open | constitution VIII; FR-UI-8; R-770 |
+| R-1127 | Seven designed screens can never be captured without a src/main seed seam | register | process/open | constitution VIII; R-770, R-1107, R-1117, R-085 |
+| R-1129 | No tour step opens an individual licence notice, so the Gemma terms are never captured | register | process/open | NFR-6d; constitution VIII; R-1127 |
