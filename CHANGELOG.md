@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (q-coverage-orphans: all twelve orphan-tagged tests diagnosed — none is a typo, a lost requirement, or a missing one; the tag is a legitimate cross-reference the coverage tool doesn't yet recognise, and every carrying file is owned by another package)
 
-### `<pending>` — q-coverage-orphans: diagnosis only, no test or spec edit; tooling gap flagged for the coverage-matrix owner
+### `867bfdd5` — q-coverage-orphans: diagnosis only, no test or spec edit; tooling gap flagged for the coverage-matrix owner
 
 **Scope:** none (investigation only). Explicitly did not touch any file under
 `app/src/test/kotlin/org/ort/app/**` (owned by the `:app` screens and debug-scenarios builders
