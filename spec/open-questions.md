@@ -47,6 +47,20 @@ channel; moved model download into setup for a new slim `play` build variant (**
 deferred the persistent voice library to post-1.0 (**D45**); fixed M4's fork timing to a
 post-1.0 dev-fold measurement (**D46**); confirmed 1.0 ships free (**D47**); and fixed the
 analytics destination as self-hosted and build-configured (**D48**). See spec §3 for all eight.
+
+**2026-09-20 update.** Register R-1132 (a halt) found that no production code path ever created a
+`StationEntity` — every construction lived in `src/test`/`src/debug`, so the Stations screen, every
+station-detail surface, and R-1124's own database-presence/recency priors were permanently empty on
+a real device. With the product owner unavailable, the session lead decided **D56**: a station
+record is born at Pass B closure for the top-ranked resolved callsign candidate of any over that
+parsed a callsign and survived the rejection pipeline — `AMBIGUOUS` or better, never a rejected or
+failed over — and by an operator correction, which always creates or rebinds the record. The bar is
+deliberately not `CONFIRMED`, which R-1110 already made unreachable in production without a fitted
+calibrator; `AMBIGUOUS` or better is also the only bar under which FR-DIG-7's "over counts by
+attribution state" fact means anything, since it requires an unconfirmed station to exist as a
+record. The same session closed **R-1126**: `:core`'s `Materiality` table now names
+`CALIBRATION_VERSION` material to `PassId.B_OFFLINE`, so a future calibrator re-fit offers every
+uncalibrated Pass B row for reprocessing instead of leaving it `AMBIGUOUS` forever.
 ## Status, 7 September 2026 — the register is nearly empty
 
 **Closed:** Q3–Q11, Q13, Q14, Q15, Q17, Q18, Q19 and Q22, recorded as D19–D32, D49 and D50 in

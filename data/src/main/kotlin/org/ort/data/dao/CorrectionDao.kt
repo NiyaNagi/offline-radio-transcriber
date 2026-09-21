@@ -6,6 +6,8 @@ import androidx.room.Query
 import androidx.room.Transaction
 import org.ort.core.AttributionState
 import org.ort.data.entity.CorrectionEntity
+import org.ort.data.entity.OverCountsByAttributionState
+import org.ort.data.entity.StationEntity
 
 /**
  * Build-plan P16's write path for [CorrectionEntity] (FR-UI-6, FR-SPK-7): one-tap correction of
@@ -75,6 +77,18 @@ public interface CorrectionDao {
      * new attribution and stamps the real prior state onto the row it inserts, so it is
      * unconditionally trustworthy: a caller cannot forget to pass it, and it cannot go stale
      * between being computed and being written, since both happen in the same transaction here.
+     *
+     * Register R-1132, D56: "an operator correction always creates or rebinds the record" — the
+     * other half of D56, alongside Pass B closure ([CatalogDao.recordStationObservation]). A
+     * correction always produces [AttributionState.INFERRED]
+     * ([applyCorrectedAttribution]/[org.ort.core.Attribution.withCorrection]'s own contract),
+     * which already clears D56's "`AMBIGUOUS` or better" bar, so [recordStationObservation] is
+     * called unconditionally here, for both a verified pick and unverified free text
+     * ([FIELD_STATION_UNVERIFIED]) — [correction].[CorrectionEntity.newValue] is already what
+     * this same call writes onto `transmission.stationId` via [applyCorrectedAttribution], so the
+     * two tables agree about what the operator just said, whether or not it was verified against
+     * the lexicon (Q8's "marked unverified" is carried on the correction row's own `field`, not
+     * by withholding the station record).
      */
     @Transaction
     public suspend fun recordCorrection(correction: CorrectionEntity) {
@@ -88,6 +102,63 @@ public interface CorrectionDao {
             ),
         )
         applyCorrectedAttribution(correction.transmissionId, correction.newValue)
+        if (correction.newValue.isNotBlank()) {
+            recordStationObservation(correction.newValue, AttributionState.INFERRED, correction.correctedAt)
+        }
+    }
+
+    // ---- R-1132, D56: the same station-birth rule CatalogDao.recordStationObservation applies
+    // at Pass B closure, reached here too because Room's per-Dao interfaces do not let one Dao
+    // call into another's abstract methods -- the "station" table already has more than one
+    // writer (StationIdentityDao's UPDATE queries alongside CatalogDao's own insert/read), and
+    // this follows that established precedent rather than restructuring the Dao boundary. The
+    // *rule* -- how counts merge -- has exactly one implementation, OverCountsByAttributionState;
+    // only this thin get-then-insert-or-update shell is repeated, the same way `correctionsFor`
+    // above is already duplicated verbatim in CatalogDao.
+
+    @Query("SELECT * FROM station WHERE id = :id")
+    public suspend fun getStationForCorrection(id: String): StationEntity?
+
+    @Insert
+    public suspend fun insertStationForCorrection(entity: StationEntity)
+
+    @Query(
+        "UPDATE station SET lastHeardAt = :observedAt, transmissionCount = transmissionCount + 1, " +
+            "overCountsByAttributionState = :overCounts WHERE id = :id",
+    )
+    public suspend fun touchStationObservationForCorrection(id: String, observedAt: Long, overCounts: String)
+
+    @Transaction
+    public suspend fun recordStationObservation(callsign: String, state: AttributionState, observedAt: Long) {
+        val existing = getStationForCorrection(callsign)
+        if (existing == null) {
+            insertStationForCorrection(
+                StationEntity(
+                    id = callsign,
+                    callsign = callsign,
+                    firstHeardAt = observedAt,
+                    lastHeardAt = observedAt,
+                    transmissionCount = 1,
+                    isUserPinned = false,
+                    notes = null,
+                    userName = null,
+                    frequenciesHeard = null,
+                    activityByHourDow = null,
+                    potaRefs = null,
+                    spokenGrids = null,
+                    ituRegionFromPrefix = null,
+                    overCountsByAttributionState = OverCountsByAttributionState.EMPTY.increment(state).serialize(),
+                ),
+            )
+        } else {
+            touchStationObservationForCorrection(
+                id = callsign,
+                observedAt = observedAt,
+                overCounts = OverCountsByAttributionState.parse(existing.overCountsByAttributionState)
+                    .increment(state)
+                    .serialize(),
+            )
+        }
     }
 
     /**

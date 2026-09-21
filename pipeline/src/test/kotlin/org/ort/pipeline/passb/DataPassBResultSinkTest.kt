@@ -296,4 +296,80 @@ class DataPassBResultSinkTest {
 
         assertNull(db.transmissionDao().getById("TX1")!!.processedTier)
     }
+
+    // Register R-1132, D56: before this, no production code path ever inserted a StationEntity --
+    // every construction lived in src/test or src/debug, so the Stations screen and CatalogDao's
+    // own database-presence/recency priors (R-1124) always read cold on a real device. D56 sets
+    // the bar at "AMBIGUOUS or better" precisely because CONFIRMED is unreachable in production
+    // without a calibrator (R-1110) -- a bar set at CONFIRMED would re-create this exact bug.
+
+    @Test
+    fun `R_1132 an accepted outcome births a station for the top-ranked candidate`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(acceptedResult())
+
+        val station = db.catalogDao().getStation("K7ABC")!!
+        assertEquals("K7ABC", station.callsign)
+        assertEquals("CONFIRMED=1,INFERRED=0,AMBIGUOUS=0,UNKNOWN=0", station.overCountsByAttributionState)
+    }
+
+    @Test
+    fun `R_1132 an AMBIGUOUS attribution still births a station -- unconfirmed, not absent`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+        val ambiguous = acceptedResult().copy(attribution = Attribution.ambiguous())
+
+        sink.record(ambiguous)
+
+        // AMBIGUOUS carries no attribution.stationId (register R-1110) -- the station is keyed on
+        // the top-ranked candidate's own text instead, the same source R-1125 already uses.
+        val station = db.catalogDao().getStation("K7ABC")!!
+        assertEquals("CONFIRMED=0,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0", station.overCountsByAttributionState)
+    }
+
+    @Test
+    fun `R_1132 an UNKNOWN attribution never births a station`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+        val unknown = acceptedResult().copy(attribution = Attribution.unknown(), ranked = emptyList())
+
+        sink.record(unknown)
+
+        assertNull(db.catalogDao().getStation("K7ABC"))
+    }
+
+    @Test
+    fun `R_1132 a rejected outcome never births a station`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(rejectedResult())
+
+        assertNull(db.catalogDao().getStation("K7ABC"))
+    }
+
+    @Test
+    fun `R_1132 a failed outcome never births a station`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(failedResult())
+
+        assertNull(db.catalogDao().getStation("K7ABC"))
+    }
+
+    @Test
+    fun `R_1132 a second over for the same callsign updates the station rather than duplicating it`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+
+        sink.record(acceptedResult())
+        sink.record(acceptedResult().copy(attribution = Attribution.ambiguous()))
+
+        val station = db.catalogDao().getStation("K7ABC")!!
+        assertEquals(2, station.transmissionCount)
+        assertEquals("CONFIRMED=1,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0", station.overCountsByAttributionState)
+    }
 }

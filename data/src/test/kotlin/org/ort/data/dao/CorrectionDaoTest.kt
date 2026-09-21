@@ -283,6 +283,60 @@ public class CorrectionDaoTest {
         assertEquals(emptyList<String>(), db.correctionDao().listAllFields())
     }
 
+    /**
+     * Register R-1132, D56 (FR-DIG-7, constitution I, III): "an operator correction always
+     * creates or rebinds the record" — the other half of D56, alongside Pass B closure
+     * ([CatalogDao.recordStationObservation]). A correction always resolves to `INFERRED`
+     * ([CorrectionDao.applyCorrectedAttribution]), which already clears D56's "AMBIGUOUS or
+     * better" bar, so this never needs its own separate threshold.
+     */
+    @Test
+    @Requirement("R-1132", "FR-DIG-7")
+    public fun R_1132_recordCorrection_creates_a_station_for_a_callsign_never_seen_before(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session("S1"))
+        db.transmissionDao().insert(TestFixtures.transmission("TX1", sessionId = "S1", stationId = null))
+
+        db.correctionDao().recordCorrection(
+            CorrectionEntity(
+                id = "CORR1",
+                transmissionId = "TX1",
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = null,
+                newValue = "W7NPC",
+                correctedAt = 100L,
+            ),
+        )
+
+        val station = db.catalogDao().getStation("W7NPC")!!
+        assertEquals("W7NPC", station.callsign)
+        assertEquals(100L, station.firstHeardAt)
+        assertEquals("CONFIRMED=0,INFERRED=1,AMBIGUOUS=0,UNKNOWN=0", station.overCountsByAttributionState)
+    }
+
+    @Test
+    @Requirement("R-1132", "FR-DIG-7")
+    public fun R_1132_recordCorrection_rebinds_rather_than_duplicates_an_existing_station(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session("S1"))
+        db.transmissionDao().insert(TestFixtures.transmission("TX1", sessionId = "S1", stationId = null))
+        db.catalogDao().recordStationObservation("W7NPC", AttributionState.AMBIGUOUS, observedAt = 50L)
+
+        db.correctionDao().recordCorrection(
+            CorrectionEntity(
+                id = "CORR1",
+                transmissionId = "TX1",
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = null,
+                newValue = "W7NPC",
+                correctedAt = 100L,
+            ),
+        )
+
+        val station = db.catalogDao().getStation("W7NPC")!!
+        assertEquals(50L, station.firstHeardAt) // birth timestamp untouched by the rebind
+        assertEquals(100L, station.lastHeardAt)
+        assertEquals("CONFIRMED=0,INFERRED=1,AMBIGUOUS=1,UNKNOWN=0", station.overCountsByAttributionState)
+    }
+
     @Test
     public fun isCorrected_reflects_the_lock(): Unit = runTest {
         db.sessionDao().insert(TestFixtures.session("S1"))

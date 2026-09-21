@@ -3,6 +3,8 @@ package org.ort.data.dao
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
+import org.ort.core.AttributionState
 import org.ort.data.entity.AssetEntity
 import org.ort.data.entity.CalibrationEntity
 import org.ort.data.entity.CallsignCandidateEntity
@@ -11,6 +13,7 @@ import org.ort.data.entity.CorrectionEntity
 import org.ort.data.entity.LatticeSlotEntity
 import org.ort.data.entity.LexiconVersionEntity
 import org.ort.data.entity.OperatorLocationEntity
+import org.ort.data.entity.OverCountsByAttributionState
 import org.ort.data.entity.PhoneticLatticeEntity
 import org.ort.data.entity.StationEntity
 import org.ort.data.entity.StationSummaryEntity
@@ -42,6 +45,60 @@ public interface CatalogDao {
 
     @Query("SELECT * FROM station WHERE id = :id")
     public suspend fun getStation(id: String): StationEntity?
+
+    @Query(
+        "UPDATE station SET lastHeardAt = :observedAt, transmissionCount = transmissionCount + 1, " +
+            "overCountsByAttributionState = :overCounts WHERE id = :id",
+    )
+    public suspend fun touchStationObservation(id: String, observedAt: Long, overCounts: String)
+
+    /**
+     * Register R-1132, D56 (FR-SPK-1, FR-SPK-10, FR-LEX-25..27, FR-DIG-7, constitution I): the
+     * write path that gives a station its first row, or updates the one it already has, the
+     * moment a real over resolves a callsign worth remembering — "at `AMBIGUOUS` or better", per
+     * D56's own wording. [callsign] is the station's own id (the convention every existing
+     * [StationEntity] fixture already uses — `id == callsign`); this method never chooses the
+     * callsign itself, only records that [callsign] was heard again at [state].
+     *
+     * Never overwrites [StationEntity.userName], `.notes`, or any of the other columns an
+     * operator or a later enrichment pass owns — [touchStationObservation] only ever touches
+     * `lastHeardAt`, `transmissionCount` and `overCountsByAttributionState`, and a fresh
+     * [insert] leaves every one of those columns at its honest "nothing known yet" default
+     * (constitution I: never fabricated). `firstHeardAt` is set once, on birth, and never moves —
+     * it is the record's actual birthday, not its most recent sighting.
+     */
+    @Transaction
+    public suspend fun recordStationObservation(callsign: String, state: AttributionState, observedAt: Long) {
+        val existing = getStation(callsign)
+        if (existing == null) {
+            insert(
+                StationEntity(
+                    id = callsign,
+                    callsign = callsign,
+                    firstHeardAt = observedAt,
+                    lastHeardAt = observedAt,
+                    transmissionCount = 1,
+                    isUserPinned = false,
+                    notes = null,
+                    userName = null,
+                    frequenciesHeard = null,
+                    activityByHourDow = null,
+                    potaRefs = null,
+                    spokenGrids = null,
+                    ituRegionFromPrefix = null,
+                    overCountsByAttributionState = OverCountsByAttributionState.EMPTY.increment(state).serialize(),
+                ),
+            )
+        } else {
+            touchStationObservation(
+                id = callsign,
+                observedAt = observedAt,
+                overCounts = OverCountsByAttributionState.parse(existing.overCountsByAttributionState)
+                    .increment(state)
+                    .serialize(),
+            )
+        }
+    }
 
     @Insert
     public suspend fun insert(entity: VoiceprintEntity)

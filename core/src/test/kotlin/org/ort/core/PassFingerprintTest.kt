@@ -69,4 +69,16 @@ class PassFingerprintTest {
     fun `every pass has a materiality entry`() {
         PassId.entries.forEach { Materiality.fieldsFor(it) }
     }
+
+    @Test
+    fun `R_1126 a calibration re-fit makes a Pass B row a reprocess candidate too`() {
+        val stored = fp(pass = PassId.B_OFFLINE, calibration = null)
+        val current = fp(pass = PassId.B_OFFLINE, calibration = AssetRef("calib", "1"))
+        assertTrue(
+            stored.materiallyDiffersFrom(current),
+            "a fitted calibrator must offer every uncalibrated Pass B row for reprocessing " +
+                "(FR-REP-4) -- before this, CALIBRATION_VERSION was material to D_RESOLVE only",
+        )
+        assertEquals(setOf(FingerprintField.CALIBRATION_VERSION), stored.changedMaterialFields(current))
+    }
 }
