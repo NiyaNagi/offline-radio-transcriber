@@ -34,6 +34,49 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P37: `diff.py` can fail)
 
+### `5547978b` — P36 gate fallout: detekt line-length rewrap, and a deterministic fix for `AC_144`'s contention timeout
+
+**Scope:** `app/src/main/kotlin/org/ort/app/fieldreport/recorder/ScreenFrameCapturer.kt` (rewrap
+only, no content change); `app/src/test/kotlin/org/ort/app/ui/settings/SettingsContentTest.kt`.
+
+**Requirements/ACs:** none new — a batch-gate fix for P36/R-1128's own landed work; AC-144
+unchanged in behaviour.
+
+**What changed:** two gate failures traced to the R-1128 batch, both fixed without raising a
+timeout.
+
+1. `:app:detekt`'s `MaxLineLength` fired seven times on `mayRenderUserSuppliedContent`'s own
+   derivation table (a Markdown table's single-line rows do not wrap). Reshaped into a wrapped
+   `field -> view state -> destination` list, same content, no row dropped, no reasoning shortened.
+2. `SettingsContentTest`'s `AC_144` timed out (`ComposeTimeoutException`, 15 s) under a six-worker
+   loaded gate, passed in isolation. Diagnosed rather than re-run blindly: `Send field report…`
+   opens the consent screen, whose `LaunchedEffect` calls the real `FieldReportBundleBuilder
+   .preview()`, which renders `CountsJsonProducer` (reused from `DiagnosticsBundleSpec.files`) —
+   the first `OrtDatabase.create()` call in this test class's own fresh Robolectric sandbox, real
+   synchronous disk I/O (WAL mode, the hand-written schema, `runBlocking`), load-sensitive the same
+   way `BannerClosingBorderTest`'s own R-1080 fix documents for a different lazily-opened database.
+   Not a behavioural regression from P36 — `BuildConfig.DEBUG` is `true` in every Robolectric test
+   regardless of the gate P36 removed, so this composition already ran unconditionally before that
+   change; the timing margin was already thin (`ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS`'s own doc
+   comment already names this exact test as the reason it was raised once before, R-1043) and a
+   loaded six-worker gate used what little was left. Fixed the way that family is fixed: a new
+   `warmDatabase()` calls `OrtDatabase.create(context)` synchronously before `setContent`, paying
+   the one-time cost outside the timed `waitUntil` instead of racing it inside one. Not closed —
+   closing it before `composeTestRule`'s own teardown would reproduce the exact "close while
+   composition still live" race `OrtComposeTestRule.kt` documents; this class does not otherwise
+   manage a database lifecycle, and a fresh Robolectric sandbox is discarded per test regardless.
+
+**Verified:** `./gradlew :app:detekt --max-workers=2` — the seven `ScreenFrameCapturer.kt` hits are
+gone; one unrelated, pre-existing `LargeClass` finding remains in `FailureMapperTest.kt` (last
+touched by the P35 durability merge, `0b10bf56` — not this fix's file, not this fix's scope, not
+introduced here). `./gradlew :app:testFullDebugUnitTest --tests
+"org.ort.app.ui.settings.SettingsContentTest" --tests "org.ort.app.fieldreport.*" --max-workers=2
+--rerun-tasks` — green, `AC_144` included, forced real execution. `./gradlew :app:ktlintCheck` —
+green.
+
+**Left open / not done:** the pre-existing `FailureMapperTest.kt` `LargeClass` detekt finding is
+unrelated to this fix and untouched — flagged for whoever owns that file/package, not fixed here.
+
 ### `4df86464` — P34 gate fix: `AudioRecordSource.start` split so detekt's LongMethod/CyclomaticComplexMethod hold, plus two line-length fixes
 
 **Scope:** `:capture-android` only — `AudioRecordSource.kt` (production), plus two pre-existing

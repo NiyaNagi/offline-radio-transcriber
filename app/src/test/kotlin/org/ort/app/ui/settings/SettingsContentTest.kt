@@ -21,6 +21,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.testing.ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.data.OrtDatabase
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
@@ -45,6 +46,12 @@ class SettingsContentTest {
         waitUntil(timeoutMillis) {
             runCatching { onNodeWithText(text, substring = true).assertExists() }.isSuccess
         }
+    }
+
+    /** See `AC_144`'s own doc comment: pays `OrtDatabase.create`'s one-time, load-sensitive real
+     * disk I/O synchronously, before any timed `waitUntil` starts, instead of racing it inside one. */
+    private fun warmDatabase() {
+        OrtDatabase.create(context)
     }
 
     @Test
@@ -151,10 +158,36 @@ class SettingsContentTest {
      * wiring (not just the stateless `FieldReportConsentScreen` composable in isolation, which
      * `SettingsDiagnosticsScreenTest` already covers): toggle `Screen frames` on, `Cancel`, reopen,
      * and find it off again — all in one composition, since this rule refuses a second `setContent`.
+     *
+     * Gate fallout (P36/R-1128 batch, register): the `waitUntil` below timed out under a six-worker
+     * gate on a loaded machine — passed in isolation with `--rerun-tasks`, so this was contention,
+     * not a behavioural regression. Investigated rather than papered over with a longer timeout
+     * (`ORT_COMPOSE_ASYNC_WAIT_TIMEOUT_MILLIS`'s own doc comment already names this exact test as
+     * the reason it was raised once before, R-1043): `Send field report…` opens the consent screen,
+     * whose `LaunchedEffect` calls the real `FieldReportBundleBuilder.preview()`, which renders
+     * every one of `FieldReportBundleSpec.ungatedFiles` — including `CountsJsonProducer`, reused
+     * from `DiagnosticsBundleSpec.files`, which calls `OrtDatabase.create(context)`. Nothing in this
+     * test class opens a database before that point, so this was the **first** `OrtDatabase.create`
+     * call in the test's own fresh Robolectric sandbox — real, synchronous disk I/O
+     * (`buildAndInitialize`'s own `runBlocking`: WAL mode, the hand-written schema, the busy-timeout
+     * pragma), ordinarily a few milliseconds but load-sensitive exactly the way
+     * `BannerClosingBorderTest`'s own R-1080 fix documents for a different lazily-opened database.
+     * [warmDatabase] pays that one-time cost synchronously, before the timed wait starts, rather
+     * than racing it inside a 15 s wall-clock window — the same "move the real I/O out of the
+     * timed wait" shape as that fix, applied here because `CountsJsonProducer` cannot be routed
+     * around the way that fix routed around `FailureSignalsPolling`'s query with `sessionId = null`
+     * (every ungated file, including this one, is unconditional). Deliberately not closed: this
+     * class does not otherwise manage an `OrtDatabase` lifecycle (no `ortComposeTestRule`), and
+     * closing it from inside this method, before `composeTestRule`'s own teardown fires, would
+     * reproduce the exact "close while composition still live" race `OrtComposeTestRule.kt`'s own
+     * doc comment describes — each Robolectric test method gets its own fresh, discarded sandbox
+     * regardless, the same accepted shape `app/build.gradle.kts`'s own poison-hunting comments
+     * already document for several `*Polling`/`*Runner` objects that never close what they open.
      */
     @Test
     @Requirement("AC-144")
     fun `AC_144 a category toggled on and cancelled is off again the next time the consent screen opens`() {
+        warmDatabase()
         composeTestRule.setContent {
             OrtTheme { SettingsContent(context = context, onDrawer = {}, initialScreen = SettingsScreenId.DIAGNOSTICS) }
         }

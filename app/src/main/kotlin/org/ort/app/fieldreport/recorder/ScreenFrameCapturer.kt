@@ -41,15 +41,26 @@ public interface ScreenFrameCapturer {
  * than a grid square (FR-LEX-24). Working forward from [org.ort.data.entity.StationEntity]'s own
  * fields (the one place these are declared, `data/src/main/kotlin/org/ort/data/entity
  * /CatalogEntities.kt`) to every view state that copies one, and from each view state to every
- * `Content`/`Screen` composable that renders it:
+ * `Content`/`Screen` composable that renders it — one line per field below, read as
+ * *field (constitution clause) -> the view state it is carried into -> where that view state is
+ * rendered*:
  *
- * | Field (constitution clause)                                                      | Carried into                                                                   | Rendered at                                     |
- * |-----------------------------------------------------------------------------------|---------------------------------------------------------------------------------|--------------------------------------------------|
- * | `StationEntity.userName` (FR-SPK-25)                                              | `StationListEntryViewState.givenName`                                            | `STATIONS` — `StationScreen.StationRow`, text + `contentDescription` |
- * | `StationEntity.userName` / `.notes` (FR-SPK-25 / FR-DIG-13)                       | `StationGivenByYouViewState`, `StationIdentityViewState.givenByYou`             | `STATION_DETAIL` — `StationIdentityScreen`'s "Given by you" |
- * | `StationEntity.userName` (FR-SPK-25)                                              | `StationSearchRow.userName`                                                      | `TRANSMISSION_DETAIL` — `CorrectionSheet`'s station-search rows (see note below) |
- * | `StationEntity.ituRegionFromPrefix` (FR-DIG-7, FR-DIG-13)                          | `StationIdentityViewState.lexiconLabel`                                          | `STATION_DETAIL` |
- * | `StationEntity.{frequenciesHeard, activityByHourDow, potaRefs, spokenGrids, overCountsByAttributionState}` (FR-DIG-7, FR-DIG-13) | none found | not rendered on any screen today — verified by searching every consumer of `StationEntity` and every `StationPolling`/`StationsAndFrequencies` view-state mapper; `ShareCoordinator`'s own doc comment independently confirms these are excluded from the *contribution* payload for the identical reason |
+ * - `StationEntity.userName` (FR-SPK-25) -> `StationListEntryViewState.givenName` -> `STATIONS`
+ *   (`StationScreen.StationRow` draws it as visible text and in its `contentDescription`, at
+ *   `:172`, `:198` and `:220`).
+ * - `StationEntity.userName` / `.notes` (FR-SPK-25 / FR-DIG-13) -> `StationGivenByYouViewState`,
+ *   `StationIdentityViewState.givenByYou` -> `STATION_DETAIL` (`StationIdentityScreen`'s own
+ *   "Given by you" fields).
+ * - `StationEntity.userName` (FR-SPK-25) -> `StationSearchRow.userName` -> `TRANSMISSION_DETAIL`
+ *   (`CorrectionSheet`'s station-search rows — see the note on this destination below).
+ * - `StationEntity.ituRegionFromPrefix` (FR-DIG-7, FR-DIG-13) ->
+ *   `StationIdentityViewState.lexiconLabel` -> `STATION_DETAIL`.
+ * - `StationEntity.{frequenciesHeard, activityByHourDow, potaRefs, spokenGrids,
+ *   overCountsByAttributionState}` (FR-DIG-7, FR-DIG-13) -> **no view state found that carries
+ *   any of them** -> not rendered on any screen today. Verified by searching every consumer of
+ *   `StationEntity` and every `StationPolling`/`StationsAndFrequencies` view-state mapper;
+ *   `ShareCoordinator`'s own doc comment independently confirms these five are excluded from the
+ *   *contribution* payload for the identical reason.
  *
  * That derivation makes exactly three destinations unsafe: `STATIONS`, `STATION_DETAIL`, and
  * `TRANSMISSION_DETAIL`. Every other destination was checked against the same table and carries
