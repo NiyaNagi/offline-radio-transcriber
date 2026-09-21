@@ -44,13 +44,80 @@ public interface CatalogDao {
     public suspend fun insert(entity: StationEntity)
 
     @Query("SELECT * FROM station WHERE id = :id")
-    public suspend fun getStation(id: String): StationEntity?
+    public suspend fun getStationRaw(id: String): StationEntity?
 
+    /**
+     * Register R-1134 (FR-DIG-7, FR-DIG-8, constitution I, III): the real read path — [getStationRaw]
+     * exists only so [recordStationObservation] can check for a station's existence without paying
+     * for [overCountRowsFor] on every write. [StationEntity.overCountsByAttributionState] is
+     * recomputed here, on every read, from the [org.ort.data.entity.TransmissionEntity] rows it is a
+     * fact *about*, rather than trusted from the stored column — FR-DIG-8: "a fact that cannot be
+     * recomputed from the log is not a fact." Before this, [touchStationObservation] incremented the
+     * column in place and nothing ever decremented it: undoing a correction
+     * ([org.ort.data.dao.CorrectionDao.restoreAttribution]) or splitting a voiceprint cluster
+     * ([org.ort.data.dao.StationIdentityDao.splitVoiceprint]) both change a transmission's own
+     * `attributionState`/`stationId` directly, and neither called an inverse of `increment` — on
+     * purpose, since decrementing is a quiet deletion constitution III forbids. Deriving instead of
+     * incrementing makes undo automatic: [overCountRowsFor] reads the transmission's *current*
+     * `attributionState`/`stationId`, so a row moved back to its pre-correction state (or to
+     * `UNKNOWN` by a split) simply stops counting toward this station on the very next read, with no
+     * separate "undo the increment" step to remember or forget.
+     *
+     * [StationEntity.firstHeardAt]/`.lastHeardAt`/`.transmissionCount`/`.userName`/`.notes` are
+     * deliberately left exactly as stored — only `overCountsByAttributionState` is overwritten here.
+     * `firstHeardAt` is still set once, at birth, and never moved; `userName`/`.notes` are operator
+     * content no machine observation may ever overwrite. Neither is a "fact" FR-DIG-7 names as
+     * re-derivable, and changing either was out of this row's scope.
+     */
+    @Transaction
+    public suspend fun getStation(id: String): StationEntity? {
+        val raw = getStationRaw(id) ?: return null
+        val counts = overCountRowsFor(id).associate { it.attributionState to it.count }
+        return raw.copy(overCountsByAttributionState = OverCountsByAttributionState(counts).serialize())
+    }
+
+    /**
+     * Register R-1134: reproduces [recordStationObservation]'s own "which callsign does this over
+     * count toward" rule, from stored rows instead of an in-place increment — the union's two arms
+     * mirror the two ways a transmission can be counted for [stationId], and never overlap:
+     *
+     * - a transmission whose own `stationId` already names this station — every `CONFIRMED`/
+     *   `INFERRED` over, whether machine-resolved or operator-corrected
+     *   ([org.ort.data.dao.CorrectionDao.applyCorrectedAttribution] always writes `stationId` and
+     *   `attributionState` together, so the two never disagree about who this counts toward);
+     * - a transmission with `stationId IS NULL` (every real `AMBIGUOUS` over today —
+     *   `Attribution.stationId` is `null` for `AMBIGUOUS`, register R-1110) whose **top-ranked**
+     *   [org.ort.data.entity.CallsignCandidateEntity] (`rank = 0`) names this station — the exact
+     *   candidate [DataPassBResultSink.recordStationObservation] itself keys on.
+     *
+     * Both arms exclude `UNKNOWN` (D56: a station is observed only at "`AMBIGUOUS` or better").
+     * Read `AttributionState` values are already the enum's stored name (Room's built-in enum
+     * support), so the `!= 'UNKNOWN'` literal comparison matches [AttributionState.UNKNOWN.name].
+     *
+     * The second arm uses `EXISTS`, never a `JOIN`, against [CallsignCandidateEntity] on purpose:
+     * [DataPassBResultSink.persistCandidates]'s own doc comment states a re-run for the same
+     * transmission **adds** a new candidate set rather than overwriting the previous one
+     * (constitution III — nothing deleted quietly), so more than one `rank = 0` row can exist for
+     * one transmission. A `JOIN` would fan out one transmission row into one result row per
+     * matching candidate row and over-count it; `EXISTS` counts the transmission at most once
+     * regardless of how many historical candidate rows agree with [stationId].
+     */
     @Query(
-        "UPDATE station SET lastHeardAt = :observedAt, transmissionCount = transmissionCount + 1, " +
-            "overCountsByAttributionState = :overCounts WHERE id = :id",
+        "SELECT attributionState, COUNT(*) AS count FROM (" +
+            "SELECT attributionState FROM transmission " +
+            "WHERE stationId = :stationId AND attributionState != 'UNKNOWN' " +
+            "UNION ALL " +
+            "SELECT t.attributionState FROM transmission t " +
+            "WHERE t.stationId IS NULL AND t.attributionState != 'UNKNOWN' AND EXISTS (" +
+            "SELECT 1 FROM callsign_candidate cc " +
+            "WHERE cc.transmissionId = t.id AND cc.`rank` = 0 AND cc.callsign = :stationId" +
+            ")" +
+            ") GROUP BY attributionState",
     )
-    public suspend fun touchStationObservation(id: String, observedAt: Long, overCounts: String)
+    public suspend fun overCountRowsFor(stationId: String): List<StationOverCount>
+
+    @Query("UPDATE station SET lastHeardAt = :observedAt, transmissionCount = transmissionCount + 1 WHERE id = :id")
+    public suspend fun touchStationObservation(id: String, observedAt: Long)
 
     /**
      * Register R-1132, D56 (FR-SPK-1, FR-SPK-10, FR-LEX-25..27, FR-DIG-7, constitution I): the
@@ -62,14 +129,30 @@ public interface CatalogDao {
      *
      * Never overwrites [StationEntity.userName], `.notes`, or any of the other columns an
      * operator or a later enrichment pass owns — [touchStationObservation] only ever touches
-     * `lastHeardAt`, `transmissionCount` and `overCountsByAttributionState`, and a fresh
-     * [insert] leaves every one of those columns at its honest "nothing known yet" default
-     * (constitution I: never fabricated). `firstHeardAt` is set once, on birth, and never moves —
-     * it is the record's actual birthday, not its most recent sighting.
+     * `lastHeardAt` and `transmissionCount`, and a fresh [insert] leaves every other column at its
+     * honest "nothing known yet" default (constitution I: never fabricated). `firstHeardAt` is set
+     * once, on birth, and never moves — it is the record's actual birthday, not its most recent
+     * sighting.
+     *
+     * Register R-1134: [state] is no longer used to compute a stored count here — see [getStation]'s
+     * own doc comment for why `overCountsByAttributionState` is derived on read instead. It stays in
+     * the signature, and is now enforced with [require] rather than merely trusted, because both
+     * real call sites ([org.ort.pipeline.passb.DataPassBResultSink], [CorrectionDao.recordCorrection])
+     * already gate on `state != UNKNOWN` before calling this — D56's own "AMBIGUOUS or better" bar —
+     * so making that a structural check here (constitution VII: "a rule a person must remember is a
+     * rule that will eventually be forgotten") costs nothing and catches a future caller that forgets
+     * the gate, rather than silently deriving a station with a birth no over actually justified. The
+     * inserted row's own `overCountsByAttributionState` is written as [OverCountsByAttributionState
+     * .EMPTY]'s serialized form — an honest, constant placeholder, never read as truth: [getStation]
+     * always overwrites it with the real, derived value before any caller sees it.
      */
     @Transaction
     public suspend fun recordStationObservation(callsign: String, state: AttributionState, observedAt: Long) {
-        val existing = getStation(callsign)
+        require(state != AttributionState.UNKNOWN) {
+            "recordStationObservation(...) must never be called for UNKNOWN -- D56's 'AMBIGUOUS or " +
+                "better' bar is the caller's own responsibility to gate on before reaching here"
+        }
+        val existing = getStationRaw(callsign)
         if (existing == null) {
             insert(
                 StationEntity(
@@ -86,17 +169,11 @@ public interface CatalogDao {
                     potaRefs = null,
                     spokenGrids = null,
                     ituRegionFromPrefix = null,
-                    overCountsByAttributionState = OverCountsByAttributionState.EMPTY.increment(state).serialize(),
+                    overCountsByAttributionState = OverCountsByAttributionState.EMPTY.serialize(),
                 ),
             )
         } else {
-            touchStationObservation(
-                id = callsign,
-                observedAt = observedAt,
-                overCounts = OverCountsByAttributionState.parse(existing.overCountsByAttributionState)
-                    .increment(state)
-                    .serialize(),
-            )
+            touchStationObservation(id = callsign, observedAt = observedAt)
         }
     }
 
@@ -219,3 +296,8 @@ public interface CatalogDao {
 
 /** [CatalogDao.winningCandidateCharSpan]'s projection — a half-open `[spanStart, spanEnd)` range, or both `null`. */
 public data class WinningCandidateCharSpan(val spanStart: Int?, val spanEnd: Int?)
+
+/** [CatalogDao.overCountRowsFor]'s projection — one row per distinct, non-`UNKNOWN` [AttributionState]
+ * a station has genuinely been observed at, per register R-1134. A state with no matching row means
+ * zero, the same "absent means zero" [OverCountsByAttributionState.countFor] already assumes. */
+public data class StationOverCount(val attributionState: AttributionState, val count: Int)

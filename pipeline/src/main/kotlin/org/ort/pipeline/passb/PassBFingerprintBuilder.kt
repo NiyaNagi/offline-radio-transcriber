@@ -1,6 +1,7 @@
 package org.ort.pipeline.passb
 
 import org.ort.asrapi.DecodeOptions
+import org.ort.asrapi.rules.RejectionRuleId
 import org.ort.core.AssetRef
 import java.security.MessageDigest
 
@@ -56,6 +57,32 @@ public object PassBFingerprintBuilder {
         }
         return sha256Hex(canonical)
     }
+
+    /**
+     * Register R-1133 (FR-ASR-5, FR-ASR-6; AC-6; constitution I, VI): a deterministic, canonical
+     * rendering of [org.ort.asrapi.PassBOutcome.inertControls] — the hallucination controls that
+     * could not evaluate on one particular Pass B outcome (see that property's own doc comment
+     * for why "could not evaluate" is distinct from "ran and passed"). Sorted by declared
+     * [RejectionRuleId] order and comma-joined, so two outcomes with the same inert set always
+     * produce the identical string regardless of the set's own iteration order — the same
+     * determinism [configHash] itself requires, extended here to a per-outcome fact.
+     *
+     * Deliberately **not** SHA-256-hashed the way [configHash] is. [configHash] hashes because
+     * it folds several heterogeneous, already-visible-elsewhere facts (thresholds, decode
+     * options, lexicon versions) into one compact token for equality comparison; nothing needs
+     * to read a threshold back out of it. This value's whole reason for existing is the
+     * opposite: [org.ort.pipeline.passb.DataPassBResultSink] persists it next to
+     * [org.ort.data.entity.TransmissionEntity.executionProvider] and `.processedTier` precisely
+     * so a debug dump can show, in plain text, *which* controls were live for a given over
+     * (constitution I: "every machine conclusion MUST be inspectable" — the exact gap register
+     * R-1133 reports: "no debug dump can show that AC-6 ran on five controls rather than six").
+     * A SHA-256 hash of a six-member closed enum would trade that inspectability away for no
+     * compensating benefit — none of this codebase's other "pass provenance" columns
+     * (`executionProvider`, `processedTier`, `rejectionReason`, `threadJoinReason`) are hashed
+     * either; every one of them is stored as plain, readable text.
+     */
+    public fun inertControlsSignature(inertControls: Set<RejectionRuleId>): String =
+        inertControls.sortedBy { it.ordinal }.joinToString(",") { it.name }
 
     private fun sha256Hex(input: String): String = MessageDigest.getInstance("SHA-256")
         .digest(input.toByteArray(Charsets.UTF_8))

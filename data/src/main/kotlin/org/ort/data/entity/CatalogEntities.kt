@@ -87,15 +87,32 @@ public data class StationEntity(
 
 /**
  * The wire format for [StationEntity.overCountsByAttributionState] (FR-DIG-7's "over counts by
- * attribution state", register R-1132, D56): one `STATE=count` pair per closed
+ * attribution state", register R-1132, R-1134, D56): one `STATE=count` pair per closed
  * [AttributionState], in enum order, comma-separated — deterministic and legible without a
- * parser, per constitution I's "every machine conclusion MUST be inspectable". [UNKNOWN][AttributionState.UNKNOWN]
- * is carried at `0` forever in production: [org.ort.data.dao.CatalogDao.recordStationObservation]
- * (D56) is never called for an `UNKNOWN` outcome — a station is born only at `AMBIGUOUS` or
- * better — so the column can still name all four states without ever claiming a real `UNKNOWN`
- * observation happened. [increment] only ever adds, never removes, a count — constitution III:
- * "nothing is deleted quietly", so a station once observed at a weaker state keeps that count
- * even after a later over resolves the same callsign more strongly.
+ * parser, per constitution I's "every machine conclusion MUST be inspectable".
+ * [UNKNOWN][AttributionState.UNKNOWN] is carried at `0` forever in production:
+ * [org.ort.data.dao.CatalogDao.recordStationObservation] (D56) is never called for an `UNKNOWN`
+ * outcome — a station is born only at `AMBIGUOUS` or better — so the column can still name all
+ * four states without ever claiming a real `UNKNOWN` observation happened.
+ *
+ * **Register R-1134**: on [StationEntity] rows returned by [org.ort.data.dao.CatalogDao.getStation],
+ * this value is **derived**, on every read, from the current [org.ort.data.entity.TransmissionEntity]
+ * rows it is a fact about (see that method's own doc comment) — never incremented in place. An
+ * earlier version of this column *was* a stored increment with no corresponding decrement, which
+ * is exactly why undoing a correction used to leave a station's count permanently inflated by an
+ * observation it no longer had evidence for. `CatalogDao.getStation` now builds this class
+ * directly from a freshly-queried map and calls only [serialize]; [increment] is kept as the
+ * type's own pure, independently-tested "add one more observation" operation — no production
+ * write path calls it any more, but it remains the correct building block for one, should a
+ * future caller need to merge in a single new count rather than a freshly derived map.
+ *
+ * **`org.ort.data.dao.ActivityDao.listStations` does not go through `CatalogDao.getStation`**
+ * and therefore still returns this column's raw, undifferentiated placeholder value (always
+ * [EMPTY]'s serialized form on a freshly born station) — a known, left-open gap: nothing in
+ * `:app` reads this field from that path today (confirmed by `ScreenFrameCapturer.kt`'s own
+ * redaction-derivation table, which found "no view state carries it"), so it is inert rather
+ * than actively wrong, but a future caller of `listStations()` MUST NOT trust this field from
+ * that path.
  */
 public data class OverCountsByAttributionState(private val counts: Map<AttributionState, Int>) {
 

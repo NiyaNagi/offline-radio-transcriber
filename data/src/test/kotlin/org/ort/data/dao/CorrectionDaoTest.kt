@@ -317,8 +317,31 @@ public class CorrectionDaoTest {
     @Requirement("R-1132", "FR-DIG-7")
     public fun R_1132_recordCorrection_rebinds_rather_than_duplicates_an_existing_station(): Unit = runTest {
         db.sessionDao().insert(TestFixtures.session("S1"))
-        db.transmissionDao().insert(TestFixtures.transmission("TX1", sessionId = "S1", stationId = null))
+        // W7NPC already has one genuine, real AMBIGUOUS observation from an earlier over (TX0)
+        // before TX1's correction rebinds it -- backed by a real transmission + top-ranked
+        // candidate row, the same shape a real Pass B closure would leave (register R-1134: the
+        // count is derived, not a bare recordStationObservation(...) call with nothing behind it).
+        db.transmissionDao().insert(
+            TestFixtures.transmission("TX0", sessionId = "S1", stationId = null)
+                .copy(attributionState = AttributionState.AMBIGUOUS),
+        )
+        db.catalogDao().insert(
+            org.ort.data.entity.CallsignCandidateEntity(
+                id = "C-TX0",
+                transmissionId = "TX0",
+                callsign = "W7NPC",
+                rank = 0,
+                score = 0.9,
+                grammarValid = true,
+                ituPrefix = "W",
+                ituCountry = "United States",
+                priorBreakdown = null,
+                databaseHit = true,
+                selected = false,
+            ),
+        )
         db.catalogDao().recordStationObservation("W7NPC", AttributionState.AMBIGUOUS, observedAt = 50L)
+        db.transmissionDao().insert(TestFixtures.transmission("TX1", sessionId = "S1", stationId = null))
 
         db.correctionDao().recordCorrection(
             CorrectionEntity(
@@ -334,7 +357,99 @@ public class CorrectionDaoTest {
         val station = db.catalogDao().getStation("W7NPC")!!
         assertEquals(50L, station.firstHeardAt) // birth timestamp untouched by the rebind
         assertEquals(100L, station.lastHeardAt)
+        // TX0 (AMBIGUOUS, found via its top-ranked candidate) and TX1 (INFERRED, corrected --
+        // stationId now names W7NPC directly) both derive as real, distinct observations.
         assertEquals("CONFIRMED=0,INFERRED=1,AMBIGUOUS=1,UNKNOWN=0", station.overCountsByAttributionState)
+    }
+
+    /**
+     * Register R-1134 (FR-DIG-7, FR-DIG-8, constitution I, III): the central regression this row
+     * exists for. Before this fix, `overCountsByAttributionState` was incremented in place on
+     * every `recordStationObservation` call and nothing ever called an inverse on undo -- so
+     * correcting a callsign and then undoing it left the old station's count permanently
+     * inflated by one observation it no longer has any evidence for. Deriving the count from the
+     * transmission rows themselves (see [CatalogDao.getStation]'s own doc comment) fixes this for
+     * free: `restoreAttribution` already writes the transmission's own `attributionState`/
+     * `stationId` back to their pre-correction values, and the very next [CatalogDao.getStation]
+     * read simply re-derives from that real state -- no separate "undo the increment" step to
+     * remember or forget.
+     */
+    @Test
+    @Requirement("R-1134", "FR-DIG-7", "FR-DIG-8", "R-321")
+    public fun R_1134_an_undone_correction_no_longer_inflates_the_old_stations_over_count(): Unit = runTest {
+        db.sessionDao().insert(TestFixtures.session("S1"))
+        // TX1's real Pass B outcome was an uncorrected AMBIGUOUS resolution to K7ABC -- no
+        // stationId (register R-1110), found only via its top-ranked candidate, the same shape
+        // DataPassBResultSink.recordStationObservation itself produces on a real device.
+        db.transmissionDao().insert(
+            TestFixtures.transmission("TX1", sessionId = "S1", stationId = null)
+                .copy(attributionState = AttributionState.AMBIGUOUS),
+        )
+        db.catalogDao().insert(
+            org.ort.data.entity.CallsignCandidateEntity(
+                id = "C1",
+                transmissionId = "TX1",
+                callsign = "K7ABC",
+                rank = 0,
+                score = 0.9,
+                grammarValid = true,
+                ituPrefix = "K",
+                ituCountry = "United States",
+                priorBreakdown = null,
+                databaseHit = true,
+                selected = false,
+            ),
+        )
+        db.catalogDao().recordStationObservation("K7ABC", AttributionState.AMBIGUOUS, observedAt = 500L)
+        assertEquals(
+            "CONFIRMED=0,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0",
+            db.catalogDao().getStation("K7ABC")!!.overCountsByAttributionState,
+        )
+
+        // The operator corrects TX1 away from K7ABC to W7NPC.
+        db.correctionDao().recordCorrection(
+            CorrectionEntity(
+                id = "CORR1",
+                transmissionId = "TX1",
+                field = CorrectionDao.FIELD_STATION,
+                previousValue = null,
+                newValue = "W7NPC",
+                correctedAt = 1_000L,
+            ),
+        )
+        // K7ABC's count drops -- TX1's stationId now names W7NPC, not null, so the AMBIGUOUS arm
+        // of the derivation no longer finds it there.
+        assertEquals(
+            "CONFIRMED=0,INFERRED=0,AMBIGUOUS=0,UNKNOWN=0",
+            db.catalogDao().getStation("K7ABC")!!.overCountsByAttributionState,
+        )
+        assertEquals(
+            "CONFIRMED=0,INFERRED=1,AMBIGUOUS=0,UNKNOWN=0",
+            db.catalogDao().getStation("W7NPC")!!.overCountsByAttributionState,
+        )
+
+        // The operator undoes the correction.
+        val correction = db.correctionDao().correctionsFor("TX1").single()
+        db.correctionDao().restoreAttribution(
+            transmissionId = "TX1",
+            state = correction.previousAttributionState!!,
+            stationId = correction.previousValue,
+            confidence = correction.previousAttributionConfidence,
+            sourceTransmissionId = correction.previousAttributionSourceTransmissionId,
+            corrected = correction.previousCorrected!!,
+        )
+
+        // K7ABC's count is restored automatically -- no inverse-decrement call was ever made;
+        // the derivation just reads TX1's real, restored attributionState/stationId again.
+        assertEquals(
+            "CONFIRMED=0,INFERRED=0,AMBIGUOUS=1,UNKNOWN=0",
+            db.catalogDao().getStation("K7ABC")!!.overCountsByAttributionState,
+        )
+        // And W7NPC no longer claims an observation it has no evidence for.
+        assertEquals(
+            "CONFIRMED=0,INFERRED=0,AMBIGUOUS=0,UNKNOWN=0",
+            db.catalogDao().getStation("W7NPC")!!.overCountsByAttributionState,
+        )
     }
 
     @Test

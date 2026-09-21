@@ -136,6 +136,32 @@ public data class TransmissionEntity(
      * reason.
      */
     val threadJoinReason: ThreadJoinReason? = null,
+    /**
+     * [inertControls] (schema v16, register R-1133, FR-ASR-5, FR-ASR-6; AC-6; constitution I,
+     * VI): which hallucination controls could not evaluate at all on the most recent Pass B
+     * outcome for this row — [org.ort.asrapi.PassBOutcome.inertControls]'s own doc comment names
+     * the distinction from a control that ran and cleared the segment (e.g. `NO_SPEECH_PROB`,
+     * permanently inert against the wired sherpa-onnx binding — register R-1121). Before this
+     * column existed, `PassBOutcome.inertControls` was computed on every pass and then thrown
+     * away the instant [org.ort.pipeline.passb.DataPassBResultSink] read it — inertness was
+     * *representable* but not *inspectable*: no debug dump could show that AC-6 ran on five
+     * controls rather than six for a given over.
+     *
+     * Stored as [org.ort.pipeline.passb.PassBFingerprintBuilder.inertControlsSignature]'s
+     * deterministic, sorted, comma-joined plain-text rendering — see that function's own doc
+     * comment for why this is legible text, not a hash, matching [executionProvider] and
+     * [processedTier]'s own plain-text discipline. Empty string (`""`, never a fabricated
+     * `null`) means a real outcome ran and every control that reached it could actually
+     * evaluate; `null` means no Pass B outcome carrying this fact has ever been recorded for
+     * this row (the segment-persist insert always writes `null` here, the same "nothing has
+     * happened yet" convention [executionProvider] itself uses).
+     *
+     * Written by [org.ort.pipeline.passb.DataPassBResultSink.record] for both `Accepted` and
+     * `Rejected` outcomes — both carry `PassBOutcome.inertControls` — never for `Failed`, which
+     * did not genuinely evaluate any control at all (the same "provenance is a fact about a
+     * genuine attempt" reasoning [processedTier] already documents).
+     */
+    val inertControls: String? = null,
 ) {
     /**
      * The derived on-disk path for this transmission's audio (technical design §12.2): paths

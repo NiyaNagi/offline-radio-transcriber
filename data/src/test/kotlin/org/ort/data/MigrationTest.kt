@@ -997,17 +997,71 @@ public class MigrationTest {
     }
 
     /**
-     * FR-AST-5: every previously released schema's fixture — v1 through v14 — walks forward through
-     * the *entire* migration chain to v15 (the current head), not just the single step each version
-     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v14,
+     * Register R-1133 (FR-ASR-5, FR-ASR-6, AC-6): v15 → v16 adds `transmission.inertControls`.
+     * Proves both halves of FR-AST-5/6: a pre-existing `transmission` row survives untouched with
+     * the new column `NULL` (no Pass B outcome has recorded this fact for it yet, never a
+     * fabricated `""`), and the new write path ([OrtDatabase.transmissionDao]'s
+     * `setInertControls`) is immediately usable afterwards.
+     */
+    @Test
+    @Requirement("AC-53", "FR-AST-5", "FR-AST-6", "FR-ASR-5", "FR-ASR-6", "AC-6", "R-1133")
+    public fun migration_from_v15_to_v16_preserves_existing_rows_and_adds_the_inert_controls_column() {
+        val dbName = "migration-test-db-v16"
+        val v15 = helper.createDatabase(dbName, 15)
+        v15.execSQL(
+            "INSERT INTO session (id, startedAt, endedAt, profileId, deviceTier, appVersion, " +
+                "terminationReason, sourceId, schemaVersion, gapCount, shedEvents, captureMode, " +
+                "audioRouteKind, audioRouteLabel, bluetoothProfile, rigTransport, vadDetector) VALUES " +
+                "('S1', 0, NULL, NULL, NULL, 'test', NULL, NULL, 15, 0, 0, NULL, NULL, NULL, NULL, NULL, 'UNKNOWN')",
+        )
+        v15.execSQL(
+            "INSERT INTO transmission (id, sessionId, threadId, startedAtUtc, endedAtUtc, durationMs, " +
+                "audioFormat, preRollMs, postRollMs, frequencyHz, frequencyProvenance, mode, signalStrength, " +
+                "channelName, voiceprintId, attributionState, stationId, attributionConfidence, " +
+                "attributionSourceTransmissionId, corrected, processingState, rejectionReason, samplePosition, " +
+                "monotonicStartNanos, utcOffsetMinutes, calibrationId, enhancementApplied, executionProvider, " +
+                "isReprocessCandidate, processedTier, rigStateChangedMidTransmission, vadDetector, " +
+                "vadDetectorVersion, rigSquelchFusionApplied, threadJoinReason) VALUES ('TX1', 'S1', NULL, 0, " +
+                "1000, 1000, 'flac/16k/mono', 200, 200, NULL, 'measured', NULL, NULL, NULL, NULL, 'UNKNOWN', " +
+                "NULL, NULL, NULL, 0, 'CAPTURED', NULL, 0, 0, 0, NULL, '', NULL, 0, NULL, 0, 'UNKNOWN', NULL, " +
+                "0, NULL)",
+        )
+        v15.close()
+
+        helper.runMigrationsAndValidate(dbName, 16, true, OrtDatabase.MIGRATION_15_16)
+
+        val db = Room.databaseBuilder(ApplicationProvider.getApplicationContext(), OrtDatabase::class.java, dbName)
+            .addMigrations(*OrtDatabase.MIGRATIONS)
+            .build()
+        try {
+            val migrated = runBlocking { db.transmissionDao().getById("TX1") }
+            assertEquals("flac/16k/mono", migrated!!.audioFormat) // pre-existing row survives
+            assertEquals(
+                "the new column must default to NULL, never a fabricated empty signature",
+                null,
+                migrated.inertControls,
+            )
+
+            runBlocking { db.transmissionDao().setInertControls("TX1", "NO_SPEECH_PROB") }
+            val stamped = runBlocking { db.transmissionDao().getById("TX1") }
+            assertEquals("NO_SPEECH_PROB", stamped!!.inertControls) // new write path usable post-migration
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * FR-AST-5: every previously released schema's fixture — v1 through v15 — walks forward through
+     * the *entire* migration chain to v16 (the current head), not just the single step each version
+     * was introduced by. The `session` table's columns relevant here are unchanged from v1 to v15,
      * so the same insert works unmodified against every fixture version; what varies is only which
      * version [MigrationTestHelper.createDatabase] starts from and how many migrations run to reach
      * head.
      */
     @Test
     @Requirement("AC-53", "FR-AST-5", "FR-AST-6")
-    public fun every_prior_fixture_from_v1_to_v14_migrates_forward_to_v15_preserving_its_session_row() {
-        for (fixtureVersion in 1..14) {
+    public fun every_prior_fixture_from_v1_to_v15_migrates_forward_to_v16_preserving_its_session_row() {
+        for (fixtureVersion in 1..15) {
             val dbName = "migration-test-db-every-fixture-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             // R-1098: a *freshly created* v14 schema (this is, exactly what `createDatabase` builds
@@ -1042,7 +1096,7 @@ public class MigrationTest {
             try {
                 val migrated = runBlocking { db.sessionDao().getById("S1") }
                 assertEquals(
-                    "fixture v$fixtureVersion's session row must survive the full migration chain to v15",
+                    "fixture v$fixtureVersion's session row must survive the full migration chain to v16",
                     "test",
                     migrated!!.appVersion,
                 )
@@ -1113,18 +1167,18 @@ public class MigrationTest {
      * itself: the same factory function, with the same [androidx.sqlite.driver.bundled
      * .BundledSQLiteDriver], the shipped app and every other production caller use. `fixtureVersion`
      * 9 is the version named in the halt report (`data/schemas/org.ort.data.OrtDatabase/9.json`);
-     * the loop also covers every earlier released version (v14 added, R-1098, head v15), since
+     * the loop also covers every earlier released version (v15 added, R-1133, head v16), since
      * each is an on-disk shape a real device could still be carrying. Widening the range by one is
      * the one change each new head version needs here.
      */
     @Test
     @Requirement("R-885", "AC-53", "FR-AST-5", "FR-AST-6")
-    public fun r_885_every_fixture_from_v1_to_v14_opens_through_OrtDatabase_create_and_reads_its_session_row() {
-        for (fixtureVersion in 1..14) {
+    public fun r_885_every_fixture_from_v1_to_v15_opens_through_OrtDatabase_create_and_reads_its_session_row() {
+        for (fixtureVersion in 1..15) {
             val dbName = "r885-real-open-v$fixtureVersion"
             val fixture = helper.createDatabase(dbName, fixtureVersion)
             // R-1098: see the identical branch's own comment in
-            // `every_prior_fixture_from_v1_to_v14_migrates_forward_to_v15_preserving_its_session_row`
+            // `every_prior_fixture_from_v1_to_v15_migrates_forward_to_v16_preserving_its_session_row`
             // — a freshly created v14 schema's `session.vadDetector` is `NOT NULL` with no SQL-level
             // default.
             if (fixtureVersion >= 14) {
@@ -1175,6 +1229,10 @@ public class MigrationTest {
                 // MIGRATION_14_15 through this connection-based path -- proven by writing a real
                 // ThreadJoinReason through the transmission insert path, not just "did not crash".
                 if (fixtureVersion == 14) runBlocking { verifyThreadJoinReasonUsableThroughRealOpen(db) }
+                // R-1133: fixtureVersion 15 is the one whose real open runs exactly
+                // MIGRATION_15_16 through this connection-based path -- proven by writing through
+                // the new setInertControls write path, not just "did not crash".
+                if (fixtureVersion == 15) runBlocking { verifyInertControlsUsableThroughRealOpen(db) }
             } finally {
                 db.close()
             }
@@ -1289,6 +1347,20 @@ public class MigrationTest {
                 "connection-based open, not just Room's legacy SupportSQLiteDatabase path",
             org.ort.data.entity.ThreadJoinReason.NEW_THREAD_GAP_EXCEEDED,
             transmission?.threadJoinReason,
+        )
+    }
+
+    /** R-1133: [org.ort.data.entity.TransmissionEntity.inertControls], exercised through a real
+     * [OrtDatabase.create] open — see the caller's own doc comment. */
+    private suspend fun verifyInertControlsUsableThroughRealOpen(db: OrtDatabase) {
+        db.transmissionDao().insert(TestFixtures.transmission("TX-R885-V15", sessionId = "S1"))
+        db.transmissionDao().setInertControls("TX-R885-V15", "NO_SPEECH_PROB")
+        val transmission = db.transmissionDao().getById("TX-R885-V15")
+        assertEquals(
+            "MIGRATION_15_16's inertControls column must be usable through the real " +
+                "connection-based open, not just Room's legacy SupportSQLiteDatabase path",
+            "NO_SPEECH_PROB",
+            transmission?.inertControls,
         )
     }
 }

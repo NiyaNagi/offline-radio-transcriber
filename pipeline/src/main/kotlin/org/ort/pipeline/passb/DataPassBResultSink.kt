@@ -88,6 +88,13 @@ public class DataPassBResultSink(
         db.transmissionDao().setExecutionProvider(result.transmissionId, result.fingerprint.provider)
         when (val outcome = result.outcome) {
             is PassBOutcome.Accepted -> {
+                // R-1133: an Accepted outcome carries PassBOutcome.inertControls -- see
+                // TransmissionDao.setInertControls's own kdoc for why this is written unconditionally
+                // for both Accepted and Rejected, never Failed.
+                db.transmissionDao().setInertControls(
+                    result.transmissionId,
+                    PassBFingerprintBuilder.inertControlsSignature(outcome.inertControls),
+                )
                 db.transcriptDao().supersede(
                     TranscriptEntity(
                         id = Ulid.generate().value,
@@ -116,6 +123,13 @@ public class DataPassBResultSink(
                 db.transmissionDao().setProcessedTier(result.transmissionId, result.fingerprint.tier)
             }
             is PassBOutcome.Rejected -> {
+                // R-1133: a Rejected outcome also carries PassBOutcome.inertControls -- a
+                // pre-decode reject (e.g. TOO_SHORT) never reached the post-decode controls, so
+                // its own inertControls is honestly empty rather than absent.
+                db.transmissionDao().setInertControls(
+                    result.transmissionId,
+                    PassBFingerprintBuilder.inertControlsSignature(outcome.inertControls),
+                )
                 db.transmissionDao().setRejectionReason(result.transmissionId, "${outcome.rule}: ${outcome.detail}")
                 // R-1033: a rejection is still a genuine run at this tier (rejected is not failed).
                 db.transmissionDao().setProcessedTier(result.transmissionId, result.fingerprint.tier)

@@ -115,6 +115,14 @@ public interface CorrectionDao {
     // *rule* -- how counts merge -- has exactly one implementation, OverCountsByAttributionState;
     // only this thin get-then-insert-or-update shell is repeated, the same way `correctionsFor`
     // above is already duplicated verbatim in CatalogDao.
+    //
+    // Register R-1134: this shell no longer computes or stores a count at all -- see
+    // CatalogDao.getStation's own doc comment for why overCountsByAttributionState is derived on
+    // read, from the transmission rows themselves, rather than incremented here. A correction's
+    // own transmission-row write (applyCorrectedAttribution, in the same recordCorrection
+    // transaction) is what CatalogDao.overCountRowsFor actually reads back on the next getStation
+    // call; this shell's only remaining job is to make sure a station row exists to attach a
+    // firstHeardAt/lastHeardAt to.
 
     @Query("SELECT * FROM station WHERE id = :id")
     public suspend fun getStationForCorrection(id: String): StationEntity?
@@ -122,14 +130,15 @@ public interface CorrectionDao {
     @Insert
     public suspend fun insertStationForCorrection(entity: StationEntity)
 
-    @Query(
-        "UPDATE station SET lastHeardAt = :observedAt, transmissionCount = transmissionCount + 1, " +
-            "overCountsByAttributionState = :overCounts WHERE id = :id",
-    )
-    public suspend fun touchStationObservationForCorrection(id: String, observedAt: Long, overCounts: String)
+    @Query("UPDATE station SET lastHeardAt = :observedAt, transmissionCount = transmissionCount + 1 WHERE id = :id")
+    public suspend fun touchStationObservationForCorrection(id: String, observedAt: Long)
 
     @Transaction
     public suspend fun recordStationObservation(callsign: String, state: AttributionState, observedAt: Long) {
+        require(state != AttributionState.UNKNOWN) {
+            "recordStationObservation(...) must never be called for UNKNOWN -- D56's 'AMBIGUOUS or " +
+                "better' bar is the caller's own responsibility to gate on before reaching here"
+        }
         val existing = getStationForCorrection(callsign)
         if (existing == null) {
             insertStationForCorrection(
@@ -147,17 +156,11 @@ public interface CorrectionDao {
                     potaRefs = null,
                     spokenGrids = null,
                     ituRegionFromPrefix = null,
-                    overCountsByAttributionState = OverCountsByAttributionState.EMPTY.increment(state).serialize(),
+                    overCountsByAttributionState = OverCountsByAttributionState.EMPTY.serialize(),
                 ),
             )
         } else {
-            touchStationObservationForCorrection(
-                id = callsign,
-                observedAt = observedAt,
-                overCounts = OverCountsByAttributionState.parse(existing.overCountsByAttributionState)
-                    .increment(state)
-                    .serialize(),
-            )
+            touchStationObservationForCorrection(id = callsign, observedAt = observedAt)
         }
     }
 
