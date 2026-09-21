@@ -135,8 +135,21 @@ class NavSeedTest {
         }
     }
 
-    private fun ComposeContentTestRule.waitUntilTextExists(text: String, timeoutMillis: Long = 15_000) {
-        waitUntil(timeoutMillis) { onAllNodes(hasText(text)).fetchSemanticsNodes().isNotEmpty() }
+    // R-1140 (register, coordinator diagnosis): every one of this helper's own five new failures
+    // traced to `hasText`'s own default exact/case-sensitive match against text this app composes
+    // as a *substring* of a longer sentence (`FailureReasonLine`'s own "$failed failed — $reason")
+    // or *uppercased* (`SectionHeader`'s own `label.uppercase()`) — never to the wait itself timing
+    // out on real work, and never to a screen genuinely being unreachable. `substring`/`ignoreCase`
+    // default `false` so every existing passing call keeps its own exact-match behaviour unchanged.
+    private fun ComposeContentTestRule.waitUntilTextExists(
+        text: String,
+        timeoutMillis: Long = 15_000,
+        substring: Boolean = false,
+        ignoreCase: Boolean = false,
+    ) {
+        waitUntil(timeoutMillis) {
+            onAllNodes(hasText(text, substring = substring, ignoreCase = ignoreCase)).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private fun ComposeContentTestRule.waitUntilTagExists(tag: String, timeoutMillis: Long = 15_000) {
@@ -165,7 +178,10 @@ class NavSeedTest {
         }
         composeTestRule.waitUntilContentDescriptionExists("Back to Log")
         composeTestRule.onNodeWithContentDescription("Confirmed", substring = true).performClick()
-        composeTestRule.waitUntilTextExists("Everything the resolver saw")
+        // R-1140 (register): `DetailWhyScreen`'s real subtitle is the full sentence below, not
+        // this prefix alone — `hasText`'s own default exact match never found the shorter string
+        // (the five-test diagnosis this row records); `substring = true` matches it as written.
+        composeTestRule.waitUntilTextExists("Everything the resolver saw", substring = true)
     }
 
     // R-1117/R-1127 (register): D05 (`Detail-Why.dc.html`) had no seed of its own at all before
@@ -182,8 +198,9 @@ class NavSeedTest {
         }
         // `DetailWhyScreen`'s own subtitle — present only on the exhaustive screen, never on
         // `TransmissionDetailScreen`'s own inline "Why this callsign" preview, which shares that
-        // section's own header label but not this sentence.
-        composeTestRule.waitUntilTextExists("Everything the resolver saw")
+        // section's own header label but not this sentence. R-1140: `substring = true` — see
+        // `R_1117`'s own case above for why the bare prefix never exact-matched.
+        composeTestRule.waitUntilTextExists("Everything the resolver saw", substring = true)
     }
 
     // R-056/R-1127 (register): the labelled-sample form is interaction-only local state with no
@@ -226,7 +243,10 @@ class NavSeedTest {
                 )
             }
         }
-        composeTestRule.waitUntilTextExists("A station heard before")
+        // R-1140: `SearchTier`'s own header is a `SectionHeader`, which renders `label.uppercase()`
+        // ("A STATION HEARD BEFORE") — `ignoreCase = true` matches it as rendered; `hasText`'s own
+        // default exact/case-sensitive match never did.
+        composeTestRule.waitUntilTextExists("A station heard before", ignoreCase = true)
     }
 
     @Test
@@ -239,7 +259,8 @@ class NavSeedTest {
                 )
             }
         }
-        composeTestRule.waitUntilTextExists("Type a callsign")
+        // R-1140: `TypeTier`'s own header is a `SectionHeader` too — same fix as Tier B above.
+        composeTestRule.waitUntilTextExists("Type a callsign", ignoreCase = true)
     }
 
     // R-350/R-1127 (register): `ImprovePage` is unseeded local state — R04 could only ever be
@@ -251,8 +272,10 @@ class NavSeedTest {
         }
         composeTestRule.waitUntilTextExists("All groups")
         // The one failure reason and its "Install" action (R-350's own fix) — proves this is a
-        // real-shaped summary, not merely `ImprovePage.Done` with a null one.
-        composeTestRule.waitUntilTextExists("No transcription model installed")
+        // real-shaped summary, not merely `ImprovePage.Done` with a null one. R-1140: real text is
+        // `FailureReasonLine`'s own "1 failed — No transcription model installed", never this
+        // humanised reason alone — `substring = true` matches it as composed.
+        composeTestRule.waitUntilTextExists("No transcription model installed", substring = true)
     }
 
     @Test

@@ -57,7 +57,7 @@ class SetupActivityMicDeniedOverrideTest {
     }
 
     @Test
-    fun `R_1127 a cold EXTRA_STEP MICROPHONE_DENIED launch survives onResume with the override active, RECORD_AUDIO granted`() {
+    fun `R_1127 a cold EXTRA_STEP MICROPHONE_DENIED launch survives onResume, override active, RECORD_AUDIO granted`() {
         storeWelcomeJurisdictionAndMode()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         DebugMicPermissionOverride.isDebugBuild = { true }
