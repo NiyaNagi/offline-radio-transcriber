@@ -32,7 +32,6 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-<<<<<<< HEAD
 ## 2026-09-21 (R-1135/R-1136: two more artboard/code drifts closed from the R-1130 audit; R-1143 verified already conformant except Thread-Detail's header shape)
 
 ### `<pending>` — R-1135: `OrtColors.kt`'s `textSignal`/`textLow` doc comments corrected to match their real call sites; R-1136: an unnamed legacy colour removed from three boards; R-1143: Digest/Transmission-Detail kebabs confirmed already drawn, Thread-Detail's header shape flagged instead of forced
@@ -117,6 +116,70 @@ instruction. `git diff --stat`: `OrtColors.kt` (+2/-2, comments only), `Frequenc
 ---
 
 ## 2026-09-20 (R-1121: hallucination control 3 made honestly inert; no acoustic confidence is fabricated anywhere)
+
+## 2026-09-21 (R-1140: five NavSeedTest timeouts, root-caused to the test's own string matching, not the seams)
+
+### `<pending>` — m-seed-seams-fix: `hasText`'s default exact/case-sensitive match against uppercased or substring-embedded production text, not a wiring or fixture-richness defect
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/navigation/NavSeedTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/setup/{SetupActivityMicDeniedOverrideTest,
+SetupActivityRouteMismatchOverrideTest}.kt` (four pre-existing `MaxLineLength` findings, pure
+reformatting, no assertion/fixture/name changed). No `src/main` file touched.
+
+**Requirements/ACs:** R-1140 (the register row this session's own diagnosis is filed as); R-1127,
+R-1117, R-350, R-052 (the five cases this closes, unchanged in intent).
+
+**What changed:** `m-seed-seams`'s own five new `NavSeedTest` cases
+(`openTransmissionId with correctionStep SEARCH/TYPE`, `openTransmissionWhy`, `R_1117 tapping the
+title attribution marker`, `improveDonePreview`) failed in the batch gate with
+`ComposeTimeoutException: Condition still not satisfied after 15000 ms`, all inside
+`waitUntilTextExists`. **Root cause, confirmed by fix-then-rerun on each of the five, not
+inferred**: every one of them called `hasText(text)` with its default exact-match,
+case-sensitive comparison against text this app composes either **uppercased**
+(`SectionHeader`'s own `Text(text = label.uppercase(), ...)` — `SearchTier`'s "A station heard
+before" renders as "A STATION HEARD BEFORE", `TypeTier`'s "Type a callsign" as "TYPE A
+CALLSIGN") or **embedded as a substring of a longer composed sentence**
+(`DetailWhyScreen`'s subtitle is the full "Everything the resolver saw, in the order it used
+it", not the shorter phrase the test checked for; `FailureReasonLine`'s real line is
+`"${summary.failed} failed — ${humanised reason}"`, e.g. "1 failed — No transcription model
+installed", never the humanised reason alone). Every seam the tests exercise, the seed plumbing
+(`buildNavHostIds` → `NavHostIds` → `TransmissionDetailContent`/`ImproveContent`) and the fixture
+data behind each of the five destinations were already correct — none of that was touched.
+Fixed `waitUntilTextExists` to accept `substring`/`ignoreCase` (both default `false`, so the
+seventeen already-passing calls keep their own exact-match behaviour unchanged) and updated the
+five call sites to match the real, literal rendered string. Also fixed four pre-existing
+`MaxLineLength` findings (`config/detekt/detekt.yml`'s 120-column floor) already on `main` in two
+of this same unit's own new files, by rewrapping/shortening — no assertion, fixture or test name
+changed.
+
+**Why this is the real cause and not the coordinator's own alternate hypothesis (richer seeded
+data required)**: that hypothesis predicted the destination rendered an empty/fallback state the
+wait could never satisfy. It is directly falsified by what actually fixed each case — every fix
+was a pure string-matching correction (`substring`/`ignoreCase`), with **zero** change to any
+scenario, fixture or seed data, and every fixed assertion now matches text that is only present
+when the *real*, richly-rendered state is on screen: `improveDonePreview`'s second assertion
+matches `"1 failed — No transcription model installed"` — the `1` and the reason both come from
+this unit's own `donePreviewPage()` fixture, not a fallback; `SEARCH`/`TYPE`'s assertions match
+each tier's own real `SectionHeader`, only reachable once that exact tier has actually composed;
+`Why`/`R_1117`'s assertion matches `DetailWhyScreen`'s own real subtitle sentence in full. A
+richer-fixture fix would not have made an exact-string mismatch start matching — only a
+matching-mode fix could, and did.
+
+**Verified:**
+- `.\gradlew.bat :app:smokeTestFullDebugUnitTest --max-workers=2` (the whole task, not a
+  filtered subset) — BUILD SUCCESSFUL, **185 tests across 18 classes, 0 failures**
+  (`app/build/test-results/smokeTestFullDebugUnitTest/TEST-*.xml` summed directly), including
+  every one of `NavSeedTest`'s 22 cases.
+- `.\gradlew.bat :app:testFullDebugUnitTest --max-workers=2` — BUILD SUCCESSFUL, **2800 tests
+  across 291 classes, 0 failures** (same XML-summing method), including both new
+  `SetupActivity*OverrideTest` classes.
+- `.\gradlew.bat :app:detekt :app:ktlintCheck --max-workers=2` — BUILD SUCCESSFUL, clean
+  (confirmed with `--rerun-tasks` for `detekt` specifically, not relying on `UP-TO-DATE` alone).
+
+**Left open / not done:** none of the seven screens from `m-seed-seams` turns out to be
+unreachable — all five previously-timing-out cases now pass against the real, unmodified
+production seam and fixture data, so no claim from that unit's own report is withdrawn.
+`gradlew --stop` was not run; no `git stash` was used.
 
 ### `<pending>` — R-1121: `NoSpeechProbRule` stops accepting on `null`; `Hypothesis`/`TokenScore.logProb` stop being fabricated `0f`
 

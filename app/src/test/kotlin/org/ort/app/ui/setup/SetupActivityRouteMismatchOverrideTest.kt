@@ -68,8 +68,16 @@ class SetupActivityRouteMismatchOverrideTest {
         storeVerifiedInputOnly()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         val seeded = RouteCheckState.Mismatch(
-            selected = AudioDeviceDescriptor(id = "usb-1", kind = AudioDeviceKind.USB_DEVICE, label = "USB Audio Device"),
-            routed = AudioDeviceDescriptor(id = "builtin-mic", kind = AudioDeviceKind.BUILT_IN_MIC, label = "Built-in microphone"),
+            selected = AudioDeviceDescriptor(
+                id = "usb-1",
+                kind = AudioDeviceKind.USB_DEVICE,
+                label = "USB Audio Device",
+            ),
+            routed = AudioDeviceDescriptor(
+                id = "builtin-mic",
+                kind = AudioDeviceKind.BUILT_IN_MIC,
+                label = "Built-in microphone",
+            ),
             reason = "test",
         )
         DebugRouteCheckOverride.isDebugBuild = { true }
@@ -91,7 +99,11 @@ class SetupActivityRouteMismatchOverrideTest {
         storeVerifiedInputOnly()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         val seeded = RouteCheckState.Mismatch(
-            selected = AudioDeviceDescriptor(id = "usb-1", kind = AudioDeviceKind.USB_DEVICE, label = "USB Audio Device"),
+            selected = AudioDeviceDescriptor(
+                id = "usb-1",
+                kind = AudioDeviceKind.USB_DEVICE,
+                label = "USB Audio Device",
+            ),
             routed = null,
             reason = "test",
         )
