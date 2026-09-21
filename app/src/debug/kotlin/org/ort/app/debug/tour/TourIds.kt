@@ -80,6 +80,11 @@ import org.ort.data.OrtDatabase
  *   (`MAIN`/`SEARCH`/`TYPE`) opens D08/D09/D10 directly on that tier.
  * - `improveDonePreview` (R-350/R-1127): `true` (on an `IMPROVE_RECORDS` destination step, no
  *   `transmission` companion) starts R04 already on a real-shaped `Done` summary.
+ * - `improveSelectPreview` / `improveRunningPreview` (R-770): the same shape as
+ *   `improveDonePreview` exactly — `true` starts R02/R03 already on a real-shaped `Select`/
+ *   `Running` state, since neither is reachable through a tour fixture any other way (see
+ *   [org.ort.app.ui.navigation.NavSeed.improveSelectPreview]/[org.ort.app.ui.navigation.NavSeed
+ *   .improveRunningPreview]'s own doc comments).
  *
  * A key naming a symbolic value this table does not recognise, and that also does not resolve as a
  * literal id/number, throws — caught by [TourRunner] the same as any other per-step failure, never
@@ -134,6 +139,9 @@ public object TourIds {
             },
             // R-350/R-1127: `IMPROVE_RECORDS`'s own seam — no session/transmission lookup needed.
             improveDonePreview = drillIn["improveDonePreview"]?.let { it.equals("true", ignoreCase = true) },
+            // R-770: mirrors `improveDonePreview` exactly — no session/transmission lookup needed.
+            improveSelectPreview = drillIn["improveSelectPreview"]?.let { it.equals("true", ignoreCase = true) },
+            improveRunningPreview = drillIn["improveRunningPreview"]?.let { it.equals("true", ignoreCase = true) },
         )
     }
 
