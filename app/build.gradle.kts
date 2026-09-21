@@ -468,6 +468,26 @@ fun applyComposeIdlePoisonMitigations(debugUnitTest: Test, smokeTask: TaskProvid
         jvmArgumentProviders.addAll(debugUnitTest.jvmArgumentProviders)
         systemProperties.putAll(debugUnitTest.systemProperties)
     }
+
+    // Register R-1140: every exclusion above is justified, and their silence was not. On
+    // 2026-09-20 a builder ran this task, saw 2743 tests pass, and reported a new `NavSeedTest`
+    // case as proved — that class is excluded here, so none of its five new tests had run, and all
+    // five were failing. `check` does depend on both tasks (below), so the gate caught it, but only
+    // after a 41-minute run; the person who could have caught it in three minutes was told
+    // "BUILD SUCCESSFUL" and nothing else. This says out loud what was skipped and where it runs.
+    // The list is read from the smoke task's own `includes` rather than restated here: a second
+    // copy is how this message would quietly stop matching what is actually skipped, which is the
+    // same class of drift as the silence it exists to fix.
+    debugUnitTest.doLast {
+        val skipped = smokeTask.get().includes.sorted()
+        logger.lifecycle(
+            "\n${debugUnitTest.name}: ${skipped.size} Compose-idle-poisoning test classes are " +
+                "EXCLUDED from this task and did NOT run here:\n" +
+                skipped.joinToString("\n") { "  - $it" } +
+                "\nThey run in '${smokeTask.name}'. A green result here does not cover them: run " +
+                "that task too, or './gradlew :app:check', before reporting. (register R-1140)",
+        )
+    }
 }
 
 // `afterEvaluate`, not immediate: `test<Flavor>DebugUnitTest` is AGP's own task (registered by the
