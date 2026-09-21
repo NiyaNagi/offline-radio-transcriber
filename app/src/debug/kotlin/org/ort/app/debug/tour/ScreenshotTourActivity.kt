@@ -286,16 +286,22 @@ public class ScreenshotTourActivity : ComponentActivity() {
         // as a floor for animations even now that the state match above proves the right screen
         // composed (R-803's own coordinator instruction).
         delay(DESTINATION_SETTLE_MILLIS)
-        // WPW (register R-1007 follow-up), fixed for R-1021: the real route onto
-        // `LiveMonitorScreen` — no `NavSeed` field exists to seed `NavHostNavState
-        // .openCaptureLiveMonitor` directly (that class's own doc comment), so this taps the
-        // just-composed screen's own live bar for real, through the identical accessibility bridge
-        // `TourAccessibilityScroll`'s own scroll already uses, then waits for `LiveMonitorScreen`'s
-        // own content to actually land before anything below reads the screen as settled. **By
-        // `testTag`, never by the bar's own rendered label** — R-1021's own field report: `"Live"`
-        // is only that bar's `else`-branch label, outranked by nine other real states this
-        // scenario's own gap/backlog deliberately seed (`TourAccessibilityTap`'s own doc comment
-        // has the full account).
+        // WPW (register R-1007 follow-up). **R-1021, corrected 2026-09-21: no tour.json step sets
+        // `tapLiveBar` any more.** `WPCAP` (`3b5d0e0a`) merged `LiveMonitorScreen` (N07) into the one
+        // `CaptureScreen` (N08) that `ReaderDestination.CAPTURE` now always renders, so the tap this
+        // block performs found a real, clickable `live-bar`-tagged node ([LiveBar] always self-tags
+        // its outer `Column` regardless of a caller's own modifier) but landed on `CaptureScreen`'s
+        // own embedded copy, whose `onClick` is deliberately `{}` — there is nothing further to open
+        // once already on the one merged screen. The tap "succeeded" and did nothing, and
+        // [awaitLiveMonitorVisible] then waited out its full timeout for a screen the navigation
+        // graph can no longer reach. The three `overnight-live-monitor/N07-live-monitor*` steps that
+        // used to set this flag now capture `CaptureScreen` directly, with no tap — its `destination`
+        // alone already settles on identical content to what N07 rendered (`CaptureScreen`'s own kdoc,
+        // `ui/screens/CaptureScreen.kt`, names the reused composables). Kept as tour infrastructure
+        // for a future real cross-screen tap — `Transport-Bar.dc.html` (C10, design-intent, not yet
+        // built) is drawn to land its own `live` tap on `Capture` (N08) — rather than deleted quietly
+        // (P9); a caller retargeting it must not point [awaitLiveMonitorVisible] at the now-orphaned
+        // `LIVE_MONITOR_TOP_BAR_TEST_TAG` again.
         if (step.drillIn["tapLiveBar"] == "true") {
             awaitLiveBarTagPresent(step.id)
             val tapped = TourAccessibilityTap.tapNodeWithTestTag(window.decorView, LIVE_BAR_TEST_TAG)
@@ -343,14 +349,25 @@ public class ScreenshotTourActivity : ComponentActivity() {
                 // Proves the pause actually took — the glyph flips back only once `playing` does.
                 awaitTagPresent(step.id, WAVEFORM_PLAY_TEST_TAG)
             }
-            // R-1006 reversal: a real system back press — the same
-            // `onBackPressedDispatcher.onBackPressed()` mechanism
-            // `ReaderActivityDestinationSmokeTest` already uses, never `Espresso.pressBack()` (this
-            // module carries no dependency on it) — closes the transmission drill-in without
-            // stopping playback, landing on this step's own `destination` with the transport bar
-            // (C10) now visible.
+            // **R-1146 (register), corrected 2026-09-21**: a real system back press — the same
+            // `onBackPressedDispatcher.onBackPressed()` mechanism `ReaderActivityDestinationSmokeTest`
+            // already uses, never `Espresso.pressBack()` (this module carries no dependency on it) —
+            // closes the transmission drill-in, landing on this step's own `destination`. This used to
+            // wait for the transport bar's own `Playback` state (`transport-bar-playback`) to still be
+            // showing here, encoding the C10 transport-bar work's *own* reversal of R-1006 — playback
+            // was meant to survive the navigation, the bar carrying it along. `AC-168`/build-plan `P26`
+            // (register R-1006, `684c3abf`) reversed that reversal, restoring stop-on-leave but at
+            // this nav-host layer (`NavHostBody`'s own `DisposableEffect(ids.transmissionId)`, above)
+            // rather than the per-screen layer R-1006 originally used — so playback is genuinely
+            // stopped by the moment this line runs, `TransportPlaybackController.loadedTransmissionId`
+            // clears, and [resolveTransportBarState] can never again resolve `Playback` here. The
+            // honest fact to prove is what actually replaces it: this scenario (`overnight-live`) is a
+            // live capturing session, so the bar reverts to its ordinary `Live` state — the ordinary
+            // `live-bar` tag, unconditionally present, the identical proof every other live-scenario
+            // step in this file already rests on — never "the bar is entirely absent", which is false
+            // here (it would only hold for a scenario with no live session at all).
             onBackPressedDispatcher.onBackPressed()
-            awaitTagPresent(step.id, TRANSPORT_BAR_PLAYBACK_TEST_TAG)
+            awaitTagPresent(step.id, LIVE_BAR_TEST_TAG)
         }
         if (step.override != null) {
             Scenarios.load(applicationContext, step.override)
@@ -407,18 +424,19 @@ public class ScreenshotTourActivity : ComponentActivity() {
     } == true
 
     /**
-     * WPW, fixed for **R-1021**: after [TourAccessibilityTap.tapNodeWithTestTag] taps the live bar,
-     * waits (bounded, [STATE_WAIT_TIMEOUT_MILLIS]) until `LiveMonitorScreen`'s own content has
-     * actually composed — via [TourAccessibilityTap.hasNodeWithTestTag] against
-     * `LiveMonitorTopBar`'s own stable `testTag("live-monitor-top-bar")`, never against rendered
-     * text. This function's own first version keyed on the `"LOGGED TONIGHT"` section header's
-     * literal copy — precisely the same class of defect R-1021 found in the tap itself (constitution
-     * II: never match on prose a designer may change), caught and fixed in the same round rather
-     * than left for a second field report. Never assumed from the tap's own return value alone:
-     * `ACTION_CLICK` only *invokes* [org.ort.app.ui.components.LiveBar]'s `onClick`, which flips
-     * local Compose state (`CaptureStatusContent`'s own `sub`) — proving the resulting recomposition
-     * actually landed needs a second, real read of the tree, the same reasoning
-     * `awaitDestinationSettled`'s own polling loop rests on.
+     * WPW. **Currently reached by no step in `tour.json` — see R-1021's 2026-09-21 correction on the
+     * `tapLiveBar` block above.** `LiveMonitorScreen` was merged into `CaptureScreen` (N08, `WPCAP`
+     * `3b5d0e0a`) and is no longer reachable from any navigation path, so a wait keyed on
+     * `LiveMonitorTopBar`'s own `testTag("live-monitor-top-bar")` can never again resolve `true` in
+     * this app — kept, unremoved (P9), as the template for a future tap-then-await pair once a real
+     * cross-screen tap exists again (`Transport-Bar.dc.html`, C10, not yet built) — **whichever tag
+     * that future caller waits on, it must not be this one.** Originally: after
+     * [TourAccessibilityTap.tapNodeWithTestTag] taps the live bar, waits (bounded,
+     * [STATE_WAIT_TIMEOUT_MILLIS]) until the target screen's own content has actually composed, by
+     * `testTag`, never by rendered text (constitution II) and never assumed from the tap's own return
+     * value alone — `ACTION_CLICK` only *invokes* an `onClick`, which flips local Compose state;
+     * proving the resulting recomposition actually landed needs a second, real read of the tree, the
+     * same reasoning `awaitDestinationSettled`'s own polling loop rests on.
      */
     private suspend fun awaitLiveMonitorVisible(stepId: String) {
         val settled = withTimeoutOrNull(STATE_WAIT_TIMEOUT_MILLIS) {
@@ -691,12 +709,13 @@ public class ScreenshotTourActivity : ComponentActivity() {
 
         /** WPUI follow-up: `org.ort.app.ui.components.Inspection.kt`'s own waveform play-control
          * glyph tags (`WaveformPlayControl`'s existing `"waveform-glyph-play"`/`"-pause"`, unowned
-         * by this package, not edited by it — see `TourStep`'s own doc comment) and this package's
-         * own `TransportBar`'s `"transport-bar-playback"` (the row that only exists while the bar
-         * shows [org.ort.app.ui.components.TransportBarViewState.Playback]). */
+         * by this package, not edited by it — see `TourStep`'s own doc comment). **R-1146**: this
+         * package no longer waits on `TransportBar`'s own `"transport-bar-playback"` tag after a
+         * `playThenNavigate`/`pauseThenNavigate` back-press — `AC-168`/`P26` restored stop-on-leave
+         * at the nav-host layer, so that state can never be showing there any more; see the
+         * `playThenNavigate || pauseThenNavigate` block's own comment for the full account. */
         private const val WAVEFORM_PLAY_TEST_TAG = "waveform-glyph-play"
         private const val WAVEFORM_PAUSE_TEST_TAG = "waveform-glyph-pause"
-        private const val TRANSPORT_BAR_PLAYBACK_TEST_TAG = "transport-bar-playback"
 
         /** R-1129: `org.ort.app.ui.settings.SettingsLicensesScreen.kt`'s own stable testTag on its
          * notice-detail screen — see `tapLicenseNotice`'s own doc comment (`TourStep`). */

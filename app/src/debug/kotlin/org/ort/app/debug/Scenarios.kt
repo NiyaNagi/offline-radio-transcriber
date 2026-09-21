@@ -4209,10 +4209,29 @@ public object Scenarios {
      *    row's own "Pass B errored 2 times" caption reads a real, durable count, never a guessed one.
      *
      * Live (not ended) so both the pinned/embedded live bar and this screen's own continuously-live
-     * rows are reachable at all — `org.ort.app.debug.tour.ScreenshotTourActivity`'s own `tapLiveBar`
-     * drillIn is the real route onto this screen from the tour (no `NavSeed` field exists for
-     * `OrtNavHost.NavHostNavState.openCaptureLiveMonitor` — that class's own doc comment names
-     * exactly this gap, routed to whichever package owns the `app/src/debug` source set, this one).
+     * rows are reachable at all.
+     *
+     * **R-1021 (register), corrected 2026-09-21: the tour no longer taps the live bar to reach this
+     * content.** `WPCAP` (`3b5d0e0a`, after this scenario and its own `tapLiveBar` route were
+     * written) merged [org.ort.app.ui.screens.CaptureStatusScreen] (N04),
+     * [org.ort.app.ui.screens.LevelMeterScreen] (N06) and [org.ort.app.ui.screens.LiveMonitorScreen]
+     * (N07) into the one [org.ort.app.ui.screens.CaptureScreen] (N08, `design/design-intent.md`'s own
+     * N08 row: "Supersedes N04, N06 and N07 as separate screens") — `CaptureScreen` renders this
+     * scenario's overs, level envelope and hearing card via the exact same
+     * `LiveMonitorOversSection`/`LiveMonitorLevelCard`/`LiveMonitorHearingCard` composables N07 always
+     * used (promoted `internal` in `LiveMonitorScreen.kt` for that reuse), so landing on
+     * `ReaderDestination.CAPTURE` already shows everything this fixture seeds — no further tap
+     * required, and none is wired: `CaptureStatusContent`'s own `openLiveMonitor` parameter has been
+     * an inert, `@Suppress`-ed no-op since that merge, and `LiveMonitorScreen` itself is no longer
+     * reachable from any navigation path (its own composable and tests stay, untouched, P9). The tour
+     * step (`tools/ui-audit/tour.json`, `overnight-live-monitor/N07-live-monitor*`) previously tapped
+     * a `live-bar`-tagged node anyway — [org.ort.app.ui.components.LiveBar] always self-tags
+     * `testTag("live-bar")` regardless of a caller's own modifier, so the tap "succeeded" against
+     * `CaptureScreen`'s own embedded copy — but that copy's `onClick` is deliberately `{}` (there is
+     * nothing further to open once already on the one merged screen), so the tap did nothing and the
+     * step then waited forever for a `LiveMonitorScreen` the app can no longer navigate to. Fixed by
+     * dropping the `tapLiveBar` drill-in from those three steps; the destination alone now settles on
+     * real content.
      *
      * R-1024: this scenario originally seeded no [LevelStatus] reading at all, so N07's level card
      * rendered its own honest "No level signal yet this session" fallback where the artboard draws

@@ -70,9 +70,14 @@ import org.json.JSONObject
  * again and confirms it flips back to `"waveform-glyph-play"`. Either way, a real system back press
  * (`ComponentActivity.onBackPressedDispatcher.onBackPressed()`, the identical mechanism this
  * package's own `ReaderActivityDestinationSmokeTest` already uses, never `Espresso.pressBack()`)
- * closes the drill-in, landing on this step's own [destination] with the transport bar (C10) now
- * visible showing whichever mode the taps left it in — the on-device proof R-1006's reversal
- * needed and no Robolectric test can substitute for (constitution VIII).
+ * closes the drill-in, landing on this step's own [destination]. **R-1146 (register), corrected
+ * 2026-09-21**: this used to close on the transport bar (C10) still showing playback — the C10
+ * transport-bar work's own reversal of R-1006, meant to let playback survive the navigation.
+ * `AC-168`/build-plan `P26` (register R-1006, `684c3abf`) reversed that reversal, restoring
+ * stop-on-leave at the nav-host layer — so [ScreenshotTourActivity] now waits for the ordinary
+ * `"live-bar"` tag here instead, proving playback genuinely stopped and the bar reverted to
+ * reflecting the still-live capturing session, the on-device proof this restoration needed and no
+ * Robolectric test can substitute for (constitution VIII).
  *
  * **R-1117/R-1127 (register, tour-coverage unit)**: `whyOpen` (a companion to `transmission`, the
  * same relationship `revisionsOpen` already has) — `true` opens D05 (`Detail-Why.dc.html`) on the
@@ -181,8 +186,13 @@ public data class TourStep(
             // WPW (register R-1007 follow-up): `"true"` taps the composed screen's own live bar via
             // `TourAccessibilityTap`, a *destination*-step-only key read directly by
             // `ScreenshotTourActivity` (never through `TourIds.resolveSeed`, which only ever builds
-            // a `NavSeed`) — the real route onto `LiveMonitorScreen`, since no `NavSeed` field exists
-            // for `OrtNavHost.NavHostNavState.openCaptureLiveMonitor`.
+            // a `NavSeed`). **R-1021, corrected 2026-09-21**: no step in `tour.json` sets this any
+            // more — `LiveMonitorScreen`, the screen it used to route onto, was merged into
+            // `CaptureScreen` (N08, `WPCAP` `3b5d0e0a`) and is no longer reachable from any
+            // navigation path, so a step that lands directly on `ReaderDestination.CAPTURE` already
+            // shows everything this key used to reach by tapping. Kept, unremoved (P9), for a future
+            // real cross-screen tap once `Transport-Bar.dc.html` (C10)'s own `live` → `Capture`
+            // affordance replaces the plain pinned live bar this key was written against.
             "tapLiveBar",
             // WPUI follow-up (R-1006's on-device proof) — see this class's own doc comment above.
             "playThenNavigate",
