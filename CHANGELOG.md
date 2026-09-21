@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (P37: `diff.py` can fail)
 
-### `<pending>` — P37: `diff.py` reads `runId`/`apkHash` and compares pixels, not a coarse signature
+### `6a58b994` — P37: `diff.py` reads `runId`/`apkHash` and compares pixels, not a coarse signature
 
 **Scope:** `tools/ui-audit/diff.py`; new `tools/ui-audit/tests/test_diff.py` and
 `tools/ui-audit/R-1116-stale-manifest-proof.md`; `.github/workflows/ci.yml` (new `ui-audit-diff`
