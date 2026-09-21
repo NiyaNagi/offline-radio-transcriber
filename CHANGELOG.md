@@ -32,6 +32,55 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (roadmap: five decisions, Wave L, fifteen findings, and one backlog view)
+
+### `<pending>` — roadmap research lands as D51–D55, build-plan Wave L, R-1109..R-1123 and a generated `results/backlog.md`
+
+**Scope:** `spec/functional-spec.md` (§3 decisions and §16 traceability), `spec/build-plan.md`
+(Wave L, P33–P38, plus the planned M–Q block), `results/ui-audit/register.md` (fifteen new rows),
+`AGENTS.md` (one row in "Where things are"), and a new `tools/backlog/backlog.py` with its
+generated `results/backlog.md`. No product code touched.
+
+**Requirements/ACs:** none new yet — the FR-ENT (entitlement/tiers) and FR-ORG (roster, ICS-309/213)
+groups D51 and the Teams surface need are **not** written yet and are the next spec change.
+Decisions: **D51** three tiers (Free/Pro/Teams, amending D47's "no billing"; no requirement marked
+(M) may be gated); **D52** the voice library returns to 1.0 behind the R4 probe and a counsel memo
+(amending D45); **D53** the M4/Pass C fork is decided inside the 1.0 cycle, after Pass B honesty is
+restored (amending D46); **D54** tier-1 analytics off for the closed beta, consent before emission;
+**D55** field reports ship in release builds, private destination, names redacted at capture
+(completing D49). Findings: R-1109..R-1123.
+
+**What changed:** a ten-agent read-only audit of the app against the market research produced a
+ranked backlog; its load-bearing findings are now filed where they belong. The two that outrank
+everything: `PassBFactory` builds `PriorCombiner(emptyList())`, so every evidence prior is dead in
+production (R-1109), and `confirmThreshold = -1f` makes `CONFIRMED` unconditional on an
+uncalibrated score (R-1110) — Principle I breached at the data layer, not in the UI. Also filed:
+Improve is unreachable on every real session because `deviceTier` is never written (R-1111); the
+field-report channel is `BuildConfig.DEBUG`-only so it is absent from signed builds (R-1112);
+route-change callbacks never fire and no native sample rate is negotiated (R-1113, R-1114); the
+heartbeat keeps no history so D8 cannot run (R-1115); `diff.py` cannot fail and cannot see a
+changed line of text (R-1116); Detail-Why has never been captured and no attribution marker opens
+it (R-1117); plus R-1118..R-1123 (participant order, stale leases, the migration guard, the inert
+`no_speech_prob` rule, the corpus fingerprint missing machine and provider, and native/ANR/OOM
+crashes being unreportable). Wave L (P33–P38) turns the six beta blockers into units; P33 carries
+its own tour re-capture because Principle VIII's path trigger does not fire for `:pipeline`
+changes that alter what every screen states. `results/backlog.md` is the new single view: 165 open
+items (43 P0), rolled up from the register, the hardware protocol, the build plan, the
+capture-modes checklist, the open questions and the coverage matrix.
+
+**Verified:** `python tools/spec-check/spec_check.py` — all 8 checks PASS after both spec edits.
+`python tools/backlog/backlog.py` then `--check` — 165 items, up to date, exit 0. The register's
+status column carries prose ("closed - fixed — WPD `e2620507`; run 3 confirmed"), so the roll-up
+treats a cell as done only when it *starts* with a done status and does not contain "reopen";
+that rule was checked against the register's actual vocabulary (362 plain `closed`, 46 `open`,
+29 `fixed`, 4 `rejected`, plus ~20 prose variants and one "closed - reopened").
+
+**Left open / not done:** no commit hash yet — replace `<pending>` on commit. FR-ENT and FR-ORG
+ids are unwritten, so no Teams or roster build hour can start. The operator hour budget the red
+team asked for does not exist, and 2026-12-15 is uncommittable without it. `backlog.py --check`
+is not wired into CI. Waves M–Q are listed but not expanded into prompts. The 213 uncovered
+requirement ids and 12 orphan test ids are reported, not triaged.
+
 ## 2026-09-20 (R-1091/R-1092: the mic-denied halt indicator and the FAILED models row's colour)
 
 ### R-1091, R-1092 · `SetupStep.isHalted()` now agrees with `Setup-Mic-Denied.dc.html`; the FAILED models row renders amber, not dim

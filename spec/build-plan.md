@@ -887,6 +887,128 @@ shape before an accessibility pass sweeps it).
   device dumps attached to the register rows, per constitution VIII ("a test that passes is not
   that evidence").
 
+**Wave L — beta blockers.** Six units, files disjoint, all parallel. Every one of these exists
+because an external tester hits it; none is a feature. Sources: the roadmap research of
+2026-09-20 and its red-team pass (`research/market/roadmap/`, git-excluded).
+
+- [ ] **P33 · Pass B honesty — wire the evidence priors, stop asserting `CONFIRMED` uncalibrated**
+  *(`:pipeline` passb)* — FR-LEX-9, FR-LEX-17..21, FR-SPK-10, constitution I. **Beta blocker.**
+
+  **Read first:** `pipeline/src/main/kotlin/org/ort/pipeline/passb/PassBFactory.kt` — it builds
+  `PriorCombiner(emptyList())` and sets `confirmThreshold = -1f`, so every evidence prior is dead
+  in production and the resolver asserts `CONFIRMED` on an uncalibrated score; `:lexicon`'s
+  `defaultPriors` and `PriorCombiner`; `CallsignResolver.kt`; `eval/.../Main.kt`, today the only
+  caller that builds the real prior set.
+
+  **Owns:** `PassBFactory.kt` and the Pass B construction path in `:pipeline`.
+  **Must not touch:** `:app` screens (Wave M owns the UI sweep), `:capture-*`, the prior
+  implementations in `:lexicon`.
+
+  **Tests first:** each of the seven priors contributes a non-zero term on a fixture over, and the
+  test fails against the empty combiner; with no calibration present the state is `AMBIGUOUS` and
+  never `CONFIRMED` (no hand-picked threshold — the threshold arrives with the calibration, per
+  constitution VI); the transcript fingerprint carries `calibrationVersion` when one exists.
+
+  **Ships with it:** a fake calibrator so the AMBIGUOUS-until-calibrated rule is testable both ways.
+
+  **Done when:** a device capture shows the inspection surface listing each prior's real
+  contribution; a debug dump shows no `CONFIRMED` without a calibration version; **and the tour is
+  re-captured for Log, Now, Thread, Station, Digest and Detail-Why at 1.0 and 2.0.** This unit
+  carries that re-capture explicitly: constitution VIII's path trigger does not fire for
+  `:pipeline`, yet this change alters what every one of those screens states.
+
+- [ ] **P34 · Capture route and sample rate** *(`:capture-android`)* — FR-CAP-2, FR-CAP-2a,
+  FR-CAP-3, FR-RUN-11, constitution IV. **Beta blocker.**
+
+  **Read first:** `AndroidAudioIo.kt` — `setEventListener` stores the lambda and nothing invokes
+  it, and the class defaults to 48 000 Hz with no negotiation; `AudioRecordSource.kt`'s
+  `io.read() < 0` path, today the only real interruption signal; `FakeAudioIo`, which is what every
+  existing recovery test actually exercises.
+
+  **Owns:** `AndroidAudioIo` and the route-verification path in the capture service.
+  **Must not touch:** `:pipeline`, `:app`.
+
+  **Tests first:** a route-change callback halts capture per FR-CAP-3 and writes a gap of true
+  length; an adapter offering only 44.1 kHz negotiates and resamples deterministically instead of
+  failing to open; periodic re-verification **never blocks the capture loop** — assert no added
+  pass-queue latency and no dropped audio with the verifier stalled (constitution IV).
+
+  **Done when:** H4 and the 8-hour run show route-verified lines throughout and a forced mid-run
+  switch halts capture rather than recording the room.
+
+- [ ] **P35 · Durability — stale leases and the migration guard** *(`:data`, `:app` startup)* —
+  FR-RUN-8, AC-47, FR-REP-4. **Beta blocker.**
+
+  **Read first:** `WorkQueue.recoverStaleLeases` (implemented, never called);
+  `applyHandWrittenSchema`'s unique-index creation; the Migration failure screen.
+
+  **Tests first:** kill the process mid-Pass-B, relaunch, the queue row returns to `READY` and the
+  over completes; an upgrade over a database that violates the partial unique index opens and
+  shows the failure screen instead of crashing on every launch.
+
+  **Done when:** both are observed on a device, not in Robolectric.
+
+- [ ] **P36 · Outbound channels — field reports in release, private and redacted; Gemma notices**
+  *(`:app` fieldreport, `:net`, licences screen)* — D55, D49, FR-OBS-6..12, FR-OBS-10,
+  constitution V. **Beta blocker.**
+
+  **Read first:** `FieldReportAppWiring.kt` (the channel is `BuildConfig.DEBUG`-only, so it is
+  absent from exactly the signed builds a beta ships); `FieldReportUploadClientFactory.kt` (the
+  repository is hardcoded); `RealFieldReportUploadClient.kt` — **the visibility guard is already
+  wired and fail-closed; do not rebuild it**; `ScreenFrameCapturer.kt`,
+  `FieldReportBundleBuilder.kt`.
+
+  **Owns:** the release wiring, the build-configurable destination, and redaction of
+  user-supplied names **at capture**. **Must not touch:** the visibility guard's semantics.
+
+  **Tests first:** a release build carries the channel; a build without a configured destination
+  refuses to upload; a bundle built from a screen showing an operator-typed station name contains
+  that name in no frame. Redaction happens at capture, not at bundle time — constitution V puts
+  names in no channel at all, so a frame that ever held one is already a breach.
+
+  **Done when:** an upload from a signed build lands in the named private repository; a device
+  capture of a real bundle shows the redaction; the licences screen renders Gemma's terms and its
+  prohibited-use policy.
+
+- [ ] **P37 · Evidence tooling — make `diff.py` able to fail** *(`tools/ui-audit/`)* —
+  constitution VIII. **Beta blocker, and it gates the evidence value of every other unit.**
+
+  **Read first:** `tools/ui-audit/diff.py` — it returns 0 except when a manifest file is missing,
+  never reads `runId` or `apkHash`, and its 4×4 mean-RGB signature at threshold 6.0 cannot see a
+  changed line of text (a one-line difference moves it by about 1.0). The tour's own stale-manifest
+  fix landed already; the leak moved downstream into the comparison step.
+
+  **Tests first:** a run-A manifest against a run-B directory exits non-zero; a one-line text
+  change reports `changed`; a mismatched `runId` or `apkHash` fails rather than passing quietly.
+
+  **Done when:** a **live tour invocation against a deliberately stale manifest exits non-zero**,
+  with the transcript committed. Until this lands, no `diff.py` "unchanged" counts as evidence
+  anywhere in this plan.
+
+- [ ] **P38 · Packaging and the model mirror** *(buildSrc, release workflow)* — FR-AST-10..14,
+  D44. **Beta blocker.**
+
+  **Read first:** `verifySherpaNativeLibrariesPackaged` (it reads the `full` APK only, so the slim
+  `play` artifact the beta ships is unverified); `bundled-assets.json`'s `mirrorUrl` entries and
+  `ModelMirrorPublisher`.
+
+  **Tests first:** the packaging check runs over `playRelease` and fails when a native library is
+  missing from that artifact.
+
+  **Done when:** the check lists the native libraries in the play artifact, and every `models-v1`
+  asset returns HTTP 200 from a clean client.
+
+**Waves M-Q — planned, expanded into prompts when each wave starts.** **M** UI honesty sweep
+(hide the unreachable Improve destination, share from the open screen, an alert refusal must not
+open the coalescing episode, unattributed overs in the thread order, the storage screen's
+"next deletion" claim, the Detail-Why drill-in seam) · **N** operator work, parallel throughout
+(hardware sessions, the Q2 tape, the privacy policy, the listing) · **O** TalkBack pass, backup
+round trip across a wipe, the analytics decision under D54 · **P** post-beta repair, triaged from
+what the twelve testers actually report · **Q** desktop accuracy chain (transcripts exporter →
+dev-fold number → the labelling pilot → `distil-small.en`). Off the beta path but inside 1.0:
+identity behind D52's two gates, the Pass C prototype and verdict per D53, and the Teams surface
+per D51 once its requirement ids exist.
+
 **Manual, not a builder session (yours).** The hardware protocol H1-H15 and the labelled
 validation hour / dev-fold M3 measurement (`results/e2e-audit/checklist.md`,
 `docs/reference/labelling-protocol.md`) stay the operator's — no session here can drive a real
