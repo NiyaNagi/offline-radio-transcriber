@@ -109,6 +109,70 @@ here, since it is production/tooling code this unit must not touch) and, separat
 `coverage-uncovered` (204 requirement ids with no test), which this unit was not scoped to
 address.
 
+## 2026-09-21 (R-1102/AC-193: checked whether an emulator can supply the alert-path packet-capture proof — the capture technique does, driving a genuine alert firing does not)
+
+### `a85e82d0` — q-alert-silence: AC-193 investigated on `emulator-5560`; capture technique confirmed viable, alert-firing prerequisite confirmed unreachable without a code change
+
+**Scope:** `results/e2e-audit/R-1102-alert-silence-investigation.md` (new). No product code touched
+(per this unit's own instructions: a code change would be needed to close this and was out of
+scope, so none was made).
+
+**Requirements/ACs:** AC-193, FR-ALR-2, FR-ALR-3, constitution V (the network-isolation guarantee);
+R-1102 (the register row this investigates — left open, disposition explained below).
+
+**What changed:** Investigated register row R-1102 ("AC-193's network-silence proof for alerts has
+not been run"), filed on the assumption that it needed the reference phone and the H1-H15 hardware
+protocol. Checked that assumption on `emulator-5560` instead:
+
+- **Packet capture works on an emulator, without disrupting any other emulator.** `adb -s
+  emulator-5560 root` (device is `userdebug`) plus the on-device `/system/bin/tcpdump` needs no
+  relaunch of the emulator's qemu process — the `-tcpdump <file>` launch-flag route was ruled out
+  specifically because it would have required killing and restarting a qemu process shared with
+  whatever else is using that AVD. Validated with a positive control (2 packets idle over 8 s vs.
+  182 packets over 8 s while Chrome loaded `https://example.com`) — a negative capture proves
+  nothing without a demonstrated-working rig behind it, and now there is one.
+- **Driving a genuine alert firing could not be done, and the reason is now documented precisely.**
+  FR-ALR-3/AC-194 gate a firing on Pass B resolving a real transmission, reached from exactly one
+  call site (`DataPassBResultSink.record`, inside a live `RealCaptureService` session).
+  `ReprocessRunner` never fires a live alert by design (R-1097). The debug scenario mechanism
+  (`Scenarios.load`) writes historical Room rows directly and never touches the live coordinator —
+  confirmed by grepping the whole `app/src/debug` tree for an alert scenario the task brief expected
+  to exist: none does. `RealCaptureService.Dependencies` (the one seam that could inject a fake audio
+  route) is `internal` to `:pipeline` with no debug override exposed to `:app`. Attempted to reach a
+  real `Start capture` via the existing `setup-verified` scenario recipe; blocked twice over: (1)
+  `SetupActivity.reconcileOvernightSurvival()` resets `overnightStepSeen` on every entry until a
+  *real, already-completed* overnight session exists in the database — a bootstrap-order problem on
+  a cleared device that no in-session tap sequence got past in this attempt; (2) `setup-verified`'s
+  own seeded route is a fixture "USB Audio Device · verified" flag with no real USB peripheral behind
+  it, and (independently, per `results/e2e-audit/checklist.md`'s own row E2-E02, validator V8) every
+  AVD in this fleet has a silent virtual microphone, so local-mic mode fares no better — no VAD
+  trigger, no segment, no transmission, no call to the coordinator's one call site. Confirmed by
+  direct inspection, not just inference: zero sessions and zero transmissions in the app's own
+  database after the attempt, no capture service ever running.
+
+**Verified:**
+- `adb -s emulator-5560 shell tcpdump --version` — 4.99.3, present and runnable as root without an
+  emulator relaunch.
+- Positive-control capture: 2 packets (8 s idle) vs. 182 packets (8 s, real Chrome page load) on the
+  same device, same technique — see the committed transcript for exact commands and output.
+- `.\gradlew.bat dependencyRules` — OK, 21 modules checked; `:pipeline` and `:capture-android` both
+  still carry no edge to `:net`, re-confirming the structural half of AC-193 is untouched.
+- `adb -s emulator-5560 shell run-as org.ort.app sqlite3 databases/ort.db "SELECT count(*) FROM
+  transmission;"` → `0`, after the setup/capture attempt — the honest reason no alert was observed:
+  no capture session ever started, not "it started and produced no traffic."
+- Device left clean: the `dumpsys deviceidle whitelist` change made during the attempt was reverted,
+  both pcaps and their logs were deleted from `/data/local/tmp`, and `pm clear org.ort.app` was run
+  at the end so `emulator-5560` is in the same state the next session would find after
+  `install.ps1 -Clear`.
+
+**Left open / not done:** AC-193 is **not** satisfied by this session. R-1102 stays with the
+hardware protocol (`results/e2e-audit/hardware-checklist.md`), now for a more specific reason than
+the one it was filed under: not that packet capture needs a physical device (it does not), but that
+making an alert fire needs either a real microphone/rig or a debug-only injection seam into the live
+`AlertEvaluationCoordinator` that does not exist today — both out of this unit's scope, which was
+told to stop and report rather than make a code change. Full details, exact commands and output are
+in `results/e2e-audit/R-1102-alert-silence-investigation.md`.
+
 ---
 
 ## 2026-09-21 (R-1149/R-1145: `diff.py` refuses a geometry-mismatched pair instead of reporting noise, `tour.ps1` asserts the `wm size` override is set, and Thread-Detail's artboard header matches the shared `DrillInHeader`)
