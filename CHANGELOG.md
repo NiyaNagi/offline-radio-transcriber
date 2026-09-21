@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (q-coverage-crossrefs: `CoverageMatrix`'s cross-reference regex extended to recognise `P<n>` build-plan units, `IA-<n>` decisions, `CONSTITUTION <numeral>` citations and design-intent.md's screen-id families — the orphan count from the q-coverage-orphans diagnosis (867bfdd5) goes to zero honestly)
 
-### `<pending>` — q-coverage-crossrefs: CoverageMatrix.kt recognises P/IA-/CONSTITUTION/screen-id citations as cross-references, not orphans
+### `97a18207` — q-coverage-crossrefs: CoverageMatrix.kt recognises P/IA-/CONSTITUTION/screen-id citations as cross-references, not orphans
 
 **Scope:** `buildSrc/src/main/kotlin/org/ort/gradle/CoverageMatrix.kt`,
 `buildSrc/src/test/kotlin/org/ort/gradle/CoverageMatrixTest.kt`, `results/coverage-matrix.md`
