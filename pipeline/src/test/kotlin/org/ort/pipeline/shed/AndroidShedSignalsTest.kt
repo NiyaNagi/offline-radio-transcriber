@@ -89,4 +89,75 @@ class AndroidShedSignalsTest {
         signals.refreshBacklog()
         assertEquals(1, signals.queueBacklog())
     }
+
+    // R-1141 (FR-TIER-3): the Settings tier override lives in the same on-disk preferences file
+    // `:app`'s SharedPreferencesSettingsStore writes (`:pipeline` cannot depend on `:app` --
+    // module graph, see AndroidShedSignals.tierCapOrdinal()'s own kdoc for the shared-file
+    // contract this mirrors). Writing the raw preference here, rather than constructing `:app`
+    // types, is deliberate -- this test proves the two sides agree on the file/key/value shape
+    // without creating the module edge the production code itself must not have.
+
+    @Test
+    @Requirement("FR-TIER-3")
+    fun `FR_TIER_3 reads a real tier override written to the shared settings preferences file`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        context.getSharedPreferences(AndroidShedSignals.SETTINGS_PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            .edit().putString(AndroidShedSignals.KEY_TIER_OVERRIDE, "T1").commit()
+        val db = OrtDatabase.create(context, inMemory = true)
+        val signals = AndroidShedSignals(context, db.workQueueDao(), context.filesDir)
+
+        assertEquals(1, signals.tierCapOrdinal())
+    }
+
+    @Test
+    @Requirement("FR-TIER-3")
+    fun `FR_TIER_3 no override written reads as null, never as ordinal 0`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val db = OrtDatabase.create(context, inMemory = true)
+        val signals = AndroidShedSignals(context, db.workQueueDao(), context.filesDir)
+
+        assertEquals(null, signals.tierCapOrdinal())
+    }
+
+    @Test
+    @Requirement("FR-TIER-3")
+    fun `FR_TIER_3 an unparseable stored override reads as null rather than a fabricated ordinal`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        context.getSharedPreferences(AndroidShedSignals.SETTINGS_PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            .edit().putString(AndroidShedSignals.KEY_TIER_OVERRIDE, "not-a-real-tier").commit()
+        val db = OrtDatabase.create(context, inMemory = true)
+        val signals = AndroidShedSignals(context, db.workQueueDao(), context.filesDir)
+
+        assertEquals(null, signals.tierCapOrdinal())
+    }
+
+    @Test
+    @Requirement("FR-TIER-3", "FR-TIER-4")
+    fun `FR_TIER_3 the real preference reaches ShedController end to end, even with a healthy device`() {
+        // The full real chain R-1141 wires: a real operator override, written the same way
+        // SettingsStore.tierOverrideName is, read by a real AndroidShedSignals, floors a real
+        // ShedController's level -- proving the two pieces this row owns actually agree, not just
+        // each in isolation.
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        // A healthy, plausible battery reading -- see FR_RUN_3's own test above for why an unset
+        // Robolectric default (-1, "unreadable") would otherwise read as critical and mask this
+        // test's own point behind the battery-forced level 4 path.
+        val bm = context.getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
+        val batteryShadow: ShadowBatteryManager = Shadows.shadowOf(bm)
+        batteryShadow.setIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY, 100)
+        batteryShadow.setIsCharging(true)
+        context.getSharedPreferences(AndroidShedSignals.SETTINGS_PREFS_NAME, android.content.Context.MODE_PRIVATE)
+            .edit().putString(AndroidShedSignals.KEY_TIER_OVERRIDE, "T0").commit()
+        val db = OrtDatabase.create(context, inMemory = true)
+        val signals = AndroidShedSignals(context, db.workQueueDao(), context.filesDir)
+        val controller = ShedController(signals, org.ort.testing.TestClock())
+
+        controller.sample()
+
+        assertEquals(
+            "held at T0 (ordinal 0) must floor a healthy, idle device (level 0 from signals alone) at level 3",
+            3,
+            controller.currentLevel,
+        )
+    }
 }

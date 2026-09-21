@@ -96,6 +96,101 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (R-1135/R-1136: two more artboard/code drifts closed from the R-1130 audit; R-1143 verified already conformant except Thread-Detail's header shape)
 
+## 2026-09-21 (o-ui-honesty: R-1141 wires the Settings tier override as a shed-level floor; R-1142 gates a revision card's corrected marker on the real flag; R-1137 verified already fixed)
+
+### `<pending>` — R-1141: the tier-cap floor reaches `ShedController` through `AndroidShedSignals`; R-1142: `DetailRevisionsScreen` stops showing a corrected shape for an uncorrected version; R-1137: correction-scope wording already relabelled by `c9d2a599`, no further change needed
+
+**Scope:** `pipeline/src/main/kotlin/org/ort/pipeline/shed/{ShedSignals,ShedController,AndroidShedSignals}.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/DetailRevisionsScreen.kt`,
+`app/src/main/kotlin/org/ort/app/ui/data/TransmissionDetail.kt`, plus their tests.
+
+**Requirements/ACs:** FR-TIER-3, FR-TIER-4 (R-1141); FR-SPK-10, constitution I, R-1099 (R-1142);
+FR-SPK-10, constitution I, D45 (R-1137, verification only).
+
+**What changed:**
+
+- **R-1141.** `SettingsStore.tierOverrideName` was written by Settings and read by nothing —
+  `ShedController` and `AndroidShedSignals` never saw it, so the operator's explicit tier choice
+  changed nothing about the session row, reprocessing, or the models screen, even though the
+  register row it was found in (R-1111) had already confirmed four independent formulas
+  (`RealCaptureService.tierFromShedLevel()`, `ReprocessRunner.currentTierFromShedLevel()`,
+  `ImprovePolling.currentTierOrdinal()`, `SettingsPolling.currentTierNumber()`) agree on
+  `(MAX_TIER - ShedStatus.currentLevel)`. Wired at the one real source of truth those four
+  formulas all read from, `ShedStatus.currentLevel`, rather than patching each site separately
+  (which would have risked them disagreeing again): `ShedSignals` gains
+  `tierCapOrdinal(): Int?`; `AndroidShedSignals` implements it by reading the *same* on-disk
+  preferences file/key `SharedPreferencesSettingsStore.tierOverrideName` writes (`:pipeline`
+  cannot depend on `:app` — the same shared-file contract `ArchiveSettingsStore`/
+  `CaptureConfigurationStore` already use), parsed as `Tier.valueOf(name).ordinal`, `null` for a
+  missing or unparseable value (never a fabricated ordinal); `FakeShedSignals` gets a matching
+  settable field. `ShedController.sample()` turns the ordinal into a **floor on shed level**
+  (`(MAX_TIER_ORDINAL - ordinal).coerceIn(0, MAX_TIER_ORDINAL)`), combined with the existing
+  backlog-derived level by `maxOf`, never by replacing it.
+  **The design question the row raised, answered and recorded here:** an override is a
+  **ceiling on tier** ("Hold at T1" never runs *above* T1), which is a **floor on shed level** —
+  it can only ever add shedding beyond what battery/backlog alone would choose, never remove
+  shedding those signals demand, so FR-TIER-4's mandatory automatic degradation is never
+  overridable away. This matches FR-TIER-3's own "override the detected tier **downward**, to
+  save battery or heat" and the built Settings-Tier UI, which only ever offers holding *at or
+  below* the max (`0`/`1`/`2`) — FR-TIER-3's "upward, accepting the risk" half is not offered by
+  this UI and is out of scope for this fix; building it would need a real answer to overriding
+  FR-TIER-4's mandatory degradation away, which is a separate decision, not assumed here.
+  The operator can already tell which is in force from existing, unmodified UI: `SettingsPolling
+  .tierSummaryLine`/`SettingsTierScreen`'s "N of 3 · held at T1" now actually agree (`N` can read
+  below the held tier when real pressure sheds further, which is not a contradiction — the cap is
+  a ceiling, not a pin). Battery-critical (level 4) is unaffected — it already exceeds any cap's
+  floor, so there is nothing for the cap to add there.
+- **R-1142.** `DetailRevisionsScreen.kt`'s `VersionCard` built the `Attribution.unknown()
+  .withCorrection(stationId)` INFERRED-with-corrected shape whenever `version.stationId` was
+  non-null, without checking `version.corrected` — the pre-existing "corrected" `Badge` text was
+  (accidentally) already gated correctly, but the `AttributionRow` itself was not, so an
+  uncorrected version's card showed the same "outlined circle" INFERRED marker a genuine human
+  correction gets, misrepresenting whatever its real attribution actually was. Fixed by gating
+  the whole row on `ReaderTransmissionViewStateMapper.correctedAttributionOrNull` (register
+  R-1099's shared rule), given a new overload — `correctedAttributionOrNull(stationId: String?,
+  corrected: Boolean)` — so a caller holding only a `TranscriptVersionViewState` (no `:data`
+  access, no full `TransmissionEntity`) can use the same one rule rather than a fifth
+  reconstruction; the entity-taking overload now delegates to it. An uncorrected version shows no
+  attribution row at all, rather than a fabricated one — this `ViewState` carries no
+  `attributionState`/confidence of its own to render honestly instead.
+- **R-1137.** Verified, not fixed: the correction-scope wording this row names ("every over by the
+  same voice" → "same callsign") was already relabelled in `c9d2a599` ("P29: D45 relabel"), which
+  landed *before* this row was filed — `CorrectionSheet.kt`'s Tier C radio reads "Every over with
+  the same callsign", `CorrectionScope.EVERY_OVER_SAME_VOICE` was renamed to
+  `EVERY_OVER_SAME_CALLSIGN` everywhere, `CorrectionSheetTest.kt:203` already asserts the old
+  string does not exist, and `TransmissionDetailScreen.kt`/`DetailViewState.kt`/`ThreadViewData
+  .kt`'s own INFERRED-explanation sentences (a separate surface from the correction-scope radio,
+  also checked) are already honestly gated as unreachable rather than claiming a voice match. No
+  further wording change was found needed in this unit's owned files; the row appears stale and
+  is reported to the lead for reconciliation rather than closed here (only the lead edits the
+  register). Two adjacent, genuinely still-open overclaims were found just outside this unit's
+  owned files — `DigestPolling.kt`'s "N over(s) from unidentified voices" digest headline and
+  `ImproveScreens.kt`'s inert "Match voices to stations heard here" reprocess checkbox — and
+  flagged as a follow-up task rather than fixed here.
+
+**Verified:**
+- `.\gradlew.bat :pipeline:test :pipeline:detekt :pipeline:ktlintCheck --max-workers=2` — green
+  (all `:pipeline` unit tests, including the new `ShedControllerTest`/`AndroidShedSignalsTest`
+  cases; detekt/ktlint clean).
+- `.\gradlew.bat :app:detekt :app:ktlintCheck --max-workers=2` — green.
+- `.\gradlew.bat :app:testPlayDebugUnitTest --tests "org.ort.app.ui.screens.DetailRevisionsScreenTest"` — green (4/4).
+- `.\gradlew.bat :app:testPlayDebugUnitTest --tests "org.ort.app.ui.data.ReaderTransmissionViewStateMapperTest" --tests "org.ort.app.ui.data.CorrectionPollingTest"` — green, no regression from the `correctedAttributionOrNull` overload.
+- `.\gradlew.bat :app:testFullDebugUnitTest` — green, BUILD SUCCESSFUL (all ~1200 unit tests
+  across the `full` flavor; slow — 17m35s — from shared-daemon contention with other concurrent
+  worktrees on this machine, not a failure). `smokeTestFullDebugUnitTest` not run: this unit
+  touched none of the 18 classes that task isolates (`app/build.gradle.kts`'s
+  `registerComposePoisonSmokeTestTask` list checked directly).
+- Every new/changed assertion discriminated: production change reverted, new test watched fail
+  for the right reason (`ShedController`'s cap-floor logic disabled → the cap test failed with
+  `expected: <2> but was: <0>`; `DetailRevisionsScreen`'s gate removed → the no-correction test
+  failed with `assertDoesNotExist` finding the row anyway), then restored and watched pass again.
+
+**Left open / not done:**
+- The DigestPolling/ImproveScreens voice-overclaim findings noted under R-1137 above are filed as
+  a follow-up task, not fixed in this unit (outside its owned files).
+- FR-TIER-3's "upward, accepting the risk" override half is not built (the UI never offers it);
+  noted as a real open design question for whoever builds it, not assumed away.
+
 ### `<pending>` — R-1135: `OrtColors.kt`'s `textSignal`/`textLow` doc comments corrected to match their real call sites; R-1136: an unnamed legacy colour removed from three boards; R-1143: Digest/Transmission-Detail kebabs confirmed already drawn, Thread-Detail's header shape flagged instead of forced
 
 **Scope:** `design/canvas/Stations.dc.html`, `design/canvas/Frequency.dc.html`, `design/canvas/Rows.dc.html`,

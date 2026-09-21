@@ -22,11 +22,11 @@ import org.ort.app.ui.components.BadgeKind
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.LoadingState
 import org.ort.app.ui.components.TextAction
+import org.ort.app.ui.data.ReaderTransmissionViewStateMapper
 import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
-import org.ort.core.Attribution
 
 /**
  * R-055, `Detail-Revisions.dc.html`: version cards (current / superseded; pass, model, time, who),
@@ -129,13 +129,20 @@ private fun VersionCard(
                 modifier = Modifier.padding(top = OrtSpacing.sm),
             )
         }
-        // R-194: `Detail-Revisions.dc.html`'s own marker + callsign row on every card — the real
-        // *current* attribution (see `TranscriptVersionViewState`'s own doc comment for why every
-        // card shows the same one, not a fabricated per-version history).
-        version.stationId?.let { stationId ->
-            Row(modifier = Modifier.padding(top = OrtSpacing.sm)) {
-                AttributionRow(attribution = Attribution.unknown().withCorrection(stationId))
-                if (version.corrected) {
+        // R-194/R-1142: `Detail-Revisions.dc.html`'s own marker + callsign row on every card — the
+        // real *current* attribution (see `TranscriptVersionViewState`'s own doc comment for why
+        // every card shows the same one, not a fabricated per-version history), but only when this
+        // transmission was genuinely operator-corrected: `correctedAttributionOrNull` (the shared
+        // rule `TransmissionDetail.kt`'s `attributionFrom`/`CorrectionPolling.currentAttribution`
+        // already use — register R-1099) is `null` for a `stationId` that came from ordinary
+        // resolution rather than a correction, and this card has no other, honest attribution to
+        // fall back to (this `ViewState` carries no `attributionState`/`confidence` of its own —
+        // see its own doc comment) — so it shows nothing rather than the "corrected" shape a real
+        // human correction gets, which is what R-1142 found this unconditionally doing before.
+        ReaderTransmissionViewStateMapper.correctedAttributionOrNull(version.stationId, version.corrected)
+            ?.let { attribution ->
+                Row(modifier = Modifier.padding(top = OrtSpacing.sm)) {
+                    AttributionRow(attribution = attribution)
                     Badge(
                         text = "corrected",
                         kind = BadgeKind.CORRECTED,
@@ -143,7 +150,6 @@ private fun VersionCard(
                     )
                 }
             }
-        }
         if (!version.isCurrent) {
             TextAction(
                 text = "Restore",

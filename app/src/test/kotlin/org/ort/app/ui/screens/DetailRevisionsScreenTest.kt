@@ -7,6 +7,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.components.LOADING_STATE_TEST_TAG
+import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 
@@ -61,5 +62,71 @@ class DetailRevisionsScreenTest {
 
         composeTestRule.onNodeWithTag(LOADING_STATE_TEST_TAG).assertDoesNotExist()
         composeTestRule.onNodeWithText("0 versions", substring = true).assertExists()
+    }
+
+    // R-1142 (constitution I, R-1099): the card built `Attribution.unknown().withCorrection(...)`
+    // -- forcing AttributionState.INFERRED and the "corrected" flag -- whenever a version carried
+    // a `stationId`, without checking `version.corrected`. The pre-existing "corrected" text
+    // `Badge` was already (accidentally) gated on `version.corrected`, so the real, visible defect
+    // is the `AttributionRow` itself: a version this build never marked as corrected got the same
+    // "outlined circle, KJ7ABC" INFERRED marker a genuine human correction gets, misrepresenting
+    // whatever its real attribution state actually was (this `ViewState` carries no other one to
+    // render honestly instead — see `TranscriptVersionViewState`'s own doc comment). The fix gates
+    // the whole row on `version.corrected` via the shared
+    // `ReaderTransmissionViewStateMapper.correctedAttributionOrNull`, so an uncorrected version
+    // shows no attribution row at all rather than a fabricated one.
+
+    @Test
+    fun `R_1142 a station with no correction shows no attribution row at all`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                DetailRevisionsScreen(
+                    parentLabel = "W7NPC · 02:14",
+                    versions = listOf(
+                        TranscriptVersionViewState(
+                            id = "V1",
+                            text = "kilo juliet seven",
+                            timeLabel = "02:14:07",
+                            who = "Pass B · tiny",
+                            isCurrent = true,
+                            stationId = "KJ7ABC",
+                            corrected = false,
+                        ),
+                    ),
+                    onRestore = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("KJ7ABC").assertDoesNotExist()
+        composeTestRule.onNodeWithText("corrected", ignoreCase = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `R_1142 a station with a real correction still shows the attribution row and the corrected badge`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                DetailRevisionsScreen(
+                    parentLabel = "W7NPC · 02:14",
+                    versions = listOf(
+                        TranscriptVersionViewState(
+                            id = "V1",
+                            text = "kilo juliet seven",
+                            timeLabel = "02:14:07",
+                            who = "Pass B · tiny",
+                            isCurrent = true,
+                            stationId = "KJ7ABC",
+                            corrected = true,
+                        ),
+                    ),
+                    onRestore = {},
+                    onBack = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("KJ7ABC").assertExists()
+        composeTestRule.onNodeWithText("corrected", ignoreCase = true).assertExists()
     }
 }
