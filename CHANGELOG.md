@@ -32,6 +32,68 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (R-220/R-280/R-340/R-612/R-985: the oldest open setup-2x rows re-verified against fresh captures; R-985 closed, the ghost/occlusion family corroborated absent but left open for hardware)
+
+### `<pending>` — o-setup-2x: register rows R-220, R-280, R-340, R-612, R-985 re-verified against fresh 1.0/2.0 captures on the current build
+
+**Scope:** `results/ui-audit/register.md` only. No product code changed under
+`app/src/main/kotlin/org/ort/app/ui/setup/**`, `design/canvas/Setup-*.dc.html`, or
+`Settings-Capture.dc.html`.
+
+**Requirements/ACs:** none new â€” a re-verification pass, not a feature or fix; AC-63 (font scale
+2.0) is the acceptance criterion these five rows were filed against.
+
+**What changed:**
+
+- Read all five rows in full and the code/artboards they name (`SetupScaffold.kt`, `Controls.kt`'s
+  `TextAction`, `MicrophoneScreens.kt`, `NotificationsScreenTest.kt`'s existing `R_612` test,
+  `SettingsCaptureScreen.kt`, `RowsTest.kt`'s `R_980`) before touching anything, per the working
+  agreement's Constitution Check.
+- **R-220/R-280/R-340** (the ghost, semi-transparent duplicate of a Setup screen's secondary
+  bottom-bar action): recaptured S02b, S03, S05, S06 (and S09/S10b's own `bottomActions` shape)
+  cold, at 1.0 and 2.0, on `emulator-5568` (`-gpu swiftshader_indirect`) via two independent
+  paths â€” the canonical tour's own `drawToBitmap` capture, and a genuine `adb shell screencap` of
+  the real, live `SetupActivity` window (the same method the original finding used). Neither shows
+  the ghost on any named screen. Confirmed `Setup-Mic-Denied.dc.html` line 78 genuinely specifies
+  the flagged "Check again" centred (`justify-content: center`), so WP2's own "flush-left makes it
+  disappear" observation is not a usable fix without shipping a design nonconformance â€” made no
+  such change. Every code change these rows' own history already called for (R-874's bounded
+  `TextAction` width, R-360's `SubcomposeLayout` scaffold rewrite) is already shipped. Left `open`:
+  the rows' own closing bar (Phase G â€” a reference device or an AVD booted `-gpu host`) is unmet
+  by every emulator attached this session (all three run `swiftshader_indirect`); this round adds
+  corroborating non-reproduction evidence, not the hardware check itself.
+- **R-612** (S03's scrolled body text half-occluded by the header at 2.0): reproduced the exact
+  scroll position the original report named via a real `screencap` of the live window â€” the line
+  renders clean. `NotificationsScreenTest.R_612`'s existing structural regression guard still
+  passes. Same hardware caveat as above; left `open`.
+- **R-985** (CF02's "Re-verify the route now" row has no direct 2.0 capture): filled the evidence
+  gap with a scratch, one-step tour spec (never touching the checked-in
+  `tools/ui-audit/tour.json`, owned by another builder tonight) that held the real window on CF02
+  at 2.0 long enough for a manual scroll + `screencap`; the row renders correctly (same
+  `KeyValueRow` shape as its neighbours, no per-character collapse, no missing frame). Closed.
+
+**Verified:**
+- Fresh build: `./gradlew :app:assembleFullDebug -PortAllowMissingBundledAssets=true` (BUILD
+  SUCCESSFUL, 1m 39s), installed via `tools\ui-audit\install.ps1 -Port 5568 -Clear`.
+- Scoped tour recapture: `tools\ui-audit\tour.ps1 -Port 5568 -Only "setup-*/*" -Out <scratch>` â€”
+  55/55 steps ok.
+- Three scratch one-step tour specs (own files under this session's scratch directory, `-Tour`
+  pointed at them, never at the checked-in `tour.json`) held S02b, S06 and S03 live on-device long
+  enough for a real `adb shell input swipe` + `adb shell screencap`; one more held CF02 the same
+  way for R-985's mid-scroll shot.
+- No Kotlin source changed, so no module's `test`/`detekt`/`ktlintCheck` applies here; none run.
+
+**Left open / not done:**
+- R-220/R-280/R-340/R-612 remain `open`, routed to the lead's own H14/R-884 hardware queue â€” this
+  session has no reference device and no `-gpu host` AVD, so Phase G's own closing bar could not
+  be met.
+- R-985's mid-scroll evidence lives only in this session's scratch capture, not as a permanent
+  tour step (recommend the tour-owning builder add one, e.g.
+  `mode-change-pending/CF02-settings-capture@2x-mid`) â€” flagged, not filed as a code change since
+  `tools/ui-audit/tour.json` is outside this session's ownership.
+
+---
+
 ## 2026-09-21 (R-1135/R-1136: two more artboard/code drifts closed from the R-1130 audit; R-1143 verified already conformant except Thread-Detail's header shape)
 
 ### `<pending>` — R-1135: `OrtColors.kt`'s `textSignal`/`textLow` doc comments corrected to match their real call sites; R-1136: an unnamed legacy colour removed from three boards; R-1143: Digest/Transmission-Detail kebabs confirmed already drawn, Thread-Detail's header shape flagged instead of forced
