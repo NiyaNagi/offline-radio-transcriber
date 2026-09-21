@@ -117,8 +117,17 @@ public data class UnknownTriedContextViewState(
     val hasThreadId: Boolean,
 )
 
-/** One ranked candidate row, reused by the inline preview and [org.ort.app.ui.screens.DetailWhyScreen]. */
-public data class RankedCandidateViewState(val callsign: String, val scoreLabel: String, val chosen: Boolean)
+/** One ranked candidate row, reused by the inline preview and [org.ort.app.ui.screens.DetailWhyScreen].
+ * [reason] (register R-1148) is the one honest, per-candidate fact — built from
+ * [CandidateInspectionViewState.slotMismatches] by [DetailViewStateMapper.reasonFor] — that best
+ * explains how this candidate's own path differed from what the lattice recorded; `null` when no
+ * honest reason can be derived (see that function's own doc comment), never a generic filler. */
+public data class RankedCandidateViewState(
+    val callsign: String,
+    val scoreLabel: String,
+    val chosen: Boolean,
+    val reason: String? = null,
+)
 
 /**
  * The "why this callsign" surface (R-051, FR-UI-8, `Detail-Why.dc.html`). [hasData] is false
@@ -621,19 +630,56 @@ public object DetailViewStateMapper {
                     callsign = candidate.callsign,
                     scoreLabel = "score %.1f".format(candidate.score),
                     chosen = candidate.selected,
+                    reason = reasonFor(candidate),
                 )
             },
-            priors = (chosen?.priorContributions ?: emptyList()).map(::priorBar),
+            priors = chosen?.priorContributions.orEmpty().map(::priorBar),
             runnerUp = runnerUp?.let {
                 RankedCandidateViewState(
                     callsign = it.callsign,
                     scoreLabel = "score %.1f".format(it.score),
                     chosen = false,
+                    reason = reasonFor(it),
                 )
             },
-            winningSlots = chosen?.slots ?: emptyList(),
+            winningSlots = chosen?.slots.orEmpty(),
             winningGrammarValid = chosen?.grammarValid,
         )
+    }
+
+    /**
+     * Register R-1148 (split from R-1144/R-1117; FR-UI-8, constitution I): the one honest,
+     * per-candidate fact that best explains how this candidate's own path differed from what the
+     * lattice recorded — built from [CandidateInspectionViewState.slotMismatches], the genuinely
+     * per-candidate alignment [org.ort.lexicon.CallsignGrammar] now records live as it builds each
+     * candidate's own path (see [org.ort.lexicon.SlotAlignment]'s own doc comment).
+     *
+     * `null` when [CandidateInspectionViewState.slotMismatches] is empty — either every recorded
+     * slot agreed with this candidate's own path (nothing to explain, the common case for the
+     * winner) or none of them were recorded at all (a record from before schema v17); the two look
+     * the same to this mapper on purpose, since neither honestly supports a sentence (constitution
+     * I: an absent reason, not a generic one, is the correct output when a fact cannot be derived).
+     *
+     * Reports only the *first* mismatch, in slot order, rather than an exhaustive list — the
+     * board's own worked example (`Detail-Why.dc.html`) is a single clause, and every fact here
+     * speaks only to presence, absence and mismatch, never to acoustic confidence (register
+     * R-1121: [org.ort.lexicon.LatticeSlot.alts]' own scores are text-derived placeholders, not a
+     * real confidence signal) — so there is no honest way to rank multiple mismatches by
+     * "severity" beyond the order the grammar's own beam search visited them in.
+     */
+    private fun reasonFor(candidate: CandidateInspectionViewState): String? {
+        val mismatch = candidate.slotMismatches.firstOrNull() ?: return null
+        val position = mismatch.slotIndex + 1
+        return when {
+            mismatch.candidateUnit == null ->
+                "drops the ${mismatch.latticeUnit} the lattice recorded at position $position"
+            mismatch.offeredByLattice ->
+                "uses ${mismatch.candidateUnit} at position $position, the lattice's own kept alternate " +
+                    "to ${mismatch.latticeUnit}"
+            else ->
+                "needs a ${mismatch.candidateUnit} at position $position the lattice never offered " +
+                    "(its own pick there was ${mismatch.latticeUnit})"
+        }
     }
 
     /**

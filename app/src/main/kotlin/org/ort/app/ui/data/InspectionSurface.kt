@@ -63,6 +63,34 @@ public data class CandidateInspectionViewState(
      * lattice order — empty for a record `:data` recorded before schema v5 added
      * [org.ort.data.entity.LatticeSlotEntity], never a fabricated placeholder grid. */
     val slots: List<SlotDetailViewState> = emptyList(),
+    /**
+     * Register R-1148 (split from R-1144/R-1117; FR-UI-8, constitution I): the slots, if any,
+     * where *this specific candidate's own path* genuinely differed from what the lattice
+     * recorded — never every slot, only the real differences, in lattice order. Empty either
+     * because this candidate's own path agreed with the lattice at every recorded slot (nothing to
+     * explain) or because no per-candidate alignment was recorded for this row at all (a record
+     * from before schema v17); the two look identical here on purpose — neither honestly supports
+     * a "why" sentence (see [org.ort.data.entity.LatticeSlotEntity.offeredByLattice]'s own doc
+     * comment for how those two cases are told apart at the row level).
+     */
+    val slotMismatches: List<SlotMismatchViewState> = emptyList(),
+)
+
+/**
+ * Register R-1148: one real difference between this candidate's own winning path and what the
+ * lattice recorded at [slotIndex] — never fabricated, never "heard weakly"/"heard strongly"
+ * (constitution I; register R-1121: [org.ort.lexicon.LatticeSlot.alts]' scores are text-derived
+ * placeholders, not real acoustic confidence). [candidateUnit] is `null` exactly when this
+ * candidate's own path deleted this slot. [offeredByLattice] is `true` iff [candidateUnit] was one
+ * of this slot's own alternatives — the lattice's top pick or a kept alternate — genuinely present
+ * rather than a confusion-matrix substitution the lattice never listed at all; always `false` for a
+ * `null` [candidateUnit].
+ */
+public data class SlotMismatchViewState(
+    val slotIndex: Int,
+    val latticeUnit: String,
+    val candidateUnit: String?,
+    val offeredByLattice: Boolean,
 )
 
 /**
@@ -127,13 +155,13 @@ public object InspectionViewStateMapper {
                     grammarValid = entity.grammarValid,
                     databaseHit = entity.databaseHit,
                     selected = entity.selected,
-                    priorContributions = (entity.priorBreakdown ?: emptyMap()).map { (name, logOdds) ->
+                    priorContributions = entity.priorBreakdown.orEmpty().map { (name, logOdds) ->
                         PriorContributionViewState(priorName = name, logOdds = logOdds, isColdStart = logOdds == 0.0)
                     }.sortedBy { it.priorName },
                     ituPrefix = entity.ituPrefix,
                     ituCountry = entity.ituCountry,
                     id = entity.id,
-                    slots = (slotsByCandidateId[entity.id] ?: emptyList()).sortedBy { it.index }.map { slot ->
+                    slots = slotsByCandidateId[entity.id].orEmpty().sortedBy { it.index }.map { slot ->
                         SlotDetailViewState(
                             unit = slot.unit,
                             score = slot.score,
@@ -141,6 +169,21 @@ public object InspectionViewStateMapper {
                             belowThreshold = slot.score < BELOW_THRESHOLD_SCORE,
                         )
                     },
+                    // Register R-1148: `offeredByLattice != null` is the recorded/not-recorded
+                    // marker (see LatticeSlotEntity.offeredByLattice's own doc comment); among
+                    // recorded rows, only a genuine difference from the lattice's own top pick is
+                    // a mismatch worth keeping -- an agreeing slot has nothing to explain.
+                    slotMismatches = slotsByCandidateId[entity.id].orEmpty()
+                        .filter { it.offeredByLattice != null && it.candidateUnit != it.unit }
+                        .sortedBy { it.index }
+                        .map { slot ->
+                            SlotMismatchViewState(
+                                slotIndex = slot.index,
+                                latticeUnit = slot.unit,
+                                candidateUnit = slot.candidateUnit,
+                                offeredByLattice = slot.offeredByLattice == true,
+                            )
+                        },
                 )
             },
         )

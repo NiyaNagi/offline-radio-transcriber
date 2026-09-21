@@ -63,6 +63,31 @@ public data class LatticeSlotEntity(
     val keptAlternate: String?,
     val charStart: Int?,
     val charEnd: Int?,
+    /**
+     * Schema v17, register R-1148 (split from R-1144/R-1117; FR-UI-8, constitution I): this row's
+     * per-*candidate* facts, alongside the per-*lattice* [unit]/[score]/[keptAlternate] this table
+     * already carried — identical across every candidate of a transmission before this (see this
+     * table's own earlier doc, and [org.ort.lexicon.SlotDetail]'s). [candidateUnit] is the unit
+     * this specific [candidateId]'s own winning path through [org.ort.lexicon.CallsignGrammar]'s
+     * beam search actually used at this slot — `null` when that path deleted the slot, treating
+     * its audio as no part of the callsign. `null` on every row written before this column existed
+     * (schema v16 and earlier) too — genuinely not recorded, never confused with a real deletion;
+     * [offeredByLattice] is what disambiguates the two (see its own doc below).
+     */
+    val candidateUnit: String? = null,
+    /**
+     * `null` on every row written before this column existed (schema v16 and earlier) — genuinely
+     * not recorded, never a fabricated `false`. Once recorded (schema v17 on), `true` iff
+     * [candidateUnit] was one of this slot's own [org.ort.lexicon.LatticeSlot.alts] — the top pick
+     * or a kept alternate — and always `false` when [candidateUnit] is `null` (a deletion is never
+     * "offered"), which is what lets a reader tell a genuine deletion (`candidateUnit == null`,
+     * [offeredByLattice] `== false`) apart from a pre-migration row where neither fact was ever
+     * recorded (`candidateUnit == null`, [offeredByLattice] `== null`). Mirrors
+     * [org.ort.lexicon.SlotAlignment.offeredByLattice] exactly — that is where these two facts are
+     * actually computed, live, as the beam search builds each candidate's own path, never
+     * re-derived here by comparing text after the fact.
+     */
+    val offeredByLattice: Boolean? = null,
 )
 
 @Entity(tableName = "station")

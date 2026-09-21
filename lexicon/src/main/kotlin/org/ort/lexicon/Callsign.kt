@@ -46,6 +46,16 @@ public data class CallsignCandidate(
      * unchanged; [CallsignGrammar.parse] is the only real producer and always fills it.
      */
     val slotDetails: List<SlotDetail> = emptyList(),
+    /**
+     * R-1148 (split from R-1144/R-1117; FR-UI-8, constitution I): one [SlotAlignment] per lattice
+     * slot [CallsignGrammar]'s beam search visited while building *this candidate's own* winning
+     * path — unlike [slotDetails], genuinely different between two candidates parsed from the same
+     * lattice whenever their paths disagreed. See [SlotAlignment]'s own doc comment for exactly
+     * what is and is not recorded. Defaults to `emptyList()` so every existing caller/constructor
+     * keeps compiling unchanged; [CallsignGrammar.parse] is the only real producer and always fills
+     * it, in the same order and over the same index domain as [slotDetails].
+     */
+    val slotAlignment: List<SlotAlignment> = emptyList(),
 ) {
     /** The callsign string, e.g. `K7ABC` or `VE7/K7ABC/P`. */
     public val text: String get() = parsed.canonical

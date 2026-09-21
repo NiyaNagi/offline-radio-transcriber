@@ -306,6 +306,83 @@ class DetailViewStateMapperTest {
         assertFalse(priors.getValue("Heard acoustically").arguedAgainst)
     }
 
+    // ---- R-1148: the per-candidate "why" reason, genuinely different per candidate ----
+
+    @Test
+    fun `R_1148 three candidates from one lattice get three genuinely different reasons`() {
+        // Detail-Why.dc.html's own worked example: K7LWH (chosen, matches the lattice everywhere),
+        // KA7LWH (needs a unit the lattice never offered) and K7LVH (uses the lattice's own kept
+        // alternate at the same slot K7LWH matched).
+        val inspection = InspectionViewState(
+            lattice = LatticeInspectionViewState(source = "ACOUSTIC", modelId = "whisper-small", createdAt = 1L),
+            candidates = listOf(
+                CandidateInspectionViewState(
+                    callsign = "K7LWH",
+                    rank = 0,
+                    score = 8.6,
+                    grammarValid = true,
+                    databaseHit = true,
+                    selected = true,
+                    priorContributions = emptyList(),
+                    slotMismatches = emptyList(),
+                ),
+                CandidateInspectionViewState(
+                    callsign = "KA7LWH",
+                    rank = 1,
+                    score = 4.4,
+                    grammarValid = true,
+                    databaseHit = false,
+                    selected = false,
+                    priorContributions = emptyList(),
+                    slotMismatches = listOf(
+                        SlotMismatchViewState(
+                            slotIndex = 1,
+                            latticeUnit = "7",
+                            candidateUnit = "A",
+                            offeredByLattice = false,
+                        ),
+                    ),
+                ),
+                CandidateInspectionViewState(
+                    callsign = "K7LVH",
+                    rank = 2,
+                    score = 3.1,
+                    grammarValid = true,
+                    databaseHit = false,
+                    selected = false,
+                    priorContributions = emptyList(),
+                    slotMismatches = listOf(
+                        SlotMismatchViewState(
+                            slotIndex = 3,
+                            latticeUnit = "W",
+                            candidateUnit = "V",
+                            offeredByLattice = true,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val why = DetailViewStateMapper.from(detail(Attribution.confirmed("K7LWH", 0.94), inspection)).why
+
+        val reasons = why.candidates.associate { it.callsign to it.reason }
+
+        // The chosen candidate matches the lattice everywhere: no honest reason to show, not a
+        // generic filler.
+        assertNull(reasons.getValue("K7LWH"))
+
+        // The two runners-up genuinely differ -- a test that would pass against the pre-R-1148
+        // shared SlotDetail list (identical for every candidate) is not a test of this change.
+        val kaReason = reasons.getValue("KA7LWH")
+        val kvReason = reasons.getValue("K7LVH")
+        assertTrue(kaReason != null && kvReason != null && kaReason != kvReason, "$kaReason vs $kvReason")
+
+        // Each reason names its own real, distinct fact -- never a claim about acoustic confidence.
+        assertTrue(kaReason!!.contains("A"), kaReason)
+        assertTrue(kaReason.contains("never offered"), kaReason)
+        assertTrue(kvReason!!.contains("V"), kvReason)
+        assertTrue(kvReason.contains("kept alternate"), kvReason)
+    }
+
     // -----------------------------------------------------------------------------------------
     // The `bt audio` header mark (checklist row E2-G04, D01-D04), threaded through for all four
     // attribution states the detail header shares one `DetailViewState`/`HeaderSection` for.

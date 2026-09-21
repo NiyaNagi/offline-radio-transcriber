@@ -24,6 +24,7 @@ import org.ort.lexicon.PhoneticLattice
 import org.ort.lexicon.PhoneticUnit
 import org.ort.lexicon.PriorContribution
 import org.ort.lexicon.RankedCandidate
+import org.ort.lexicon.SlotAlignment
 import org.ort.lexicon.SlotDetail
 import org.ort.pipeline.PipelineTestFixtures
 import org.robolectric.RobolectricTestRunner
@@ -179,6 +180,73 @@ class DataPassBResultSinkTest {
         val span = db.catalogDao().winningCandidateCharSpan("TX1")
         assertEquals(0, span.spanStart)
         assertEquals(2, span.spanEnd)
+    }
+
+    /** R-1148: [SlotDetail] (`unit`/`score`/`keptAlternate`) is a fact about the *lattice* and stays
+     * shared across every candidate's rows (unchanged behaviour, R-320); [SlotAlignment]
+     * (`candidateUnit`/`offeredByLattice`) is a fact about *that candidate's own path* and must
+     * differ between two candidates whose paths genuinely disagreed — a test that would pass
+     * against the pre-R-1148 shared-list behaviour is not a test of this change. */
+    private fun candidateWithAlignment(
+        callsign: String,
+        prefix: String,
+        country: String,
+        ownUnitAtSlot1: String?,
+        offered: Boolean,
+    ) = candidate(callsign, prefix, country).copy(
+        slotDetails = listOf(
+            SlotDetail(index = 0, unit = "K", score = 0.95, keptAlternate = null, charStart = 0, charEnd = 1),
+            SlotDetail(index = 1, unit = "7", score = 0.9, keptAlternate = null, charStart = 1, charEnd = 2),
+        ),
+        slotAlignment = listOf(
+            SlotAlignment(slotIndex = 0, latticeUnit = "K", candidateUnit = "K", offeredByLattice = true),
+            SlotAlignment(slotIndex = 1, latticeUnit = "7", candidateUnit = ownUnitAtSlot1, offeredByLattice = offered),
+        ),
+    )
+
+    @Test
+    fun `R_1148 each candidates own slot alignment is persisted, differing where their paths did`() = runTest {
+        val db = freshDb()
+        val sink = DataPassBResultSink(db)
+        val winner = RankedCandidate(
+            candidateWithAlignment("K7ABC", "K", "United States", ownUnitAtSlot1 = "7", offered = true),
+            contributions = listOf(PriorContribution("database", 1.0f)),
+        )
+        // A runner-up whose own path deleted slot 1 rather than matching it -- a genuinely
+        // different fact about this candidate, not a copy of the lattice's own top pick.
+        val runnerUp = RankedCandidate(
+            candidateWithAlignment("W7XYZ", "W", "United States", ownUnitAtSlot1 = null, offered = false),
+            contributions = listOf(PriorContribution("database", -0.3f)),
+        )
+        val result = PassBResult(
+            transmissionId = "TX1",
+            outcome = PassBOutcome.Accepted(FakeAsrEngine.defaultResult(text = "kilo seven alpha bravo charlie")),
+            lattice = lattice(),
+            ranked = listOf(winner, runnerUp),
+            attribution = Attribution.confirmed("K7ABC", 0.9),
+            fingerprint = fingerprint(),
+        )
+
+        sink.record(result)
+
+        val candidates = db.catalogDao().candidatesFor("TX1")
+        val winnerId = candidates.single { it.callsign == "K7ABC" }.id
+        val runnerUpId = candidates.single { it.callsign == "W7XYZ" }.id
+        val slots = db.catalogDao().slotDetailsFor("TX1")
+
+        val winnerSlot1 = slots.single { it.candidateId == winnerId && it.index == 1 }
+        val runnerUpSlot1 = slots.single { it.candidateId == runnerUpId && it.index == 1 }
+
+        // The pre-existing, per-lattice fact stays identical across both candidates' rows
+        // (unchanged behaviour, R-320).
+        assertEquals(winnerSlot1.unit, runnerUpSlot1.unit)
+        assertEquals(winnerSlot1.score, runnerUpSlot1.score, 1e-9)
+
+        // The new, per-candidate fact genuinely differs between them.
+        assertEquals("7", winnerSlot1.candidateUnit)
+        assertEquals(true, winnerSlot1.offeredByLattice)
+        assertNull(runnerUpSlot1.candidateUnit)
+        assertEquals(false, runnerUpSlot1.offeredByLattice)
     }
 
     @Test

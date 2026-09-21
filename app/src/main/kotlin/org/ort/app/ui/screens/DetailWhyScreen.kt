@@ -50,25 +50,19 @@ import org.ort.app.ui.theme.OrtType
  * see that composable's own doc comment for why this screen only ever draws the one bar shape the
  * artboard actually specifies, not a guess at what the other three attribution states would need.
  *
- * **Register R-1144, the per-candidate reasons — deliberately not built.** The board's own worked
- * example line reads "score 4.4 · needs an A the lattice did not hear" / "score 3.1 · V for W,
- * never heard before" — a real, honest sentence would need, for *this* candidate's own parsed
- * text, which lattice slot (if any) each of its characters aligns to, so a mismatch against that
- * slot's own top unit (or a character with no slot at all) can be named truthfully. That alignment
- * does not exist per candidate today: `CallsignGrammar.slotDetailsFor` (`:lexicon`, confirmed by
- * reading its own doc comment and call site) computes one `SlotDetail` list **per lattice, not per
- * candidate** — "identical across every candidate `parse` returns for the same lattice... computed
- * once per call, not once per candidate" — and `DataPassBResultSink.persistCandidates` (`:pipeline`)
- * persists that same shared list under every candidate's own `candidateId`, so
- * [org.ort.app.ui.data.CandidateInspectionViewState.slots] is already real, already reaches `:app`,
- * and is already **identical** for K7LWH, KA7LWH and K7LVH alike — comparing a candidate's own
- * callsign text against it would compare against a fact about the lattice, never about that
- * candidate, and "needs an A the lattice did not hear" built from it would be true by accident for
- * the chosen candidate and fabricated for every other one. A true reason needs a genuinely
- * per-candidate slot-to-character alignment — new data `:lexicon`/`:pipeline` would have to compute
- * and persist, not something `:app` can honestly derive from what already reaches it. Constitution
- * I: a plausible-looking but fabricated explanation on the one screen whose entire purpose is
- * showing what is and is not known would be worse than the current, honest gap.
+ * **Register R-1148, the per-candidate reasons — now built.** R-1144 declined to build these
+ * because `CallsignGrammar.slotDetailsFor` computes one `SlotDetail` list **per lattice, not per
+ * candidate**, and `DataPassBResultSink.persistCandidates` persisted that identical shared list
+ * under every candidate's own row — a reason built from it would have been true by accident for
+ * the chosen candidate and fabricated for every runner-up. `CallsignGrammar` now also records a
+ * genuinely per-candidate [org.ort.lexicon.SlotAlignment] list, live, as each candidate's own path
+ * is walked through the beam search, and `:pipeline`/`:data` persist it onto the same
+ * `lattice_slot` rows (`candidateUnit`/`offeredByLattice`, schema v17). Each candidate's row below
+ * shows [org.ort.app.ui.data.RankedCandidateViewState.reason] — one real difference between that
+ * candidate's own path and what the lattice recorded, or nothing at all when no such difference
+ * was recorded (see [org.ort.app.ui.data.DetailViewStateMapper]'s `reasonFor` for exactly which
+ * case that is). Never a claim about acoustic confidence: register R-1121 established there is
+ * none anywhere in this system, so a reason speaks only to presence, absence and mismatch.
  */
 @Composable
 public fun DetailWhyScreen(
@@ -185,7 +179,8 @@ private fun CandidatesSection(why: DetailWhyViewState) {
                     .padding(top = OrtSpacing.sm)
                     .semantics(mergeDescendants = true) {
                         contentDescription = "${candidate.callsign}, ${candidate.scoreLabel}" +
-                            if (candidate.chosen) ", chosen" else ""
+                            (if (candidate.chosen) ", chosen" else "") +
+                            candidate.reason?.let { ", $it" }.orEmpty()
                     },
             ) {
                 Text(
@@ -198,6 +193,15 @@ private fun CandidatesSection(why: DetailWhyViewState) {
                     style = OrtType.cardBody,
                     color = if (candidate.chosen) OrtColors.scoreGood else OrtColors.textDim,
                 )
+                // Register R-1148: one real, per-candidate fact -- absent, never a generic filler,
+                // when no honest difference from the lattice was recorded for this candidate.
+                candidate.reason?.let { reason ->
+                    Text(
+                        text = reason,
+                        style = OrtType.subLine,
+                        color = OrtColors.textFaint,
+                    )
+                }
             }
         }
         // R-1117 (register): `why.runnerUp` is always one of the entries already rendered above —

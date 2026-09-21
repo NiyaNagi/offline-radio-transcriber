@@ -97,7 +97,8 @@ import java.util.concurrent.Executors
  * (register R-1098, FR-SPK-5) adds `transmission.threadJoinReason` — see
  * [TransmissionEntity.threadJoinReason]'s own doc comment. v16 (register R-1133, FR-ASR-5,
  * FR-ASR-6, AC-6) adds `transmission.inertControls` — see [TransmissionEntity.inertControls]'s
- * own doc comment.
+ * own doc comment. v17 (register R-1148, FR-UI-8) adds `lattice_slot.candidateUnit` and
+ * `.offeredByLattice` — see [LatticeSlotEntity.candidateUnit]'s own doc comment.
  */
 @Database(
     entities = [
@@ -150,7 +151,7 @@ public abstract class OrtDatabase : RoomDatabase() {
     public abstract fun transmissionLabelDao(): TransmissionLabelDao
 
     public companion object {
-        public const val SCHEMA_VERSION: Int = 16
+        public const val SCHEMA_VERSION: Int = 17
         public const val DATABASE_NAME: String = "ort.db"
 
         /**
@@ -570,6 +571,29 @@ public abstract class OrtDatabase : RoomDatabase() {
         )
 
         /**
+         * v16 → v17 (register R-1148, FR-UI-8, constitution I): adds `lattice_slot.candidateUnit`
+         * and `lattice_slot.offeredByLattice` — see [LatticeSlotEntity.candidateUnit]'s own doc
+         * comment for what each means and why both are nullable. No existing table or column is
+         * touched or dropped; every v16 `lattice_slot` row survives untouched, both new columns
+         * `NULL` (this row's own per-candidate alignment was never recorded — honest, never a
+         * fabricated unit or a fabricated `false`), verified by `MigrationTest`.
+         */
+        public val MIGRATION_16_17: Migration = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                MIGRATION_16_17_STATEMENTS.forEach(db::execSQL)
+            }
+
+            override fun migrate(connection: SQLiteConnection) {
+                MIGRATION_16_17_STATEMENTS.forEach(connection::execSQL)
+            }
+        }
+
+        private val MIGRATION_16_17_STATEMENTS: List<String> = listOf(
+            "ALTER TABLE `lattice_slot` ADD COLUMN `candidateUnit` TEXT",
+            "ALTER TABLE `lattice_slot` ADD COLUMN `offeredByLattice` INTEGER",
+        )
+
+        /**
          * Every released schema's migration, in order (FR-AST-5, FR-AST-6 → AC-53).
          */
         public val MIGRATIONS: Array<Migration> = arrayOf(
@@ -588,6 +612,7 @@ public abstract class OrtDatabase : RoomDatabase() {
             MIGRATION_13_14,
             MIGRATION_14_15,
             MIGRATION_15_16,
+            MIGRATION_16_17,
         )
 
         private suspend fun PooledConnection.exec(sql: String) {

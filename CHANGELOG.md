@@ -32,7 +32,107 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-21 (R-1149/R-1145: `diff.py` refuses a geometry-mismatched pair instead of reporting noise, `tour.ps1` asserts the `wm size` override is set, and Thread-Detail's artboard header matches the shared `DrillInHeader`)
+## 2026-09-21 (R-1148: a genuinely per-candidate slot alignment, so Detail-Why's per-candidate reason is finally honest)
+
+### `<pending>` — q-candidate-reasons: R-1148 per-candidate `SlotAlignment` computed live in `:lexicon`'s beam search, persisted by `:pipeline`/`:data` (schema v17), rendered as `Detail-Why`'s per-candidate reason
+
+**Scope:** `:lexicon` (`CallsignGrammar`'s grammar/slot-detail computation), `:pipeline`'s
+`passb/` persistence of candidates, `:data`'s `lattice_slot` entity and schema v16→v17
+migration, `:app`'s `InspectionSurface`/`DetailViewState` mappers and `DetailWhyScreen`
+rendering. `PassBFactory.kt`'s calibration seam, `RealCaptureService.kt`, `threading/`,
+`alerts/`, `ui/theme/`, `tools/`, `app/src/debug/**` deliberately untouched.
+
+**Requirements/ACs:** FR-UI-8, constitution I (every machine conclusion MUST be inspectable; an
+absent explanation is honest, a generic one is not); R-1148 (this row), R-1144/R-1117 (the rows
+R-1148 was split from), R-1121 (no acoustic confidence anywhere in the system — every fact here
+speaks to presence/absence/mismatch, never "heard weakly"), R-320/R-182 (the pre-existing,
+per-*lattice* `SlotDetail`/`LatticeSlotEntity` facts, left unchanged and still shared across
+candidates, exactly as they should be).
+
+**What changed:**
+
+- **`:lexicon`.** New `SlotAlignment(slotIndex, latticeUnit, candidateUnit, offeredByLattice)`.
+  Unlike `SlotDetail` (one list per *lattice*, identical for every candidate — confirmed
+  unchanged by this change), `CallsignCandidate.slotAlignment` is one list per *candidate*,
+  recorded live inside `CallsignGrammar.expand` as each path is built through the beam search —
+  not re-derived afterward by comparing text. `candidateUnit` is `null` exactly when that
+  candidate's own path deleted the slot (the one way a candidate can be shorter than the lattice
+  it was parsed from — there is no symmetric insertion branch). `offeredByLattice` is `true` iff
+  `candidateUnit` was genuinely one of that slot's own alternatives (the top pick or a kept
+  alternate), always `false` for a deletion or a confusion-matrix substitution the slot never
+  listed.
+- **`:pipeline` (`DataPassBResultSink`).** `persistSlotDetails` now also takes each ranked
+  candidate's own `slotAlignment` and matches it to the same-index `SlotDetail` rows by slot
+  index (both span the identical `0 until lattice.slots.size` domain), writing
+  `candidateUnit`/`offeredByLattice` onto the same `lattice_slot` rows the shared `SlotDetail`
+  facts already populate.
+- **`:data`.** `LatticeSlotEntity` gains `candidateUnit: String?` and `offeredByLattice: Boolean?`
+  (both default `null`). Schema v16 → v17, `MIGRATION_16_17` (`ALTER TABLE lattice_slot ADD
+  COLUMN candidateUnit TEXT` / `... offeredByLattice INTEGER`, additive only, nothing dropped).
+  `offeredByLattice == null` is the "not recorded" marker (a pre-migration row, or a candidate
+  built before this existed) — disambiguated from a genuine deletion (`candidateUnit == null`,
+  `offeredByLattice == false`).
+- **`:app`.** `CandidateInspectionViewState.slotMismatches` (new): the real differences, if any,
+  between a candidate's own path and what the lattice recorded — built in
+  `InspectionViewStateMapper.from` by filtering to recorded (`offeredByLattice != null`) rows
+  where `candidateUnit != unit`. `DetailViewStateMapper.reasonFor` turns the *first* mismatch (in
+  slot order) into one honest sentence — a deletion ("drops the X the lattice recorded at
+  position N"), a substitution the lattice never offered ("needs a Y at position N the lattice
+  never offered..."), or a substitution to the lattice's own kept alternate ("uses Y at position
+  N, the lattice's own kept alternate to X") — and `null` when no mismatch was recorded, which is
+  the common case for the winning candidate and is rendered as no reason line at all, never a
+  filler. `RankedCandidateViewState.reason` carries it through; `DetailWhyScreen`'s
+  `CandidatesSection` renders it (visually and in the merged `contentDescription`) only when
+  present.
+- Four `?: emptyList()`/`?: emptyMap()`/`?: ""` spots in the three touched `:app` files
+  (`DetailViewState.kt`, `InspectionSurface.kt`, `DetailWhyScreen.kt`) rewritten as `.orEmpty()`
+  per detekt's `UseOrEmpty` — two pre-existing, two introduced by this change; fixed in place
+  since they were in files already being edited, nothing outside them touched.
+
+**Verified:**
+- `./gradlew :lexicon:test` — green (new `CallsignGrammarSlotAlignmentTest`, five cases, plus the
+  full pre-existing suite). Discrimination: reverting `offeredByLattice`'s computation to a
+  hardcoded `true` and re-running `CallsignGrammarSlotAlignmentTest` alone produced 1 failure (of
+  5); restoring the real computation returned it to green.
+- `./gradlew :lexicon:detekt :lexicon:ktlintCheck` — green.
+- `./gradlew :data:testDebugUnitTest` — green (new `MigrationTest.migration_from_v16_to_v17_...`,
+  plus both `v1..v16` sweep tests widened by one and the new `verifyCandidateAlignmentUsableThroughRealOpen`
+  R-885 real-open case; full pre-existing suite unaffected).
+- `./gradlew :data:detekt :data:ktlintCheck` — green.
+- `./gradlew :pipeline:testDebugUnitTest` — green (new
+  `DataPassBResultSinkTest.R_1148 each candidates own slot alignment is persisted, differing where their paths did`,
+  plus the full pre-existing suite).
+- `./gradlew :pipeline:detekt :pipeline:ktlintCheck` — green.
+- `./gradlew :app:testFullDebugUnitTest` — full suite green (this took the long path: the four
+  new/changed test files individually first, then the entire `:app` `full` debug suite).
+- `./gradlew :app:detektFullDebug :app:detektFullDebugUnitTest` — the three touched main files
+  (`DetailViewState.kt`, `InspectionSurface.kt`, `DetailWhyScreen.kt`) and three touched test
+  files carry zero findings after the `.orEmpty()` fixes; **the module-wide task itself still
+  fails**, on pre-existing findings in files this unit never touched (`Scenarios.kt`,
+  `ScenarioFixtures.kt`, `StationsFixtures.kt`, `FrequencyChangeFixtures.kt`,
+  `ScreenshotTourActivity.kt`, `TourIds.kt`, `SessionsContent.kt`, `ImproveContent.kt`,
+  `FailRoute.kt`, `FailureBanners.kt`, `OrtNavHost.kt`, `BackupBundleBuilder.kt` — none in this
+  unit's ownership, all outside `app/src/debug/**`/other packages this prompt says not to touch).
+- `./gradlew :app:ktlintCheck` — green, whole module.
+- The three-candidate discriminating test the prompt asked for by name:
+  `DetailViewStateMapperTest.R_1148 three candidates from one lattice get three genuinely different reasons`
+  — K7LWH (chosen, matches the lattice everywhere) gets `reason == null`; KA7LWH gets *"needs a A
+  at position 2 the lattice never offered (its own pick there was 7)"*; K7LVH gets *"uses V at
+  position 4, the lattice's own kept alternate to W"* — genuinely different text, not a shared
+  template.
+
+**Left open / not done:**
+- The register row (`results/ui-audit/register.md` R-1148) is left for the session lead to
+  close against this evidence, per that file's own rule ("only the session lead edits it").
+- The visual re-verification (constitution VIII, working agreement item 7) this diff triggers —
+  `DetailWhyScreen.kt` is a `*Screen` file under `:app/ui/**` — has not been run: no device/
+  emulator capture was taken. `tools\ui-audit\tour.ps1 -Only "*/Detail-Why*"` against the real
+  `Detail-Why` screen, compared to `design/canvas/Detail-Why.dc.html`, is still needed before this
+  is visually confirmed; only unit/Robolectric evidence exists so far.
+- `:app:detekt`'s module-wide red (pre-existing, unrelated findings, see above) is reported
+  rather than fixed — out of this unit's ownership.
+- The four "cold" priors (frequency, band plausibility, geographic, my-stations — R-1109/R-1124)
+  are unrelated and untouched by this change.
 
 ### `784bcbb5` — p-evidence-guards: R-1149 cross-run capture-geometry guard in `diff.py` + `wm size` override assertion in `tour.ps1`; R-1145 Thread-Detail.dc.html header redrawn to match `Station`/`Digest`
 
