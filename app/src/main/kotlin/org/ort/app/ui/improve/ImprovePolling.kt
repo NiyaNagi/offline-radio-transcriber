@@ -9,12 +9,21 @@ import org.ort.pipeline.capture.ThermalStatus
 /**
  * R-091/R-107 (register, P12, FR-REP-1..11): the real read path behind `Improve`. Groups by
  * [org.ort.data.entity.SessionEntity.deviceTier] — R-107's finding was that this field is written
- * (`"T1"` in the `field-tier1` scenario) and read nowhere; this is that reader. `deviceTier` is
- * only ever non-null for a session captured below full capability (see
- * `RealCaptureService.runCaptureFlow`, which writes `null` for every full-capability session), so
- * a session qualifying by tier is real, never a guess — but a session fact alone cannot say
- * whether any *particular* transmission in it still needs improving (see [root]'s own doc comment
- * for the per-transmission half of that, R-1064).
+ * (`"T1"` in the `field-tier1` scenario) and read nowhere; this is that reader.
+ *
+ * **R-1111 correction**: this KDoc used to claim `deviceTier` "is only ever non-null for a session
+ * captured below full capability", describing `RealCaptureService.buildSessionEntity` writing
+ * `null` for every full-capability session. That was never true in production —
+ * `buildSessionEntity` wrote `null` *unconditionally*, for every session regardless of tier, which
+ * made this entire reprocessing surface reachable only from seeded debug scenarios. Now fixed:
+ * `buildSessionEntity` writes the device's real tier (`Tier.entries[tierFromShedLevel()].name`,
+ * the identical `(MAX_TIER - ShedStatus.currentLevel)` formula this file's own
+ * [currentTierOrdinal] and `ReprocessRunner.currentTierFromShedLevel()` already compute) for
+ * every session, T3 (max) included — a T3 session still gets a real, non-null label, it simply
+ * never becomes "qualifying" below because [root]'s own `tier.ordinal < currentTierOrdinal` check
+ * requires strictly less. A session qualifying by tier is therefore real, never a guess — but a
+ * session fact alone cannot say whether any *particular* transmission in it still needs improving
+ * (see [root]'s own doc comment for the per-transmission half of that, R-1064).
  *
  * No reprocess/"Pass B/C" scheduling mechanism exists anywhere in `:pipeline` (no `WorkManager`,
  * no `CoroutineWorker`; grepped the whole tree before writing this) — [ImproveRunner]/

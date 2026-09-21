@@ -151,9 +151,13 @@ public class RealCaptureServiceTest {
             assertEquals("test transmission received", transcript!!.text)
             assertTrue(transcript.isCurrent)
 
-            // F-005: onHeartbeat() must report the segmenter's real sample position, not a
+            // F-005: recordHeartbeatTick() must report the segmenter's real sample position, not a
             // fabricated 0L -- by the time a segment has closed, audio has definitely been fed.
+            // R-1115: the write itself is now dispatched off the frame-collecting coroutine
+            // (scope.launch { recordHeartbeatTick() }, never called inline -- see that call
+            // site's own comment), so this polls rather than asserting once immediately.
             val heartbeatStore = FileHeartbeatStore(File(service.filesDir, "heartbeat.txt"))
+            waitUntil(5_000) { (heartbeatStore.last()?.samplePosition ?: 0L) > 0L }
             val heartbeat = heartbeatStore.last()
             assertNotNull("expected a heartbeat record", heartbeat)
             assertEquals(sessionId, heartbeat!!.sessionId)
