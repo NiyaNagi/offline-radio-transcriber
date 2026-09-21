@@ -917,7 +917,7 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   carries that re-capture explicitly: constitution VIII's path trigger does not fire for
   `:pipeline`, yet this change alters what every one of those screens states.
 
-- [ ] **P34 · Capture route and sample rate** *(`:capture-android`)* — FR-CAP-2, FR-CAP-2a,
+- [x] **P34 · Capture route and sample rate** *(`:capture-android`)* — FR-CAP-2, FR-CAP-2a,
   FR-CAP-3, FR-RUN-11, constitution IV. **Beta blocker.**
 
   **Read first:** `AndroidAudioIo.kt` — `setEventListener` stores the lambda and nothing invokes
@@ -935,6 +935,12 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
 
   **Done when:** H4 and the 8-hour run show route-verified lines throughout and a forced mid-run
   switch halts capture rather than recording the room.
+
+  **Status:** code and tests landed (`AndroidAudioIo` registers a real `AudioDeviceCallback` and
+  negotiates sample rate at `select()` time via `SampleRateNegotiator`; `AudioRecordSource` adds
+  fire-and-forget periodic route re-verification). **H4 and the 8-hour device run are still
+  outstanding** — this checkbox marks the unit's code/tests done, not the device-side "Done when"
+  clause, which is operator work per this session's own scope.
 
 - [ ] **P35 · Durability — stale leases and the migration guard** *(`:data`, `:app` startup)* —
   FR-RUN-8, AC-47, FR-REP-4. **Beta blocker.**

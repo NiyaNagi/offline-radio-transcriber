@@ -1,6 +1,7 @@
 package org.ort.capture.android
 
 import android.content.Context
+import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
@@ -23,12 +24,21 @@ import org.ort.core.capture.BluetoothAudioProfile
  * `AudioManager` can observe; the negotiated codec it reports is a best-effort hint (see
  * [detectNegotiatedBluetoothProfile]) that only hardware row H5 actually proves.
  *
- * Route-change and interruption detection are intentionally minimal here (no
- * `AudioDeviceCallback`/`AudioManager.OnAudioFocusChangeListener` wiring yet) — a v0 sufficient
- * to prove real capture end-to-end, not the full FR-CAP-3/FR-RUN-11 device-side implementation.
- * `AudioRecordSource`'s policy layer (which *is* fully built) will correctly treat a read error
- * as an interruption either way (`n < 0` in [AudioRecordSource.start]), so recovery still works;
- * what's missing is proactive `RouteChanged` notification before a read actually fails.
+ * **P34, register R-1113/R-1114**: before this class registered a real `AudioDeviceCallback`
+ * ([registerDeviceCallback]), [setEventListener]'s callback was stored and *never invoked* in
+ * production — the only real interruption signal was a read returning `< 0` after the device was
+ * already gone, and nothing ever re-verified the route after the first successful read. A route
+ * that silently switched to the built-in microphone mid-session (the highest-consequence silent
+ * failure in the system, constitution IV) produced no signal at all until the next
+ * `AudioRecordSource` read happened to fail, which a route swap alone does not necessarily cause.
+ * [registerDeviceCallback] closes the "device disappeared" half of that gap with a proactive,
+ * OS-driven `Interrupted` (FR-RUN-11); the "OS silently rerouted while the device is still
+ * present" half — the exact failure this register row names — is *not* something any Android
+ * callback reliably reports for input routing, so it is closed instead by periodic re-verification
+ * in [AudioRecordSource] itself, which polls [routedDevice] on a schedule regardless of whether the
+ * OS ever says anything (see that class's own kdoc). [SampleRateNegotiator] closes FR-CAP-2/2a the
+ * same session: [select] now negotiates [deviceSampleRate] against the selected device's own
+ * `AudioDeviceInfo.getSampleRates()` instead of always opening at a fixed rate.
  */
 public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DEFAULT_SAMPLE_RATE) : AudioIo {
 
@@ -43,7 +53,29 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
     private var bluetoothScoActivatedByThisInstance = false
     private var negotiatedBluetoothProfile: BluetoothAudioProfile? = null
 
-    override val deviceSampleRate: Int = sampleRateHz
+    /**
+     * FR-CAP-2, FR-CAP-2a (register R-1114): the rate [open] actually opens the hardware at —
+     * [sampleRateHz] until [select] negotiates it down (or leaves it, see [SampleRateNegotiator])
+     * against the selected device's own `AudioDeviceInfo.getSampleRates()`. Read by
+     * [AudioRecordSource] through [deviceSampleRate] *before* [open] is ever called (its
+     * constructor, not its `start()`), which is exactly why this is resolved at [select] time —
+     * the one point in the real call sequence (`select()` then `AudioRecordSource(io, device)`,
+     * see `RealCaptureService.startCapture()`) where the chosen device is known before that read.
+     */
+    private var resolvedSampleRateHz: Int = sampleRateHz
+
+    /**
+     * Detects the OS removing the currently-selected device out from under a running capture
+     * (FR-RUN-11, register R-1113) — the one real, testable half of what this class's own doc
+     * comment used to call "intentionally minimal": before this, [listener] was stored and never
+     * invoked at all in production, so the only real interruption signal was a read returning
+     * `< 0` after the device was already gone. `AudioDeviceCallback` is ordinary framework
+     * dispatch code, not a native call Robolectric would have to fake convincingly — see
+     * `AndroidAudioIoInterruptionTest` for what that lets this prove without a device.
+     */
+    private var deviceCallback: AudioDeviceCallback? = null
+
+    override val deviceSampleRate: Int get() = resolvedSampleRateHz
 
     override fun availableDevices(): List<AudioDeviceDescriptor> {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return emptyList()
@@ -52,11 +84,24 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
 
     override fun select(device: AudioDeviceDescriptor) {
         selected = device
+        resolvedSampleRateHz = negotiateSampleRateFor(device)
+    }
+
+    /** See [resolvedSampleRateHz]'s own kdoc for why this runs at [select] time, not [open]'s. */
+    private fun negotiateSampleRateFor(device: AudioDeviceDescriptor): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return sampleRateHz
+        val info = matchingDeviceInfo(device) ?: return sampleRateHz
+        // Platform-typed as non-null (`int[]`) but some real and test doubles alike return null
+        // for a device with no reported profiles — treated the same as "no restriction reported"
+        // (constitution I: absence of data is not evidence of a restriction).
+        val supported: IntArray = info.sampleRates ?: EMPTY_SAMPLE_RATES
+        return SampleRateNegotiator.negotiate(sampleRateHz, supported)
     }
 
     override fun open(): Boolean {
+        val rate = resolvedSampleRateHz
         val minBuf = AudioRecord.getMinBufferSize(
-            sampleRateHz,
+            rate,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
@@ -65,7 +110,7 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
         @Suppress("MissingPermission") // caller (MainActivity) verifies RECORD_AUDIO before this is ever called
         val audioRecord = AudioRecord(
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            sampleRateHz,
+            rate,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
             minBuf * BUFFER_SIZE_MULTIPLIER,
@@ -89,7 +134,40 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
             return false
         }
         record = audioRecord
+        registerDeviceCallback()
         return true
+    }
+
+    /**
+     * FR-RUN-11 (register R-1113): the currently-selected device disappearing (a USB adapter
+     * unplugged, a Bluetooth SCO link torn down at the OS level) is reported as
+     * [AudioIoEvent.Interrupted] the moment the OS says so — proactively, not only once the next
+     * [read] happens to return `< 0`. [AudioRecordSource]'s existing recovery/backoff and
+     * [GapTracker] then behave exactly as they already do for any other interruption; this only
+     * changes *when* the signal arrives, from "after the next failed read" to "as soon as the OS
+     * knows." A device that is not the one this instance selected is deliberately ignored — that
+     * is ordinary background device churn, not this capture's own interruption.
+     */
+    private fun registerDeviceCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        val selectedId = selected?.id ?: return
+        val callback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+                if (removedDevices.any { it.id.toString() == selectedId }) {
+                    listener?.invoke(AudioIoEvent.Interrupted("device removed"))
+                }
+            }
+        }
+        deviceCallback = callback
+        audioManager.registerAudioDeviceCallback(callback, null)
+    }
+
+    private fun unregisterDeviceCallback() {
+        val callback = deviceCallback ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            audioManager.unregisterAudioDeviceCallback(callback)
+        }
+        deviceCallback = null
     }
 
     override fun routedDevice(): AudioDeviceDescriptor? {
@@ -110,6 +188,7 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
     }
 
     override fun close() {
+        unregisterDeviceCallback()
         record?.let {
             try {
                 if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) it.stop()
@@ -220,5 +299,6 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
     public companion object {
         public const val DEFAULT_SAMPLE_RATE: Int = 48_000
         private const val BUFFER_SIZE_MULTIPLIER: Int = 4
+        private val EMPTY_SAMPLE_RATES: IntArray = IntArray(0)
     }
 }
