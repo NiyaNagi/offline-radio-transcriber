@@ -1,6 +1,7 @@
 package org.ort.pipeline.shed
 
 import org.ort.core.Clock
+import org.ort.core.Tier
 
 /**
  * technical design §7.3's shed controller. Levels 0-5, sampled every [SAMPLE_INTERVAL_MILLIS]:
@@ -44,7 +45,10 @@ public class ShedController(
         val backlog = signals.queueBacklog()
 
         // Battery-critical is an override: it forces level 4 immediately, no hysteresis delay,
-        // because draining the battery to zero is worse than briefly deferring processing.
+        // because draining the battery to zero is worse than briefly deferring processing. A
+        // tier cap (below) can never be lower-priority than this -- it only ever adds shedding,
+        // and 4 is already the ceiling short of the storage-exhaustion stop (level 5, forced
+        // elsewhere), so there is nothing left for a cap to add here.
         if (battery < criticalBatteryPercent && !charging) {
             transitionTo(4, "battery $battery% < $criticalBatteryPercent% and not charging")
             return
@@ -55,14 +59,29 @@ public class ShedController(
             .maxByOrNull { it.key }
             ?.key ?: 0
 
+        // R-1141 (FR-TIER-3): the operator's Settings tier override is a CEILING on tier, which is
+        // a FLOOR on shed level -- "Hold at T1" must never let backlog pressure choose a level
+        // lower than the one T1 implies, only ever a level equal to or higher. FR-TIER-4's
+        // automatic degradation is mandatory, so this floor is combined with [desiredFromBacklog]
+        // by taking the max, never by replacing it -- real pressure can still push below the cap
+        // (a genuinely overheating/backlogged device sheds further than the operator's chosen
+        // ceiling), it just can never be pulled back up above it.
+        val capFloor = signals.tierCapOrdinal()?.let { (MAX_TIER_ORDINAL - it).coerceIn(0, MAX_TIER_ORDINAL) } ?: 0
+        val desired = maxOf(desiredFromBacklog, capFloor)
+        val reason = if (capFloor > desiredFromBacklog) {
+            "tier cap (ordinal ${signals.tierCapOrdinal()}) floors the level at $capFloor"
+        } else {
+            "backlog $backlog >= threshold"
+        }
+
         val elapsedSinceEntry = clock.monotonicNanos() - enteredAtMonotonic
         val dwellElapsed = elapsedSinceEntry >= minDwellMillis * 1_000_000
 
         when {
-            desiredFromBacklog > currentLevel -> transitionTo(desiredFromBacklog, "backlog $backlog >= threshold")
-            desiredFromBacklog < currentLevel && dwellElapsed -> {
+            desired > currentLevel -> transitionTo(desired, reason)
+            desired < currentLevel && dwellElapsed -> {
                 val leaveThreshold = backlogThresholds[currentLevel]?.let { it * LEAVE_FACTOR } ?: 0.0
-                if (backlog <= leaveThreshold) transitionTo(desiredFromBacklog, "backlog $backlog <= leave threshold")
+                if (backlog <= leaveThreshold) transitionTo(desired, "backlog $backlog <= leave threshold")
             }
             else -> Unit
         }
@@ -79,6 +98,14 @@ public class ShedController(
         public const val DEFAULT_CRITICAL_BATTERY_PERCENT: Int = 15
         public const val DEFAULT_MIN_DWELL_MILLIS: Long = 60_000
         private const val LEAVE_FACTOR = 0.7
+
+        /** [Tier.entries]' top ordinal (3) -- the same value every other tier-from-shed-level
+         * formula in this codebase (`RealCaptureService.tierFromShedLevel()`,
+         * `ReprocessRunner.currentTierFromShedLevel()`, `ImprovePolling.currentTierOrdinal()`,
+         * `SettingsPolling.currentTierNumber()`) hardcodes as `3` for the same module-boundary
+         * reason (`:pipeline` cannot import `:app`'s copies, and each already duplicates the
+         * literal) -- derived from [Tier] here since this file already depends on `:core`. */
+        private val MAX_TIER_ORDINAL: Int = Tier.entries.size - 1
 
         /** Backlog size at which each level is entered (technical design §7.3, illustrative defaults). */
         public val DEFAULT_BACKLOG_THRESHOLDS: Map<Int, Int> = mapOf(

@@ -319,10 +319,20 @@ public object ReaderTransmissionViewStateMapper {
      * the fallback wins — proving the two functions are not silently reconverging into a second
      * "reconstruct from scratch" implementation by accident.
      */
-    public fun correctedAttributionOrNull(entity: TransmissionEntity): Attribution? {
-        val stationId = entity.stationId
-        return if (entity.corrected && stationId != null) Attribution.unknown().withCorrection(stationId) else null
-    }
+    public fun correctedAttributionOrNull(entity: TransmissionEntity): Attribution? =
+        correctedAttributionOrNull(entity.stationId, entity.corrected)
+
+    /**
+     * The same rule as the [TransmissionEntity]-taking overload above, for a caller that already
+     * holds just [stationId]/[corrected] rather than a whole entity — [DetailRevisionsScreen]
+     * (register R-1142) is exactly such a caller: a Compose file with no `:data` access, whose own
+     * [org.ort.app.ui.data.TranscriptVersionViewState] already carries these two fields (sourced
+     * from this same entity's own columns — see that type's own doc comment) and nothing more. The
+     * entity-taking overload now defers to this one so there is still only one place the rule
+     * itself is written, never a second reconstruction beside it.
+     */
+    public fun correctedAttributionOrNull(stationId: String?, corrected: Boolean): Attribution? =
+        if (corrected && stationId != null) Attribution.unknown().withCorrection(stationId) else null
 
     private fun sourceId(entity: TransmissionEntity): TransmissionId? =
         entity.attributionSourceTransmissionId?.let { runCatching { TransmissionId.parse(it) }.getOrNull() }

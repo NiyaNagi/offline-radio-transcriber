@@ -3,6 +3,7 @@ package org.ort.pipeline.shed
 import android.content.Context
 import android.os.BatteryManager
 import android.os.StatFs
+import org.ort.core.Tier
 import org.ort.data.dao.WorkQueueDao
 import java.io.File
 
@@ -88,6 +89,27 @@ public class AndroidShedSignals(
         UNKNOWN_FREE_STORAGE_BYTES
     }
 
+    /**
+     * R-1141 (FR-TIER-3): reads the same on-disk preference `:app`'s
+     * [org.ort.app.ui.settings.SharedPreferencesSettingsStore.tierOverrideName] writes —
+     * `:pipeline` cannot depend on `:app` (module graph, constitution VII), so this opens the
+     * *same* preferences file under the *same* key, the identical shared-file-contract
+     * [SharedPreferencesArchiveSettingsStore] and [org.ort.pipeline.rig.CaptureConfigurationStore]
+     * already use for exactly this reason — see either's own KDoc. A missing key, or a stored
+     * name that is not one of [Tier]'s own (a future downgrade, a corrupt write), both read as
+     * `null` ("no cap"), never as a fabricated ordinal — an unparseable override must not silently
+     * become a different one.
+     */
+    override fun tierCapOrdinal(): Int? {
+        val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+        val name = prefs.getString(KEY_TIER_OVERRIDE, null) ?: return null
+        return try {
+            Tier.valueOf(name).ordinal
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+    }
+
     private fun batteryManager(): BatteryManager? = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
 
     public companion object {
@@ -96,5 +118,13 @@ public class AndroidShedSignals(
 
         /** Reads as certainly below any storage floor — see the class KDoc. */
         public const val UNKNOWN_FREE_STORAGE_BYTES: Long = 0L
+
+        /** [org.ort.app.ui.settings.SharedPreferencesSettingsStore.PREFS_NAME], duplicated rather
+         * than imported — see [tierCapOrdinal]'s own KDoc for why the filesystem is the contract. */
+        public const val SETTINGS_PREFS_NAME: String = "org.ort.app.settings"
+
+        /** [org.ort.app.ui.settings.SharedPreferencesSettingsStore.KEY_TIER_OVERRIDE], duplicated
+         * for the same reason as [SETTINGS_PREFS_NAME]. */
+        public const val KEY_TIER_OVERRIDE: String = "tier_override"
     }
 }

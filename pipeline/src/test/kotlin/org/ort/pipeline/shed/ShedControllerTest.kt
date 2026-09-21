@@ -71,4 +71,52 @@ class ShedControllerTest {
         controller.sample()
         assertEquals(0, controller.currentLevel)
     }
+
+    // R-1141: the operator's Settings tier override (SettingsStore.tierOverrideName), read here as
+    // signals.tierCapOrdinal(), is a CEILING on tier -- a FLOOR on shed level (FR-TIER-3's "override
+    // the detected tier downward, to save battery or heat"). It must never let real thermal/backlog
+    // pressure (FR-TIER-4's mandatory automatic degradation) be overridden away, only ever add more
+    // shedding than the signals alone would choose.
+
+    @Test
+    @Requirement("FR-TIER-3", "FR-TIER-4")
+    fun `FR_TIER_3 a tier cap forces the matching shed level immediately even with no backlog`() {
+        // Held at T1 (ordinal 1): MAX_TIER_ORDINAL(3) - 1 = level 2 is the floor.
+        val signals = FakeShedSignals(backlog = 0, tierCapOrdinal = 1)
+        val controller = ShedController(signals, TestClock())
+        controller.sample()
+        assertEquals(
+            2,
+            controller.currentLevel,
+            "a cap held at T1 must floor the level at 2 even though nothing else sheds",
+        )
+    }
+
+    @Test
+    @Requirement("FR-TIER-3", "FR-TIER-4")
+    fun `FR_TIER_3 a tier cap never reduces the shedding real backlog pressure already demands`() {
+        // Held at T2 (ordinal 2) only floors level at 1 -- backlog 150 independently demands level 3.
+        val signals = FakeShedSignals(backlog = 150, tierCapOrdinal = 2)
+        val controller = ShedController(signals, TestClock())
+        controller.sample()
+        assertEquals(
+            3,
+            controller.currentLevel,
+            "backlog pressure must win over a cap that would otherwise allow a higher tier -- " +
+                "the cap is a ceiling on tier, never a way to force more capability than signals allow",
+        )
+    }
+
+    @Test
+    @Requirement("FR-TIER-3")
+    fun `FR_TIER_3 no cap set leaves the backlog-only formula exactly as before`() {
+        val signals = FakeShedSignals(backlog = 0, tierCapOrdinal = null)
+        val controller = ShedController(signals, TestClock())
+        controller.sample()
+        assertEquals(
+            0,
+            controller.currentLevel,
+            "no override (\"let the phone choose\") must not floor the level at all",
+        )
+    }
 }
