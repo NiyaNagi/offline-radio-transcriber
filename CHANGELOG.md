@@ -347,11 +347,9 @@ D45.
   Each new/changed assertion was confirmed to fail for the right reason against the pre-fix
   production code before the fix landed (strict TDD).
 - `.\gradlew.bat :app:detekt :app:ktlintCheck --max-workers=2` — no findings.
-- `.\gradlew.bat :app:testFullDebugUnitTest` (whole `:app` module, ~1200 tests) — started for a full
-  regression check; still running when this entry was committed (a large multi-fork Robolectric/Compose
-  suite), with no failure observed in everything it had completed so far. None of the classes touched
-  here are among `smokeTestFullDebugUnitTest`'s 18 isolated classes, so that task was not run. The lead
-  should confirm this run's final result rather than take "no failure observed yet" as green.
+- `.\gradlew.bat :app:testFullDebugUnitTest` (whole `:app` module) — `BUILD SUCCESSFUL in 19m 12s`,
+  every test green. None of the classes touched here are among `smokeTestFullDebugUnitTest`'s 18
+  isolated classes, so that task was not run (this task's own output confirms it and names them).
 
 **Left open / not done:**
 - No device evidence and no visual re-capture — this changes only artboards and static strings behind
