@@ -5,8 +5,21 @@ import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
 
-/** One recovery toast, [id] stable per kind so [FailureHost] can key a Compose list on it. */
-public data class RecoveryToast(public val id: String, public val message: String)
+/**
+ * One recovery/result toast, [id] stable per kind so [FailureHost] can key a Compose list on it.
+ *
+ * [onUndo] (register R-1008): defaults to `null` so every existing polled [RecoveryAnnouncer]
+ * toast (a signal recovering on its own — nothing here for the operator to undo) keeps compiling
+ * and behaving unchanged. Set only by a caller that pushes through [PushedToastChannel] for an
+ * action a screen actually took — see that object's own kdoc for the safety contract a non-null
+ * [onUndo] must follow to survive the operator having already navigated elsewhere by the time it
+ * runs.
+ */
+public data class RecoveryToast(
+    public val id: String,
+    public val message: String,
+    public val onUndo: (() -> Unit)? = null,
+)
 
 /**
  * R-103, `Flow-Degrade.dc.html`'s own closing note: "Recovery is announced too... because silence

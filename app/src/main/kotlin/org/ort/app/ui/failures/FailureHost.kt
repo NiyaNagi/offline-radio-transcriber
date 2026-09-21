@@ -155,6 +155,19 @@ public fun FailureHost(
         }
     }
 
+    // Register R-1008: the push half, alongside the poll loop above. `Unit`-keyed so this
+    // collector starts once, for as long as this composable itself stays mounted (this package's
+    // own class kdoc: mounted once, above every destination) — never restarted by a `sessionId`
+    // change the way the poll loop above deliberately is, so a toast pushed mid-navigation is
+    // never missed by a momentarily-relaunching collector. See `PushedToastChannel`'s own kdoc for
+    // why a `Channel` is what makes "not lost, not shown twice" both hold at once.
+    LaunchedEffect(Unit) {
+        while (true) {
+            val pushed = PushedToastChannel.receive()
+            toasts = toasts + pushed
+        }
+    }
+
     val dismiss = FailureDismissState(
         killedLabel = dismissedKilledLabel,
         onDismissKilled = { dismissedKilledLabel = it },
@@ -226,7 +239,10 @@ private fun ToastSlot(toasts: List<RecoveryToast>, onToastShown: () -> Unit, mod
     }
     Toast(
         message = activeToast.message,
-        onUndo = null,
+        // Register R-1008: a polled `RecoveryAnnouncer` toast never sets `onUndo` (nothing there
+        // for the operator to undo), so this is unchanged for every caller before this row; a
+        // toast pushed through `PushedToastChannel` for a screen's own action can now carry one.
+        onUndo = activeToast.onUndo,
         modifier = modifier.testTag("failure-toast-${activeToast.id}"),
     )
 }

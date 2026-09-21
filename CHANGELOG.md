@@ -32,6 +32,113 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (m-feedback-host: R-1008's push channel for `FailureHost`'s toast slot; R-1080 confirmed already fixed)
+
+### `<pending>` — R-1008: `PushedToastChannel` lets a screen hand `FailureHost` a result toast (with a safe-by-contract Undo) that survives the operator already navigating away; R-1080 verified already fixed on `main`, not re-done
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/` (`PushedToastChannel.kt` new,
+`RecoveryAnnouncer.kt`, `FailureHost.kt`), `app/src/test/kotlin/org/ort/app/ui/failures/`
+(`PushedToastChannelTest.kt` new, `PushedToastFailureHostTest.kt` new).
+
+**Requirements/ACs:** R-1008 (register, `Feedback.dc.html`); R-1080 (register, constitution VIII —
+investigated, confirmed already closed by prior work, see below).
+
+**What changed:**
+- **R-1008.** `FailureHost` (this package's own class kdoc: "mounted once, in `ReaderActivity.kt`,
+  above `OrtNavHost`") and `org.ort.app.ui.components.Toast` already existed and already survived
+  a destination change on their own; the one missing piece the register row named was a way for a
+  screen that is *not* `FailureHost` itself to hand it a toast at all — before this, the only
+  toasts it ever showed came from its own polling loop's `RecoveryAnnouncer.diff` (a signal
+  recovering on its own, never a screen's own one-shot result). New `PushedToastChannel` object: a
+  `kotlinx.coroutines.channels.Channel<RecoveryToast>(Channel.UNLIMITED)`, `push()` (never
+  suspends) and `receive()` (`FailureHost`'s own new `LaunchedEffect(Unit)` loop, alongside the
+  existing `LaunchedEffect(sessionId)` poll loop — `Unit`-keyed deliberately, so it is never
+  relaunched by a `sessionId` change the way the poll loop is, and stays a single collector for as
+  long as the host itself is mounted). `RecoveryToast` gains a third field, `onUndo: (() ->
+  Unit)? = null` — defaulted, so every existing `RecoveryAnnouncer`-produced toast (four call
+  sites, `RecoveryAnnouncerTest`) keeps compiling and behaving unchanged; `FailureHost`'s
+  `ToastSlot` now passes `activeToast.onUndo` through to `Toast` instead of a hardcoded `null`.
+  **Why a `Channel`, not this codebase's usual `CaptureState`/`LevelStatus` process-wide-`var`
+  shape or a `StateFlow`:** a toast is a one-shot event, and the row's own two requirements are
+  exactly what those two shapes cannot both give at once — a plain mutable holder can silently
+  drop a second push before the first is read ("must not be lost"); a `StateFlow`/`SharedFlow
+  (replay = 1)` fixes that but then re-delivers its last value to every new collector afterward,
+  so a toast already shown would show again ("must not be shown twice"). `Channel.UNLIMITED`
+  never drops a send and hands each value to exactly one `receive()`, exactly once — both
+  properties at once, documented at length in `PushedToastChannel`'s own kdoc together with why
+  that is enough: `FailureHost` is a permanent collector for the process's lifetime, so nothing
+  here needs to survive a process death, no worse a guarantee than `CaptureState`'s own documented
+  "not a substitute for" durable storage.
+  **The undo conclusion (asked for explicitly):** a pushed `onUndo` genuinely can survive a
+  destination change, but only because of how the closure is built, not because of anything this
+  channel enforces at the type level. Safe: a closure over data the action's own result already
+  produced by value (an id, a captured outcome) at the moment `push()` is called — proven directly
+  by `PushedToastFailureHostTest`'s own Undo case, which fires from a `val` fixed before the
+  push, never a variable this test mutates afterward. Unsafe, and indistinguishable from safe at
+  the type level: a closure that instead reads an *ambient* "current selection" or "the active
+  screen" — by the time `onUndo` runs the operator may have navigated on, and that ambient state
+  now names whatever is on screen *now*, not the thing the toast is actually about. This session
+  did **not** wire an actual call site (e.g. `TransmissionDetailContent.kt`'s "Undo all"
+  propagation flow) — `CorrectionPolling.kt`/`TransmissionDetailContent.kt` are outside this
+  unit's owned files (`ui/data`'s correction polling and the Search/`ImproveScreens.kt`/
+  `FrequencyScreen.kt` files were explicitly out of scope), and inventing one without the
+  ownership to prove it against the real outcome shape would risk exactly the stale-closure
+  failure mode the prompt warned against. The contract is documented in `PushedToastChannel`'s own
+  kdoc for whoever wires the first real caller.
+- **R-1080 (investigated, not re-done — already fixed).** Read the row, `FailureHost.kt`'s
+  `BannerOverlay` and `BannerClosingBorderTest`/`BannerChevronClearanceTest` in full before
+  starting any work. The closing border (`failure-banner-closing-border`, drawn around the scroll
+  box *and* the scroll hint together whenever `scrollState.canScrollForward`) is already present
+  in `FailureHost.kt` on `main` — landed by `684c3abf` (P26, this same commit's own CHANGELOG
+  entry: "R-1080. `FailureHost.kt`'s `BannerOverlay` now closes a new rounded-rect border ...")
+  and hardened against a Release-only gate flake by `b0b64d62` (R-1043, `sessionId = null` plus a
+  bounded virtual frame in place of a wall-clock wait — both commits are ancestors of this branch's
+  own `main`, `git merge-base --is-ancestor` confirmed for both). `results/ui-audit/register.md`'s
+  own R-1080 row still reads `open` because constitution VIII reserves `closed` for the lead's own
+  capture-based evidence ("the lead captures after merge" — 684c3abf's own CHANGELOG entry, "Left
+  open / not done") — not because the code is unfixed. Re-ran the existing tests rather than
+  duplicate them: both pass, at both font scale 1.0 (no scrolling, no second border) and font
+  scale 2.0 with a forced-short viewport (scrolling, border reaches past the hint) — see
+  Verified. No production or test change made for this row; making one against code already
+  correct and already tested would be unverifiable churn, not a fix.
+
+**Verified:**
+- `./gradlew :app:testPlayDebugUnitTest --tests "org.ort.app.ui.failures.PushedToastChannelTest"
+  --tests "org.ort.app.ui.failures.PushedToastFailureHostTest" --tests
+  "org.ort.app.ui.failures.RecoveryAnnouncerTest"` — 17 tests, all green.
+- `./gradlew :app:smokeTestPlayDebugUnitTest --tests "org.ort.app.ui.failures.FailureHostTest"` —
+  11 tests, all green (this class is isolated into its own smoke task, `app/build.gradle.kts`'s
+  own documented Compose-idle-poisoning mitigation — `:app:testPlayDebugUnitTest` alone silently
+  matches zero tests for it, not a failure of this change).
+- `./gradlew :app:testPlayDebugUnitTest --tests "org.ort.app.ui.failures.BannerClosingBorderTest"
+  --tests "org.ort.app.ui.failures.BannerChevronClearanceTest"` — 3 tests, all green (R-1080,
+  confirming the existing fix still holds, unmodified).
+- `./gradlew :app:detekt :app:ktlintCheck` — both green.
+- **Discrimination (constitution II), each reverted then restored:**
+  - The `LaunchedEffect(Unit)` collector — changed `while (true)` to `while (false)` in
+    `FailureHost.kt`: all four `PushedToastFailureHostTest` cases failed
+    (`ComposeTimeoutException`, waiting for `failure-toast-<id>` to appear — the toast is never
+    shown because nothing is draining the channel). Restored, all four pass again.
+  - The `onUndo` passthrough — changed `onUndo = activeToast.onUndo` back to `onUndo = null` in
+    `ToastSlot`: exactly the one Undo-specific test failed (`could not find any node that
+    satisfies: (Text ... contains 'Undo')`), the other three (which don't click Undo) stayed
+    green. Restored, all four pass again.
+
+**Left open / not done:**
+- No real call site wires `RecoveryToast.onUndo` yet — see the undo conclusion above. The
+  infrastructure (channel, field, `ToastSlot` wiring) is in place and tested; a future caller
+  (most plausibly `TransmissionDetailContent.kt`'s propagation flow, `PropagatedScreen.kt`'s
+  "Undo all") needs its own unit, scoped to the files that flow actually owns.
+- No screens changed pixels for R-1008 — `PushedToastChannel`/`RecoveryToast`/the `LaunchedEffect`
+  wiring are all invisible until a real caller pushes something, so there is nothing new for the
+  tour to capture from this change alone. R-1080's own screens (`level-low/F03-level-low-now` at
+  font scale 2.0, and any capture that forces the failure banner to scroll) were already captured
+  once by the session that fixed it (684c3abf/9a53840e) and need no re-capture from this session,
+  which changed nothing under `ui/failures/`'s border-drawing code.
+- `results/ui-audit/register.md` itself was not edited — per `AGENTS.md`, only the session lead
+  edits that file; this entry is the evidence for the lead to close R-1080 (or confirm it already
+  should have been) and to route R-1008 to whichever screen becomes its first real caller.
+
 ## 2026-09-20 (P37: `diff.py` can fail)
 
 ### `<pending>` — R-1124/R-1125 gate fix: `:pipeline:detekt`/`:pipeline:ktlintCheck` line-length and wrapping, no behaviour change
