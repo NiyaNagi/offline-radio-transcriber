@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (o-feedback-why: R-1139's toast channel gets its first real producer; R-1144's action bar wired, its per-candidate reasons reported as ungrounded)
 
-### `<pending>` — R-1139: `PropagatedScreen`'s `Done` pushes a real, by-value undo toast through `PushedToastChannel`; R-1144: `Detail-Why`'s bottom action bar wired to the real correction callbacks, the per-candidate reasons deliberately left unbuilt
+### `0e99eab1` — R-1139: `PropagatedScreen`'s `Done` pushes a real, by-value undo toast through `PushedToastChannel`; R-1144: `Detail-Why`'s bottom action bar wired to the real correction callbacks, the per-candidate reasons deliberately left unbuilt
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/PushedToastChannel.kt`,
 `app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailContent.kt`,
