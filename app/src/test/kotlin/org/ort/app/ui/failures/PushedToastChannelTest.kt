@@ -1,9 +1,17 @@
 package org.ort.app.ui.failures
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.testing.Requirement
 
@@ -73,5 +81,39 @@ class PushedToastChannelTest {
         val toast = RecoveryToast("rig", "Radio reconnected")
 
         assertNull(toast.onUndo)
+    }
+
+    /**
+     * Register R-1139: [PushedToastChannel.undoScope] is what makes a pushed toast's own `onUndo` —
+     * a plain, non-suspending callback — able to run a real suspend write at all, from wherever it
+     * is actually tapped, long after whatever screen built the closure is gone. Proven directly
+     * against the real, shared scope (not a fake one): work launched on it genuinely runs, and
+     * genuinely does not share a job with a caller's own short-lived scope.
+     */
+    @Test
+    @Requirement("R-1139")
+    fun `R_1139 undoScope actually runs work launched on it`() = runTest {
+        val ran = Channel<Unit>(Channel.UNLIMITED)
+
+        PushedToastChannel.undoScope.launch { ran.trySend(Unit) }
+
+        withTimeout(5_000) { ran.receive() }
+    }
+
+    @Test
+    @Requirement("R-1139")
+    fun `R_1139 undoScope is not cancelled by an unrelated coroutine scope completing`() = runTest {
+        // Stands in for a producer's own short-lived `rememberCoroutineScope()`-style scope, which
+        // this file's own class kdoc names as the trap: cancelled the moment the screen that built
+        // the closure leaves composition. `undoScope` must still be usable afterward.
+        val shortLived = CoroutineScope(Job())
+        shortLived.launch {}
+        shortLived.cancel()
+
+        val ran = Channel<Unit>(Channel.UNLIMITED)
+        PushedToastChannel.undoScope.launch { ran.trySend(Unit) }
+        withTimeout(5_000) { ran.receive() }
+
+        assertTrue(PushedToastChannel.undoScope.isActive)
     }
 }

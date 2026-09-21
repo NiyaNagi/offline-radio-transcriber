@@ -1,5 +1,8 @@
 package org.ort.app.ui.screens
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -25,6 +28,7 @@ import org.junit.runner.RunWith
 import org.ort.app.export.ShareIntentLauncher
 import org.ort.app.testing.ortComposeTestRule
 import org.ort.app.ui.audio.FakeTransmissionAudioPlayer
+import org.ort.app.ui.failures.PushedToastChannel
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.core.AttributionState
 import org.ort.core.PassId
@@ -72,11 +76,13 @@ class TransmissionDetailContentTest {
     @Before
     fun openDatabase() {
         db = OrtDatabase.create(context)
+        PushedToastChannel.resetForTest()
     }
 
     @After
     fun clearShareUriResolver() {
         ShareIntentLauncher.uriResolverForTest = null
+        PushedToastChannel.resetForTest()
     }
 
     private fun session(captureMode: String? = null, audioRouteKind: String? = null) = SessionEntity(
@@ -1059,5 +1065,158 @@ class TransmissionDetailContentTest {
         // The real, on-disk file name (`TransmissionEntity.audioPath()`'s own `$id.flac` shape) —
         // TX1's own, never TX2's — not [ShareFile.suggestedName], which only labels the chooser.
         assertEquals("TX1.flac", uri!!.lastPathSegment)
+    }
+
+    // ---- R-1139 (register): PropagatedScreen's own `Done` is PushedToastChannel's first real producer ----
+
+    /**
+     * Register R-1139: tapping `Done` on the propagated screen — the operator leaving this
+     * correction result behind, R-1008's own scenario — pushes a real toast through
+     * [PushedToastChannel], through the whole real correction flow (not a direct call to any one
+     * function), naming the real corrected callsign and the real affected-over count.
+     */
+    @Test
+    fun `R_1139_tapping_Done_on_the_propagated_screen_pushes_a_real_toast`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Not right?")
+        composeTestRule.onNodeWithText("Not right?").performClick()
+        composeTestRule.waitUntilTextExists("Type a callsign")
+        composeTestRule.onNodeWithText("Type a callsign").performScrollTo().performClick()
+        composeTestRule.waitUntilDescriptionExists("Typed callsign")
+        composeTestRule.onNodeWithContentDescription("Typed callsign").performScrollTo().performTextInput("KA7LWH")
+        composeTestRule.onNodeWithText("Save unverified correction").performScrollTo().performClick()
+        composeTestRule.waitUntilTextExists("Corrected to KA7LWH")
+
+        assertEquals(null, PushedToastChannel.tryReceiveForTest()) // nothing pushed before Done is tapped
+
+        composeTestRule.onNodeWithText("Done").performClick()
+
+        val toast = PushedToastChannel.tryReceiveForTest()
+        assert(toast != null) { "expected Done to have pushed a toast" }
+        assert(toast!!.message.contains("Corrected to KA7LWH")) { "unexpected message: ${toast.message}" }
+        assert(toast.message.contains("1 over updated")) { "unexpected message: ${toast.message}" }
+        assert(toast.onUndo != null) { "expected an undo action to have been carried" }
+    }
+
+    /**
+     * Register R-1139, the safety property that makes the whole thing worth building: the pushed
+     * toast's own `onUndo` must still act on the *real* transmission this correction touched even
+     * once this composable — and every piece of local state it owns (`transmissionId`,
+     * `destination`, `refresh`) — has been thrown away (`setContent {}` below replaces the entire
+     * composition, the strongest simulation of "the operator has genuinely navigated elsewhere"
+     * this test harness can produce). A closure built from an ambient "current selection" would
+     * have nothing left to read here; one built by value from the real
+     * [org.ort.app.ui.data.PropagationOutcome] does not need anything left.
+     */
+    @Test
+    fun `R_1139_the_pushed_toasts_undo_still_reverts_the_real_row_after_the_screen_is_gone`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        var showDetail by mutableStateOf(true)
+        composeTestRule.setContent {
+            OrtTheme {
+                if (showDetail) {
+                    TransmissionDetailContent(
+                        context = context,
+                        transmissionId = "TX1",
+                        player = FakeTransmissionAudioPlayer(),
+                        onBack = {},
+                        onOpenTransmission = {},
+                    )
+                }
+            }
+        }
+        composeTestRule.waitUntilTextExists("Not right?")
+        composeTestRule.onNodeWithText("Not right?").performClick()
+        composeTestRule.waitUntilTextExists("Type a callsign")
+        composeTestRule.onNodeWithText("Type a callsign").performScrollTo().performClick()
+        composeTestRule.waitUntilDescriptionExists("Typed callsign")
+        composeTestRule.onNodeWithContentDescription("Typed callsign").performScrollTo().performTextInput("KA7LWH")
+        composeTestRule.onNodeWithText("Save unverified correction").performScrollTo().performClick()
+        composeTestRule.waitUntilTextExists("Corrected to KA7LWH")
+        composeTestRule.onNodeWithText("Done").performClick()
+        val toast = PushedToastChannel.tryReceiveForTest()!!
+
+        // The screen (and every piece of its local state, and every `LaunchedEffect` it owned) is
+        // gone — removed from the composition entirely, not merely covered by another destination —
+        // without calling `setContent` a second time (not legal on the same rule; this is the
+        // in-composition equivalent of the operator having genuinely navigated elsewhere).
+        showDetail = false
+        composeTestRule.waitForIdle()
+
+        toast.onUndo!!()
+
+        runBlocking {
+            var entity = db.transmissionDao().getById("TX1")!!
+            var attempts = 0
+            while (entity.stationId != "K7LWH" && attempts < 100) {
+                kotlinx.coroutines.delay(50)
+                entity = db.transmissionDao().getById("TX1")!!
+                attempts++
+            }
+            assert(entity.stationId == "K7LWH") { "expected the undo to revert TX1 to K7LWH, was ${entity.stationId}" }
+        }
+    }
+
+    // ---- R-1144 (register): D05 Detail-Why's own bottom action bar, end to end ----
+
+    /**
+     * Register R-1144: `Detail-Why.dc.html`'s own bottom bar reached through the real
+     * `TransmissionDetailContent` -> `DetailDestination.Why` wiring (the same tap R-180's own test
+     * uses to reach the screen at all) — proves `WhyDestination` really gates the bar on the real
+     * INFERRED body state and really reaches the same write `Confirm` makes from the main screen.
+     */
+    @Test
+    fun `R_1144_confirming_from_the_why_screen_records_the_same_real_audit_row`() {
+        runBlocking {
+            db.sessionDao().insert(session())
+            db.transmissionDao().insert(transmission("TX1", stationId = "K7LWH"))
+        }
+
+        composeTestRule.setContent {
+            OrtTheme {
+                TransmissionDetailContent(
+                    context = context,
+                    transmissionId = "TX1",
+                    player = FakeTransmissionAudioPlayer(),
+                    onBack = {},
+                    onOpenTransmission = {},
+                )
+            }
+        }
+        composeTestRule.waitUntilTextExists("Full lattice")
+        composeTestRule.onNodeWithText("Full lattice").performScrollTo().performClick()
+        composeTestRule.waitUntilTextExists("Everything the resolver saw")
+
+        composeTestRule.onNodeWithText("Confirm").performClick()
+
+        runBlocking {
+            var corrections = db.correctionDao().correctionsFor("TX1")
+            var attempts = 0
+            while (corrections.isEmpty() && attempts < 50) {
+                kotlinx.coroutines.delay(50)
+                corrections = db.correctionDao().correctionsFor("TX1")
+                attempts++
+            }
+            assert(corrections.isNotEmpty()) { "expected Confirm from the Why screen to record an audit row" }
+        }
     }
 }

@@ -32,6 +32,96 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (o-feedback-why: R-1139's toast channel gets its first real producer; R-1144's action bar wired, its per-candidate reasons reported as ungrounded)
+
+### `<pending>` — R-1139: `PropagatedScreen`'s `Done` pushes a real, by-value undo toast through `PushedToastChannel`; R-1144: `Detail-Why`'s bottom action bar wired to the real correction callbacks, the per-candidate reasons deliberately left unbuilt
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/failures/PushedToastChannel.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/TransmissionDetailContent.kt`,
+`app/src/main/kotlin/org/ort/app/ui/screens/DetailWhyScreen.kt`, and their tests. No `:pipeline`,
+`:lexicon`, `:data`, `:capture-*`, `app/src/debug/**`, `ui/theme/` or `DetailRevisionsScreen.kt`
+touched.
+
+**Requirements/ACs:** constitution I, VIII; FR-UI-8; R-1008, R-1117, R-1139, R-1144.
+
+**What changed:**
+
+- **R-1139.** `PushedToastChannel` had a producer-shaped hole: built, tested four ways, collected
+  by `FailureHost`, and nothing called `push()`. Wired the first real one — `PropagatedScreen`'s
+  `Done` button (`TransmissionDetailContent.kt`'s `PropagatedDestination`), the moment the operator
+  leaves a correction result behind, which is exactly R-1008's own scenario ("no way to surface the
+  result of an action taken on a sub-screen once the operator has already navigated away"). The
+  toast names the real corrected callsign and the real affected-over count
+  (`"Corrected to $newCallsign — N overs updated"`, via the existing `pluralize` helper) and carries
+  a real `onUndo`.
+  - **The undo-by-value rule, applied, not just quoted.** The closure captures `outcome` (the
+    immutable `PropagationOutcome` this exact correction already produced) and
+    `context.applicationContext`, both by value, at the moment `push()` is called — never
+    `transmissionId`, `destination` or `refresh` (all bound to the screen that is about to leave
+    composition). New `PushedToastChannel.undoScope` (`SupervisorJob() + Dispatchers.IO`, process-
+    lifetime, same "no worse a guarantee than a process-wide holder" reasoning the channel itself
+    already carries) is what the closure launches `CorrectionPolling.undoAll` on — not the
+    producing composable's own `rememberCoroutineScope()`, which is cancelled the instant that
+    screen leaves composition (the exact trap the row warns about). Neither the push nor the undo
+    closure calls `refresh()`/`onDestinationChange()`: there is no local view state left once the
+    operator has moved on, and the screen now showing the toast reads the database through its own
+    poll, the same way every other screen in this app already does.
+  - The pre-existing `Undo all` text action on the same screen is unchanged — it still uses the
+    screen's own `scope` and still works exactly as before while the screen stays composed; `Done`
+    is the other path, for when the operator does not use it.
+- **R-1144, the bottom action bar (built).** `DetailWhyScreen` gained nullable `onNotRight`/
+  `onConfirm` params (both default `null`, so it renders no bar unless a caller wires *both* —
+  never a half-wired guess), rendering `Detail-Why.dc.html`'s own `ActionBar("Not right?",
+  "Confirm")` — the same component `Detail.dc.html`'s own bar already reuses, not a hand-rolled
+  pair of buttons. New `WhyDestination` in `TransmissionDetailContent.kt` wires both only when the
+  polled `DetailBodyViewState` is genuinely `Inferred` (the identical gate
+  `TransmissionDetailScreen`'s own `BottomActionBar` already applies before drawing this exact
+  pair), since `Detail-Why.dc.html` only ever drew this one bar for its one worked INFERRED
+  example — a CONFIRMED/AMBIGUOUS/UNKNOWN over reaching D05 renders no bar, rather than a guess at
+  boards that do not exist for it. `onConfirm` calls the same `CorrectionPolling.confirm` write
+  `MainDestination` already makes, not a second copy of its logic.
+- **R-1144, the per-candidate reasons (deliberately not built — reported instead).** Traced the
+  board's own worked example ("score 4.4 · needs an A the lattice did not hear") to its source and
+  found the data does not support it, however close it looks: `CallsignGrammar.slotDetailsFor`
+  (`:lexicon`) computes one `SlotDetail` list **per lattice, not per candidate** — its own doc
+  comment says so directly ("identical across every candidate `parse` returns for the same
+  lattice... computed once per call, not once per candidate") — and
+  `DataPassBResultSink.persistCandidates` (`:pipeline`) persists that same shared list under every
+  candidate's own `candidateId`. So `CandidateInspectionViewState.slots` (which already reaches
+  `:app` today, via `CatalogDao.slotDetailsFor`) is **identical** for K7LWH, KA7LWH and K7LVH
+  alike — comparing a candidate's own callsign text against it would be comparing against a fact
+  about the *lattice*, never about that candidate, and the board's own two-clause example built
+  from it would be true by accident for the chosen candidate and fabricated for every other one.
+  Not built, and not routed into a UI screen change: a true reason needs a genuinely per-candidate
+  slot-to-character alignment that `:lexicon`/`:pipeline` would have to compute and persist —
+  outside this session's owned files and, on the evidence above, real new work rather than a wiring
+  gap. Recorded here as the API this screen would need, per the prompt's own instruction not to
+  build a plausible-looking fabrication on the one screen whose entire purpose is showing what is
+  and is not known.
+
+**Verified:**
+`.\gradlew.bat :app:ktlintCheck :app:detekt --max-workers=2` — both green.
+`.\gradlew.bat :app:testFullDebugUnitTest --tests "org.ort.app.ui.failures.PushedToastChannelTest" --tests "org.ort.app.ui.failures.PushedToastFailureHostTest" --tests "org.ort.app.ui.screens.DetailWhyScreenTest"` —
+green (6 + 4 + 7 tests). `.\gradlew.bat :app:smokeTestFullDebugUnitTest --tests "org.ort.app.ui.screens.TransmissionDetailContentTest"` —
+green (25 tests; this class is one of the 18 excluded from the ordinary task, per R-1140). Full
+`:app:test` (both flavors) plus both smoke tasks also run for the whole module.
+**Discriminated, each reverted and restored:** `PropagatedDestination`'s `onDone` reverted to
+`onBack` alone failed both new R-1139 cases (`expected Done to have pushed a toast` and the
+undo-after-navigation case) for the right reason; `DetailWhyScreen`'s action-bar block removed
+failed both new `DetailWhyScreenTest` R-1144 cases and the new
+`TransmissionDetailContentTest.R_1144` case with `Failed to inject touch input` (the button node no
+longer exists) — all four restored and green again afterward.
+
+**Left open / not done:**
+- R-1144's per-candidate reasons — reported above as needing a `:lexicon`/`:pipeline` change
+  (a genuinely per-candidate slot-to-character alignment), not built.
+- No screen capture taken — per this session's brief, the lead runs the tour re-capture. Screens
+  touched: **D05 `Detail-Why`** (new bottom action bar on the INFERRED case only) and, indirectly,
+  **the toast slot** wherever it now renders after a correction's `Done` (no new screen, an
+  existing `FailureHost` overlay carrying new content).
+
+---
+
 ## 2026-09-21 (R-1135/R-1136: two more artboard/code drifts closed from the R-1130 audit; R-1143 verified already conformant except Thread-Detail's header shape)
 
 ### `<pending>` — R-1135: `OrtColors.kt`'s `textSignal`/`textLow` doc comments corrected to match their real call sites; R-1136: an unnamed legacy colour removed from three boards; R-1143: Digest/Transmission-Detail kebabs confirmed already drawn, Thread-Detail's header shape flagged instead of forced

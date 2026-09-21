@@ -1,5 +1,8 @@
 package org.ort.app.ui.failures
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 
 /**
@@ -51,6 +54,23 @@ public object PushedToastChannel {
     public fun push(toast: RecoveryToast) {
         channel.trySend(toast)
     }
+
+    /**
+     * Register R-1139: the scope a pushed toast's own [RecoveryToast.onUndo] runs its (suspending)
+     * work on. [RecoveryToast.onUndo] is a plain, non-suspending `() -> Unit` — [FailureHost]'s own
+     * [ToastSlot] calls it directly from a click, exactly as
+     * `org.ort.app.ui.components.Toast`'s own `onUndo` always has — so whichever screen *builds*
+     * that closure is the one place a suspend write like
+     * [org.ort.app.ui.data.CorrectionPolling.undoAll] can be launched from, and this file's own
+     * class kdoc already names the trap: a producer's own `rememberCoroutineScope()` is cancelled
+     * the instant the screen that pushed the toast leaves composition — which for a toast pushed
+     * specifically because the operator is about to navigate away is not "eventually", it is
+     * "immediately". This scope, like [channel] itself, lives for the process — never cancelled,
+     * [SupervisorJob] so one undo's failure cannot poison another's — the identical "no worse a
+     * guarantee than a process-wide holder" reasoning this file's own class kdoc already gives for
+     * [Channel.UNLIMITED].
+     */
+    public val undoScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * [FailureHost]'s own collector: suspends until the next pushed toast. Exactly one caller

@@ -13,6 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import org.ort.app.ui.components.ActionBar
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.LatticeSlot
 import org.ort.app.ui.components.LatticeSlotViewState
@@ -37,12 +38,45 @@ import org.ort.app.ui.theme.OrtType
  * grammar line is the winning candidate's own real `grammarValid` bit — **not** the board's own
  * "prefix K · region 7 · suffix LWH" per-component parse, which no API this package can reach
  * returns; shown as that bit alone, never an invented breakdown.
+ *
+ * **Register R-1144.** [onNotRight]/[onConfirm] (both nullable, defaulted `null` so every existing
+ * caller compiles and renders unchanged) are `Detail-Why.dc.html`'s own bottom action bar — the
+ * identical `ActionBar("Not right?", "Confirm")` [TransmissionDetailScreen]'s own `BottomActionBar`
+ * already draws for [org.ort.app.ui.data.DetailBodyViewState.Inferred], reused here rather than a
+ * second, hand-rolled bar. Rendered only when **both** callbacks are supplied together — never one
+ * without the other, since a caller that can wire `Confirm` genuinely has a resolved `stationId` to
+ * confirm and one that cannot (AMBIGUOUS, UNKNOWN, already-CONFIRMED) has neither, exactly the same
+ * gating `TransmissionDetailContent`'s own `WhyDestination` applies before ever passing them in —
+ * see that composable's own doc comment for why this screen only ever draws the one bar shape the
+ * artboard actually specifies, not a guess at what the other three attribution states would need.
+ *
+ * **Register R-1144, the per-candidate reasons — deliberately not built.** The board's own worked
+ * example line reads "score 4.4 · needs an A the lattice did not hear" / "score 3.1 · V for W,
+ * never heard before" — a real, honest sentence would need, for *this* candidate's own parsed
+ * text, which lattice slot (if any) each of its characters aligns to, so a mismatch against that
+ * slot's own top unit (or a character with no slot at all) can be named truthfully. That alignment
+ * does not exist per candidate today: `CallsignGrammar.slotDetailsFor` (`:lexicon`, confirmed by
+ * reading its own doc comment and call site) computes one `SlotDetail` list **per lattice, not per
+ * candidate** — "identical across every candidate `parse` returns for the same lattice... computed
+ * once per call, not once per candidate" — and `DataPassBResultSink.persistCandidates` (`:pipeline`)
+ * persists that same shared list under every candidate's own `candidateId`, so
+ * [org.ort.app.ui.data.CandidateInspectionViewState.slots] is already real, already reaches `:app`,
+ * and is already **identical** for K7LWH, KA7LWH and K7LVH alike — comparing a candidate's own
+ * callsign text against it would compare against a fact about the lattice, never about that
+ * candidate, and "needs an A the lattice did not hear" built from it would be true by accident for
+ * the chosen candidate and fabricated for every other one. A true reason needs a genuinely
+ * per-candidate slot-to-character alignment — new data `:lexicon`/`:pipeline` would have to compute
+ * and persist, not something `:app` can honestly derive from what already reaches it. Constitution
+ * I: a plausible-looking but fabricated explanation on the one screen whose entire purpose is
+ * showing what is and is not known would be worse than the current, honest gap.
  */
 @Composable
 public fun DetailWhyScreen(
     callsignLabel: String,
     why: DetailWhyViewState,
     onBack: () -> Unit,
+    onNotRight: (() -> Unit)? = null,
+    onConfirm: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
@@ -70,6 +104,14 @@ public fun DetailWhyScreen(
             GrammarSection(why)
             CandidatesSection(why)
             PriorsSection(why)
+        }
+        if (onNotRight != null && onConfirm != null) {
+            ActionBar(
+                secondaryLabel = "Not right?",
+                onSecondary = onNotRight,
+                primaryLabel = "Confirm",
+                onPrimary = onConfirm,
+            )
         }
     }
 }

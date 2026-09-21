@@ -30,6 +30,7 @@ import org.ort.app.ui.data.CorrectionPolling
 import org.ort.app.ui.data.CorrectionRequest
 import org.ort.app.ui.data.CorrectionScope
 import org.ort.app.ui.data.CorrectionTier
+import org.ort.app.ui.data.DetailBodyViewState
 import org.ort.app.ui.data.DetailViewState
 import org.ort.app.ui.data.DetailViewStateMapper
 import org.ort.app.ui.data.LabelledSampleWriter
@@ -42,6 +43,9 @@ import org.ort.app.ui.data.RoomSessionRouteFactsReader
 import org.ort.app.ui.data.TranscriptVersionViewState
 import org.ort.app.ui.data.TransmissionDetail
 import org.ort.app.ui.data.UnknownTriedContextViewState
+import org.ort.app.ui.data.pluralize
+import org.ort.app.ui.failures.PushedToastChannel
+import org.ort.app.ui.failures.RecoveryToast
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.core.AttributionState
@@ -261,10 +265,14 @@ private fun DetailDestinationContent(
                 modifier = Modifier.fillMaxSize().clearedWhileOverlaid(dest == DetailDestination.Correcting),
             )
 
-            DetailDestination.Why -> DetailWhyScreen(
-                callsignLabel = whyParentLabel,
-                why = viewState.why,
-                onBack = { onDestinationChange(DetailDestination.Main) },
+            DetailDestination.Why -> WhyDestination(
+                context = context,
+                transmissionId = transmissionId,
+                current = current,
+                viewState = viewState,
+                whyParentLabel = whyParentLabel,
+                onDestinationChange = onDestinationChange,
+                refresh = refresh,
                 modifier = Modifier.fillMaxSize(),
             )
 
@@ -396,6 +404,59 @@ private fun MainDestination(
             modifier = Modifier.weight(1f),
         )
     }
+}
+
+/**
+ * Register R-1144 (D05, `Detail-Why.dc.html`): the exhaustive lattice screen's own bottom action
+ * bar — split out, the same shape [RevisionsDestination]/[PropagatedDestination] already use,
+ * purely so [DetailDestinationContent] stays short.
+ *
+ * [onNotRight]/[onConfirm] are only ever built (never `null`) when
+ * [org.ort.app.ui.data.DetailBodyViewState.Inferred] is the current body state — the identical gate
+ * [TransmissionDetailScreen]'s own `BottomActionBar` already applies before it will draw this same
+ * "Not right?/Confirm" pair, since `Detail-Why.dc.html` only ever drew this one bar for its one
+ * worked (INFERRED) example. A CONFIRMED/AMBIGUOUS/UNKNOWN over reaching this screen renders no bar
+ * at all rather than a guess at what those boards (which do not exist for D05) would ask for.
+ * `onConfirm` mirrors [MainDestination]'s own real write (`CorrectionPolling.confirm`, then
+ * [refresh]) exactly — the same correction callback, not a second copy of its logic.
+ */
+@Composable
+private fun WhyDestination(
+    context: Context,
+    transmissionId: String,
+    current: TransmissionDetail,
+    viewState: DetailViewState,
+    whyParentLabel: String,
+    onDestinationChange: (DetailDestination) -> Unit,
+    refresh: suspend () -> Unit,
+    modifier: Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    val body = viewState.body
+    DetailWhyScreen(
+        callsignLabel = whyParentLabel,
+        why = viewState.why,
+        onBack = { onDestinationChange(DetailDestination.Main) },
+        onNotRight = if (body is DetailBodyViewState.Inferred) {
+            { onDestinationChange(DetailDestination.Correcting) }
+        } else {
+            null
+        },
+        onConfirm = if (body is DetailBodyViewState.Inferred) {
+            {
+                val stationId = current.attribution.stationId
+                if (stationId != null) {
+                    scope.launch {
+                        CorrectionPolling.confirm(context, transmissionId, stationId, SystemClock.wallMillis())
+                        refresh()
+                    }
+                }
+            }
+        } else {
+            null
+        },
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -536,7 +597,42 @@ private fun PropagatedDestination(
                     onDestinationChange(DetailDestination.Main)
                 }
             },
-            onDone = onBack,
+            // Register R-1139: `Done` is the operator leaving this correction result behind —
+            // `PushedToastChannel`'s own first real producer, since R-1008's complaint ("no way to
+            // surface the result of an action taken on a sub-screen once the operator has already
+            // navigated away") is exactly what tapping `Done` here does. The `Undo all` text action
+            // above still works unchanged while this screen stays composed; this is the *other*
+            // path — the operator has decided they are done looking at it.
+            //
+            // Built by value, at push time, never from an ambient "current" anything (the trap
+            // `PushedToastChannel`'s own kdoc names): [outcome] is the immutable
+            // [PropagationOutcome] this exact correction already produced, and
+            // `context.applicationContext` is captured once here rather than read again later —
+            // both survive this composable leaving composition unchanged, unlike `transmissionId`,
+            // `destination` or [refresh] (all bound to *this* screen, deliberately not referenced
+            // here). [PushedToastChannel.undoScope] (not this composable's own `scope`, which is
+            // cancelled the moment this screen leaves composition — see that scope's own kdoc) is
+            // what makes `CorrectionPolling.undoAll` runnable from wherever the toast is actually
+            // tapped. No `refresh()`/`onDestinationChange` call here or in the undo closure below:
+            // there is no local view state left to refresh once the operator has moved on — the
+            // screen showing the toast reads the database through its own poll, the same way every
+            // other screen in this app already does.
+            onDone = {
+                val applicationContext = context.applicationContext
+                PushedToastChannel.push(
+                    RecoveryToast(
+                        id = "correction-${outcome.correctedAtMillis}-${outcome.newCallsign}",
+                        message = "Corrected to ${outcome.newCallsign} — " +
+                            "${pluralize(outcome.overCount, "over")} updated",
+                        onUndo = {
+                            PushedToastChannel.undoScope.launch {
+                                CorrectionPolling.undoAll(applicationContext, outcome, SystemClock.wallMillis())
+                            }
+                        },
+                    ),
+                )
+                onBack()
+            },
             onViewAffectedOvers = onViewAffectedOvers,
             modifier = Modifier.weight(1f),
         )
