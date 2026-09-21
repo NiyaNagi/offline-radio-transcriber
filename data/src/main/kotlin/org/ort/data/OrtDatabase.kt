@@ -589,23 +589,105 @@ public abstract class OrtDatabase : RoomDatabase() {
          * launch alike — is deliberately cheap-and-safe rather than conditional.
          */
         private suspend fun applyHandWrittenSchema(connection: PooledConnection) {
+            // Register R-1120 (halt), constitution III: each guard below runs BEFORE the index it
+            // protects, every time, so a database that already violates the constraint (any
+            // install from before this guard existed) is repaired first — the `CREATE UNIQUE
+            // INDEX` immediately after it therefore never throws for a pre-existing violation.
+            // See each guard's own kdoc for how its losers stay reachable, never deleted.
+            dedupeCurrentTranscripts(connection)
             // Exactly one current transcript per transmission (FR-REP-3 → AC-31).
             connection.exec(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_transcript_one_current " +
                     "ON transcript(transmissionId) WHERE isCurrent = 1",
             )
+            dedupeActiveWorkQueueItems(connection)
             // Active-state-only uniqueness so a completed or finally-failed pass is
             // re-enqueueable (technical design §7.1's draft-1 fix).
             connection.exec(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_wq_active " +
                     "ON work_queue_item(transmissionId, pass) WHERE state IN ('READY','LEASED','DEFERRED')",
             )
+            dedupeCurrentPriorAdjustments(connection)
             // Exactly one current weight per (station, named prior) — register R-052.
             connection.exec(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_prior_adjustment_one_current " +
                     "ON prior_adjustment(stationId, name) WHERE isCurrent = 1",
             )
             ensureFtsIndex(connection)
+        }
+
+        /**
+         * Register R-1120 (halt), FR-STO-7, constitution III ("nothing is deleted quietly"): a
+         * pre-existing install can hold more than one `isCurrent = 1` transcript row for the same
+         * `transmissionId` — nothing enforced the one-current invariant before
+         * `idx_transcript_one_current` existed, and a bug or a crashed reprocess run is exactly the
+         * kind of thing that could leave two behind. Left alone, `CREATE UNIQUE INDEX` below throws
+         * on that install's very first [create] call after this guard shipped, and every launch
+         * after that (register R-1120's "bricks the install permanently").
+         *
+         * The loser of each tie is not deleted: it is marked `isCurrent = 0`, the identical
+         * "superseded" state [org.ort.data.dao.TranscriptDao.supersede] already produces on every
+         * ordinary reprocess — so the row stays exactly as reachable as any other superseded
+         * transcript ([org.ort.data.dao.TranscriptDao.getAllVersions] still returns it; nothing
+         * about this guard is visible to a caller beyond the flag it flips). The survivor is
+         * whichever row has the highest `rowid` (SQLite's own monotonic insertion-order tiebreak)
+         * — an arbitrary but deterministic choice: which of two simultaneously-`isCurrent` rows
+         * should have "won" was already undefined before this guard existed, since nothing
+         * enforced the constraint at all.
+         *
+         * Idempotent and cheap on a healthy database: the `WHERE`/`GROUP BY` below matches no rows
+         * beyond the one already-unique survivor per `transmissionId`, so this costs one indexed
+         * scan on every [create] call, the same "always run it, it is safe" shape
+         * [ensureFtsIndex] already uses.
+         */
+        private suspend fun dedupeCurrentTranscripts(connection: PooledConnection) {
+            connection.exec(
+                "UPDATE transcript SET isCurrent = 0 WHERE isCurrent = 1 AND rowid NOT IN (" +
+                    "SELECT MAX(rowid) FROM transcript WHERE isCurrent = 1 GROUP BY transmissionId)",
+            )
+        }
+
+        /**
+         * Register R-1120 (halt), FR-STO-7, constitution III: the same guard for `idx_wq_active`.
+         * A pre-existing duplicate *active* row (`READY`/`LEASED`/`DEFERRED`) for the same
+         * `(transmissionId, pass)` is moved to the terminal `FAILED` state — outside the active set
+         * the index covers, so the index can be built — with [DUPLICATE_ACTIVE_ITEM_REASON]
+         * recorded as its `lastError`, visibly (constitution I: never a silent state change).
+         * Never deleted: the row stays exactly as reachable as any other `FAILED` item —
+         * `Fail-Pass.dc.html` can still show it, and [org.ort.data.WorkQueue.requeueFailed] can
+         * still give it a fresh run if the operator chooses to. The survivor is the row with the
+         * highest `id` (this table's own `AUTOINCREMENT` primary key, so this is the same
+         * "most-recently-inserted wins" tiebreak [dedupeCurrentTranscripts] uses).
+         */
+        private suspend fun dedupeActiveWorkQueueItems(connection: PooledConnection) {
+            connection.exec(
+                "UPDATE work_queue_item SET state = 'FAILED', lastError = '$DUPLICATE_ACTIVE_ITEM_REASON' " +
+                    "WHERE state IN ('READY','LEASED','DEFERRED') AND id NOT IN (" +
+                    "SELECT MAX(id) FROM work_queue_item WHERE state IN ('READY','LEASED','DEFERRED') " +
+                    "GROUP BY transmissionId, pass)",
+            )
+        }
+
+        /** [dedupeActiveWorkQueueItems]'s own recorded reason — a plain constant so the guard's
+         * test and its production statement read the identical literal. */
+        internal const val DUPLICATE_ACTIVE_ITEM_REASON: String =
+            "duplicate active work-queue row resolved by the schema guard (register R-1120)"
+
+        /**
+         * Register R-1120 (halt), FR-STO-7, constitution III: the same guard for
+         * `idx_prior_adjustment_one_current`. A pre-existing duplicate current weight for the same
+         * `(stationId, name)` is marked `isCurrent = 0` — the identical "superseded" shape
+         * [org.ort.data.dao.StationIdentityDao.updatePriorWeight] already produces for every
+         * ordinary weight change going forward — never deleted. The survivor is the row with the
+         * highest `rowid`; `prior_adjustment` declares a `TEXT` primary key (`id`), not an integer
+         * one, but SQLite still gives every ordinary (non-`WITHOUT ROWID`) table an implicit
+         * `rowid`, so the same tiebreak [dedupeCurrentTranscripts] uses applies here too.
+         */
+        private suspend fun dedupeCurrentPriorAdjustments(connection: PooledConnection) {
+            connection.exec(
+                "UPDATE prior_adjustment SET isCurrent = 0 WHERE isCurrent = 1 AND rowid NOT IN (" +
+                    "SELECT MAX(rowid) FROM prior_adjustment WHERE isCurrent = 1 GROUP BY stationId, name)",
+            )
         }
 
         /**

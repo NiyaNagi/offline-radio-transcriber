@@ -936,7 +936,7 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   **Done when:** H4 and the 8-hour run show route-verified lines throughout and a forced mid-run
   switch halts capture rather than recording the room.
 
-- [ ] **P35 · Durability — stale leases and the migration guard** *(`:data`, `:app` startup)* —
+- [x] **P35 · Durability — stale leases and the migration guard** *(`:data`, `:app` startup)* —
   FR-RUN-8, AC-47, FR-REP-4. **Beta blocker.**
 
   **Read first:** `WorkQueue.recoverStaleLeases` (implemented, never called);

@@ -50,11 +50,12 @@ class FailureMapperTest {
         backlogHistory: List<BacklogSample> = emptyList(),
         stagedActivation: StagedActivation? = null,
         stagedActivationActiveLabel: String? = null,
+        databaseOpenFailureReason: String? = null,
     ) = FailureSignals(
         captureState, inputStatus, levelStatus, thermalStatus, rigStatus, storageForecast,
         shedLevel, shedBacklog, newestGap, nowMillis, debugOverride,
         sessionStartedAtMillis, sessionTransmissionCount, storageForecastHistory, backlogHistory,
-        stagedActivation, stagedActivationActiveLabel,
+        stagedActivation, stagedActivationActiveLabel, databaseOpenFailureReason,
     )
 
     @Test
@@ -114,6 +115,33 @@ class FailureMapperTest {
             ),
         )
         assertTrue(presentation is FailurePresentation.StorageHalt)
+    }
+
+    @Test
+    @Requirement("R-1120")
+    fun `R_1120 a database open failure is the migration takeover, carrying the real reason`() {
+        val presentation = FailureMapper.map(
+            signals(databaseOpenFailureReason = "UNIQUE constraint failed: transcript.transmissionId"),
+        )
+        assertTrue(presentation is FailurePresentation.Migration)
+        presentation as FailurePresentation.Migration
+        assertEquals(false, presentation.state.steps.single().ok)
+        assertEquals(
+            "UNIQUE constraint failed: transcript.transmissionId",
+            presentation.state.steps.single().detail,
+        )
+    }
+
+    @Test
+    @Requirement("R-1120")
+    fun `R_1120 a database open failure outranks a route mismatch, checked first among every takeover`() {
+        val presentation = FailureMapper.map(
+            signals(
+                databaseOpenFailureReason = "disk I/O error",
+                inputStatus = InputStatus.State.Mismatch(usbDevice, builtInMic),
+            ),
+        )
+        assertTrue(presentation is FailurePresentation.Migration)
     }
 
     @Test

@@ -15,6 +15,8 @@ import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetState
 import org.ort.app.fieldreport.wiring.FieldReportAppWiring
+import org.ort.core.SystemClock
+import org.ort.data.WorkQueue
 import org.ort.pipeline.digest.ProseDigestRunner
 import org.ort.pipeline.digest.SharedPreferencesProseDigestSettingsStore
 import org.ort.telemetry.AnalyticsEventFactory
@@ -108,6 +110,25 @@ class OrtApplication : Application() {
                         Log.w(TAG, "bundled asset ${result.id} is absent from this build: ${result.reason}")
                 }
             }
+        }
+        // Register R-1119/R-1120 (both beta blockers, build-plan P35): the app-process startup
+        // path this task's two durability fixes needed and never had.
+        //
+        // [DatabaseStartupWiring.openOrRecordFailure] opens the database exactly once, here, where
+        // a throw can actually be caught and turned into a real, in-app signal
+        // ([org.ort.app.ui.failures.DatabaseOpenFailure]) instead of crashing this process outright
+        // on every subsequent launch (register R-1120; see that object's own kdoc for why
+        // [OrtDatabase]'s own dedup guard is the actual fix and this is only the safety net).
+        //
+        // [WorkQueue.recoverStaleLeasesAtLaunch] only runs when the database opened successfully,
+        // and runs unconditionally when it did — not gated behind a capture session ever starting
+        // (register R-1119; see that function's own kdoc for why the app process, not
+        // [org.ort.pipeline.capture.RealCaptureService], is the right place: a night ColorOS killed
+        // mid-Pass-B is recovered the moment the app relaunches at all, never only if the operator
+        // happens to start a fresh capture session afterward).
+        backgroundScope.launch {
+            val db = DatabaseStartupWiring.openOrRecordFailure(this@OrtApplication)
+            db?.let { WorkQueue(it, SystemClock).recoverStaleLeasesAtLaunch() }
         }
     }
 
