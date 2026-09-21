@@ -102,8 +102,8 @@ by "looks about right".
 | `text/time` | `oklch(0.60 0.008 250)` | Time and frequency columns in a log row |
 | `text/faint` | `oklch(0.58 0.008 250)` | Section labels, secondary sub-lines |
 | `text/figure` | `oklch(0.63 0.008 250)` | Score chips, counts beside a list row |
-| `text/low` | `oklch(0.605 0.008 250)` | "unknown station", axis labels, artboard ids |
-| `text/signal` | `oklch(0.595 0.008 250)` | Signal figures, chevrons, recent-search icon |
+| `text/low` | `oklch(0.605 0.008 250)` | "unknown station", axis labels, artboard ids, the recent-search icon |
+| `text/signal` | `oklch(0.595 0.008 250)` | Signal figures, chevrons, the search-field placeholder |
 | `text/disabled` | `oklch(0.585 0.008 250)` | Column headers, disabled text actions |
 | `marker/unknown` | `oklch(0.495 0.008 250)` | The UNKNOWN dot |
 | `line/control` | `oklch(0.49 0.008 250)` | Unselected radio and checkbox border |
