@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (roadmap: five decisions, Wave L, fifteen findings, and one backlog view)
 
-### `<pending>` — P38: the play APK's native libraries are now proven, and the models-v1 mirror audit is filed
+### `6e2a9284` — P38: the play APK's native libraries are now proven, and the models-v1 mirror audit is filed
 
 **Scope:** `buildSrc/src/main/kotlin/ort.android-app.gradle.kts` (task wiring only),
 `buildSrc/src/test/kotlin/org/ort/gradle/PlatformGuardsTest.kt`. No `.github/workflows/ci.yml`
