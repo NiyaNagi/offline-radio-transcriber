@@ -34,6 +34,115 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-20 (roadmap: five decisions, Wave L, fifteen findings, and one backlog view)
 
+### `<pending>` — P33: Pass B's seven evidence priors are wired, and `CONFIRMED` requires a calibration
+
+**Scope:** `:pipeline`, `pipeline/src/main/kotlin/org/ort/pipeline/passb/` (`PassBFactory.kt`,
+`PassB.kt`, `CallsignResolver.kt`, `PassBFingerprintBuilder.kt`, new `Calibrator.kt`) and its own
+tests (new `FakeCalibrator.kt`, new `PassBFactoryCalibrationTest.kt`; updated
+`PassBFactoryTest.kt`, `PassBTest.kt`, `SpotterComparisonTest.kt`, `CallsignResolverTest.kt`,
+`CaptureProcessingLoopTest.kt`, `RealCaptureServiceTest.kt`). No `:lexicon` prior implementation,
+`:app` screen or `:capture-*` module touched.
+
+**Requirements/ACs:** FR-LEX-9, FR-LEX-17..21, FR-LEX-25..27, FR-LEX-31, FR-SPK-10; constitution
+I ("an attribution without its confidence state is a bug, at the data layer") and VI ("no number
+without its provenance"). Closes register R-1109 and R-1110 (build-plan P33, Wave L beta blocker).
+
+**What changed:** two defects in `PassBFactory.create`, both filed by the 2026-09-20 roadmap
+audit as "every real device capture was resolved by grammar and confusion distance alone, with
+`CONFIRMED` asserted unconditionally."
+
+1. **R-1109 — dead priors.** `PriorCombiner(emptyList())` is now `PriorCombiner(defaultPriors(PropagationModel()))`
+   — the same seven priors (frequency, band plausibility, database presence, recency, geography,
+   conversation context, my-stations) `:eval`'s `Main.kt` already builds for the offline harness.
+   `PassB.resolution` is now public (same "every machine conclusion MUST be inspectable"
+   rationale `PassB.fingerprint` already carries) so a test can confirm what `PassBFactory`
+   actually wired, not trust the assembly step.
+2. **R-1110 — `CONFIRMED` on an uncalibrated score.** Introduced the calibration seam: a new
+   `Calibrator` interface (`confirmThreshold: Float`, `calibrationVersion: AssetRef`) that
+   `CallsignResolver` now takes in place of a raw `confirmThreshold: Float`, and that
+   `PassBFactory.create` takes as a nullable `calibrator` parameter in place of its old
+   `confirmThreshold` parameter. **`CONFIRMED` is reachable only through a real `Calibrator`.**
+   With `calibrator = null` — production's state today; there is no dev-fold data yet to fit one
+   against — a resolvable, well-separated top candidate now reports `AMBIGUOUS`, never `CONFIRMED`
+   and, deliberately, never `UNKNOWN` either: a real, uncontested candidate is not "nothing worth
+   asserting," so `AMBIGUOUS` ("we cannot yet say how sure we are") is the honest state, not a
+   hand-picked threshold pretending to be one. `PassFingerprint.calibrationVersion` is stamped from
+   `calibrator?.calibrationVersion` (`null` today), and `PassBFingerprintBuilder.configHash` now
+   hashes `confirmThreshold` as `Float?` (`"-"` when absent) so "no calibration" is its own
+   distinct, honestly-labelled configuration rather than colliding with any particular fitted
+   value. A `FakeCalibrator` (test-only, `pipeline/src/test/...`) is the behavioural fake
+   constitution II requires, letting a test choose a fit and exercise both sides of the rule.
+
+   Judgement call: the "no calibrator" branch returns `AMBIGUOUS` rather than making
+   `confirmThreshold` unreachable (e.g. `Float.POSITIVE_INFINITY`) and falling through to the
+   existing `< confirmThreshold` check, which would have produced `UNKNOWN` instead — the build
+   plan and register both specify `AMBIGUOUS` by name, and the two states are not
+   interchangeable here: `UNKNOWN` is for "no real candidate," `AMBIGUOUS` is for "a real
+   candidate we cannot yet certify." `CallsignResolverTest` pins the distinction explicitly.
+
+   Second judgement call, disclosed rather than hidden: production capture (`RealCaptureService`)
+   and reprocessing (`ReprocessRunner`) both call `PassBFactory.create` with no `calibrator`
+   argument, unchanged by this unit — so **every real capture's attribution is now honestly
+   `AMBIGUOUS`, never `CONFIRMED`, until a real fitted calibrator ships.** This is the correct,
+   intended consequence of closing R-1110 (a fabricated `CONFIRMED` is worse than an honest
+   `AMBIGUOUS`), but it has a real side effect: `AlertWatch.Callsign` watches, which match on
+   `Attribution.stationId`, cannot fire in production at all until then, because `stationId` is
+   only ever populated on `CONFIRMED`. `RealCaptureServiceTest`'s `FR_ALR_3` test exercised
+   exactly this path with a `Callsign` watch; it now uses a `Keyword` watch (matched against
+   `transcriptText`, which is populated regardless of attribution state) to keep proving the same
+   alert-dispatch wiring without depending on a calibration this session does not have. **This is
+   a real, newly-honest capability gap worth its own register row** — flagging for the lead rather
+   than filing it myself (session roles: builders build and report, the lead files).
+
+**Discrimination (constitution II):** both fixes were reverted and confirmed red for the right
+reason, then restored.
+- Reverting `PriorCombiner(defaultPriors(...))` back to `PriorCombiner(emptyList())` turned
+  `PassBFactoryCalibrationTest`'s `R_1109 the factory wires all seven evidence priors...` red
+  (its `ranked.contributions` came back empty against the fixture's populated `RankingContext`),
+  while every `R_1110` test stayed green — confirming the two tests are independent and each
+  fails only for its own reason.
+- Reverting `CallsignResolver`'s `calibrator ?: return Attribution.ambiguous()` to
+  `calibrator ?: return Attribution.confirmed(...)` (simulating the original always-`CONFIRMED`
+  defect) turned four tests red for the right reason:
+  `CallsignResolverTest`'s two new `R_1110` cases, and `PassBFactoryCalibrationTest`'s
+  `R_1110 with no calibrator...` and `R_1110 the default PassBFactory call site...` — while
+  `R_1109`'s priors test and the "with a calibrator present" test stayed green.
+
+**Verified:** `.\gradlew.bat :pipeline:test --max-workers=2` — full suite green (forced
+re-execution with `--rerun` after restoring both fixes, not just an up-to-date cache hit).
+`.\gradlew.bat :lexicon:test --max-workers=2` — unaffected, green (no `:lexicon` file touched).
+Not run: the full gate (`dependencyRules platformGuards build`), `gradlew --stop`, and any device
+or tour capture — per this unit's own instruction, the lead runs one gate and one tour for the
+whole Wave L batch.
+
+**Left open / not done:**
+- **Context is still always empty in production.** `PassB`'s `contextFor` defaults to
+  `{ RankingContext() }` for every item, and `PassBFactory.create` has no parameter to override
+  it. Wiring the real seven priors (this unit's scope) means they are *live*, but every field of
+  the `RankingContext` they read (`repeater`, `databaseHits`, `recency`,
+  `geographicDistanceKm`, `conversation`, `myStations`, `propagation`) is still cold-start on
+  every real transmission until something sources real data into it — a separate, larger unit
+  the build plan's "Read first" list for P33 did not name and this session did not attempt.
+  `PassBFactoryCalibrationTest`'s priors test proves the combiner is wired by calling it directly
+  with a fixture context; it is not a claim that a real device capture sees non-zero priors today.
+- **No real `Calibrator` exists or is wired anywhere in production** — by design, per this unit's
+  own instruction (no dev-fold data to fit one against yet). Every real capture is `AMBIGUOUS` at
+  best until one ships.
+- **`AlertWatch.Callsign` watches cannot fire in production** as a direct, correct consequence of
+  the above — flagged in "What changed" above for the lead to file as its own register row rather
+  than filed here.
+- **`:core`'s `Materiality` table does not include `CALIBRATION_VERSION` for `PassId.B_OFFLINE`**
+  (only `D_RESOLVE` has it) — so once a real calibrator ships, a re-fit will not mark existing
+  Pass B rows as reprocess candidates via `PassFingerprint.materiallyDiffersFrom`. Noticed while
+  reading `PassFingerprint.kt`; out of this unit's scope (`:core`, not `:pipeline`'s Pass B
+  construction path) and not fixed here.
+- **Device capture and the tour re-capture were deliberately not attempted** — this unit's own
+  "Done when" names Log, Now, Thread, Station, Digest and Detail-Why for re-capture at 1.0/2.0;
+  the lead runs one tour for the whole Wave L batch. This change alters the *content* every one
+  of those screens states (attribution state, confidence, and — once wired — prior contributions
+  on the inspection surface), even though constitution VIII's own path trigger does not fire for
+  a `:pipeline`-only diff.
+
 ### `<pending>` — roadmap research lands as D51–D55, build-plan Wave L, R-1109..R-1123 and a generated `results/backlog.md`
 
 **Scope:** `spec/functional-spec.md` (§3 decisions and §16 traceability), `spec/build-plan.md`

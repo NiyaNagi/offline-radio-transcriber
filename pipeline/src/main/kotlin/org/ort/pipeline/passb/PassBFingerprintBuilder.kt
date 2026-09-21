@@ -13,6 +13,9 @@ import java.security.MessageDigest
  * fixed at [PassBFactory.create] time that can change what a Pass B run produces:
  *
  * - [confirmThreshold] / [separationThreshold] — [CallsignResolver]'s own thresholds.
+ *   [confirmThreshold] is `null` exactly when [PassBFactory.create] was given no [Calibrator]
+ *   (P33/R-1110): "no calibration" is itself a distinct configuration, not the same one as any
+ *   particular fitted threshold, so it hashes to its own literal `"-"` rather than a magic number.
  * - [decodeOptions] — passed to [org.ort.asrapi.AsrEngine.transcribe] on every run of this pass.
  * - the bundled lexicon snapshot's three independently-versioned tables ([variantsVersion],
  *   [ituVersion], [confusionVersion]). Unlike Pass D's separate `lexiconVersion` fingerprint
@@ -33,7 +36,7 @@ import java.security.MessageDigest
 public object PassBFingerprintBuilder {
 
     public fun configHash(
-        confirmThreshold: Float,
+        confirmThreshold: Float?,
         separationThreshold: Float,
         decodeOptions: DecodeOptions,
         variantsVersion: AssetRef,
@@ -41,7 +44,7 @@ public object PassBFingerprintBuilder {
         confusionVersion: AssetRef,
     ): String {
         val canonical = buildString {
-            append("confirmThreshold=").append(confirmThreshold)
+            append("confirmThreshold=").append(confirmThreshold?.toString() ?: "-")
             append(";separationThreshold=").append(separationThreshold)
             append(";decode.language=").append(decodeOptions.language ?: "-")
             append(";decode.hotwords=").append(decodeOptions.hotwords.phrases.sorted().joinToString(","))

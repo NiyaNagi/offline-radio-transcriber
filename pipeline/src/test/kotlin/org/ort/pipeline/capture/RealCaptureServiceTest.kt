@@ -734,6 +734,14 @@ public class RealCaptureServiceTest {
      * `NotificationManager` a real device would use) and proves a matching watch's alert reaches
      * that dispatcher — never the honest-but-inert [org.ort.pipeline.alerts.NoOpAlertEvaluationTrigger]
      * default [PassBFactory.create] still falls back to for every caller that supplies nothing.
+     *
+     * **P33/R-1110:** a [AlertWatch.Callsign] watch is no longer usable to prove this wiring —
+     * [RealCaptureService.startProcessingLoop] passes [PassBFactory.create] no calibrator (this
+     * remains true: production has none to pass yet), so every real capture's attribution is
+     * `AMBIGUOUS` and `stationId` is `null`. A [AlertWatch.Keyword] watch, matched against
+     * [org.ort.pipeline.alerts.AlertMatchInput.transcriptText] (populated for any accepted decode,
+     * regardless of attribution state), proves the identical dispatch path without depending on a
+     * calibration this session does not have.
      */
     @Test
     @Requirement("FR-ALR-3", "FR-ALR-4", "AC-194", "AC-195")
@@ -751,7 +759,7 @@ public class RealCaptureServiceTest {
         val sessionId = "TEST-SESSION-ALR-FIRE"
         val dispatcher = FakeAlertNotificationDispatcher()
         val watchStore = InMemoryAlertWatchStore(
-            initial = listOf(AlertWatch.Callsign(Ulid.generate().value, "K7ABC")),
+            initial = listOf(AlertWatch.Keyword(Ulid.generate().value, "kilo seven alpha")),
         )
 
         val controller = Robolectric.buildService(RealCaptureService::class.java).create()
@@ -785,11 +793,11 @@ public class RealCaptureServiceTest {
             waitUntil(10_000) { dispatcher.firings.isNotEmpty() }
 
             val firing = dispatcher.firings.single()
-            assertEquals("K7ABC", firing.input.stationId)
+            assertEquals("kilo seven alpha bravo charlie", firing.input.transcriptText)
             assertEquals(
                 "the watch this session configured, not some other one",
-                "K7ABC",
-                (firing.watch as AlertWatch.Callsign).callsign,
+                "kilo seven alpha",
+                (firing.watch as AlertWatch.Keyword).keyword,
             )
         } finally {
             controller.destroy()

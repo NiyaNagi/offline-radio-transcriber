@@ -16,15 +16,25 @@ import org.ort.lexicon.RankedCandidate
  * or a voice match, which this resolver — reading only the current transmission's lattice — never
  * does.
  *
- * Precision outranks recall at every tier (NFR-1a): below [confirmThreshold] the candidate is
- * never asserted, not even as a weaker state. A weaker device may know less; it must not be more
- * wrong.
+ * Precision outranks recall at every tier (NFR-1a): below the [Calibrator]'s `confirmThreshold`
+ * the candidate is never asserted, not even as a weaker state. A weaker device may know less; it
+ * must not be more wrong.
+ *
+ * **P33 / R-1110 (constitution I, VI):** `CONFIRMED` requires a real, fitted [calibrator] — there
+ * is no path from here to `CONFIRMED` without one, and no path that substitutes a hand-picked
+ * threshold constant for it (a number without its fold is not evidence). With [calibrator] `null`
+ * — production's state today, absent dev-fold data to fit one against — a resolvable top
+ * candidate (one that survived the separation check) reports `AMBIGUOUS`, never `CONFIRMED` and
+ * never `UNKNOWN`: there genuinely is a real, uncontested candidate here, so "nothing worth
+ * asserting" (`UNKNOWN`) would be as dishonest as asserting it outright; "we cannot yet say how
+ * sure we are" (`AMBIGUOUS`) is the true state.
  */
 public class CallsignResolver(
     /** FR-LEX-11: two top candidates within this margin of `totalScore` are too close to separate. */
     private val separationThreshold: Float,
-    /** The minimum `totalScore` at which the top candidate is trusted enough to assert at all. */
-    private val confirmThreshold: Float,
+    /** Supplies the confirm threshold and the fingerprint's calibration provenance. `null` means
+     * no calibration exists yet — see this class's own doc comment for what that does below. */
+    private val calibrator: Calibrator?,
 ) {
     public fun resolve(ranked: List<RankedCandidate>): Attribution {
         val top = ranked.firstOrNull() ?: return Attribution.unknown()
@@ -32,7 +42,11 @@ public class CallsignResolver(
         if (second != null && (top.totalScore - second.totalScore) < separationThreshold) {
             return Attribution.ambiguous()
         }
-        if (top.totalScore < confirmThreshold) {
+        // R-1110: no calibrator means no confirmThreshold to test against, so there is nothing to
+        // assert against -- never CONFIRMED, and never UNKNOWN either (a real, uncontested
+        // candidate is exactly not "nothing worth asserting"). AMBIGUOUS is the honest state.
+        val calibration = calibrator ?: return Attribution.ambiguous()
+        if (top.totalScore < calibration.confirmThreshold) {
             return Attribution.unknown()
         }
         // Confidence is reported as a [0,1] probability (FR-LEX-17); this resolver is not itself

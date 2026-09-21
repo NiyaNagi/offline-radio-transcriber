@@ -87,7 +87,13 @@ public data class PassBResolutionChain(
 public class PassB(
     private val audioProvider: SegmentAudioProvider,
     private val rejectionPipeline: RejectionPipeline,
-    private val resolution: PassBResolutionChain,
+    /**
+     * Public (audit F-013, constitution I: "every machine conclusion MUST be inspectable"; P33
+     * follow-up: a test needs to confirm which priors [PassBFactory] actually wired into
+     * [PassBResolutionChain.combiner], not trust the assembly step) so a caller can confirm what
+     * this instance was actually built with, rather than trusting an assembly step no one can see.
+     */
+    public val resolution: PassBResolutionChain,
     /**
      * Public (audit F-013, constitution I: "every machine conclusion MUST be inspectable") so a
      * caller — [PassBFactory]'s own tests included — can confirm what this instance was actually

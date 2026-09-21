@@ -17,6 +17,7 @@ import org.ort.core.PassId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
 import org.ort.data.WorkQueue
+import org.ort.pipeline.passb.FakeCalibrator
 import org.ort.pipeline.passb.PassBFactory
 import org.ort.pipeline.reprocess.SafePass
 import org.ort.testing.Requirement
@@ -72,7 +73,18 @@ public class CaptureProcessingLoopTest {
             ),
         )
         val modelRef = AssetRef("fake-asr-model", "1")
-        val pass = PassBFactory.create(filesDir, db, engine, modelRef, provider = "cpu")
+        // P33/R-1110: AC-31 here is about the transcript row, not calibration -- a fake calibrator
+        // keeps this test's incidental attribution assertion below meaningful (a real station id
+        // to check), rather than reporting AMBIGUOUS the way the no-calibrator production default
+        // now honestly does.
+        val pass = PassBFactory.create(
+            filesDir,
+            db,
+            engine,
+            modelRef,
+            provider = "cpu",
+            calibrator = FakeCalibrator(confirmThreshold = -1f),
+        )
         val loop = CaptureProcessingLoop(PassDrainRunner(queue, runId = "run-1"), pass)
 
         val leased = loop.drainOnce()

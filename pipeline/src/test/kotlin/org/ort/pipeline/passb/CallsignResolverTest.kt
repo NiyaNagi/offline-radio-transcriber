@@ -37,7 +37,7 @@ class CallsignResolverTest {
 
     @Test
     fun `a single well-separated candidate above threshold is CONFIRMED`() {
-        val resolver = CallsignResolver(separationThreshold = 0.5f, confirmThreshold = 0.6f)
+        val resolver = CallsignResolver(separationThreshold = 0.5f, calibrator = FakeCalibrator(confirmThreshold = 0.6f))
         val ranked = listOf(fakeRanked("K7ABC", 5.0f))
         val attribution = resolver.resolve(ranked)
         assertEquals(AttributionState.CONFIRMED, attribution.state)
@@ -46,7 +46,7 @@ class CallsignResolverTest {
 
     @Test
     fun `two candidates within the separation threshold are AMBIGUOUS`() {
-        val resolver = CallsignResolver(separationThreshold = 0.5f, confirmThreshold = 0.1f)
+        val resolver = CallsignResolver(separationThreshold = 0.5f, calibrator = FakeCalibrator(confirmThreshold = 0.1f))
         val ranked = listOf(fakeRanked("K7ABC", 5.0f), fakeRanked("K7ABD", 4.8f))
         val attribution = resolver.resolve(ranked)
         assertEquals(AttributionState.AMBIGUOUS, attribution.state)
@@ -54,21 +54,43 @@ class CallsignResolverTest {
 
     @Test
     fun `no candidates is UNKNOWN`() {
-        val resolver = CallsignResolver(separationThreshold = 0.5f, confirmThreshold = 0.1f)
+        val resolver = CallsignResolver(separationThreshold = 0.5f, calibrator = FakeCalibrator(confirmThreshold = 0.1f))
         assertEquals(AttributionState.UNKNOWN, resolver.resolve(emptyList()).state)
     }
 
     @Test
     fun `a well-separated candidate below the confirm threshold is UNKNOWN, never asserted (NFR-1a)`() {
-        val resolver = CallsignResolver(separationThreshold = 0.5f, confirmThreshold = 100f)
+        val resolver = CallsignResolver(separationThreshold = 0.5f, calibrator = FakeCalibrator(confirmThreshold = 100f))
         val ranked = listOf(fakeRanked("K7ABC", 5.0f))
         assertEquals(AttributionState.UNKNOWN, resolver.resolve(ranked).state)
     }
 
     @Test
     fun `never produces INFERRED (constitution I -- CONFIRMED means heard in this transmission, not carried)`() {
-        val resolver = CallsignResolver(separationThreshold = 0.0f, confirmThreshold = -1000f)
+        val resolver = CallsignResolver(separationThreshold = 0.0f, calibrator = FakeCalibrator(confirmThreshold = -1000f))
         val ranked = listOf(fakeRanked("K7ABC", 5.0f), fakeRanked("K7ABD", -1000f))
         assertEquals(AttributionState.CONFIRMED, resolver.resolve(ranked).state)
+    }
+
+    // --- P33 / R-1110: CONFIRMED requires a calibration; with none, the honest state is
+    // AMBIGUOUS -- never CONFIRMED (constitution I) and never UNKNOWN (there is a real,
+    // uncontested candidate here, which is exactly not "nothing worth asserting").
+
+    @Test
+    fun `R_1110 a well-separated top candidate with no calibrator is AMBIGUOUS, never CONFIRMED`() {
+        val resolver = CallsignResolver(separationThreshold = 0.5f, calibrator = null)
+        val ranked = listOf(fakeRanked("K7ABC", 5.0f))
+        assertEquals(AttributionState.AMBIGUOUS, resolver.resolve(ranked).state)
+    }
+
+    @Test
+    fun `R_1110 a well-separated top candidate with no calibrator is never UNKNOWN either`() {
+        // Distinguishes "no calibration" from "confirmThreshold set impossibly high": a resolver
+        // with a calibrator whose threshold nothing can clear still correctly reports UNKNOWN
+        // (see the test above this one) -- the no-calibrator case is a different state on purpose.
+        val resolver = CallsignResolver(separationThreshold = 0.5f, calibrator = null)
+        val ranked = listOf(fakeRanked("K7ABC", 5.0f))
+        assertEquals(AttributionState.AMBIGUOUS, resolver.resolve(ranked).state)
+        org.junit.jupiter.api.Assertions.assertNotEquals(AttributionState.UNKNOWN, resolver.resolve(ranked).state)
     }
 }
