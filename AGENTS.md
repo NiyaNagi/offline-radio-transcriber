@@ -53,6 +53,15 @@ something, cite the id. When you write a test, name it for the id it establishes
 
 ## Working agreement
 
+0. **A builder runs `test`, `detekt` *and* `ktlintCheck` for every module it touched**, before it
+   reports. `:module:test` alone is not enough: the full `build` gate the lead runs also applies
+   detekt and ktlint, and on 2026-09-20 nine parallel builders each ran only their own module's
+   tests, which cost three gate rounds of roughly 40 minutes each — every failure style-only, none
+   in shipped behaviour. If a finding is `LongMethod` or `CyclomaticComplexMethod`, treat it as a
+   signal rather than a formality: it usually means the change added a second responsibility to a
+   method that already had one. Never answer it with `@Suppress` or a threshold change; the one
+   defensible suppression is a test name that is a bare identifier with no wrap point, and it names
+   both the detekt and the ktlint rule id, because they are separate checks.
 1. **Start with a Constitution Check.** Name the principles that bear on the work.
 2. **Work from the build plan.** Take a whole prompt; do not improvise scope. Within a wave,
    only touch the files your prompt says it owns.
@@ -111,6 +120,7 @@ prefer the project's own fakes, which are behavioural.
 ./gradlew dependencyRules platformGuards build   # the gate; with HF_TOKEN set and no escape hatch before a push
 ./gradlew -p buildSrc test                       # a plain build does not run buildSrc's tests
 ./gradlew :lexicon:test                          # one module
+./gradlew :lexicon:test :lexicon:detekt :lexicon:ktlintCheck   # what a builder runs before reporting — see below
 ./gradlew coverageMatrix                         # regenerates results/coverage-matrix.md
 ./gradlew coverageMatrixCheck                    # separate invocation — together they trip Gradle validation
 python tools/spec-check/spec_check.py            # spec integrity: ids, dangling refs, traceability
