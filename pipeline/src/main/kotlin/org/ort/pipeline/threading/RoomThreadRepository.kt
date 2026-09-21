@@ -105,7 +105,7 @@ public class RoomThreadRepository(private val db: OrtDatabase) : ThreadRepositor
                 digestText = null,
                 kind = kind,
                 kindSource = ThreadKindSource.DETECTED,
-                participantOrder = closure.stationId?.let { listOf(it) },
+                participantOrder = listOf(participantOrderKey(closure)),
             ),
         )
         stampTransmission(threadId, closure.transmissionId, reason)
@@ -126,7 +126,10 @@ public class RoomThreadRepository(private val db: OrtDatabase) : ThreadRepositor
         } else {
             previousParticipants
         }
-        val newOrder = if (closure.stationId != null) previousOrder + closure.stationId else previousOrder
+        // Register R-1118: every over gets its own roster slot, in order -- never only the ones
+        // with a resolved station. See [participantOrderKey]'s own kdoc for what an unresolved
+        // over is recorded as instead of being silently skipped.
+        val newOrder = previousOrder + participantOrderKey(closure)
 
         db.execRaw(
             "UPDATE thread SET endedAt = ?, transmissionCount = ?, participantStationIds = ?, " +
@@ -142,6 +145,26 @@ public class RoomThreadRepository(private val db: OrtDatabase) : ThreadRepositor
     }
 
     /**
+     * Register R-1118 (FR-SPK-29, FR-SPK-30, AC-164; constitution I): a net's check-in roster
+     * (`ThreadEntity.participantOrder`) used to be built only from overs carrying a resolved
+     * [TransmissionClosure.stationId], so an `UNKNOWN` over — or, since R-1110, `AMBIGUOUS`, which
+     * is every real callsign resolution today without a calibrator (`Attribution.stationId` is
+     * `null` for both) — was silently absent from the very roster FR-SPK-30 asks for, dropping
+     * exactly the check-ins an operator most needs to see. Every over now gets a slot, in order,
+     * never skipped: [TransmissionClosure.voiceKey] (a resolved station id, or a voiceprint id when
+     * only a voice — not yet a callsign — has been matched) when either is known, so a recurring
+     * unresolved voice still reads as *one* participant across repeats rather than dissolving into
+     * indistinguishable entries; [UNKNOWN_PARTICIPANT] — a literal, never a fabricated identity —
+     * for a check-in with neither, which is the common case today (voice matching is not yet wired
+     * in production; see [TransmissionClosure.voiceKey]'s own doc comment and R-1110). This mirrors
+     * [participantStationIds] deliberately staying station-only (a distinct concept this row does
+     * not touch): that field answers "which real stations are in this thread", this one answers
+     * "what was the check-in order", and the second question has an honest answer even when the
+     * first does not yet.
+     */
+    private fun participantOrderKey(closure: TransmissionClosure): String = closure.voiceKey ?: UNKNOWN_PARTICIPANT
+
+    /**
      * Register R-1098: stamps both `transmission.threadId` (the pre-existing write) and
      * `transmission.threadJoinReason` (the real [ThreadGrouper.decide] verdict for this exact
      * transmission) in the same raw statement — one write, not two, so a caller can never observe
@@ -154,5 +177,13 @@ public class RoomThreadRepository(private val db: OrtDatabase) : ThreadRepositor
             reason.name,
             transmissionId,
         )
+    }
+
+    private companion object {
+        /** Register R-1118: the literal recorded for a check-in with neither a resolved station nor
+         * a matched voiceprint — see [participantOrderKey]'s own kdoc. Never a real station or
+         * voiceprint id (both are [org.ort.core.Ulid] values, which this literal is not shaped
+         * like), so it can never collide with a genuine participant. */
+        const val UNKNOWN_PARTICIPANT: String = "UNKNOWN"
     }
 }
