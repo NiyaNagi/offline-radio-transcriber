@@ -448,8 +448,16 @@ Axis labels are mono 10px `text/low` at each end.
   simplex, repeater, mode, signal, squelch, tier, pass. Not: message, channel number, recording,
   clip, user, contact.
 - **Sentence case** everywhere except section labels (uppercase) and badges.
-- **Say what is not known**, in the same voice as what is. `4 unidentified voices` is a result,
-  not a failure. `not listening · 38 s` is a fact. `rejected · squelch tail` names the reason.
+- **Say what is not known**, in the same voice as what is. `4 overs with no callsign heard` is a
+  result, not a failure. `not listening · 38 s` is a fact. `rejected · squelch tail` names the
+  reason.
+  *(This example read `4 unidentified voices` until 2026-09-21, and that was the defect it was
+  meant to teach against: the app does no voice analysis at all — `voiceprintId` is unconditionally
+  null and `:identity` is an empty stub — so calling them **voices** claimed a clustering that never
+  happened. The phrase spread from here into `DigestPolling`, `StationScreen` and `NowViewState`
+  before R-1147 caught it. Say the fact you have: a callsign was not heard. Where a count mixes
+  `UNKNOWN` and `AMBIGUOUS` overs, even that overclaims — `not attributed to a station` is the one
+  thing true of both.)*
 - **Never fabricate a number.** A prior that abstained reads `cold start — no prior data`, not
   `0.00`. An unknown confidence is absent, not zero.
 - **No exclamation marks, no apology, no encouragement.** The operator is an expert.
