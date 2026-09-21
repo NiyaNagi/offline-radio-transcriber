@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (register R-1033/R-1034: a decision recorded for provenance already built, and a session-level VAD summary for the log it was missing from)
 
-### `<pending>` — R-1033/R-1034: D56 records the live-tier decision already shipped, and `capture.log` gains one `vad_session_summary` line per session
+### `f4420547` — R-1033/R-1034: D56 records the live-tier decision already shipped, and `capture.log` gains one `vad_session_summary` line per session
 
 **Scope:** `:pipeline` (`RealCaptureService.kt`'s session/diagnostics paths, `DiagnosticsLog.kt`),
 `spec/functional-spec.md`, `spec/open-questions.md`. No `:pipeline/passb/`, `:asr-*`, `:app`,
