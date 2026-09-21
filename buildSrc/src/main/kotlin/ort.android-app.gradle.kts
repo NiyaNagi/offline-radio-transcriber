@@ -385,12 +385,12 @@ tasks.matching { mergeJniLibFoldersTaskName.matches(it.name) }.configureEach {
 // depends on every subproject's own `check` (root build.gradle.kts), so a plain `./gradlew build`
 // still exercises this guard on every push.
 // P23: scoped to the `full` flavor's own debug APK — the same single variant this guard always
-// checked before flavors existed. `play`'s own packaging is not re-checked here (both flavors
-// share the identical native-library wiring above, so the risk this guard exists for — R-1001,
-// a declared dependency whose native `.so` never reaches the APK — is not flavor-specific; adding
-// a second, full assembled `play` APK to `:app:check`'s own graph purely to re-prove an identical
-// packaging step was judged not worth doubling this task's own build cost. Left open if that
-// judgement call needs revisiting: see this session's own report.)
+// checked before flavors existed. `play`'s own packaging was NOT re-checked here at the time (both
+// flavors share the identical native-library wiring above, so the risk this guard exists for —
+// R-1001, a declared dependency whose native `.so` never reaches the APK — is not flavor-specific;
+// adding a second, full assembled `play` APK to `:app:check`'s own graph purely to re-prove an
+// identical packaging step was judged not worth doubling this task's own build cost. Left open if
+// that judgement call needs revisiting: see this session's own report.)
 val verifySherpaNativeLibrariesPackaged = tasks.register<NativeLibraryPackagingGuardTask>(
     "verifySherpaNativeLibrariesPackaged",
 ) {
@@ -402,6 +402,40 @@ val verifySherpaNativeLibrariesPackaged = tasks.register<NativeLibraryPackagingG
 }
 
 tasks.named("check") { dependsOn(verifySherpaNativeLibrariesPackaged) }
+
+// P38 (register R-1105, R-1116, D43, D44, FR-AST-10..14): that judgement call is revisited here.
+// `verifySherpaNativeLibrariesPackaged` above never read anything but the `full` flavor's debug
+// APK — the `play` flavor (the slim artifact the beta and the store actually ship, per D43) had
+// its native-library packaging checked by construction, never by proof. `play` and `full` share
+// the identical fetchSherpaNativeLibraries/mergeJniLibFolders wiring above, so today they do not
+// structurally differ here the way bundled *assets* do (verifyPlayBundledAssetPackagingBoundary
+// below) — but "they are wired identically today" is exactly the kind of claim a future change can
+// silently invalidate (a flavor-specific jniLibs source set, a per-flavor NDK abiFilter override,
+// an AGP upgrade that changes packaging defaults) with nothing here to catch it. Reuses the same
+// [NativeLibraryPackagingGuardTask] class — the check is flavor-agnostic; only the artifact and its
+// task-graph wiring are new.
+//
+// Targets `playRelease`, not `playDebug`: `playRelease` is the variant `release.yml`'s
+// `build-play-variant` job actually bundles for the store (`bundlePlayRelease`), and D43 draws the
+// `full`/`play` distinction at the shipped artifact, not at build type — a check against `playDebug`
+// would prove nothing about what the store receives. AGP names a `release`-build-type APK with no
+// signing config (true for `play` in every environment — see this file's own `buildTypes` block:
+// only `debug` ever gets `signingConfig = signingConfigs.getByName("release")`, `release` never
+// does) `app-play-release-unsigned.apk`, confirmed directly by running `:app:assemblePlayRelease`
+// with no `HF_TOKEN`/signing secrets set — matches `build-play-variant`'s own "No HF_TOKEN here at
+// all" (release.yml), so this check needs neither a token nor the escape hatch, in any environment.
+val verifyPlaySherpaNativeLibrariesPackaged = tasks.register<NativeLibraryPackagingGuardTask>(
+    "verifyPlaySherpaNativeLibrariesPackaged",
+) {
+    group = "verification"
+    description = "Fails if the packaged play-flavor release APK — the artifact release.yml's " +
+        "build-play-variant job bundles for the store — is missing a required sherpa-onnx native " +
+        "library for any required ABI (register R-1105, R-1116)."
+    apkFile.set(layout.buildDirectory.file("outputs/apk/play/release/app-play-release-unsigned.apk"))
+    dependsOn("assemblePlayRelease")
+}
+
+tasks.named("check") { dependsOn(verifyPlaySherpaNativeLibrariesPackaged) }
 
 // Debug-fix session (2026-09-19, reworked after coordinator review): the signing-stability half of
 // the same fix verifySherpaNativeLibrariesPackaged models above (an assembled-APK guard, not a
