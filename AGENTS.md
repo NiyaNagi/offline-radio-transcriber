@@ -112,7 +112,7 @@ cd corpus && pytest                              # the Python side
 tools\ui-audit\install.ps1 -Port 5558 -Clear                          # build, install, wipe state
 tools\ui-audit\tour.ps1 -Port 5558 -Only "<scenario>/<screen>*" -Out <scratch>   # scoped re-capture
 tools\ui-audit\tour.ps1 -Port 5558                                    # the full canonical tour (only this replaces results/ui-audit/)
-python tools\ui-audit\diff.py --before <ref> --after <dir> --manifest <manifest> --threshold 0.5
+python tools\ui-audit\diff.py --before <ref> --after <dir> --manifest <manifest>   # --threshold is now a % of differing pixels (default 0.05), not a 0-255 mean
 gh run watch <id> --exit-status                                       # the hosted proof: CI and Release
 ```
 
