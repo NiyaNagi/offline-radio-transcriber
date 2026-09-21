@@ -17,8 +17,15 @@ import kotlin.system.measureTimeMillis
  */
 class AlertEvaluationCoordinatorTest {
 
-    private fun input(stationId: String? = "K7ABC", state: AttributionState = AttributionState.CONFIRMED) =
-        AlertMatchInput("TX1", state, stationId, transcriptText = null, frequencyHz = null)
+    private fun input(resolvedCallsign: String? = "K7ABC", state: AttributionState = AttributionState.CONFIRMED) =
+        AlertMatchInput(
+            "TX1",
+            state,
+            stationId = if (state == AttributionState.CONFIRMED) resolvedCallsign else null,
+            resolvedCallsign = resolvedCallsign,
+            transcriptText = null,
+            frequencyHz = null,
+        )
 
     @Test
     fun `FR_ALR_1 a matching enabled watch dispatches, a non-matching one does not`() {
@@ -26,10 +33,10 @@ class AlertEvaluationCoordinatorTest {
         val dispatcher = FakeAlertNotificationDispatcher()
         val coordinator = AlertEvaluationCoordinator(store, dispatcher)
 
-        coordinator.evaluate(input(stationId = "K7ABC"))
+        coordinator.evaluate(input(resolvedCallsign = "K7ABC"))
         assertEquals(1, dispatcher.firings.size)
 
-        coordinator.evaluate(input(stationId = "W7XYZ"))
+        coordinator.evaluate(input(resolvedCallsign = "W7XYZ"))
         assertEquals(1, dispatcher.firings.size, "a non-matching station must not add a second firing")
     }
 
@@ -39,7 +46,7 @@ class AlertEvaluationCoordinatorTest {
         val dispatcher = FakeAlertNotificationDispatcher()
         val coordinator = AlertEvaluationCoordinator(store, dispatcher)
 
-        coordinator.evaluate(input(stationId = "K7ABC"))
+        coordinator.evaluate(input(resolvedCallsign = "K7ABC"))
 
         assertTrue(dispatcher.firings.isEmpty())
     }
@@ -53,7 +60,7 @@ class AlertEvaluationCoordinatorTest {
         val dispatcher = FakeAlertNotificationDispatcher()
         val coordinator = AlertEvaluationCoordinator(store, dispatcher)
 
-        coordinator.evaluate(input(stationId = "K7ABC"))
+        coordinator.evaluate(input(resolvedCallsign = "K7ABC"))
 
         assertTrue(dispatcher.firings.isEmpty())
     }
@@ -66,7 +73,7 @@ class AlertEvaluationCoordinatorTest {
         val coordinator = AlertEvaluationCoordinator(store, dispatcher, clockMillis = { now })
 
         repeat(50) {
-            coordinator.evaluate(input(stationId = "K7ABC"))
+            coordinator.evaluate(input(resolvedCallsign = "K7ABC"))
             now += 1_000L // one second apart -- well inside the 10-minute coalescing window
         }
 
@@ -88,9 +95,9 @@ class AlertEvaluationCoordinatorTest {
             coalesceWindowMillis = 10_000L,
         )
 
-        coordinator.evaluate(input(stationId = "K7ABC"))
+        coordinator.evaluate(input(resolvedCallsign = "K7ABC"))
         now += 20_000L // past the window
-        coordinator.evaluate(input(stationId = "K7ABC"))
+        coordinator.evaluate(input(resolvedCallsign = "K7ABC"))
 
         assertEquals(2, dispatcher.firings.size)
         assertFalse(dispatcher.firings[1].isRepeat, "a match after the window must alert again, not coalesce")
@@ -112,7 +119,7 @@ class AlertEvaluationCoordinatorTest {
         }
         val coordinator = AlertEvaluationCoordinator(store, stallingDispatcher)
 
-        val elapsed = measureTimeMillis { coordinator.fireAndForget(input(stationId = "K7ABC")) }
+        val elapsed = measureTimeMillis { coordinator.fireAndForget(input(resolvedCallsign = "K7ABC")) }
 
         assertTrue(elapsed < 200, "fireAndForget must return immediately, took ${elapsed}ms")
         // Prove the launched evaluation genuinely started (not just that the call site is fast

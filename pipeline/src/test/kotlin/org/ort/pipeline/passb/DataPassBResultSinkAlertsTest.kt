@@ -14,6 +14,10 @@ import org.ort.core.PassFingerprint
 import org.ort.core.PassId
 import org.ort.core.Tier
 import org.ort.data.OrtDatabase
+import org.ort.lexicon.CallsignCandidate
+import org.ort.lexicon.ItuAllocation
+import org.ort.lexicon.ParsedCallsign
+import org.ort.lexicon.RankedCandidate
 import org.ort.pipeline.PipelineTestFixtures
 import org.ort.pipeline.alerts.AlertEvaluationTrigger
 import org.ort.pipeline.alerts.AlertMatchInput
@@ -51,6 +55,54 @@ class DataPassBResultSinkAlertsTest {
         override fun fireAndForget(input: AlertMatchInput) {
             calls += input
         }
+    }
+
+    /** The same shape [CallsignResolverTest.fakeRanked] builds. */
+    private fun fakeRanked(text: String): RankedCandidate {
+        val parsed = ParsedCallsign(prefix = text.dropLast(4), areaDigit = text[text.length - 4], suffix = text.takeLast(3))
+        val candidate = CallsignCandidate(
+            parsed = parsed,
+            allocation = ItuAllocation(parsed.prefix, "Test Entity", "TT"),
+            acousticLogProb = 1.0f,
+            editPenalty = 0f,
+            slotSpan = 0..0,
+        )
+        return RankedCandidate(candidate, emptyList())
+    }
+
+    /**
+     * Register R-1125: [AlertMatchInput.resolvedCallsign] must come from Pass B's own top-ranked
+     * candidate, not from [Attribution.stationId] — the latter is `null` for `AMBIGUOUS` (register
+     * R-1110: every attribution today without a calibrator), which is exactly the production shape
+     * this fixture recreates. Before this fix, a callsign watch reading `stationId` here would see
+     * `null` and could never fire.
+     */
+    @Test
+    fun `R_1125 an AMBIGUOUS attribution still carries its top-ranked candidate as resolvedCallsign`() = runTest {
+        val db = freshDb()
+        val trigger = RecordingAlertTrigger()
+        val sink = DataPassBResultSink(db, alertTrigger = trigger)
+
+        sink.record(
+            PassBResult(
+                transmissionId = "TX1",
+                outcome = PassBOutcome.Accepted(
+                    FakeAsrEngine.defaultResult(text = "kilo seven alpha bravo charlie"),
+                ),
+                lattice = null,
+                ranked = listOf(fakeRanked("K7ABC")),
+                attribution = Attribution.ambiguous(),
+                fingerprint = fingerprint(),
+            ),
+        )
+
+        val input = trigger.calls.single()
+        assertEquals(
+            "AMBIGUOUS never carries a stationId (constitution I) -- this is the defect R-1125 fixes",
+            null,
+            input.stationId,
+        )
+        assertEquals("K7ABC", input.resolvedCallsign)
     }
 
     @Test

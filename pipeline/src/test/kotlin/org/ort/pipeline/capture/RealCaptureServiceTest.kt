@@ -735,13 +735,21 @@ public class RealCaptureServiceTest {
      * that dispatcher — never the honest-but-inert [org.ort.pipeline.alerts.NoOpAlertEvaluationTrigger]
      * default [PassBFactory.create] still falls back to for every caller that supplies nothing.
      *
-     * **P33/R-1110:** a [AlertWatch.Callsign] watch is no longer usable to prove this wiring —
-     * [RealCaptureService.startProcessingLoop] passes [PassBFactory.create] no calibrator (this
-     * remains true: production has none to pass yet), so every real capture's attribution is
-     * `AMBIGUOUS` and `stationId` is `null`. A [AlertWatch.Keyword] watch, matched against
-     * [org.ort.pipeline.alerts.AlertMatchInput.transcriptText] (populated for any accepted decode,
-     * regardless of attribution state), proves the identical dispatch path without depending on a
-     * calibration this session does not have.
+     * **P33/R-1110:** [RealCaptureService.startProcessingLoop] passes [PassBFactory.create] no
+     * calibrator (this remains true: production has none to pass yet), so every real capture's
+     * attribution is `AMBIGUOUS` and `Attribution.stationId` is `null`. A [AlertWatch.Keyword]
+     * watch, matched against [org.ort.pipeline.alerts.AlertMatchInput.transcriptText] (populated
+     * for any accepted decode, regardless of attribution state), proves the dispatch path without
+     * depending on a calibration this session does not have.
+     *
+     * **Register R-1125:** a [AlertWatch.Callsign] watch is proven in the *same* run, alongside the
+     * keyword one — before that fix, a callsign watch matched [org.ort.pipeline.alerts.AlertMatchInput.stationId]
+     * (always `null` here, for the identical R-1110 reason above) and this test's own history
+     * records that its callsign-watch case was moved to a keyword watch for exactly that reason.
+     * [org.ort.pipeline.alerts.AlertMatchInput.resolvedCallsign] is populated from Pass B's
+     * top-ranked candidate independent of the `AMBIGUOUS` state, so a callsign watch for "K7ABC"
+     * now fires through the real, end-to-end capture composition too — this restores that coverage
+     * rather than leaving it permanently substituted.
      */
     @Test
     @Requirement("FR-ALR-3", "FR-ALR-4", "AC-194", "AC-195")
@@ -759,7 +767,12 @@ public class RealCaptureServiceTest {
         val sessionId = "TEST-SESSION-ALR-FIRE"
         val dispatcher = FakeAlertNotificationDispatcher()
         val watchStore = InMemoryAlertWatchStore(
-            initial = listOf(AlertWatch.Keyword(Ulid.generate().value, "kilo seven alpha")),
+            initial = listOf(
+                AlertWatch.Keyword(Ulid.generate().value, "kilo seven alpha"),
+                // R-1125: restores real coverage of the callsign path this test's own history
+                // once had and lost (see this test's own kdoc).
+                AlertWatch.Callsign(Ulid.generate().value, "K7ABC"),
+            ),
         )
 
         val controller = Robolectric.buildService(RealCaptureService::class.java).create()
@@ -789,15 +802,29 @@ public class RealCaptureServiceTest {
 
             // AlertEvaluationCoordinator.fireAndForget launches onto its own coroutine scope
             // (constitution IV: never synchronous with the caller) -- poll for it rather than
-            // asserting immediately after COMPLETE.
-            waitUntil(10_000) { dispatcher.firings.isNotEmpty() }
+            // asserting immediately after COMPLETE. Both watches must fire from this one over.
+            waitUntil(10_000) { dispatcher.firings.size >= 2 }
 
-            val firing = dispatcher.firings.single()
-            assertEquals("kilo seven alpha bravo charlie", firing.input.transcriptText)
+            val keywordFiring = dispatcher.firings.single { it.watch is AlertWatch.Keyword }
+            assertEquals("kilo seven alpha bravo charlie", keywordFiring.input.transcriptText)
             assertEquals(
                 "the watch this session configured, not some other one",
                 "kilo seven alpha",
-                (firing.watch as AlertWatch.Keyword).keyword,
+                (keywordFiring.watch as AlertWatch.Keyword).keyword,
+            )
+
+            // R-1125: the callsign watch fires on the resolved (AMBIGUOUS) candidate, and the
+            // input it fired on states its real, uncalibrated confidence -- never a fabricated
+            // CONFIRMED.
+            val callsignFiring = dispatcher.firings.single { it.watch is AlertWatch.Callsign }
+            assertEquals("K7ABC", callsignFiring.input.resolvedCallsign)
+            assertNull(
+                "AMBIGUOUS carries no stationId (constitution I) -- resolvedCallsign is what fired this watch",
+                callsignFiring.input.stationId,
+            )
+            assertEquals(
+                org.ort.core.AttributionState.AMBIGUOUS,
+                callsignFiring.input.attributionState,
             )
         } finally {
             controller.destroy()

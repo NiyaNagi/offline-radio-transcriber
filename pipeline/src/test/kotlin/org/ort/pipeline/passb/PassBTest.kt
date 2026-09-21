@@ -1,6 +1,11 @@
 package org.ort.pipeline.passb
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -25,6 +30,7 @@ import org.ort.lexicon.ConfusionCostMatrix
 import org.ort.lexicon.ItuPrefixTable
 import org.ort.lexicon.LatticeSource
 import org.ort.lexicon.PriorCombiner
+import org.ort.lexicon.RankingContext
 import org.ort.lexicon.VariantTable
 
 /**
@@ -71,6 +77,7 @@ class PassBTest {
         confirmThreshold: Float = -1f,
         audio: FloatArray = FloatArray(16_000),
         sink: RecordingSink = RecordingSink(),
+        contextSource: RankingContextSource = RankingContextSource { _, _ -> RankingContext() },
     ): Pair<PassB, RecordingSink> {
         val engine = FakeAsrEngine(
             FakeAsrEngine.Behaviour.Returns(FakeAsrEngine.defaultResult(text = engineText)),
@@ -81,6 +88,7 @@ class PassBTest {
             resolution = resolutionChain(confirmThreshold),
             fingerprint = fingerprint(),
             sink = sink,
+            contextSource = contextSource,
             decodeOptions = DecodeOptions(),
         )
         return passB to sink
@@ -158,5 +166,43 @@ class PassBTest {
         assertEquals(AttributionState.UNKNOWN, sink.last!!.attribution.state)
         assertNull(sink.last!!.lattice)
         check(sink.last!!.outcome is PassBOutcome.Rejected)
+    }
+
+    /**
+     * Register R-1124, constitution IV ("Capture Never Blocks"): [PassB] runs entirely inside
+     * Pass B's own WorkQueue-driven processing lane, already structurally off the capture path
+     * (`:capture-*` has no compile-time dependency on `:pipeline`/`:lexicon` at all) — but that
+     * guarantee only holds if [contextSource] genuinely *suspends* rather than blocking whatever
+     * thread it runs on. This proves the real shape: a [RankingContextSource] that never completes
+     * is run alongside another coroutine on the *same single-threaded dispatcher* — if context
+     * assembly used a blocking call instead of a real suspension point, the shared thread would
+     * stay occupied and the other coroutine could never run.
+     */
+    @Test
+    fun `R_1124 context assembly suspends rather than blocks the thread it runs on`() = runBlocking {
+        // Deliberately runBlocking, not runTest: this proves real concurrency (a real thread
+        // staying free while genuinely suspended) -- runTest's virtual clock would make
+        // withTimeout below race its own virtual time instead of the real background dispatcher.
+        val contextAssemblyStarted = CompletableDeferred<Unit>()
+        val releaseContextAssembly = CompletableDeferred<RankingContext>()
+        val stallingSource = RankingContextSource { _, _ ->
+            contextAssemblyStarted.complete(Unit)
+            releaseContextAssembly.await()
+        }
+        val (passB, _) = passB(engineText = "kilo seven alpha bravo charlie", contextSource = stallingSource)
+
+        val singleThread = Dispatchers.Default.limitedParallelism(1)
+        val passBRun = launch(singleThread) { passB.run(item()) }
+
+        withTimeout(5_000) { contextAssemblyStarted.await() }
+
+        // The shared single thread must still be free: a second coroutine scheduled on it
+        // completes while the first is suspended inside contextSource.forCandidates.
+        val proofOfLifeOnSameThread = CompletableDeferred<Unit>()
+        launch(singleThread) { proofOfLifeOnSameThread.complete(Unit) }
+        withTimeout(5_000) { proofOfLifeOnSameThread.await() }
+
+        releaseContextAssembly.complete(RankingContext())
+        passBRun.join()
     }
 }

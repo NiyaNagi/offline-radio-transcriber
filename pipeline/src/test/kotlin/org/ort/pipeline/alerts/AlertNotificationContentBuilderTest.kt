@@ -22,7 +22,8 @@ class AlertNotificationContentBuilderTest {
         input = AlertMatchInput(
             transmissionId = "TX1",
             attributionState = state,
-            stationId = "K7ABC",
+            stationId = if (state == AttributionState.CONFIRMED) "K7ABC" else null,
+            resolvedCallsign = "K7ABC",
             transcriptText = null,
             frequencyHz = null,
         ),
@@ -87,6 +88,7 @@ class AlertNotificationContentBuilderTest {
                 "TX1",
                 AttributionState.UNKNOWN,
                 stationId = null,
+                resolvedCallsign = null,
                 transcriptText = "skywarn",
                 frequencyHz = null,
             ),

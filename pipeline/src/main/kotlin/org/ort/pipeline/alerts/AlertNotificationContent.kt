@@ -21,9 +21,11 @@ public data class AlertNotificationContent(val title: String, val text: String)
  *   the three means "heard in this transmission" (constitution I: `CONFIRMED` is the only state
  *   that does).
  * - A [AlertWatch.Keyword]/[AlertWatch.Frequency] watch's *match* is the keyword or the frequency,
- *   not a callsign — but when the transmission does carry a resolved station, its attribution
- *   state is still named on the second line, for the identical reason: never let a reader infer
- *   "heard" from a bare callsign string alone.
+ *   not a callsign — but when the transmission does carry a resolved candidate (register R-1125:
+ *   [AlertMatchInput.resolvedCallsign], not [AlertMatchInput.stationId] — the latter is `null` for
+ *   every `AMBIGUOUS`/`UNKNOWN` attribution), its attribution state is still named on the second
+ *   line, for the identical reason: never let a reader infer "heard" from a bare callsign string
+ *   alone.
  */
 public object AlertNotificationContentBuilder {
 
@@ -63,7 +65,9 @@ public object AlertNotificationContentBuilder {
     }
 
     private fun stationLine(input: AlertMatchInput): String {
-        val station = input.stationId ?: return "No station resolved for this transmission yet."
+        // R-1125: resolvedCallsign, not stationId -- a resolved-but-AMBIGUOUS candidate is real
+        // information for this line too, not "no station resolved" (see AlertMatchInput's kdoc).
+        val station = input.resolvedCallsign ?: return "No station resolved for this transmission yet."
         return "$station · ${callsignHeadline(input.attributionState).lowercase()}"
     }
 }
