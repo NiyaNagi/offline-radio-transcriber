@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (R-1149/R-1145: `diff.py` refuses a geometry-mismatched pair instead of reporting noise, `tour.ps1` asserts the `wm size` override is set, and Thread-Detail's artboard header matches the shared `DrillInHeader`)
 
-### `<pending>` — p-evidence-guards: R-1149 cross-run capture-geometry guard in `diff.py` + `wm size` override assertion in `tour.ps1`; R-1145 Thread-Detail.dc.html header redrawn to match `Station`/`Digest`
+### `784bcbb5` — p-evidence-guards: R-1149 cross-run capture-geometry guard in `diff.py` + `wm size` override assertion in `tour.ps1`; R-1145 Thread-Detail.dc.html header redrawn to match `Station`/`Digest`
 
 **Scope:** `tools/ui-audit/diff.py`, `tools/ui-audit/tests/test_diff.py`, `tools/ui-audit/tour.ps1`,
 `design/canvas/Thread-Detail.dc.html`. `install.ps1` and `results/ui-audit/**` (including the
