@@ -32,6 +32,109 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-20 (P37: `diff.py` can fail)
+
+### `<pending>` — P37: `diff.py` reads `runId`/`apkHash` and compares pixels, not a coarse signature
+
+**Scope:** `tools/ui-audit/diff.py`; new `tools/ui-audit/tests/test_diff.py` and
+`tools/ui-audit/R-1116-stale-manifest-proof.md`; `.github/workflows/ci.yml` (new `ui-audit-diff`
+job); `spec/build-plan.md` (P37 checkbox). No Kotlin module, no `release.yml` touched.
+
+**Requirements/ACs:** constitution VIII (visual conformance is evidence-backed); register R-1116
+(closed by this change), R-1083 and R-1103 (the tour-side half of the same finding, already
+fixed — this closes the half that "moved downstream into the comparison step").
+
+**What changed:** `diff.py` used to return exit 0 for every outcome except a missing manifest
+file, never read the `runId`/`apkHash` fields `tour.ps1`/`TourRunner` (R-1083) already stamp onto
+every manifest entry, and compared screenshots with a 4×4 mean-RGB signature at `--threshold 6.0` —
+coarse enough that a one-line text difference measured about 1.0, an order of magnitude under its
+own default. Fixed two independent ways:
+
+1. **Manifest self-consistency, checked before any image is opened.** `check_manifest_run_identity`
+   reads every entry's `runId` and `apkHash` and requires each field to agree across the whole
+   manifest (ignoring nothing — even the `"unknown"` default two entries that both lack the field
+   agree on is self-consistent, just uninformative). A manifest whose entries disagree — the
+   literal "run-A manifest, run-B directory" shape, entries assembled from more than one tour
+   invocation — raises `RunIdentityError`, and `main()` prints the conflicting values and exits 3
+   before comparing a single pixel. When `--before` is a directory, its own `tour-manifest.json`
+   (`tour.ps1` always writes one alongside its screenshots) is read and checked the same way — the
+   two manifests are never compared *against* each other (before and after are legitimately
+   different runs by design), only each against itself.
+
+2. **The comparison itself is now `pixel_diff_fraction`**: every pixel outside the excluded
+   status-bar band is compared channel-by-channel (R+G+B summed, alpha ignored); a pixel counts as
+   "differing" when that sum exceeds `--pixel-diff-threshold` (new flag, default 24 of 765). The
+   result is the *fraction* of differing pixels, and `--threshold` is redefined from "0–255 mean
+   signature diff" to "percentage of pixels (0–100)" — a deliberate, documented unit break; an old
+   invocation's `--threshold` value now means something different (flagged for the lead: `AGENTS.md`'s
+   own example command, `--threshold 0.5`, is still syntactically valid but its number now means
+   0.5% of pixels, not a 0–255 mean; not edited here — out of this unit's ownership and other Wave
+   builders may be touching `AGENTS.md` this wave). A dimension mismatch (different width or
+   height) is always `changed`, never silently normalized away the way the old grid-downsample did.
+
+   **Measured, not guessed** (constitution VI): using real committed captures under
+   `results/ui-audit/`, extracted from that path's own git history —
+
+   | pair (both real commits' own committed PNGs) | what actually differs | differing-pixel % (thr 16–80) |
+   |---|---|---|
+   | `overnight/CF02-settings-capture.png`, decode→re-encode round trip (same commit `aa510f44`, PIL round-trip) | nothing (lossless PNG re-encoding noise floor) | **0.0%** at every threshold tried |
+   | `results/ui-audit/overnight/N01-now.png`, commits `aa510f44` vs `df7a73cf` | only the seeded date/time strings (`17:05`/`Fri 11 Sep` vs `07:53`/`Thu 10 Sep`) | **0.186%–0.210%** |
+   | `overnight/CF02-settings-capture.png`, commits `f26ab8a8` vs `aa510f44` | a label's text-wrap point moved a few characters (same words) | **0.813%–0.953%** |
+   | `overnight/CF02-settings-capture.png`, commits `ae17ca18` vs `ce636b92` | a real multi-feature revision of the screen | **8.04%–8.78%** |
+
+   `--pixel-diff-threshold`'s exact value barely moved any of these (all four pairs stayed within
+   0.15 percentage points across 16–80), so 24 was picked near the middle of that insensitive range
+   rather than tuned to one case. `--threshold` defaults to **0.05** (0.05% of pixels): about 4×
+   under the smallest genuine signal measured (0.186%) and, by construction (pixel-level, not
+   file-byte, comparison), immune to the re-encoding noise this tool's own docstring already warned
+   about (measured 0.0%). No same-build, same-scenario "captured twice" pair exists in this
+   project's git history to measure a true rendering-jitter noise floor (blinking cursor, a live
+   timer) beyond the re-encoding round trip above — `diff.py`'s own docstring says so and asks
+   whoever finds one to record its measured fraction there before ever raising the default.
+
+   Extraction commands and the full sweep (`tools/ui-audit/measure.py`-shaped ad hoc script, not
+   committed — a one-off measurement, not a tool) are reproducible via `git show <sha>:results/ui-audit/<path>`
+   for each row above; the numbers are restated in `diff.py`'s own module docstring so a future
+   reader does not have to re-derive them from this entry.
+
+**Verified:**
+- `python -m pytest tools/ui-audit -q` → **7 passed** (`test_R_1116_manifest_with_two_run_ids_exits_nonzero`,
+  `test_R_1116_manifest_with_two_apk_hashes_exits_nonzero`,
+  `test_R_1116_before_directorys_own_mixed_manifest_exits_nonzero`,
+  `test_R_1116_self_consistent_manifest_with_unknown_run_fields_is_accepted`,
+  `test_R_1116_one_line_text_change_is_reported_changed`,
+  `test_R_1116_identical_screenshots_are_reported_unchanged`,
+  `test_R_1116_dimension_mismatch_is_reported_changed_never_unchanged`).
+- **Discrimination** (constitution II): the pre-fix `diff.py` (`git show HEAD:tools/ui-audit/diff.py`
+  before this change) was swapped back in and the same suite run again — **5 of the 7 failed for
+  the right reason** (the two that still passed, identical-screenshots-unchanged and
+  unknown-fields-accepted, are sanity/regression guards, not discriminating tests, and were never
+  expected to fail): both mismatched-manifest tests and the before-directory test asserted
+  `rc != 0` and got `rc == 0` (the old code never reads `runId` at all); the one-line-text-change
+  test asserted `changed` and got `unchanged` (`AssertionError: '`S01-screen`' in '\n\n(none)\n'`);
+  the dimension-mismatch test asserted `changed: 1` and got `unchanged: 1` (the old 4×4 grid
+  downsamples both images to the same shape regardless of their actual dimensions, silently erasing
+  a size difference). Restoring the fixed file returned all 7 to green.
+- **Done-when, `diff.py` half** (`tools/ui-audit/R-1116-stale-manifest-proof.md`, committed): the
+  real, committed `results/ui-audit/tour-manifest.json` (six entries, one given a synthetic
+  `"runId": "deliberately-stale-foreign-run"` the other five lack) run against the real, committed
+  `results/ui-audit/` directory: `python tools\ui-audit\diff.py --before HEAD --after results\ui-audit --manifest <stale manifest>`
+  → `error: ... entries disagree on 'runId' - found ['deliberately-stale-foreign-run', 'unknown']. ...`,
+  **exit code 3**; no `tour-diff.md` written. The identical invocation against the pre-fix `diff.py`
+  exits 0 and writes a report.
+
+**Left open / not done:** the **live `tour.ps1`-against-a-device** half of P37's "done when" — this
+session's own working rules kept it from installing to any of the three attached emulators, so the
+end-to-end (device poll → pulled manifest → this script's refusal) reproduction is left to the
+lead, who has an emulator free. Self-consistency for `--before` is only checked when
+`<before>/tour-manifest.json` actually exists next to its screenshots (an older or hand-assembled
+`--before` directory with no manifest of its own is compared on pixels alone, as before this
+change — not a regression, just an unclosed gap in the new check's own reach). `AGENTS.md`'s
+example `--threshold 0.5` invocation now means a different threshold than it used to (see above) —
+flagged, not fixed, since `AGENTS.md` is outside this unit's ownership this wave.
+
+---
+
 ## 2026-09-20 (roadmap: five decisions, Wave L, fifteen findings, and one backlog view)
 
 ### `<pending>` — roadmap research lands as D51–D55, build-plan Wave L, R-1109..R-1123 and a generated `results/backlog.md`
