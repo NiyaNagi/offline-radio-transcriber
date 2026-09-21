@@ -891,7 +891,7 @@ shape before an accessibility pass sweeps it).
 because an external tester hits it; none is a feature. Sources: the roadmap research of
 2026-09-20 and its red-team pass (`research/market/roadmap/`, git-excluded).
 
-- [ ] **P33 · Pass B honesty — wire the evidence priors, stop asserting `CONFIRMED` uncalibrated**
+- [x] **P33 · Pass B honesty — wire the evidence priors, stop asserting `CONFIRMED` uncalibrated**
   *(`:pipeline` passb)* — FR-LEX-9, FR-LEX-17..21, FR-SPK-10, constitution I. **Beta blocker.**
 
   **Read first:** `pipeline/src/main/kotlin/org/ort/pipeline/passb/PassBFactory.kt` — it builds

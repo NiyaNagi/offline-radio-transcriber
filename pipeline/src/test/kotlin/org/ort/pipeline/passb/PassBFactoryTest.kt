@@ -56,11 +56,18 @@ public class PassBFactoryTest {
     @Test
     @Requirement("FR-REP-1")
     public fun `FR_REP_1 two different configs yield two different configHashes`() {
-        val passLow = PassBFactory.create(filesDir, db, engine(), modelRef, provider = "cpu", confirmThreshold = -1f)
-        val passHigh = PassBFactory.create(filesDir, db, engine(), modelRef, provider = "cpu", confirmThreshold = 0.5f)
+        val passLow = PassBFactory.create(filesDir, db, engine(), modelRef, provider = "cpu", calibrator = null)
+        val passHigh = PassBFactory.create(
+            filesDir,
+            db,
+            engine(),
+            modelRef,
+            provider = "cpu",
+            calibrator = FakeCalibrator(confirmThreshold = 0.5f),
+        )
 
         assertNotEquals(
-            "a different confirmThreshold must produce a different configHash",
+            "a different calibrator (or none at all) must produce a different configHash",
             passLow.fingerprint.configHash,
             passHigh.fingerprint.configHash,
         )
@@ -144,6 +151,10 @@ public class PassBFactoryTest {
                 resolvableEngine(),
                 modelRef,
                 provider = "cpu",
+                // P33/R-1110: with no calibrator the resolver reports AMBIGUOUS (no stationId at
+                // all), so this test -- about alertTrigger wiring, not calibration -- supplies a
+                // fake one to reach a real, named station, same as PassBFactoryCalibrationTest.
+                calibrator = FakeCalibrator(confirmThreshold = -1f),
                 alertTrigger = trigger,
             )
             val queue = WorkQueue(db, TestClock())

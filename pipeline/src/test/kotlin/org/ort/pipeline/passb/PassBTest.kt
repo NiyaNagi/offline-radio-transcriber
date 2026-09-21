@@ -60,7 +60,10 @@ class PassBTest {
         variants = VariantTable.bundled(),
         grammar = CallsignGrammar(ItuPrefixTable.bundled(), ConfusionCostMatrix.bundled()),
         combiner = PriorCombiner(emptyList()),
-        resolver = CallsignResolver(separationThreshold = separationThreshold, confirmThreshold = confirmThreshold),
+        resolver = CallsignResolver(
+            separationThreshold = separationThreshold,
+            calibrator = FakeCalibrator(confirmThreshold = confirmThreshold),
+        ),
     )
 
     private fun passB(

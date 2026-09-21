@@ -12,7 +12,9 @@ import org.ort.lexicon.CallsignGrammar
 import org.ort.lexicon.ConfusionCostMatrix
 import org.ort.lexicon.ItuPrefixTable
 import org.ort.lexicon.PriorCombiner
+import org.ort.lexicon.PropagationModel
 import org.ort.lexicon.VariantTable
+import org.ort.lexicon.defaultPriors
 import org.ort.pipeline.alerts.AlertEvaluationTrigger
 import org.ort.pipeline.alerts.NoOpAlertEvaluationTrigger
 import java.io.File
@@ -24,10 +26,18 @@ import java.io.File
  * `PassB`'s own doc comment describes, assembled with real collaborators instead of `PassBTest`'s
  * fixtures.
  *
- * [confirmThreshold]/[separationThreshold] are the same **uncalibrated, provisional** values
- * `PassBTest`'s real-grammar case uses — there is no dev-fold data yet to fit a real threshold
- * against (constitution VI; see [CallsignResolver]'s own doc comment on why confidence here is
- * clamped, not calibrated). A future session with real recordings replaces these.
+ * **P33 / R-1109 (constitution I, FR-LEX-9, FR-LEX-25..27, FR-LEX-31):** [PriorCombiner] is built
+ * from [defaultPriors] — frequency, band plausibility, database presence, recency, geography,
+ * conversation context and my-stations, the same seven `:eval`'s `Main.kt` already builds for the
+ * offline harness. Before this fix the combiner here was built from `emptyList()`, so every one
+ * of those priors was dead on every real device capture; only `:eval` ever exercised them.
+ *
+ * **P33 / R-1110 (constitution I, VI):** [calibrator] is `null` by default — there is no dev-fold
+ * data yet to fit a real one against. See [CallsignResolver]'s own doc comment for what a `null`
+ * calibrator does to the resolvable attribution states (never `CONFIRMED`), and [Calibrator]'s own
+ * doc comment for why there is no "uncalibrated" implementation of it to reach for instead of
+ * `null`. [separationThreshold] is unrelated to calibration (it only governs `AMBIGUOUS`) and
+ * keeps its own provisional default.
  *
  * [provider] MUST be the execution provider [engine] actually runs on — supplied by the caller
  * (audit F-013), never guessed here. `:pipeline`'s own [AsrEngineAvailability.Available.provider]
@@ -54,7 +64,7 @@ public object PassBFactory {
         modelRef: AssetRef,
         provider: String,
         tier: Tier = Tier.T0,
-        confirmThreshold: Float = -1f,
+        calibrator: Calibrator? = null,
         separationThreshold: Float = 0.01f,
         alertTrigger: AlertEvaluationTrigger = NoOpAlertEvaluationTrigger,
     ): PassB {
@@ -65,17 +75,17 @@ public object PassBFactory {
         val resolution = PassBResolutionChain(
             variants = variants,
             grammar = CallsignGrammar(ituTable, confusionMatrix),
-            combiner = PriorCombiner(emptyList()),
-            resolver = CallsignResolver(separationThreshold = separationThreshold, confirmThreshold = confirmThreshold),
+            combiner = PriorCombiner(defaultPriors(PropagationModel())),
+            resolver = CallsignResolver(separationThreshold = separationThreshold, calibrator = calibrator),
         )
         val fingerprint = PassFingerprint(
             passId = PassId.B_OFFLINE,
             codeVersion = 1,
             modelIds = listOf(modelRef),
             lexiconVersion = null,
-            calibrationVersion = null,
+            calibrationVersion = calibrator?.calibrationVersion,
             configHash = PassBFingerprintBuilder.configHash(
-                confirmThreshold = confirmThreshold,
+                confirmThreshold = calibrator?.confirmThreshold,
                 separationThreshold = separationThreshold,
                 decodeOptions = decodeOptions,
                 variantsVersion = variants.version,
