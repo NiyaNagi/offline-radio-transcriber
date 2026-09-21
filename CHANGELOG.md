@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (p-backup-record: R-1094's backup now round-trips the station catalog, voiceprints, threads and superseded transcript history; R-1095 judged safe-but-limited after fixing one orphaned-correction defect)
 
-### `<pending>` — R-1094: backup/restore carries the station catalog, voiceprints, threads and every transcript version; R-1095: fixed an orphaned-correction defect in the conflict rule, judged the rest safe-but-limited
+### `f8c48d5b` — R-1094: backup/restore carries the station catalog, voiceprints, threads and every transcript version; R-1095: fixed an orphaned-correction defect in the conflict rule, judged the rest safe-but-limited
 
 **Scope:** `app/src/main/kotlin/org/ort/app/backup/**` (`BackupBundleBuilder.kt`, `BackupRecordCodecs.kt`,
 `BackupRestoreCoordinator.kt`), the backup-only sections of `app/src/main/kotlin/org/ort/app/ui/settings/SettingsBackupScreen.kt`, `SettingsViewData.kt` and `SettingsContent.kt`, `data/src/main/kotlin/org/ort/data/dao/CatalogDao.kt` (two new read queries), and matching tests under `app/src/test/kotlin/org/ort/app/backup/**`, `app/src/test/kotlin/org/ort/app/ui/settings/SettingsBackupScreenTest.kt` and `data/src/test/kotlin/org/ort/data/dao/CatalogDaoTest.kt`.
