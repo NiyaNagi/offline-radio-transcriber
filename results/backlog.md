@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 105 | 13 | 25 | 67 |
+| UI / defect register | 106 | 13 | 25 | 68 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 5 | 2 | 3 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **151** | **30** | **43** | **78** |
+| **Total** | **152** | **30** | **43** | **79** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -183,3 +183,4 @@ process, polish, open questions and coverage debt are P2.
 | R-1156 | No scenario exercises a multi-candidate inferred Detail-Why, so its two newest features have no capture | register | process/open | constitution VIII; FR-UI-8; R-1144, R-1148 |
 | R-1157 | The tour degrades around 300 steps into one process, so late steps fail spuriously | register | tooling/open | constitution VIII; R-1146, R-1021 |
 | R-1159 | A mid-scroll capture is pinned to a step count nobody derived | register | tooling/open | constitution VIII; R-1158 |
+| R-1160 | A tour-step check was passing by matching the drawer instead of the screen | register | process/open | constitution II, VIII; R-770, R-1127, R-1070 |
