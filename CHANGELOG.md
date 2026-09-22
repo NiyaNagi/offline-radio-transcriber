@@ -32,6 +32,77 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-22 (R-1158: a permanent mid-scroll tour step replaces R-985's one-off manual screencap of CF02's "Re-verify the route now" row at 2.0)
+
+### `319ed7a2` — r-cf02-step: a new `scroll` step-count value lands a real tour capture on the row `scroll: "end"`/unscrolled 2x both missed
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourSpec.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/TourAccessibilityScroll.kt`,
+`app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt`,
+`app/src/test/kotlin/org/ort/app/debug/tour/TourSpecTest.kt`, `tools/ui-audit/tour.json`. No
+`app/src/main` file touched — the row this closes on was already reachable by a generic,
+production-safe accessibility scroll; no seam was needed.
+
+**Requirements/ACs:** constitution VIII (a screen is not fixed until captured again and compared
+with its artboard — the standard R-985's own closure fell short of); R-1158 (this row, register);
+R-985 (the closure this is the permanent follow-up to); R-980 (the original defect, now with
+reproducible 2.0 evidence).
+
+**What changed:**
+
+- `TourStep.scroll` (`TourSpec.kt`) now accepts `"end"` (unchanged: loops to convergence) **or a
+  positive integer string** (`"1"`, `"2"`, …), which performs exactly that many real
+  `ACTION_SCROLL_FORWARD` accessibility actions instead — any other string (non-integer, zero,
+  negative) still fails to parse, the same "programmer/spec-authoring error" class as before.
+- `TourAccessibilityScroll.scrollForward(rootView, steps)` implements it, reusing
+  `scrollToEnd`'s own provider lookup, tallest-scrollable-node search and position-stability
+  settle (R-982) unchanged — the only difference is a step-count bound instead of looping until
+  the position stops moving.
+- `ScreenshotTourActivity` wires the new value at both capture sites (a plain destination step
+  and a setup step), alongside the existing `"end"` handling.
+- `tools/ui-audit/tour.json` gains
+  `mode-change-pending/CF02-settings-capture@2x-mid` (`fontScale: 2.0`, `scroll: "1"`), between
+  the existing `@2x` (unscrolled) and `@2x-end` (scrolled to convergence) steps for the same
+  scenario/screen. `mode-change-pending` is confirmed (not assumed) to be the scenario that put
+  the row on screen in the state R-980/R-985 were about — R-980's own register row names
+  `mode-change-pending/CF02-settings-capture@2x-end` as the step that first found the defect.
+  `overnight/CF02-settings-capture` was not extended: the screen's section layout is identical
+  regardless of scenario, so there was no reason a second scenario would show anything the
+  already-reachable one does not, and R-980/R-985 never used it either.
+- `TourSpecTest`'s `R_TOUR_SCROLL_END_ACCEPTED` (renamed in substance, not name, to match) now
+  accepts `"end"` or a positive step count; three new tests
+  (`R_1158_SCROLL_FORWARD_COUNT_ACCEPTED`/`_ZERO_REJECTED`/`_NEGATIVE_REJECTED`) cover the parser
+  boundary directly.
+
+**Verified:**
+
+- `./gradlew :app:test` — green (both flavors; `TourSpecTest` 17/17 including the three new R-1158
+  cases).
+- `./gradlew :app:detekt :app:ktlintCheck` — clean.
+- `./gradlew :app:smokeTestFullDebugUnitTest --max-workers=2` — green.
+- On-device, `emulator-5560` (never `-5554`, which holds the lead's canonical run): `wm size
+  1260x2772` override confirmed; `tools\ui-audit\install.ps1 -Port 5560 -Clear` (fresh install,
+  wiped state); `tools\ui-audit\tour.ps1 -Port 5560 -Only "mode-change-pending/CF02*" -Out
+  <scratch>` — 5/5 steps ok, 0 errors, 63.8s. The new `@2x-mid` capture lands the "Re-verify the
+  route now" row's full `KeyValueRow` — three-line wrapped key, four-line wrapped sub-line
+  ("30 s · capture pauses for it · a gap is recorded"), and the `Verify` action — entirely inside
+  the frame: no clipping, no per-character collapse, the same shape as the "Device" row above and
+  "Speech" row below. This directly confirms R-985's own finding (and, by extension, R-980's fix)
+  at font scale 2.0, this time reproducibly. Scratch captures only; `results/ui-audit/` untouched.
+
+**Left open / not done:** this closes the *evidence* gap R-1158 named; the register row itself is
+the lead's to judge and close (out of this session's ownership, per the register's own rule that
+only the session lead edits it — not touched here). The `steps: "1"` count is specific to this
+screen's own content and font scale, confirmed empirically on-device rather than derived; a future
+content change above the row (a longer/shorter Device sub-line, a new section) could shift how
+many steps land on it, the same way any fixed-scroll capture would. `scrollForward` itself, like
+`scrollToEnd` before it, has no Robolectric unit test — the accessibility-action mechanism needs a
+real bound service to produce a sealed `AccessibilityNodeInfo` (see `TourAccessibilityScroll`'s
+own class-level doc comment), so this is device-verified only, the same standing gap `scrollToEnd`
+already carried.
+
+---
+
 ## 2026-09-21 (R-1148 follow-up: the "needs a/an X" sentence now picks its article by how the letter or digit is spoken, not by the written glyph)
 
 ### `290407e0` — q-candidate-reasons-article: fix `DetailViewStateMapper.reasonFor`'s hardcoded "a" ("needs a A") to a real pronunciation-based article rule, covering the whole alphabet and every digit
