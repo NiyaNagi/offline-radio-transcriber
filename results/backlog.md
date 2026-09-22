@@ -182,4 +182,4 @@ process, polish, open questions and coverage debt are P2.
 | R-1155 | The canonical capture directory mixes current and stale screenshots, now at different geometries | register | tooling/open | constitution VIII; R-1149, R-1083 |
 | R-1156 | No scenario exercises a multi-candidate inferred Detail-Why, so its two newest features have no capture | register | process/open | constitution VIII; FR-UI-8; R-1144, R-1148 |
 | R-1157 | The tour degrades around 300 steps into one process, so late steps fail spuriously | register | tooling/open | constitution VIII; R-1146, R-1021 |
-| R-1158 | R-985 was closed on evidence the tour cannot reproduce | register | process/open | constitution VIII; R-985 |
+| R-1159 | A mid-scroll capture is pinned to a step count nobody derived | register | tooling/open | constitution VIII; R-1158 |
