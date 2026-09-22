@@ -208,6 +208,44 @@ class TourStepsTest {
         else -> null
     }
 
+    /**
+     * CI regression (register, `r-r03-ci`): the three `ImprovePage` preview seams
+     * (`NavSeed.improveSelectPreview`/`improveRunningPreview`/`improveDonePreview`, R-770/
+     * R-1127/R-350) used to fall through [expectedForDrillIn]'s own `else -> null` straight to the
+     * generic `IMPROVE_RECORDS` destination check (`Expected.Text("Improve records")`) — which,
+     * read by eye against `ImproveScreens.kt`, is never actually rendered by
+     * `ImproveSelectScreen`/`ImproveRunningScreen`/`ImproveDoneScreen` themselves. It only ever
+     * passed because `ReaderDrawerContent`'s own row list (`Drawer.kt`) is unconditionally
+     * composed regardless of open/closed state and carries `IMPROVE_RECORDS.drawerLabel`
+     * ("Improve records") as one of its rows — the exact "accidental drawer match" class this
+     * file's own `reviewSessionView`/`reviewSession` cases in [expectedForDrillIn] are already
+     * scarred by (WPREC/R-1070's history, same doc comment). `overnight/R03-improve-running@2x`
+     * failed this incidental check once on CI (`ubuntu-latest` Robolectric) while passing locally
+     * every time, including its own `@1x`/`@2x-end` siblings, which this class composes
+     * identically (`step.fontScale`/`step.scroll` are not read here at all — R02/R03/R04 were all
+     * equally exposed to the identical, pre-existing fragility since R-1127 first added
+     * `improveDonePreview` with no case here at all; this run simply tripped on one of the nine).
+     *
+     * Fixed the way constitution II and R-1021 both already require: each preview checks a real,
+     * stable `testTag` on the screen it actually claims to reach, never prose belonging to a
+     * different surface — `improve-running-action-bar`/`improve-done-action-bar` already existed
+     * (`ImproveScreens.kt`); `drill-in-header-back` is `DrillInHeader`'s own shared tag, sufficient
+     * here since `Select` is the only `ImprovePage` state under this destination that draws one at
+     * all (`Root`/`Running`/`Done` do not).
+     *
+     * A separate function, not three more branches inside [expectedForDrillIn]'s own `when` — that
+     * `when` already sat at detekt's `CyclomaticComplexMethod` threshold (20); adding these three
+     * tripped it to 21. Checked before [expectedForDrillIn] in [expectedFor]'s own chain, the same
+     * position [expectedForStepId] already occupies, for the identical reason: a shape neither of
+     * the two generic functions below it can tell apart from another sibling step.
+     */
+    private fun expectedForImprovePreview(drillIn: Map<String, String>): Expected? = when {
+        drillIn["improveSelectPreview"] == "true" -> Expected.Tag("drill-in-header-back")
+        drillIn["improveRunningPreview"] == "true" -> Expected.Tag("improve-running-action-bar")
+        drillIn["improveDonePreview"] == "true" -> Expected.Tag("improve-done-action-bar")
+        else -> null
+    }
+
     private fun expectedForDestination(destination: String): Expected = when (destination) {
         "NOW" -> Expected.AnyTag(setOf("now-idle-title", "now-active-title"))
         "LOG" -> Expected.Text("Log")
@@ -250,6 +288,7 @@ class TourStepsTest {
     }
 
     private fun expectedFor(step: TourStep): Expected = expectedForStepId(step.id)
+        ?: expectedForImprovePreview(step.drillIn)
         ?: expectedForDrillIn(step.drillIn)
         ?: expectedForDestination(requireNotNull(step.destination))
 
