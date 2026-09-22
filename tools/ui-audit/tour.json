@@ -321,6 +321,7 @@
     { "id": "mode-change-pending/CF11-settings-mode", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "MODE" } },
     { "id": "mode-change-pending/CF02-settings-capture", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" } },
     { "id": "mode-change-pending/CF02-settings-capture@2x", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "fontScale": 2.0 },
+    { "id": "mode-change-pending/CF02-settings-capture@2x-mid", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "fontScale": 2.0, "scroll": "1" },
     { "id": "mode-change-pending/CF02-settings-capture@2x-end", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "fontScale": 2.0, "scroll": "end" },
     { "id": "mode-change-pending/CF02-settings-capture-end", "scenario": "mode-change-pending", "destination": "SETTINGS", "drillIn": { "settingsScreen": "CAPTURE" }, "scroll": "end" },
 

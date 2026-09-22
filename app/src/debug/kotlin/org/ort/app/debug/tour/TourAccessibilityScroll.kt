@@ -148,6 +148,43 @@ public object TourAccessibilityScroll {
         return ScrollOutcome.Scrolled
     }
 
+    /**
+     * Register R-1158 (R-985's own follow-up): [scrollToEnd] only ever proves the *end* is
+     * reachable — it leaves nothing that lands *between* the unscrolled top frame and the
+     * scrolled-to-end frame, which is exactly the gap that left CF02's "Re-verify the route now"
+     * row (R-980) with no permanent font-scale-2.0 evidence: the row was proven to render
+     * correctly there only by a scratch, one-off `adb shell input swipe` (a real device, held on
+     * the screen by hand — R-985's own account), which nobody else could reproduce and no future
+     * tour run would re-check. `scrollForward` performs exactly [steps] real
+     * `ACTION_SCROLL_FORWARD` accessibility actions — the identical action, provider-lookup and
+     * settle discipline [scrollToEnd] already uses (see this object's own class-level doc comment
+     * for why that mechanism, not a `SemanticsOwner` one) — but never loops to convergence the way
+     * [scrollToEnd] does, so a step names a small, reproducible count and lands wherever that many
+     * real scroll actions put it: deterministic for a given screen, scenario and font scale, the
+     * same way every other tour step already is. Stops early, exactly like [scrollToEnd], if an
+     * action reports no further movement (R-982's own position-stability check, reused unchanged)
+     * — a [steps] count larger than the screen's real extent degrades to [scrollToEnd]'s own
+     * outcome rather than erroring or looping past the end.
+     */
+    public suspend fun scrollForward(rootView: View, steps: Int): ScrollOutcome {
+        require(steps >= 1) { "scrollForward requires at least one step, got $steps" }
+        val provider = findAccessibilityNodeProvider(rootView)
+            ?: error("no AccessibilityNodeProvider anywhere under the root view — nothing to scroll")
+        val targetId = findTallestScrollableVirtualViewId(provider) ?: return ScrollOutcome.NothingToScroll
+        var previousPosition = scrollPositionOf(provider, targetId)
+        var performed = 0
+        while (performed < steps) {
+            val moved = provider.performAction(targetId, AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, null)
+            if (!moved) break
+            performed++
+            delay(SCROLL_STEP_SETTLE_MILLIS)
+            val currentPosition = scrollPositionOf(provider, targetId)
+            if (currentPosition != null && previousPosition != null && currentPosition == previousPosition) break
+            previousPosition = currentPosition
+        }
+        return ScrollOutcome.Scrolled
+    }
+
     /** [AccessibilityNodeInfo.getRangeInfo]'s own `current` value — a plain field read, unsealed-safe
      * for the identical reason [findTallestScrollableVirtualViewId]'s own `isScrollable`/
      * `getBoundsInScreen` reads are (this object's own class-level doc comment). `null` when this

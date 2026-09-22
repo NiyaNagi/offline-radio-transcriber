@@ -122,13 +122,21 @@ import org.json.JSONObject
  * next tick; nothing is remounted). Used for the recovery-toast/transition captures (e.g.
  * `rig-lost` → `rig-reconnected`).
  *
- * [scroll] (v5, register R-460): `"end"` (the only value this class accepts — anything else fails
- * to parse, the same "programmer/spec-authoring error" class as a malformed step) scrolls the
- * screen's own primary vertical scroll container to its end, after the ordinary settle and before
- * capture — see [TourAccessibilityScroll] for how, and its own doc comment for exactly why an
- * `AccessibilityNodeInfo` walk, not a `SemanticsOwner` one. A step naming `scroll` on a screen with
- * no vertically-scrollable container throws (recorded as one `error` manifest line, same as any
- * other per-step failure) — never silently captured as if nothing had been asked for.
+ * [scroll] (v5, register R-460; v8, register R-1158): `"end"` scrolls the screen's own primary
+ * vertical scroll container to its end, after the ordinary settle and before capture — see
+ * [TourAccessibilityScroll.scrollToEnd] for how, and its own doc comment for exactly why an
+ * `AccessibilityNodeInfo` walk, not a `SemanticsOwner` one. **R-1158**: a positive integer string
+ * (e.g. `"1"`, `"2"`) instead performs exactly that many `ACTION_SCROLL_FORWARD` actions — never
+ * looping to convergence the way `"end"` does — via [TourAccessibilityScroll.scrollForward]. This
+ * exists because a screen tall enough at font scale 2.0 can put real content strictly *between*
+ * the unscrolled top frame and the scrolled-to-end frame, reachable by neither: CF02's "Re-verify
+ * the route now" row (R-980) was proven to render correctly there only by a scratch, one-off `adb
+ * shell input swipe` nobody else could reproduce (R-985), which is exactly the gap a small,
+ * reproducible step count closes. Any other string (a non-integer, zero or negative) fails to
+ * parse, the same "programmer/spec-authoring error" class as a malformed step. A step naming
+ * `scroll` on a screen with no vertically-scrollable container throws (recorded as one `error`
+ * manifest line, same as any other per-step failure) — never silently captured as if nothing had
+ * been asked for.
  */
 public data class TourStep(
     public val id: String,
@@ -147,8 +155,9 @@ public data class TourStep(
         require((destination == null) != (setup == null)) {
             "tour step '$id' must name exactly one of destination or setup, not both or neither"
         }
-        require(scroll == null || scroll == "end") {
-            "tour step '$id' names unknown scroll value '$scroll' — only 'end' is supported"
+        require(scroll == null || scroll == "end" || (scroll.toIntOrNull() ?: -1) >= 1) {
+            "tour step '$id' names unknown scroll value '$scroll' — only 'end' or a positive integer " +
+                "step count is supported"
         }
     }
 

@@ -379,8 +379,17 @@ public class ScreenshotTourActivity : ComponentActivity() {
         }
         if (step.waitMillis > 0) delay(step.waitMillis)
         var scrollNote: String? = null
-        if (step.scroll == "end") {
-            when (TourAccessibilityScroll.scrollToEnd(window.decorView)) {
+        // R-1158: `"end"` loops to convergence; any other non-null value is a validated (TourSpec's
+        // own `init`) positive integer step count instead — see TourAccessibilityScroll.scrollForward's
+        // own doc comment for why a small, reproducible count exists alongside `scrollToEnd`.
+        when {
+            step.scroll == "end" -> when (TourAccessibilityScroll.scrollToEnd(window.decorView)) {
+                TourAccessibilityScroll.ScrollOutcome.Scrolled -> delay(SCROLL_SETTLE_MILLIS)
+                TourAccessibilityScroll.ScrollOutcome.NothingToScroll -> scrollNote = NO_SCROLL_NOTE
+            }
+            step.scroll != null -> when (
+                TourAccessibilityScroll.scrollForward(window.decorView, step.scroll.toInt())
+            ) {
                 TourAccessibilityScroll.ScrollOutcome.Scrolled -> delay(SCROLL_SETTLE_MILLIS)
                 TourAccessibilityScroll.ScrollOutcome.NothingToScroll -> scrollNote = NO_SCROLL_NOTE
             }
@@ -626,8 +635,15 @@ public class ScreenshotTourActivity : ComponentActivity() {
         delay(DESTINATION_SETTLE_MILLIS)
         if (step.waitMillis > 0) delay(step.waitMillis)
         var scrollNote: String? = null
-        if (step.scroll == "end") {
-            when (TourAccessibilityScroll.scrollToEnd(setupActivity.window.decorView)) {
+        // R-1158: see the identical branch in renderDestinationStep for why.
+        when {
+            step.scroll == "end" -> when (TourAccessibilityScroll.scrollToEnd(setupActivity.window.decorView)) {
+                TourAccessibilityScroll.ScrollOutcome.Scrolled -> delay(SCROLL_SETTLE_MILLIS)
+                TourAccessibilityScroll.ScrollOutcome.NothingToScroll -> scrollNote = NO_SCROLL_NOTE
+            }
+            step.scroll != null -> when (
+                TourAccessibilityScroll.scrollForward(setupActivity.window.decorView, step.scroll.toInt())
+            ) {
                 TourAccessibilityScroll.ScrollOutcome.Scrolled -> delay(SCROLL_SETTLE_MILLIS)
                 TourAccessibilityScroll.ScrollOutcome.NothingToScroll -> scrollNote = NO_SCROLL_NOTE
             }

@@ -171,12 +171,47 @@ class TourSpecTest {
     }
 
     @Test
-    fun `R_TOUR_SCROLL_END_ACCEPTED every scroll step in tour json names only the supported end value`() {
+    fun `R_TOUR_SCROLL_END_ACCEPTED every scroll step in tour json names end or a positive step count`() {
         val spec = loadSpec()
         val scrollSteps = spec.steps.filter { it.scroll != null }
         assertTrue("expected at least one scroll step (R-460)", scrollSteps.isNotEmpty())
         for (step in scrollSteps) {
-            assertTrue("step '${step.id}' names unsupported scroll value '${step.scroll}'", step.scroll == "end")
+            val scroll = step.scroll
+            val isValid = scroll == "end" || (scroll?.toIntOrNull() ?: -1) >= 1
+            assertTrue("step '${step.id}' names unsupported scroll value '$scroll'", isValid)
+        }
+    }
+
+    /** R-1158 (register): a positive integer step count performs that many real
+     * `ACTION_SCROLL_FORWARD` actions instead of looping to convergence like `"end"` — see
+     * [TourStep]'s own doc comment for why this exists (CF02's "Re-verify the route now" row,
+     * R-980/R-985). */
+    @Test
+    fun `R_1158_SCROLL_FORWARD_COUNT_ACCEPTED a step naming a positive integer scroll step count parses`() {
+        val json = """{"steps":[{"id":"x","scenario":"empty","destination":"NOW","scroll":"2"}]}"""
+        val spec = TourSpec.parse(json)
+        assertEquals("2", spec.steps.single().scroll)
+    }
+
+    @Test
+    fun `R_1158_SCROLL_FORWARD_ZERO_REJECTED a step naming a zero scroll step count fails to parse`() {
+        val json = """{"steps":[{"id":"x","scenario":"empty","destination":"NOW","scroll":"0"}]}"""
+        try {
+            TourSpec.parse(json)
+            fail("expected an IllegalArgumentException for a step naming a zero scroll step count")
+        } catch (expected: IllegalArgumentException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun `R_1158_SCROLL_FORWARD_NEGATIVE_REJECTED a step naming a negative scroll step count fails to parse`() {
+        val json = """{"steps":[{"id":"x","scenario":"empty","destination":"NOW","scroll":"-1"}]}"""
+        try {
+            TourSpec.parse(json)
+            fail("expected an IllegalArgumentException for a step naming a negative scroll step count")
+        } catch (expected: IllegalArgumentException) {
+            // expected
         }
     }
 }
