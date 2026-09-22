@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-22 (R-1158: a permanent mid-scroll tour step replaces R-985's one-off manual screencap of CF02's "Re-verify the route now" row at 2.0)
 
-### `pending` — r-cf02-step: a new `scroll` step-count value lands a real tour capture on the row `scroll: "end"`/unscrolled 2x both missed
+### `319ed7a2` — r-cf02-step: a new `scroll` step-count value lands a real tour capture on the row `scroll: "end"`/unscrolled 2x both missed
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/TourSpec.kt`,
 `app/src/debug/kotlin/org/ort/app/debug/tour/TourAccessibilityScroll.kt`,
