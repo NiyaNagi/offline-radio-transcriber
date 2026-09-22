@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-21 (R-C10: the four `overnight-live/C10-*` failures the lead's 324-step canonical tour found are a long-run capacity artifact, not the playback control lying about its state)
 
-### `pending` — r-c10-playback: on-device proof the play/pause glyph is correct; `awaitTagPresent` now dumps the tree on timeout; a discriminating unit test for the manual-pause-tap path
+### `ea7e0942` — r-c10-playback: on-device proof the play/pause glyph is correct; `awaitTagPresent` now dumps the tree on timeout; a discriminating unit test for the manual-pause-tap path
 
 **Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt`,
 `app/src/test/kotlin/org/ort/app/ui/screens/PlaybackControlDetailScreenTest.kt`. No file under
