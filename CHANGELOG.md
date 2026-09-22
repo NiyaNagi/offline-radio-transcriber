@@ -32,7 +32,88 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
-## 2026-09-22 (R-1158: a permanent mid-scroll tour step replaces R-985's one-off manual screencap of CF02's "Re-verify the route now" row at 2.0)
+## 2026-09-22 (r-r03-ci: `TourStepsTest` stops relying on an accidental drawer-row match for the three `ImprovePage` preview seams)
+
+### `5e68ff63` — r-r03-ci: R02/R03/R04's own `TourStepsTest` markers, real and stable, replacing a fragile generic fallback that had been silently wrong since R-1127
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/tour/TourStepsTest.kt` only — no production code
+changed; `ImproveScreens.kt` was read, not edited (the fix needed no new testTag, both real tags
+it uses already existed).
+
+**Requirements/ACs:** constitution II ("never assert prose"), constitution VIII; R-770, R-1127,
+R-350 (the three `ImprovePage` preview seams this test checks); R-1021 (the precedent this
+mirrors — a tour tap matching `"Live"` prose broke the moment the label legitimately changed;
+the fix there was the same one applied here: assert a stable tag, not rendered text).
+
+**What changed — the investigation, not just the patch:**
+
+CI (run 35781945667, `android — Robolectric + assemble`, `ubuntu-latest`) failed
+`TourStepsTest.R_TOUR_STEPS` on exactly one of `tour.json`'s 324 steps:
+`overnight/R03-improve-running@2x` — `expected Text(text=Improve records), not found`. Rerunning
+the identical test locally (`--rerun-tasks`, this machine) was green, which ruled out a caching
+artefact and made "why do the two environments disagree" the real question, not "which one is
+right" — investigated, not assumed:
+
+- `TourStepsTest` does not read `TourStep.fontScale` or `TourStep.scroll` at all (grepped the
+  whole class before concluding this) — so `@1x`/`@2x`/`@2x-end` compose *identically* here; the
+  `@2x` suffix in the failing step's id is not itself significant to this test. This rules out an
+  actual font-scale/ellipsis effect (the first hypothesis worth checking) — there is no font
+  scale difference for this test to be sensitive to.
+- Read `ImproveScreens.kt` end to end: neither `ImproveRunningScreen` nor `ImproveDoneScreen`
+  renders the string "Improve records" anywhere. Only `ImproveScreen` (the root, R01) has it as
+  a literal title, and `ImproveSelectScreen` (R02) renders it as `DrillInHeader`'s `parentLabel`.
+  So `expectedForDestination("IMPROVE_RECORDS") = Expected.Text("Improve records")` — the generic
+  fallback `expectedForDrillIn` dropped through to for all three preview seams, since none of
+  `improveDonePreview`/`improveSelectPreview`/`improveRunningPreview` had a case there — could
+  only ever have been satisfied for R03/R04 one way: `ReaderDrawerContent`'s own row list
+  (`Drawer.kt`) is unconditionally composed whether the drawer is open or closed (confirmed by
+  this same test class's own existing doc comment on `Expected.DisplayedTag`), and carries
+  `ReaderDestination.IMPROVE_RECORDS.drawerLabel` ("Improve records") as one of its rows —
+  the exact "accidental drawer match" class this file's own `reviewSessionView`/`reviewSession`
+  cases are already scarred by (WPREC/R-1070's history, documented in this file already).
+- That gap is **not new to this branch** — `improveDonePreview` shipped in R-1127
+  (`2b53110e`) with a `tour.json` step but no corresponding `TourStepsTest` case, so R04 has
+  carried the identical fragility, silently, since that merge. R-770 added two more steps
+  (`improveSelectPreview`/`improveRunningPreview`) relying on the same unguarded fallback,
+  which is the surface area this run happened to trip on — not a defect introduced fresh by
+  either commit's own logic, but inherited and (by adding two more instances) somewhat enlarged.
+- Given the check was never actually reading anything the target screen itself renders, and given
+  no other observed mechanism (timing, WorkManager, layout) explains the CI-only, single-step
+  failure, the honest conclusion is the third hypothesis the coordinator asked to rule in or out:
+  **the check was an unreliable one, not a defect specific to `R03-improve-running@2x`.** Nothing
+  else establishes definitively *why this one run* tripped on exactly this step rather than one
+  of its two siblings or R02/R04 (an always-composed-but-incidental match is not something this
+  investigation found a further timing/environment mechanism for) — but that uncertainty is exactly
+  the point: a check whose pass/fail depends on unrelated, incidental composition has no business
+  being trusted either way, on any environment.
+
+**The fix:** a new `expectedForImprovePreview(drillIn)` function (checked in `expectedFor`'s own
+chain immediately after `expectedForStepId`, before the generic `expectedForDrillIn`/
+`expectedForDestination` fallbacks) gives each of the three preview seams a real, stable
+`testTag` on the screen it actually claims to reach: `improve-running-action-bar` (R03) and
+`improve-done-action-bar` (R04) already existed in `ImproveScreens.kt`; `drill-in-header-back`
+(R02) is `DrillInHeader`'s own shared tag, sufficient here since `Select` is the only
+`ImprovePage` state under `IMPROVE_RECORDS` that draws a `DrillInHeader` at all. Kept as a
+separate function rather than three more branches inside `expectedForDrillIn`'s own `when` —
+that `when` was already at detekt's `CyclomaticComplexMethod` threshold (20); adding the three
+branches in place tripped it to 21 (`:app:detekt` caught this immediately, fixed by extraction,
+never by a suppression or a threshold bump, per the working agreement's own standing rule).
+
+**Verified:** `:app:testFullDebugUnitTest --tests "org.ort.app.debug.tour.TourStepsTest"
+--rerun-tasks` — `BUILD SUCCESSFUL in 2m 35s` (forced full re-run, not cached). Full gate:
+`:app:test` (`BUILD SUCCESSFUL in 26m`, all flavors — `TourStepsTest` included, not excluded from
+this task), `:app:detekt` and `:app:ktlintCheck` (both green after the extraction above),
+`:app:smokeTestFullDebugUnitTest --max-workers=2` (`BUILD SUCCESSFUL in 3m 13s`).
+
+**Left open / not done:** whether `TourStepsTest`'s prose-matching approach is a live problem
+*beyond* the three Improve seams was not audited row by row this round — flagged separately
+rather than expanded into scope here, since a full audit of every `expectedForDestination`/
+`expectedForDrillIn` case against what its target screen actually renders (vs. what merely
+happens to also appear in the always-composed drawer) is its own unit of work, not a two-line
+fix. `EARLIER_NIGHTS`'s plain-root case was spot-checked directly (`RecordingsScreen.kt` does
+render "Recordings" itself, so that one is genuine, not accidental) but no other destination was
+checked. Register row R-770 is unaffected by this change — R02/R03/R04 still capture correctly
+on a real device; this fixes only the JVM-side proof that the seam lands where it claims to.
 
 ### `319ed7a2` — r-cf02-step: a new `scroll` step-count value lands a real tour capture on the row `scroll: "end"`/unscrolled 2x both missed
 
