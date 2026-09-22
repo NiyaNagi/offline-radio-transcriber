@@ -153,6 +153,36 @@ class PlaybackControlDetailScreenTest {
     }
 
     /**
+     * R-1006 (register), the C10 tour investigation (2026-09-21): the tour's own
+     * `overnight-live/C10-paused-then-log`/`@2x` steps tap play, wait for the "Pause" glyph, tap it
+     * again, then wait for the control to read "Play retained audio" once more — a manual pause,
+     * never the end-of-track completion this file's own
+     * `R_1006_reaching_the_recorded_end_reverts_the_control_to_play_rather_than_lying_forever`
+     * already covers. No existing test exercised a second, manual tap before this one; this closes
+     * that gap and proves
+     * — at the unit level, independent of any device/tour timing — that a genuine second tap really
+     * does flip [WaveformPlayControl]'s glyph back, via the same [togglePlayback]/`onPlaying`
+     * callback path the composable itself uses, not merely [waveformControlGlyph]'s own pure
+     * mapping (already covered by `InspectionTest.kt`).
+     */
+    @Test
+    fun `R_1006 a second tap pauses and the glyph reverts to Play retained audio`() {
+        val player = FakeTransmissionAudioPlayer()
+        composeTestRule.setContent {
+            OrtTheme { TransmissionDetailScreen(state = state(), player = player) }
+        }
+        composeTestRule.onNodeWithContentDescription("Play retained audio").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithContentDescription("Pause").assertExists()
+
+        composeTestRule.onNodeWithContentDescription("Pause").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithContentDescription("Play retained audio").assertExists()
+        composeTestRule.onNodeWithContentDescription("Pause").assertDoesNotExist()
+    }
+
+    /**
      * AC-168's other half — "returning does not auto-resume" — proven at the exact seam
      * [PlaybackSection] uses to seed its own local state on (re)composition:
      * [initialPlaybackState]. Once `OrtNavHost.kt`'s own `NavHostBody` calls

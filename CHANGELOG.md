@@ -32,6 +32,113 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-21 (R-C10: the four `overnight-live/C10-*` failures the lead's 324-step canonical tour found are a long-run capacity artifact, not the playback control lying about its state)
+
+### `pending` — r-c10-playback: on-device proof the play/pause glyph is correct; `awaitTagPresent` now dumps the tree on timeout; a discriminating unit test for the manual-pause-tap path
+
+**Scope:** `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt`,
+`app/src/test/kotlin/org/ort/app/ui/screens/PlaybackControlDetailScreenTest.kt`. No file under
+`tools/ui-audit/tour.json`, `ui/theme/`, `:pipeline`, `:capture-*` or `:data` touched; no product
+code under `app/src/main/**` touched (see "What changed" for why the investigation ruled that out
+rather than reaching for it).
+
+**Requirements/ACs:** register R-1146 (closed `8c36cc46`, this round's own starting point), R-1006
+(the glyph-follows-`playing`-state contract), AC-168; constitution II ("a test MUST be shown to
+discriminate", "when a test and a screenshot disagree, the screenshot wins"), VIII.
+
+**What changed:**
+
+1. **Diagnosed which of the two `awaitTagPresent(WAVEFORM_PLAY_TEST_TAG)` calls in the
+   `playThenNavigate`/`pauseThenNavigate` block each failure was hitting — the first (before any
+   tap) or the last (after a pause tap) — by reproducing the lead's failure on-device rather than
+   guessing from the error message, which cannot tell the two apart.** A scoped
+   `tour.ps1 -Only "overnight-live/C10*"` run against a fresh install passed 4/4 (twice — once
+   before this investigation's own code changes, once after), matching register R-1146's own prior
+   scoped proof. That ruled out a reliably-reproducible defect, so the full, un-scoped 318-step
+   canonical tour was run instead (the same one the lead's 324-step run represents, six steps
+   apart — see "Left open"), against the identical, unmodified `TransmissionDetailScreen`/
+   `WaveformPlayControl`/`TransportPlaybackController` code the R-1146 fix already left in place.
+   It reproduced the failure directly: **all four** `overnight-live/C10-*` steps failed with the
+   identical `never found a node tagged 'waveform-glyph-play'` message, `manifest.json` timestamps
+   roughly 21s apart (one 20s timeout plus overhead, back to back) — including
+   `C10-playing-then-log`, whose own code path calls `awaitTagPresent(WAVEFORM_PLAY_TEST_TAG)`
+   exactly **once**, before any tap (`pauseThenNavigate` is false for that step, so the
+   post-pause-tap wait is never reached at all). That step failing proves, without needing the new
+   dump below, that every failure is the *first* wait — the initial glyph never rendering within
+   20s that late into a long run — not the post-pause-tap one the register row's own filing
+   worried about.
+2. **The pause tap does flip the glyph back, in reality.** The same full-run reproduction's other
+   three steps (`C10-playing-then-log@2x`, `C10-paused-then-log`, `C10-paused-then-log@2x`) failing
+   at the identical first wait, never reaching their own pause-tap step at all, is on-device
+   evidence that nothing about the pause path is broken — the steps that exercise it never got far
+   enough to test it in this run. Two more independent proofs, neither touching the emulator's own
+   timing: a fresh scoped tour run (4/4 ok, this round, on `emulator-5560`) reached and passed both
+   `paused-then-log` variants; and a new Robolectric unit test (below) exercises a genuine second,
+   manual tap — never the end-of-track auto-completion
+   `R_1006_reaching_the_recorded_end_reverts_the_control_to_play_rather_than_lying_forever` already
+   covered — and passes against the unmodified production code. **Conclusion: this is not a product
+   defect.** `WaveformPlayControl`/`PlaybackSection`/`TransportPlaybackController` are unchanged.
+3. **Classification: long-run capacity, not a tour-code or product defect.** The C10 block sits
+   near the end of a 318-step tour, all captured inside one continuous `ScreenshotTourActivity`
+   process/composition (`TourRunner.run` never recreates it between steps). Passing reliably in
+   isolation and failing reliably — all four steps, at the very first wait — only ~300 steps into
+   a real run, with no code difference between the two, points at accumulated cost from a long
+   single-process run (memory pressure, GC, or genuinely slow composition/settle by that point),
+   not at anything C10-specific. This session did not chase the accumulation's own root cause
+   further (see "Left open") and made no change to compensate for it (no timeout raised) — R-1146
+   already warned against loosening an assertion without understanding what is really happening,
+   and a timeout raised on a guess would be exactly that.
+4. **`awaitTagPresent`'s timeout failure now carries a tree dump**, the same
+   `TourAccessibilityTap.describeNodes` evidence `tapTaggedNodeOrFail` already attaches on its own
+   failure — added because two different call sites in the C10 block share one tag and one error
+   string. As it turned out this round did not need it (point 1 above used the code path shape
+   instead), but the next ambiguous case may not be so clean, and every other tag-wait in this file
+   already carries equivalent evidence on failure.
+5. **New unit test**, `PlaybackControlDetailScreenTest.kt`: `R_1006 a second tap pauses and the
+   glyph reverts to Play retained audio` — taps play, asserts "Pause", taps pause, asserts the
+   control reads "Play retained audio" again and "Pause" no longer exists. No existing test in this
+   file exercised a manual second tap; the closest, `R_1006_reaching_the_recorded_end...`, only
+   covers the position reaching its own end. Passes unmodified against production code — a
+   discriminating result in the sense that follows from point 2, not from reverting a fix, since no
+   product line changed in this round.
+
+**Verified:**
+- `.\gradlew.bat ":app:test"` — `BUILD SUCCESSFUL` (32m).
+- `.\gradlew.bat ":app:detekt" ":app:ktlintCheck"` — `BUILD SUCCESSFUL`, no findings.
+- `.\gradlew.bat ":app:smokeTestFullDebugUnitTest" "--max-workers=2"` — `BUILD SUCCESSFUL`,
+  including `TransmissionDetailContentTest`'s full suite.
+- **Real device, not a report** (constitution VIII), all on `emulator-5560`,
+  `tools\ui-audit\install.ps1 -Port 5560 -Clear` before each run, `wm size 1260x2772` set first:
+  - Scoped `tour.ps1 -Only "overnight-live/C10*"` (before this round's code changes): `steps: 4
+    ok: 4 errors: 0`.
+  - Full canonical `tour.ps1` (no `-Only`, 318 steps, ~12.4 minutes): `steps: 318 ok: 314 errors: 4`
+    — the four `overnight-live/C10-*` steps, all `never found a node tagged 'waveform-glyph-play'`,
+    reproducing the lead's own finding (this round's own emulator hit all four; the lead's hit
+    three of four and `C10-playing-then-log` passed — consistent with a load-dependent margin, not
+    a fixed boundary).
+  - Scoped `tour.ps1 -Only "overnight-live/C10*"` (after this round's code changes, final):
+    `steps: 4 ok: 4 errors: 0`. Captures under the session scratchpad, not `results/ui-audit/`
+    (constitution VIII: only the lead's full canonical run replaces that).
+
+**Left open / not done:**
+- **The accumulated-cost mechanism itself is not identified.** This round proved *that* a long run
+  degrades badly enough by step ~300 to blow a 20s wait that passes reliably in isolation, and
+  ruled out the playback control as the cause, but did not profile *what* accumulates (heap growth
+  across 318 scenario loads/compositions, GC pause frequency, bitmap retention, or genuine
+  emulator/host load unrelated to the app) — that needs a profiling pass this round did not run,
+  and belongs to whoever owns tour capacity/performance, not this file's own remit.
+- **`results/ui-audit/register.md` not edited** — only the session lead edits it (AGENTS.md). This
+  entry and the evidence above are for the lead to file a new row against (this is not R-1146
+  reopened: R-1146's own fix is correct and unchanged; this is a new finding) and decide whether
+  the tour's own long-run capacity needs a structural fix (e.g. periodic activity/process
+  recycling) or is an accepted cost of a 300+-step single-process run.
+- This session's own worktree branched from `main` at `4217cf58` (six steps behind the tour.json
+  the lead's 324-step run used — `git log` shows no commit between R-1146 (`8c36cc46`) and this
+  branch point touching any file this investigation's own conclusion depends on, so the extra six
+  steps do not change it, but the exact 324-step canonical file was not the one reproduced against).
+
+---
+
 ## 2026-09-21 (R-1149/R-1145: `diff.py` refuses a geometry-mismatched pair instead of reporting noise, `tour.ps1` asserts the `wm size` override is set, and Thread-Detail's artboard header matches the shared `DrillInHeader`)
 
 ### `784bcbb5` — p-evidence-guards: R-1149 cross-run capture-geometry guard in `diff.py` + `wm size` override assertion in `tour.ps1`; R-1145 Thread-Detail.dc.html header redrawn to match `Station`/`Digest`
