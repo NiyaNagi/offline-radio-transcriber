@@ -515,9 +515,23 @@ public class ScreenshotTourActivity : ComponentActivity() {
             true
         } == true
         if (!settled) {
+            // R-C10 investigation (2026-09-21, register R-1146's own follow-up): carries what the
+            // tree actually shows at timeout off-device, the same evidence `tapTaggedNodeOrFail`
+            // already attaches on its own failure. Added because the `playThenNavigate`/
+            // `pauseThenNavigate` block above calls this twice with the *same* tag
+            // (`WAVEFORM_PLAY_TEST_TAG`, once before any tap and once after a pause tap) — without
+            // this dump, a manifest failure line cannot tell the two apart. In the event this round
+            // investigated, it did not matter: a full 318-step canonical run reproduced all four
+            // `overnight-live/C10-*` steps failing with this same message, including
+            // `C10-playing-then-log`, whose own code path calls this function on
+            // `WAVEFORM_PLAY_TEST_TAG` exactly once, before any tap — proving the failure is the
+            // *first* wait (the initial glyph never rendering in time), not the post-pause-tap one,
+            // without needing this dump at all. Kept anyway: the next ambiguous case may not be so
+            // clean.
+            val dump = TourAccessibilityTap.describeNodes(window.decorView, testTag)
             error(
                 "tour step '$stepId' never found a node tagged '$testTag' within " +
-                    "${STATE_WAIT_TIMEOUT_MILLIS}ms",
+                    "${STATE_WAIT_TIMEOUT_MILLIS}ms\n$dump",
             )
         }
     }

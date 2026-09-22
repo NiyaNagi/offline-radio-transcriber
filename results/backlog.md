@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 101 | 13 | 25 | 63 |
+| UI / defect register | 103 | 13 | 25 | 65 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 5 | 2 | 3 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **147** | **30** | **43** | **74** |
+| **Total** | **149** | **30** | **43** | **76** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -179,3 +179,5 @@ process, polish, open questions and coverage debt are P2.
 | R-1151 | Settings-Backup's artboard does not show what the backup now carries | register | design **fixed, awaiting the capture** (`088127d3`, merged 2026-09-21): `settings-backup.dc.html` redrawn against `settingsbackupscreen.kt` line by line - the seven-table *in the backup* copy (`:103-110`), the biometric-data disclosure (`:111-118`), the narrowed *not yet* line (`:119-126`), and the station/voiceprint/thread counts now shown in both the save preview (`:133-141`) and the restore plan (`:206-230`). title, subtitle, empty state and all four button labels already matched and were left alone./fixed / awaiting capture | constitution VIII; R-1094 |
 | R-1153 | A debug scenario that seeds setupComplete without a qualifying session bounces to the overnight step | register | process/open | AC-189; NFR-8; R-1104 |
 | R-1154 | A session board states a stations breakdown the screen has never rendered | register | design/open | constitution VIII; R-1150 |
+| R-1155 | The canonical capture directory mixes current and stale screenshots, now at different geometries | register | tooling/open | constitution VIII; R-1149, R-1083 |
+| R-1156 | No scenario exercises a multi-candidate inferred Detail-Why, so its two newest features have no capture | register | process/open | constitution VIII; FR-UI-8; R-1144, R-1148 |
