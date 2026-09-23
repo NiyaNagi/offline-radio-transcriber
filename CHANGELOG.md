@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-22 (r-1161: the first-run setup deadlock — the overnight step becomes a nag again instead of a block)
 
-### `<pending>` — r-1161/r-1162/r-1172: overnight survival is nagged at most once per process and never blocks capture; the trapped step gets an exit; a fabricated exemption reading is deleted
+### `53365f99` — r-1161/r-1162/r-1172: overnight survival is nagged at most once per process and never blocks capture; the trapped step gets an exit; a fabricated exemption reading is deleted
 
 **Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/MainActivity.kt`,
 `app/src/main/kotlin/org/ort/app/ui/setup/OvernightSurvival.kt`,
