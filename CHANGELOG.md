@@ -2833,7 +2833,6 @@ Register rows R-1100, R-1101, R-1123.
   unit-level and, for `ProcessExitReasonReporter`, dependent on Android's own OS behaviour, which
   only a device can ultimately confirm.
 
-=======
 ## 2026-09-21 (register R-1033/R-1034: a decision recorded for provenance already built, and a session-level VAD summary for the log it was missing from)
 
 ### `f4420547` — R-1033/R-1034: D56 records the live-tier decision already shipped, and `capture.log` gains one `vad_session_summary` line per session
@@ -2910,7 +2909,6 @@ new session-level summary is that package's call, not addressed here.
 
 ---
 
->>>>>>> n-capture-provenance
 ## 2026-09-20 (P37: `diff.py` can fail)
 
 ## 2026-09-20 (m-seed-seams: seven screens get a real seed seam, one of them a real product affordance)
