@@ -207,6 +207,159 @@ board changed.
 - R-1166 wants this whole flow shortened and its language simplified; this change makes the Welcome
   copy longer, not shorter. That tension is real and belongs to that row's redesign, not to a
   correctness fix that could not wait for it.
+## 2026-09-22 (r-1161: the first-run setup deadlock — the overnight step becomes a nag again instead of a block)
+
+### `53365f99` — r-1161/r-1162/r-1172: overnight survival is nagged at most once per process and never blocks capture; the trapped step gets an exit; a fabricated exemption reading is deleted
+
+**Scope:** `:app` only — `app/src/main/kotlin/org/ort/app/MainActivity.kt`,
+`app/src/main/kotlin/org/ort/app/ui/setup/OvernightSurvival.kt`,
+`app/src/main/kotlin/org/ort/app/ui/setup/SetupActivity.kt`,
+`app/src/main/kotlin/org/ort/app/ui/setup/OvernightScreen.kt`, and their three test suites
+(`MainActivityTest.kt`, `SetupActivityTest.kt`, `OvernightScreenTest.kt`). No other module, no
+`design/` file (see "Left open").
+
+**Requirements/ACs:** AC-189 (the one the fix turns on); constitution I, II, IV, VIII; register
+R-1161, R-1162, R-1163, R-1172; R-1104 (the change whose composition with an older reset produced
+the defect); NFR-8.
+
+**What changed — the defect first, because the fix only makes sense against it.**
+
+Device field report, 2026-09-22, verbatim: *"after finishing the setup, i get dropped back into the
+running overnight screen and it loops when i click skip for now, i cant exit it. any button i press
+just loops back to the running overnight page."* That is literally true, and there was no escape
+from inside the app on a fresh install — `SetupActivity` and `ReaderActivity` are both
+`exported="false"`, so `MainActivity` is the only entry.
+
+The cycle: `SetupActivity.onStartCapture()` sets `setupComplete` and hands back → `MainActivity
+.route()` sees setup complete but `overnightSurvivalStillUnproven(store)` true, so it relaunches
+`SetupActivity` and finishes itself → `SetupActivity.onCreate` → `reconcileOvernightSurvival()`,
+survival unproven, sets `store.overnightStepSeen = false` → `SetupStateMachine.stepFor` returns
+`OVERNIGHT` → **both** of that screen's actions set the flag back to `true` and `refreshStep()`,
+which now finds every gate clear, returns `null`, and hands back to `MainActivity` → forever.
+
+**The deadlock underneath it:** `hasProvenSurvival()` admits only a recorded session of at least
+`OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS` ending in `TerminationReason.USER`; sessions are created only
+by `RealCaptureService`; the only thing that starts it is `MainActivity.startCaptureAndShowStatus()`
+— the branch the refusal never took. **The sole exit condition required the very thing the refusal
+prevented.**
+
+**What the fix is allowed to be, and why it is not "stop the reset".** AC-189 requires only that the
+step *"reappears on every relevant subsequent launch"*; it never says capture is blocked until
+survival is proven. R-1104 over-implemented its own acceptance criterion. So the nag stays and the
+block goes, and removing the refusal costs no AC coverage. AC-189's real requirement — that only
+heartbeat/session evidence may set `overnightSurvivalProven`, never
+`isIgnoringBatteryOptimizations()`, which constitution IV records as lying on ColorOS — is untouched.
+
+Three production changes:
+
+1. **`OvernightNagState`** (new, `OvernightSurvival.kt`) — an `internal object` with a `@Volatile`
+   flag, the same process-wide-holder shape `CaptureState`/`LevelStatus` already establish, and
+   deliberately *not* persisted: the fact is true of the running process, not of the device, and
+   persisting it would silence AC-189's reappearance. `reset()` is a test seam; `MainActivityTest`
+   resets on both sides of every test, because a leaked static between tests is its own bug.
+2. **`MainActivity.overnightSurvivalStillUnproven`** — returns `false` immediately once the nag has
+   been shown this process, so the trip back from Setup starts capture. When it does decide to nag
+   it now also **owns the reset**: it records that it asked and clears `store.overnightStepSeen`
+   itself, which is what makes Setup genuinely resume on `OVERNIGHT`. The already-proven branch is
+   unchanged.
+3. **`SetupActivity.reconcileOvernightSurvival`** — the `else { store.overnightStepSeen = false }`
+   branch is deleted; only the latch-when-proven half remains. Its kdoc used to *argue for* the
+   reset on the grounds that the two buttons "still only need to fire once per launch ... with no
+   risk of looping back within the same launch" — true within a launch, false across launches, and
+   every trip of the cycle is a new launch. The new comment says exactly that, in those words, so
+   the next reader does not reintroduce it.
+
+**R-1162, in the same change.** `OvernightScreen` passed `onBack = null`, which is right for a step
+walked once mid-sequence and wrong the moment the same step can be shown *after* setup is complete.
+It gains an optional third action, **`Back to the app`** (`setup-overnight-return-to-app`), rendered
+only when `store.setupComplete` — absent on the first-run walk, where there is genuinely nowhere to
+return to. It deliberately does not use `onBack`: a cold resume calls `refreshStep(pushCurrent =
+false)` and pushes nothing onto `backStack` (its kdoc is right to), so an exit here needs a real
+destination, and `handBackToMainActivity()` is the only honest one. It writes nothing to the store —
+the operator declined to answer rather than answering, so AC-189's reappearance stands for the next
+process; what lets the router through is `OvernightNagState`, which already recorded the ask.
+
+**R-1172, also in this file.** The hardcoded status row read *"Not yet exempt — this never blocks
+capture"* and was never recomputed, so it reported *not yet exempt* on a device that was already
+exempt — an invented specific about the exact fact the screen exists to establish. The exemption
+half is **deleted, not made live**: the only reading available is `isIgnoringBatteryOptimizations()`,
+which constitution IV records as lying and which this screen's own rationale card has just told the
+operator not to trust. The row now reads *"Whatever you choose here, it never blocks capture"* —
+unconditionally true, and now more true than it was. The `markerUnknown` dot is left as-is and now
+means what it says.
+
+**The test, and why it had to cross two activities (R-1163).** No existing test could see this:
+`MainActivityTest.markSetupComplete()` and `SetupActivityTest.storeSetupAlreadyComplete()`'s caller
+had each met one half of the cycle and seeded `KEY_OVERNIGHT_SURVIVAL_PROVEN = true` past it, each
+with a comment describing that half as a fixture inconvenience, and nothing drove `MainActivity ->
+SetupActivity -> MainActivity` as one sequence. New in `MainActivityTest` (Robolectric + JUnit4, that
+suite's own convention, and the only suite that can assert `nextStartedService`):
+
+- `AC_189 R-1161 an unproven device detours once and the skip then actually reaches capture` — seeds
+  the real post-setup state, routes once and asserts `SetupActivity` with no service started
+  (keeping R-1104 honest), asserts the router cleared `KEY_OVERNIGHT_SEEN`, launches the real
+  `SetupActivity` and drives `onSkipOvernight()`, then routes a second time and asserts
+  `ReaderActivity` **and** a started `RealCaptureService`.
+- `AC_189 R-1161 the overnight detour is taken at most once per process` — pins the checker's call
+  count at 1 across two routes, so "once per process" is tested rather than implied.
+
+Both are named `AC_189 ...` rather than `R_1161 ...` on purpose: `CoverageMatrix` attributes a test
+to a requirement by the id in its *name* and an `@Requirement` annotation only to the class, so a
+`R_1161`-prefixed name would have left AC-189's row saying nothing about the tests that now carry
+it (constitution II, "tests are named for the requirement they establish"). The register id stays in
+the name after it.
+
+**Verified:** `./gradlew :app:test :app:detekt :app:ktlintCheck -PortAllowMissingBundledAssets=true`
+— green (see "Left open" for the flavour/smoke caveat this task prints itself). Discrimination shown
+by running the new tests against the unfixed production code first: **7 failed, each for its own
+right reason** — `expected:<1> but was:<2>` on the call count, `expected:<org.ort.app.MainActivity>
+but was:<null>` on the un-reset step, "the router owns the reset" on the cleared flag, "the exit must
+actually leave the screen", "Did not expect any node but found '1'" on the fabricated exemption
+string, and the two missing-`setup-overnight-return-to-app` node failures. Each of the two production
+edits has a test that is red without it and green with it, independently: the call-count test touches
+no `SetupActivity`, and `AC_189 R-1161 an already-seen overnight step is never reset back to unseen
+while unproven` launches `SetupActivity` alone.
+
+`./gradlew :app:smokeTestFullDebugUnitTest :app:smokeTestPlayDebugUnitTest --rerun-tasks` — green,
+run because `:app:test` prints its own warning that 18 Compose-idle-poisoning classes are excluded
+from it (R-1140). Reported honestly: the *first* run of that pair had one failure,
+`NavSeedTest.openThreadId lands on the thread detail drill-in`, a Robolectric
+`ActivityController.windowFocusChanged` NPE. It passed alone and on the full `--rerun-tasks` sweep,
+and this change touches no navigation or reader file, so it is recorded here as a suspected
+isolation flake in that suite rather than swept under the green.
+
+**Left open / not done:**
+
+- **No screenshot evidence.** The diff touches `app/src/main/kotlin/org/ort/app/ui/**`, so
+  constitution VIII's re-verification applies and has **not** been run — no device or emulator was
+  attached to this worktree. The affected screen is S08 (`setup/S08-battery`), at font scale 1.0 and
+  2.0, in the *post-completion* state where the third action renders. A Robolectric bounds test at
+  `w390dp-h844dp-420dpi` with native graphics asserts all three actions sit inside the screen at
+  2.0, which is not a substitute: when a test and a screenshot disagree, the screenshot wins.
+- **The artboard is now stale on two counts.** `design/canvas/Setup-Battery.dc.html` still draws the
+  old *"Not yet exempt — this never blocks capture"* string and has no third action, so a diff
+  against it will flag both. `design/` is not this prompt's to edit; the redraw (and whether the
+  exit is drawn on the board at all, or recorded as an accepted deviation) is the lead's call.
+- **Two `SetupActivityTest` tests changed rather than staying green, deliberately and not quietly.**
+  `AC_189 unproven survival resets overnightStepSeen so a fresh launch resumes on Overnight again`
+  asserted the reset *at the place the reset is being removed from*; it is replaced by `AC_189 with
+  the step cleared by the router, Setup resumes on Overnight and proves nothing`, which asserts the
+  same reappearance from the state the router now leaves behind, plus a new `R_1161 an already-seen
+  overnight step is never reset back to unseen while survival is unproven`. And `AC_189 skipping
+  Overnight again within the same launch hands back to MainActivity, no loop` needed its fixture to
+  state the router's reset explicitly; it was also **renamed** to `AC_189 skipping Overnight hands
+  back to MainActivity rather than re-showing it in the same launch`, because R-1163 is right that
+  its old name read as a general "no loop" guarantee it never gave — its kdoc always scoped it to
+  the intra-activity case, and a green test called "no loop" is precisely what made the
+  inter-activity loop invisible.
+- **R-1161's own row proposes more than this change does.** The register argues the deeper fix is to
+  remove `OVERNIGHT` from the setup gate ladder entirely and surface it as a *Keep capture running*
+  prompt on the first missed heartbeat. That is a spec change (AC-189 pins the step to first-run
+  setup) and belongs with R-1166's onboarding redesign; this change ends the trap without it.
+- **`onOpenBatterySetting` still marks the step seen and hands back**, unchanged. It is no longer a
+  loop, because the router clears the flag at most once per process — but if a future change gives
+  something other than `MainActivity` a way to clear `overnightStepSeen`, that invariant breaks. It
+  is stated in both kdocs for exactly that reason.
 
 ## 2026-09-22 (r-r03-ci: `TourStepsTest` stops relying on an accidental drawer-row match for the three `ImprovePage` preview seams)
 

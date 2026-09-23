@@ -1459,9 +1459,34 @@ class SetupActivityTest {
             .apply()
     }
 
+    /** R-1161: the state `MainActivity.overnightSurvivalStillUnproven` now leaves behind when it
+     * decides to nag — it, and only it, clears this flag, and it sets the process-wide
+     * [OvernightNagState] in the same breath so the detour can only happen once. */
+    private fun clearOvernightStepSeen() {
+        ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, false)
+            .apply()
+    }
+
+    /**
+     * AC-189's own requirement — the step *reappears* — unchanged by R-1161, only relocated: the
+     * router clears [SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN] before handing here, and this
+     * activity resumes on [SetupStep.OVERNIGHT] exactly as it always did. What it must **not** do is
+     * fabricate the survival fact on the way (constitution IV: only real session evidence).
+     *
+     * **Replaces** `AC_189 unproven survival resets overnightStepSeen so a fresh launch resumes on
+     * Overnight again`, which asserted the reset *here*. That reset is the R-1161 defect: this
+     * activity is re-entered on every trip of the cycle, so resetting here re-armed the step the two
+     * buttons had just cleared, forever. The reappearance it was protecting is still protected —
+     * by `MainActivityTest`'s own R-1161 tests, at the one place that can know whether the operator
+     * has already been asked this process.
+     */
     @Test
-    fun `AC_189 unproven survival resets overnightStepSeen so a fresh launch resumes on Overnight again`() {
+    fun `AC_189 with the step cleared by the router, Setup resumes on Overnight and proves nothing`() {
         storeSetupAlreadyComplete()
+        clearOvernightStepSeen()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
 
@@ -1472,6 +1497,33 @@ class SetupActivityTest {
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SURVIVAL_PROVEN, false)
         assertFalse("still unproven -- this run must not fabricate the fact", survivalProven)
+    }
+
+    /**
+     * **R-1161**, the `SetupActivity` half, discriminating on its own: with the step already seen
+     * and survival still unproven, `reconcileOvernightSurvival()` must leave
+     * [SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN] alone and let this already-complete flow hand
+     * straight back. Before the fix it set that flag back to `false` on **every** entry, so the two
+     * Overnight buttons could never stay answered across the `MainActivity` -> here ->
+     * `MainActivity` hop, and the operator's *any button I press just loops back* was literally
+     * true. Reverting that one `else` branch turns this assertion red.
+     */
+    @Test
+    fun `AC_189 R-1161 an already-seen overnight step is never reset back to unseen while unproven`() {
+        storeSetupAlreadyComplete()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
+
+        // Every gate including Overnight is satisfied, so this activity finishes inside onCreate --
+        // the same shape the two "hands back immediately" tests above already document.
+        ActivityScenario.launch(SetupActivity::class.java).use {
+            val app = ApplicationProvider.getApplicationContext<Application>()
+            assertEquals(MainActivity::class.java.name, shadowOf(app).nextStartedActivity?.component?.className)
+        }
+        val stepSeen = ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, false)
+        assertTrue("re-arming the step on entry is what made the cycle total (R-1161)", stepSeen)
     }
 
     @Test
@@ -1495,19 +1547,26 @@ class SetupActivityTest {
     }
 
     /**
-     * Discriminates [reconcileOvernightSurvival]'s own "reset, do not loop" design from the naive
-     * always-block shape this file's own report warns against: [SetupStore.overnightStepSeen] is
-     * reset only once, in `onCreate`, before this activity's first [refreshStep] — so once the
-     * operator acts on [SetupStep.OVERNIGHT] again this launch (`Skip for now`), every other gate
-     * in this already-complete flow (set by [storeSetupAlreadyComplete]) is satisfied too, and
-     * `stepFor` hands straight back to `MainActivity` rather than re-showing Overnight a second
-     * time within the same activity instance. A regression to the naive "always block while
-     * unproven" shape would instead recompute [SetupStep.OVERNIGHT] again right here, so the
-     * activity would never reach `isFinishing`.
+     * Once the operator acts on [SetupStep.OVERNIGHT] (`Skip for now`), every other gate in this
+     * already-complete flow ([storeSetupAlreadyComplete]) is satisfied too, so `stepFor` hands
+     * straight back to `MainActivity` rather than re-showing Overnight a second time within the
+     * same activity instance.
+     *
+     * **Scope, restated honestly (R-1163):** this test's name used to read as a general "no loop"
+     * guarantee and it never was one — it only ever covered the *intra-activity* case, and the loop
+     * the operator actually hit was inter-activity, `MainActivity` -> here -> `MainActivity`. A
+     * green test asserting "no loop" is precisely what made that invisible. That cycle is now driven
+     * end to end in `MainActivityTest`'s own `R_1161 an unproven device detours once and the skip
+     * then actually reaches capture`; this one keeps the narrower property it always had, and says
+     * so in its name.
+     *
+     * [clearOvernightStepSeen] is what changed with R-1161: this activity no longer re-arms the
+     * step itself, so the fixture has to state the router's own reset explicitly to land here.
      */
     @Test
-    fun `AC_189 skipping Overnight again within the same launch hands back to MainActivity, no loop`() {
+    fun `AC_189 skipping Overnight hands back to MainActivity rather than re-showing it in the same launch`() {
         storeSetupAlreadyComplete()
+        clearOvernightStepSeen()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
 
@@ -1524,6 +1583,35 @@ class SetupActivityTest {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val next = shadowOf(app).nextStartedActivity
         assertEquals(MainActivity::class.java.name, next?.component?.className)
+    }
+
+    /**
+     * **R-1162**: a step reachable once setup is already complete must offer a way *back into the
+     * app*, not only a forward action. `Back to the app` leaves the answer unrecorded on purpose —
+     * the operator declined to answer, so AC-189's reappearance stands for the next process — and
+     * simply hands back, which the router then turns into capture because it has already asked this
+     * process ([OvernightNagState]).
+     */
+    @Test
+    fun `R_1162 returning to the app from Overnight hands back without recording an answer`() {
+        storeSetupAlreadyComplete()
+        clearOvernightStepSeen()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.OVERNIGHT, activity.currentStepForTest)
+                activity.onReturnToAppFromOvernight()
+                assertTrue("the exit must actually leave the screen", activity.isFinishing)
+            }
+        }
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        assertEquals(MainActivity::class.java.name, shadowOf(app).nextStartedActivity?.component?.className)
+        val stepSeen = ApplicationProvider.getApplicationContext<Application>()
+            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, false)
+        assertFalse("leaving without answering must not be recorded as having answered", stepSeen)
     }
 
     private companion object {

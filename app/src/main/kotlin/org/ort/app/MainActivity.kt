@@ -13,6 +13,7 @@ import kotlinx.coroutines.runBlocking
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.setup.DebugOvernightSurvivalOverride
+import org.ort.app.ui.setup.OvernightNagState
 import org.ort.app.ui.setup.RealOvernightSurvivalChecker
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStateMachine
@@ -104,16 +105,48 @@ public class MainActivity : ComponentActivity() {
      * real writers this and [SetupActivity] now are). A no-op, returning `false` immediately, once
      * already proven — the ordinary case for every later launch on a device that has proven it.
      *
+     * **R-1161 (register; AC-189, constitution IV) — this is a nag, and it was a deadlock.** As
+     * originally written this returned `true` for as long as survival was unproven, on *every*
+     * launch of this activity, and [route] turned that into a refusal to start capture. But
+     * `hasProvenSurvival()`'s only admissible evidence is a recorded session of at least
+     * `OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS`, sessions are only ever created by
+     * `RealCaptureService`, and the only thing that starts it is [startCaptureAndShowStatus] — the
+     * branch the refusal never took. **The sole exit condition required the very thing the refusal
+     * prevented**, and since `SetupActivity` and `ReaderActivity` are both `exported="false"`, an
+     * operator who finished setup on a fresh install had no way out of the cycle but uninstalling.
+     *
+     * The fix is to separate the two things R-1104 had fused. **AC-189 asks only that the step
+     * "reappears on every relevant subsequent launch" — it never says capture is blocked until
+     * survival is proven** (`spec/functional-spec.md`), so the nag stays and the block goes:
+     * - the detour is taken **at most once per process** ([OvernightNagState]), so the trip back
+     *   from `SetupActivity` starts capture instead of bouncing;
+     * - this function, and nothing else, **clears [SetupStore.overnightStepSeen]** when it decides
+     *   to nag, which is what makes `SetupStateMachine.stepFor` resume on `SetupStep.OVERNIGHT` —
+     *   AC-189's "reappears", now owned by the one caller that can know whether the operator has
+     *   already been asked. `SetupActivity` used to do this on every entry, which re-armed the step
+     *   the operator had just answered on every trip of the cycle (R-1161's other half).
+     *
+     * The proven branch is untouched: a real session, cleanly ended, at least
+     * `OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS` long, never the OS's own exemption flag — which
+     * constitution IV records as lying on the reference device — and once proven it latches, so a
+     * device that has proven survival is never routed through Setup again to re-ask (AC-189's own
+     * "until").
+     *
      * [DebugOvernightSurvivalOverride] is the same test seam [SetupActivity] uses, checked first so
      * a test can script this without a real `:data` database.
      */
     private fun overnightSurvivalStillUnproven(store: SetupStore): Boolean {
         if (store.overnightSurvivalProven) return false
+        if (OvernightNagState.askedThisProcess) return false
         val checker = DebugOvernightSurvivalOverride.activeOverride
             ?: RealOvernightSurvivalChecker(OrtDatabase.create(applicationContext).sessionDao())
-        val proven = runBlocking { checker.hasProvenSurvival() }
-        if (proven) store.overnightSurvivalProven = true
-        return !proven
+        if (runBlocking { checker.hasProvenSurvival() }) {
+            store.overnightSurvivalProven = true
+            return false
+        }
+        OvernightNagState.markAsked()
+        store.overnightStepSeen = false
+        return true
     }
 
     /**

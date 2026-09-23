@@ -69,6 +69,39 @@ public class FakeOvernightSurvivalChecker(@Volatile public var proven: Boolean =
 }
 
 /**
+ * **R-1161** (register; AC-189, constitution IV) — whether the overnight step has already been put
+ * in front of the operator **in this process**. A process-wide holder in exactly the shape
+ * `CaptureState`/`LevelStatus` already establish for this codebase (`:pipeline`), and for the same
+ * reason: the fact is true of the running process, not of the device, so it deliberately does not
+ * belong in [SetupStore] — persisting it would silence AC-189's "reappears on every relevant
+ * subsequent launch".
+ *
+ * It exists because AC-189's reappearance and R-1104's refusal-to-start-capture are two different
+ * things, and conflating them deadlocked the app: `hasProvenSurvival()` can only ever be satisfied
+ * by a recorded session, only `MainActivity.startCaptureAndShowStatus()` records one, and that was
+ * the branch the refusal never took. `MainActivity.overnightSurvivalStillUnproven` reads and sets
+ * this so the detour happens **at most once per process** and capture is never refused a second
+ * time — the nag stays, the block goes.
+ *
+ * [reset] is a test seam and nothing else: a leaked static between tests is its own defect, and
+ * `MainActivityTest` resets on both sides of every test.
+ */
+internal object OvernightNagState {
+
+    @Volatile
+    var askedThisProcess: Boolean = false
+        private set
+
+    fun markAsked() {
+        askedThisProcess = true
+    }
+
+    fun reset() {
+        askedThisProcess = false
+    }
+}
+
+/**
  * The same debug-override seam [DebugRigLinkPortOverride]/`DebugLexiconImportOverride` already
  * establish for this package (see either's own class kdoc for the full rationale): a real device
  * or a Robolectric-hosted [SetupActivity] test needs a way to hand [SetupActivity.onCreate] a

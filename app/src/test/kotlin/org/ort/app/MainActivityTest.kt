@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.content.Intent
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
@@ -11,14 +12,19 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.setup.DebugOvernightSurvivalOverride
 import org.ort.app.ui.setup.FakeOvernightSurvivalChecker
+import org.ort.app.ui.setup.OvernightNagState
+import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.SetupActivity
+import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
+import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.CaptureState
 import org.ort.testing.Requirement
 import org.robolectric.Robolectric
@@ -55,9 +61,21 @@ class MainActivityTest {
         controllerUnderTest = null
     }
 
+    /**
+     * R-1161: [OvernightNagState] is a process-wide holder in exactly the way [CaptureState] and
+     * `LevelStatus` are, so a value set by one test is still set for the next one in this JVM —
+     * reset on both sides of every test rather than only after, since another suite in the same
+     * run may have routed through `MainActivity` before this class starts.
+     */
+    @Before
+    fun setUp() {
+        OvernightNagState.reset()
+    }
+
     @After
     fun tearDown() {
         destroyAfterTest()
+        OvernightNagState.reset()
         // CaptureState is a process-wide singleton; leaving a test's `capturing(...)` call live
         // would leak into the next test the same way an undestroyed Activity does.
         CaptureState.idle(clearSession = true)
@@ -122,6 +140,42 @@ class MainActivityTest {
         val context = ApplicationProvider.getApplicationContext<Application>()
         context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit().putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true).apply()
+    }
+
+    /**
+     * R-1161: the state the operator is actually in the instant `Start capture` is tapped on S12 —
+     * every setup gate satisfied, [SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN] among them, and
+     * overnight survival genuinely unproven because no session has ever been recorded.
+     * [markSetupCompleteWithUnprovenSurvival] is not enough for the round trip below:
+     * [SetupActivity] has to be able to resolve a step from this same store, and every gate but
+     * Overnight must be clear for `Skip for now` to hand back at all. Mirrors
+     * `SetupActivityTest.storeEverySetupGateExceptComplete()` — including the model fixture, which
+     * the `play` flavor's READY gate genuinely needs (that helper's own doc comment).
+     */
+    private fun markPostSetupWithUnprovenSurvival() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .edit()
+            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
+            .putString(SharedPreferencesSetupStore.KEY_SELECTED_INPUT_ID, "usb-1")
+            .putBoolean(SharedPreferencesSetupStore.KEY_INPUT_VERIFIED, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, true)
+            .putString(SharedPreferencesSetupStore.KEY_RADIO_CHOICE, RadioChoice.NONE.name)
+            .putBoolean(SharedPreferencesSetupStore.KEY_ANALYTICS_CONSENT_SEEN, true)
+            .putBoolean(SharedPreferencesSetupStore.KEY_SETUP_COMPLETE, true)
+            .apply()
+        org.ort.app.debug.ScenarioFixtures.installEveryModelFixtureAtRealSize(
+            ApplicationProvider.getApplicationContext(),
+        )
+    }
+
+    private fun overnightStepSeenInPrefs(): Boolean {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        return context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+            .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, false)
     }
 
     private fun overnightSurvivalProvenInPrefs(): Boolean {
@@ -273,6 +327,101 @@ class MainActivityTest {
                 ":data read) must never run when that alone already decided the route",
             0,
             checker.callCount,
+        )
+    }
+
+    // --- R-1161: the detour is a nag, not a block -----------------------------------------------
+
+    /**
+     * **R-1161** (register; AC-189, constitution IV) — the operator's own report, driven end to end:
+     * *"after finishing the setup, i get dropped back into the running overnight screen and it loops
+     * when i click skip for now, i cant exit it."*
+     *
+     * This is deliberately the one test that crosses both activities, because crossing them is
+     * exactly what no existing test did (R-1163): `MainActivityTest` and `SetupActivityTest` had
+     * each met one half of the cycle and seeded past it in a fixture, so the composition was never
+     * executed anywhere. Route → `SetupActivity` → `Skip for now` → hand back → route again. Before
+     * the fix the second route repeated the first — [SetupActivity] again, no capture service —
+     * forever, and `hasProvenSurvival()`'s only evidence is a recorded session that only
+     * `startCaptureAndShowStatus` can create, so the sole exit condition required the very thing the
+     * loop prevented.
+     *
+     * Both halves are asserted so a later change cannot quietly drop either: AC-189
+     * (`spec/functional-spec.md`) requires the step to **reappear** on a relevant subsequent launch,
+     * and says nothing at all about refusing capture until survival is proven — so the first route
+     * must still detour, and the second must still reach capture.
+     */
+    @Test
+    @Requirement("AC-189")
+    fun `AC_189 R-1161 an unproven device detours once and the skip then actually reaches capture`() {
+        val checker = FakeOvernightSurvivalChecker(proven = false)
+        DebugOvernightSurvivalOverride.show(checker)
+        markPostSetupWithUnprovenSurvival()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        val app = ApplicationProvider.getApplicationContext<Application>()
+
+        val firstRoute = buildAndResume()
+        assertEquals(
+            "AC-189: an unproven device is still sent back through Setup once",
+            SetupActivity::class.java.name,
+            shadowOf(firstRoute).nextStartedActivity?.component?.className,
+        )
+        assertNull("the detour itself must not start capture", shadowOf(app).nextStartedService)
+        assertFalse(
+            "the router owns the reset now: Setup can only resume on Overnight if this is cleared here",
+            overnightStepSeenInPrefs(),
+        )
+        destroyAfterTest()
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { setup ->
+                assertEquals(SetupStep.OVERNIGHT, setup.currentStepForTest)
+                setup.onSkipOvernight()
+                assertTrue("Skip for now must hand back, not re-show the step", setup.isFinishing)
+            }
+        }
+
+        val secondRoute = buildAndResume()
+        assertEquals(
+            "the trap: before R-1161's fix this second route repeated the first, with no way out of " +
+                "the app at all",
+            ReaderActivity::class.java.name,
+            shadowOf(secondRoute).nextStartedActivity?.component?.className,
+        )
+        assertEquals(
+            "capture must genuinely start -- the only thing that can ever produce the session " +
+                "evidence hasProvenSurvival() asks for",
+            REAL_CAPTURE_SERVICE_CLASS_NAME,
+            shadowOf(app).nextStartedService?.component?.className,
+        )
+    }
+
+    /**
+     * R-1161's "at most once per process" contract, stated on its own so it is tested rather than
+     * merely implied by the round trip above: the checker is a `:data` read and the detour is a nag,
+     * so a second launch of the router inside the same process asks neither again.
+     */
+    @Test
+    @Requirement("AC-189")
+    fun `AC_189 R-1161 the overnight detour is taken at most once per process`() {
+        val checker = FakeOvernightSurvivalChecker(proven = false)
+        DebugOvernightSurvivalOverride.show(checker)
+        markSetupCompleteWithUnprovenSurvival()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        buildAndResume()
+        destroyAfterTest()
+        val secondRoute = buildAndResume()
+
+        assertEquals("the nag is asked once per process, never re-asked on the way back", 1, checker.callCount)
+        assertEquals(
+            ReaderActivity::class.java.name,
+            shadowOf(secondRoute).nextStartedActivity?.component?.className,
+        )
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        assertEquals(
+            REAL_CAPTURE_SERVICE_CLASS_NAME,
+            shadowOf(app).nextStartedService?.component?.className,
         )
     }
 
