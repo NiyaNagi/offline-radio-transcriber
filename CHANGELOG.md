@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-22 (r-1164-1165: the two false privacy claims shipping in `v0.1.1` are corrected, and the copy that states them is made un-driftable)
 
-### `(hash recorded in the follow-up commit)` — r-1164-1165: Welcome stops making the one claim FR-ANL-14 forbids, and two screens stop promising voiceprints never leave
+### `e52b02a6` — r-1164-1165: Welcome stops making the one claim FR-ANL-14 forbids, and two screens stop promising voiceprints never leave
 
 **Scope:** `:app` only —
 `app/src/main/kotlin/org/ort/app/ui/OfflinePromiseCopy.kt` (new),
