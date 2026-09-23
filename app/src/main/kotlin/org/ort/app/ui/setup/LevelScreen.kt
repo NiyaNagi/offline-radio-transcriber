@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -23,6 +26,8 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.PrimaryButton
@@ -30,15 +35,34 @@ import org.ort.app.ui.components.referenceLineY
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
+import org.ort.capture.android.CaptureGain
+import kotlin.math.roundToInt
 
 /**
- * S07 (`Setup-Level.dc.html`, R-082) — the live 60 s meter driven by [LevelCheck]. `Continue`
- * enables only [LevelBand.IN_BAND] (guide §6.10). No level signal at all (open failed, or nothing
- * was ever read) renders an honest "cannot measure" [FailedState] instead of fabricated bars
- * (guide §6.8, constitution I) — never a fake meter.
+ * S07 (`Setup-Level.dc.html`, R-082) — the live 60 s meter driven by [LevelCheck]. No level signal
+ * at all (open failed, or nothing was ever read) renders an honest "cannot measure" [FailedState]
+ * instead of fabricated bars (guide §6.8, constitution I) — never a fake meter.
+ *
+ * **R-1170: `Continue` is never disabled for validation here.** It used to enable only on
+ * [LevelBand.IN_BAND], with [onBack] `null` — so a quiet band at two in the morning left the
+ * operator with no forward, no back and no later. A disabled control also gives no account of what
+ * is wrong and, decisively, leaves the focus order entirely, so a screen-reader user cannot even
+ * find the thing blocking them. The rule this flow now follows is: keep the button lit, validate on
+ * tap, and say what is missing. Tapping it out of band proceeds and writes the unresolved state
+ * down ([SetupActivity.onLevelContinue]), which lights S12's amber `Fix` on the Level row.
+ *
+ * **R-1168: the gain slider `design/design-intent.md:77` specified and nobody built.** It is
+ * deliberately secondary — the meter stays the primary object on this screen — and the copy below
+ * states plainly what it is: a software multiply applied after the audio has already been
+ * digitised. See [org.ort.capture.android.CaptureGain] for the whole of what it can and cannot do.
  */
 @Composable
-public fun LevelScreen(state: LevelCheckState?, onContinue: () -> Unit) {
+public fun LevelScreen(
+    state: LevelCheckState?,
+    onContinue: () -> Unit,
+    gainDb: Int = CaptureGain.MIN_GAIN_DB,
+    onGainChange: (Int) -> Unit = {},
+) {
     val reading = (state as? LevelCheckState.Reading)?.level
     SetupScaffold(
         step = SetupStep.LEVEL,
@@ -49,7 +73,6 @@ public fun LevelScreen(state: LevelCheckState?, onContinue: () -> Unit) {
             PrimaryButton(
                 text = "Continue",
                 onClick = onContinue,
-                enabled = reading?.band == LevelBand.IN_BAND,
                 modifier = Modifier.fillMaxWidth().testTag("setup-level-continue"),
             )
         },
@@ -85,6 +108,8 @@ public fun LevelScreen(state: LevelCheckState?, onContinue: () -> Unit) {
             testTag = "setup-level-headroom",
         )
 
+        GainSlider(gainDb = gainDb, onGainChange = onGainChange)
+
         reading?.let {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
                 Box(
@@ -100,15 +125,127 @@ public fun LevelScreen(state: LevelCheckState?, onContinue: () -> Unit) {
                 )
             }
         }
+
+        // R-1170: "say what is missing" — the half of the rule that replaces a disabled button.
+        // Shown whenever the band is not green (including with no reading at all, which is the
+        // case an operator with a dead adapter actually hits), never as a dead-end.
+        if (reading?.band != LevelBand.IN_BAND) {
+            Text(
+                text = "You can continue. The level stays flagged on the last setup screen, with a " +
+                    "way back here, until it is in the band.",
+                style = OrtType.cardBody,
+                color = OrtColors.textDim,
+                modifier = Modifier.padding(top = 10.dp).testTag("setup-level-unresolved-note"),
+            )
+        }
+
         Text(
-            text = "The level is set on the radio, not here — the app only reads it. Too quiet " +
-                "loses the weak signals; clipping loses the strong ones.",
+            text = LEVEL_GAIN_PARAGRAPH,
             style = OrtType.cardBody,
             color = OrtColors.textDim,
             modifier = Modifier.padding(top = 10.dp),
         )
     }
 }
+
+/**
+ * R-1168, and the copy retraction that has to ship with it (constitution I). This screen used to
+ * say *"The level is set on the radio, not here — the app only reads it"*, which a gain control
+ * makes false. The replacement neither hides the control nor sells it: everything it claims is
+ * true of a software multiply on already-quantised PCM, including the two things it cannot do.
+ */
+internal const val LEVEL_GAIN_PARAGRAPH: String =
+    "Set the level on the radio first: too quiet loses the weak signals, clipping loses the strong " +
+        "ones. Input gain here is a software multiply applied after the audio has been digitised — " +
+        "it raises the noise floor by exactly as much as the speech, and it cannot recover an input " +
+        "that is already clipping at the converter. Use it only when an adapter's output is so quiet " +
+        "that speech wastes most of the sample's range. Above 0 dB, what is retained is the gained " +
+        "audio."
+
+/**
+ * `design/design-intent.md:77` specified S07 as "Level slider" and it was never built (R-1168).
+ * Secondary by construction — a labelled row with the reading in dB, beneath the meter, never
+ * competing with it. Discrete [CaptureGain.GAIN_STEP_DB] steps so every reachable value is a round
+ * number the operator can say out loud when reporting what they set.
+ *
+ * The reading is the real [gainDb], formatted here and nowhere else; at [CaptureGain.MIN_GAIN_DB]
+ * it reads "0 dB (off)" rather than a bare zero, because "no gain at all" is the state this control
+ * should normally be in and the screen should say so.
+ */
+// The `thumb` slot is `@ExperimentalMaterial3Api` in material3 1.3 (the same opt-in
+// `OrtNavHost.kt:270` already carries). Taken deliberately rather than living with the default: see
+// the `thumb` argument's own comment for the capture that made it necessary.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GainSlider(gainDb: Int, onGainChange: (Int) -> Unit, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.fillMaxWidth().padding(top = 6.dp).testTag("setup-level-gain")) {
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Input gain",
+                style = OrtType.subtitle,
+                color = OrtColors.textDim,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = gainReadingFor(gainDb),
+                style = OrtType.timeFreq.copy(fontSize = OrtType.control.fontSize),
+                color = if (gainDb == CaptureGain.MIN_GAIN_DB) OrtColors.textDim else OrtColors.accentGreen,
+                modifier = Modifier.testTag("setup-level-gain-reading"),
+            )
+        }
+        Slider(
+            value = gainDb.toFloat(),
+            onValueChange = { onGainChange(it.roundToInt()) },
+            valueRange = CaptureGain.MIN_GAIN_DB.toFloat()..CaptureGain.MAX_GAIN_DB.toFloat(),
+            steps = GAIN_SLIDER_INTERMEDIATE_STEPS,
+            colors = SliderDefaults.colors(
+                thumbColor = OrtColors.accentGreen,
+                activeTrackColor = OrtColors.accentGreen,
+                inactiveTrackColor = OrtColors.lineSection,
+                activeTickColor = OrtColors.accentOnGreen,
+                inactiveTickColor = OrtColors.textLow,
+            ),
+            // The Material 3 1.3 default thumb is a tall 4 dp pill that overhangs the track top and
+            // bottom -- confirmed on a real capture, not inferred: it reads as a stray green bar at
+            // the left edge, in a design language whose only round marks are status dots. A plain
+            // circle instead, the size this screen's own board draws.
+            //
+            // The box around it is **24 dp wide and 44 dp tall**, and both halves of that are
+            // device-verified rather than chosen: Material 3 lays the track out *between* the
+            // thumb's halves, so a wide box visibly detaches the handle from the track, while the
+            // slider's own height is `max(thumb, track)` and it applies `requiredSizeIn`
+            // internally — a `heightIn(min = 44.dp)` on this composable's own modifier is simply
+            // discarded. A `uiautomator dump` of the built screen caught exactly that: with a
+            // square 24 dp thumb the `SeekBar` node measured 78 px ≈ 24 dp tall, under the 44 dp
+            // touch-target floor, with the modifier constraint present and doing nothing.
+            thumb = {
+                Box(
+                    modifier = Modifier.size(width = GAIN_THUMB_BOX_WIDTH_DP.dp, height = 44.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(modifier = Modifier.size(20.dp).background(OrtColors.accentGreen, CircleShape))
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Input gain in decibels" }
+                .testTag("setup-level-gain-slider"),
+        )
+    }
+}
+
+/** `"0 dB (off)"`, `"+6 dB"` — the real value, never a decorative label. */
+internal fun gainReadingFor(gainDb: Int): String =
+    if (gainDb == CaptureGain.MIN_GAIN_DB) "0 dB (off)" else "+$gainDb dB"
+
+/** `Slider`'s `steps` counts the stops *between* the ends, so this is one fewer than the number of
+ * intervals [CaptureGain.GAIN_STEP_DB] divides the range into. */
+private val GAIN_SLIDER_INTERMEDIATE_STEPS: Int =
+    (CaptureGain.MAX_GAIN_DB - CaptureGain.MIN_GAIN_DB) / CaptureGain.GAIN_STEP_DB - 1
+
+/** Just wider than the 20 dp mark it centres — see [GainSlider]'s `thumb` argument for why this is
+ * narrow while the same box is 44 dp tall. */
+private const val GAIN_THUMB_BOX_WIDTH_DP: Int = 24
 
 /**
  * R-225 (validator pass 2): at font scale 2.0 the three facts ("noise −72", "target −18 to −12",

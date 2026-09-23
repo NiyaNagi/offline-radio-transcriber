@@ -374,7 +374,7 @@ public fun readyRowsFor(
     modeRow(store, actions.onChangeMode),
     ReadyRow(
         label = "Input",
-        value = store.selectedInputLabel ?: "Not set",
+        value = inputRowValue(store),
         ok = store.inputVerified,
         statusText = "verified".takeIf { store.inputVerified },
         actionLabel = "Fix".takeIf { !store.inputVerified },
@@ -385,6 +385,18 @@ public fun readyRowsFor(
     radioRow(store, rigStatus, actions.onFixRadio, actions.onChangeRadio),
     modelsRow(modelsState, actions.onInstallModel),
 )
+
+/**
+ * R-1169: the Input row names the audio source the verified open actually obtained beside the
+ * device, so the one fact that decides whether the OEM was applying its own gain and noise
+ * suppression to this capture is readable after setup, not only during it. Omitted entirely when
+ * nothing recorded one (an unverified input, or a route verified by a build before this existed) —
+ * never filled in with a plausible default (constitution I).
+ */
+private fun inputRowValue(store: SetupStore): String {
+    val label = store.selectedInputLabel ?: return "Not set"
+    return listOfNotNull(label, store.verifiedAudioSource).joinToString(" · ")
+}
 
 /**
  * P22 (AC-189, constitution IV): this row's `ok`/`statusText`/`actionLabel` are driven **only** by

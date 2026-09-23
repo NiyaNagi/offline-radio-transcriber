@@ -22,6 +22,16 @@ public interface AudioIo {
     /** The native sample rate the hardware is actually running at. */
     public val deviceSampleRate: Int
 
+    /**
+     * Which [CaptureAudioSource] the most recent successful [open] actually obtained (technical
+     * design §5.1, register R-1169) — `null` before any open has succeeded, and never a guessed
+     * default. It is a *recorded fact about this capture*, not a setting: before it existed there
+     * was no way to tell from a capture whether the OEM had applied its own gain and noise
+     * suppression to it. Implementations keep it readable after [close], because the one caller
+     * that reports it (`:app`'s `RealRouteCheck`) closes the device before it emits its result.
+     */
+    public val audioSource: CaptureAudioSource?
+
     public fun availableDevices(): List<AudioDeviceDescriptor>
 
     /** Requests the OS route audio from [device]. Mirrors `AudioRecord.setPreferredDevice`. */

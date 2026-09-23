@@ -21,6 +21,7 @@ import org.ort.app.assets.AndroidBundledAssetSource
 import org.ort.app.assets.BundledAssetInstaller
 import org.ort.app.assets.BundledAssetState
 import org.ort.app.fieldreport.wiring.FieldReportAppWiring
+import org.ort.app.ui.setup.CaptureGainWiring
 import org.ort.core.SystemClock
 import org.ort.data.WorkQueue
 import org.ort.pipeline.digest.ProseDigestRunner
@@ -63,6 +64,14 @@ class OrtApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // R-1168: deliberately **above** the Robolectric guard. Everything below it touches the
+        // filesystem, the network scheduler or a background dispatcher; this is a single
+        // preference read and one assignment to a `@Volatile` field, and it is the wiring that
+        // makes the operator's input gain reach `RealCaptureService`'s own `AndroidAudioIo` on a
+        // cold start where Setup is never opened at all. A fix whose only proof would be "it is in
+        // the source" is exactly the R-1171 pattern this is trying not to repeat, so it is placed
+        // where a test can actually execute it. At the default (0 dB) it is a no-op.
+        CaptureGainWiring.applyStoredGain(this)
         if (isRunningUnderRobolectric()) return
         // WPR2 (FR-OBS-6/FR-OBS-7): the one call that starts the debug-build field-report session
         // recorder — see `FieldReportAppWiring`'s own doc comment for why this is called exactly

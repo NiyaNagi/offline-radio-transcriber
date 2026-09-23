@@ -3,6 +3,7 @@ package org.ort.capture.android.fake
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioIo
 import org.ort.capture.android.AudioIoEvent
+import org.ort.capture.android.CaptureAudioSource
 
 /**
  * A scriptable [AudioIo] — the behavioural fake every [org.ort.capture.android.AudioRecordSource]
@@ -27,6 +28,15 @@ public class FakeAudioIo(
 
     /** Set to false to simulate the device refusing to (re)open. */
     public var openSucceeds: Boolean = true
+
+    /**
+     * Register R-1169: scriptable, because which source a device hands back is a property of the
+     * device, not of this fake — a test that needs `:app`'s route check to report an unprocessed
+     * open sets [org.ort.capture.android.CaptureAudioSource.UNPROCESSED] here, and one that needs
+     * the OEM-processed fallback sets the other. `null` (the default) is the honest state of a
+     * fake that has not been told: nothing is claimed about a source it never obtained.
+     */
+    override var audioSource: CaptureAudioSource? = null
 
     public var openCount: Int = 0
         private set

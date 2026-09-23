@@ -1,4 +1,4 @@
-package org.ort.app.ui.setup
+﻿package org.ort.app.ui.setup
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -12,6 +12,7 @@ import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.RigStatus
 import org.ort.pipeline.capture.RigVerification
 import org.ort.rig.RigCapability
+import org.ort.testing.Requirement
 
 /** R-080..R-084 (ui-conformance-plan WP9), extended by D33/P19 WPD (E2-E13) — [readyRowsFor]
  * builds S12's rows from real state only ([SetupStore], live battery-exemption, [RigStatus],
@@ -37,6 +38,32 @@ class ReadyRowsForTest {
         rigStatus: RigStatus.State = RigStatus.State.Absent,
         modelsState: ModelsViewState = ModelsViewState(emptyList()),
     ) = readyRowsFor(store, overnightState, rigStatus, modelsState, noOpActions)
+
+    // --- R-1169: the recorded audio source is readable after setup, not only during it -----------
+
+    @Test
+    @Requirement("FR-CAP-1", "R-1169")
+    fun `FR_CAP_1 the Input row names the audio source the verified open actually obtained`() {
+        val store = InMemorySetupStore(
+            selectedInputLabel = "USB Audio Device",
+            inputVerified = true,
+            verifiedAudioSource = "unprocessed",
+        )
+
+        val row = rows(store).first { it.label == "Input" }
+
+        assertEquals("USB Audio Device · unprocessed", row.value)
+    }
+
+    @Test
+    @Requirement("FR-CAP-1", "R-1169")
+    fun `FR_CAP_1 an input with no recorded source names the device alone, never a guessed one`() {
+        val store = InMemorySetupStore(selectedInputLabel = "USB Audio Device", inputVerified = true)
+
+        val row = rows(store).first { it.label == "Input" }
+
+        assertEquals("USB Audio Device", row.value)
+    }
 
     // --- D33/E2-E13: the new leading Mode row ----------------------------------------------------
 

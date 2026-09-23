@@ -242,6 +242,7 @@
     { "id": "setup-mic-denied/S02b-mic-denied@2x", "setup": "S02b", "scenario": "setup-mic-denied", "fontScale": 2.0 },
     { "id": "setup-route-mismatch/S06-route-mismatch@2x", "setup": "S06", "scenario": "setup-route-mismatch", "fontScale": 2.0 },
     { "id": "setup-level/S07-level@2x", "setup": "S07", "scenario": "setup-level", "fontScale": 2.0 },
+  { "id": "setup-level/S07-level@2x-end", "setup": "S07", "scenario": "setup-level", "fontScale": 2.0, "scroll": "end" },
     { "id": "setup-verified/S08-battery@2x", "setup": "S08", "scenario": "setup-verified", "fontScale": 2.0 },
     { "id": "setup-verified/S12-ready@2x", "setup": "S12", "scenario": "setup-verified", "fontScale": 2.0 },
     { "id": "rig-bt-connected/S12-ready-bt@2x", "setup": "S12", "scenario": "rig-bt-connected", "fontScale": 2.0 },

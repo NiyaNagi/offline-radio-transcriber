@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 Every commit that lands completed, tested work gets an entry here — this is the project's
 build log, not just its git history, because `git log` doesn't carry *why* a change was safe,
@@ -360,6 +360,154 @@ isolation flake in that suite rather than swept under the green.
   loop, because the router clears the flag at most once per process — but if a future change gives
   something other than `MainActivity` a way to clear `overnightStepSeen`, that invariant breaks. It
   is stated in both kdocs for exactly that reason.
+## 2026-09-22 (r-gain: the audio source the spec chose in 2024, and the gain control the design intent promised)
+
+### `60f91c41` — r-gain: R-1169 `UNPROCESSED`/`VOICE_RECOGNITION` selection, recorded; R-1168 a real gain control at `AndroidAudioIo.read()`; R-1170 `Continue` no longer disabled on S07; and the three copy lines all of that makes false
+
+**Scope:** `:capture-android` (`AndroidAudioIo.kt`, `AudioIo.kt`, `fake/FakeAudioIo.kt`, new
+`CaptureGain.kt` and `CaptureAudioSource.kt`) and `:app` (`ui/setup/SetupStore.kt`,
+`ui/setup/RouteCheck.kt`, `ui/setup/LevelScreen.kt`, `ui/setup/VerifyScreen.kt`,
+`ui/setup/ReadyScreen.kt`, `ui/setup/SetupActivity.kt`, new `ui/setup/CaptureGainWiring.kt`,
+`OrtApplication.kt`, `ui/settings/SettingsCaptureScreen.kt`), plus the four artboards and the
+design inventory row those screens are judged against. **No `:pipeline` and no `:data` edit** —
+see "Left open" for the one thing that needed them.
+
+**Requirements/ACs:** FR-CAP-1, FR-CAP-6, FR-CAP-12; technical design §5.1; register R-1168,
+R-1169, R-1170; R-1171 (the anti-pattern this change had to avoid); constitution I (the copy
+retractions), III (bit-identity and saturation on losslessly retained audio), IV (nothing here
+can block capture), VIII (artboards updated in the same change). AC-131 is the reason the gain is
+deliberately **not** in `CaptureConfiguration`.
+
+**What changed.**
+
+*R-1169 — the audio source.* `spec/technical-design.md` §5.1 has specified
+`MediaRecorder.AudioSource.UNPROCESSED` where
+`AudioManager.getProperty(PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)` reports it, falling back to
+`VOICE_RECOGNITION` and explicitly never `MIC` with effects, since it was written;
+`AndroidAudioIo.kt:112` hardcoded `VOICE_RECOGNITION` unconditionally and `UNPROCESSED` appeared
+nowhere in the repository outside that one spec paragraph. New `CaptureAudioSource` is the closed
+set plus the pure decision (`preferredFor`), and `AndroidAudioIo.openPreferredSource` runs the
+real probe, opens on the chosen source, falls back a second time if a device that *claims*
+`UNPROCESSED` will not initialise on it, and **records which source the open actually obtained**
+(read back off `AudioRecord.getAudioSource()`, not assumed from what was asked for). That fact is
+now a member of the `AudioIo` interface, kept readable past `close()` because the one caller that
+reports it closes first. It is carried on `RouteCheckState`, shown on S05 beside the negotiated
+native rate (`48 000 Hz · mono · 16-bit · unprocessed`), persisted as
+`SetupStore.verifiedAudioSource` alongside `verifiedNativeRateHz`/`verifiedResamplerIdentity`, and
+**read back** by S12's Input row (`USB Audio Device · unprocessed`) so it is not another
+write-only preference. Why it leads this change: `VOICE_RECOGNITION` is an OEM-tuned path that on
+ColorOS in particular applies the vendor's own hidden AGC and noise suppression, so the level the
+operator reported would not sit still may be a vendor AGC, and stacking a user gain on top of a
+hidden one is two controls fighting.
+
+*R-1168 — the gain control.* New `CaptureGain`: the operator's choice in dB (0–12 in 3 dB steps),
+the derived multiplier, and the saturating in-place multiply. The multiply is applied in
+`AndroidAudioIo.read()` and **nowhere else**, because that is the only point both the capture path
+(`AudioRecordSource`) and first-run setup's own meter cross — on a fresh install `RealLevelCheck`
+opens the device itself and never constructs an `AudioRecordSource`, so a multiply at
+`AudioRecordSource.kt:174`/`:194` would have left the very slider the operator is watching dead
+during onboarding. Applying it there also means `LevelMeter.onFrame` and `RealLevelCheck`'s own
+peak both measure **post-gain** audio, so gain-induced clipping is reported rather than hidden.
+Unity returns before touching a sample (bit-identical), and every scaled sample saturates at the
+16-bit limits rather than wrapping — a wrapped sample is a full-scale sign flip, an audible click
+baked permanently into audio this project retains losslessly so every pass can be re-run against
+it. The value is a process-wide `@Volatile` holder (the `InputStatus`/`ShedStatus` shape) pushed
+in from `:app`, deliberately **not** routed through `CaptureConfigurationStore`, which freezes
+configuration at session start by design (AC-131) and would have produced a slider the operator
+can move while the meter does not respond. It is pushed at `OrtApplication.onCreate` (above the
+Robolectric guard, so the wiring is executable by a test) and again in `SetupActivity.onCreate`;
+the first is what makes it reach `RealCaptureService`'s own `AndroidAudioIo` on a cold start where
+Setup is never opened at all. The UI is a secondary slider on S07 beneath the meter, with the
+reading in dB.
+
+*R-1170 — `Continue` on S07.* `enabled = reading?.band == LevelBand.IN_BAND` is gone. The button
+stays lit; tapping it out of band proceeds and writes the unresolved state down
+(`SetupActivity.onLevelContinue`), which lights S12's existing amber `Fix` on the Level row, and
+the screen says so in place rather than silently refusing. The write is explicit rather than left
+to whatever the last reading was, because the case that matters is the one where there was no
+reading at all.
+
+*The copy.* Three lines promised the app never adjusts gain, and a gain control makes them false
+(constitution I). `LevelScreen.kt` and `SettingsCaptureScreen.kt` are rewritten — the new wording
+is narrow on purpose and does not sell the feature: gain here is a software multiply applied after
+the audio has been digitised, it raises the noise floor by exactly as much as the speech, it
+cannot recover an input already clipping at the converter, setting the level on the radio is still
+the right thing to do, and above 0 dB what is retained is the gained audio. The third site named
+in the brief, `CaptureStatusViewState.kt:171-173`, turned out to be band advice ("Turn the volume
+down") and makes no claim about the app's behaviour, so it is left alone; so is
+`LevelMeterScreen.kt:91-93`, for the same reason — both are reported to the lead rather than
+changed, because neither is false.
+
+*What the captures changed, which is the point of taking them.* Two things in this change exist
+only because the built screen was photographed and dumped rather than reasoned about:
+
+1. **The slider's thumb.** Material 3 1.3's default thumb is a tall 4 dp pill; on
+   `S07-level.png` it read as a stray green bar hanging off the left edge of the track, in a design
+   language whose only round marks are status dots. Replaced with a plain 20 dp circle (the
+   `thumb` slot, which carries the same `@ExperimentalMaterial3Api` opt-in `OrtNavHost.kt:270`
+   already does). A first attempt used a 44 dp-square box and the capture showed the handle
+   visibly detached from the track — Material 3 lays the track out *between* the thumb's halves.
+2. **The touch target, which a `uiautomator dump` caught failing silently.** With a 24 dp-square
+   thumb the real `SeekBar` node measured `bounds="[65,1530][1195,1608]"` → 78 px ≈ **24 dp** tall,
+   under the 44 dp floor — *with a `Modifier.heightIn(min = 44.dp)` present on the composable and
+   doing nothing*, because Material 3's slider applies `requiredSizeIn` internally and discards it.
+   The thumb box is now 24 dp wide × 44 dp tall (narrow keeps the handle on the track, tall sets
+   the slider's height), and the re-dump reads `[65,1530][1195,1672]` → 142 px ≈ **44.0 dp**. A
+   passing test would never have found this; the modifier that was supposed to guarantee it was
+   right there in the source.
+
+*Artboards (constitution VIII).* `Setup-Level.dc.html` gains the gain row and the new paragraph
+(it had silently agreed with the code rather than with `design/design-intent.md:77`, which has
+specified "Level slider" all along); `Settings-Capture.dc.html` gets the rewritten paragraph;
+`Setup-Verify.dc.html` and `Setup-Done.dc.html` get the audio-source segment. The S07 inventory
+row is amended to record that `Continue enabled only in range` is **withdrawn**, not unbuilt.
+
+**Verified:** see the session report for the exact `:capture-android` and `:app` `test`/`detekt`/
+`ktlintCheck` output. Discrimination was performed for both production changes rather than
+asserted: removing the multiply from `AndroidAudioIo.read()` fails exactly three of
+`AndroidAudioIoGainTest`'s four cases and correctly leaves the bit-identity one green; replacing
+the source selection with the old hardcoded `VOICE_RECOGNITION` fails
+`AndroidAudioIoAudioSourceTest`'s unprocessed case and nothing else.
+
+**Captures (constitution VIII, AGENTS item 7).** `ort_audit_2` on port 5558, `wm size 1260x2772` /
+`wm density 420` (the committed reference geometry, confirmed before each run and reset after),
+`tools\ui-audit\install.ps1 -Port 5558 -Clear`, then scoped `tour.ps1` runs into
+`…\scratchpad\ui-audit-r1168-final\` — S07 at 1.0, 2.0 and 2.0 scrolled to the end; S05; S12 at
+1.0, 2.0 and 2.0-end; CF02 at 1.0, 2.0, 2.0-mid, 2.0-end and 1.0-end. All steps `ok`, 0 errors.
+Every one was compared against its amended artboard by eye: the gain row and rewritten paragraph
+render as drawn on S07; `48 000 Hz · mono · 16-bit · unprocessed` on S05; `USB Audio Device ·
+unprocessed` on S12's Input row; CF02's rewritten closing paragraph is complete and clear of the
+live bar. At font scale 2.0 S07 overflows, as it did before this change, and the scrolled-to-end
+capture shows the whole paragraph reachable with nothing clipped. Two `uiautomator dump`s:
+`S07-level-dump.xml` (the `SeekBar` node's label and bounds — see above) and an S12 dump
+confirming the new Input row reads `content-desc="Input, USB Audio Device · unprocessed, verified"`
+to a screen reader.
+
+**Left open / not done:**
+- **`tour.json` gained a step (`setup-level/S07-level@2x-end`) that the committed capture set does
+  not have.** S07 was the one screen with no scrolled-to-end step at 2.0, which this change makes
+  matter; only a full canonical tour replaces `results/ui-audit/`, and that is the lead's run, so
+  the committed manifest is deliberately one step short until then.
+- **"Continue stays enabled out of band" is proven on Robolectric, not on the device.** The
+  emulator's own microphone reads in band, so the S07 dump shows the in-band branch; the dump does
+  confirm `Continue` is `clickable="true" enabled="true"` and 48 dp tall.
+- **The session row does not carry the audio source.** `SessionEntity.audioNativeRateHz` and
+  `InputStatus.State.Opened` are the other two places the negotiated rate and resampler identity
+  are recorded, and both live outside this package's ownership (`data/.../SessionEntity.kt` plus a
+  schema migration, and `pipeline/.../InputStatus.kt` + `pipeline/.../RealCaptureService.kt`).
+  Stopped and reported rather than reaching across. The fact *is* recorded for the verified route,
+  in `:app`, and is visible on S05 and S12; what is missing is the per-session column.
+- **`onBack = null` on S07 is untouched.** R-1162/R-1170 name it; the always-lit `Continue` plus
+  the recorded unresolved state removes the dead end, but the missing back affordance is a
+  separate row's work.
+- **The gain has no Settings entry point.** It is reachable from S12's Level `Fix` action, which
+  re-enters S07; Settings' capture screen names where it lives but does not host it.
+- **The `UNPROCESSED` branch is proven only through an injected probe.** A Robolectric device
+  always answers "no support", so the real `getProperty` call exercises the fallback branch only.
+  Whether a device that reports support actually opens at `UNPROCESSED`, and what it sounds like on
+  the reference ColorOS phone, is a hardware row.
+
+---
 
 ## 2026-09-22 (r-r03-ci: `TourStepsTest` stops relying on an accidental drawer-row match for the three `ImprovePage` preview seams)
 

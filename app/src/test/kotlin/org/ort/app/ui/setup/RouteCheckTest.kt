@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.capture.android.CaptureAudioSource
 import org.ort.capture.android.fake.FakeAudioIo
 import org.ort.pipeline.capture.InputStatus
 import org.ort.testing.Requirement
@@ -54,6 +55,53 @@ class RouteCheckTest {
             states.filterIsInstance<RouteCheckState.InProgress>().any { RouteCheckStage.ROUTE_MATCH in it.passed },
             "route-match stage must have been reported before Passed",
         )
+    }
+
+    @Test
+    @Requirement("FR-CAP-1", "R-1169")
+    fun `FR_CAP_1 the audio source the open obtained is carried through to Passed`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.audioSource = CaptureAudioSource.UNPROCESSED
+        io.forceRoutedDevice(usb)
+        io.enqueueFrames(loudFrame())
+
+        val states = RealRouteCheck(pollIntervalMillis = 10L).run(io, usb).toList()
+
+        val passed = states.last() as RouteCheckState.Passed
+        assertEquals(CaptureAudioSource.UNPROCESSED.operatorLabel, passed.audioSourceLabel)
+        assertTrue(
+            states.filterIsInstance<RouteCheckState.InProgress>()
+                .all { it.audioSourceLabel == CaptureAudioSource.UNPROCESSED.operatorLabel },
+            "the fact is known from the first open, so every progress state must already carry it",
+        )
+    }
+
+    @Test
+    @Requirement("FR-CAP-1", "R-1169")
+    fun `FR_CAP_1 the OEM processed fallback is reported as such, not quietly omitted`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.audioSource = CaptureAudioSource.VOICE_RECOGNITION
+        io.forceRoutedDevice(usb)
+        io.enqueueFrames(loudFrame())
+
+        val passed = RealRouteCheck(pollIntervalMillis = 10L).run(io, usb).toList().last()
+
+        assertEquals(
+            CaptureAudioSource.VOICE_RECOGNITION.operatorLabel,
+            (passed as RouteCheckState.Passed).audioSourceLabel,
+        )
+    }
+
+    @Test
+    @Requirement("FR-CAP-1", "R-1169")
+    fun `FR_CAP_1 an io that reports no source claims none, rather than a plausible default`() = runTest {
+        val io = FakeAudioIo(deviceSampleRate = 16_000)
+        io.forceRoutedDevice(usb)
+        io.enqueueFrames(loudFrame())
+
+        val passed = RealRouteCheck(pollIntervalMillis = 10L).run(io, usb).toList().last()
+
+        assertNull((passed as RouteCheckState.Passed).audioSourceLabel)
     }
 
     @Test

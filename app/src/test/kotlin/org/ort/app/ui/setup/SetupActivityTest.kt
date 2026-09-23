@@ -25,12 +25,14 @@ import org.ort.app.analytics.AnalyticsAppWiring
 import org.ort.app.analytics.AnalyticsUploadRunOutcome
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.navigation.ReaderDestination
+import org.ort.capture.android.CaptureGain
 import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
 import org.ort.rig.NullRigModule
 import org.ort.rig.RigTransportKind
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.GraphicsMode
@@ -1613,6 +1615,130 @@ class SetupActivityTest {
             .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, false)
         assertFalse("leaving without answering must not be recorded as having answered", stepSeen)
     }
+
+    // --- R-1168 / R-1169 / R-1170: the gain control, the recorded source, the never-disabled button
+
+    /**
+     * R-1168, and directly against R-1171 (three Settings switches persisted, rendered and read by
+     * nobody): moving S07's slider must do **both** things — take effect now, on the live audio
+     * path, and survive the process. Either alone would be the defect that register row exists to
+     * stop repeating.
+     */
+    @Test
+    @Requirement("FR-CAP-6", "R-1168")
+    fun `FR_CAP_6 moving the gain slider takes effect immediately and is persisted`() {
+        grant(Manifest.permission.RECORD_AUDIO)
+        try {
+            ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    activity.onGainChanged(6)
+
+                    assertEquals("the live audio path must see it now", 6, CaptureGain.decibels)
+                    assertTrue("6 dB is a real multiplier, not unity", CaptureGain.linear > 1.5f)
+                    assertEquals("and the slider must move with it", 6, activity.gainDbForTest)
+                }
+            }
+            assertEquals(
+                "it must survive the process that set it",
+                6,
+                setupPrefs().getInt(SharedPreferencesSetupStore.KEY_CAPTURE_GAIN_DB, -1),
+            )
+        } finally {
+            CaptureGain.reset()
+        }
+    }
+
+    @Test
+    @Requirement("FR-CAP-6", "R-1168")
+    fun `FR_CAP_6 a gain stored by an earlier run is live again before any meter opens a device`() {
+        setupPrefs().edit().putInt(SharedPreferencesSetupStore.KEY_CAPTURE_GAIN_DB, 9).commit()
+        CaptureGain.reset()
+        grant(Manifest.permission.RECORD_AUDIO)
+        try {
+            ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    assertEquals(9, CaptureGain.decibels)
+                    assertEquals(9, activity.gainDbForTest)
+                }
+            }
+        } finally {
+            CaptureGain.reset()
+        }
+    }
+
+    /**
+     * R-1170: `Continue` is no longer disabled for validation, so the unresolved state has to be
+     * written down instead of blocked on — otherwise "keep the button lit" would simply lose the
+     * finding. S12's Level row reads `levelInBand` together with the measured peak (`levelRow`'s
+     * own doc comment), and this is what makes it light its amber `Fix`.
+     */
+    @Test
+    @Requirement("FR-CAP-6", "R-1170")
+    fun `FR_CAP_6 continuing with an out of band level records the unresolved state for S12`() {
+        grant(Manifest.permission.RECORD_AUDIO)
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.onLevelStateChanged(
+                    LevelCheckState.Reading(
+                        LevelReading(
+                            bars = listOf(0.1f),
+                            peakDbfs = -40.0,
+                            noiseFloorDbfs = -70.0,
+                            band = LevelBand.TOO_QUIET,
+                        ),
+                    ),
+                )
+                activity.onLevelContinue()
+            }
+        }
+
+        assertFalse(
+            "the operator proceeds, and the unresolved level is written down rather than lost",
+            setupPrefs().getBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true),
+        )
+    }
+
+    @Test
+    @Requirement("FR-CAP-6", "R-1170")
+    fun `FR_CAP_6 continuing with no level reading at all never leaves a stale in-band flag standing`() {
+        setupPrefs().edit().putBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true).commit()
+        grant(Manifest.permission.RECORD_AUDIO)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onLevelContinue() }
+        }
+
+        assertFalse(
+            "a step that never went green must not carry a green marker forward from an earlier route",
+            setupPrefs().getBoolean(SharedPreferencesSetupStore.KEY_LEVEL_IN_BAND, true),
+        )
+    }
+
+    /** R-1169: the third fact about a verified open, recorded beside the rate and the resampler. */
+    @Test
+    @Requirement("FR-CAP-1", "R-1169")
+    fun `FR_CAP_1 a passed verification records which audio source the open obtained`() {
+        grant(Manifest.permission.RECORD_AUDIO)
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.onVerifyStateChanged(
+                    RouteCheckState.Passed(
+                        nativeRateHz = 48_000,
+                        resamplerDescription = "48000 Hz -> 16000 Hz, resampled",
+                        audioSourceLabel = "unprocessed",
+                    ),
+                )
+            }
+        }
+
+        assertEquals(
+            "unprocessed",
+            setupPrefs().getString(SharedPreferencesSetupStore.KEY_VERIFIED_AUDIO_SOURCE, null),
+        )
+    }
+
+    private fun setupPrefs() = ApplicationProvider.getApplicationContext<Application>()
+        .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
 
     private companion object {
         /** [WelcomeScreen]'s own title text, `WelcomeHeader`'s own literal — kept as one constant

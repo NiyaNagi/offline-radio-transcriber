@@ -1,4 +1,4 @@
-package org.ort.app.debug
+﻿package org.ort.app.debug
 
 import android.content.Context
 import kotlinx.coroutines.CancellationException
@@ -43,6 +43,7 @@ import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.app.ui.setup.levelBarFraction
 import org.ort.capture.android.AudioDeviceDescriptor
 import org.ort.capture.android.AudioDeviceKind
+import org.ort.capture.android.CaptureAudioSource
 import org.ort.capture.android.heartbeat.FileHeartbeatStore
 import org.ort.capture.android.heartbeat.HeartbeatRecord
 import org.ort.core.AttributionState
@@ -2132,6 +2133,11 @@ public object Scenarios {
                 routedDeviceLabel = "USB Audio Device",
                 levelBars = speechShapedLevelBarFractions(),
                 noiseFloorDbfs = -58.0,
+                // R-1169: the source a real open on this fixture's USB adapter would actually have
+                // obtained. Named here rather than left null so the board's own "Opened at native
+                // rate" detail is captured in the shape a device produces, not in the degenerate
+                // "reported nothing" shape an override that simply forgot the field would.
+                audioSourceLabel = CaptureAudioSource.UNPROCESSED.operatorLabel,
             ),
         )
     }
@@ -2342,6 +2348,7 @@ public object Scenarios {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.verifiedAudioSource = CaptureAudioSource.UNPROCESSED.operatorLabel
         // R-804's own class: CF02/CF11 read CaptureConfigurationStore.current(), not SetupStore.
         realCaptureConfigurationStore(context).update(
             CaptureConfiguration(mode = CaptureMode.LOCAL_MICROPHONE, selectedInputId = "mic-0"),
@@ -2567,6 +2574,7 @@ public object Scenarios {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.verifiedAudioSource = CaptureAudioSource.UNPROCESSED.operatorLabel
         // R-804 (halt): CF02/CF11 read CaptureConfigurationStore.current(), not SetupStore — every
         // caller of this shared base (setup-verified/setup-level/setup-radio) selects the same
         // usb-1 input above, so each must agree with the real store those two boards actually read.
@@ -2998,6 +3006,7 @@ public object Scenarios {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.verifiedAudioSource = CaptureAudioSource.UNPROCESSED.operatorLabel
         store.levelInBand = true
         store.levelPeakDbfs = -14.0
         store.overnightStepSeen = true
@@ -3069,6 +3078,7 @@ public object Scenarios {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.verifiedAudioSource = CaptureAudioSource.UNPROCESSED.operatorLabel
         store.levelInBand = true
         store.levelPeakDbfs = -14.0
         store.overnightStepSeen = true
@@ -3693,6 +3703,7 @@ public object Scenarios {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.verifiedAudioSource = CaptureAudioSource.UNPROCESSED.operatorLabel
         store.levelInBand = true
         store.levelPeakDbfs = -14.0
         store.overnightStepSeen = true
@@ -3969,6 +3980,7 @@ public object Scenarios {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.verifiedAudioSource = CaptureAudioSource.UNPROCESSED.operatorLabel
         store.levelInBand = true
         store.levelPeakDbfs = -14.0
         store.overnightStepSeen = true
@@ -4009,6 +4021,7 @@ public object Scenarios {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "polyphase/v1 48000->16000 (L=1 M=3 taps=64 8f2c91a4d310)"
+        store.verifiedAudioSource = CaptureAudioSource.UNPROCESSED.operatorLabel
         store.levelInBand = true
         store.levelPeakDbfs = -14.0
         store.overnightStepSeen = true

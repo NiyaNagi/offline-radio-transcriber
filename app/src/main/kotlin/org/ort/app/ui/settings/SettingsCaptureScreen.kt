@@ -138,8 +138,7 @@ public fun SettingsCaptureScreen(
             ManualFrequencyRow(manualFrequencyMhz = state.manualFrequencyMhz, onEdit = onEditManualFrequency)
 
             Text(
-                text = "The level is set on the radio, not here. The app reads it and tells you when it " +
-                    "drifts; it never adjusts gain on the way in, so what is retained is what the radio put out.",
+                text = CAPTURE_LEVEL_PARAGRAPH,
                 style = OrtType.cardBody,
                 color = OrtColors.textDim,
                 modifier = Modifier.padding(top = OrtSpacing.lg, bottom = OrtSpacing.lg),
@@ -147,6 +146,21 @@ public fun SettingsCaptureScreen(
         }
     }
 }
+
+/**
+ * R-1168, and the copy retraction that has to ship with the control (constitution I). This screen
+ * used to end *"…it never adjusts gain on the way in, so what is retained is what the radio put
+ * out"* — the most explicit of the three promises a gain slider makes false. It is replaced rather
+ * than deleted, because the operator still needs to know both halves: setting the level on the
+ * radio is still the right thing to do, and what the gain control actually is, including what it
+ * cannot do and what it changes about the retained audio.
+ */
+internal const val CAPTURE_LEVEL_PARAGRAPH: String =
+    "The level is set on the radio, not here, and the app reads it and tells you when it drifts. " +
+        "Input gain — the slider on setup's Level step — is a software multiply applied after the " +
+        "audio has been digitised: it raises the noise floor by exactly as much as the speech, and " +
+        "it cannot recover an input that is already clipping at the converter. At 0 dB what is " +
+        "retained is exactly what the radio put out; above it, what is retained is the gained audio."
 
 /**
  * CF02's leading Capture-mode row (`Settings-Capture.dc.html`, amended 2026-09-10, FR-CAP-12) — an

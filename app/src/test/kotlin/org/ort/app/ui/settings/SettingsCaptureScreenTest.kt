@@ -1,4 +1,4 @@
-package org.ort.app.ui.settings
+﻿package org.ort.app.ui.settings
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,11 +11,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -39,6 +41,34 @@ class SettingsCaptureScreenTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    /**
+     * R-1168 (register), constitution I. This screen carried the most explicit of the three
+     * promises a gain control makes false — *"it never adjusts gain on the way in, so what is
+     * retained is what the radio put out"* — and the fix is not allowed to leave it standing. The
+     * assertion is deliberately on the **absence** of the superseded clause and the presence of the
+     * two facts that replace it, not on the exact new wording, which a designer may rephrase.
+     */
+    @Test
+    @Requirement("FR-CAP-12", "R-1168")
+    fun `FR_CAP_12 the screen no longer promises the app never adjusts gain on the way in`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsCaptureScreen(
+                    state = state(CaptureMode.LOCAL_MICROPHONE),
+                    onBack = {},
+                    toggles = SettingsCaptureToggleActions({}, {}, {}),
+                )
+            }
+        }
+        val scrollable = composeTestRule.onNode(hasScrollAction())
+        scrollable.performSemanticsAction(SemanticsActions.ScrollBy) { it(0f, Float.MAX_VALUE) }
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onAllNodesWithText("never adjusts gain", substring = true).assertCountEquals(0)
+        composeTestRule.onNodeWithText("raises the noise floor by exactly as much as the speech", substring = true)
+            .assertExists()
+    }
 
     private fun state(mode: CaptureMode, modeSubLine: String = "sub-line") = SettingsCaptureViewState(
         inputLabel = "USB Audio Device",
@@ -180,7 +210,7 @@ class SettingsCaptureScreenTest {
 
         composeTestRule
             .onNodeWithText(
-                "it never adjusts gain on the way in, so what is retained is what the radio put out.",
+                "above it, what is retained is the gained audio.",
                 substring = true,
             )
             .assertExists()
@@ -225,7 +255,7 @@ class SettingsCaptureScreenTest {
 
         composeTestRule
             .onNodeWithText(
-                "it never adjusts gain on the way in, so what is retained is what the radio put out.",
+                "above it, what is retained is the gained audio.",
                 substring = true,
             )
             .assertExists()

@@ -2,22 +2,26 @@ package org.ort.app.ui.setup
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.unit.Density
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.components.referenceLineY
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /** R-082 (ui-conformance-plan WP9) — `Setup-Level.dc.html` (S07): `Continue` only in band; no
@@ -32,12 +36,38 @@ class LevelScreenTest {
         LevelReading(bars = listOf(0.1f, 0.4f, 0.7f), peakDbfs = -14.0, noiseFloorDbfs = -58.0, band = band),
     )
 
+    /**
+     * R-1170 (register): this test used to assert the opposite — `Continue` disabled while the
+     * band was not green — and that, together with `onBack = null`, is what stranded an operator
+     * whose adapter would not reach the band. The rule is now: never disable a primary button for
+     * validation; keep it lit, validate on tap, and say what is missing.
+     */
     @Test
-    fun `R_082 Continue is disabled when too quiet, enabled when in band`() {
+    @Requirement("FR-CAP-6", "R-1170")
+    fun `FR_CAP_6 Continue stays enabled when the level is too quiet, and says what is unresolved`() {
         composeTestRule.setContent {
             OrtTheme { LevelScreen(state = reading(LevelBand.TOO_QUIET), onContinue = {}) }
         }
-        composeTestRule.onNodeWithTag("setup-level-continue").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("setup-level-continue").assertIsEnabled()
+        composeTestRule.onNodeWithTag("setup-level-unresolved-note").assertExists()
+    }
+
+    @Test
+    @Requirement("FR-CAP-6", "R-1170")
+    fun `FR_CAP_6 a level that cannot be measured at all is still not a dead end`() {
+        composeTestRule.setContent {
+            OrtTheme { LevelScreen(state = LevelCheckState.Unavailable("device open failed"), onContinue = {}) }
+        }
+        composeTestRule.onNodeWithTag("setup-level-continue").assertIsEnabled()
+    }
+
+    @Test
+    @Requirement("FR-CAP-6", "R-1170")
+    fun `FR_CAP_6 an in band level has nothing unresolved to say`() {
+        composeTestRule.setContent {
+            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+        }
+        composeTestRule.onNodeWithTag("setup-level-unresolved-note").assertDoesNotExist()
     }
 
     @Test
@@ -55,7 +85,62 @@ class LevelScreenTest {
             OrtTheme { LevelScreen(state = LevelCheckState.Unavailable("device open failed"), onContinue = {}) }
         }
         composeTestRule.onNodeWithTag("setup-level-unavailable").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("setup-level-continue").assertIsNotEnabled()
+    }
+
+    // --- R-1168: the gain slider design-intent.md:77 specified and nobody built ------------------
+
+    @Test
+    @Requirement("FR-CAP-6", "R-1168")
+    fun `FR_CAP_6 the gain reading is the real value, not a decorative label`() {
+        composeTestRule.setContent {
+            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}, gainDb = 6) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-level-gain-reading").assertTextEquals("+6 dB")
+    }
+
+    @Test
+    @Requirement("FR-CAP-6", "R-1168")
+    fun `FR_CAP_6 no gain reads as off rather than a bare zero`() {
+        composeTestRule.setContent {
+            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}, gainDb = 0) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-level-gain-reading").assertTextEquals("0 dB (off)")
+    }
+
+    @Test
+    @Requirement("FR-CAP-6", "R-1168")
+    fun `FR_CAP_6 moving the slider reports the new gain in whole decibels`() {
+        var reported: Int? = null
+        composeTestRule.setContent {
+            OrtTheme {
+                LevelScreen(
+                    state = reading(LevelBand.TOO_QUIET),
+                    onContinue = {},
+                    gainDb = 0,
+                    onGainChange = { reported = it },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-level-gain-slider")
+            .performSemanticsAction(SemanticsActions.SetProgress) { it(9f) }
+
+        assertEquals(9, reported)
+    }
+
+    @Test
+    @Requirement("FR-CAP-6", "R-1168")
+    fun `FR_CAP_6 the screen no longer claims the app only reads the level`() {
+        composeTestRule.setContent {
+            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+        }
+
+        // The superseded promise, verbatim -- a gain control makes it false (constitution I).
+        composeTestRule.onAllNodesWithText("the app only reads it", substring = true).assertCountEquals(0)
+        composeTestRule.onNodeWithText("cannot recover an input that is already clipping", substring = true)
+            .assertExists()
     }
 
     // --- R-124 (validator follow-up, register R-120..R-125) ------------------------------------
