@@ -39,6 +39,8 @@ public sealed interface RouteCheckState {
         val routedDeviceLabel: String? = null,
         val levelBars: List<Float> = emptyList(),
         val noiseFloorDbfs: Double? = null,
+        /** R-1169 — see [Passed.audioSourceLabel]. */
+        val audioSourceLabel: String? = null,
     ) : RouteCheckState
 
     /**
@@ -57,6 +59,14 @@ public sealed interface RouteCheckState {
         val routedDeviceLabel: String? = null,
         val levelBars: List<Float> = emptyList(),
         val noiseFloorDbfs: Double? = null,
+        /**
+         * R-1169: which capture audio source the open actually obtained
+         * (`org.ort.capture.android.CaptureAudioSource.operatorLabel`), reported beside the native
+         * rate on S05 and recorded on [SetupStore.verifiedAudioSource]. `null` when the [AudioIo]
+         * did not report one — never a guessed default, since "which processing the OEM applied to
+         * this capture" is exactly the fact that was previously unknowable.
+         */
+        val audioSourceLabel: String? = null,
     ) : RouteCheckState
 
     /** `Setup-Route-Mismatch.dc.html`: the OS routed audio somewhere other than [selected]. */
@@ -133,8 +143,11 @@ public class RealRouteCheck(
             return@flow
         }
         val nativeRate = io.deviceSampleRate
+        // R-1169: read straight after the open that obtained it. `AndroidAudioIo` keeps it readable
+        // past `close()` precisely because this flow closes the device before it reports.
+        val audioSourceLabel = io.audioSource?.operatorLabel
         var passed = setOf(RouteCheckStage.NATIVE_RATE)
-        emit(RouteCheckState.InProgress(passed, nativeRate, 0L))
+        emit(RouteCheckState.InProgress(passed, nativeRate, 0L, audioSourceLabel = audioSourceLabel))
 
         val routedDevice = io.routedDevice()
         val verdict = RouteVerifier.verify(selected, routedDevice)
@@ -145,7 +158,7 @@ public class RealRouteCheck(
         }
         passed = passed + RouteCheckStage.ROUTE_MATCH
         val routedDeviceLabel = routedDevice?.label
-        emit(RouteCheckState.InProgress(passed, nativeRate, 0L, routedDeviceLabel))
+        emit(RouteCheckState.InProgress(passed, nativeRate, 0L, routedDeviceLabel, audioSourceLabel = audioSourceLabel))
 
         val published = publishedVerificationFor(selected)
         if (published != null) {
@@ -155,12 +168,13 @@ public class RealRouteCheck(
                     published.nativeRateHz,
                     published.resamplerId,
                     routedDeviceLabel ?: published.descriptor.label,
+                    audioSourceLabel = audioSourceLabel,
                 ),
             )
             return@flow
         }
 
-        val listened = listenForSignal(io, passed, nativeRate, routedDeviceLabel)
+        val listened = listenForSignal(io, passed, nativeRate, routedDeviceLabel, audioSourceLabel)
         if (listened == null) {
             io.close()
             emit(RouteCheckState.TimedOut)
@@ -175,6 +189,7 @@ public class RealRouteCheck(
                 routedDeviceLabel,
                 listened.levelBars,
                 listened.noiseFloorDbfs,
+                audioSourceLabel,
             ),
         )
 
@@ -187,6 +202,7 @@ public class RealRouteCheck(
                 routedDeviceLabel,
                 listened.levelBars,
                 listened.noiseFloorDbfs,
+                audioSourceLabel,
             ),
         )
     }
@@ -209,6 +225,7 @@ public class RealRouteCheck(
         passed: Set<RouteCheckStage>,
         nativeRate: Int,
         routedDeviceLabel: String?,
+        audioSourceLabel: String?,
     ): ListenResult? {
         var elapsed = 0L
         var heard = false
@@ -238,6 +255,7 @@ public class RealRouteCheck(
                             routedDeviceLabel,
                             levelBars.toList(),
                             noiseFloorDbfs,
+                            audioSourceLabel,
                         ),
                     )
                 }

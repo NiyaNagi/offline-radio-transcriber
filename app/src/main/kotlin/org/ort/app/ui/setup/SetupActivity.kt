@@ -45,6 +45,7 @@ import org.ort.app.work.ModelDownloadSnapshot
 import org.ort.app.work.ModelDownloadWorker
 import org.ort.capture.android.AndroidAudioIo
 import org.ort.capture.android.AudioDeviceDescriptor
+import org.ort.capture.android.CaptureGain
 import org.ort.core.capture.CaptureMode
 import org.ort.core.capture.CaptureModePresets
 import org.ort.data.OrtDatabase
@@ -154,6 +155,15 @@ public class SetupActivity : ComponentActivity() {
 
     private var levelState by mutableStateOf<LevelCheckState?>(null)
     private var levelRunToken by mutableStateOf(0)
+
+    /**
+     * R-1168: S07's gain slider position, in dB. Compose state rather than reading
+     * [CaptureGain.decibels] directly at composition time — that is a plain `@Volatile` field
+     * nothing recomposes on, so the slider would not move under the operator's finger. [CaptureGain]
+     * remains the single source of truth for the *live* value the audio path reads;
+     * [onGainChanged] writes both, and [onCreate] seeds this from what [CaptureGain] already holds.
+     */
+    private var gainDb by mutableStateOf(CaptureGain.MIN_GAIN_DB)
 
     private var rigStatusSnapshot by mutableStateOf(RigStatus.state)
 
@@ -283,6 +293,9 @@ public class SetupActivity : ComponentActivity() {
      * that [SetupStep.VERIFY] itself was reached. */
     internal val verifyStateForTest: RouteCheckState? get() = verifyState
 
+    /** R-1168: test-only window into the slider position S07 is actually rendering. */
+    internal val gainDbForTest: Int get() = gainDb
+
     // WPW (register, WPR2's own report): `FieldReportAppWiring.attachWindow(window)` was called
     // only from `ReaderActivity` — Setup was never wired at all, even though the operator's own
     // motivating incident (four onboarding defects, no evidence but a verbal description and one
@@ -305,6 +318,12 @@ public class SetupActivity : ComponentActivity() {
         )
         rigLinkPort = DebugRigLinkPortOverride.activeOverride ?: BridgeRigLinkPort(DefaultRigLinkBridge(this))
         audioIo = AndroidAudioIo(this)
+        // R-1168: the stored gain becomes the live one before any meter or capture opens a device
+        // here. `OrtApplication` already does this at process start for the path that never enters
+        // Setup at all; repeating it is idempotent and keeps this Activity correct when it is
+        // launched directly (every `SetupActivityTest`, and every debug scenario, does exactly that).
+        CaptureGainWiring.applyStoredGain(store)
+        gainDb = CaptureGain.decibels
         selectedInputId = store.selectedInputId
         selectedInputLabel = store.selectedInputLabel
         reconcileOvernightSurvival()
@@ -625,6 +644,8 @@ public class SetupActivity : ComponentActivity() {
             store.inputVerified = true
             store.verifiedNativeRateHz = new.nativeRateHz
             store.verifiedResamplerIdentity = new.resamplerDescription
+            // R-1169: recorded alongside the other two facts about this open, for the same reason.
+            store.verifiedAudioSource = new.audioSourceLabel
         }
     }
 
@@ -655,7 +676,35 @@ public class SetupActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * R-1168 (register): the operator moved S07's gain slider. Two writes, both required — the
+     * preference so the choice survives the process, and [CaptureGain] so it takes effect on the
+     * very next `AndroidAudioIo.read`, which is what makes the meter the operator is watching move
+     * in response. Anything less is the R-1171 pattern: a control that is persisted, rendered and
+     * read by nobody.
+     */
+    internal fun onGainChanged(db: Int) {
+        CaptureGain.setGainDb(db)
+        gainDb = CaptureGain.decibels
+        store.captureGainDb = CaptureGain.decibels
+    }
+
+    /**
+     * R-1170: `Continue` here is never disabled for validation — the rule this flow now follows is
+     * keep the button lit, validate on tap, and say what is missing. A quiet band at two in the
+     * morning used to strand the operator with no forward, no back and no later.
+     *
+     * "Validate on tap" is this: the unresolved state is **written down** rather than blocked on,
+     * so S12's Level row lights its amber `Fix` instead of the operator being told nothing. The
+     * write is explicit rather than left to whatever `onLevelStateChanged` last saw, because the
+     * case that matters is the one where it saw nothing at all (an input that never produced a
+     * reading), and a stale `levelInBand` from an earlier route must not carry a green marker past
+     * a step that never went green.
+     */
     internal fun onLevelContinue() {
+        if ((levelState as? LevelCheckState.Reading)?.level?.band != LevelBand.IN_BAND) {
+            store.levelInBand = false
+        }
         navigateForward(SetupStep.OVERNIGHT)
     }
 
@@ -1320,7 +1369,12 @@ public class SetupActivity : ComponentActivity() {
                 }
             }
         }
-        LevelScreen(state = levelState, onContinue = ::onLevelContinue)
+        LevelScreen(
+            state = levelState,
+            onContinue = ::onLevelContinue,
+            gainDb = gainDb,
+            onGainChange = ::onGainChanged,
+        )
     }
 
     /**

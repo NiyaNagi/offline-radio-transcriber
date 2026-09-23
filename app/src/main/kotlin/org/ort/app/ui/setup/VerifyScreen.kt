@@ -89,7 +89,14 @@ public fun VerifyScreen(
 
         CheckRow(
             title = "Opened at native rate",
-            detail = facts.nativeRateHz?.let { "${formatHzGrouped(it)} Hz · mono · 16-bit" },
+            // R-1169: the audio source the open actually obtained, named beside the rate it opened
+            // at — before this there was no way to tell from a capture whether the OEM had applied
+            // its own gain and noise suppression. Omitted entirely, never guessed, when the
+            // [AudioIo] reported none.
+            detail = facts.nativeRateHz?.let { rate ->
+                listOfNotNull("${formatHzGrouped(rate)} Hz · mono · 16-bit", facts.audioSourceLabel)
+                    .joinToString(" · ")
+            },
             done = RouteCheckStage.NATIVE_RATE in passed,
             testTag = "setup-verify-check-native-rate",
         )
@@ -182,6 +189,7 @@ private data class RouteCheckFacts(
     val elapsedListeningMillis: Long?,
     val levelBars: List<Float>,
     val noiseFloorDbfs: Double?,
+    val audioSourceLabel: String?,
 )
 
 private fun routeCheckFactsFrom(check: RouteCheckState?): RouteCheckFacts = when (check) {
@@ -191,6 +199,7 @@ private fun routeCheckFactsFrom(check: RouteCheckState?): RouteCheckFacts = when
         check.elapsedListeningMillis,
         check.levelBars,
         check.noiseFloorDbfs,
+        check.audioSourceLabel,
     )
     is RouteCheckState.Passed -> RouteCheckFacts(
         check.nativeRateHz,
@@ -198,8 +207,9 @@ private fun routeCheckFactsFrom(check: RouteCheckState?): RouteCheckFacts = when
         null,
         check.levelBars,
         check.noiseFloorDbfs,
+        check.audioSourceLabel,
     )
-    else -> RouteCheckFacts(null, null, null, emptyList(), null)
+    else -> RouteCheckFacts(null, null, null, emptyList(), null, null)
 }
 
 /** `"48000"` → `"48 000"` (space-grouped thousands) — `Setup-Verify.dc.html`'s own formatting for

@@ -6,7 +6,6 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Build
 import org.ort.core.capture.BluetoothAudioProfile
 
@@ -40,7 +39,25 @@ import org.ort.core.capture.BluetoothAudioProfile
  * same session: [select] now negotiates [deviceSampleRate] against the selected device's own
  * `AudioDeviceInfo.getSampleRates()` instead of always opening at a fixed rate.
  */
-public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DEFAULT_SAMPLE_RATE) : AudioIo {
+public class AndroidAudioIo(
+    context: Context,
+    private val sampleRateHz: Int = DEFAULT_SAMPLE_RATE,
+    /**
+     * The live input gain, read once per [read] (register R-1168). A function, not a value, because
+     * the operator can move the control while the device is already open and it must take effect on
+     * the very next read — see [CaptureGain]'s own kdoc for why the real default is a process-wide
+     * holder rather than a constructor argument `:app` could only set on the instance it built.
+     */
+    private val gain: () -> Float = { CaptureGain.linear },
+    /**
+     * The `PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED` capability probe (register R-1169), injectable
+     * for exactly one reason: a Robolectric device always answers "no", so without this seam the
+     * `UNPROCESSED` branch of technical design §5.1 could only ever be proven on hardware, and a
+     * reverted selection would go on passing every test in this module. The real default below is
+     * the real probe; nothing in production passes anything else.
+     */
+    private val unprocessedSupported: (() -> Boolean)? = null,
+) : AudioIo {
 
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -48,6 +65,17 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
     private var record: AudioRecord? = null
     private var listener: ((AudioIoEvent) -> Unit)? = null
     private var selected: AudioDeviceDescriptor? = null
+
+    /**
+     * Which [CaptureAudioSource] the most recent successful [open] actually obtained (register
+     * R-1169) — `null` until one has succeeded, never a guessed default. Deliberately **survives**
+     * [close]: `:app`'s `RealRouteCheck` closes the device before it emits its result, and a fact
+     * about a capture that cannot be read after the capture is not recorded at all.
+     */
+    @Volatile
+    private var obtainedAudioSource: CaptureAudioSource? = null
+
+    override val audioSource: CaptureAudioSource? get() = obtainedAudioSource
 
     /** Whether *this instance* activated Bluetooth SCO — so [close] only ever undoes what it did. */
     private var bluetoothScoActivatedByThisInstance = false
@@ -107,18 +135,7 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
         )
         if (minBuf <= 0) return false
 
-        @Suppress("MissingPermission") // caller (MainActivity) verifies RECORD_AUDIO before this is ever called
-        val audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
-            rate,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            minBuf * BUFFER_SIZE_MULTIPLIER,
-        )
-        if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-            audioRecord.release()
-            return false
-        }
+        val audioRecord = openPreferredSource(rate, minBuf * BUFFER_SIZE_MULTIPLIER) ?: return false
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val target = selected?.let { desc -> matchingDeviceInfo(desc) }
@@ -131,11 +148,75 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
         if (audioRecord.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
             audioRecord.release()
             deactivateBluetoothSco()
+            // It initialised but never recorded: nothing was obtained, so nothing is claimed.
+            obtainedAudioSource = null
             return false
         }
         record = audioRecord
         registerDeviceCallback()
         return true
+    }
+
+    /**
+     * Technical design §5.1, register R-1169: opens on `UNPROCESSED` where the device reports
+     * supporting it, falling back to `VOICE_RECOGNITION` — and **records which one the open
+     * actually got** ([obtainedAudioSource]), read back off the real `AudioRecord` rather than
+     * assumed from what was asked for.
+     *
+     * The fallback is applied twice over, deliberately. Once on the capability answer, which is
+     * the spec's own rule; and once more if a device that *claims* `UNPROCESSED` then fails to
+     * initialise on it — constitution II prefers a capability probe to exception forensics, but a
+     * probe that turns out to have lied must not take capture down with it, and this is the one
+     * place where trying the other source costs nothing. `null` only when neither would open,
+     * which the caller already treats as a genuine capture failure.
+     */
+    private fun openPreferredSource(rate: Int, bufferBytes: Int): AudioRecord? {
+        obtainedAudioSource = null
+        val supported = unprocessedSupported?.invoke() ?: supportsUnprocessedSource()
+        val preferred = CaptureAudioSource.preferredFor(supported)
+        val candidates = (listOf(preferred) + CaptureAudioSource.VOICE_RECOGNITION).distinct()
+        for (candidate in candidates) {
+            val opened = initialisedRecord(candidate, rate, bufferBytes) ?: continue
+            obtainedAudioSource = CaptureAudioSource.fromAndroidSource(opened.audioSource) ?: candidate
+            return opened
+        }
+        return null
+    }
+
+    /** One `AudioRecord` construction attempt — `null` for anything that did not initialise. */
+    private fun initialisedRecord(source: CaptureAudioSource, rate: Int, bufferBytes: Int): AudioRecord? {
+        @Suppress("MissingPermission") // caller (MainActivity) verifies RECORD_AUDIO before this is ever called
+        val candidate = try {
+            AudioRecord(
+                source.androidSource,
+                rate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferBytes,
+            )
+        } catch (_: IllegalArgumentException) {
+            // A source the platform rejects outright for this configuration — the same "could not
+            // open on this one" outcome as a failed initialisation, handled identically.
+            return null
+        }
+        if (candidate.state != AudioRecord.STATE_INITIALIZED) {
+            candidate.release()
+            return null
+        }
+        return candidate
+    }
+
+    /**
+     * The capability probe technical design §5.1 names. `getProperty` answers `"true"`/`"false"` or
+     * `null`; anything that is not an explicit `"true"` is treated as no support (constitution I:
+     * absence of an answer is not evidence of a capability), and a stack that rejects the query
+     * outright lands in the same place rather than taking capture down.
+     */
+    private fun supportsUnprocessedSource(): Boolean = try {
+        audioManager.getProperty(AudioManager.PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED)
+            .equals("true", ignoreCase = true)
+    } catch (_: RuntimeException) {
+        false
     }
 
     /**
@@ -182,9 +263,24 @@ public class AndroidAudioIo(context: Context, private val sampleRateHz: Int = DE
         return base?.withNegotiatedBluetoothProfile()
     }
 
+    /**
+     * Register R-1168: **the one and only gain seam.** The multiply is applied here, after the
+     * device has delivered the block and before anyone sees it, because this is the only point both
+     * the capture path ([AudioRecordSource]) and first-run setup's own level meter (`:app`'s
+     * `RealLevelCheck`, which opens the device itself and never constructs an [AudioRecordSource])
+     * actually cross. Applying it one layer up would leave the slider the operator is watching
+     * during setup completely dead.
+     *
+     * It also means every downstream measurement — [LevelMeter.onFrame] here, `RealLevelCheck`'s
+     * own peak there — measures **post-gain** audio, so gain-induced clipping is reported honestly
+     * rather than hidden behind a meter reading the pre-gain block. See [CaptureGain.applyTo] for
+     * why it saturates.
+     */
     override fun read(buffer: ShortArray): Int {
         val r = record ?: return -1
-        return r.read(buffer, 0, buffer.size)
+        val n = r.read(buffer, 0, buffer.size)
+        if (n > 0) CaptureGain.applyTo(buffer, n, gain())
+        return n
     }
 
     override fun close() {

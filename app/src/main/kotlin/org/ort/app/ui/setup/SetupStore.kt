@@ -40,8 +40,31 @@ public interface SetupStore {
     public var inputVerified: Boolean
     public var verifiedNativeRateHz: Int?
     public var verifiedResamplerIdentity: String?
+
+    /**
+     * R-1169: which capture audio source the verified open actually obtained
+     * (`org.ort.capture.android.CaptureAudioSource.operatorLabel` — `"unprocessed"` or
+     * `"voice recognition (OEM processed)"`), recorded beside [verifiedNativeRateHz] and
+     * [verifiedResamplerIdentity] because it is the same kind of fact: something about *this*
+     * capture that cannot be reconstructed afterwards. `null` when no verified open has reported
+     * one, never a guessed default — see `AudioIo.audioSource`'s own doc comment for why the
+     * absence is meaningful rather than a value to fill in. Read back by S12's Input row.
+     */
+    public var verifiedAudioSource: String?
     public var levelInBand: Boolean
     public var levelPeakDbfs: Double?
+
+    /**
+     * R-1168: the operator's input-gain choice in dB, the preference behind S07's slider. `null`
+     * (and 0 dB) until the operator moves it, which is the overwhelmingly common case: gain here is
+     * a software multiply on already-digitised audio, not a control anybody should need.
+     *
+     * Deliberately **not** in `CaptureConfiguration`/`CaptureConfigurationStore`, which freezes
+     * configuration at session start by design (AC-131): a gain frozen there would move the slider
+     * without moving the meter. `org.ort.capture.android.CaptureGain` is where the live value goes;
+     * this is only where it survives a process restart.
+     */
+    public var captureGainDb: Int?
     public var overnightStepSeen: Boolean
     public var radioChoice: RadioChoice?
     public var manualFrequencyHz: Long?
@@ -132,6 +155,11 @@ public interface SetupStore {
         inputVerified = false
         verifiedNativeRateHz = null
         verifiedResamplerIdentity = null
+        // R-1169: a fact about the route just abandoned, not about the next one — cleared with the
+        // rest of the verification rather than carried across to a device that never reported it.
+        // [captureGainDb] is deliberately *not* cleared here: it is an operator preference about
+        // how quiet their adapter is, not a measurement of a particular verified route.
+        verifiedAudioSource = null
         levelInBand = false
         levelPeakDbfs = null
     }
@@ -152,8 +180,10 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
     override var inputVerified: Boolean by BooleanPref(KEY_INPUT_VERIFIED, default = false)
     override var verifiedNativeRateHz: Int? by IntPref(KEY_VERIFIED_NATIVE_RATE)
     override var verifiedResamplerIdentity: String? by StringPref(KEY_RESAMPLER_IDENTITY)
+    override var verifiedAudioSource: String? by StringPref(KEY_VERIFIED_AUDIO_SOURCE)
     override var levelInBand: Boolean by BooleanPref(KEY_LEVEL_IN_BAND, default = false)
     override var levelPeakDbfs: Double? by DoublePref(KEY_LEVEL_PEAK_DBFS)
+    override var captureGainDb: Int? by IntPref(KEY_CAPTURE_GAIN_DB)
     override var overnightStepSeen: Boolean by BooleanPref(KEY_OVERNIGHT_SEEN, default = false)
     override var radioChoice: RadioChoice? by EnumPref(KEY_RADIO_CHOICE, RadioChoice::valueOf)
     override var manualFrequencyHz: Long? by LongPref(KEY_MANUAL_FREQUENCY_HZ)
@@ -227,8 +257,10 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
         public const val KEY_INPUT_VERIFIED: String = "input_verified"
         public const val KEY_VERIFIED_NATIVE_RATE: String = "verified_native_rate"
         public const val KEY_RESAMPLER_IDENTITY: String = "verified_resampler_identity"
+        public const val KEY_VERIFIED_AUDIO_SOURCE: String = "verified_audio_source"
         public const val KEY_LEVEL_IN_BAND: String = "level_in_band"
         public const val KEY_LEVEL_PEAK_DBFS: String = "level_peak_dbfs"
+        public const val KEY_CAPTURE_GAIN_DB: String = "capture_gain_db"
         public const val KEY_OVERNIGHT_SEEN: String = "overnight_step_seen"
         public const val KEY_RADIO_CHOICE: String = "radio_choice"
         public const val KEY_MANUAL_FREQUENCY_HZ: String = "manual_frequency_hz"
@@ -263,8 +295,10 @@ public class InMemorySetupStore(
     override var inputVerified: Boolean = false,
     override var verifiedNativeRateHz: Int? = null,
     override var verifiedResamplerIdentity: String? = null,
+    override var verifiedAudioSource: String? = null,
     override var levelInBand: Boolean = false,
     override var levelPeakDbfs: Double? = null,
+    override var captureGainDb: Int? = null,
     override var overnightStepSeen: Boolean = false,
     override var radioChoice: RadioChoice? = null,
     override var manualFrequencyHz: Long? = null,

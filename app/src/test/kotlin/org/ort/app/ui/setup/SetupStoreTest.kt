@@ -60,8 +60,10 @@ class SetupStoreTest {
         store.inputVerified = true
         store.verifiedNativeRateHz = 48_000
         store.verifiedResamplerIdentity = "48000 Hz -> 16000 Hz, resampled"
+        store.verifiedAudioSource = "unprocessed"
         store.levelInBand = true
         store.levelPeakDbfs = -14.2
+        store.captureGainDb = 6
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.TH_D75A
         store.manualFrequencyHz = 145_230_000L
@@ -88,8 +90,10 @@ class SetupStoreTest {
         assert(reread.inputVerified)
         assert(reread.verifiedNativeRateHz == 48_000)
         assert(reread.verifiedResamplerIdentity == "48000 Hz -> 16000 Hz, resampled")
+        assert(reread.verifiedAudioSource == "unprocessed")
         assert(reread.levelInBand)
         assert(reread.levelPeakDbfs == -14.2)
+        assert(reread.captureGainDb == 6)
         assert(reread.overnightStepSeen)
         assert(reread.radioChoice == RadioChoice.TH_D75A)
         assert(reread.manualFrequencyHz == 145_230_000L)
@@ -111,8 +115,10 @@ class SetupStoreTest {
             inputVerified = true,
             verifiedNativeRateHz = 48_000,
             verifiedResamplerIdentity = "x",
+            verifiedAudioSource = "unprocessed",
             levelInBand = true,
             levelPeakDbfs = -14.0,
+            captureGainDb = 6,
             radioChoice = RadioChoice.NONE,
             setupComplete = true,
         )
@@ -122,9 +128,14 @@ class SetupStoreTest {
         assert(!store.inputVerified)
         assert(store.verifiedNativeRateHz == null)
         assert(store.verifiedResamplerIdentity == null)
+        // R-1169: a fact about the route just abandoned, cleared with the rest of the verification.
+        assert(store.verifiedAudioSource == null)
         assert(!store.levelInBand)
         assert(store.levelPeakDbfs == null)
-        // Unrelated facts survive.
+        // Unrelated facts survive. R-1168: the gain is an operator preference about how quiet their
+        // adapter is, not a measurement of a particular verified route -- changing the input must
+        // not silently undo it.
+        assert(store.captureGainDb == 6)
         assert(store.selectedInputId == "usb-1")
         assert(store.radioChoice == RadioChoice.NONE)
         assert(store.setupComplete)

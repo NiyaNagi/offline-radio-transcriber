@@ -14,6 +14,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /** R-081 (ui-conformance-plan WP9) — `Setup-Verify.dc.html` (S05). */
@@ -22,6 +23,53 @@ class VerifyScreenTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    /**
+     * R-1169: the one fact that says whether the OEM was applying its own gain and noise
+     * suppression to this capture, named beside the rate it opened at. Before this there was no way
+     * to tell from a capture at all.
+     */
+    @Test
+    @Requirement("FR-CAP-1", "R-1169")
+    fun `FR_CAP_1 the native rate check names the audio source the open actually obtained`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.Passed(48_000, null, audioSourceLabel = "unprocessed"),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("48 000 Hz · mono · 16-bit · unprocessed").assertExists()
+    }
+
+    @Test
+    @Requirement("FR-CAP-1", "R-1169")
+    fun `FR_CAP_1 a check that reports no audio source names the rate alone, never a guessed source`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.Passed(48_000, null),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("48 000 Hz · mono · 16-bit").assertExists()
+    }
 
     @Test
     fun `R_081 Continue is disabled while checks are still in progress`() {
