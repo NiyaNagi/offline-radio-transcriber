@@ -6,11 +6,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -158,8 +161,14 @@ class RigBluetoothScreenTest {
         assert(refreshed)
     }
 
+    /**
+     * E2-E10, amended by **R-1170**: this used to assert `setup-rig-bt-continue` was *disabled*
+     * until the checklist reached Verified. The assertion is inverted, not deleted — the button is
+     * lit and refuses on tap; the R-1170 tests at the foot of this file pin that an unverified link
+     * still cannot proceed, which is the guarantee this test was really standing for.
+     */
     @Test
-    fun `E2_E10 Continue is disabled until the checklist reaches Verified`() {
+    fun `E2_E10 Continue stays lit before the checklist reaches Verified`() {
         composeTestRule.setContent {
             OrtTheme {
                 RigBluetoothScreen(
@@ -175,7 +184,7 @@ class RigBluetoothScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsEnabled()
     }
 
     @Test
@@ -236,10 +245,15 @@ class RigBluetoothScreenTest {
         assert(continued)
     }
 
-    /** R-1013: nothing ever answered — Continue must stay disabled, distinct from R-1014's own
-     * partial-success case above. */
+    /**
+     * R-1013: nothing ever answered — Continue must not proceed, distinct from R-1014's own
+     * partial-success case above. **R-1170** inverted the mechanism, not the guarantee: the
+     * assertion was `assertIsNotEnabled()`; it is now lit-but-refusing, which is what the register
+     * row asked for and what this test has always really been about.
+     */
     @Test
-    fun `R_1013 Continue stays disabled on IdentifyTimedOut`() {
+    fun `R_1013 Continue still refuses to proceed on IdentifyTimedOut`() {
+        var continued = false
         composeTestRule.setContent {
             OrtTheme {
                 RigBluetoothScreen(
@@ -250,7 +264,7 @@ class RigBluetoothScreenTest {
                     onSelectDevice = {},
                     onPairInSettings = {},
                     onRefresh = {},
-                    onContinue = {},
+                    onContinue = { continued = true },
                     onContinueWithoutConnecting = {},
                     onUseUsbInstead = {},
                     onRequestBluetoothPermission = {},
@@ -258,7 +272,8 @@ class RigBluetoothScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsEnabled().performClick()
+        assert(!continued)
     }
 
     /** R-1013: "Continue without connecting" must stay reachable — the one forward path when
@@ -431,7 +446,109 @@ class RigBluetoothScreenTest {
         }
 
         composeTestRule.onNodeWithTag("setup-rig-bt-lost-banner").performScrollTo().assertIsDisplayed()
-        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsNotEnabled()
+        // R-1170: lit, not disabled — that it still refuses to proceed is pinned below.
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsEnabled()
+    }
+
+    // --- R-1170: the primary stays lit, and the link-verification gate still genuinely blocks -----
+
+    /**
+     * R-1170: the regression this change most risks on S10b. `Continue` being lit must not become a
+     * way past a link that never verified — E2-E10's gate is unchanged, only how the block is
+     * communicated. Lit, tapped, `onContinue` never called, and the notice says what to do.
+     */
+    @Test
+    fun `R_1170 an unverified link still cannot proceed, however lit the button is`() {
+        var continued = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(selectedAddress = sppDevice.address, linkState = RigLinkState.Open),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = { continued = true },
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsEnabled().performClick()
+        assert(!continued)
+        // No performScrollTo(): the notice lives in the scaffold's pinned bottom bar, which is a
+        // separate subcompose slot with no scroll action of its own (R-360) -- scrolling to it
+        // throws rather than failing, so asking for it would hide whatever this really asserts.
+        composeTestRule.onNodeWithTag("setup-rig-bt-validation").assertIsDisplayed()
+    }
+
+    /** R-1170: the same with no device picked at all — `linkState` is null and there is nothing to
+     * verify, which is no more a licence to proceed than a half-open link. */
+    @Test
+    fun `R_1170 with no device picked at all Continue still does not proceed`() {
+        var continued = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = { continued = true },
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue").assertIsEnabled().performClick()
+        assert(!continued)
+    }
+
+    /** R-1170, the accessibility half. */
+    @Test
+    fun `R_1170 the bluetooth notice is a live region a screen reader announces`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(selectedAddress = sppDevice.address, linkState = RigLinkState.Open),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-continue").performClick()
+        composeTestRule.onNodeWithTag("setup-rig-bt-validation")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Assertive))
+    }
+
+    /** R-1170: no standing scold on arrival. */
+    @Test
+    fun `R_1170 no bluetooth notice is shown before the primary has been tapped`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                RigBluetoothScreen(
+                    state = state(selectedAddress = sppDevice.address, linkState = RigLinkState.Open),
+                    onSelectDevice = {},
+                    onPairInSettings = {},
+                    onRefresh = {},
+                    onContinue = {},
+                    onContinueWithoutConnecting = {},
+                    onUseUsbInstead = {},
+                    onRequestBluetoothPermission = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-bt-validation").assertDoesNotExist()
     }
 
     @Test

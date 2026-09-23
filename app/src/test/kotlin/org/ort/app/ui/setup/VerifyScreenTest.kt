@@ -1,9 +1,12 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -23,8 +26,15 @@ class VerifyScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
+    /**
+     * R-081, amended by **R-1170**: this used to assert `setup-verify-continue` was *disabled*
+     * while checks were in progress. The button is now lit at all times and refuses on tap — the
+     * disabled assertion was inverted, not deleted, and the R-1170 tests at the foot of this file
+     * pin the thing that actually matters: an unverified route still cannot proceed
+     * (constitution IV — `ROUTE_MISMATCH` is the one deliberate hard halt in the flow).
+     */
     @Test
-    fun `R_081 Continue is disabled while checks are still in progress`() {
+    fun `R_081 Continue stays lit while checks are still in progress`() {
         composeTestRule.setContent {
             OrtTheme {
                 VerifyScreen(
@@ -40,7 +50,7 @@ class VerifyScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsEnabled()
         composeTestRule.onNodeWithTag("setup-verify-check-native-rate").assertIsDisplayed()
     }
 
@@ -204,7 +214,8 @@ class VerifyScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsNotEnabled()
+        // R-1170: lit, not disabled — the escape link beside it is what R-284 is about.
+        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsEnabled()
         composeTestRule.onNodeWithTag("setup-verify-choose-different").assertIsDisplayed().performClick()
         assert(chosenDifferent)
     }
@@ -227,6 +238,103 @@ class VerifyScreenTest {
         }
 
         composeTestRule.onNodeWithTag("setup-verify-choose-different").assertDoesNotExist()
+    }
+
+    // --- R-1170: the primary stays lit, and the verification gate still genuinely blocks ----------
+
+    /**
+     * R-1170 **and constitution IV**, together — this is the regression the R-1170 change most
+     * risks and the reason this test exists at all. Keeping `Continue` lit must not become a way to
+     * walk past a route that has not verified: *"a route that is not the selected device halts
+     * capture"* is absolute, and `RouteCheckState.Mismatch` is the one deliberate hard halt in the
+     * whole flow. Lit, tapped, and `onContinue` is still never called.
+     */
+    @Test
+    fun `R_1170 an unverified route still cannot proceed, however lit the button is`() {
+        var continued = false
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
+                    ),
+                    onContinue = { continued = true },
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsEnabled().performClick()
+        assert(!continued)
+        composeTestRule.onNodeWithTag("setup-verify-validation").assertIsDisplayed()
+    }
+
+    /** R-1170: the same, for a state that carries no check at all — nothing has even been tried,
+     * which is no more a licence to proceed than a half-finished check. */
+    @Test
+    fun `R_1170 a route with no check at all still cannot proceed`() {
+        var continued = false
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(inputLabel = "USB Audio Device", check = null),
+                    onContinue = { continued = true },
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsEnabled().performClick()
+        assert(!continued)
+    }
+
+    /** R-1170, the accessibility half: the refusal is announced, not merely drawn. */
+    @Test
+    fun `R_1170 the verify notice is a live region a screen reader announces`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-verify-continue").performClick()
+        composeTestRule.onNodeWithTag("setup-verify-validation")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Assertive))
+    }
+
+    /** R-1170: no standing scold on arrival — the notice answers a tap. */
+    @Test
+    fun `R_1170 no verify notice is shown before the primary has been tapped`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                VerifyScreen(
+                    state = VerifyViewState(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
+                    ),
+                    onContinue = {},
+                    onBack = {},
+                    onTryAgain = {},
+                    onChooseAnotherInput = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-verify-validation").assertDoesNotExist()
     }
 
     // --- R-943 (register, reviewer A3 run 4a, design): checklist markers, the mono meta lines, ---

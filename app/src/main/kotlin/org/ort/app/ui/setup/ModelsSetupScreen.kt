@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -46,6 +50,46 @@ public data class ModelsSetupViewState(val rows: List<ModelDownloadRowViewState>
     public val allInstalled: Boolean get() = rows.all { it.status == ModelDownloadRowStatus.INSTALLED }
 }
 
+/**
+ * **R-1170 — the one place in the setup flow where disabling a primary is still right.** The rule
+ * is *never disable for validation state*; the exception it keeps is an action genuinely **in
+ * flight**, so a second tap cannot double-submit. Those are two different facts on this screen and
+ * they had been conflated: `enabled = state.allInstalled` treated "a file is missing" (validation —
+ * the operator can fix it, and should be told how) exactly like "a download is running right now"
+ * (unavailability). This function is the in-flight half alone.
+ *
+ * Note this can never disagree with [ModelsSetupViewState.allInstalled]: a row that is
+ * [ModelDownloadRowStatus.DOWNLOADING] is by definition not installed, so an all-installed state is
+ * always enabled here.
+ */
+internal fun modelsContinueEnabled(state: ModelsSetupViewState): Boolean =
+    state.rows.none { it.status == ModelDownloadRowStatus.DOWNLOADING }
+
+/**
+ * R-1170: what the tap says when files are simply missing and nothing is running. It names the real
+ * outstanding work rather than a bare "not ready" (constitution I, and design-guide §6.8's "states
+ * the cause in operator terms ... never a bare 'error'") — a single outstanding model is named;
+ * several are counted. It says both `Download` and `Retry` because [ModelDownloadRow] offers
+ * whichever of the two that row's own status earns.
+ *
+ * **AC-188 is unchanged by any of this**: setup still cannot reach READY with a model missing —
+ * `onContinue` is simply never invoked here, so [SetupStateMachine]'s own `requiredModelsInstalled`
+ * gate is not even reached.
+ */
+internal fun modelsValidationMessage(state: ModelsSetupViewState): String? {
+    val outstanding = state.rows.filter { it.status != ModelDownloadRowStatus.INSTALLED }
+    val single = outstanding.singleOrNull()
+    return when {
+        outstanding.isEmpty() -> null
+        single != null ->
+            "${single.label} is not installed yet — use Download or Retry beside it. Setup cannot " +
+                "continue without it."
+        else ->
+            "${outstanding.size} models are not installed yet — use Download or Retry beside each " +
+                "one. Setup cannot continue without them."
+    }
+}
+
 @Composable
 public fun ModelsSetupScreen(
     state: ModelsSetupViewState,
@@ -53,16 +97,22 @@ public fun ModelsSetupScreen(
     onToggleWifiOnly: (Boolean) -> Unit,
     onContinue: () -> Unit,
 ) {
+    var showWhatIsMissing by remember { mutableStateOf(false) }
+    val whatIsMissing = modelsValidationMessage(state)
     SetupScaffold(
         step = SetupStep.MODELS,
         title = "Models",
         subtitle = "This build did not carry everything your device's tier can use",
         onBack = null,
         bottomActions = {
+            SetupValidationNotice(
+                message = whatIsMissing.takeIf { showWhatIsMissing },
+                modifier = Modifier.testTag("setup-models-validation"),
+            )
             PrimaryButton(
                 text = "Continue",
-                onClick = onContinue,
-                enabled = state.allInstalled,
+                onClick = { if (whatIsMissing == null) onContinue() else showWhatIsMissing = true },
+                enabled = modelsContinueEnabled(state),
                 modifier = Modifier.fillMaxWidth().testTag("setup-models-continue"),
             )
         },

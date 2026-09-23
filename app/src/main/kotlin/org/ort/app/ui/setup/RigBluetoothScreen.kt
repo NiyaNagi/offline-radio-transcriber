@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -51,9 +55,14 @@ public data class RigBluetoothViewState(
  * selectable — never guessed as incapable, constitution I), `Pair a device in system settings`,
  * `Refresh`, and the open -> identify -> verify checklist driven by [RigLinkPort]'s
  * [RigLinkState] flow (see that file's own doc comment for why the real `:rig-bluetooth` adapter
- * is not yet wired in here). `Continue` enables only once [RigLinkState.Verified] is reached
+ * is not yet wired in here). `Continue` advances only once [RigLinkState.Verified] is reached
  * (E2-E10); a [RigLinkState.Lost]/[RigLinkState.Failed]/[RigLinkState.NoPermission] renders as a
  * banner, never a blank screen (E2-E11, FR-RIG-15).
+ *
+ * **R-1170**: `Continue` is no longer *disabled* before that point — `disabled` removes it from the
+ * focus order, so a screen-reader operator could not reach the control blocking them. It is lit and
+ * refuses on tap, announcing [BT_LINK_NOT_VERIFIED_YET]. E2-E10's gate is unchanged: [onContinue]
+ * still fires only for [RigLinkState.Verified]/[RigLinkState.VerifyTimedOut].
  *
  * **R-1003/R-1005c (device field report — a trapped operator).** Three fixes against the artboard
  * as redrawn 2026-09-12 (`design/design-guide.md` §10.1's own commit):
@@ -143,6 +152,17 @@ public fun RigBluetoothScreen(
     }
 }
 
+/**
+ * R-1170: what S10b's `Continue` says when it refuses. Like [VerifyScreen], this is a verification
+ * gate rather than an unmade choice, so the button being lit must not become a way past a link that
+ * never verified — the tap says the check has not passed and points at the two real ways forward
+ * this screen already offers (pick the device again, or `Continue without connecting`, which lands
+ * on FR-RIG-2's manual-frequency path rather than pretending the link came up).
+ */
+private const val BT_LINK_NOT_VERIFIED_YET: String =
+    "The link is not verified yet. Pick a paired device above and wait for the checklist — or use " +
+        "Continue without connecting, which logs the frequency by hand."
+
 /** [RigBluetoothScreen]'s own `bottomActions` — split out purely to keep that function's own
  * length under detekt's `LongMethod` threshold (R-1005c added the middle action), the same reason
  * every other small private composable in this file already is. */
@@ -153,10 +173,14 @@ private fun RigBluetoothBottomActions(
     onContinueWithoutConnecting: () -> Unit,
     onUseUsbInstead: () -> Unit,
 ) {
+    var showWhatIsMissing by remember { mutableStateOf(false) }
+    SetupValidationNotice(
+        message = BT_LINK_NOT_VERIFIED_YET.takeIf { showWhatIsMissing && !verified },
+        modifier = Modifier.testTag("setup-rig-bt-validation"),
+    )
     PrimaryButton(
         text = "Continue",
-        onClick = onContinue,
-        enabled = verified,
+        onClick = { if (verified) onContinue() else showWhatIsMissing = true },
         modifier = Modifier.fillMaxWidth().testTag("setup-rig-bt-continue"),
     )
     ContinueWithoutConnectingAction(

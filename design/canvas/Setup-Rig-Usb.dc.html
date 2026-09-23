@@ -77,7 +77,11 @@
   <div style="flex-grow: 1;"></div>
 
   <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
-    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.30 0.012 250); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.585 0.008 250);">Continue</div></div>
+    <!-- R-1170: drawn lit, not greyed. The primary is never disabled for validation state -- a
+         disabled control leaves the focus order, so a screen-reader operator cannot reach the thing
+         blocking them. R-344's guarantee is unchanged: tapping this with no parseable frequency
+         announces the format wanted and submits nothing. -->
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Continue</div></div>
     <div style="display: flex; align-items: center; justify-content: center; min-height: 44px;"><div style="font-size: 13.5px; color: oklch(0.66 0.008 250);">Back</div></div>
   </div>
 

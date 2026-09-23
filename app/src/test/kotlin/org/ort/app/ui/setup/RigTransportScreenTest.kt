@@ -1,8 +1,11 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -90,13 +93,73 @@ class RigTransportScreenTest {
         assert(selected == RigTransportKind.USB_SERIAL)
     }
 
+    /**
+     * E2-E09, amended by **R-1170**: this used to assert `setup-rig-transport-connect` was
+     * *disabled* until a transport was selected. The assertion is inverted, not deleted — the
+     * button is lit and refuses on tap instead; the R-1170 tests below pin that it still does not
+     * connect with nothing chosen.
+     */
     @Test
-    fun `E2_E09 Connect is disabled until a transport is selected`() {
+    fun `E2_E09 Connect stays lit until a transport is selected`() {
         composeTestRule.setContent {
             OrtTheme { RigTransportScreen(state = state(selected = null), onSelect = {}, onConnect = {}, onBack = {}) }
         }
 
-        composeTestRule.onNodeWithTag("setup-rig-transport-connect").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("setup-rig-transport-connect").assertIsEnabled()
+    }
+
+    // --- R-1170: never disable a primary button for validation state -------------------------------
+
+    /** R-1170: lit with nothing selected, and tapping it says what to pick rather than connecting
+     * over a transport the operator never chose. */
+    @Test
+    fun `R_1170 Connect with nothing selected does not connect and says what to pick`() {
+        var connected = false
+        composeTestRule.setContent {
+            OrtTheme {
+                RigTransportScreen(
+                    state = state(selected = null),
+                    onSelect = {},
+                    onConnect = { connected = true },
+                    onBack = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-transport-connect").assertIsEnabled().performClick()
+        assert(!connected)
+        composeTestRule.onNodeWithTag("setup-rig-transport-validation").assertIsDisplayed()
+    }
+
+    /** R-1170, the accessibility half. */
+    @Test
+    fun `R_1170 the transport notice is a live region a screen reader announces`() {
+        composeTestRule.setContent {
+            OrtTheme { RigTransportScreen(state = state(selected = null), onSelect = {}, onConnect = {}, onBack = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-transport-connect").performClick()
+        composeTestRule.onNodeWithTag("setup-rig-transport-validation")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Assertive))
+    }
+
+    /** R-1170: no standing scold on arrival. */
+    @Test
+    fun `R_1170 no transport notice is shown before the primary has been tapped`() {
+        composeTestRule.setContent {
+            OrtTheme { RigTransportScreen(state = state(selected = null), onSelect = {}, onConnect = {}, onBack = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-rig-transport-validation").assertDoesNotExist()
+    }
+
+    /** R-1170, pure: the refusal names the rig the operator is looking at, not a generic "make a
+     * selection" — the whole question on S09b is how *this* rig is wired. */
+    @Test
+    fun `R_1170 rigTransportValidationMessage names the rig, and is null once a transport is chosen`() {
+        assert(rigTransportValidationMessage(state()) == null)
+        val missing = rigTransportValidationMessage(state(selected = null))
+        assert(missing != null && missing.contains("TH-D75A"))
     }
 
     @Test

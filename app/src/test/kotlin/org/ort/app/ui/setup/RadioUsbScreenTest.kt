@@ -1,8 +1,11 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -43,11 +46,17 @@ class RadioUsbScreenTest {
         composeTestRule.onNodeWithText("No rig support in this build yet").assertIsDisplayed()
     }
 
-    /** R-344 (validator pass 4, halt): a blank/unparseable frequency must never be submittable at
-     * all -- "Enter the frequency instead" is disabled, not merely reporting `null` if tapped
-     * (constitution I: never silently lose a fact). `onBack` stays reachable either way. */
+    /**
+     * R-344 (validator pass 4, halt): a blank/unparseable frequency must never be submittable at
+     * all — `onEnterFrequency` is never invoked with a null (constitution I: never silently lose a
+     * fact). `onBack` stays reachable either way.
+     *
+     * **R-1170** inverted the mechanism, not the guarantee: this used to assert the primary was
+     * `assertIsNotEnabled()`. It is now lit and the *tap itself* refuses, which is strictly a
+     * stronger test — the click is really performed here, and the sentinel is still untouched.
+     */
     @Test
-    fun `R_344 Enter the frequency instead is disabled while the field is blank, never a fabricated frequency`() {
+    fun `R_344 a blank field never submits a frequency, however lit the button is`() {
         var entered: Long? = -1L // sentinel distinct from both null and any real value
         var back = false
         composeTestRule.setContent {
@@ -60,10 +69,33 @@ class RadioUsbScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").assertIsNotEnabled()
-        assertEquals(-1L, entered) // untouched -- never invoked
+        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").assertIsEnabled().performClick()
+        assertEquals(-1L, entered) // untouched -- never invoked, not even with null
+        composeTestRule.onNodeWithTag("setup-radio-usb-validation").assertIsDisplayed()
         composeTestRule.onNodeWithTag("setup-radio-usb-back").performClick()
         assert(back)
+    }
+
+    /** R-1170, the accessibility half. */
+    @Test
+    fun `R_1170 the frequency notice is a live region a screen reader announces`() {
+        composeTestRule.setContent {
+            OrtTheme { RadioUsbScreen(rigStatus = RigStatus.State.Absent, onBack = {}, onEnterFrequency = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").performClick()
+        composeTestRule.onNodeWithTag("setup-radio-usb-validation")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Assertive))
+    }
+
+    /** R-1170: no standing scold on arrival. */
+    @Test
+    fun `R_1170 no frequency notice is shown before the primary has been tapped`() {
+        composeTestRule.setContent {
+            OrtTheme { RadioUsbScreen(rigStatus = RigStatus.State.Absent, onBack = {}, onEnterFrequency = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-radio-usb-validation").assertDoesNotExist()
     }
 
     @Test
@@ -81,16 +113,23 @@ class RadioUsbScreenTest {
         assertEquals(145_230_000L, entered)
     }
 
-    /** R-344: a zero/negative/unparseable entry must keep the button disabled the same as a blank
-     * one -- [parseMegahertzToHz] already refuses these; this proves the button tracks it live. */
+    /**
+     * R-344: a zero/negative/unparseable entry must be refused exactly the same as a blank one —
+     * [parseMegahertzToHz] already refuses these; this proves the button tracks it live.
+     * **R-1170**: was `assertIsNotEnabled()`; now the tap itself refuses and nothing is submitted.
+     */
     @Test
-    fun `R_344 Enter the frequency instead stays disabled for an unparseable or non-positive value`() {
+    fun `R_344 an unparseable or non-positive value is still refused`() {
+        var entered: Long? = -1L
         composeTestRule.setContent {
-            OrtTheme { RadioUsbScreen(rigStatus = RigStatus.State.Absent, onBack = {}, onEnterFrequency = {}) }
+            OrtTheme {
+                RadioUsbScreen(rigStatus = RigStatus.State.Absent, onBack = {}, onEnterFrequency = { entered = it })
+            }
         }
 
         composeTestRule.onNodeWithTag("setup-radio-usb-frequency-field").performTextInput("not a number")
-        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("setup-radio-usb-enter-frequency").assertIsEnabled().performClick()
+        assertEquals(-1L, entered)
     }
 
     @Test

@@ -11,6 +11,10 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -66,6 +70,11 @@ public data class RigTransportOption(
  * Both declared transports, generated capabilities, the preset marked, the cost of each stated.
  * `Connect over …` names the currently-selected transport ([RigTransportViewState.selected]) and
  * moves to S10 (USB) or S10b (Bluetooth); `Back` returns to S09.
+ *
+ * **R-1170**: that button used to be `enabled = state.selected != null` — a disabled control is
+ * outside the focus order, so a screen-reader operator could not reach the thing blocking them, and
+ * nothing anywhere said what was wrong. It is lit at all times now and the tap refuses, naming the
+ * choice that has not been made. [onConnect] is still never called without a transport selected.
  */
 @Composable
 public fun RigTransportScreen(
@@ -74,16 +83,21 @@ public fun RigTransportScreen(
     onConnect: () -> Unit,
     onBack: () -> Unit,
 ) {
+    var showWhatIsMissing by remember { mutableStateOf(false) }
+    val whatIsMissing = rigTransportValidationMessage(state)
     SetupScaffold(
         step = SetupStep.RIG_TRANSPORT,
         title = "How is the ${state.rigDisplayName} linked?",
         subtitle = "The same command set on either. Pick the one you have wired.",
         onBack = onBack,
         bottomActions = {
+            SetupValidationNotice(
+                message = whatIsMissing.takeIf { showWhatIsMissing },
+                modifier = Modifier.testTag("setup-rig-transport-validation"),
+            )
             PrimaryButton(
                 text = "Connect over ${state.selected?.let(RigPickerCatalogue::transportLabel) ?: "…"}",
-                onClick = onConnect,
-                enabled = state.selected != null,
+                onClick = { if (whatIsMissing == null) onConnect() else showWhatIsMissing = true },
                 modifier = Modifier.fillMaxWidth().testTag("setup-rig-transport-connect"),
             )
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -108,6 +122,16 @@ public fun RigTransportScreen(
             color = OrtColors.textDim,
         )
     }
+}
+
+/**
+ * R-1170: what S09b's tap says when it refuses. It names the rig the operator is actually looking
+ * at rather than a generic "make a selection", since the whole question on this screen is how *this
+ * rig* is wired.
+ */
+internal fun rigTransportValidationMessage(state: RigTransportViewState): String? {
+    if (state.selected != null) return null
+    return "Pick how the ${state.rigDisplayName} is linked — tap one of the cards above, then connect."
 }
 
 @Composable

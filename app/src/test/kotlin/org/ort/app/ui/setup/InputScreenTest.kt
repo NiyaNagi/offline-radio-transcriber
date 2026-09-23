@@ -1,8 +1,11 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
-import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -35,8 +38,15 @@ class InputScreenTest {
         typeLabel = "Built-in microphone",
     )
 
+    /**
+     * R-081, amended by **R-1170**: this used to assert `setup-input-verify` was *disabled* until a
+     * route was selected. It is now lit at all times and refuses on tap instead — the disabled
+     * assertion was inverted rather than deleted, and the half of R-081 this test actually
+     * establishes (tapping a row selects it) is unchanged. See the R-1170 tests below for the
+     * behaviour that replaced it.
+     */
     @Test
-    fun `R_081 Verify this input is disabled until a route is selected, tapping a row selects it`() {
+    fun `R_081 Verify this input stays lit with no route selected, tapping a row selects it`() {
         var selected: String? = null
         composeTestRule.setContent {
             OrtTheme {
@@ -49,9 +59,111 @@ class InputScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-input-verify").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("setup-input-verify").assertIsEnabled()
         composeTestRule.onNodeWithTag("setup-input-route-usb-1").performClick()
         assert(selected == "usb-1")
+    }
+
+    // --- R-1170: never disable a primary button for validation state -------------------------------
+
+    /**
+     * R-1170 (register; the operator's own words on the device, *"keep the continue button lit up at
+     * all times"*). `enabled = state.selectedId != null` gave no feedback about what was wrong, and
+     * `disabled` removes the control from the focus order, so a screen-reader user could not reach
+     * the thing blocking them at all. The button is lit; the tap validates and refuses.
+     */
+    @Test
+    fun `R_1170 Verify this input is enabled with nothing selected and tapping it does not advance`() {
+        var verified = false
+        composeTestRule.setContent {
+            OrtTheme {
+                InputScreen(
+                    state = InputViewState(routes = listOf(usb, mic), selectedId = null),
+                    onSelect = {},
+                    onRefresh = {},
+                    onVerify = { verified = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-input-verify").assertIsEnabled().performClick()
+        assert(!verified) // the gate still holds -- lit is not the same as permissive
+        composeTestRule.onNodeWithTag("setup-input-validation").assertIsDisplayed()
+    }
+
+    /** R-1170: the accessibility half — the notice is a live region, so TalkBack announces it the
+     * moment the refusal happens rather than leaving the operator to hunt for it. */
+    @Test
+    fun `R_1170 the notice is a live region a screen reader announces`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                InputScreen(
+                    state = InputViewState(routes = listOf(usb, mic), selectedId = null),
+                    onSelect = {},
+                    onRefresh = {},
+                    onVerify = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-input-verify").performClick()
+        composeTestRule.onNodeWithTag("setup-input-validation")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Assertive))
+    }
+
+    /** R-1170: nothing is said before the operator has asked for anything — the notice answers a
+     * tap, it is not a standing scold on arrival. */
+    @Test
+    fun `R_1170 no notice is shown before the primary has been tapped`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                InputScreen(
+                    state = InputViewState(routes = listOf(usb, mic), selectedId = null),
+                    onSelect = {},
+                    onRefresh = {},
+                    onVerify = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-input-validation").assertDoesNotExist()
+    }
+
+    /** R-1170: the notice clears itself once the missing thing is supplied, and the primary then
+     * does what it always said it would. */
+    @Test
+    fun `R_1170 with a route selected the notice is gone and the primary advances`() {
+        var verified = false
+        composeTestRule.setContent {
+            OrtTheme {
+                InputScreen(
+                    state = InputViewState(routes = listOf(usb, mic), selectedId = "usb-1"),
+                    onSelect = {},
+                    onRefresh = {},
+                    onVerify = { verified = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-input-verify").assertIsEnabled().performClick()
+        assert(verified)
+        composeTestRule.onNodeWithTag("setup-input-validation").assertDoesNotExist()
+    }
+
+    /** R-1170: what the tap says is specific to *why* it refused — an empty enumeration is hardware
+     * that is not attached, an unchosen row is a decision not yet made, and they are not the same
+     * sentence (constitution I). Asserted as "these two differ and neither is null", not against the
+     * copy itself, which a designer may legitimately change tomorrow (constitution II). */
+    @Test
+    fun `R_1170 inputValidationMessage distinguishes no routes from no choice, and is null once chosen`() {
+        val none = InputViewState(routes = emptyList(), selectedId = null)
+        val unchosen = InputViewState(routes = listOf(usb, mic), selectedId = null)
+        val chosen = InputViewState(routes = listOf(usb, mic), selectedId = "usb-1")
+
+        assert(inputValidationMessage(chosen) == null)
+        assert(inputValidationMessage(none) != null)
+        assert(inputValidationMessage(unchosen) != null)
+        assert(inputValidationMessage(none) != inputValidationMessage(unchosen))
     }
 
     /** R-850 (validator V8, device): the subtitle read "Which of these is the radio?" — the board's
