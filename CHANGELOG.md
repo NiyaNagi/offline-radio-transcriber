@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-22 (lead: the operator's device report on onboarding — twelve register rows, D58, AC-198..204, P39)
 
-### `PENDING` — lead: file the 2026-09-22 onboarding findings, decide D58, and put the restructure on the plan
+### `c1995ebd` — lead: file the 2026-09-22 onboarding findings, decide D58, and put the restructure on the plan
 
 **Scope:** lead-only surfaces — `results/ui-audit/register.md`, `spec/open-questions.md`,
 `spec/functional-spec.md`, `spec/build-plan.md`, `results/backlog.md` (regenerated). No product
