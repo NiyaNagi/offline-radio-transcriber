@@ -102,6 +102,19 @@ unrecoverable work — R-1138. If you need a clean tree, **commit on your branch
 cheap, visible, and can be amended or reordered later. There is no case in this repo where a
 stash is the right tool.
 
+**Never round-trip a tracked file through PowerShell, and this one has now cost two sessions.**
+`Get-Content -Raw | Set-Content`, `Get-Content` piped to `WriteAllLines`, and `Out-File` over an
+existing source file all **double-encode every non-ASCII character** on this machine — every em
+dash, arrow and accented character in the file silently becomes mojibake. It does not fail; it
+produces a file that still compiles and whose diff looks enormous and wrong. The lead corrupted
+`spec/functional-spec.md` this way on 2026-09-21 (caught only by spec-check rule 7), and a builder
+did the same to two `:app` source files on 2026-09-22 — surfacing, confusingly, as two *unrelated*
+R-138 assertions failing. Use the editor tools for edits, or Python with
+`io.open(p, encoding='utf-8', newline='')` for both the read and the write, which is what every
+script under the session scratchpad does. If you suspect you have already done it, `git diff` will
+show changes on lines you never touched — revert those files with `git checkout` and redo the edit
+rather than trying to repair the encoding in place.
+
 **Why `gradlew --stop`, and what to do instead.** The daemon is shared across every worktree, so
 stopping it kills whatever the other builders and the lead's gate are running — on 2026-09-20 one
 `--stop` cost another builder a completed full-module run, which is R-1131. If a test process is
