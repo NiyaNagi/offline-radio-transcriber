@@ -3,6 +3,7 @@ package org.ort.app.ui.setup
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -12,7 +13,9 @@ import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.OfflinePromiseCopy
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 
 /** R-080 (ui-conformance-plan WP9) — `Setup-Welcome.dc.html` (S01). */
@@ -64,5 +67,41 @@ class WelcomeScreenTest {
             "Nothing is deleted quietly. Every attribution carries its confidence. A weaker phone " +
                 "knows less; it is never more wrong.",
         ).assertIsDisplayed()
+    }
+
+    /**
+     * R-1164. `OfflinePromiseCopyTest` proves the wording satisfies FR-ANL-14; this proves the
+     * Welcome screen is the surface that states it, asserted through **this screen's own tag**
+     * rather than by looking for the words anywhere in the tree — R-1160 and R-1070 are both cases
+     * of a check that passed by matching something other than the screen under test.
+     */
+    @Test
+    @Requirement("FR-ANL-14", "R-1164")
+    fun `FR_ANL_14 the Welcome screen's lead paragraph is the shared promise copy`() {
+        composeTestRule.setContent {
+            OrtTheme { WelcomeScreen(onBegin = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-welcome-promise", useUnmergedTree = true)
+            .assertTextEquals(OfflinePromiseCopy.WELCOME_PROMISE)
+    }
+
+    /** R-1165 — the sheet renders every shared point, in order, and invents none of its own. */
+    @Test
+    @Requirement("FR-SPK-20", "R-1165")
+    fun `R_1165 the What is captured sheet renders exactly the shared promise points`() {
+        composeTestRule.setContent {
+            OrtTheme { WelcomeScreen(onBegin = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-welcome-what-is-captured").performClick()
+
+        OfflinePromiseCopy.POINTS.forEachIndexed { index, point ->
+            composeTestRule.onNodeWithTag("setup-welcome-promise-point-$index", useUnmergedTree = true)
+                .assertTextEquals(point)
+        }
+        composeTestRule
+            .onNodeWithTag("setup-welcome-promise-point-${OfflinePromiseCopy.POINTS.size}", useUnmergedTree = true)
+            .assertDoesNotExist()
     }
 }

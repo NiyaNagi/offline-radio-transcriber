@@ -1,10 +1,13 @@
 package org.ort.app.ui.settings
 
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.OfflinePromiseCopy
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -53,5 +56,26 @@ class SettingsAboutScreenTest {
         assert(modelsY < runtimeY) { "expected Models above Runtime, got $modelsY vs $runtimeY" }
         assert(runtimeY < radioY) { "expected Runtime above Radio, got $runtimeY vs $radioY" }
         assert(radioY < androidY) { "expected Radio above Android, got $radioY vs $androidY" }
+    }
+
+    /**
+     * R-1165. About and the Welcome sheet claimed to state the same guarantee verbatim while each
+     * held its own literals; they had already drifted, and both went on repeating a voiceprint
+     * promise D38 made false. `OfflinePromiseCopyTest` judges the wording — this asserts About
+     * renders exactly the shared list through **this screen's own tags**, so the two surfaces
+     * cannot diverge again without a test failing.
+     */
+    @Test
+    @Requirement("FR-ANL-14", "FR-SPK-20", "R-1165")
+    fun `R_1165 the offline promise renders exactly the shared points, in order`() {
+        composeTestRule.setContent { OrtTheme { SettingsAboutScreen(state = state(), onBack = {}) } }
+
+        OfflinePromiseCopy.POINTS.forEachIndexed { index, point ->
+            composeTestRule.onNodeWithTag("settings-about-promise-point-$index", useUnmergedTree = true)
+                .assertTextEquals(point)
+        }
+        composeTestRule
+            .onNodeWithTag("settings-about-promise-point-${OfflinePromiseCopy.POINTS.size}", useUnmergedTree = true)
+            .assertDoesNotExist()
     }
 }

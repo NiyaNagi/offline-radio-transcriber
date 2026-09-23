@@ -12,7 +12,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.OfflinePromiseCopy
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.OrtIcons
@@ -51,29 +53,18 @@ public fun SettingsAboutScreen(state: SettingsAboutViewState, onBack: () -> Unit
             )
 
             SectionHeader(label = "The offline promise", modifier = Modifier.padding(top = OrtSpacing.md))
-            Text(
-                text = "No part of capture, transcription, resolution or the reader can reach the " +
-                    "network. The build enforces it: only :net may link an HTTP client, and none of " +
-                    "these is that module.",
-                style = OrtType.bodyProse,
-                color = OrtColors.textBody,
-                modifier = Modifier.padding(top = OrtSpacing.sm),
-            )
-            Text(
-                text = "Voiceprints, the names you give stations, what this phone has learned about who " +
-                    "is around when, and your location never leave it — not in an export, a " +
-                    "contribution, a diagnostic bundle or a backup.",
-                style = OrtType.bodyProse,
-                color = OrtColors.textBody,
-                modifier = Modifier.padding(top = OrtSpacing.sm),
-            )
-            Text(
-                text = "Nothing is deleted quietly. Every attribution carries its confidence. A weaker " +
-                    "phone knows less; it is never more wrong.",
-                style = OrtType.bodyProse,
-                color = OrtColors.textBody,
-                modifier = Modifier.padding(top = OrtSpacing.sm),
-            )
+            // R-1165: these paragraphs used to be re-typed literals that had already drifted from
+            // the Welcome sheet's supposedly verbatim copy (`:net` against `only one module`), and
+            // both went on stating a voiceprint guarantee D38 had made false. One list now feeds
+            // both surfaces; see `OfflinePromiseCopy` for the wording's spec obligations.
+            OfflinePromiseCopy.POINTS.forEachIndexed { index, point ->
+                Text(
+                    text = point,
+                    style = OrtType.bodyProse,
+                    color = OrtColors.textBody,
+                    modifier = Modifier.padding(top = OrtSpacing.sm).testTag("settings-about-promise-point-$index"),
+                )
+            }
 
             SectionHeader(label = "Build", modifier = Modifier.padding(top = OrtSpacing.lg))
             // R-138 (round 7, register): board row order is Models, Runtime, Radio, Android,
