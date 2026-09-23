@@ -31,6 +31,7 @@ import androidx.compose.ui.layout.SubcomposeLayout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.OfflinePromiseCopy
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.Sheet
@@ -45,7 +46,9 @@ import org.ort.app.ui.theme.OrtType
  * back target (it is the first screen), no step indicator (the sequence has not begun), just the
  * app wordmark, the offline promise, the five things setup will ask for, `Begin`, and a `Sheet`
  * carrying `Settings-About.dc.html`'s own "the offline promise" copy verbatim (P8's own board
- * cites that file for this text — this package does not invent it).
+ * cites that file for this text — this package does not invent it). R-1165: "verbatim" is now
+ * structural rather than aspirational — both surfaces read [OfflinePromiseCopy], which is where
+ * the wording and its spec obligations live.
  *
  * R-123/R-220 (register R-120..R-125, R-220..R-227): `Column`'s own layout already keeps the
  * fixed [WelcomeFooter] and the scrollable content above it from ever overlapping, at any font
@@ -140,11 +143,10 @@ private fun WelcomeHeader() {
             modifier = Modifier.padding(top = 22.dp),
         )
         Text(
-            text = "Transcription, callsign resolution and the log all run here. No account, " +
-                "no upload, no network in the capture path — ever.",
+            text = OfflinePromiseCopy.WELCOME_PROMISE,
             style = OrtType.bodyProse,
             color = OrtColors.textSecondary,
-            modifier = Modifier.padding(top = 14.dp),
+            modifier = Modifier.padding(top = 14.dp).testTag("setup-welcome-promise"),
         )
     }
 }
@@ -219,7 +221,7 @@ private fun WelcomeSheet(onDismiss: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
         Sheet(title = "What is captured", modifier = Modifier.testTag("setup-welcome-sheet")) {
             Column(modifier = Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
-                OFFLINE_PROMISE_POINTS.forEach { point ->
+                OfflinePromiseCopy.POINTS.forEachIndexed { index, point ->
                     Row(modifier = Modifier.padding(vertical = 9.dp)) {
                         Box(
                             modifier = Modifier
@@ -227,7 +229,12 @@ private fun WelcomeSheet(onDismiss: () -> Unit) {
                                 .size(9.dp)
                                 .background(OrtColors.accentGreen, CircleShape),
                         )
-                        Text(text = point, style = OrtType.subtitle, color = OrtColors.textBody)
+                        Text(
+                            text = point,
+                            style = OrtType.subtitle,
+                            color = OrtColors.textBody,
+                            modifier = Modifier.testTag("setup-welcome-promise-point-$index"),
+                        )
                     }
                 }
             }
@@ -243,17 +250,4 @@ private val WELCOME_ASKS: List<Pair<String, Boolean>> = listOf(
     "An input level set against the noise floor" to false,
     "Permission to keep running overnight" to false,
     "A radio to read the frequency from" to true,
-)
-
-/** `Settings-About.dc.html`'s "the offline promise" section, verbatim — the same three bullets,
- * not a paraphrase, so this Sheet and the About screen never say something different about the
- * same guarantee (guide §9: never fabricate, never drift). */
-private val OFFLINE_PROMISE_POINTS: List<String> = listOf(
-    "No part of capture, transcription, resolution or the reader can reach the network. The " +
-        "build enforces it: only one module may link an HTTP client, and none of these is that module.",
-    "Voiceprints, the names you give stations, what this phone has learned about who is around " +
-        "when, and your location never leave it — not in an export, a contribution, a diagnostic " +
-        "bundle or a backup.",
-    "Nothing is deleted quietly. Every attribution carries its confidence. A weaker phone knows " +
-        "less; it is never more wrong.",
 )

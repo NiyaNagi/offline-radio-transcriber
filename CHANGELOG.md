@@ -95,6 +95,118 @@ Settings capture switches that are persisted, rendered and read by nobody) and R
 "not yet exempt" row, and a notification preview populated with invented figures) are filed and
 unassigned. The tour has no step for the frequency screen at any font scale, so whatever it looks
 like now has never been captured — noted in R-1167 and not fixed here.
+## 2026-09-22 (r-1164-1165: the two false privacy claims shipping in `v0.1.1` are corrected, and the copy that states them is made un-driftable)
+
+### `e52b02a6` — r-1164-1165: Welcome stops making the one claim FR-ANL-14 forbids, and two screens stop promising voiceprints never leave
+
+**Scope:** `:app` only —
+`app/src/main/kotlin/org/ort/app/ui/OfflinePromiseCopy.kt` (new),
+`app/src/main/kotlin/org/ort/app/ui/setup/WelcomeScreen.kt`,
+`app/src/main/kotlin/org/ort/app/ui/settings/SettingsAboutScreen.kt`,
+`app/src/test/kotlin/org/ort/app/ui/OfflinePromiseCopyTest.kt` (new),
+`app/src/test/kotlin/org/ort/app/ui/setup/WelcomeScreenTest.kt`,
+`app/src/test/kotlin/org/ort/app/ui/settings/SettingsAboutScreenTest.kt`,
+`design/canvas/Setup-Welcome.dc.html`, `design/canvas/Settings-About.dc.html`.
+
+**Requirements/ACs:** FR-ANL-14 (the one permitted privacy claim, verbatim); FR-SPK-20 as amended
+by D38; FR-OBS-9, FR-OBS-10 (the field-report channel's per-upload consent and its public-destination
+guard); FR-SPK-25, FR-DIG-13, FR-LEX-24 (the three categories that are in no channel and no tier);
+D37, D42; constitution I (Uncertainty Is Content — a false promise is the same class of defect as a
+confident wrong callsign), V, VIII. Register rows R-1164 and R-1165.
+
+**What changed:**
+
+*R-1164 — the Welcome screen.* `WelcomeScreen`'s lead paragraph read *"Transcription, callsign
+resolution and the log all run here. No account, no upload, no network in the capture path —
+ever."* FR-ANL-14 says a bare claim that no audio ever leaves the device SHALL NOT be made, because
+contribution, a field report and analytics tier 3 can each carry audio by the operator's own
+choice — and this very setup flow offers tier 3 six screens later at `AnalyticsConsentScreen.kt:96`.
+The screen promised never and then asked. It now reads:
+
+> Your audio is processed only on your phone and is never uploaded unless you choose to share it.
+> Transcription, callsign resolution and the log all run here, with no account and no network call
+> from the capture path.
+
+The first sentence is FR-ANL-14's permitted wording, character for character. The defect was the
+absolute *ever*, not the sentiment: *no network call from the capture path* is true, is enforced by
+`dependencyRules` rather than promised, and stays — now scoped to the capture path so it cannot be
+read as re-implying the absolute the first sentence just qualified. *No account* is also true and
+stays.
+
+*R-1165 — the voiceprint guarantee, on two screens.* Welcome's "What is captured" sheet and
+`SettingsAboutScreen` both stated *"Voiceprints, the names you give stations, what this phone has
+learned about who is around when, and your location never leave it — not in an export, a
+contribution, a diagnostic bundle or a backup."* Three of those four categories are still absolute
+(FR-SPK-25, FR-DIG-13, FR-LEX-24) and keep their sentence, now saying *never leave this phone* and
+adding *or any analytics tier* so D42's new channel is covered explicitly. The voiceprint half
+stopped being true at D38 and is now its own point, stating the exception and every condition
+attached to it — off by default on every report, each file and its real size named before anything
+is sent, a public destination refused unless the FR-OBS-10 switch was explicitly turned off — plus
+the operator's own device-to-device transfer, which FR-SPK-20 permits and `SettingsBackupScreen`
+already tells them about (that screen and this copy directly contradicted each other before this
+change). A surgical split, not a deletion: the absolute that is still true was not weakened to make
+the edit easy.
+
+*The structural half.* `WelcomeScreen`'s `OFFLINE_PROMISE_POINTS` carried a doc comment claiming it
+was `Settings-About.dc.html`'s section "verbatim, not a paraphrase", while `SettingsAboutScreen`
+re-typed the same paragraphs as its own literals. They had already drifted (`:net` against `only one
+module`), and when D38 made the voiceprint promise false, *both* went on repeating it for the same
+reason: nothing tied them together. The wording now lives once, in `OfflinePromiseCopy`, with its
+spec obligations in the kdoc, and both screens render it through their own test tags
+(`setup-welcome-promise`, `setup-welcome-promise-point-N`, `settings-about-promise-point-N`). The
+About screen's first paragraph consequently changes from `:net` to `only one module`, which is what
+its own artboard has always said and which stops a module name leaking into user copy.
+
+Both artboards carry the new text: `Setup-Welcome.dc.html`'s lead paragraph, and
+`Settings-About.dc.html`'s promise section, which gains a fourth bullet. Nothing else about either
+board changed.
+
+**Verified:**
+
+- `./gradlew :app:test :app:smokeTestFullDebugUnitTest :app:detekt :app:ktlintCheck
+  -PortAllowMissingBundledAssets=true` — see the report for the exact result.
+- **Discrimination, both directions, run rather than asserted.** The four `OfflinePromiseCopyTest`
+  cases were written first and run against the *shipped* copy wired into the new shared constant:
+  all four failed, each naming the real defect (`Found "no upload" in: …`; `Expected to find: Your
+  audio is processed only on your phone…`; `D38 removed voiceprints from this absolute`; `D38 made
+  "voiceprints never leave" false`). They pass on the corrected copy. Separately, the three new
+  render tests were checked by making each screen render one character more than the shared
+  constant: all three failed on the exact-text assertion and were restored.
+- The split is deliberate and both halves are needed: `OfflinePromiseCopyTest` judges *the wording*
+  against the spec and cannot be satisfied by a screen; the render tests prove *these two screens*
+  are the surfaces that state it, asserted through each screen's own tag rather than by finding the
+  words somewhere in the tree. R-1160 and R-1070 are both cases of a check that passed by matching
+  something other than the screen under test; a tag that exists only inside the screen (and, for the
+  sheet, only while it is open) cannot do that.
+- Asserting on this prose is the documented exception to constitution II's "never assert on prose":
+  FR-ANL-14 makes the wording itself the requirement. The test kdoc says so.
+
+**Left open / not done:**
+
+- **No visual evidence. Both screens are unverified against their artboards.** This diff touches
+  `app/src/main/kotlin/org/ort/app/ui/**` and `design/**`, so working agreement 7 and constitution
+  VIII require a fresh tour capture at font scale 1.0 and 2.0, scrolled to the end, compared with
+  the boards — and no emulator or device was available in this worktree. **The new copy is longer
+  than what it replaces** (Welcome's lead paragraph roughly doubles; the promise list goes from
+  three points to four, one of them long), so the 2.0 first-frame behaviour of `WelcomeScreen`'s
+  `SubcomposeLayout` and the 320 dp cap on the sheet's scroll column are exactly what needs looking
+  at. R-1164 and R-1165 must not be closed on this report. A passing test is not that evidence.
+- **Other surfaces still repeating these claims were found and deliberately not touched**, being
+  outside this prompt's ownership: `README.md:4` ("entirely offline"); `StationIdentityScreen.kt`
+  (:103, :483-485) and `Station-Identity.dc.html` (:33, :88), which state the voiceprint absolute a
+  third and fourth time; `SettingsExportScreen.kt:73-74` and `Settings-Export.dc.html:99` ("Never
+  exported, by any option: voiceprints…"); `SettingsViewData.kt:362-363`, whose kdoc calls the list
+  "Constitution V's closed list, verbatim" when V no longer reads that way; `Settings.dc.html:65`;
+  `data/…/CatalogEntities.kt:183`. `SettingsBackupScreen.kt:112-114` is the one that already told
+  the truth and therefore contradicted the others. These want their own register rows.
+- The `WELCOME_ASKS` list, the screen title *"Everything your radio heard, written down, on this
+  phone only"* and the footer link *"What is captured, and what never leaves this phone"* were left
+  alone. The title is a claim about where processing happens (Principle V's own framing) rather than
+  an upload claim, and the footer link is a question the sheet then answers honestly — but both sit
+  close enough to the line that the lead may want a view.
+- R-1166 wants this whole flow shortened and its language simplified; this change makes the Welcome
+  copy longer, not shorter. That tension is real and belongs to that row's redesign, not to a
+  correctness fix that could not wait for it.
 
 ## 2026-09-22 (r-r03-ci: `TourStepsTest` stops relying on an accidental drawer-row match for the three `ImprovePage` preview seams)
 
