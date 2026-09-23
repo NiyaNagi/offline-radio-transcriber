@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-23 (r-1180: a test that raced virtual time against a real dispatcher)
 
-### `PENDING` — r-1180: the two R-1139 scope tests get real seconds instead of virtual ones
+### `e18b009f` — r-1180: the two R-1139 scope tests get real seconds instead of virtual ones
 
 **Scope:** `app/src/test/kotlin/org/ort/app/ui/failures/PushedToastChannelTest.kt` only. No
 production file changed (`PushedToastChannel.kt` was edited temporarily for the discrimination run
