@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 106 | 13 | 25 | 68 |
+| UI / defect register | 118 | 13 | 25 | 80 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
-| Build-plan units | 5 | 2 | 3 | 0 |
+| Build-plan units | 6 | 2 | 4 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **152** | **30** | **43** | **79** |
+| **Total** | **165** | **30** | **44** | **91** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -60,6 +60,7 @@ process, polish, open questions and coverage debt are P2.
 | P9 | GATE: 8-hour run on the reference device | build-plan | not started |  |
 | P11 | End-to-end, then the M4 fork | build-plan | not started |  |
 | P12 | Make capture actually work end to end on a device | build-plan | not started |  |
+| P39 | Onboarding cut to four steps | build-plan | not started |  |
 | E2-A06 | FR-RIG-6, FR-CAP-5, FR-RIG-3 | e2e | **owed data/descriptor additions found while wiring** (wpc2 report): transmissionentity.rigstatechangedmidtransmission (v9), capturegapcause.bluetooth_audio_lost (v9), transportspec.usbvendorid/usbproductid/lineterminator on :rig descriptors (then defaultrigtransportfactory reads the descriptor before |  |
 | E2-I06 | D36 | e2e | hardware |  |
 | E2-L01 | H1 | e2e | hardware |  |
@@ -184,3 +185,15 @@ process, polish, open questions and coverage debt are P2.
 | R-1157 | The tour degrades around 300 steps into one process, so late steps fail spuriously | register | tooling/open | constitution VIII; R-1146, R-1021 |
 | R-1159 | A mid-scroll capture is pinned to a step count nobody derived | register | tooling/open | constitution VIII; R-1158 |
 | R-1160 | A tour-step check was passing by matching the drawer instead of the screen | register | process/open | constitution II, VIII; R-770, R-1127, R-1070 |
+| R-1161 | Setup loops forever on Running overnight, and the exit needs a capture the loop prevents | register | app/open | AC-189; constitution IV; R-1104; NFR-8 |
+| R-1162 | A setup step that can reappear after setup is complete offers no way back | register | app/open | R-1161; constitution IV; AC-189 |
+| R-1163 | Two test suites each seeded past the deadlock and wrote down why | register | process/open | R-1161; constitution II, VIII |
+| R-1164 | The Welcome screen makes the one privacy claim the spec forbids, and it ships today | register | app/open | FR-ANL-14; constitution I, V; D42; AC-180 |
+| R-1165 | Two screens still promise voiceprints never leave the device, which D38 made false | register | app/open | FR-SPK-20; FR-OBS-9; FR-OBS-10; D38; constitution I, V; R-1164 |
+| R-1166 | First-run setup is eleven to twenty screens where four would do | register | app/open | AC-166; AC-180; AC-189; FR-CAP-8; constitution I; R-1161, R-1162 |
+| R-1167 | The frequency is demanded on one path and never asked on the path right beside it | register | app/open | R-344; FR-RIG-*; constitution I; R-1166 |
+| R-1168 | There is no gain control, the design intent promised one, and three screens promise there never will be | register | app/open | FR-CAP-*; constitution I; R-1166 |
+| R-1169 | The spec picked an unprocessed audio source years ago and the code still asks for the processed one | register | app/open | technical-design §5.1; constitution I; R-1168 |
+| R-1170 | Five setup screens disable Continue for validation, and two of them have no way out at all | register | app/open | constitution I, IV; FR-A11Y-*; R-1161, R-1162, R-1166 |
+| R-1171 | Three capture switches in Settings are persisted, rendered, and read by nobody | register | app/open | constitution I; R-1132, R-1139, R-1141 |
+| R-1172 | Two setup screens show invented state as though it were real | register | app/open | constitution I; R-1166 |

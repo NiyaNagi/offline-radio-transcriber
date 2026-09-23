@@ -1015,6 +1015,26 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   (publishing is a release action for the lead/operator, not a builder fix) — see this unit's own
   CHANGELOG entry for the full per-asset table and what remains open.
 
+- [ ] **P39 · Onboarding cut to four steps** *(`:app` `ui/setup`, `MainActivity`)* — D58,
+  AC-198..204, AC-166/180/189 (all amended), R-1166, R-1167, R-1170, R-1172. **Beta blocker, and
+  the flow the operator actually has to walk.** Rebuild first-run setup to D58's sequence: Welcome
+  (one line, the FR-ANL-14 sentence once, the jurisdiction and analytics acknowledgements folded
+  in) → capture mode over the log → the microphone permission fired from that choice with no
+  explainer step → one screen carrying input, the verify checklist and the level meter → models,
+  conditionally. Move the deferred asks to the homes D58 names, each of them, rather than deleting
+  them: notifications to first capture start, the battery prompt to the first missed heartbeat
+  (which is also R-1161's structural half), the manual frequency to the log header, the rig branch
+  behind "a rig module actually exists".
+  **Done when:** AC-198 holds by walking a real first run; AC-199 holds by the launch-to-capture
+  route test with every capture-produced signal reporting unproven; AC-200..204 each have a test
+  named for them; `stepFor`'s terminal state is derived from "no gates remain" rather than the
+  `setupComplete` latch, and setup no longer hands control to a router that can hand it straight
+  back; every remaining screen is captured by the tour at font scale 1.0 and 2.0 and compared with
+  its artboard, with the register rows carrying the capture paths. Note the artboard set changes
+  shape here — screens merge — so the boards are part of this unit, not a follow-up, and the
+  now-unreachable ones are deleted rather than left to rot. Depends on the R-1161 loop fix and the
+  R-1170 always-lit-Continue change landing first; those are separable and are in flight.
+
 **Waves M-Q — planned, expanded into prompts when each wave starts.** **M** UI honesty sweep
 (hide the unreachable Improve destination, share from the open screen, an alert refusal must not
 open the coalescing episode, unattributed overs in the thread order, the storage screen's

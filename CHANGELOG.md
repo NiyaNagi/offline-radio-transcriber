@@ -32,6 +32,70 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-22 (lead: the operator's device report on onboarding — twelve register rows, D58, AC-198..204, P39)
+
+### `PENDING` — lead: file the 2026-09-22 onboarding findings, decide D58, and put the restructure on the plan
+
+**Scope:** lead-only surfaces — `results/ui-audit/register.md`, `spec/open-questions.md`,
+`spec/functional-spec.md`, `spec/build-plan.md`, `results/backlog.md` (regenerated). No product
+code touched; four builders are in flight against the rows this filed.
+
+**Requirements/ACs:** **D58** (new), **AC-198..204** (new), **AC-166 / AC-180 / AC-189** (all three
+amended), R-1161..R-1172 (twelve new register rows), P39 (new build-plan unit, unticked).
+
+**What changed:** The operator ran first-run setup on a real device and reported a trap they could
+not escape, a missing gain control, and a flow that is too long. Five agents reviewed it in
+parallel — external onboarding research, a code inventory, a root-cause trace, a capture-stack
+feasibility study and an adversarial critique — and the findings were filed as twelve rows.
+
+The blocker, **R-1161**, is a two-activity deadlock and is worse than a loop:
+`SetupActivity.reconcileOvernightSurvival` (`:396`) erases `overnightStepSeen` whenever overnight
+survival is unproven, `stepFor` therefore returns `OVERNIGHT`, both of that screen's buttons set the
+flag back and hand control to `MainActivity`, which refuses to start capture for the same unproven
+reason and sends the operator straight back. **The only thing that can prove survival is a recorded
+15-minute session, and the only way to record one is the branch the loop never reaches** — so there
+is no exit from inside the app at all, `SetupActivity` and `ReaderActivity` both being
+`exported="false"`. Neither contributing change was wrong alone; R-1104 closed a real blind spot and
+the reset had been benign before it. The defect lives entirely in their composition, which is why
+no single unit test sees it — and **R-1163** records the sharper version of that: both suites that
+could have caught it had already met the mechanism and seeded past it in a fixture, each with a
+comment accurately describing one half of the deadlock as an inconvenience.
+
+Two rows are honesty defects shipping right now. **R-1164**: `WelcomeScreen.kt:143-144` claims
+*"No account, no upload, no network in the capture path — ever"*, which is the exact bare claim
+FR-ANL-14 (mandatory) forbids, on a screen six steps ahead of the one offering analytics tier 3.
+**R-1165**: the same screen's sheet and `SettingsAboutScreen.kt:64` both still promise voiceprints
+never leave the device, which D37/D38 made false — the field-report channel may carry them. The
+rest of that sentence remains exactly true and must survive the fix.
+
+**D58** decides the restructure, applying one test to every existing step: *will the app behave
+wrongly, or be unable to start, in the next minute, without this answer?* Twelve screens become
+four — welcome, capture mode over the log, the microphone permission fired from that choice, and one
+screen carrying input, verify and level together. Jurisdiction, notifications, the battery prompt,
+the rig branch, the manual frequency and analytics consent each get a **named** home rather than
+being deleted. AC-166, AC-180 and AC-189 are amended rather than dropped; AC-189 in particular loses
+the word *onboarding*, because the diagnosis established that **it never asked for a block, only for
+the prompt to keep reappearing** — R-1104 over-implemented its own criterion, which is what made the
+deadlock possible. AC-199 now states the general rule directly: no setup step may gate capture on
+evidence only capture can produce, verified by driving the whole route rather than one step.
+
+**Verified:** `python tools/spec-check/spec_check.py` — all 8 rules PASS (ids contiguous, no dangling
+refs, every new AC linked to a requirement, every decision carrying a §16 traceability row).
+`python tools/backlog/backlog.py` — regenerated, 165 open items. No build was run and none was
+needed: this commit changes no code.
+
+**Left open / not done:** Everything P39 describes is unbuilt — this commit only decides and files
+it. Four builders are in flight on the separable rows (R-1164/R-1165 copy, R-1161/R-1162 the
+deadlock, R-1169/R-1168 audio source and gain, R-1170 the disabled-button rule); none has landed or
+been gated yet, and no claim is made here about their state. The gain control in particular is
+**judged but not settled by evidence**: Android exposes no input-gain API, so it can only ever be a
+software multiply that raises the noise floor exactly as much as the signal — see R-1168 for the one
+case where that genuinely helps and the three shipped copy lines it would falsify. R-1171 (three
+Settings capture switches that are persisted, rendered and read by nobody) and R-1172 (a hardcoded
+"not yet exempt" row, and a notification preview populated with invented figures) are filed and
+unassigned. The tour has no step for the frequency screen at any font scale, so whatever it looks
+like now has never been captured — noted in R-1167 and not fixed here.
+
 ## 2026-09-22 (r-r03-ci: `TourStepsTest` stops relying on an accidental drawer-row match for the three `ImprovePage` preview seams)
 
 ### `5e68ff63` — r-r03-ci: R02/R03/R04's own `TourStepsTest` markers, real and stable, replacing a fragile generic fallback that had been silently wrong since R-1127

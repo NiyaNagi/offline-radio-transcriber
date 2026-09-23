@@ -830,3 +830,105 @@ lost.
 | C13 | Where does operator location come from? | GPS when available, manual fallback | D17, FR-LEX-22..24. Rig-reported position placed **first** because the TH-D75A has GPS for APRS, giving portable accuracy with no Android location permission at all |
 | C14 | What gives when the device cannot keep up? | Never drop audio | D16, FR-RUN-1..6. Five-level shed order ending in deferral, not loss. Combined with cross-tier reprocessing, overload yields a provisional record — the same safety property as tier degradation |
 | C10 | If the run-on-anything requirement is dropped, does it get materially better? | Yes. "A modern device must have a highly accurate and world class experience with things still working on lower tier devices" | D3, D8 rewritten; D13 and D14 added. §6 tier model inverted — tiers now defined *downward* from a reference experience. NFR-1 becomes a per-tier table. Cross-tier reprocessing (FR-REP-8..11) is what reconciles the two halves: a low tier yields a provisional record, not a permanently degraded one |
+
+## 2026-09-22 — D58: onboarding asks four questions, and the rest are asked when they matter
+
+**The trigger.** The operator ran first-run setup on a real device and reported three things in one
+breath: a loop on the *Running overnight* screen they could not escape, a wish for a microphone
+gain control with the `Continue` button lit throughout, and — the part this decision answers —
+*"the setup feels to complicated as well, simplify it to a smaller number of pages. dont ask the
+frequency for onboarding, drop the user into the capture mode dialog after askin gbasic questions.
+simplify the language across onboarding to just focus on what the app is asking for, dont use all
+the mumbo jumbo on 'on this device only etc'."*
+
+**What was actually there.** Counted, not estimated: a new user on API 33+ with every model bundled
+walks **12 screens**; the worst path reaches **20**, every member of `SetupStep` being reachable in
+a single run. Five have no skip predicate at all. Two (`LEVEL`, `MODELS`) disable `Continue` with no
+back and no later, so an operator whose environment will not cooperate has no action available but
+uninstalling. Seven of the back half pass `onBack = null`. The step indicator reads *"n of 10"*
+against a fixed denominator a local-microphone operator never reaches. Four separate screens carry
+a privacy reassurance, and two of those statements are **false** (R-1164, R-1165). This was not a
+flow that had grown one screen too long; it had stopped being a flow and become an inventory.
+
+**The decision.** Onboarding asks only what the app cannot start capturing *correctly* without, and
+the test applied to every existing step was exactly that: **will the app behave wrongly, or be
+unable to start, in the next minute, without this answer?** Everything that fails the test becomes a
+contextual prompt at the moment it first matters, or a Settings row. The resulting sequence:
+
+1. **Welcome.** One line on what the app does, the FR-ANL-14 sentence once and only here, `Begin`.
+   Absorbs the jurisdiction notice and the analytics disclosure as acknowledged lines rather than
+   screens of their own (see the AC amendments below).
+2. **Capture mode**, presented over the log rather than as a step in a wizard — the operator's own
+   *drop the user into the capture mode dialog*. Three rows, one sub-line each, no essay. The
+   destination is visible behind it, which is the point.
+3. **The microphone permission**, fired directly from that choice with no explainer screen in front
+   of it. Its one-line rationale rides on the mode surface, in the shape the evidence supports
+   (*this app needs X so you can Y*) — a rationale at the point of asking measurably outperforms
+   both no rationale and a dedicated screen, and a dedicated screen is request fatigue.
+4. **Input, verify and level — one screen.** The route list, the verify checklist expanding in
+   place, the meter and its gain beneath. This is the only screen that must be full-screen, because
+   it is the only one whose failure is *silent*: constitution IV lives here, and
+   `ROUTE_MISMATCH` remains the one deliberate hard halt in the product.
+5. **Models**, conditionally, only when something the tier needs is genuinely absent — already
+   correctly scoped today and unchanged.
+
+Four screens in the ordinary case, five when a download is owed, against twelve.
+
+**What moves, and where to — each named, because "defer it" without a destination is how a step
+becomes lost rather than moved.**
+
+- **The jurisdiction notice** → an acknowledged line on Welcome, full text in Settings › About.
+- **Notifications** → asked at the first capture start, in context, where the persistent
+  notification is about to appear.
+- **The overnight/battery step** → a *Keep capture running* prompt triggered by the first missed
+  heartbeat. This is not only a simplification: it is the structural half of R-1161's fix. Overnight
+  survival is evidence that by construction cannot exist before a capture has run, so it can never
+  be a pre-capture gate without deadlocking, which is precisely what it did. It is a post-capture
+  fact and now lives where post-capture facts live. External practice agrees and is worth recording
+  against a future reviewer's instinct: no consumer application that depends on background survival
+  asks for the exemption during onboarding — the ones that need it most surface it as a remedy after
+  tracking has demonstrably failed, and on OEM skins the generic exemption does not cover auto-start
+  or the vendor sleep list at all, so asking up front buys a yes that does not fix the problem and
+  spends the trust the microphone ask needs.
+- **The radio / rig-transport / rig-Bluetooth branch** → entered only when the chosen capture mode
+  implies a rig *and* a rig module exists to talk to. No rig module has a CAT implementation today,
+  so on current builds this branch does not appear at all, which is the honest rendering of the
+  state the code is actually in.
+- **The manual frequency** → out of onboarding entirely (R-1167), into the log header, editable in
+  place where the operator can see what it is labelling. The answer is genuinely consumed and the
+  field stays; only the prompt moves. The flow was in any case already incoherent about it: one tap
+  demanded a parseable number with a disabled button while the tap immediately beside it advanced
+  with the value still null and capture ran perfectly well.
+- **Analytics consent** → an acknowledged line on Welcome with the two opt-in toggles one tap away,
+  and permanently in Settings.
+
+**Two structural rules this decision also fixes, because the loop was a symptom of them.**
+
+- **A terminal state is a function of "no gates remain", never of a latch.** `READY` is gated behind
+  `!setupComplete`, so once that flag is true the flow's own last screen can never be shown again —
+  on any re-entry there is no "this is the end" state to land on.
+- **Setup must never treat "nothing left to do" as an instruction to hand control back to the router
+  that sent it here.** `refreshStep`'s null branch is an *exit*, not a destination; `MainActivity`
+  and `SetupActivity` each believe the other decides, and a cycle between two components that both
+  defer is a cycle by construction rather than by accident.
+
+**Copy.** One idea per screen, a heading in the imperative that names the ask, one supporting line.
+The privacy statement is not deleted — FR-ANL-14 makes one sentence mandatory wherever the claim is
+made at all — but it appears **once**, on Welcome, where it is the rationale for what is about to be
+asked rather than ambient reassurance. That is the operator's *mumbo jumbo* complaint answered
+precisely: the problem was never that the app said it, it was that four screens said it, two of them
+falsely, none of them at the moment it was load-bearing.
+
+**Honesty cost, stated plainly.** This decision removes screens whose content was true and
+carefully written. The jurisdiction notice, the tiered-analytics explanation and the battery caveat
+are all things this product is right to say. The judgement is that saying them to someone who has
+not yet heard a single over is not informing them — it is spending attention that the input
+verification, the one step where being wrong is silent, then does not have. Every one of them keeps
+a permanent home and none becomes unreachable.
+
+**Not settled here, and deliberately left open:** whether the step indicator survives at all. With
+four steps and one conditional, the denominator is genuinely knowable at the mode choice, which
+would retire the R-1087 compromise of a fixed total larger than any real run — but a four-step flow
+may not need an indicator, and the cheapest honest answer may be to delete it rather than fix it.
+Decide against the rebuilt flow, not in advance of it.
+

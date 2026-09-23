@@ -2909,7 +2909,11 @@ Input to the test plan. Grouped by what a test would have to establish.
 - **AC-63** The log view is navigable and comprehensible via screen reader, and renders without
   clipping at maximum system font scale (FR-A11Y-2, FR-A11Y-3).
 - **AC-166** The jurisdiction and consent notice (NFR-6c) is shown **exactly once, on first
-  run**, and capture cannot start until it has been dismissed (NFR-6c).
+  run**, and capture cannot start until it has been dismissed (NFR-6c). **Amended by D58
+  (2026-09-22):** this criterion requires that the notice be *shown and acknowledged* before
+  capture, not that it occupy a step of its own; it is satisfied by an acknowledged line in the
+  first-run flow whose full text is permanently reachable from Settings. The shown-once and
+  cannot-start-until-dismissed halves are unchanged and still binding.
 - **AC-167** Settings exposes a licence-notices screen listing Gemma, Whisper, sherpa-onnx, ONNX
   Runtime, Silero and every other bundled library with a notice obligation, each reachable and
   readable **without a network connection** (NFR-6d).
@@ -3225,7 +3229,11 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
   FR-ANL-2..4, and turning tier 2 or tier 3 off takes effect immediately for events not yet sent
   (FR-ANL-9).
 - **AC-180** Setup explains tier 1 and offers tiers 2 and 3 as an explicit, unchecked choice;
-  declining both leaves every other function fully working (FR-ANL-10).
+  declining both leaves every other function fully working (FR-ANL-10). **Amended by D58
+  (2026-09-22):** the explanation and the two unchecked toggles must be *present and reachable
+  within the first-run flow* rather than constitute a dedicated step. Unchecked-by-default and
+  declining-costs-nothing are unchanged and still binding, as is FR-ANL-10's own rule that this
+  never gates anything.
 - **AC-181** Resetting the install id purges every row previously associated with the old id at
   the configured destination (FR-ANL-11).
 - **AC-182** Analytics rows land only in the `field` fold and never appear tagged `dev` or `eval`,
@@ -3247,9 +3255,15 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
 - **AC-188** Setup cannot reach READY while any model the detected tier requires is missing or
   unverified, or while the microphone/level check has not passed; reaching READY requires both
   conditions satisfied together (FR-AST-12).
-- **AC-189** The battery-exemption onboarding step reappears on every relevant subsequent launch
+- **AC-189** The battery-exemption prompt reappears on every relevant subsequent launch
   until the heartbeat (FR-SVC-5b) proves the app survived a backgrounded run, even where the OS
-  reports the exemption already granted (FR-AST-12, FR-SVC-5b).
+  reports the exemption already granted (FR-AST-12, FR-SVC-5b). **Amended by D58 (2026-09-22),
+  and the word "onboarding" deliberately removed:** this is a *post-capture* prompt and SHALL NOT
+  gate capture. Overnight survival can only be proven by a recorded session, so a pre-capture gate
+  on it is unsatisfiable by construction - implemented as one it deadlocked every first-run
+  operator (R-1161), with both of the step's own buttons returning to it forever and no exit but
+  uninstalling. This criterion never asked for a block; only for the prompt to keep reappearing
+  until the evidence exists. See AC-199.
 - **AC-190** The `full` variant installs with every asset bundled and never reaches a model
   download step; the `play` variant installs without those models and downloads them during
   setup — verified by installing each variant and comparing its setup flow (FR-AST-13).
@@ -3274,6 +3288,28 @@ Goal G1 is the primary user-facing deliverable and had no acceptance criteria at
   callsign was heard in that transmission (FR-ALR-5).
 - **AC-197** Every watched callsign, keyword and frequency is visible and manageable from one
   screen (FR-ALR-6).
+
+### 14.18 First-run setup (D58)
+
+- **AC-198** A first run on a device where every required model is already present reaches live
+  capture in **no more than four screens**, the system permission dialog not counted; a run that
+  must download reaches it in no more than five (FR-CAP-8, FR-AST-10, NFR-6c).
+- **AC-199** **No setup step gates capture on evidence that only capture can produce.** Verified by
+  driving the full launch-to-capture route with every such signal (overnight survival among them)
+  reporting unproven, and asserting that capture still starts - not merely that some individual
+  step advances (FR-AST-12, FR-SVC-5b, FR-RUN-1).
+- **AC-200** Every setup step that can be shown after setup has once completed renders an exit that
+  returns to the running app, not only a forward action (NFR-6c, FR-AST-12).
+- **AC-201** No primary button in the setup flow is disabled because of validation state; it stays
+  focusable and actionable, and acting on it while the step is unsatisfied says specifically what
+  is missing. A control MAY be disabled only while an action is genuinely in flight. An unverified
+  audio route still never proceeds - the block is communicated, not removed (FR-CAP-1, FR-A11Y-1).
+- **AC-202** First-run setup never asks for the manual frequency; the value remains editable in the
+  log's own header and continues to label overs exactly as before (FR-RIG-1, FR-CAP-8).
+- **AC-203** The FR-ANL-14 privacy sentence appears **exactly once** in the first-run flow, and no
+  other screen in that flow makes a privacy claim of its own (FR-ANL-14, constitution I).
+- **AC-204** The microphone permission is requested with its rationale on the surface that asks for
+  it, with no dedicated explainer step preceding the system dialog (FR-CAP-1, NFR-6c).
 
 ---
 
@@ -3633,6 +3669,7 @@ product; all of them are what make the reference experience world-class.
 | D42 Principle V redefined; analytics channel added | FR-ANL-1..14, FR-OBS-5 (amended), FR-OBS-5a (amended), NFR-6 (amended), AC-163..183 |
 | D43 Setup downloads any model not bundled; two build variants | FR-AST-3 (amended), FR-AST-10..13, AC-136 (amended), AC-138 (amended), AC-139 (amended), AC-184..190 |
 | D44 Model mirror on GitHub Releases, pinned by sha256 | FR-AST-14, AC-191 |
+| D58 Onboarding cut to four steps; deferred asks get named homes | AC-166 (amended), AC-180 (amended), AC-189 (amended), AC-198..204, FR-CAP-8, FR-ANL-10, FR-ANL-14, FR-AST-12, FR-SVC-5b, NFR-6c |
 | D45 Voice library (D28) deferred to post-1.0 | FR-SPK-11..26 (deferred), RELEASES.md correction |
 | D46 M4 fork timing fixed to a post-1.0 dev-fold measurement | R3, M4, Q2 |
 | D47 1.0 launches free, no billing | technical design §16 (token kinds) |
