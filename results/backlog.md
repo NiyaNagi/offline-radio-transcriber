@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 118 | 13 | 25 | 80 |
+| UI / defect register | 119 | 13 | 25 | 81 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 6 | 2 | 4 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **165** | **30** | **44** | **91** |
+| **Total** | **166** | **30** | **44** | **92** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -197,3 +197,4 @@ process, polish, open questions and coverage debt are P2.
 | R-1170 | Five setup screens disable Continue for validation, and two of them have no way out at all | register | app/open | constitution I, IV; FR-A11Y-*; R-1161, R-1162, R-1166 |
 | R-1171 | Three capture switches in Settings are persisted, rendered, and read by nobody | register | app/open | constitution I; R-1132, R-1139, R-1141 |
 | R-1172 | Two setup screens show invented state as though it were real | register | app/open | constitution I; R-1166 |
+| R-1173 | The superseded privacy claim is repeated in seven more places, including the repo headline | register | app/open | FR-ANL-14; FR-SPK-20; FR-PLT-5; D37; D38; D42; constitution I, V; R-1164, R-1165 |
