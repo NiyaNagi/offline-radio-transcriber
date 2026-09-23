@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 Every commit that lands completed, tested work gets an entry here — this is the project's
 build log, not just its git history, because `git log` doesn't carry *why* a change was safe,
@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-22 (r-gain: the audio source the spec chose in 2024, and the gain control the design intent promised)
 
-### `<pending>` — r-gain: R-1169 `UNPROCESSED`/`VOICE_RECOGNITION` selection, recorded; R-1168 a real gain control at `AndroidAudioIo.read()`; R-1170 `Continue` no longer disabled on S07; and the three copy lines all of that makes false
+### `60f91c41` — r-gain: R-1169 `UNPROCESSED`/`VOICE_RECOGNITION` selection, recorded; R-1168 a real gain control at `AndroidAudioIo.read()`; R-1170 `Continue` no longer disabled on S07; and the three copy lines all of that makes false
 
 **Scope:** `:capture-android` (`AndroidAudioIo.kt`, `AudioIo.kt`, `fake/FakeAudioIo.kt`, new
 `CaptureGain.kt` and `CaptureAudioSource.kt`) and `:app` (`ui/setup/SetupStore.kt`,
