@@ -26,9 +26,47 @@ transcribing works with actual models built in. See `RELEASING.md`.
 Everything in v0.1.1 below, plus the items here. This is what the rolling "latest build"
 prerelease contains.
 
-Nothing user-facing yet. Changes since v0.1.1 are internal: the project's binding principles and
-test plan now describe how the interface is checked against its designs, and there is a written
-procedure for continuing that work from real device testing.
+### Fixed
+
+- **Setup could trap you on the "Running overnight" screen with no way out.** After finishing
+  setup you were sent straight back to it, and both of its buttons returned you there again — on a
+  fresh install there was no escape but uninstalling. The cause was circular: the app would not
+  start capturing until it had proof it survives running in the background, and the only thing that
+  can produce that proof is a capture it would not start. The battery-optimisation prompt now
+  appears once per launch and never blocks capture, and the screen has a **Back to the app** action
+  whenever it appears after setup is already done.
+- **The welcome screen made a privacy claim this app cannot honestly make.** It said there was no
+  upload, *ever*. That is not true of an app that offers to share audio, a field report, or a
+  contribution at your choice — and it offered one of those a few screens later. It now states the
+  one accurate promise: *your audio is processed only on your phone and is never uploaded unless
+  you choose to share it.*
+- **Two screens still said voiceprints never leave the device.** They can, by one route you control
+  — a field report where you switch that category on, or a transfer you make to your own device.
+  Names you give stations, what the phone has learned about who is around when, and your location
+  still leave in no channel and no tier, and those screens now say exactly that instead of an
+  absolute that had stopped being true.
+
+### New
+
+- **Input gain, on setup's Level step.** A slider beside the live meter, 0 to 12 dB, which takes
+  effect immediately on the audio being captured rather than waiting for a restart. It is honest
+  about what it is: a software multiply applied after the audio has been digitised, so it raises
+  the noise floor by exactly as much as the speech and cannot rescue an input already clipping.
+  Set the level on the radio first; use this only when an adapter is so quiet that speech wastes
+  most of its range.
+- **The app now asks Android for unprocessed audio where the device offers it**, instead of always
+  taking the voice-recognition input, which on many phones applies its own automatic gain and noise
+  suppression underneath you. Which one it actually got is shown on the setup step that verifies
+  your input.
+
+### Improved
+
+- **Continue is no longer greyed out while setup waits for something.** It stays available and, if
+  you press it before the step is satisfied, tells you what is missing rather than leaving you to
+  guess. A greyed-out button also cannot be reached by a screen reader at all, which meant the one
+  control blocking you was the one control you could not find. Checks that genuinely must pass —
+  proving your chosen input really is the radio, and a verified rig link — still refuse to proceed;
+  they now say so instead of going quiet.
 
 ### Correction
 
