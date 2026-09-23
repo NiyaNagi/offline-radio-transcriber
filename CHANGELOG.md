@@ -32,6 +32,45 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-23 (r-1180: a test that raced virtual time against a real dispatcher)
+
+### `PENDING` — r-1180: the two R-1139 scope tests get real seconds instead of virtual ones
+
+**Scope:** `app/src/test/kotlin/org/ort/app/ui/failures/PushedToastChannelTest.kt` only. No
+production file changed (`PushedToastChannel.kt` was edited temporarily for the discrimination run
+and restored with `git checkout`, verified by an empty diff).
+
+**Requirements/ACs:** register R-1180 (new), R-1139.
+
+**What changed:** Release `35827213621` failed on `ad5c4924` while CI on the *same commit* passed
+and the lead's own full gate had passed — `2905 tests completed, 1 failed`, with
+`TimeoutCancellationException: Timed out after 5s of _virtual_ (kotlinx.coroutines.test) time` at
+`PushedToastChannelTest.kt:115`. The whole merge range was diffed first to establish this was not
+collateral from that night's four merges: nothing in them touches this file or anything it imports.
+
+The two `R_1139` tests ran under `runTest` while launching work on `PushedToastChannel.undoScope`,
+which is a real `SupervisorJob() + Dispatchers.IO` scope — deliberately real, since a scope that can
+be faked away is not what R-1139 needs proven. Under `runTest`, `withTimeout(5_000)` counts
+**virtual** time, and the virtual clock jumps forward the moment the test scheduler runs dry, which
+is immediately, because the actual work is on `Dispatchers.IO` where that scheduler cannot see it.
+The timeout was racing the work rather than bounding it: green when IO won, red on a loaded hosted
+runner. Both tests now use `runBlocking`, making the five seconds real. Every other test in the file
+keeps `runTest` — they drive a plain `Channel`, where a virtual clock is exactly right — and a kdoc
+records the distinction in place so it is not tidied back.
+
+**Verified:** discrimination run both ways. With `undoScope` temporarily cancelled at construction,
+`:app:testFullDebugUnitTest --tests …PushedToastChannelTest --rerun-tasks` → **2 of 6 failed**, both
+R-1139 cases, the run taking the real 5s per timeout — which is itself the evidence the timeout now
+bounds rather than races. Restored → **BUILD SUCCESSFUL**, both PASSED.
+`:app:detekt :app:ktlintCheck` → **BUILD SUCCESSFUL in 21s**, no findings, nothing suppressed.
+
+**Left open / not done:** R-1180's open half is a repository-wide sweep for the same pattern — any
+`runTest` body that touches a production object holding its own `Dispatchers.IO`/`Default` scope is
+the identical latent race, and each instance will present as an unrelated intermittent failure
+somewhere else. Not done here. This is the second flake found in one night; R-1174 (a
+`smokeTest` class failing once and passing alone) is the other and is unrelated in mechanism but
+identical in how nearly it was shrugged off.
+
 ## 2026-09-22 (lead: the operator's device report on onboarding — twelve register rows, D58, AC-198..204, P39)
 
 ### `c1995ebd` — lead: file the 2026-09-22 onboarding findings, decide D58, and put the restructure on the plan

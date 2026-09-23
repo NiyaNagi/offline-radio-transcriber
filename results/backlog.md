@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 126 | 13 | 25 | 88 |
+| UI / defect register | 127 | 13 | 25 | 89 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 6 | 2 | 4 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **173** | **30** | **44** | **99** |
+| **Total** | **174** | **30** | **44** | **100** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -205,3 +205,4 @@ process, polish, open questions and coverage debt are P2.
 | R-1177 | The tour gained a step, so the committed manifest is a step short until a canonical run | register | tooling/open | constitution VIII; R-1149, R-1158 |
 | R-1178 | The frequency screen's two other branches draw no field for the control its message names | register | app/open | R-1167; R-1170; D58 |
 | R-1179 | The Bluetooth-permission step has never once captured the Bluetooth-permission screen | register | tooling/open | R-817; R-940; R-800; R-1005a; R-810, R-811, R-820, R-830; constitution VIII; R-1160, R-1021 |
+| R-1180 | A test raced virtual time against a real dispatcher and called the result a timeout | register | process/open | R-1139; R-1174; constitution II, VIII |

@@ -6,6 +6,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
@@ -90,19 +91,35 @@ class PushedToastChannelTest {
      * against the real, shared scope (not a fake one): work launched on it genuinely runs, and
      * genuinely does not share a job with a caller's own short-lived scope.
      */
+    /**
+     * **`runBlocking`, not `runTest`, and the distinction is the whole reason this test was flaky
+     * (register R-1180).** Every other test in this file drives a plain [Channel] and nothing else,
+     * so `runTest`'s virtual clock is exactly right for them. These last two are different: they
+     * launch on [PushedToastChannel.undoScope], which is a **real** `SupervisorJob() +
+     * Dispatchers.IO` scope, deliberately, because a scope that can be faked away is not the thing
+     * R-1139 needs proven. Inside `runTest`, `withTimeout(5_000)` counts *virtual* time, and the
+     * virtual clock jumps forward the instant the test scheduler has nothing left to run — which is
+     * immediately, since the real work is on `Dispatchers.IO` and the scheduler cannot see it. The
+     * 5-second timeout therefore raced the IO dispatcher rather than bounding it, passed whenever
+     * IO happened to win, and failed on a loaded hosted runner (Release `35827213621`,
+     * `TimeoutCancellationException: Timed out after 5s of _virtual_ time`). `runBlocking` makes the
+     * timeout real wall-clock seconds, which is what a real scope needs and what this always meant.
+     */
     @Test
     @Requirement("R-1139")
-    fun `R_1139 undoScope actually runs work launched on it`() = runTest {
+    fun `R_1139 undoScope actually runs work launched on it`() = runBlocking {
         val ran = Channel<Unit>(Channel.UNLIMITED)
 
         PushedToastChannel.undoScope.launch { ran.trySend(Unit) }
 
         withTimeout(5_000) { ran.receive() }
+        Unit
     }
 
+    /** Real time, not virtual — see the test above for why. */
     @Test
     @Requirement("R-1139")
-    fun `R_1139 undoScope is not cancelled by an unrelated coroutine scope completing`() = runTest {
+    fun `R_1139 undoScope is not cancelled by an unrelated coroutine scope completing`() = runBlocking {
         // Stands in for a producer's own short-lived `rememberCoroutineScope()`-style scope, which
         // this file's own class kdoc names as the trap: cancelled the moment the screen that built
         // the closure leaves composition. `undoScope` must still be usable afterward.
