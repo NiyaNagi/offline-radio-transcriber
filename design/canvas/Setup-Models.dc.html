@@ -79,7 +79,12 @@
   </div>
 
   <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
-    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.30 0.012 250); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.585 0.008 250);">Continue</div></div>
+    <!-- R-1170: drawn lit, not greyed. The board's state here is one PENDING row and one FAILED
+         row with nothing downloading, which is validation, not unavailability -- tapping this
+         announces which models are outstanding and does not advance (AC-188's gate is unchanged).
+         The one case that still draws greyed is a download actually in flight, which this board
+         does not illustrate. -->
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Continue</div></div>
   </div>
 
 </div>

@@ -506,6 +506,124 @@ to a screen reader.
   always answers "no support", so the real `getProperty` call exercises the fallback branch only.
   Whether a device that reports support actually opens at `UNPROCESSED`, and what it sounds like on
   the reference ColorOS phone, is a hardware row.
+## 2026-09-22 (R-1170: six setup screens stop disabling the primary button for validation state)
+
+### `41f7f664` — R-1170: the setup primary stays lit and refuses on tap, instead of being disabled and silent
+
+**Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/` — `InputScreen.kt`, `VerifyScreen.kt`,
+`RigTransportScreen.kt`, `RigBluetoothScreen.kt`, `ModelsSetupScreen.kt`, `RadioUsbScreen.kt` and
+their six test files; four artboards under `design/canvas/`. **`LevelScreen.kt`,
+`SetupActivity.kt`, `SetupStateMachine.kt` and `OvernightScreen.kt` are deliberately untouched** —
+other builders own them in this same session, and R-1170's second half (LevelScreen and
+ModelsSetupScreen being dead ends with no back and no "later") needs state-machine changes that
+are out of this unit's scope.
+
+**Requirements/ACs:** R-1170; constitution I (an honest, specific refusal rather than a silent
+one), constitution II (assert stable tags, never prose — R-1160, R-1070), constitution IV (an
+unverified route must never silently proceed), constitution VII's accessibility floor. Gates
+preserved unchanged and re-pinned by test: **AC-188** (setup cannot reach READY with a model
+missing), **E2-E10** (the Bluetooth link-verification gate), **R-344** (a blank or unparseable
+frequency is never submitted), **R-1013/R-1014** (`IdentifyTimedOut` does not proceed;
+`VerifyTimedOut` does).
+
+**What changed:**
+
+The operator, testing on a real device, asked to *"keep the continue button lit up at all times"*.
+The published argument is on their side and one part of it is an accessibility defect rather than
+taste: a disabled button says nothing about *what* is wrong, is routinely below contrast minimums,
+and `disabled` **removes the control from the focus order**, so a screen-reader operator cannot
+reach or discover the thing blocking them (Adrian Roselli, *Don't Disable Form Controls*; Adam
+Silver; GOV.UK's own practice is to submit and then explain).
+
+The rule applied, with both halves respected: **never disable a primary button for validation
+state — keep it lit, validate on tap, say specifically what is missing; disable only while an
+action is genuinely in flight.**
+
+- New shared `SetupValidationNotice` (declared in `InputScreen.kt` so the change stays inside this
+  unit's assigned files; `internal`, used by all six screens). It renders nothing until the
+  operator has actually tapped, carries `LiveRegionMode.Assertive` so TalkBack announces the
+  refusal as the direct answer to the tap, and uses the guide's amber explanatory colour.
+- **`InputScreen`** — `enabled = state.selectedId != null` removed. `inputValidationMessage()`
+  distinguishes two genuinely different problems (constitution I): an empty enumeration is
+  hardware not attached ("No inputs were found. Connect the radio's audio adapter, then tap
+  Refresh."), a populated list with nothing chosen is a decision not made ("Choose which input
+  carries the radio's audio — tap one of the rows above, then verify it.").
+- **`VerifyScreen`** — `enabled = allPassed` removed, **and the gate is untouched**: `onContinue`
+  is still invoked only on `RouteCheckState.Passed`. Tapping before then announces "The route
+  check has not passed yet. Setup cannot continue until it does — wait for the checks above to
+  finish, or choose a different input." This was the change's main risk and it is pinned by two
+  new tests (in-progress, and no check at all).
+- **`RigTransportScreen`** — `enabled = state.selected != null` removed; the tap says "Pick how the
+  <rig> is linked — tap one of the cards above, then connect.", naming the rig rather than a
+  generic "make a selection".
+- **`RigBluetoothScreen`** — `enabled = verified` removed, E2-E10's gate untouched. The tap says
+  "The link is not verified yet. Pick a paired device above and wait for the checklist — or use
+  Continue without connecting, which logs the frequency by hand.", pointing at the two forward
+  paths the screen already has.
+- **`ModelsSetupScreen`** — the one place the in-flight exception legitimately applies, and the two
+  facts had been conflated. `enabled = state.allInstalled` became
+  `modelsContinueEnabled()` = *no row is `DOWNLOADING`*: disabled only while a download is actually
+  running (unavailability, preventing a double submission), lit whenever files are merely missing.
+  `modelsValidationMessage()` names a single outstanding model or counts several ("… is not
+  installed yet — use Download or Retry beside it. Setup cannot continue without it."). AC-188 is
+  untouched: `onContinue` is simply never invoked, so `SetupStateMachine`'s own
+  `requiredModelsInstalled` gate is not even reached.
+- **`RadioUsbScreen`** — `enabled = enteredHz != null` removed; the tap says "Enter the frequency in
+  megahertz first — for example 145.230." R-344's guarantee is **stronger** than before, not
+  weaker: `onEnterFrequency` is not invoked at all, not even with `null`.
+- **Artboards** (`Setup-Verify`, `Setup-Rig-Bluetooth`, `Setup-Models`, `Setup-Rig-Usb`) drew the
+  primary in the disabled grey; they now draw it lit, with a comment naming R-1170 and the gate
+  that still holds. `Setup-Input` and `Setup-Rig-Transport` already drew the lit state and were
+  left alone. Nothing else on any board was restyled.
+
+**Assertions inverted, not deleted** — every one is annotated in place with why:
+`InputScreenTest` R-081 (`setup-input-verify`), `VerifyScreenTest` R-081 and R-284
+(`setup-verify-continue`, twice), `RigTransportScreenTest` E2-E09
+(`setup-rig-transport-connect`), `RigBluetoothScreenTest` E2-E10, R-1013 and E2-E11-Lost
+(`setup-rig-bt-continue`, three times), `ModelsSetupScreenTest` AC-188
+(`setup-models-continue`), `RadioUsbScreenTest` R-344 twice
+(`setup-radio-usb-enter-frequency`). In every case the guarantee the test was really standing for
+— that the thing does not advance — is now asserted *directly*, by performing the click and
+checking the callback never fired, which is strictly stronger than asserting a disabled node. The
+one `assertIsNotEnabled()` deliberately kept in this package is `ModelsSetupScreenTest`'s new
+in-flight test.
+
+**Verified:** `./gradlew :app:test :app:detekt :app:ktlintCheck -PortAllowMissingBundledAssets=true`
+— **BUILD SUCCESSFUL in 35m 5s**, `:app:testFullDebugUnitTest` + `:app:testPlayDebugUnitTest`
+**5734 tests, 0 failures**, `:app:detekt` clean (no `LongMethod`/`CyclomaticComplexMethod`, no new
+`@Suppress`), `:app:ktlintCheck` clean. (Windows 10, this workstation; an earlier run of the same
+command reported two real ktlint findings — `RigTransportScreen.kt:132` *first line of body
+expression fits on same line as function signature*, `InputScreenTest.kt:169` *needless blank
+line* — both fixed by restructuring, not suppressed.) Strict TDD
+with a real discrimination pass: the 23 new/changed assertions were written first and run against
+unchanged production code — all 23 failed for the right reason (`Failed to assert the following:
+(is enabled)` against a node reporting `[Disabled]`, and `Expected exactly '1' node … (TestTag =
+'setup-*-validation')`). After the production change all `org.ort.app.ui.setup.*` tests passed
+(476 tests). The six `enabled =` gates were then reverted in place and the suite re-run: the same
+23 went red again, for the same reasons, then restored.
+
+**Left open / not done:**
+- **R-1170's second half is deliberately not in this unit** — `LevelScreen` and
+  `ModelsSetupScreen` are dead ends (`onBack = null`, no "later" escape). No escape hatch was
+  added here; that needs `SetupStateMachine`/`SetupActivity` changes owned elsewhere. A view on
+  what the right escape is has been reported to the lead.
+- **No screen capture yet.** This diff touches `app/src/main/kotlin/org/ort/app/ui/setup/**` and
+  `design/**`, so constitution VIII requires a tour re-capture at font scale 1.0 and 2.0 against
+  the updated artboards before any register row moves past `fixed`. The notice adds a line to the
+  scaffold's pinned bottom bar, which at 2.0 is exactly the kind of growth R-123/R-341/R-360 are
+  scarred by — it must be judged on a real capture, not on the Robolectric tests here.
+- Three of the new tests (`no … notice is shown before the primary has been tapped`, one per
+  screen) pass both with and against the production change, since the notice does not exist at
+  all in the reverted code. They are stated as pairing with the live-region tests rather than
+  discriminating on their own, and are recorded that way rather than presented as coverage.
+- `RadioUsbScreen`'s `Connected`/`Stale` branches render no frequency field, so the new notice
+  there names a control that branch does not draw. That branch is reachable only through the debug
+  scenario simulator (never real hardware, `:rig`/`:rig-usb` being unbuilt) and its primary was
+  equally unusable before this change; not fixed here, reported instead.
+- `SetupValidationNotice` is declared in `InputScreen.kt` rather than a file of its own, to stay
+  inside this unit's assigned files. The builder applying the identical rule to `LevelScreen` in
+  the same session may have declared something similar; the lead should dedupe at merge (a
+  duplicate declaration fails the build loudly rather than silently).
 
 ---
 

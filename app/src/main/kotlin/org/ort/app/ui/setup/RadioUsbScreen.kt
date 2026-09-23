@@ -39,14 +39,20 @@ import org.ort.pipeline.capture.RigVerification
  *
  * R-344 (validator pass 4, halt): also the destination for S09's third row ("No radio — I will
  * enter the frequency"), routed here rather than straight to S12 so a real value is actually
- * collected — [SetupActivity.onChooseRig]'s own doc comment has the full account. The button
- * below is disabled until [parseMegahertzToHz] would accept the current text, so neither entry
+ * collected — [SetupActivity.onChooseRig]'s own doc comment has the full account. Neither entry
  * path can proceed with a blank or unparseable frequency (constitution I: never silently lose a
  * fact) — [SetupActivity.onEnterFrequency] guards the same thing again, belt and suspenders.
+ *
+ * **R-1170**: the way that refusal is expressed changed. The button used to be
+ * `enabled = enteredHz != null`, which took it out of the focus order and told nobody why; it is
+ * now lit at all times and the *tap* refuses, naming the format it wants. R-344's guarantee is
+ * strictly stronger than before, not weaker: [onEnterFrequency] is not invoked at all — not even
+ * with `null` — until [parseMegahertzToHz] accepts the text.
  */
 @Composable
 public fun RadioUsbScreen(rigStatus: RigStatus.State, onBack: () -> Unit, onEnterFrequency: (Long?) -> Unit) {
     var frequencyText by remember { mutableStateOf("") }
+    var showWhatIsMissing by remember { mutableStateOf(false) }
     val enteredHz = parseMegahertzToHz(frequencyText)
     SetupScaffold(
         step = SetupStep.RADIO_USB,
@@ -54,10 +60,15 @@ public fun RadioUsbScreen(rigStatus: RigStatus.State, onBack: () -> Unit, onEnte
         subtitle = "No rig support is built into this app yet",
         onBack = onBack,
         bottomActions = {
+            SetupValidationNotice(
+                message = FREQUENCY_NOT_ENTERED_YET.takeIf { showWhatIsMissing && enteredHz == null },
+                modifier = Modifier.testTag("setup-radio-usb-validation"),
+            )
             PrimaryButton(
                 text = "Enter the frequency instead",
-                onClick = { onEnterFrequency(enteredHz) },
-                enabled = enteredHz != null,
+                onClick = {
+                    if (enteredHz != null) onEnterFrequency(enteredHz) else showWhatIsMissing = true
+                },
                 modifier = Modifier.fillMaxWidth().testTag("setup-radio-usb-enter-frequency"),
             )
             Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -100,6 +111,14 @@ public fun RadioUsbScreen(rigStatus: RigStatus.State, onBack: () -> Unit, onEnte
         }
     }
 }
+
+/**
+ * R-1170: what S10's tap says when it refuses. It names the unit and gives the board's own example,
+ * because "enter a frequency" alone does not say whether 145230000, 145.230 or 145,230 is wanted —
+ * and [parseMegahertzToHz] accepts exactly one of those.
+ */
+private const val FREQUENCY_NOT_ENTERED_YET: String =
+    "Enter the frequency in megahertz first — for example 145.230."
 
 /** `null` for a blank or unparseable entry — never a fabricated frequency (constitution I). A
  * valid MHz value (e.g. `"145.230"`) becomes an exact Hz [Long] the same way every other

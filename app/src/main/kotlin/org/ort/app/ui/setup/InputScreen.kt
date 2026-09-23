@@ -8,9 +8,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.RadioRow
@@ -29,8 +36,16 @@ import org.ort.core.capture.CaptureModePresets
  * cannot recommend the route — never for the built-in mic or Bluetooth, both of which are
  * supported capture modes under D33/D34 (WP2's own follow-up closed the earlier
  * gap this screen used to work around — `RadioRow` had no subtitle slot or colour override; it
- * has both now). `Refresh` sits beside the title (guide's title-trailing action), `Verify this
- * input` is disabled until a route is chosen.
+ * has both now). `Refresh` sits beside the title (guide's title-trailing action); `Verify this
+ * input` only advances once a route is chosen (R-1170, below, for how that refusal is expressed).
+ *
+ * **R-1170 (register; the operator, on the device: *"keep the continue button lit up at all
+ * times"*)**: `Verify this input` used to be `enabled = state.selectedId != null`. A disabled
+ * button says nothing about *what* is wrong, is routinely below the contrast floor, and —
+ * decisively — `disabled` removes the control from the focus order, so a screen-reader operator
+ * cannot reach the very thing blocking them. It is now lit at all times; the tap validates and
+ * [SetupValidationNotice] says what is missing. The gate itself is unchanged: [onVerify] is not
+ * called until a route is chosen.
  *
  * [InputRouteOption.icon] (register R-122, validator finding): `RadioRow` itself has no icon slot —
  * confirmed by reading `ui/components/Controls.kt` before writing this, a real WP2 gap this
@@ -46,6 +61,8 @@ public fun InputScreen(
     onVerify: () -> Unit,
     onBack: (() -> Unit)? = null,
 ) {
+    var showWhatIsMissing by remember { mutableStateOf(false) }
+    val whatIsMissing = inputValidationMessage(state)
     SetupScaffold(
         step = SetupStep.INPUT,
         title = "Input",
@@ -55,10 +72,13 @@ public fun InputScreen(
             TextAction(text = "Refresh", onClick = onRefresh, modifier = Modifier.testTag("setup-input-refresh"))
         },
         bottomActions = {
+            SetupValidationNotice(
+                message = whatIsMissing.takeIf { showWhatIsMissing },
+                modifier = Modifier.testTag("setup-input-validation"),
+            )
             PrimaryButton(
                 text = "Verify this input",
-                onClick = onVerify,
-                enabled = state.selectedId != null,
+                onClick = { if (whatIsMissing == null) onVerify() else showWhatIsMissing = true },
                 modifier = Modifier.fillMaxWidth().testTag("setup-input-verify"),
             )
         },
@@ -106,6 +126,53 @@ public fun InputScreen(
             color = OrtColors.textDim,
         )
     }
+}
+
+/**
+ * **R-1170 — what replaces a disabled primary button across the setup flow.**
+ *
+ * The rule the register row settles on: *never disable a primary button for validation state; keep
+ * it lit, validate when it is tapped, and say specifically what is missing.* Disabling stays
+ * defensible for one thing only — an action genuinely **in flight**, to stop a double submission
+ * (that is unavailability, not validation, and [ModelsSetupScreen] is the one screen in this
+ * package where it applies).
+ *
+ * This notice is the "say what is missing" half. It renders nothing at all until the operator has
+ * actually asked for something, so it answers a tap rather than greeting them with a standing
+ * scold. [LiveRegionMode.Assertive], not `Polite`: the text is the direct answer to a deliberate
+ * tap that appeared to do nothing, so interrupting is the correct behaviour — a polite region can
+ * queue behind whatever TalkBack is already saying and arrive long after the operator has given
+ * up on the button. `accentAmberText` is the guide's own colour for a stated, recoverable problem
+ * (§3/§6.8) — a sentence of explanation, not a banner.
+ *
+ * Declared here rather than in a file of its own so this change stays inside the files R-1170's
+ * own brief assigns to it; every setup screen in this package shares it.
+ */
+@Composable
+internal fun SetupValidationNotice(message: String?, modifier: Modifier = Modifier) {
+    if (message == null) return
+    Text(
+        text = message,
+        style = OrtType.subLine,
+        color = OrtColors.accentAmberText,
+        modifier = modifier
+            .fillMaxWidth()
+            .semantics { liveRegion = LiveRegionMode.Assertive },
+    )
+}
+
+/**
+ * R-1170: what S04's tap says when it refuses, or `null` when there is nothing to refuse. The two
+ * cases are genuinely different problems and must not collapse into one sentence (constitution I):
+ * an empty enumeration is hardware that is not attached, and the answer is the adapter and
+ * `Refresh`; a populated list with nothing chosen is a decision the operator has not made yet.
+ */
+internal fun inputValidationMessage(state: InputViewState): String? = when {
+    state.selectedId != null -> null
+    state.routes.isEmpty() ->
+        "No inputs were found. Connect the radio's audio adapter, then tap Refresh."
+    else ->
+        "Choose which input carries the radio's audio — tap one of the rows above, then verify it."
 }
 
 /**

@@ -17,6 +17,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -34,10 +38,16 @@ import java.util.Locale
 
 /**
  * S05 (`Setup-Verify.dc.html`, R-081) — the four checks progressing in board order, driven by
- * [RouteCheck]. `Continue` (guide §6.10: a setup primary stays disabled until its verify passes)
- * enables only on [RouteCheckState.Passed]; a [RouteCheckState.Mismatch] hands off to
- * [RouteMismatchScreen] instead (this screen never renders the halt itself — [SetupActivity]
- * switches screens on that state).
+ * [RouteCheck]. `Continue` advances only on [RouteCheckState.Passed]; a [RouteCheckState.Mismatch]
+ * hands off to [RouteMismatchScreen] instead (this screen never renders the halt itself —
+ * [SetupActivity] switches screens on that state).
+ *
+ * **R-1170**: the button itself is no longer disabled while the check is unfinished — guide §6.10's
+ * "a setup primary stays disabled until its verify passes" is superseded for the *rendering*, not
+ * for the gate. `disabled` takes the control out of the focus order, so a screen-reader operator
+ * could not reach the thing blocking them; the button is lit and refuses on tap, announcing
+ * [VERIFY_NOT_PASSED_YET]. **What did not change, and must not**: [onContinue] is still only ever
+ * invoked on [RouteCheckState.Passed] (constitution IV).
  *
  * Validator finding (register R-120..R-125, halt): [RouteCheckState.TimedOut] used to fall through
  * to no branch at all — every check icon reverted to unfilled (the `else -> emptySet()` below), the
@@ -140,6 +150,18 @@ public fun VerifyScreen(
     }
 }
 
+/**
+ * R-1170: what S05's `Continue` says when it refuses. **This screen is the careful one.**
+ * Constitution IV is absolute that a route which is not the selected device halts capture, and
+ * `ROUTE_MISMATCH` is the one deliberate hard halt in the whole flow — so keeping the button lit
+ * must never become a way past an unverified route. The honest version, and the one built here, is
+ * that the tap *tells the operator the check has not passed and what to do about it*; it does not
+ * advance. The gate is untouched; only how the block is communicated has changed.
+ */
+private const val VERIFY_NOT_PASSED_YET: String =
+    "The route check has not passed yet. Setup cannot continue until it does — wait for the checks " +
+        "above to finish, or choose a different input."
+
 /** [VerifyScreen]'s own `bottomActions` slot — split out purely to keep that composable under
  * detekt's length ceiling, no behaviour of its own beyond what it always drew inline. */
 @Composable
@@ -150,6 +172,7 @@ private fun VerifyBottomActions(
     onTryAgain: () -> Unit,
     onChooseAnotherInput: () -> Unit,
 ) {
+    var showWhatIsMissing by remember { mutableStateOf(false) }
     if (timedOut) {
         PrimaryButton(
             text = "Try again",
@@ -164,10 +187,16 @@ private fun VerifyBottomActions(
             )
         }
     } else {
+        // R-1170: lit at all times, and the tap is where the gate is enforced -- see
+        // VERIFY_NOT_PASSED_YET's own doc comment for why this screen in particular is not a
+        // mechanical substitution.
+        SetupValidationNotice(
+            message = VERIFY_NOT_PASSED_YET.takeIf { showWhatIsMissing && !allPassed },
+            modifier = Modifier.testTag("setup-verify-validation"),
+        )
         PrimaryButton(
             text = "Continue",
-            onClick = onContinue,
-            enabled = allPassed,
+            onClick = { if (allPassed) onContinue() else showWhatIsMissing = true },
             modifier = Modifier.fillMaxWidth().testTag("setup-verify-continue"),
         )
         // R-284: the same "wrong device, do not make me wait out the timeout" escape the board
