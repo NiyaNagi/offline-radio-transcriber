@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-22 (R-1170: six setup screens stop disabling the primary button for validation state)
 
-### `<pending>` — R-1170: the setup primary stays lit and refuses on tap, instead of being disabled and silent
+### `41f7f664` — R-1170: the setup primary stays lit and refuses on tap, instead of being disabled and silent
 
 **Scope:** `app/src/main/kotlin/org/ort/app/ui/setup/` — `InputScreen.kt`, `VerifyScreen.kt`,
 `RigTransportScreen.kt`, `RigBluetoothScreen.kt`, `ModelsSetupScreen.kt`, `RadioUsbScreen.kt` and
