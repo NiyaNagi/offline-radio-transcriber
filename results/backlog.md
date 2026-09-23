@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 124 | 13 | 25 | 86 |
+| UI / defect register | 126 | 13 | 25 | 88 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 6 | 2 | 4 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **171** | **30** | **44** | **97** |
+| **Total** | **173** | **30** | **44** | **99** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -132,6 +132,7 @@ process, polish, open questions and coverage debt are P2.
 | R-770 | Tour coverage of designed screens | register | process **2026-09-20, narrowed by the tour-coverage unit (`57e17037`, merged):** the tour went from 279 to 297 steps and this umbrella is now blocked on a single, specific cause rather than a general shortfall - see r-1127, which lists the seven screens that need a `src/main` seed seam. everything else this row originally listed is either covered or was added this round. **2026-09-21, narrowed again to two screens** (lead, after the full canonical tour). r-1127's seven screens are reachable and were captured in the 318-step run: the correction sheets d08-d10, detail > label, setup > mic denied (its first capture ever), s06 route-mismatch and d05 detail-why. what remains of this umbrella is **exactly two**: r02 `improve-select` and r03 `improve-running`, which hold unseeded local state in `improvecontent` and were outside r-1127's own named list. everything else this row was opened for is either captured or closed. worth noting what the tour proved beyond coverage: it reported 7 real step failures rather than a false green, and three of those reopened r-1021 - so the coverage this row asked for is now also load-bearing, not decorative./open | `design/design-intent.md`, tour |
 | R-771 | D02 Detail-Inferred lattice slots | register | design/fixed / awaiting capture | `Detail`, cf. R-720/R-320 |
 | R-801 | Second look at the 2026-09-10 boards (read-only reviewer, no device) | register | process/fixed / awaiting capture | `design-guide.md` Â§3, Â§6.1, Â§6.5, Â§8 |
+| R-817 | S02c `@2x` coverage | register | process/**reopened 2026-09-22 by r-1179** | `Setup-Bluetooth-Permission.dc.html`, R-744 |
 | R-838 | F23 Log gap row icon | register | design/closed | `Fail-Bluetooth-Audio.dc.html` |
 | R-884 | Ghost "Back" at the top of S09b at 2.0 | register | polish/hardware | `Setup-Rig-Transport.dc.html` |
 | R-933 | CF04 under `model-missing` (live) | register | design/closed | `Settings-Assets.dc.html` |
@@ -203,3 +204,4 @@ process, polish, open questions and coverage debt are P2.
 | R-1176 | A touch-target constraint was present in the source, silently discarded at runtime, and invisible to every test | register | app/open | FR-A11Y-*; WCAG 2.2 AA 2.5.8; constitution VIII; R-1090 |
 | R-1177 | The tour gained a step, so the committed manifest is a step short until a canonical run | register | tooling/open | constitution VIII; R-1149, R-1158 |
 | R-1178 | The frequency screen's two other branches draw no field for the control its message names | register | app/open | R-1167; R-1170; D58 |
+| R-1179 | The Bluetooth-permission step has never once captured the Bluetooth-permission screen | register | tooling/open | R-817; R-940; R-800; R-1005a; R-810, R-811, R-820, R-830; constitution VIII; R-1160, R-1021 |
