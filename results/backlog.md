@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 121 | 13 | 25 | 83 |
+| UI / defect register | 123 | 13 | 25 | 85 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 6 | 2 | 4 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **168** | **30** | **44** | **94** |
+| **Total** | **170** | **30** | **44** | **96** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -106,7 +106,7 @@ process, polish, open questions and coverage debt are P2.
 
 | id | what | source | state | refs / note |
 |---|---|---|---|---|
-| coverage-uncovered | 204 requirement ids have no test | coverage | open | ./gradlew coverageMatrix |
+| coverage-uncovered | 201 requirement ids have no test | coverage | open | ./gradlew coverageMatrix |
 | T1 | Speaker embedding separation on narrowband off-air audio | questions | open |  |
 | T2 | Phonetic-unit KWS accuracy on radio audio | questions | open |  |
 | T3 | Whether CB-Whisper's encoder-hidden-state approach ports to sherpa-onnx on Android | questions | open |  |
@@ -200,3 +200,5 @@ process, polish, open questions and coverage debt are P2.
 | R-1173 | The superseded privacy claim is repeated in seven more places, including the repo headline | register | app/open | FR-ANL-14; FR-SPK-20; FR-PLT-5; D37; D38; D42; constitution I, V; R-1164, R-1165 |
 | R-1174 | A smoke-test class fails once and passes alone, and nobody can say why | register | process/open | R-1140; constitution VIII |
 | R-1175 | The build log carried an unresolved merge for two days and every guard missed it | register | tooling/open | constitution I, VI; R-1163; spec-check rule 8 |
+| R-1176 | A touch-target constraint was present in the source, silently discarded at runtime, and invisible to every test | register | app/open | FR-A11Y-*; WCAG 2.2 AA 2.5.8; constitution VIII; R-1090 |
+| R-1177 | The tour gained a step, so the committed manifest is a step short until a canonical run | register | tooling/open | constitution VIII; R-1149, R-1158 |
