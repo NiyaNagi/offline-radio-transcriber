@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-24
 
-### `157203e5` — R-1189/R-1190/R-1191: the pass deadline stops racing caller-supplied code, and the trap becomes loud
+### `492a77f4` — R-1189/R-1190/R-1191: the pass deadline stops racing caller-supplied code, and the trap becomes loud
 
 **Scope:** `data/src/main/kotlin/org/ort/data/WorkQueue.kt` and `data/src/test/kotlin/org/ort/data/WorkQueueTest.kt`;
 `pipeline/src/test/**` (`PassDrainRunnerTest`, `digest/ProseDigestRunnerTest`,
