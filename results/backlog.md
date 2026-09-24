@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 131 | 13 | 25 | 93 |
+| UI / defect register | 139 | 13 | 25 | 101 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 5 | 2 | 3 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **177** | **30** | **43** | **104** |
+| **Total** | **185** | **30** | **43** | **112** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -209,3 +209,11 @@ process, polish, open questions and coverage debt are P2.
 | R-1190 | One of sixteen flush call sites breaks the convention the other fifteen keep | register | pipeline/open | R-1180; R-1189 |
 | R-1191 | A test waits a fixed 200 ms for a coroutine to reach a state, and calls it a margin | register | pipeline/open | R-1180; R-1174; constitution II |
 | R-1192 | Every network test does real blocking socket I/O on the test thread, and so does production | register | net/open | R-1180; FR-NET-*; constitution VII |
+| R-1193 | The app asks permission to share audio and has no code that could ever share it | register | app/open | FR-ANL-4; AC-174; D42; constitution I; R-1171, R-1182 |
+| R-1194 | Two crash-recovery paths are specified, written, and never run | register | data/open | FR-RUN-8; AC-47; constitution IV; R-1132 |
+| R-1195 | The Meter action is wired to a parameter marked unused, under a comment asserting it works | register | app/open | R-1182; R-1021; constitution I |
+| R-1196 | The coverage matrix scores a dead feature as fully covered, and the asymmetry that proves it | register | tooling/open | R-1193; R-1194; constitution VI, VIII; R-1140, R-1160, R-1163 |
+| R-1197 | A reachability guard is worth building for three closed inventories, and not for anything else | register | tooling/open | R-1196; R-1171; R-1182; R-1188; R-1193; R-1194 |
+| R-1198 | Twenty-four of one hundred and forty-five DAO methods are unreachable, and one is a trap | register | data/open | R-1194; R-1196; R-1197 |
+| R-1199 | Provenance and history are recorded where nothing can ever read them | register | app/open | constitution III, VI; R-1194 |
+| R-1200 | Three dead UI subtrees, and an enum that looks like the failure registry and is not | register | app/open | R-1188; constitution I |
