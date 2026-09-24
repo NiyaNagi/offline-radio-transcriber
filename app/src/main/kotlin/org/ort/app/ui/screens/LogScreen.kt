@@ -64,7 +64,10 @@ public fun LogScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
             verticalAlignment = Alignment.Bottom,
         ) {
-            Text(text = "Log", style = OrtType.screenTitle, modifier = Modifier.weight(1f))
+            // R-1201 (register): this screen's own stable marker for the tour's step check. The
+            // check used to assert `Text("Log")`, which `ReaderDrawerContent`'s always-composed
+            // `Log` row satisfied on *every* screen — see `TourStepExpectations`' own doc comment.
+            Text(text = "Log", style = OrtType.screenTitle, modifier = Modifier.weight(1f).testTag("log-title"))
             TextAction(text = "Filter", onClick = onFilterClick)
         }
 

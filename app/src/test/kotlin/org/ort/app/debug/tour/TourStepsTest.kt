@@ -40,7 +40,6 @@ import org.ort.pipeline.capture.StorageForecast
 import org.ort.pipeline.capture.ThermalStatus
 import org.ort.pipeline.capture.VadAvailability
 import org.robolectric.RobolectricTestRunner
-import java.io.File
 
 /**
  * spec/ui-conformance-plan.md WP12 v3, register R-410: proves every *destination* step in the real
@@ -64,8 +63,14 @@ import java.io.File
  * `SetupActivity`'s per-step content is itself extracted into a callable composable (`ui/setup`'s
  * row, not this package's).
  *
- * Every expected marker below is a real `testTag` or a real title string this codebase already
- * asserts against elsewhere (`OrtNavHostDestinationDispatchTest`'s own per-destination title checks,
+ * **Register R-1201**: what each step is expected to show now lives in [TourStepExpectations], not
+ * here — hoisted so [TourExpectationDrawerCollisionTest] can *enumerate* the table as well as run
+ * it. That guard exists because 144 of the 264 steps this class checks were, until that row,
+ * asserting text `ReaderDrawerContent`'s always-composed row list satisfied on any screen at all;
+ * read that object's own doc comment before adding a case here.
+ *
+ * Every expected marker is a real `testTag` or a real title string this codebase already asserts
+ * against elsewhere (`OrtNavHostDestinationDispatchTest`'s own per-destination title checks,
  * `CaptureStatusScreen.kt`'s/`SearchScreen.kt`'s/`ThreadDetailScreen.kt`'s own `testTag`s) — never a
  * guessed string invented for this test alone.
  */
@@ -111,187 +116,6 @@ class TourStepsTest {
             .edit().clear().commit()
     }
 
-    /** One assertion this class knows how to check against a composed [OrtNavHost]. */
-    private sealed interface Expected {
-        data class Tag(val tag: String) : Expected
-        data class AnyTag(val tags: Set<String>) : Expected
-        data class Text(val text: String) : Expected
-
-        /** v7 (register R-010..R-014/R-334/R-770): [Tag] alone only proves a node with this tag
-         * exists *somewhere* in the tree - `ModalNavigationDrawer`'s own `drawerContent` is always
-         * composed, open or closed (confirmed directly: [TourDrawerSeedTest]'s own closed case finds
-         * `drawer-rows` present but off-screen), so a bare [Tag] check on it would pass even if
-         * `openDrawer` silently did nothing. This variant additionally requires the node's own
-         * bounds to actually be on-screen, the same distinction [TourDrawerSeedTest] uses.
-         */
-        data class DisplayedTag(val tag: String) : Expected
-    }
-
-    /** R-017: a drill-in's own header names its origin destination as the back label
-     * (`openedFromDestination()`, `NavSeed.kt`'s own doc comment) - checked against the real
-     * rendered text (confirmed by reading a real device capture before writing this; it is the
-     * bare destination label, e.g. "Log", not a longer "Back to Log" sentence), the same bare
-     * label [expectedForDestination] already checks for that destination's own root. `null` when
-     * [drillIn] names none of the kinds this class knows how to check. */
-    private fun expectedForDrillIn(drillIn: Map<String, String>): Expected? = when {
-        // N08/WPCAP (design-intent `Capture.dc.html`): the level meter is no longer a separate
-        // sub-screen `openLevelMeter` drills into — it is always inline on the merged Capture
-        // surface, via `LiveMonitorLevelCard`'s own chart (`LiveMonitorScreen.kt`), the exact same
-        // component N07's own live monitor already used this tag for. `openLevelMeter` itself is
-        // now an inert, compat-only parameter (see `CaptureStatusContent`'s own kdoc) — landing on
-        // `CAPTURE` at all already shows this chart whenever a real `LevelStatus` reading exists.
-        drillIn["captureLevelMeter"] == "true" -> Expected.Tag("live-monitor-level-chart")
-        // R-261: an open sheet blocks the tree behind it (confirmed by `TourStepsTest` itself, run
-        // once and read - the query field genuinely disappears while `search-filters-sheet` shows),
-        // so these two check the sheet's own content, never the destination root underneath it.
-        drillIn["searchFiltersOpen"] == "true" -> Expected.Tag("search-filters-sheet")
-        drillIn["logSheetOpen"] == "true" -> Expected.Text("Filter the log")
-        // v7 (register R-010..R-014/R-334/R-770): the drawer's own scrollable row list, required to
-        // be genuinely on-screen (`Expected.DisplayedTag`'s own doc comment) - checked before the
-        // generic destination branch below so a drawer step is proven to land on the open drawer
-        // itself, never merely on the destination it was opened over.
-        drillIn["openDrawer"] == "true" -> Expected.DisplayedTag("drawer-rows")
-        // v7 (register R-770): F04's own detail - `TransmissionDetailScreen.kt`'s
-        // `RejectedHeaderSection`, real `testTag`, checked before the generic `transmission` branch
-        // below so this is proven to be the rejected detail, not merely any transmission detail.
-        drillIn["transmission"] == "rejected" -> Expected.Tag("rejected-section")
-        drillIn.containsKey("transmission") -> Expected.Text("Log")
-        // ST03/ST04 (WP8's `initialSubScreen` seam): checked before the bare `station` branch
-        // below - `Station-Pattern`/`Station-Identity` draw their own `DrillInHeader` with
-        // `parentLabel` set to the station's own callsign/label (`StationPatternScreen.kt`/
-        // `StationIdentityScreen.kt`, confirmed by reading both before writing this), never the
-        // "Stations" origin-destination label the plain station root (ST02) shows - so the two
-        // real, on-screen titles this class already knows are real strings this app renders
-        // (`StationPatternScreen.kt`'s "When they are around", `StationIdentityScreen.kt`'s "How
-        // this station is known") are the honest check here, not a guessed one.
-        drillIn["stationSubScreen"] == "PATTERN" -> Expected.Text("When they are around")
-        drillIn["stationSubScreen"] == "IDENTITY" -> Expected.Text("How this station is known")
-        // tour-coverage unit (register R-272/R-770): `SplitSubScreen`'s own real, unconditional
-        // title (`StationIdentityScreen.kt`'s `StationSplitScreen`, "Split this voice") - checked
-        // before the bare `station` branch below for the identical reason PATTERN/IDENTITY already
-        // are: the split screen's own `DrillInHeader` shows the station's callsign, not "Stations".
-        drillIn["stationSubScreen"] == "SPLIT" -> Expected.Text("Split this voice")
-        drillIn.containsKey("station") -> Expected.Text("Stations")
-        drillIn.containsKey("thread") -> Expected.Text("Threads")
-        drillIn.containsKey("frequency") -> Expected.Text("Frequencies")
-        drillIn.containsKey("logFilterFrequency") -> Expected.Text("Log")
-        // WPREC (register): this case's own "Earlier nights" marker was never actually reading the
-        // Digest's own header — `DigestScreens.kt`'s `DigestScreen` draws
-        // `DrillInHeader(parentLabel = "Session", ...)` ("Back to Session"), never "Earlier nights"
-        // at all. It passed regardless, on every build before this row's own drawer change, only
-        // because `ModalNavigationDrawer`'s `drawerContent` is *always* composed
-        // (`Expected.DisplayedTag`'s own doc comment above) and the drawer's own `EARLIER_NIGHTS`
-        // row used to render that literal text too — an accidental match on off-screen drawer
-        // content, not the Digest screen this case exists to verify. Split by `reviewSessionView`
-        // so each half checks the screen it actually reaches: `DigestScreen`'s own real header
-        // ("Session") for `DIGEST`.
-        //
-        // R-1070 (register, WPSESSCOV): `SessionDetailScreen`'s own back label changed from
-        // "Earlier nights" to "Recordings" — which collides with `ReaderDestination
-        // .EARLIER_NIGHTS.drawerLabel`, now also "Recordings" (RC01 absorbs that row), reproducing
-        // the *exact* accidental-drawer-match failure this case's own history is documented above.
-        // `Expected.Text("Recordings")` here would pass whether or not `SessionDetailScreen` itself
-        // ever rendered that label — confirmed directly: it still passed with `SessionDetailScreen`
-        // temporarily hardcoded back to "Earlier nights". "COVERAGE" is this screen's own real,
-        // unconditional section header (`SessionsScreens.kt`'s `SessionDetailScreen`,
-        // `SectionHeader(label = "Coverage", ...)` — `SectionHeader` itself upper-cases every label
-        // it is given, confirmed by reading `Rows.kt`, so the real rendered text is "COVERAGE" —
-        // drawn before either of the screen's own gap/facts sections that could theoretically be
-        // empty), unique to this screen, never composed by the drawer.
-        drillIn["reviewSessionView"] == "DIGEST" -> Expected.Text("Session")
-        drillIn.containsKey("reviewSession") -> Expected.Text("COVERAGE")
-        // Every Settings sub-screen carries its own "‹ Settings" back chevron (confirmed by
-        // reading a real device capture of Settings-Capture/-Storage/-Assets before writing
-        // this) - a weaker check than a per-sub-screen title, but one this class can make for
-        // all nine sub-screens without guessing text it has not actually seen rendered.
-        drillIn.containsKey("settingsScreen") -> Expected.Text("Settings")
-        else -> null
-    }
-
-    /**
-     * CI regression (register, `r-r03-ci`): the three `ImprovePage` preview seams
-     * (`NavSeed.improveSelectPreview`/`improveRunningPreview`/`improveDonePreview`, R-770/
-     * R-1127/R-350) used to fall through [expectedForDrillIn]'s own `else -> null` straight to the
-     * generic `IMPROVE_RECORDS` destination check (`Expected.Text("Improve records")`) — which,
-     * read by eye against `ImproveScreens.kt`, is never actually rendered by
-     * `ImproveSelectScreen`/`ImproveRunningScreen`/`ImproveDoneScreen` themselves. It only ever
-     * passed because `ReaderDrawerContent`'s own row list (`Drawer.kt`) is unconditionally
-     * composed regardless of open/closed state and carries `IMPROVE_RECORDS.drawerLabel`
-     * ("Improve records") as one of its rows — the exact "accidental drawer match" class this
-     * file's own `reviewSessionView`/`reviewSession` cases in [expectedForDrillIn] are already
-     * scarred by (WPREC/R-1070's history, same doc comment). `overnight/R03-improve-running@2x`
-     * failed this incidental check once on CI (`ubuntu-latest` Robolectric) while passing locally
-     * every time, including its own `@1x`/`@2x-end` siblings, which this class composes
-     * identically (`step.fontScale`/`step.scroll` are not read here at all — R02/R03/R04 were all
-     * equally exposed to the identical, pre-existing fragility since R-1127 first added
-     * `improveDonePreview` with no case here at all; this run simply tripped on one of the nine).
-     *
-     * Fixed the way constitution II and R-1021 both already require: each preview checks a real,
-     * stable `testTag` on the screen it actually claims to reach, never prose belonging to a
-     * different surface — `improve-running-action-bar`/`improve-done-action-bar` already existed
-     * (`ImproveScreens.kt`); `drill-in-header-back` is `DrillInHeader`'s own shared tag, sufficient
-     * here since `Select` is the only `ImprovePage` state under this destination that draws one at
-     * all (`Root`/`Running`/`Done` do not).
-     *
-     * A separate function, not three more branches inside [expectedForDrillIn]'s own `when` — that
-     * `when` already sat at detekt's `CyclomaticComplexMethod` threshold (20); adding these three
-     * tripped it to 21. Checked before [expectedForDrillIn] in [expectedFor]'s own chain, the same
-     * position [expectedForStepId] already occupies, for the identical reason: a shape neither of
-     * the two generic functions below it can tell apart from another sibling step.
-     */
-    private fun expectedForImprovePreview(drillIn: Map<String, String>): Expected? = when {
-        drillIn["improveSelectPreview"] == "true" -> Expected.Tag("drill-in-header-back")
-        drillIn["improveRunningPreview"] == "true" -> Expected.Tag("improve-running-action-bar")
-        drillIn["improveDonePreview"] == "true" -> Expected.Tag("improve-done-action-bar")
-        else -> null
-    }
-
-    private fun expectedForDestination(destination: String): Expected = when (destination) {
-        "NOW" -> Expected.AnyTag(setOf("now-idle-title", "now-active-title"))
-        "LOG" -> Expected.Text("Log")
-        "SEARCH" -> Expected.Tag("search-query-field")
-        "THREADS" -> Expected.Text("Threads")
-        "STATIONS" -> Expected.Text("Stations")
-        "FREQUENCIES" -> Expected.Text("Frequencies")
-        // N08/WPCAP: `CaptureStatusContent` now always renders the merged `CaptureScreen`
-        // (design-intent `Capture.dc.html`), which supersedes N04/N06/N07 as separate
-        // destinations/sub-screens — its own title row carries `capture-title`, not the old N04
-        // `CaptureStatusScreen`'s `capture-status-title` (that composable itself is untouched and
-        // still carries its own tag; it is simply no longer reachable from this destination).
-        "CAPTURE" -> Expected.Tag("capture-title")
-        "IMPROVE_RECORDS" -> Expected.Text("Improve records")
-        // WPREC (design-intent row RC01): a plain reach (no drillIn) now lands on
-        // `RecordingsContent` (`Recordings.dc.html`), not the old `SessionsContent` list root — a
-        // `reviewSession` drillIn (DG04/DG05) is still checked first, above, and (R-1070) checks
-        // `SessionDetailScreen`'s own "Coverage" section instead of this destination's own
-        // "Recordings", precisely because that word is no longer unique to this real screen once
-        // the seeded review path is involved — see that case's own doc comment.
-        "EARLIER_NIGHTS" -> Expected.Text("Recordings")
-        "SETTINGS" -> Expected.Text("Settings")
-        else -> error("TourStepsTest has no expected marker for destination '$destination'")
-    }
-
-    /** A handful of steps share a `destination`/`drillIn` shape with a sibling step that lands on a
-     * genuinely different real state (v7, register R-770) — [expectedForDestination]/
-     * [expectedForDrillIn] alone cannot tell them apart, since both are keyed on shape, not id. Real
-     * strings only, the same rule the two functions above already follow. */
-    private fun expectedForStepId(id: String): Expected? = when (id) {
-        // `ThreadListMapper.listState`: no transmission `field-tier1` seeds ever carries a
-        // `threadId` (only `OvernightScenario` sets one), and `field-tier1` (unlike
-        // `stations-14-nights`, confirmed empirically on-device before switching to this scenario -
-        // its own transmissions belong to no single "current" session `ThreadPolling` reads, so it
-        // renders the *Empty* state instead) has one real, current session's worth of real overs -
-        // `UngroupedThreads`' own real prose, the fact that distinguishes T03
-        // (`Threads-Ungrouped.dc.html`) from both Empty and a T01 `Grouped` card list.
-        "field-tier1/T03-threads-ungrouped" -> Expected.Text("Conversations are not built on this phone yet")
-        else -> null
-    }
-
-    private fun expectedFor(step: TourStep): Expected = expectedForStepId(step.id)
-        ?: expectedForImprovePreview(step.drillIn)
-        ?: expectedForDrillIn(step.drillIn)
-        ?: expectedForDestination(requireNotNull(step.destination))
-
     private data class Resolved(
         val id: String,
         val destination: ReaderDestination,
@@ -321,10 +145,7 @@ class TourStepsTest {
 
     @Test
     fun `R_TOUR_STEPS every destination step in tour json lands on the screen it claims to`() {
-        val tourJsonFile = File("../tools/ui-audit/tour.json").canonicalFile
-        check(tourJsonFile.exists()) { "expected tools/ui-audit/tour.json at $tourJsonFile" }
-        val spec = TourSpec.parse(tourJsonFile.readText())
-        val destinationSteps = spec.steps.filter { it.destination != null }
+        val destinationSteps = TourStepExpectations.tourSpec().steps.filter { it.destination != null }
         assertTrue("expected at least one destination step", destinationSteps.isNotEmpty())
 
         // `setContent` can only be called once per test (Compose UI test's own rule, found by
@@ -369,7 +190,7 @@ class TourStepsTest {
         current = Resolved(step.id, destination, navSeed, loadResult.primarySessionId)
         composeTestRule.waitForIdle()
 
-        val expected = expectedFor(step)
+        val expected = TourStepExpectations.expectedFor(step)
         fun isFound(): Boolean = when (expected) {
             is Expected.Tag -> composeTestRule.onAllNodesWithTag(expected.tag).fetchSemanticsNodes().isNotEmpty()
             is Expected.AnyTag -> expected.tags.any {

@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -60,7 +61,10 @@ public fun FrequencyChangeScreen(
     // already has; WP3 routes the destination once it can identify that thread.
     onOpenThread: () -> Unit = {},
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
+    // R-1201 (register): `frequencyInitialView: "Change"` shares its step shape with the plain
+    // `frequency` drill-in, so both used to assert the same `Text("Frequencies")` — a string the
+    // always-composed drawer satisfied on any screen, and which told the two views apart not at all.
+    Column(modifier = modifier.fillMaxSize().testTag("frequency-change-screen")) {
         DrillInHeader(parentLabel = state.label, onBack = onBack)
         // A real overflow risk, not just a test artifact: R-274's own axis+legend row (below)
         // made this content tall enough to push the bottom action row (`The N overs`) off a small

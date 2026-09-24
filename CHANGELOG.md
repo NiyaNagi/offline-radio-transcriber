@@ -601,6 +601,144 @@ for the right reason and not for a missing symbol:
 - **`RouteCheckState.Passed.resamplerDescription` is computed and rendered nowhere.** Noticed while
   building the R-1186 fixture; not this change's row, not touched, reported here.
 - The register rows are the lead's to move — nothing under `results/ui-audit/` was edited.
+## 2026-09-24 (R-1201/R-1202: the tour's step check starts meaning something)
+
+### `dcaa0a79` — r-1201: 144 of 264 tour steps were reading the drawer instead of their own screen, and now none are
+
+**Scope:** `app/src/test/kotlin/org/ort/app/debug/tour/` (the expectation table, hoisted, plus its
+new guard), `app/src/debug/kotlin/org/ort/app/debug/tour/ScreenshotTourActivity.kt` (R-1202's
+destination-side half), and **one additive `testTag` line apiece** on fifteen `:app` UI files.
+`tools/ui-audit/tour.json` is **unchanged** — no step was added, removed or re-pointed; only what
+each step is checked against changed. `OrtNavHost.kt` is untouched (the discrimination experiment
+below edited it temporarily and the tree was verified clean afterwards).
+
+New: `app/src/test/.../tour/TourStepExpectations.kt`,
+`app/src/test/.../tour/TourExpectationDrawerCollisionTest.kt`. Edited: `TourStepsTest.kt`,
+`ScreenshotTourActivity.kt`, `ui/screens/{LogScreen,TransmissionDetailScreen,ThreadScreen,`
+`ThreadDetailScreen,StationScreen,FrequencyScreen,FrequencyChangeScreen,DetailWhyScreen,`
+`DetailRevisionsScreen,CorrectionSheet}.kt`, `ui/recordings/{RecordingsScreen,`
+`RecordingSessionScreen}.kt`, `ui/improve/ImproveScreens.kt`,
+`ui/settings/{SettingsRootScreen,SettingsContent}.kt`.
+
+**Requirements/ACs:** register **R-1201**, **R-1202** (partially — see *Left open*), R-1160's own
+open half, R-1070, R-1179; constitution **II** ("assertions MUST NOT depend on prose"; "a test MUST
+be shown to discriminate") and **VIII**. No product requirement changes.
+
+**What changed.**
+
+**1 · The finding, restated so this entry stands alone.** `Drawer.kt:257-267` puts
+`text = AnnotatedString(description)` on each drawer row's own node, where `description` is that
+destination's `drawerLabel` plus its count, and `ModalNavigationDrawer` composes its `drawerContent`
+unconditionally — open or closed. `TourStepsTest` matched with `hasText(substring = true)`. So a
+step expecting `Text("Log")` was satisfied by the drawer's own Log row, on every screen in the app,
+forever. R-1201 measured it by deleting `NavHostBody`: **148 of 264 destination steps passed with no
+screen composed at all.**
+
+**2 · The expectation table is hoisted and rewritten.** `TourStepsTest`'s private `Expected` types
+and its four `expectedFor*` functions now live in `TourStepExpectations`, an `internal object` a
+second test can *enumerate* rather than only run. Every colliding case now names a `testTag` the
+screen puts on its own root or title — the repair R-1160 already proved on the three improve
+previews and R-1070 on the session review, applied to all 144. The table also got **more**
+discriminating in four places it had never been: the 50 `settingsScreen` steps now assert
+`settings-sub-screen-<ID>` (which sub-screen, not "some screen somewhere"); `whyOpen`,
+`revisionsOpen` and `correctionStep` get `detail-why-screen`, `detail-revisions-screen` and
+`correction-sheet` instead of all three sharing the plain transmission case;
+`frequencyInitialView: "Change"` gets `frequency-change-screen` instead of sharing the Detail case;
+and `recordingSession` (RC02), which had **no case at all** and fell through to the
+`EARLIER_NIGHTS` default, gets `recording-session-screen`.
+
+**3 · The tags are on the screens, not on the host.** Fifteen UI files gained exactly one
+`Modifier.testTag(...)` each, on a title row that is drawn unconditionally (`log-title`,
+`recordings-title`, `improve-root-title`, `settings-root-title`) or on the screen's own outermost
+`modifier` where `Loading`/`Empty` are real states a tour step legitimately lands on
+(`threads-screen`, `stations-screen`, `frequencies-screen`, and the six drill-in screens). Settings
+is tagged once, at `SettingsSubScreen`'s single dispatch point, via the new
+`settingsSubScreenTestTag(SettingsScreenId)` — every sub-screen already applies that `modifier` to
+its own root, so thirteen screens are covered by one edit and the tag names which one composed.
+
+**3a · What that cost, and the trap worth knowing.** Two `testTag`s on **one layout node do not both
+survive — the first in the modifier chain wins and the second silently disappears**. Tagging
+`SettingsSubScreen`'s shared `modifier` blindly therefore erased `backup-screen-scroll` and
+`export-screen-scroll`, and tagging `FrequenciesListScreen`'s loading/empty branches erased
+`LoadingState`'s own `loading-state`; four settings tests and one frequencies test went red and said
+so. Fixed honestly rather than by moving the other tags: `SELF_TAGGED_SUB_SCREENS` names the two
+screens that already identify themselves, `settingsSubScreenTestTag` returns whichever tag the
+screen actually ends up carrying (one source of truth for the dispatch and for the tour's table),
+and `frequencies-screen` now sits on the real list only — so a step that lands on a loading or empty
+Frequencies screen fails loudly instead of being quietly counted as the list.
+
+**4 · The guard (R-1201's own specification).** `TourExpectationDrawerCollisionTest` composes
+`ReaderDrawerContent` **alone** — the same thing `DrawerContentTest` already does — and fails on any
+`Expected.Text` string the drawer-only tree can satisfy, reading the *unmerged* tree so it sees both
+the row node's description and its child label `Text`. The drawer tree is ground truth: a string it
+matches is a string the tour cannot use to prove anything. Deliberately not a blanket lint over
+short `onNodeWithText` literals (R-1201's own note: ~200 sites, mostly correct, and a noisy check
+gets suppressed — R-1175 one level up).
+
+**5 · R-1202, destination side.** `assertStillOnRequestedDestination` now runs immediately before
+`drawToBitmap` in `renderDestinationStep`, the same shape and placement R-1179's setup-side guard
+already had, re-reading `ReaderNavigator`'s `currentState`, `drawerOpenState`,
+`reviewSessionViewState` and `settingsScreenState`. Everything between the settle and the capture —
+a `tapLicenseNotice`/`tapLiveBar` tap, the `playThenNavigate` back press, an `override` reload, a
+scroll — can move the screen, and until now nothing looked again.
+
+**Verified.** All on this worktree, Windows 11 / JDK 17, `-PortAllowMissingBundledAssets=true`.
+
+- **The guard's own census, run before the table was believed.** A scratch test (written, run,
+  deleted — not committed) ran the guard against both the pre-fix and the post-fix table:
+  `destination steps = 264`, **`pre-fix flagged = 144`**, **`post-fix flagged = 0`**, by string
+  `{Settings=52, Log=55, Threads=6, Stations=6, Frequencies=7, Recordings=12, Improve records=6}`.
+  **144 is exactly the number R-1201 measured by experiment**, reached here by a completely
+  different route (static enumeration against a real drawer composition, not a stubbed nav host).
+- **Discrimination, by repeating R-1201's own experiment against the new table.** `NavHostBody` was
+  temporarily disabled in `OrtNavHost.kt` and `TourStepsTest` re-run: **260 of 264 steps failed**
+  (was 116), in 2776s. The four that still pass are `overnight/N00-drawer`,
+  `overnight/N00-drawer@2x`, `storage-warn/N00-drawer` and `stations-14-nights/RC01-drawer` — the
+  four steps whose *subject is the drawer* (N00 `Menu.dc.html`), which is the correct answer, not a
+  residue. The edit was reverted and `git diff` on `OrtNavHost.kt` verified empty.
+- **The guard also carries its own discrimination, permanently**: one test asserts the drawer-only
+  tree still matches all seven pre-fix labels (so a broken matcher cannot go green), another that it
+  matches none of the seven screen-unique strings that came through R-1201's stub correctly.
+- `./gradlew :app:detekt :app:ktlintCheck` — **BUILD SUCCESSFUL in 22s**. (The first attempt was
+  red twice and both were real: `MaxLineLength` in the new guard, then `LongMethod` 83/80 on
+  `SettingsSubScreen` — answered by extracting `taggedSubScreenModifier`, not by a `@Suppress`.)
+- `./gradlew :app:test :app:smokeTestFullDebugUnitTest :app:smokeTestPlayDebugUnitTest` —
+  **BUILD SUCCESSFUL in 37m 58s**: `testFullDebugUnitTest` 2952/2952, `testPlayDebugUnitTest`
+  2952/2952, `smokeTestFullDebugUnitTest` 193/193, `smokeTestPlayDebugUnitTest` 193/193, 0 failures.
+  `TourStepsTest` green at 264/264 with every marker now rooted in a real screen (142s).
+  The run before the tag-collision fix had 22 failures: 5 caused directly by the clobbered tags,
+  and 17 `AppNotIdleException`s in three classes downstream of them (including
+  `LiveMonitorScreenTest`, which this diff does not touch at all) — the Compose-idle poisoning
+  `app/build.gradle.kts` documents at length, triggered here by the 60-second timeouts the five
+  real failures produced. All 22 are gone with the tags fixed; no suite-configuration change was
+  needed and none was made.
+- `./gradlew coverageMatrix` then `coverageMatrixCheck` (separate invocations) — one row added for
+  `R-1201`, check green. `python tools/spec-check/spec_check.py` OK; `python tools/backlog/backlog.py
+  --check` up to date.
+
+**Left open / not done.**
+
+- **R-1202 is half-closed and stays open.** `ReaderNavigator` publishes the destination, the drawer,
+  the review-session view and the settings sub-screen — and those are re-asserted. It publishes
+  **nothing that identifies a drill-in**: which transmission, station, thread, frequency or
+  recording session is open lives in `OrtNavHost`'s private `NavHostNavState`. A step that moved
+  from one transmission to another between the settle and the capture is still undetectable.
+  Closing that needs those ids mirrored onto `ReaderNavigator` the way `drawerOpenState` (R-803) and
+  `reviewSessionViewState` (R-840) already were — an `ui/navigation` change this unit does not own.
+  Reported rather than approximated, as the brief required.
+- **One `Expected.Text` case remains near the line, knowingly.** `reviewSessionView: "DIGEST"` ->
+  `Text("Session")` is `DigestScreen`'s own `DrillInHeader` parent label. The drawer's *rows* cannot
+  match it and R-1201's stub cleared it, but the drawer's *session header* shows whatever the
+  current session is labelled, which is data, not a fixed string — so the guard cannot hold that
+  half as ground truth. Recorded in both files rather than silently guarded.
+- **No screen was captured.** The diff touches `ui/**`, so working-agreement item 7 applies on its
+  face. Every one of the fifteen edits adds a `Modifier.testTag(...)`, a semantics-only modifier
+  that takes no part in measurement or drawing, and no other line of any screen changed (two
+  modifier chains were re-wrapped across lines to stay under 120 columns; the modifier *order* is
+  unchanged in both). The emulator is reserved by the session lead, so nothing was installed or
+  captured. The lead should judge whether that reasoning is accepted or a tour run is wanted.
+- The `settings-sub-screen-<ID>` tag proves which sub-screen composed, not that its async load
+  landed; `awaitStableSemantics` (R-973) remains the thing that decides that on-device.
 
 ## 2026-09-23 (P39 wave: two homes for what onboarding stops asking)
 

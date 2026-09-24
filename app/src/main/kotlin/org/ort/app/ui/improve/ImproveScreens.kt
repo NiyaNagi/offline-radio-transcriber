@@ -67,11 +67,15 @@ public fun ImproveScreen(
         Column(
             modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = OrtSpacing.lg),
         ) {
+            // R-1201 (register), and the other half of R-1160: that row fixed the nine improve
+            // *preview* steps and left the six *root* steps asserting `Text("Improve records")` —
+            // which is `IMPROVE_RECORDS.drawerLabel`, carried by the always-composed drawer row on
+            // every screen. This tag is the same repair R-1160 used, applied to the root.
             Text(
                 text = "Improve records",
                 style = OrtType.screenTitle,
                 color = OrtColors.textHigh,
-                modifier = Modifier.padding(top = OrtSpacing.sm),
+                modifier = Modifier.padding(top = OrtSpacing.sm).testTag("improve-root-title"),
             )
             Text(
                 text = "This phone can do more than some of these were done with",

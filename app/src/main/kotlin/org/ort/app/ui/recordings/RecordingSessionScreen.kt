@@ -74,7 +74,11 @@ public fun RecordingSessionScreen(
     labelSheet: RecordingSessionLabelSheetViewState?,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
+    // R-1201 (register): RC02's own step shape (`recordingSession`) had no case of its own and fell
+    // through to the `EARLIER_NIGHTS` destination default, `Text("Recordings")` — which this
+    // screen's own back label carries *and* the always-composed drawer row does, so it proved
+    // neither that RC02 had been reached nor that anything at all had rendered.
+    Column(modifier = modifier.fillMaxSize().testTag("recording-session-screen")) {
         DrillInHeader(parentLabel = "Recordings", onBack = actions.onBack)
         if (state == null) {
             // Round 2 (coordinator review), register R-1022: the shared `LoadingState` (not a plain

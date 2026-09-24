@@ -20,6 +20,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import kotlinx.coroutines.CoroutineDispatcher
@@ -161,6 +162,44 @@ public fun SettingsContent(
     }
 }
 
+/**
+ * R-1201 (register): the two sub-screens that **already** put a stable `testTag` on the very node
+ * [SettingsSubScreen]'s `modifier` lands on. Two `testTag`s on one layout node do not both survive —
+ * the first in the chain silently wins and the second disappears, which is how a blind
+ * `modifier.testTag(...)` at the dispatch below turned `SettingsContentBackupAndShareTest` and
+ * `SettingsContentExportAndDebugDumpTest` red (four tests, all "could not find any node that
+ * satisfies TestTag = '…-screen-scroll'"). These two are identified by the tag they already have
+ * rather than being given a second one on top of it.
+ */
+private val SELF_TAGGED_SUB_SCREENS: Map<SettingsScreenId, String> = mapOf(
+    SettingsScreenId.BACKUP to "backup-screen-scroll",
+    SettingsScreenId.EXPORT to "export-screen-scroll",
+)
+
+/**
+ * R-1201 (register): the stable marker that identifies one Settings sub-screen, rooted in that
+ * screen — `tools/ui-audit/tour.json`'s 50 `settingsScreen` steps assert this instead of the prose
+ * "Settings", which `ReaderDrawerContent`'s always-composed `Settings` row satisfied on every
+ * screen in the app (constitution II: never assert on prose; a check must discriminate). One source
+ * of truth for both halves: [SettingsSubScreen] adds the tag only where the screen has none of its
+ * own, and this returns whichever one the screen actually ends up carrying. Public because the
+ * tour's own step check is the caller that needs it.
+ */
+public fun settingsSubScreenTestTag(screen: SettingsScreenId): String =
+    SELF_TAGGED_SUB_SCREENS[screen] ?: "settings-sub-screen-${screen.name}"
+
+/**
+ * R-1201 (register): [SettingsSubScreen]'s own `modifier`, carrying the marker that says *which*
+ * sub-screen composed. Every one of `tour.json`'s 50 `settingsScreen` steps used to assert
+ * `Text("Settings")` — `ReaderDrawerContent`'s own `Settings` row, composed on every screen whether
+ * the drawer is open or not — so the check could not tell one sub-screen from another and could not
+ * tell any of them from no screen at all. Added at the one dispatch point rather than thirteen
+ * times in thirteen files, since each sub-screen already puts this `modifier` on its own root; and
+ * *not* added for the two screens in [SELF_TAGGED_SUB_SCREENS], which already tag that same node.
+ */
+private fun taggedSubScreenModifier(modifier: Modifier, screen: SettingsScreenId): Modifier =
+    if (screen in SELF_TAGGED_SUB_SCREENS) modifier else modifier.testTag(settingsSubScreenTestTag(screen))
+
 /** The nine sub-screens, split out of [SettingsContent] purely to keep that function under
  * detekt's length/complexity limits — the same reason `OrtNavHost`'s own `DestinationContent` was
  * extracted before this package existed. [crossPackage] bundles the cross-package/cross-screen
@@ -177,6 +216,7 @@ private fun SettingsSubScreen(
     modifier: Modifier,
     crossPackage: SettingsCrossPackageActions,
 ) {
+    val tagged = taggedSubScreenModifier(modifier, screen) // R-1201 — see that function's own kdoc
     when (screen) {
         SettingsScreenId.CAPTURE -> SettingsCaptureSubScreen(
             context = context,
@@ -184,7 +224,7 @@ private fun SettingsSubScreen(
             storeVersion = storeVersion,
             onStoreChanged = onStoreChanged,
             onBack = onBack,
-            modifier = modifier,
+            modifier = tagged,
             onOpenLevelMeter = crossPackage.onOpenLevelMeter,
             onOpenModeSettings = crossPackage.onOpenModeSettings,
         )
@@ -192,7 +232,7 @@ private fun SettingsSubScreen(
         SettingsScreenId.RIG -> SettingsRigScreen(
             state = remember(storeVersion) { SettingsPolling.rig(context) },
             onBack = onBack,
-            modifier = modifier,
+            modifier = tagged,
             // WPC2 (`RigSupervisor`'s own doc comment, confirmed by reading `RigSupervisor.kt`
             // before wiring this): reconnection is the transport's own job — `UsbSerialTransport`/
             // `BluetoothSppTransport` each self-heal on their own backoff ladder; there is no
@@ -210,7 +250,7 @@ private fun SettingsSubScreen(
                 store.tierOverrideName = it
                 onStoreChanged()
             },
-            modifier = modifier,
+            modifier = tagged,
         )
 
         SettingsScreenId.STORAGE -> SettingsStorageSubScreen(
@@ -219,13 +259,13 @@ private fun SettingsSubScreen(
             storeVersion = storeVersion,
             onStoreChanged = onStoreChanged,
             onBack = onBack,
-            modifier = modifier,
+            modifier = tagged,
             onReviewSession = crossPackage.onReviewSession,
         )
 
-        SettingsScreenId.ASSETS -> ModelsContent(context = context, modifier = modifier, onBack = onBack)
+        SettingsScreenId.ASSETS -> ModelsContent(context = context, modifier = tagged, onBack = onBack)
 
-        SettingsScreenId.EXPORT -> SettingsExportSubScreen(context = context, onBack = onBack, modifier = modifier)
+        SettingsScreenId.EXPORT -> SettingsExportSubScreen(context = context, onBack = onBack, modifier = tagged)
 
         SettingsScreenId.CONTRIBUTE -> SettingsContributeScreen(
             state = remember(storeVersion) { SettingsPolling.contribute(store) },
@@ -234,19 +274,19 @@ private fun SettingsSubScreen(
                 applyContributeToggle(store, index, value)
                 onStoreChanged()
             },
-            modifier = modifier,
+            modifier = tagged,
         )
 
         SettingsScreenId.DIAGNOSTICS -> SettingsDiagnosticsSubScreen(
             context = context,
             onBack = onBack,
-            modifier = modifier,
+            modifier = tagged,
         )
 
         SettingsScreenId.ABOUT -> SettingsAboutScreen(
             state = remember { SettingsPolling.about(context) },
             onBack = onBack,
-            modifier = modifier,
+            modifier = tagged,
         )
 
         SettingsScreenId.MODE -> SettingsModeSubScreen(
@@ -254,11 +294,11 @@ private fun SettingsSubScreen(
             storeVersion = storeVersion,
             onStoreChanged = onStoreChanged,
             onBack = onBack,
-            modifier = modifier,
+            modifier = tagged,
         )
 
         // P27 (NFR-6d, AC-167): the one new branch this unit's file-ownership map allows here.
-        SettingsScreenId.LICENSES -> SettingsLicensesScreen(context = context, onBack = onBack, modifier = modifier)
+        SettingsScreenId.LICENSES -> SettingsLicensesScreen(context = context, onBack = onBack, modifier = tagged)
 
         // P28 (D42, FR-ANL-1..14): this wave's own turn at the same narrow integration point
         // P27's LICENSES branch above documents — split into its own function for the identical
@@ -268,16 +308,16 @@ private fun SettingsSubScreen(
             storeVersion = storeVersion,
             onStoreChanged = onStoreChanged,
             onBack = onBack,
-            modifier = modifier,
+            modifier = tagged,
         )
 
         // P30 (FR-STO-6, FR-STO-9): this wave's own turn at the same narrow integration point
         // P27/P28's branches above document.
-        SettingsScreenId.BACKUP -> SettingsBackupSubScreen(context = context, onBack = onBack, modifier = modifier)
+        SettingsScreenId.BACKUP -> SettingsBackupSubScreen(context = context, onBack = onBack, modifier = tagged)
 
         // P31 (FR-ALR-1..6): this wave's own turn at the same narrow integration point.
         SettingsScreenId.ALERTS ->
-            SettingsAlertsSubScreen(context, storeVersion, onStoreChanged, onBack, modifier)
+            SettingsAlertsSubScreen(context, storeVersion, onStoreChanged, onBack, tagged)
     }
 }
 

@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -64,7 +65,11 @@ public fun ThreadScreen(
     onLearnMoreAboutTier: () -> Unit = {},
     onImproveAtHome: () -> Unit = {},
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
+    // R-1201 (register): the root carries the tag, not the "Threads" title — the title is drawn
+    // only by the `Grouped`/`Ungrouped` branches, while `Loading`/`Empty` are real states a tour
+    // step can legitimately land on. The tour's step check used to assert `Text("Threads")`, which
+    // `ReaderDrawerContent`'s always-composed `Threads` row satisfied on every screen.
+    Column(modifier = modifier.fillMaxSize().testTag("threads-screen")) {
         when (state) {
             // Register R-1022/R-1051 (halt): the real "not yet known" seed (`ThreadContent`'s own
             // `remember`) — never rendered as `Empty`'s "No overs yet." claim (see
