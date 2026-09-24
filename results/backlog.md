@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 139 | 13 | 25 | 101 |
+| UI / defect register | 143 | 13 | 25 | 105 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 5 | 2 | 3 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **185** | **30** | **43** | **112** |
+| **Total** | **189** | **30** | **43** | **116** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -183,7 +183,6 @@ process, polish, open questions and coverage debt are P2.
 | R-1156 | No scenario exercises a multi-candidate inferred Detail-Why, so its two newest features have no capture | register | process/open | constitution VIII; FR-UI-8; R-1144, R-1148 |
 | R-1157 | The tour degrades around 300 steps into one process, so late steps fail spuriously | register | tooling/open | constitution VIII; R-1146, R-1021 |
 | R-1159 | A mid-scroll capture is pinned to a step count nobody derived | register | tooling/open | constitution VIII; R-1158 |
-| R-1160 | A tour-step check was passing by matching the drawer instead of the screen | register | process/open | constitution II, VIII; R-770, R-1127, R-1070 |
 | R-1162 | A setup step that can reappear after setup is complete offers no way back | register | app/open | R-1161; constitution IV; AC-189 |
 | R-1163 | Two test suites each seeded past the deadlock and wrote down why | register | process/open | R-1161; constitution II, VIII |
 | R-1164 | The Welcome screen makes the one privacy claim the spec forbids, and it ships today | register | app/open | FR-ANL-14; constitution I, V; D42; AC-180 |
@@ -217,3 +216,8 @@ process, polish, open questions and coverage debt are P2.
 | R-1198 | Twenty-four of one hundred and forty-five DAO methods are unreachable, and one is a trap | register | data/open | R-1194; R-1196; R-1197 |
 | R-1199 | Provenance and history are recorded where nothing can ever read them | register | app/open | constitution III, VI; R-1194 |
 | R-1200 | Three dead UI subtrees, and an enum that looks like the failure registry and is not | register | app/open | R-1188; constitution I |
+| R-1201 | Measured: 144 of 264 tour steps assert text the drawer alone satisfies | register | process/open | R-1160; R-1070; R-1179; constitution II, VIII |
+| R-1202 | The capture-side guard covers setup steps and leaves 264 destination steps unguarded | register | tooling/open | R-1179; R-1201; constitution VIII |
+| R-1203 | The gate's first two tasks have their own tests, and the gate never runs them | register | tooling/open | R-1140; constitution VI, VIII |
+| R-1204 | The platform guard reads a manifest, and the Release workflow publishes a different one | register | tooling/open | FR-OBS-5; constitution VII; R-1203 |
+| R-1205 | Six suites report green from a place where nothing ran | register | tooling/open | R-1140; R-1203; constitution VI |
