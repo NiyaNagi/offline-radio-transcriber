@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 127 | 13 | 25 | 89 |
+| UI / defect register | 128 | 13 | 25 | 90 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 5 | 2 | 3 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **173** | **30** | **43** | **100** |
+| **Total** | **174** | **30** | **43** | **101** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -131,7 +131,6 @@ process, polish, open questions and coverage debt are P2.
 | R-770 | Tour coverage of designed screens | register | process **2026-09-20, narrowed by the tour-coverage unit (`57e17037`, merged):** the tour went from 279 to 297 steps and this umbrella is now blocked on a single, specific cause rather than a general shortfall - see r-1127, which lists the seven screens that need a `src/main` seed seam. everything else this row originally listed is either covered or was added this round. **2026-09-21, narrowed again to two screens** (lead, after the full canonical tour). r-1127's seven screens are reachable and were captured in the 318-step run: the correction sheets d08-d10, detail > label, setup > mic denied (its first capture ever), s06 route-mismatch and d05 detail-why. what remains of this umbrella is **exactly two**: r02 `improve-select` and r03 `improve-running`, which hold unseeded local state in `improvecontent` and were outside r-1127's own named list. everything else this row was opened for is either captured or closed. worth noting what the tour proved beyond coverage: it reported 7 real step failures rather than a false green, and three of those reopened r-1021 - so the coverage this row asked for is now also load-bearing, not decorative./open | `design/design-intent.md`, tour |
 | R-771 | D02 Detail-Inferred lattice slots | register | design/fixed / awaiting capture | `Detail`, cf. R-720/R-320 |
 | R-801 | Second look at the 2026-09-10 boards (read-only reviewer, no device) | register | process/fixed / awaiting capture | `design-guide.md` Â§3, Â§6.1, Â§6.5, Â§8 |
-| R-817 | S02c `@2x` coverage | register | process/**reopened 2026-09-22 by r-1179** | `Setup-Bluetooth-Permission.dc.html`, R-744 |
 | R-838 | F23 Log gap row icon | register | design/closed | `Fail-Bluetooth-Audio.dc.html` |
 | R-884 | Ghost "Back" at the top of S09b at 2.0 | register | polish/hardware | `Setup-Rig-Transport.dc.html` |
 | R-933 | CF04 under `model-missing` (live) | register | design/closed | `Settings-Assets.dc.html` |
@@ -185,23 +184,25 @@ process, polish, open questions and coverage debt are P2.
 | R-1157 | The tour degrades around 300 steps into one process, so late steps fail spuriously | register | tooling/open | constitution VIII; R-1146, R-1021 |
 | R-1159 | A mid-scroll capture is pinned to a step count nobody derived | register | tooling/open | constitution VIII; R-1158 |
 | R-1160 | A tour-step check was passing by matching the drawer instead of the screen | register | process/open | constitution II, VIII; R-770, R-1127, R-1070 |
-| R-1161 | Setup loops forever on Running overnight, and the exit needs a capture the loop prevents | register | app/open | AC-189; constitution IV; R-1104; NFR-8 |
 | R-1162 | A setup step that can reappear after setup is complete offers no way back | register | app/open | R-1161; constitution IV; AC-189 |
 | R-1163 | Two test suites each seeded past the deadlock and wrote down why | register | process/open | R-1161; constitution II, VIII |
 | R-1164 | The Welcome screen makes the one privacy claim the spec forbids, and it ships today | register | app/open | FR-ANL-14; constitution I, V; D42; AC-180 |
 | R-1165 | Two screens still promise voiceprints never leave the device, which D38 made false | register | app/open | FR-SPK-20; FR-OBS-9; FR-OBS-10; D38; constitution I, V; R-1164 |
-| R-1166 | First-run setup is eleven to twenty screens where four would do | register | app/open | AC-166; AC-180; AC-189; FR-CAP-8; constitution I; R-1161, R-1162 |
-| R-1167 | The frequency is demanded on one path and never asked on the path right beside it | register | app/open | R-344; FR-RIG-*; constitution I; R-1166 |
 | R-1168 | There is no gain control, the design intent promised one, and three screens promise there never will be | register | app/open | FR-CAP-*; constitution I; R-1166 |
 | R-1169 | The spec picked an unprocessed audio source years ago and the code still asks for the processed one | register | app/open | technical-design §5.1; constitution I; R-1168 |
 | R-1170 | Five setup screens disable Continue for validation, and two of them have no way out at all | register | app/open | constitution I, IV; FR-A11Y-*; R-1161, R-1162, R-1166 |
 | R-1171 | Three capture switches in Settings are persisted, rendered, and read by nobody | register | app/open | constitution I; R-1132, R-1139, R-1141 |
-| R-1172 | Two setup screens show invented state as though it were real | register | app/open | constitution I; R-1166 |
 | R-1173 | The superseded privacy claim is repeated in seven more places, including the repo headline | register | app/open | FR-ANL-14; FR-SPK-20; FR-PLT-5; D37; D38; D42; constitution I, V; R-1164, R-1165 |
 | R-1174 | A smoke-test class fails once and passes alone, and nobody can say why | register | process/open | R-1140; constitution VIII |
 | R-1175 | The build log carried an unresolved merge for two days and every guard missed it | register | tooling/open | constitution I, VI; R-1163; spec-check rule 8 |
 | R-1176 | A touch-target constraint was present in the source, silently discarded at runtime, and invisible to every test | register | app/open | FR-A11Y-*; WCAG 2.2 AA 2.5.8; constitution VIII; R-1090 |
 | R-1177 | The tour gained a step, so the committed manifest is a step short until a canonical run | register | tooling/open | constitution VIII; R-1149, R-1158 |
-| R-1178 | The frequency screen's two other branches draw no field for the control its message names | register | app/open | R-1167; R-1170; D58 |
-| R-1179 | The Bluetooth-permission step has never once captured the Bluetooth-permission screen | register | tooling/open | R-817; R-940; R-800; R-1005a; R-810, R-811, R-820, R-830; constitution VIII; R-1160, R-1021 |
 | R-1180 | A test raced virtual time against a real dispatcher and called the result a timeout | register | process/open | R-1139; R-1174; constitution II, VIII |
+| R-1181 | The new log-header frequency row is contradicted by the overs directly beneath it | register | app/open | R-1167; AC-202; constitution I, VIII |
+| R-1182 | A second frequency field in Settings is written, read back, and never reaches capture | register | app/open | R-1167; R-1171; R-1132, R-1139, R-1141; constitution I |
+| R-1183 | The tour navigation helper replays taps at a resolution the tour never uses | register | tooling/open | R-1149; constitution VIII |
+| R-1184 | The heartbeat cadence the new prompt measures against is a copy of the one capture beats on | register | app/open | R-1161; AC-189 |
+| R-1185 | The capture-mode step is still a wizard page, and the builder did not say so | register | app/open | D58; P39; R-1166 |
+| R-1186 | A source-code identifier survived the copy rewrite onto the one screen that matters most | register | app/open | R-1166; constitution I; P39 |
+| R-1187 | Route rows render their label above their own radio button, on the screen a first run cannot avoid | register | app/open | R-1166; P39; FR-A11Y-* |
+| R-1188 | The overnight screen survived the restructure and nothing in the app can reach it | register | app/open | R-1161; R-1162; P39; constitution I |
