@@ -349,7 +349,8 @@ private fun AmberHalfMarker() {
 public data class ReadyActions(
     val onFixInput: () -> Unit,
     val onFixLevel: () -> Unit,
-    val onFixOvernight: () -> Unit,
+    // R-1188: there used to be an `onFixOvernight` here, jumping to `SetupStep.OVERNIGHT`. See
+    // [overnightRow] for why the row it served now carries no action at all.
     val onFixRadio: () -> Unit,
     /** R-285 (validator pass 3): distinct from [onFixRadio] — [SetupActivity.onChangeRadio]'s own
      * clear-then-navigate, the same callback S11's own "Change radio" ([RadioVerifiedScreen])
@@ -401,7 +402,7 @@ public fun readyRowsFor(
         onAction = actions.onFixInput,
     ),
     levelRow(store, actions.onFixLevel),
-    overnightRow(overnightState, actions.onFixOvernight),
+    overnightRow(overnightState),
     radioRow(store, rigStatus, manualFrequencyHz, actions.onFixRadio, actions.onChangeRadio),
     modelsRow(modelsState, actions.onInstallModel),
 )
@@ -419,23 +420,33 @@ private fun inputRowValue(store: SetupStore): String {
 }
 
 /**
- * P22 (AC-189, constitution IV): this row's `ok`/`statusText`/`actionLabel` are driven **only** by
+ * P22 (AC-189, constitution IV): this row's `ok`/`statusText` are driven **only** by
  * [OvernightSurvivalState.survivalProven] — real, heartbeat/session-derived evidence
  * ([OvernightSurvivalChecker]) — never by [OvernightSurvivalState.batteryExemptDiagnostic], the
  * live `PowerManager.isIgnoringBatteryOptimizations()` reading this row used before P22. That flag
  * is shown for wording only ("Battery exemption granted/skipped"): AC-189 is explicit that the OS
  * reporting the exemption already granted must never, by itself, satisfy this gate.
+ *
+ * **R-1188: the row states the fact and offers no `Fix`, and that is the honest shape.** It used to
+ * carry one, jumping to `SetupStep.OVERNIGHT` — the deleted screen. Deleting the screen is not why
+ * the action went: **there is nothing this row could route to that would fix it.** The only evidence
+ * that clears it is a capture that ran long enough and ended cleanly, and standing on Ready the
+ * operator has not started one yet, which is exactly the unsatisfiable-by-construction shape R-1161
+ * was about. Offering a `Fix` that cannot fix it is a claim the screen cannot keep (constitution I).
+ * The value line therefore says what would actually settle it, and the battery ask itself lives on
+ * F24, raised by the first missed heartbeat — evidence that can only exist after a capture has run.
  */
-private fun overnightRow(overnightState: OvernightSurvivalState, onFixOvernight: () -> Unit): ReadyRow {
+private fun overnightRow(overnightState: OvernightSurvivalState): ReadyRow {
     val ok = overnightState.survivalProven
-    val value = if (overnightState.batteryExemptDiagnostic) "Battery exemption granted" else "Battery exemption skipped"
+    val exemption =
+        if (overnightState.batteryExemptDiagnostic) "Battery exemption granted" else "Battery exemption skipped"
     return ReadyRow(
         label = "Overnight",
-        value = value,
+        value = if (ok) exemption else "$exemption · proven by a night's capture, not yet",
         ok = ok,
         statusText = "verified".takeIf { ok },
-        actionLabel = "Fix".takeIf { !ok },
-        onAction = onFixOvernight,
+        actionLabel = null,
+        onAction = null,
     )
 }
 

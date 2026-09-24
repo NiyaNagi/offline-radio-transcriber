@@ -14,9 +14,16 @@ import org.ort.core.capture.RigTransportKind
  * gate rather than a fact that stopped being recorded — all four still live on [SetupStore]:
  * `jurisdictionNoticeSeen` and `analyticsConsentSeen` are written by [SetupActivity.onBegin]
  * (folded onto Welcome, AC-166/AC-180), `notificationsSkipped` by the first-capture-start ask, and
- * `overnightStepSeen` by whatever surfaces the *Keep capture running* prompt. Nothing reads them to
- * decide a step any more, which is exactly the point: a gate whose evidence cannot exist before
- * capture cannot be a pre-capture gate (AC-189 as amended, R-1161).
+ * `overnightStepSeen` by nothing in production any more. Nothing reads them to decide a step, which
+ * is exactly the point: a gate whose evidence cannot exist before capture cannot be a pre-capture
+ * gate (AC-189 as amended, R-1161).
+ *
+ * **R-1188, reported and deliberately not acted on here.** `overnightStepSeen` is now written only by
+ * `app/src/debug`'s scenario seeding — its two production writers were `SetupActivity`'s Overnight
+ * actions, deleted with the step. Removing the field touches `Scenarios.kt`, which this change does
+ * not own, so it is named here rather than left to be rediscovered: the field is a write-only
+ * remnant, and the *Keep capture running* prompt it was reserved for uses its own
+ * `KeepCaptureRunningDismissStore` instead.
  */
 public data class SetupSnapshot(
     val welcomeSeen: Boolean,
@@ -95,8 +102,8 @@ public data class SetupSnapshot(
  *
  * [SetupStep.ROUTE_MISMATCH], [SetupStep.RADIO_USB] and [SetupStep.RADIO_VERIFIED] are deliberately
  * never returned here — all three are transient, live results of an action taken on an earlier step,
- * not states worth resuming into on a fresh launch. Neither is [SetupStep.OVERNIGHT], and that is
- * now a rule rather than an omission (AC-189 as amended, AC-199).
+ * not states worth resuming into on a fresh launch. `OVERNIGHT` was the fourth such exclusion until
+ * R-1188 deleted the step outright; the battery ask is F24's banner now (AC-189 as amended, AC-199).
  */
 public object SetupStateMachine {
 

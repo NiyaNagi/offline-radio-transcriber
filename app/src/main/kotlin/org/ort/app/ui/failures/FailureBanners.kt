@@ -176,6 +176,16 @@ public fun FailKilledBanner(
  * The last sentence is [org.ort.app.ui.failures.FailurePresentation.KeepCaptureRunning]'s own half
  * of **AC-199**, said out loud: dismissing this blocks nothing, and the operator is told so rather
  * than left to find out.
+ *
+ * **R-1188: the one thing that had to come across from the deleted screen.** `SetupStep.OVERNIGHT`
+ * and its `OvernightScreen` are gone — this is the single battery surface now — and everything that
+ * screen said is above except one item from its three-step list: *Choose Don't optimise or
+ * Unrestricted*. Its other two steps are this banner's own primary action and the fact that a banner
+ * does not take the operator anywhere they have to come back from. That one is different: the
+ * platform screen the primary opens offers several options, only one is what is being asked for, and
+ * choosing the wrong one produces exactly the outcome this prompt exists to prevent — the operator
+ * believes they have answered and the OS keeps ending the app. Deleting the only place it was said
+ * would have been deleting quietly (constitution III).
  */
 @Composable
 public fun FailKeepCaptureRunningBanner(
@@ -188,7 +198,8 @@ public fun FailKeepCaptureRunningBanner(
         title = "Keep capture running",
         body = "The heartbeat stopped at ${state.stoppedAtLabel} and nothing was heard for " +
             "${state.gapDurationLabel}. Android can stop this app while the screen is off; exempting it " +
-            "from battery optimisation usually helps. It is not a guarantee — some phones report the " +
+            "from battery optimisation usually helps — on the screen that opens, choose Don't optimise " +
+            "or Unrestricted. It is not a guarantee — some phones report the " +
             "app exempt and end it anyway, which is why this app proves it is alive by heartbeat and " +
             "shows you the gap rather than trusting that setting. Whatever you choose here, it never " +
             "blocks capture.",

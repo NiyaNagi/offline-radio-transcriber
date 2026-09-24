@@ -16,10 +16,12 @@ public object SetupStepIds {
      * `S05` and `S07` are gone for a different reason: they merged *into* `S04`, which now names the
      * whole input / route-check / level screen rather than the route list alone.
      *
-     * `S08` stays although [org.ort.app.ui.setup.SetupStateMachine] never returns `OVERNIGHT` any
-     * more (AC-189 as amended). The screen is still in the code, its artboard still exists, and
-     * constitution VIII requires an artboard to be reachable by a capture — the tour opens it by
-     * `EXTRA_STEP` exactly as the *Keep capture running* prompt that owns it next will.
+     * **R-1188 removed `S08` too.** P39 kept it because the artboard still existed and constitution
+     * VIII requires an artboard to be reachable by a capture. The *Keep capture running* prompt that
+     * was to own that screen next was built as F24 instead, with its own copy and its own intent,
+     * leaving `OVERNIGHT` unreachable by anything but this map — so the step, the screen and
+     * `Setup-Battery.dc.html` are all deleted, and the board that has to be captured is
+     * `Fail-Keep-Running.dc.html`, which the tour already visits as `keep-running/F24-keep-running-*`.
      */
     private val BY_ID: Map<String, String> = mapOf(
         "S01" to "WELCOME",
@@ -28,7 +30,6 @@ public object SetupStepIds {
         "S02c" to "BLUETOOTH_PERMISSION",
         "S04" to "LISTEN",
         "S06" to "ROUTE_MISMATCH",
-        "S08" to "OVERNIGHT",
         "S09" to "RADIO",
         "S09b" to "RIG_TRANSPORT",
         "S10" to "RADIO_USB",

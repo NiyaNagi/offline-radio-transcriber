@@ -308,7 +308,6 @@ class ReadyScreenTest {
         val actions = ReadyActions(
             onFixInput = {},
             onFixLevel = {},
-            onFixOvernight = {},
             onFixRadio = {},
             onChangeRadio = {},
             onInstallModel = {},

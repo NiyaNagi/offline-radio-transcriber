@@ -118,7 +118,7 @@ class SetupScaffoldTest {
     /**
      * R-341 (validator pass 4, spec, reopened R-123/R-281/R-282/R-283): the regression test above
      * (and `WelcomeScreenTest`'s/`InputScreenTest`'s/`NotificationsScreenTest`'s/
-     * `RouteMismatchScreenTest`'s/`OvernightScreenTest`'s own font-scale-2.0 tests) all
+     * `RouteMismatchScreenTest`'s own font-scale-2.0 tests) all
      * `performScrollTo()` before asserting — proving the content is *reachable*, never that it does
      * not overlap the bar on the very *first* frame, which is exactly what the validator's
      * screenshots (unscrolled) showed clipped. This asserts on the raw first composition, no scroll

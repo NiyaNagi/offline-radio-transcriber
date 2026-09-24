@@ -21,7 +21,6 @@ import org.junit.Test
 import org.junit.runner.Description
 import org.junit.runner.RunWith
 import org.junit.runners.model.Statement
-import org.ort.app.MainActivity
 import org.ort.app.analytics.AnalyticsAppWiring
 import org.ort.app.analytics.AnalyticsUploadRunOutcome
 import org.ort.app.ui.ReaderActivity
@@ -1677,13 +1676,10 @@ class SetupActivityTest {
         store.update(store.current().copy(manualFrequencyHz = hz))
     }
 
-    /** P39: [SetupStep.OVERNIGHT] is off the ladder, so it is opened the way its new home will open
-     * it — by [SetupActivity.EXTRA_STEP], which `tryOpenAtRequestedStep` honours once every real gate
-     * has cleared. */
-    private fun overnightIntent(): Intent = Intent(
-        ApplicationProvider.getApplicationContext<Application>(),
-        SetupActivity::class.java,
-    ).putExtra(SetupActivity.EXTRA_STEP, SetupStep.OVERNIGHT.name)
+    // R-1188: `overnightIntent()` stood here, opening `SetupStep.OVERNIGHT` by `EXTRA_STEP` because
+    // nothing in production could reach it. That was the whole finding — a screen kept alive by the
+    // two tests below this helper, which are deleted with it. The battery ask has one surface now,
+    // F24's banner, covered by `FailureHostTest`.
 
     private fun clearOvernightStepSeen() {
         ApplicationProvider.getApplicationContext<Application>()
@@ -1765,81 +1761,17 @@ class SetupActivityTest {
         assertTrue("real evidence must latch the fact so it is never re-checked once proven", survivalProven)
     }
 
-    /**
-     * Once the operator acts on [SetupStep.OVERNIGHT] (`Skip for now`), every other gate in this
-     * already-complete flow ([storeSetupAlreadyComplete]) is satisfied too, so `stepFor` hands
-     * straight back to `MainActivity` rather than re-showing Overnight a second time within the
-     * same activity instance.
-     *
-     * **Scope, restated honestly (R-1163):** this test's name used to read as a general "no loop"
-     * guarantee and it never was one — it only ever covered the *intra-activity* case, and the loop
-     * the operator actually hit was inter-activity, `MainActivity` -> here -> `MainActivity`. A
-     * green test asserting "no loop" is precisely what made that invisible. That cycle is now driven
-     * end to end in `MainActivityTest`'s own `R_1161 an unproven device detours once and the skip
-     * then actually reaches capture`; this one keeps the narrower property it always had, and says
-     * so in its name.
-     *
-     * **P39**: `stepFor` never returns [SetupStep.OVERNIGHT] any more, so the screen is reached the way
-     * its new home will reach it — by [SetupActivity.EXTRA_STEP]. That is deliberate rather than
-     * incidental: the *Keep capture running* prompt D58 moves this ask to is a capture-status surface
-     * outside this change's ownership, and this test is what proves the screen it will open still
-     * behaves when opened that way.
-     */
-    @Test
-    fun `AC_189 skipping Overnight records the answer and never re-shows it in the same launch`() {
-        storeSetupAlreadyComplete()
-        clearOvernightStepSeen()
-        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
-        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
-
-        ActivityScenario.launch<SetupActivity>(overnightIntent()).use { scenario ->
-            scenario.onActivity { activity ->
-                assertEquals(SetupStep.OVERNIGHT, activity.currentStepForTest)
-                activity.onSkipOvernight()
-                assertEquals(
-                    "a loop would leave this activity still showing Overnight; it now re-derives the " +
-                        "step and, with every gate clear, that is the terminal screen",
-                    SetupStep.READY,
-                    activity.currentStepForTest,
-                )
-            }
-        }
-        assertTrue(
-            "the operator's answer must be recorded, or the prompt reappears having been answered",
-            ApplicationProvider.getApplicationContext<Application>()
-                .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-                .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, false),
-        )
-    }
-
-    /**
-     * **R-1162**: a step reachable once setup is already complete must offer a way *back into the
-     * app*, not only a forward action. `Back to the app` leaves the answer unrecorded on purpose —
-     * the operator declined to answer, so AC-189's reappearance stands for the next process — and
-     * simply hands back, which the router then turns into capture, because nothing about overnight
-     * survival diverts a launch any more (AC-199).
-     */
-    @Test
-    fun `R_1162 returning to the app from Overnight hands back without recording an answer`() {
-        storeSetupAlreadyComplete()
-        clearOvernightStepSeen()
-        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
-        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
-
-        ActivityScenario.launch<SetupActivity>(overnightIntent()).use { scenario ->
-            scenario.onActivity { activity ->
-                assertEquals(SetupStep.OVERNIGHT, activity.currentStepForTest)
-                activity.onReturnToAppFromOvernight()
-                assertTrue("the exit must actually leave the screen", activity.isFinishing)
-            }
-        }
-        val app = ApplicationProvider.getApplicationContext<Application>()
-        assertEquals(MainActivity::class.java.name, shadowOf(app).nextStartedActivity?.component?.className)
-        val stepSeen = ApplicationProvider.getApplicationContext<Application>()
-            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, false)
-        assertFalse("leaving without answering must not be recorded as having answered", stepSeen)
-    }
+    // R-1188: two tests stood here — `AC_189 skipping Overnight records the answer and never
+    // re-shows it in the same launch` and `R_1162 returning to the app from Overnight hands back
+    // without recording an answer`. Both opened `SetupStep.OVERNIGHT` deliberately by `EXTRA_STEP`,
+    // and between them they were the only thing keeping that screen alive: no production path
+    // reached it. Deleted with the screen rather than retargeted, because what they establish is
+    // gone with it. **R-1162 is resolved by the same deletion** — its finding was that the screen
+    // offered no exit, and F24 is a dismissable banner over a working app, never a takeover
+    // (AC-199, asserted by `FailureHostTest`'s own `AC_199 the keep-running prompt never withholds
+    // the destination beneath it`). The three tests above this comment keep what still applies: the
+    // router no longer gates on overnight survival, and `reconcileOvernightSurvival` latches the
+    // proven half without re-arming anything.
 
     // --- R-1168 / R-1169 / R-1170: the gain control, the recorded source, the never-disabled button
 

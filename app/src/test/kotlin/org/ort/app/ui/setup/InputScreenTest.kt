@@ -1,20 +1,31 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasTextExactly
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.Density
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 
 /** R-081 (ui-conformance-plan WP9) — `Setup-Input.dc.html` (S04). */
 @RunWith(RobolectricTestRunner::class)
@@ -70,6 +81,159 @@ class InputScreenTest {
         composeTestRule.onNodeWithTag("setup-input-verify").assertIsEnabled()
         composeTestRule.onNodeWithTag("setup-input-route-usb-1").performClick()
         assert(selected == "usb-1")
+    }
+
+    // --- R-1187 (register; the R-1017/R-880 family): the route row's label is bound to its own -----
+    // --- control, not floating above it, once the subtitle wraps -----------------------------------
+
+    /**
+     * **The defect, exactly.** [org.ort.app.ui.components.RadioRow] centres its marker against the
+     * *whole* label+subtitle column, and [InputSection]'s own leading device-type [androidx.compose
+     * .material3.Icon] does the same against the row. Once the subtitle wraps — which it does for
+     * every route on the emulator, and will for any USB adapter with a long name — the centre of
+     * that column has migrated down past the label, so the marker and the icon sit beside the
+     * *sub-line* while the label floats above them. The row then reads as a heading followed by an
+     * unrelated control, on the one screen a first run cannot avoid and the one whose whole job is
+     * picking the right input.
+     *
+     * Identical in shape to R-1017, which fixed exactly this on `RigBluetoothScreen`'s paired-device
+     * rows and left this caller — then one of twelve screens — behind.
+     *
+     * **The invariant, and why this one.** *The marker's own vertical centre falls within the label's
+     * own vertical bounds, and above where the subtitle begins.* That is the geometric statement of
+     * "this control belongs to that label", it survives any amount of wrapping, and it is the thing a
+     * render test cannot see: every existing assertion on this screen passes with the row broken.
+     * The same is asserted of the leading icon, which is a sibling of the row rather than part of it
+     * and so had to be aligned separately.
+     *
+     * Run at 1.0 as well as 2.0 because the emulator capture that filed this row was at 1.0 — the
+     * subtitle does not need a large font to wrap, only a long device name.
+     */
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Requirement("R-1187", "R-1017")
+    fun `R_1187 the route row marker and icon sit beside the label, not below it, at font scale 1_0`() {
+        assertRouteRowControlsAlignWithLabel(fontScale = 1f)
+    }
+
+    @Test
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Requirement("R-1187", "R-1017")
+    fun `R_1187 the route row marker and icon sit beside the label, not below it, at font scale 2_0`() {
+        assertRouteRowControlsAlignWithLabel(fontScale = 2f)
+    }
+
+    /**
+     * The emulator's own case, verbatim from `setup-verified/S04-listen.png`: every enumerated route
+     * is named `sdk_gphone64_x86_64` and carries a two-line subtitle. [InputRouteEnumerator]'s own
+     * `typeLabel` supplies the icon, so this fixture composes the same three pieces production does.
+     */
+    private fun assertRouteRowControlsAlignWithLabel(fontScale: Float) {
+        val route = InputRouteOption(
+            id = "usb-1",
+            label = "sdk_gphone64_x86_64",
+            subtitle = "USB audio · 48 kHz native · captured through the adapter, not the phone's own microphone",
+            advisory = null,
+            typeLabel = "USB audio",
+            icon = OrtIcons.usbAudio,
+        )
+        composeTestRule.setContent {
+            val base = LocalDensity.current
+            CompositionLocalProvider(
+                LocalDensity provides Density(density = base.density, fontScale = fontScale),
+            ) {
+                OrtTheme {
+                    ListenScreen(
+                        state = ListenViewState(routes = listOf(route), selectedId = "usb-1"),
+                        actions = ListenActions(
+                            onSelect = {},
+                            onRefresh = {},
+                            onVerify = {},
+                            onContinue = {},
+                            onTryAgain = {},
+                            onChooseAnotherInput = {},
+                        ),
+                    )
+                }
+            }
+        }
+
+        // R-1017: the row's own `.selectable(...)` merges descendant semantics, dropping the marker's
+        // testTag from the merged tree entirely -- `useUnmergedTree = true` is what reaches it.
+        val marker = composeTestRule
+            .onNodeWithTag("radio-row-marker", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val icon = composeTestRule
+            .onNodeWithTag("setup-input-route-icon-usb-1", useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val label = composeTestRule
+            .onNodeWithText(route.label, useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+        val subtitle = composeTestRule
+            .onNodeWithText("48 kHz native", substring = true, useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+
+        // The premise: this test says nothing unless the subtitle genuinely wrapped. A single-line
+        // `chip` sub-line is shorter than a single-line `control` label, so a taller subtitle is a
+        // wrapped one.
+        val labelHeight = (label.bottom - label.top).value
+        val subtitleHeight = (subtitle.bottom - subtitle.top).value
+        assertTrue(
+            "the fixture must produce a wrapped subtitle at font scale $fontScale or this test proves " +
+                "nothing -- label ${labelHeight}dp vs subtitle ${subtitleHeight}dp",
+            subtitleHeight > labelHeight,
+        )
+
+        listOf("marker" to marker, "icon" to icon).forEach { (name, bounds) ->
+            val centreY = (bounds.top + bounds.bottom) / 2
+            assertTrue(
+                "expected the $name's vertical centre ($centreY) to fall within the label's own bounds " +
+                    "(${label.top}..${label.bottom}) at font scale $fontScale -- a control below its own " +
+                    "label reads as an unrelated one",
+                centreY in label.top..label.bottom,
+            )
+            assertTrue(
+                "expected the $name to stay above where the wrapped subtitle begins at font scale " +
+                    "$fontScale, got centre $centreY vs subtitle top ${subtitle.top}",
+                centreY < subtitle.top,
+            )
+        }
+    }
+
+    /**
+     * R-1187's accessibility half, and the half a screenshot cannot show. A screen reader must
+     * announce the control *with its name*: the label and its sub-line have to be inside the row's
+     * own selectable node, not siblings of it.
+     *
+     * Constitution VIII is explicit that accessibility is judged on a device and never from the test
+     * tree — Compose's merged `SemanticsNode` tree and the real `AccessibilityNodeInfo` tree have
+     * disagreed on exactly this before (R-342, R-361, both on `ReadyScreen`). This asserts the
+     * strongest thing available without one: the node carrying the selection action is the node
+     * carrying the text. A `uiautomator dump` still settles it.
+     */
+    @Test
+    @Requirement("R-1187")
+    fun `R_1187 the route row's label is inside its own selectable node`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb, mic), selectedId = "usb-1"),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-input-route-usb-1")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.RadioButton))
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Selected))
+            .assert(hasTextExactly(usb.label, usb.subtitle!!))
     }
 
     // --- R-1170: never disable a primary button for validation state -------------------------------

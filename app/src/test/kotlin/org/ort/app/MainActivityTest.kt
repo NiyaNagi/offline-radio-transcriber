@@ -11,14 +11,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.navigation.ReaderDestination
 import org.ort.app.ui.setup.DebugOvernightSurvivalOverride
 import org.ort.app.ui.setup.FakeOvernightSurvivalChecker
-import org.ort.app.ui.setup.OvernightNagState
 import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
@@ -59,21 +57,13 @@ class MainActivityTest {
         controllerUnderTest = null
     }
 
-    /**
-     * R-1161: [OvernightNagState] is a process-wide holder in exactly the way [CaptureState] and
-     * `LevelStatus` are, so a value set by one test is still set for the next one in this JVM —
-     * reset on both sides of every test rather than only after, since another suite in the same
-     * run may have routed through `MainActivity` before this class starts.
-     */
-    @Before
-    fun setUp() {
-        OvernightNagState.reset()
-    }
+    // R-1188: `OvernightNagState.reset()` stood on both sides of every test here — that holder is
+    // deleted with the overnight step, and F24 keys its dismissal to a persisted watermark instead.
+    // The process-wide resets below are unaffected and still necessary for the same reason.
 
     @After
     fun tearDown() {
         destroyAfterTest()
-        OvernightNagState.reset()
         // CaptureState is a process-wide singleton; leaving a test's `capturing(...)` call live
         // would leak into the next test the same way an undestroyed Activity does.
         CaptureState.idle(clearSession = true)

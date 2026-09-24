@@ -7,7 +7,7 @@ import org.ort.data.entity.TerminationReason
 
 /**
  * P22 (AC-189, constitution IV): "liveness is proven by heartbeat, never by
- * `isIgnoringBatteryOptimizations()`" applies exactly as much to [OvernightScreen]'s own gate as
+ * `isIgnoringBatteryOptimizations()`" applies exactly as much to [ReadyScreen]'s own Overnight row as
  * it does to the capture-status surface (`StatusViewState.kt`'s "Alive (heartbeat current)" line,
  * built the identical way from `FileHeartbeatStore`/`UncleanEndDetector`, `:capture-android`).
  * This is the setup-side equivalent question — "has this device, at least once, actually run long
@@ -24,7 +24,7 @@ import org.ort.data.entity.TerminationReason
  * be missed). This is a heuristic proxy, not a certainty, and is documented as such rather than
  * silently asserted (constitution I): a session that happened to stay foregrounded the whole time
  * would pass this check too. It is still strictly more honest than the OS's own exemption flag,
- * which [OvernightScreen]'s own doc comment already establishes lies on the reference device.
+ * which constitution IV and NFR-8 record as lying outright on the reference device.
  */
 public interface OvernightSurvivalChecker {
     public suspend fun hasProvenSurvival(): Boolean
@@ -33,7 +33,7 @@ public interface OvernightSurvivalChecker {
 /**
  * Fifteen minutes — long enough that a session merely opened and closed again in the same breath
  * (the operator immediately backing out of `Start capture`) cannot count as survival evidence, but
- * short of asking for anything like a full overnight run before the nagging step ever clears. A
+ * short of asking for anything like a full overnight run before the Overnight row ever clears. A
  * heuristic threshold, not a spec-mandated number — the same kind of judgement call
  * [ReadyScreen.kt]'s own `LARGE_FONT_SCALE_THRESHOLD` documents itself as.
  */
@@ -68,38 +68,12 @@ public class FakeOvernightSurvivalChecker(@Volatile public var proven: Boolean =
     }
 }
 
-/**
- * **R-1161** — whether the overnight prompt has already been put in front of the operator **in this
- * process**. A process-wide holder in exactly the shape `CaptureState`/`LevelStatus` already
- * establish for this codebase (`:pipeline`), and for the same reason: the fact is true of the
- * running process, not of the device, so it deliberately does not belong in [SetupStore] —
- * persisting it would silence AC-189's "reappears on every relevant subsequent launch".
- *
- * **P39 (D58, AC-199): nothing reads this today, and that is the point.** It existed to bound the
- * router's detour to once per process, because the detour itself could otherwise loop. The detour is
- * gone — `MainActivity` no longer diverts a launch for overnight survival at all, which is the
- * structural half of R-1161's fix — so there is nothing left to bound. It is kept rather than deleted
- * because the *Keep capture running* prompt D58 names as the ask's new home (first missed heartbeat,
- * a capture-status surface outside this change's ownership) needs exactly this "have we already asked
- * this process?" fact, and rebuilding it there from scratch would be rebuilding the reasoning above
- * too. If that surface lands and does not use it, delete it then and say so.
- *
- * [reset] is a test seam and nothing else: a leaked static between tests is its own defect.
- */
-internal object OvernightNagState {
-
-    @Volatile
-    var askedThisProcess: Boolean = false
-        private set
-
-    fun markAsked() {
-        askedThisProcess = true
-    }
-
-    fun reset() {
-        askedThisProcess = false
-    }
-}
+// R-1188: `OvernightNagState` stood here — a process-wide "have we already asked this launch?" flag.
+// P39 kept it on one stated condition, in its own doc comment: *"If that surface lands and does not
+// use it, delete it then and say so."* F24 landed and does not use it. It keys its dismissal to the
+// gap it was shown for, persisted in `KeepCaptureRunningDismissStore`, which is a strictly better
+// answer than a per-process boolean — a boolean could only ever have expressed "never ask again",
+// which is not what the operator was asked. Deleted on that condition, said here.
 
 /**
  * The same debug-override seam [DebugRigLinkPortOverride]/`DebugLexiconImportOverride` already
