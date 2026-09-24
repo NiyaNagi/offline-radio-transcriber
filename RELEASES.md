@@ -26,6 +26,26 @@ transcribing works with actual models built in. See `RELEASING.md`.
 Everything in v0.1.1 below, plus the items here. This is what the rolling "latest build"
 prerelease contains.
 
+### Changed
+
+- **Setting the app up is now four screens instead of twelve.** A first run asks what it genuinely
+  cannot start without and nothing else: what the app is and two notes to acknowledge, how the radio
+  is connected, then one screen where you pick the input, watch the app prove it really is the radio,
+  and set the level. That's it — capture starts.
+
+  Everything the old flow asked for is still asked, just at the moment it matters instead of up
+  front. Notifications are requested when capture first starts, where the notification is about to
+  appear. The battery-optimisation prompt appears if the app is actually stopped in the background,
+  because that is the first moment there is anything to prove. The frequency moved into the log's own
+  header, where you can see what it is labelling and change it in place. The radio-control steps
+  appear only once there is a radio module that can actually talk to a rig — there isn't one yet, so
+  they no longer appear at all, which is the honest version of what the old flow implied.
+
+- **The wording throughout is plainer.** *"a handheld near the phone · room audio · frequency by
+  hand"* is now *"the phone listens to a handheld or speaker nearby"*. The privacy statement appears
+  once, on the first screen, instead of on four screens in slightly different words — two of which
+  were saying something that had stopped being true.
+
 ### Fixed
 
 - **Setup could trap you on the "Running overnight" screen with no way out.** After finishing
