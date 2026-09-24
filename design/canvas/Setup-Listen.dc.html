@@ -1,0 +1,161 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap">
+  <style>
+    body { margin: 0; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+    a { color: oklch(0.72 0.14 150); } a:hover { color: oklch(0.80 0.14 150); }
+  </style>
+</helmet>
+
+<!--
+  S04 (P39, D58, AC-198) — the one screen that carries the whole audio decision. Replaces
+  Setup-Input.dc.html, Setup-Verify.dc.html and Setup-Level.dc.html, which were three steps of a
+  twelve-step wizard for one task with one failure mode — and that failure mode is the only silent
+  one in the flow (constitution IV). Drawn in the state that shows all three sections: a route
+  chosen, its check passed, the meter live. Before the check is started the route-check and level
+  sections are absent entirely (never four empty rings for a check nobody asked for); on a timeout
+  the signal row fails honestly and the pinned block becomes Try again / Choose another input.
+  A route mismatch leaves this screen for Setup-Route-Mismatch.dc.html — the one deliberate hard
+  halt in the product, unchanged by the merge.
+-->
+
+<div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
+
+  <div style="padding: 10px 20px 0; display: flex; align-items: center; gap: 14px;">
+    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="oklch(0.90 0.006 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"></path></svg>
+    <div style="flex-grow: 1;"></div>
+    <div style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: oklch(0.62 0.008 250);">2 of 3</div>
+  </div>
+  <div style="display: flex; gap: 4px; padding: 14px 20px 0;">
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.72 0.14 150);"></div>
+    <div style="flex-grow: 1; height: 3px; border-radius: 2px; background: oklch(0.26 0.010 250);"></div>
+  </div>
+
+  <div style="padding: 22px 20px 0; display: flex; align-items: baseline;">
+    <div style="flex-grow: 1;">
+      <div style="font-size: 27px; font-weight: 600; letter-spacing: -0.022em; line-height: 1.2;">Find the radio's audio</div>
+      <div style="font-size: 13.5px; color: oklch(0.62 0.008 250); margin-top: 3px;">Pick the input, prove it, then set the level.</div>
+    </div>
+    <div style="display: flex; align-items: center; min-height: 44px;"><div style="font-size: 13px; color: oklch(0.72 0.14 150);">Refresh</div></div>
+  </div>
+
+  <div style="padding: 14px 20px 0;">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250);">Inputs</div>
+  </div>
+
+  <div style="padding: 8px 20px 0;">
+    <div style="display: inline-flex; align-items: center; gap: 6px; border: 1px solid oklch(0.30 0.010 250); border-radius: 14px; padding: 4px 11px;">
+      <div style="font-size: 12px; color: oklch(0.66 0.008 250);">preset by</div>
+      <div style="font-size: 12px; font-weight: 500; color: oklch(0.94 0.006 250);">USB-connected radio</div>
+    </div>
+  </div>
+
+  <div style="padding: 10px 20px 0; display: flex; flex-direction: column;">
+    <div style="display: flex; align-items: center; gap: 13px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.72 0.14 150)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="3" width="12" height="9" rx="2"></rect><path d="M12 12v4M8 21h8M12 16v5"></path></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14.5px; font-weight: 500; color: oklch(0.96 0.006 250);">USB Audio Device</div>
+        <div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px;">USB audio · 48 kHz native · resampled to 16 kHz</div>
+      </div>
+      <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.72 0.14 150); box-sizing: border-box; display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><div style="width: 8px; height: 8px; border-radius: 50%; background: oklch(0.72 0.14 150);"></div></div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 13px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250); min-height: 44px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.68 0.008 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"></path><rect x="3" y="14" width="4" height="6" rx="1.5"></rect><rect x="17" y="14" width="4" height="6" rx="1.5"></rect></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14.5px; color: oklch(0.86 0.006 250);">Wired headset</div>
+        <div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px;">Wired headset · 44.1 kHz native · resampled to 16 kHz</div>
+      </div>
+      <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.49 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 13px; padding: 11px 0; border-top: 1px solid oklch(0.21 0.010 250); border-bottom: 1px solid oklch(0.21 0.010 250); min-height: 44px;">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="oklch(0.68 0.008 250)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14.5px; color: oklch(0.86 0.006 250);">Built-in microphone</div>
+        <div style="font-size: 12px; color: oklch(0.62 0.008 250); margin-top: 2px;">Built-in microphone · 48 kHz native — captures the room, not the radio</div>
+      </div>
+      <div style="width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid oklch(0.49 0.008 250); box-sizing: border-box; flex-shrink: 0;"></div>
+    </div>
+  </div>
+
+  <div style="padding: 16px 20px 0;">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250);">Route check</div>
+  </div>
+
+  <div style="padding: 4px 20px 0; display: flex; flex-direction: column;">
+    <div style="display: flex; align-items: center; gap: 13px; padding: 9px 0;">
+      <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; color: oklch(0.96 0.006 250);">Opened at native rate</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.62 0.008 250); margin-top: 2px;">48 000 Hz · mono · 16-bit · unprocessed</div>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 13px; padding: 9px 0;">
+      <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; color: oklch(0.96 0.006 250);">Routed device matches the one you chose</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.62 0.008 250); margin-top: 2px;">getRoutedDevice() → USB Audio Device</div>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 13px; padding: 9px 0;">
+      <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div style="flex-grow: 1;">
+        <div style="font-size: 14px; color: oklch(0.96 0.006 250);">Listening for signal</div>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: oklch(0.62 0.008 250); margin-top: 2px;">Key the radio, or wait for traffic — up to 30 s</div>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 13px; padding: 9px 0;">
+      <div style="width: 20px; height: 20px; border-radius: 50%; background: oklch(0.72 0.14 150); display: flex; align-items: center; justify-content: center; flex-shrink: 0;"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="oklch(0.16 0.01 150)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg></div>
+      <div style="flex-grow: 1;"><div style="font-size: 14px; color: oklch(0.96 0.006 250);">Resampler identity recorded</div></div>
+    </div>
+  </div>
+
+  <div style="padding: 10px 20px 0;">
+    <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.58 0.008 250);">Level</div>
+  </div>
+
+  <div style="padding: 8px 20px 0;">
+    <div style="height: 96px; border: 1px solid oklch(0.21 0.010 250); border-radius: 8px; background: oklch(0.135 0.008 250); position: relative; overflow: hidden;">
+      <div style="position: absolute; left: 0; right: 0; top: 24px; height: 18px; background: oklch(0.72 0.14 150 / 0.10); border-top: 1px solid oklch(0.72 0.14 150 / 0.5); border-bottom: 1px solid oklch(0.72 0.14 150 / 0.5);"></div>
+      <div style="position: absolute; left: 0; right: 0; top: 1px; height: 1px; background: oklch(0.72 0.15 25 / 0.6);"></div>
+      <div style="position: absolute; left: 12px; right: 12px; bottom: 0; top: 0; display: flex; align-items: flex-end; gap: 1.5px;">
+        <div style="flex-grow: 1; height: 14%; background: oklch(0.42 0.04 250);"></div>
+        <div style="flex-grow: 1; height: 19%; background: oklch(0.42 0.04 250);"></div>
+        <div style="flex-grow: 1; height: 46%; background: oklch(0.56 0.10 150);"></div>
+        <div style="flex-grow: 1; height: 63%; background: oklch(0.64 0.12 150);"></div>
+        <div style="flex-grow: 1; height: 74%; background: oklch(0.72 0.14 150);"></div>
+        <div style="flex-grow: 1; height: 58%; background: oklch(0.60 0.11 150);"></div>
+        <div style="flex-grow: 1; height: 22%; background: oklch(0.42 0.04 250);"></div>
+        <div style="flex-grow: 1; height: 17%; background: oklch(0.42 0.04 250);"></div>
+        <div style="flex-grow: 1; height: 51%; background: oklch(0.58 0.10 150);"></div>
+        <div style="flex-grow: 1; height: 70%; background: oklch(0.68 0.13 150);"></div>
+        <div style="flex-grow: 1; height: 76%; background: oklch(0.72 0.14 150);"></div>
+        <div style="flex-grow: 1; height: 44%; background: oklch(0.54 0.09 150);"></div>
+        <div style="flex-grow: 1; height: 20%; background: oklch(0.42 0.04 250);"></div>
+        <div style="flex-grow: 1; height: 15%; background: oklch(0.42 0.04 250);"></div>
+      </div>
+    </div>
+    <div style="display: flex; justify-content: space-between; padding-top: 7px;">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.62 0.05 60);">noise −58</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.62 0.10 150);">target −18 to −12</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: oklch(0.72 0.15 25);">clip 0</div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1;"></div>
+
+  <div style="padding: 0 20px 24px; display: flex; flex-direction: column; gap: 8px;">
+    <div style="display: flex; align-items: center; justify-content: center; height: 48px; background: oklch(0.72 0.14 150); border-radius: 8px;"><div style="font-size: 15px; font-weight: 500; color: oklch(0.16 0.01 150);">Continue</div></div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

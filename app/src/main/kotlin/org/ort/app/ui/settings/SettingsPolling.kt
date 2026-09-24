@@ -414,15 +414,20 @@ public object SettingsPolling {
      * not only a scenario one: an operator who hand-enters a frequency once during Setup and never
      * revisits CF02 sees "not set" there too. This is the honest fallback, not a merge of the two
      * stores: an explicit Settings-time edit (any string, [SettingsStore.manualFrequencyMhz] once
-     * touched) always wins outright; only the genuinely-untouched case reads the real Setup-time
-     * entry instead of a bare "not set". `null` when neither store ever recorded one.
+     * touched) always wins outright; only the genuinely-untouched case reads the real entry instead
+     * of a bare "not set". `null` when neither store ever recorded one.
+     *
+     * **P39 (D58, AC-202, R-1167) repointed the fallback, and this file is edited only because the
+     * deletion forced it.** `SetupStore.manualFrequencyHz` is gone — the prompt moved to the log's own
+     * header, so setup stopped being the thing that knows the answer, and leaving a second copy behind
+     * would have let this row show a value the capture path was no longer using. It now reads
+     * [org.ort.pipeline.rig.CaptureConfigurationStore], the store `RealCaptureService` itself reads at
+     * session start, which is where every writer of this fact now writes. `current()`, not the pending
+     * configuration: this row describes what capture is actually logging against, and a change made
+     * mid-session does not take effect until the next one (FR-CAP-12, AC-131).
      */
     private fun setupManualFrequencyLabel(context: Context): String? {
-        val setupPrefs = context.applicationContext.getSharedPreferences(
-            org.ort.app.ui.setup.SharedPreferencesSetupStore.PREFS_NAME,
-            Context.MODE_PRIVATE,
-        )
-        val hz = org.ort.app.ui.setup.SharedPreferencesSetupStore(setupPrefs).manualFrequencyHz ?: return null
+        val hz = realCaptureConfigurationStore(context).current().manualFrequencyHz ?: return null
         return "%.3f".format(Locale.ROOT, hz / 1_000_000.0)
     }
 

@@ -32,6 +32,121 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-23 (P39: onboarding cut from twelve screens to four)
+
+### `<pending>` — P39 · onboarding cut to four screens, and the two structural rules that made R-1161 possible
+
+**Scope:** `:app` — `ui/setup/**` (the whole package), `MainActivity.kt`, the setup artboards under
+`design/canvas/` plus `design/canvas/canvas.json` and `design/design-intent.md` §2, the setup
+entries in `app/src/debug/.../Scenarios.kt` and `app/src/debug/.../tour/`, and
+`tools/ui-audit/tour.json`. Three files outside that list were touched because the change forced
+them and they would not otherwise compile or would hold a stale fact: `ui/navigation/ReaderNavigator.kt`
+and `ui/settings/SettingsContent.kt` (two `SetupStep.INPUT` references, one token each) and
+`ui/settings/SettingsPolling.kt` (its manual-frequency fallback, repointed at the store that owns
+that value now — see below).
+
+**Requirements/ACs:** D58 and its 2026-09-23 resolution; AC-198, AC-199, AC-200, AC-201, AC-202,
+AC-203, AC-204; AC-166, AC-180, AC-189 (all three as amended by D58); FR-CAP-8, FR-ANL-10,
+FR-ANL-14, FR-AST-12, FR-SVC-5b, NFR-6c; register R-1161, R-1162, R-1166, R-1167, R-1170 (second
+half), R-1172 (second instance), R-1178, R-1179; constitution I, II, IV, VIII.
+
+**What changed.**
+
+*The ladder.* A brand-new operator walked **twelve** screens and could reach twenty. The sequence is
+now **Welcome → Mode → Listen → Ready**, with **Models** only when something the detected tier needs
+is genuinely absent — four screens, five with a download (AC-198). `SetupStep` lost `MICROPHONE`,
+`NOTIFICATIONS`, `JURISDICTION_NOTICE`, `ANALYTICS_CONSENT`, `INPUT`, `VERIFY` and `LEVEL` and gained
+`LISTEN`. Every departing step went to the home D58 names, and each is named in
+`SetupStep`'s own doc comment rather than left to be rediscovered.
+
+*The two structural rules.* `SetupStateMachine.stepFor` is now **non-null**: "no gates remain"
+resolves to `READY`, a real destination with a real `Start capture` press, instead of `null`. `READY`
+is no longer gated behind the `setupComplete` latch, so re-entry has somewhere to land — it did not,
+and that is half of R-1161. `refreshStep`'s null branch, which set the latch and handed control back
+to the router that had just sent setup here, no longer exists; setup leaves only on an explicit
+operator action. `MainActivity.route` no longer diverts a launch for overnight survival at all
+(AC-199): it keeps R-1104's *latch* — the fast-path operator is the one `reconcileOvernightSurvival`
+never runs for — and drops the refusal, which AC-189 never asked for and which required the very
+thing it prevented. `SetupStateMachine.isComplete` also stops consulting the notification permission:
+with `NOTIFICATIONS` deleted, nothing writes the skip flag `MainActivity` folded in, and leaving the
+clause would have rebuilt the same cycle over a permission that never gated capture.
+
+*The screens.* `LISTEN` (`ListenScreen.kt`, new) merges the route list, the four-stage route check
+expanding in place, and the meter with its gain — one task, one failure mode, and the only *silent*
+one in the flow, which is why D58 makes it the one screen that must be full-screen. `InputScreen.kt`,
+`VerifyScreen.kt` and `LevelScreen.kt` keep their files and their drawing and become `InputSection`,
+`VerifySection` and `LevelSection`. `WelcomeScreen` absorbs the jurisdiction notice and the analytics
+disclosure as acknowledged rows with their full content one tap away, and `Begin` records both —
+AC-166 and AC-180 were *amended*, not dropped, and the flags they turn on are still written.
+`ModeScreen` carries the microphone rationale and fires Android's own dialog from the mode tap, with
+no explainer screen in front of it (AC-204). The five-ask list on Welcome is gone: four of those five
+asks no longer exist.
+
+*R-1170's second half.* `SetupStore.levelAcknowledged` is the unresolved-but-acknowledged state the
+register asked for. Tapping `Continue` out of band records it and proceeds; `Ready`'s Level row
+carries the amber `Fix`. The *route* gate deliberately has no such escape — constitution IV, and
+`SetupSnapshot.levelAcknowledged`'s own doc comment says why the asymmetry is the point.
+
+*The rig branch.* `RADIO`/`RIG_TRANSPORT`/`RIG_BLUETOOTH` are entered only when the chosen mode
+implies a rig **and** a rig module with a real CAT implementation exists
+(`SetupSnapshot.rigModuleAvailable`). None does today, so on current builds that branch does not
+appear at all. The tour still reaches it: a scenario that installs a scripted `RigLinkPort` is, for
+capture purposes, a rig module that exists.
+
+*The manual frequency, and the silent data loss it nearly caused.* AC-202 takes the prompt out of
+onboarding, which means nothing writes `SetupStore.manualFrequencyHz` any more. Because
+`CaptureConfigurationStore.update` replaces the configuration wholesale, an adapter still sourcing
+that field would have pushed **`null` over the frequency the operator typed into the log header** on
+any later trip through setup — no error, and no symptom but every subsequent over logged without a
+frequency. `SetupCaptureConfigurationAdapter.toCaptureConfiguration` now takes the value as a
+parameter and carries through whatever the configuration store already holds (pending in preference
+to current, since `update` writes to pending while capture runs). **`SetupStore.manualFrequencyHz`
+is deleted**, deliberately: one fact in two stores is how the overwrite happened, and a preference
+nothing writes is R-1171's own pattern. Its readers were repointed at `CaptureConfigurationStore`,
+the store `RealCaptureService` itself reads — `ReadyScreen.readyRowsFor` (a new parameter) and
+`SettingsPolling.setupManualFrequencyLabel`. The preference **key** is kept, with a comment saying
+why: an install that walked the old flow still has a real value under it, and nothing here is deleted
+quietly (constitution III).
+
+*R-1179, and the guard that would have caught it.* `setup-bt-permission/S02c` has never once captured
+its own screen — every committed PNG is the Input screen, because `install.ps1` grants
+`BLUETOOTH_CONNECT` and the gate therefore cannot fire. `DebugBluetoothPermissionOverride` (the same
+seam `DebugMicPermissionOverride` already provides for S02b) lets the scenario make the real
+permission-state function report an honest absence, without taking away a grant four other rows need.
+Separately, `ScreenshotTourActivity.assertStillOnRequestedStep` re-checks
+`SetupActivity.currentStepForTest` **immediately before `drawToBitmap`**, not only at the settle —
+which is the whole of why the old settle could not see this: the step was honoured transiently inside
+`onCreate` and replaced by the first `onResume`, after the settle and before the capture.
+
+*AC-200.* The exit back to the running app is a slot on `SetupScaffold`, supplied on every step when
+`setupComplete` and absent on a genuine first run. R-1162 shipped it on exactly one screen and its own
+row asked for the set to be enumerated rather than assumed to be one screen; one slot is that
+enumeration.
+
+*Notifications.* Asked at first capture start, from `SetupActivity.onStartCapture` — a visible screen
+the operator has just acted on, rather than a blank router window — once, whatever they answer.
+
+*Boards.* `Setup-Listen.dc.html` is new. `Setup-Welcome` and `Setup-Mode` are redrawn. Every
+indicator was renumbered against the derived denominator, and the rig branch plus `Setup-Battery`
+lost theirs entirely (they are not numbered stages any more). **Deleted, named rather than left to
+rot:** `Setup-Mic`, `Setup-Notify`, `Setup-Jurisdiction`, `Setup-Analytics-Consent`, `Setup-Input`,
+`Setup-Verify`, `Setup-Level`. `canvas.json` and `design-intent.md` §2 follow.
+
+**Verified:** `./gradlew :app:test :app:smokeTestFullDebugUnitTest :app:smokeTestPlayDebugUnitTest
+:app:detekt :app:ktlintCheck` — see the report for the real output. Each of AC-198..204 has at least
+one test named for it and each was shown to fail for the right reason before the production change,
+by reverting that change and watching it go red.
+
+**Left open / not done:** the *Keep capture running* prompt on the first missed heartbeat, and the
+log header's own frequency editor, are both capture-surface work outside this change's ownership —
+`SetupStep.OVERNIGHT` and `OvernightScreen` are kept and reachable by `EXTRA_STEP` so the first has
+somewhere to land, and the adapter now preserves whatever the second writes. The `setup_mic_*` and
+notification string resources in `res/values/strings.xml` are orphaned by the two deleted screens and
+left in place (that file is not this package's). `setup-analytics-consent` remains a registered
+scenario with no tour step, since the step it reached no longer exists.
+
+---
+
 ## 2026-09-23 (r-1180: a test that raced virtual time against a real dispatcher)
 
 ### `e18b009f` — r-1180: the two R-1139 scope tests get real seconds instead of virtual ones

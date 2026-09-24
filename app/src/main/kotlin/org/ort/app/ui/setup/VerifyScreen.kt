@@ -3,215 +3,123 @@ package org.ort.app.ui.setup
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.InProgressRing
 import org.ort.app.ui.components.OrtIcons
-import org.ort.app.ui.components.PrimaryButton
-import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 import java.util.Locale
 
 /**
- * S05 (`Setup-Verify.dc.html`, R-081) — the four checks progressing in board order, driven by
- * [RouteCheck]. `Continue` advances only on [RouteCheckState.Passed]; a [RouteCheckState.Mismatch]
- * hands off to [RouteMismatchScreen] instead (this screen never renders the halt itself —
- * [SetupActivity] switches screens on that state).
+ * The route-check section of [ListenScreen] (`Setup-Listen.dc.html`) — the four checks progressing in
+ * board order, driven by [RouteCheck], with the input waveform card beneath them.
  *
- * **R-1170**: the button itself is no longer disabled while the check is unfinished — guide §6.10's
- * "a setup primary stays disabled until its verify passes" is superseded for the *rendering*, not
- * for the gate. `disabled` takes the control out of the focus order, so a screen-reader operator
- * could not reach the thing blocking them; the button is lit and refuses on tap, announcing
- * [VERIFY_NOT_PASSED_YET]. **What did not change, and must not**: [onContinue] is still only ever
- * invoked on [RouteCheckState.Passed] (constitution IV).
+ * **P39 (D58): this was `VerifyScreen`, a step of its own.** It now expands in place under the route
+ * list, which is what D58's *"the verify checklist expanding in place"* names. Nothing about the
+ * *gate* moved with it: a [RouteCheckState.Mismatch] still hands off to [RouteMismatchScreen] — the
+ * one deliberate hard halt in the product (constitution IV, AC-201's own closing sentence) — and
+ * [ListenScreen]'s `Continue` is still only ever enabled to advance on [RouteCheckState.Passed].
  *
- * Validator finding (register R-120..R-125, halt): [RouteCheckState.TimedOut] used to fall through
- * to no branch at all — every check icon reverted to unfilled (the `else -> emptySet()` below), the
- * screen offered no honest explanation, `Continue` stayed disabled forever, and [onBack] was
- * unconditionally `null`, trapping the operator with no way out at all. Now: the two stages that
- * genuinely completed before the 30 s listening window ran out
- * ([RealRouteCheck]'s own flow — `NATIVE_RATE`/`ROUTE_MATCH` always precede the signal wait) stay
- * ticked, the signal check shows an honest failed mark and "No signal heard in 30 s on
- * `<device>`", `Continue` is replaced by `Try again`/`Choose another input` (the same recovery
- * [RouteMismatchScreen] already offers for a route mismatch — this is the same kind of stuck state,
- * just discovered differently), and [onBack] is now always supplied — a genuinely halted
- * verification is exactly the situation where "the back chevron must always exist" matters most.
- *
- * R-284 (validator pass 3): `Setup-Verify.dc.html` draws a `Choose a different input` link under
- * the disabled `Continue` for the whole time a check is still in progress (up to the 30 s signal
- * wait), not only after [RouteCheckState.TimedOut] — an operator who already knows the wrong
- * device is selected should not have to sit out the full timeout first. Built directly here rather
- * than via [TextAction] (`Controls.kt`, WP2's file): the board's own colour for this link,
- * `oklch(0.66 0.008 250)`, is [OrtColors.textMuted] — noticeably dimmer than [TextAction]'s fixed
- * `accent/green`, which has no enabled-but-muted mode of its own to select.
+ * Validator finding (register R-120..R-125, halt): [RouteCheckState.TimedOut] used to fall through to
+ * no branch at all — every check icon reverted to unfilled, the screen offered no honest explanation,
+ * and `Continue` stayed disabled forever. Now: the two stages that genuinely completed before the 30 s
+ * listening window ran out stay ticked, the signal check shows an honest failed mark and "No signal
+ * heard in 30 s on `<device>`", and [ListenScreen] offers `Try again` / `Choose another input`.
  */
 @Composable
-public fun VerifyScreen(
-    state: VerifyViewState,
-    onContinue: () -> Unit,
-    onBack: () -> Unit,
-    onTryAgain: () -> Unit,
-    onChooseAnotherInput: () -> Unit,
-) {
-    val timedOut = state.check is RouteCheckState.TimedOut
-    val passed = when (val check = state.check) {
+internal fun VerifySection(inputLabel: String, check: RouteCheckState?) {
+    val timedOut = check is RouteCheckState.TimedOut
+    val passed = when (check) {
         is RouteCheckState.InProgress -> check.passed
         is RouteCheckState.Passed -> RouteCheckStage.entries.toSet()
         RouteCheckState.TimedOut -> setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH)
         else -> emptySet()
     }
-    val allPassed = state.check is RouteCheckState.Passed
+    val facts = routeCheckFactsFrom(check)
 
-    SetupScaffold(
-        step = SetupStep.VERIFY,
-        title = "Verifying the route",
-        subtitle = state.inputLabel,
-        onBack = onBack,
-        bottomActions = {
-            VerifyBottomActions(timedOut, allPassed, onContinue, onTryAgain, onChooseAnotherInput)
+    CheckRow(
+        title = "Opened at native rate",
+        // R-1169: the audio source the open actually obtained, named beside the rate it opened at —
+        // before this there was no way to tell from a capture whether the OEM had applied its own gain
+        // and noise suppression. Omitted entirely, never guessed, when the [AudioIo] reported none.
+        detail = facts.nativeRateHz?.let { rate ->
+            listOfNotNull("${formatHzGrouped(rate)} Hz · mono · 16-bit", facts.audioSourceLabel)
+                .joinToString(" · ")
         },
-    ) {
-        val facts = routeCheckFactsFrom(state.check)
+        done = RouteCheckStage.NATIVE_RATE in passed,
+        testTag = "setup-verify-check-native-rate",
+    )
+    CheckRow(
+        title = "Routed device matches the one you chose",
+        detail = facts.routedDeviceLabel?.let { "getRoutedDevice() → $it" },
+        done = RouteCheckStage.ROUTE_MATCH in passed,
+        testTag = "setup-verify-check-route-match",
+    )
+    CheckRow(
+        title = "Listening for signal",
+        detail = if (timedOut) {
+            "No signal heard in 30 s on $inputLabel"
+        } else {
+            "Key the radio, or wait for traffic — up to 30 s"
+        },
+        done = RouteCheckStage.SIGNAL in passed,
+        failed = timedOut,
+        inProgress = check is RouteCheckState.InProgress && RouteCheckStage.SIGNAL !in passed,
+        // R-943: the board's own live "0:11" counter -- only while genuinely still listening, never a
+        // stale or fabricated value once the stage has already passed or failed.
+        trailing = facts.elapsedListeningMillis?.takeIf { RouteCheckStage.SIGNAL !in passed }
+            ?.let(::formatElapsed),
+        testTag = "setup-verify-check-signal",
+    )
+    CheckRow(
+        title = "Resampler identity recorded",
+        detail = null,
+        done = RouteCheckStage.RESAMPLER in passed,
+        testTag = "setup-verify-check-resampler",
+    )
 
-        CheckRow(
-            title = "Opened at native rate",
-            // R-1169: the audio source the open actually obtained, named beside the rate it opened
-            // at — before this there was no way to tell from a capture whether the OEM had applied
-            // its own gain and noise suppression. Omitted entirely, never guessed, when the
-            // [AudioIo] reported none.
-            detail = facts.nativeRateHz?.let { rate ->
-                listOfNotNull("${formatHzGrouped(rate)} Hz · mono · 16-bit", facts.audioSourceLabel)
-                    .joinToString(" · ")
-            },
-            done = RouteCheckStage.NATIVE_RATE in passed,
-            testTag = "setup-verify-check-native-rate",
-        )
-        CheckRow(
-            title = "Routed device matches the one you chose",
-            detail = facts.routedDeviceLabel?.let { "getRoutedDevice() → $it" },
-            done = RouteCheckStage.ROUTE_MATCH in passed,
-            testTag = "setup-verify-check-route-match",
-        )
-        CheckRow(
-            title = "Listening for signal",
-            detail = if (timedOut) {
-                "No signal heard in 30 s on ${state.inputLabel}"
-            } else {
-                "Key the radio, or wait for traffic — up to 30 s"
-            },
-            done = RouteCheckStage.SIGNAL in passed,
-            failed = timedOut,
-            inProgress = state.check is RouteCheckState.InProgress && RouteCheckStage.SIGNAL !in passed,
-            // R-943: the board's own live "0:11" counter -- only while genuinely still listening,
-            // never a stale or fabricated value once the stage has already passed or failed.
-            trailing = facts.elapsedListeningMillis?.takeIf { RouteCheckStage.SIGNAL !in passed }
-                ?.let(::formatElapsed),
-            testTag = "setup-verify-check-signal",
-        )
-        CheckRow(
-            title = "Resampler identity recorded",
-            detail = null,
-            done = RouteCheckStage.RESAMPLER in passed,
-            testTag = "setup-verify-check-resampler",
-        )
-
-        // R-943: the board's own Input waveform card -- real per-sample level history taken during
-        // the SIGNAL listen (empty, honestly, before listening has started at all: an empty chart,
-        // never a fabricated one, matching LevelScreen's own constitution-I rule for its meter).
-        InputWaveformCard(
-            bars = facts.levelBars,
-            noiseFloorDbfs = facts.noiseFloorDbfs,
-            signalHeard = RouteCheckStage.SIGNAL in passed,
-        )
-    }
+    // R-943: the board's own Input waveform card -- real per-sample level history taken during the
+    // SIGNAL listen (empty, honestly, before listening has started at all: an empty chart, never a
+    // fabricated one, matching the meter's own constitution-I rule).
+    InputWaveformCard(
+        bars = facts.levelBars,
+        noiseFloorDbfs = facts.noiseFloorDbfs,
+        signalHeard = RouteCheckStage.SIGNAL in passed,
+    )
 }
 
 /**
- * R-1170: what S05's `Continue` says when it refuses. **This screen is the careful one.**
+ * R-1170: what [ListenScreen]'s primary says when it refuses. **This is the careful one.**
  * Constitution IV is absolute that a route which is not the selected device halts capture, and
- * `ROUTE_MISMATCH` is the one deliberate hard halt in the whole flow — so keeping the button lit
- * must never become a way past an unverified route. The honest version, and the one built here, is
- * that the tap *tells the operator the check has not passed and what to do about it*; it does not
- * advance. The gate is untouched; only how the block is communicated has changed.
+ * `ROUTE_MISMATCH` is the one deliberate hard halt in the whole flow — so keeping the button lit must
+ * never become a way past an unverified route. The honest version, and the one built: the tap *tells
+ * the operator the check has not passed and what to do about it*; it does not advance. The gate is
+ * untouched; only how the block is communicated has changed.
  */
-private const val VERIFY_NOT_PASSED_YET: String =
+internal const val VERIFY_NOT_PASSED_YET: String =
     "The route check has not passed yet. Setup cannot continue until it does — wait for the checks " +
         "above to finish, or choose a different input."
 
-/** [VerifyScreen]'s own `bottomActions` slot — split out purely to keep that composable under
- * detekt's length ceiling, no behaviour of its own beyond what it always drew inline. */
-@Composable
-private fun VerifyBottomActions(
-    timedOut: Boolean,
-    allPassed: Boolean,
-    onContinue: () -> Unit,
-    onTryAgain: () -> Unit,
-    onChooseAnotherInput: () -> Unit,
-) {
-    var showWhatIsMissing by remember { mutableStateOf(false) }
-    if (timedOut) {
-        PrimaryButton(
-            text = "Try again",
-            onClick = onTryAgain,
-            modifier = Modifier.fillMaxWidth().testTag("setup-verify-try-again"),
-        )
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            TextAction(
-                text = "Choose another input",
-                onClick = onChooseAnotherInput,
-                modifier = Modifier.testTag("setup-verify-choose-another"),
-            )
-        }
-    } else {
-        // R-1170: lit at all times, and the tap is where the gate is enforced -- see
-        // VERIFY_NOT_PASSED_YET's own doc comment for why this screen in particular is not a
-        // mechanical substitution.
-        SetupValidationNotice(
-            message = VERIFY_NOT_PASSED_YET.takeIf { showWhatIsMissing && !allPassed },
-            modifier = Modifier.testTag("setup-verify-validation"),
-        )
-        PrimaryButton(
-            text = "Continue",
-            onClick = { if (allPassed) onContinue() else showWhatIsMissing = true },
-            modifier = Modifier.fillMaxWidth().testTag("setup-verify-continue"),
-        )
-        // R-284: the same "wrong device, do not make me wait out the timeout" escape the board
-        // offers for the whole in-progress window, not only once TimedOut arrives.
-        if (!allPassed) {
-            ChooseADifferentInputLink(onClick = onChooseAnotherInput)
-        }
-    }
-}
-
-/** The handful of real, optional facts [VerifyScreen]'s checklist/waveform card render — bundled
- * so deriving them from [state]'s [RouteCheckState] is one `when`, not five, keeping the composable
- * itself under detekt's complexity ceiling. Every field is `null`/empty for any state that never
- * carries it (constitution I — see [RouteCheckState.InProgress]'s own doc comment for why each
- * exists at all). */
+/** The handful of real, optional facts the checklist/waveform card render — bundled so deriving them
+ * from a [RouteCheckState] is one `when`, not five. Every field is `null`/empty for any state that
+ * never carries it (constitution I). */
 private data class RouteCheckFacts(
     val nativeRateHz: Int?,
     val routedDeviceLabel: String?,
@@ -241,14 +149,13 @@ private fun routeCheckFactsFrom(check: RouteCheckState?): RouteCheckFacts = when
     else -> RouteCheckFacts(null, null, null, emptyList(), null, null)
 }
 
-/** `"48000"` → `"48 000"` (space-grouped thousands) — `Setup-Verify.dc.html`'s own formatting for
- * the native-rate detail line. `Locale.ROOT`'s own grouping separator is a comma, replaced with a
- * plain space to match the board rather than assuming any particular locale's own convention. */
+/** `"48000"` → `"48 000"` (space-grouped thousands) — the board's own formatting for the native-rate
+ * detail line. `Locale.ROOT`'s own grouping separator is a comma, replaced with a plain space to match
+ * the board rather than assuming any particular locale's own convention. */
 internal fun formatHzGrouped(hz: Int): String = String.format(Locale.ROOT, "%,d", hz).replace(',', ' ')
 
 /** Milliseconds elapsed listening, as the board's own `"0:11"` (minutes:seconds, zero-padded
- * seconds) — mirrors the mono, accent-green figure `Setup-Verify.dc.html` draws beside "Listening
- * for signal" while the wait is still live. */
+ * seconds). */
 internal fun formatElapsed(millis: Long): String {
     val totalSeconds = millis / MILLIS_PER_SECOND
     val minutes = totalSeconds / SECONDS_PER_MINUTE
@@ -258,24 +165,6 @@ internal fun formatElapsed(millis: Long): String {
 
 private const val MILLIS_PER_SECOND = 1_000L
 private const val SECONDS_PER_MINUTE = 60L
-
-/** R-284's own doc comment (above, on [VerifyScreen]) explains why this is a lone `Text` rather
- * than [TextAction] — [OrtColors.textMuted], `Setup-Verify.dc.html`'s own colour for this link,
- * `Role.Button` + a real 44dp target either way. */
-@Composable
-private fun ChooseADifferentInputLink(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-        Box(
-            modifier = Modifier
-                .heightIn(min = 44.dp)
-                .clickable(onClickLabel = "Choose a different input", role = Role.Button, onClick = onClick)
-                .testTag("setup-verify-choose-different"),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(text = "Choose a different input", style = OrtType.textAction, color = OrtColors.textMuted)
-        }
-    }
-}
 
 @Composable
 private fun CheckRow(
@@ -318,9 +207,7 @@ private fun CheckRow(
                 inProgress -> InProgressRing(size = 20.dp, color = OrtColors.accentGreen, strokeWidth = 2.dp)
                 // R-943 (register, reviewer A3 run 4a, design): this used to be a filled circle the
                 // exact colour of the screen's own background -- invisible, not the board's own dim
-                // *ring* (`border: 1.5px solid`, no fill) a not-yet-reached check draws. `textLow`
-                // matches this row's own "pending" title colour just below, the same tone the board
-                // itself uses for everything about a step it has not reached yet.
+                // *ring* a not-yet-reached check draws.
                 else -> Box(
                     modifier = Modifier
                         .size(20.dp)
@@ -343,20 +230,17 @@ private fun CheckRow(
 }
 
 /**
- * R-943 (register, reviewer A3 run 4a, design): `Setup-Verify.dc.html`'s own "Input" waveform card
- * (board lines 71–91) — the real per-sample level history [RouteCheckState.InProgress.levelBars]/
- * [RouteCheckState.Passed.levelBars] built up during the [RouteCheckStage.SIGNAL] listen, drawn the
- * same proportional-bar way [LevelScreen]'s own meter draws S07's (constitution I: an honest flat
- * line — [bars] empty — before listening has produced any real sample at all, never a fabricated
- * waveform). [signalHeard] only ever reads "signal heard" once [RouteCheckStage.SIGNAL] has
- * genuinely passed — never claimed early.
+ * R-943 (register, reviewer A3 run 4a, design): the board's own "Input" waveform card — the real
+ * per-sample level history [RouteCheckState.InProgress.levelBars]/[RouteCheckState.Passed.levelBars]
+ * built up during the [RouteCheckStage.SIGNAL] listen, drawn the same proportional-bar way the meter
+ * draws its own (constitution I: an honest flat line — [bars] empty — before listening has produced
+ * any real sample at all, never a fabricated waveform). [signalHeard] only ever reads "signal heard"
+ * once [RouteCheckStage.SIGNAL] has genuinely passed — never claimed early.
  *
- * R-981 (register, design, reopened): the board's own right-hand caption (lines 87–90) is a real
- * `space-between` row with the left-hand noise-floor fact, not a "heard" badge that only exists in
- * the illustrated case — this card used to render nothing at all on that side while [signalHeard]
- * was `false` (`results/ui-audit/setup-verified/S05-verify.png`, still mid-listen, drew only the
- * noise floor). It now always names the real fact: "signal heard" once true, an honest "not yet"
- * (never invented, never a decoration) while [signalHeard] is still `false`.
+ * R-981 (register, design, reopened): the board's own right-hand caption is a real `space-between` row
+ * with the left-hand noise-floor fact, not a "heard" badge that only exists in the illustrated case.
+ * It now always names the real fact: "signal heard" once true, an honest "not yet" while
+ * [signalHeard] is still `false`.
  */
 @Composable
 private fun InputWaveformCard(
@@ -366,7 +250,10 @@ private fun InputWaveformCard(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxWidth().testTag("setup-verify-input-waveform")) {
-        Text(text = "Input".uppercase(), style = OrtType.sectionLabel, color = OrtColors.textFaint)
+        // P39: labelled "Signal" rather than the board's old "Input" — on the merged screen the route
+        // list directly above is what "input" now means, and two sections a thumb apart cannot both
+        // carry that word without the waveform reading as a second route picker.
+        Text(text = "Signal".uppercase(), style = OrtType.sectionLabel, color = OrtColors.textFaint)
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
@@ -389,11 +276,6 @@ private fun InputWaveformCard(
                 style = OrtType.axis,
                 color = OrtColors.textLow,
             )
-            // R-981 (register, design): the board's own right-hand label (lines 87-90, one
-            // space-between row) is not decoration to show only in the illustrated "heard" case —
-            // it names the real route-check fact either way, honestly "not yet" while still
-            // listening rather than rendering nothing at all (this card's own previous shape,
-            // `results/ui-audit/setup-verified/S05-verify.png`, only ever drew the left half).
             Text(
                 text = if (signalHeard) "signal heard" else "not yet",
                 style = OrtType.axis,

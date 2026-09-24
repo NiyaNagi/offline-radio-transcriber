@@ -263,10 +263,27 @@ class SettingsPollingTest {
         }
     }
 
+    /**
+     * P39 (D58, AC-202, R-1167): `SetupStore.manualFrequencyHz` is gone — the prompt moved to the log's
+     * own header, and a second copy of the fact would have been overwritten with `null` by the next
+     * setup sync. `CaptureConfigurationStore`, the store `RealCaptureService` reads at session start,
+     * holds it now, and this row's fallback reads it there. The R-951 behaviour itself is unchanged: an
+     * explicit Settings-time edit still wins outright, and "neither store ever recorded one" still
+     * reads honestly not-set.
+     */
+    private fun recordManualFrequencyInTheCaptureConfiguration(hz: Long) {
+        val store = org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore(
+            context.getSharedPreferences(
+                org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+                Context.MODE_PRIVATE,
+            ),
+        )
+        store.update(store.current().copy(manualFrequencyHz = hz))
+    }
+
     @Test
-    fun `R_951 Log overs against falls back to the frequency hand-entered during Setup`() {
-        val setupPrefs = context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Context.MODE_PRIVATE)
-        SharedPreferencesSetupStore(setupPrefs).manualFrequencyHz = 145_230_000L
+    fun `R_951 Log overs against falls back to the frequency the capture configuration holds`() {
+        recordManualFrequencyInTheCaptureConfiguration(145_230_000L)
         val state = SettingsPolling.capture(context, InMemorySettingsStore())
         assert(state.manualFrequencyMhz == "145.230") {
             "expected the real Setup-time hand-entered frequency, got ${state.manualFrequencyMhz}"
@@ -275,8 +292,7 @@ class SettingsPollingTest {
 
     @Test
     fun `R_951 a Settings-time edit always wins over the Setup-time one`() {
-        val setupPrefs = context.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Context.MODE_PRIVATE)
-        SharedPreferencesSetupStore(setupPrefs).manualFrequencyHz = 145_230_000L
+        recordManualFrequencyInTheCaptureConfiguration(145_230_000L)
         val state = SettingsPolling.capture(context, InMemorySettingsStore(manualFrequencyMhz = "146.960"))
         assert(state.manualFrequencyMhz == "146.960") {
             "expected the operator's own later Settings edit to win, got ${state.manualFrequencyMhz}"

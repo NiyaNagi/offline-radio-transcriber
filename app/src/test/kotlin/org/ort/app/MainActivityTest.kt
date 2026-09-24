@@ -4,7 +4,6 @@ import android.Manifest
 import android.app.Application
 import android.content.Intent
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
@@ -22,7 +21,6 @@ import org.ort.app.ui.setup.FakeOvernightSurvivalChecker
 import org.ort.app.ui.setup.OvernightNagState
 import org.ort.app.ui.setup.RadioChoice
 import org.ort.app.ui.setup.SetupActivity
-import org.ort.app.ui.setup.SetupStep
 import org.ort.app.ui.setup.SharedPreferencesSetupStore
 import org.ort.core.capture.CaptureMode
 import org.ort.pipeline.capture.CaptureState
@@ -251,24 +249,39 @@ class MainActivityTest {
 
     // --- R-1104: the fast path re-checks overnight survival too, not only permissions -----------
 
+    /**
+     * **AC-199 at the router, and the exact inversion of what this test used to assert.** It used to
+     * demand that unproven overnight survival *"send the operator back through Setup, never straight
+     * into capture"*. That was R-1104 over-implementing AC-189, and it is what deadlocked every
+     * first-run operator (R-1161): `hasProvenSurvival()`'s only admissible evidence is a recorded
+     * session, only [MainActivity.startCaptureAndShowStatus] can create one, and that was the branch
+     * the refusal never took.
+     *
+     * **Inverted rather than deleted**, which is this register's own discipline for a test whose
+     * premise turned out to be the defect: the strictly stronger form asserts capture actually starts.
+     * AC-189 as amended says so in terms — the prompt is post-capture and SHALL NOT gate capture.
+     */
     @Test
-    @Requirement("R-1104")
-    fun `R_1104 setup complete and permitted but overnight survival never proven routes to SetupActivity`() {
+    @Requirement("AC-199")
+    fun `AC_199 setup complete with overnight survival never proven still starts capture`() {
         markSetupCompleteWithUnprovenSurvival()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
 
         val activity = buildAndResume()
 
-        val nextActivity = shadowOf(activity).nextStartedActivity
         assertEquals(
-            "unproven overnight survival must send the operator back through Setup, never straight " +
-                "into capture, the same as a revoked permission does",
-            SetupActivity::class.java.name,
-            nextActivity?.component?.className,
+            "no setup step may gate capture on evidence only capture can produce (AC-199)",
+            ReaderActivity::class.java.name,
+            shadowOf(activity).nextStartedActivity?.component?.className,
         )
         val app = ApplicationProvider.getApplicationContext<Application>()
-        assertNull("unproven overnight survival must not start capture", shadowOf(app).nextStartedService)
+        assertEquals(
+            "capture must genuinely start -- it is the only thing that can ever produce the session " +
+                "evidence hasProvenSurvival() asks for",
+            REAL_CAPTURE_SERVICE_CLASS_NAME,
+            shadowOf(app).nextStartedService?.component?.className,
+        )
     }
 
     @Test
@@ -351,9 +364,25 @@ class MainActivityTest {
      * and says nothing at all about refusing capture until survival is proven — so the first route
      * must still detour, and the second must still reach capture.
      */
+    /**
+     * **AC-199, driven as the whole route the criterion names**: launch → capture, with *every*
+     * capture-produced signal reporting unproven. This is the test AC-199 asks for in terms — "driving
+     * the full launch-to-capture route with every such signal (overnight survival among them)
+     * reporting unproven, and asserting that capture still starts — **not merely that some individual
+     * step advances**".
+     *
+     * It is deliberately the one test that crosses both activities, because crossing them is exactly
+     * what no existing test did (R-1163): `MainActivityTest` and `SetupActivityTest` had each met one
+     * half of the cycle and seeded past it in a fixture, so the composition was never executed
+     * anywhere. Before P39 the first route detoured to Setup, Setup's own two buttons handed back, and
+     * the router detoured again — forever, with no way out of the app but uninstalling.
+     *
+     * The **second** route is what makes this a route test rather than a step test: it proves the
+     * round trip terminates, which is the property a per-step assertion cannot see.
+     */
     @Test
-    @Requirement("AC-189")
-    fun `AC_189 R-1161 an unproven device detours once and the skip then actually reaches capture`() {
+    @Requirement("AC-199")
+    fun `AC_199 R-1161 a launch with every capture-produced signal unproven reaches capture, twice over`() {
         val checker = FakeOvernightSurvivalChecker(proven = false)
         DebugOvernightSurvivalOverride.show(checker)
         markPostSetupWithUnprovenSurvival()
@@ -362,66 +391,44 @@ class MainActivityTest {
 
         val firstRoute = buildAndResume()
         assertEquals(
-            "AC-189: an unproven device is still sent back through Setup once",
-            SetupActivity::class.java.name,
+            "AC-199: nothing may divert this launch over evidence only a capture can produce",
+            ReaderActivity::class.java.name,
             shadowOf(firstRoute).nextStartedActivity?.component?.className,
         )
-        assertNull("the detour itself must not start capture", shadowOf(app).nextStartedService)
-        assertFalse(
-            "the router owns the reset now: Setup can only resume on Overnight if this is cleared here",
-            overnightStepSeenInPrefs(),
+        assertEquals(
+            REAL_CAPTURE_SERVICE_CLASS_NAME,
+            shadowOf(app).nextStartedService?.component?.className,
         )
         destroyAfterTest()
 
-        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
-            scenario.onActivity { setup ->
-                assertEquals(SetupStep.OVERNIGHT, setup.currentStepForTest)
-                setup.onSkipOvernight()
-                assertTrue("Skip for now must hand back, not re-show the step", setup.isFinishing)
-            }
-        }
-
         val secondRoute = buildAndResume()
         assertEquals(
-            "the trap: before R-1161's fix this second route repeated the first, with no way out of " +
-                "the app at all",
+            "the trap: before P39 the second route repeated the first, with no way out of the app at all",
             ReaderActivity::class.java.name,
             shadowOf(secondRoute).nextStartedActivity?.component?.className,
-        )
-        assertEquals(
-            "capture must genuinely start -- the only thing that can ever produce the session " +
-                "evidence hasProvenSurvival() asks for",
-            REAL_CAPTURE_SERVICE_CLASS_NAME,
-            shadowOf(app).nextStartedService?.component?.className,
         )
     }
 
     /**
-     * R-1161's "at most once per process" contract, stated on its own so it is tested rather than
-     * merely implied by the round trip above: the checker is a `:data` read and the detour is a nag,
-     * so a second launch of the router inside the same process asks neither again.
+     * **AC-199, and the structural half of it.** The router must not merely happen to reach capture —
+     * it must be incapable of clearing the flag that made the old flow resume on the overnight step.
+     * `overnightStepSeen` is the operator's own answer to a prompt; the router resetting it is how
+     * AC-189's "reappears" got fused to a refusal, and the composition of the two was the deadlock.
      */
     @Test
-    @Requirement("AC-189")
-    fun `AC_189 R-1161 the overnight detour is taken at most once per process`() {
-        val checker = FakeOvernightSurvivalChecker(proven = false)
-        DebugOvernightSurvivalOverride.show(checker)
-        markSetupCompleteWithUnprovenSurvival()
+    @Requirement("AC-199")
+    fun `AC_199 the router never clears the operator's own answer to the overnight prompt`() {
+        DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
+        // markPostSetupWithUnprovenSurvival() already records the overnight step as answered -- that
+        // is the state an operator is in the instant `Start capture` is tapped.
+        markPostSetupWithUnprovenSurvival()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         buildAndResume()
-        destroyAfterTest()
-        val secondRoute = buildAndResume()
 
-        assertEquals("the nag is asked once per process, never re-asked on the way back", 1, checker.callCount)
-        assertEquals(
-            ReaderActivity::class.java.name,
-            shadowOf(secondRoute).nextStartedActivity?.component?.className,
-        )
-        val app = ApplicationProvider.getApplicationContext<Application>()
-        assertEquals(
-            REAL_CAPTURE_SERVICE_CLASS_NAME,
-            shadowOf(app).nextStartedService?.component?.className,
+        assertTrue(
+            "an answer the operator has already given must survive the router",
+            overnightStepSeenInPrefs(),
         )
     }
 

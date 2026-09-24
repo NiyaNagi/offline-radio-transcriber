@@ -9,33 +9,33 @@ package org.ort.app.debug.tour
  * setup [TourStep.setup] value is resolved to before that extra is set.
  */
 public object SetupStepIds {
+    /**
+     * **P39 (D58) removed five ids and repointed one.** `S02` (the microphone explainer), `S03`
+     * (notifications), `S01a` (the jurisdiction notice) and `S11b` (analytics consent) name screens
+     * that no longer exist — the first two were deleted outright, the second two folded onto `S01`.
+     * `S05` and `S07` are gone for a different reason: they merged *into* `S04`, which now names the
+     * whole input / route-check / level screen rather than the route list alone.
+     *
+     * `S08` stays although [org.ort.app.ui.setup.SetupStateMachine] never returns `OVERNIGHT` any
+     * more (AC-189 as amended). The screen is still in the code, its artboard still exists, and
+     * constitution VIII requires an artboard to be reachable by a capture — the tour opens it by
+     * `EXTRA_STEP` exactly as the *Keep capture running* prompt that owns it next will.
+     */
     private val BY_ID: Map<String, String> = mapOf(
         "S01" to "WELCOME",
-        "S02" to "MICROPHONE",
+        "S00" to "MODE",
         "S02b" to "MICROPHONE_DENIED",
-        "S03" to "NOTIFICATIONS",
-        "S04" to "INPUT",
-        "S05" to "VERIFY",
+        "S02c" to "BLUETOOTH_PERMISSION",
+        "S04" to "LISTEN",
         "S06" to "ROUTE_MISMATCH",
-        "S07" to "LEVEL",
         "S08" to "OVERNIGHT",
         "S09" to "RADIO",
-        "S10" to "RADIO_USB",
-        "S11" to "RADIO_VERIFIED",
-        "S12" to "READY",
-        // P19/WPI (spec/e2e-capture-modes-plan.md, E2-J02): D33's four new setup steps.
-        "S00" to "MODE",
-        "S02c" to "BLUETOOTH_PERMISSION",
         "S09b" to "RIG_TRANSPORT",
+        "S10" to "RADIO_USB",
         "S10b" to "RIG_BLUETOOTH",
-        // P22 (D43, NFR-6c, FR-AST-10..12): the two setup steps that round added — see
-        // design-intent.md §2's S01a/S11a rows.
-        "S01a" to "JURISDICTION_NOTICE",
+        "S11" to "RADIO_VERIFIED",
         "S11a" to "MODELS",
-        // P28 (D42, FR-ANL-10, AC-180): the analytics-consent step, right after S11a/MODELS and
-        // before S12/READY — no design-intent.md row exists for it yet (that inventory is outside
-        // this unit's own file ownership, the same note P22's own S01a/S11a addition already made).
-        "S11b" to "ANALYTICS_CONSENT",
+        "S12" to "READY",
     )
 
     /** `null` when [sId] is not one of design-intent's S01..S12/S02b. */

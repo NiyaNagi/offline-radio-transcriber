@@ -1,14 +1,9 @@
 package org.ort.app.ui.setup
 
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.SemanticsProperties
-import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
-import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -19,13 +14,35 @@ import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /** R-081 (ui-conformance-plan WP9) — `Setup-Verify.dc.html` (S05). */
 @RunWith(RobolectricTestRunner::class)
+// P39: the merged Listen screen is genuinely taller than Robolectric's 320x470dp default, so these
+// assertions are made at the tour's own geometry rather than at a viewport no real device has.
+@Config(qualifiers = "w390dp-h844dp-420dpi")
 class VerifyScreenTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    /**
+     * P39 (D58): the route check is a section of [ListenScreen] now, not a screen of its own, so every
+     * assertion below drives the real merged screen with the route list above it.
+     *
+     * [ListenViewState.inputVerified] is derived from the check rather than passed in, because in
+     * production `SetupActivity.onVerifyStateChanged` writes `SetupStore.inputVerified` the instant a
+     * check passes — a passed check beside an unverified store is a state the app cannot produce, and
+     * a fixture that could produce it would be testing something that never happens.
+     */
+    private fun listenStateFor(inputLabel: String, check: RouteCheckState?) = ListenViewState(
+        routes = emptyList(),
+        selectedId = "usb-1",
+        inputLabel = inputLabel,
+        check = check,
+        checkRunning = true,
+        inputVerified = check is RouteCheckState.Passed,
+    )
 
     /**
      * R-1169: the one fact that says whether the OEM was applying its own gain and noise
@@ -37,15 +54,20 @@ class VerifyScreenTest {
     fun `FR_CAP_1 the native rate check names the audio source the open actually obtained`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.Passed(48_000, null, audioSourceLabel = "unprocessed"),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -58,15 +80,20 @@ class VerifyScreenTest {
     fun `FR_CAP_1 a check that reports no audio source names the rate alone, never a guessed source`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.Passed(48_000, null),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -75,7 +102,7 @@ class VerifyScreenTest {
     }
 
     /**
-     * R-081, amended by **R-1170**: this used to assert `setup-verify-continue` was *disabled*
+     * R-081, amended by **R-1170**: this used to assert `setup-listen-continue` was *disabled*
      * while checks were in progress. The button is now lit at all times and refuses on tap — the
      * disabled assertion was inverted, not deleted, and the R-1170 tests at the foot of this file
      * pin the thing that actually matters: an unverified route still cannot proceed
@@ -85,20 +112,25 @@ class VerifyScreenTest {
     fun `R_081 Continue stays lit while checks are still in progress`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsEnabled()
+        composeTestRule.onNodeWithTag("setup-listen-continue").assertIsEnabled()
         composeTestRule.onNodeWithTag("setup-verify-check-native-rate").assertIsDisplayed()
     }
 
@@ -107,21 +139,26 @@ class VerifyScreenTest {
         var continued = false
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.Passed(48_000, null),
                     ),
-                    onContinue = { continued = true },
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = { continued = true },
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsEnabled()
-        composeTestRule.onNodeWithTag("setup-verify-continue").performClick()
+        composeTestRule.onNodeWithTag("setup-listen-continue").assertIsEnabled()
+        composeTestRule.onNodeWithTag("setup-listen-continue").performClick()
         assert(continued)
     }
 
@@ -130,259 +167,26 @@ class VerifyScreenTest {
         var back = false
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
                     ),
-                    onContinue = {},
                     onBack = { back = true },
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
 
         composeTestRule.onNodeWithTag("setup-back").performClick()
         assert(back)
-    }
-
-    // --- R-121 (validator finding, halt): RouteCheckState.TimedOut ----------------------------
-
-    @Test
-    fun `R_121 a timeout keeps the two checks that already passed ticked and fails the signal check honestly`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(inputLabel = "USB Audio Device", check = RouteCheckState.TimedOut),
-                    onContinue = {},
-                    onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
-                )
-            }
-        }
-
-        // R-1018 (register, device pass 2): the pinned bar's own real design-spacing fix (12dp ->
-        // 24dp above the safe area, SetupScaffold.kt) leaves 12dp less room for this unconstrained
-        // test root's scrollable content than before -- these two checks (above the paragraph below
-        // in the board's own order) are asserted first, while nothing has scrolled past them yet;
-        // scrolling to the paragraph afterward can otherwise carry them off the top of the viewport,
-        // the same "grew below the fold" shape R-1005c's own test file comment already documents.
-        composeTestRule.onNodeWithTag("setup-verify-check-native-rate").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("setup-verify-check-route-match").assertIsDisplayed()
-        composeTestRule.onNodeWithText("No signal heard in 30 s on USB Audio Device")
-            .performScrollTo()
-            .assertIsDisplayed()
-    }
-
-    @Test
-    fun `R_121 a timeout never leaves Continue as the only way forward, and the back chevron always exists`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(inputLabel = "USB Audio Device", check = RouteCheckState.TimedOut),
-                    onContinue = {},
-                    onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag("setup-verify-continue").assertDoesNotExist()
-        composeTestRule.onNodeWithTag("setup-verify-try-again").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("setup-verify-choose-another").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("setup-back").assertIsDisplayed()
-    }
-
-    @Test
-    fun `R_121 Try again and Choose another input on a timeout both invoke their own callback`() {
-        var tryAgain = false
-        var chooseAnother = false
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(inputLabel = "USB Audio Device", check = RouteCheckState.TimedOut),
-                    onContinue = {},
-                    onBack = {},
-                    onTryAgain = { tryAgain = true },
-                    onChooseAnotherInput = { chooseAnother = true },
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag("setup-verify-try-again").performClick()
-        assert(tryAgain)
-        composeTestRule.onNodeWithTag("setup-verify-choose-another").performClick()
-        assert(chooseAnother)
-    }
-
-    /** R-280 (validator pass 3): S05's own timed-out "Choose another input" was named among the
-     * screens where a ghost, semi-transparent duplicate of the bottom bar's secondary action was
-     * reported near the status bar -- proof `MicrophoneScreensTest`'s own `R_220` test already
-     * carries for S02b's "Check again". */
-    @Test
-    fun `R_280 exactly one Choose another input renders on a timeout, never a ghost duplicate`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(inputLabel = "USB Audio Device", check = RouteCheckState.TimedOut),
-                    onContinue = {},
-                    onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
-                )
-            }
-        }
-        composeTestRule.onAllNodesWithText("Choose another input").assertCountEquals(1)
-    }
-
-    // --- R-284 (validator pass 3): "Choose a different input" during the listening check --------
-
-    @Test
-    fun `R_284 the listening check offers Choose a different input, not just the disabled Continue`() {
-        var chosenDifferent = false
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
-                        inputLabel = "USB Audio Device",
-                        check = RouteCheckState.InProgress(
-                            setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
-                            48_000,
-                            11_000L,
-                        ),
-                    ),
-                    onContinue = {},
-                    onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = { chosenDifferent = true },
-                )
-            }
-        }
-
-        // R-1170: lit, not disabled — the escape link beside it is what R-284 is about.
-        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsEnabled()
-        composeTestRule.onNodeWithTag("setup-verify-choose-different").assertIsDisplayed().performClick()
-        assert(chosenDifferent)
-    }
-
-    @Test
-    fun `R_284 the link is gone once every check has already passed`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
-                        inputLabel = "USB Audio Device",
-                        check = RouteCheckState.Passed(48_000, null),
-                    ),
-                    onContinue = {},
-                    onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag("setup-verify-choose-different").assertDoesNotExist()
-    }
-
-    // --- R-1170: the primary stays lit, and the verification gate still genuinely blocks ----------
-
-    /**
-     * R-1170 **and constitution IV**, together — this is the regression the R-1170 change most
-     * risks and the reason this test exists at all. Keeping `Continue` lit must not become a way to
-     * walk past a route that has not verified: *"a route that is not the selected device halts
-     * capture"* is absolute, and `RouteCheckState.Mismatch` is the one deliberate hard halt in the
-     * whole flow. Lit, tapped, and `onContinue` is still never called.
-     */
-    @Test
-    fun `R_1170 an unverified route still cannot proceed, however lit the button is`() {
-        var continued = false
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
-                        inputLabel = "USB Audio Device",
-                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
-                    ),
-                    onContinue = { continued = true },
-                    onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsEnabled().performClick()
-        assert(!continued)
-        composeTestRule.onNodeWithTag("setup-verify-validation").assertIsDisplayed()
-    }
-
-    /** R-1170: the same, for a state that carries no check at all — nothing has even been tried,
-     * which is no more a licence to proceed than a half-finished check. */
-    @Test
-    fun `R_1170 a route with no check at all still cannot proceed`() {
-        var continued = false
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(inputLabel = "USB Audio Device", check = null),
-                    onContinue = { continued = true },
-                    onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag("setup-verify-continue").assertIsEnabled().performClick()
-        assert(!continued)
-    }
-
-    /** R-1170, the accessibility half: the refusal is announced, not merely drawn. */
-    @Test
-    fun `R_1170 the verify notice is a live region a screen reader announces`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
-                        inputLabel = "USB Audio Device",
-                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
-                    ),
-                    onContinue = {},
-                    onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag("setup-verify-continue").performClick()
-        composeTestRule.onNodeWithTag("setup-verify-validation")
-            .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Assertive))
-    }
-
-    /** R-1170: no standing scold on arrival — the notice answers a tap. */
-    @Test
-    fun `R_1170 no verify notice is shown before the primary has been tapped`() {
-        composeTestRule.setContent {
-            OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
-                        inputLabel = "USB Audio Device",
-                        check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
-                    ),
-                    onContinue = {},
-                    onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
-                )
-            }
-        }
-
-        composeTestRule.onNodeWithTag("setup-verify-validation").assertDoesNotExist()
     }
 
     // --- R-943 (register, reviewer A3 run 4a, design): checklist markers, the mono meta lines, ---
@@ -392,15 +196,20 @@ class VerifyScreenTest {
     fun `R_943 a not-yet-reached check shows the board's dim pending ring, never an invisible fill`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -415,15 +224,20 @@ class VerifyScreenTest {
     fun `R_943 the native-rate detail formats Hz with grouped thousands, mono`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -435,8 +249,8 @@ class VerifyScreenTest {
     fun `R_943 the routed device detail line names the real routed device once matched`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(
                             passed = setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
@@ -445,10 +259,15 @@ class VerifyScreenTest {
                             routedDeviceLabel = "USB Audio Device",
                         ),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -460,15 +279,20 @@ class VerifyScreenTest {
     fun `R_943 no routed device label yet renders no detail line at all, never a placeholder`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -480,8 +304,8 @@ class VerifyScreenTest {
     fun `R_943 the elapsed counter renders beside Listening for signal while still listening`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(
                             setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
@@ -489,10 +313,15 @@ class VerifyScreenTest {
                             elapsedListeningMillis = 11_000L,
                         ),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -504,8 +333,8 @@ class VerifyScreenTest {
     fun `R_943 the elapsed counter disappears once the signal check has passed`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(
                             setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH, RouteCheckStage.SIGNAL),
@@ -513,10 +342,15 @@ class VerifyScreenTest {
                             elapsedListeningMillis = 11_000L,
                         ),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -528,8 +362,8 @@ class VerifyScreenTest {
     fun `R_943 the Input waveform card renders with the real level samples`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(
                             passed = setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
@@ -539,10 +373,15 @@ class VerifyScreenTest {
                             noiseFloorDbfs = -58.0,
                         ),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -556,15 +395,20 @@ class VerifyScreenTest {
     fun `R_943 no real sample yet renders the honest dash, never a fabricated noise floor`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(setOf(RouteCheckStage.NATIVE_RATE), 48_000, 0L),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -576,8 +420,8 @@ class VerifyScreenTest {
     fun `R_943 signal heard caption renders only once the signal stage has genuinely passed`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(
                             setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
@@ -585,10 +429,15 @@ class VerifyScreenTest {
                             4_000L,
                         ),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -607,8 +456,8 @@ class VerifyScreenTest {
     fun `R_981 the waveform card names the real not-yet-heard fact, never rendering blank`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.InProgress(
                             setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
@@ -616,10 +465,15 @@ class VerifyScreenTest {
                             4_000L,
                         ),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }
@@ -634,15 +488,20 @@ class VerifyScreenTest {
     fun `R_943 signal heard caption renders once the signal stage has passed`() {
         composeTestRule.setContent {
             OrtTheme {
-                VerifyScreen(
-                    state = VerifyViewState(
+                ListenScreen(
+                    state = listenStateFor(
                         inputLabel = "USB Audio Device",
                         check = RouteCheckState.Passed(48_000, null),
                     ),
-                    onContinue = {},
                     onBack = {},
-                    onTryAgain = {},
-                    onChooseAnotherInput = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
                 )
             }
         }

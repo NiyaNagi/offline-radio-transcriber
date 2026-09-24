@@ -13,7 +13,6 @@ import kotlinx.coroutines.runBlocking
 import org.ort.app.permissions.PermissionsState
 import org.ort.app.ui.ReaderActivity
 import org.ort.app.ui.setup.DebugOvernightSurvivalOverride
-import org.ort.app.ui.setup.OvernightNagState
 import org.ort.app.ui.setup.RealOvernightSurvivalChecker
 import org.ort.app.ui.setup.SetupActivity
 import org.ort.app.ui.setup.SetupStateMachine
@@ -77,9 +76,12 @@ public class MainActivity : ComponentActivity() {
     private fun route() {
         val prefs = getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, MODE_PRIVATE)
         val store = SharedPreferencesSetupStore(prefs)
-        val setupComplete =
-            SetupStateMachine.isComplete(currentPermissionsState(store.notificationsSkipped), store.snapshot())
-        if (setupComplete && !overnightSurvivalStillUnproven(store)) {
+        if (SetupStateMachine.isComplete(currentPermissionsState(store.notificationsSkipped), store.snapshot())) {
+            // Only on this branch: the operator who never re-enters Setup is exactly the one
+            // `SetupActivity.reconcileOvernightSurvival` never runs for (R-1104), and the other branch
+            // enters Setup, where it does. Keeping the `:data` read off the branch that has already
+            // decided the route is R-1104's own discipline, not a new one.
+            latchOvernightSurvivalIfProven(store)
             startCaptureAndShowStatus()
         } else {
             startActivity(Intent(this, SetupActivity::class.java))
@@ -88,65 +90,40 @@ public class MainActivity : ComponentActivity() {
     }
 
     /**
-     * R-1104 (register; AC-189, NFR-8, constitution IV): [SetupStateMachine.isComplete] alone lets
-     * an operator who finished setup once, and always launches through this fast path, skip
-     * [SetupActivity]'s own `reconcileOvernightSurvival()` forever — the one place that re-derives
-     * [SetupStore.overnightSurvivalProven] from real session evidence
-     * ([org.ort.app.ui.setup.OvernightSurvivalChecker]). On ColorOS, whose
-     * `isIgnoringBatteryOptimizations()` reports wrongly (constitution IV — never trusted as
-     * evidence here either), that is exactly the population this check exists to catch, and this
-     * fast path was its only blind spot: an operator who never revisits Setup was never re-asked.
+     * **P39 (D58, AC-199): this used to be able to refuse capture, and that was R-1161.** The function
+     * below now only ever *latches* [SetupStore.overnightSurvivalProven] when real evidence for it
+     * exists. It returns nothing, [route] ignores it, and no launch is ever diverted because of it.
      *
-     * This runs the identical check [SetupActivity]'s own `reconcileOvernightSurvival()` runs — a
-     * real session, cleanly ended, at least `OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS` long, never the
-     * OS's own exemption flag — and, once proven, persists it exactly as that function does, so a
-     * device that has already proven survival is never routed through Setup again to re-ask
-     * (AC-189's own "until"; [SetupStore.overnightSurvivalProven]'s own doc comment covers the two
-     * real writers this and [SetupActivity] now are). A no-op, returning `false` immediately, once
-     * already proven — the ordinary case for every later launch on a device that has proven it.
+     * The reasoning, because the old shape looked defensible and was not. `hasProvenSurvival()`'s only
+     * admissible evidence is a recorded session of at least `OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS`;
+     * sessions are only ever created by `RealCaptureService`; and the only thing that starts it is
+     * [startCaptureAndShowStatus] — the branch the refusal never took. **The sole exit condition
+     * required the very thing the refusal prevented**, and since `SetupActivity` and `ReaderActivity`
+     * are both `exported="false"`, an operator who finished setup on a fresh install had no way out of
+     * the cycle but uninstalling. AC-189 as amended is explicit that this is a *post-capture* prompt
+     * and SHALL NOT gate capture; AC-199 generalises it to every signal of this kind.
      *
-     * **R-1161 (register; AC-189, constitution IV) — this is a nag, and it was a deadlock.** As
-     * originally written this returned `true` for as long as survival was unproven, on *every*
-     * launch of this activity, and [route] turned that into a refusal to start capture. But
-     * `hasProvenSurvival()`'s only admissible evidence is a recorded session of at least
-     * `OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS`, sessions are only ever created by
-     * `RealCaptureService`, and the only thing that starts it is [startCaptureAndShowStatus] — the
-     * branch the refusal never took. **The sole exit condition required the very thing the refusal
-     * prevented**, and since `SetupActivity` and `ReaderActivity` are both `exported="false"`, an
-     * operator who finished setup on a fresh install had no way out of the cycle but uninstalling.
+     * **Where the nag went.** D58 names its home: a *Keep capture running* prompt on the first missed
+     * heartbeat, which is where a post-capture fact belongs. That surface is not built here — it is a
+     * capture-status surface, outside this change's ownership — and `SetupStep.OVERNIGHT` plus
+     * [org.ort.app.ui.setup.OvernightScreen] are deliberately left intact and reachable by
+     * `SetupActivity.EXTRA_STEP` so it has somewhere to land. Until it exists, the prompt does not
+     * appear; what does not happen any more is the deadlock.
      *
-     * The fix is to separate the two things R-1104 had fused. **AC-189 asks only that the step
-     * "reappears on every relevant subsequent launch" — it never says capture is blocked until
-     * survival is proven** (`spec/functional-spec.md`), so the nag stays and the block goes:
-     * - the detour is taken **at most once per process** ([OvernightNagState]), so the trip back
-     *   from `SetupActivity` starts capture instead of bouncing;
-     * - this function, and nothing else, **clears [SetupStore.overnightStepSeen]** when it decides
-     *   to nag, which is what makes `SetupStateMachine.stepFor` resume on `SetupStep.OVERNIGHT` —
-     *   AC-189's "reappears", now owned by the one caller that can know whether the operator has
-     *   already been asked. `SetupActivity` used to do this on every entry, which re-armed the step
-     *   the operator had just answered on every trip of the cycle (R-1161's other half).
+     * The latch itself is worth keeping and is R-1104's real content: an operator who completes setup
+     * once and always launches through this fast path never enters `SetupActivity` again, so
+     * `reconcileOvernightSurvival()` — the other place that re-derives this flag from session
+     * evidence — never runs for them, and `Ready`'s own overnight row would read unproven forever on a
+     * device that had long since proven it. A no-op, returning immediately, once already latched.
      *
-     * The proven branch is untouched: a real session, cleanly ended, at least
-     * `OVERNIGHT_SURVIVAL_THRESHOLD_MILLIS` long, never the OS's own exemption flag — which
-     * constitution IV records as lying on the reference device — and once proven it latches, so a
-     * device that has proven survival is never routed through Setup again to re-ask (AC-189's own
-     * "until").
-     *
-     * [DebugOvernightSurvivalOverride] is the same test seam [SetupActivity] uses, checked first so
-     * a test can script this without a real `:data` database.
+     * [DebugOvernightSurvivalOverride] is the same test seam `SetupActivity` uses, checked first so a
+     * test can script this without a real `:data` database.
      */
-    private fun overnightSurvivalStillUnproven(store: SetupStore): Boolean {
-        if (store.overnightSurvivalProven) return false
-        if (OvernightNagState.askedThisProcess) return false
+    private fun latchOvernightSurvivalIfProven(store: SetupStore) {
+        if (store.overnightSurvivalProven) return
         val checker = DebugOvernightSurvivalOverride.activeOverride
             ?: RealOvernightSurvivalChecker(OrtDatabase.create(applicationContext).sessionDao())
-        if (runBlocking { checker.hasProvenSurvival() }) {
-            store.overnightSurvivalProven = true
-            return false
-        }
-        OvernightNagState.markAsked()
-        store.overnightStepSeen = false
-        return true
+        if (runBlocking { checker.hasProvenSurvival() }) store.overnightSurvivalProven = true
     }
 
     /**

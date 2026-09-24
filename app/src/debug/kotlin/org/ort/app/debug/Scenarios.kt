@@ -28,6 +28,7 @@ import org.ort.app.ui.failures.ReconcileRecord
 import org.ort.app.ui.failures.ReconcileViewState
 import org.ort.app.ui.failures.UsbViewState
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
+import org.ort.app.ui.setup.DebugBluetoothPermissionOverride
 import org.ort.app.ui.setup.DebugMicPermissionOverride
 import org.ort.app.ui.setup.DebugModelsSetupOverride
 import org.ort.app.ui.setup.DebugRigLinkPortOverride
@@ -521,6 +522,10 @@ public object Scenarios {
                 ScenarioFixtures.republishCapturing(ScenarioFixtures.sessionId("calibration"))
                 republishCalibrationFacets()
             }
+            // P39: these two need the rig-module gate open on a republish exactly as on a load.
+            "setup-radio", "setup-rig-transport", "setup-rig-transport-preset" -> republishRigModuleFacet()
+            // R-1179: and this one needs the Bluetooth permission to read as honestly absent.
+            "setup-bt-permission" -> republishSetupBtPermissionFacets()
             "setup-rig-bluetooth" -> republishSetupRigBluetoothFacets()
             "setup-rig-bluetooth-connecting" -> republishSetupRigBluetoothConnectingFacets()
             "setup-rig-bluetooth-identified" -> republishSetupRigBluetoothIdentifiedFacets()
@@ -799,6 +804,10 @@ public object Scenarios {
         // WPD's seam (coordinator-assigned, this round): a scripted RigLinkPort from a prior
         // `setup-rig-bluetooth` load must not leak into a later scenario's own S10b render.
         DebugRigLinkPortOverride.clear()
+        // R-1179 (P39): the same discipline for the Bluetooth-permission override -- an honest-absence
+        // published for `setup-bt-permission` must not leak into any other scenario's own step
+        // resolution, where it would silently insert S02c in front of whatever was asked for.
+        DebugBluetoothPermissionOverride.clear()
         // R-943 (WPD's own seam): a RouteCheckState published for a prior `setup-verified` load's
         // own S05 render must not leak into a later scenario's own S05/route-mismatch board.
         DebugRouteCheckOverride.clear()
@@ -2101,7 +2110,7 @@ public object Scenarios {
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.NONE
         store.rigTransport = RigTransportKind.USB_SERIAL
-        store.manualFrequencyHz = 145_230_000L
+        seedManualFrequency(context, 145_230_000L)
         store.setupComplete = false
         // R-943 (register, reviewer A4 run 5, halt): S05 (`Setup-Verify.dc.html`) is reached by a
         // cold `SetupActivity.EXTRA_STEP` launch straight at `VERIFY` — no S04 selection ever ran,
@@ -2311,8 +2320,60 @@ public object Scenarios {
         store.levelPeakDbfs = -14.0
         store.overnightStepSeen = true
         store.radioChoice = null
-        store.manualFrequencyHz = null
+        seedManualFrequency(context, null)
+        republishRigModuleFacet()
         return LoadResult(0, 0, null)
+    }
+
+    /**
+     * **P39 (D58): what makes the rig branch reachable at all, for the tour only.**
+     *
+     * `SetupStateMachine.stepFor` now enters `RADIO`/`RIG_TRANSPORT`/`RIG_BLUETOOTH` only when a rig
+     * module with a real CAT implementation exists, and none does on any shipped build — which is the
+     * honest rendering of the state the code is in, and the whole point of that gate. But constitution
+     * VIII requires every artboard to be reachable by a capture, and `Setup-Rig*.dc.html` exist. This
+     * is the seam that squares the two: a debug scenario that installs a scripted
+     * [org.ort.app.ui.setup.RigLinkPort] *is*, for the tour's purposes, a rig module that exists, and
+     * `SetupActivity.rigModuleAvailable()` reads exactly that.
+     *
+     * The bare-list script is deliberate: this facet exists to open the *gate*, not to drive a
+     * checklist. Every `setup-rig-bluetooth*` scenario installs its own, differently-scripted port
+     * afterwards and must not inherit a default behaviour from here.
+     */
+    /**
+     * **P39 (D58, AC-202, R-1167): the hand-entered frequency lives in `CaptureConfigurationStore`
+     * now, so a fixture describing a device that has one has to put it there.**
+     *
+     * It used to be seeded on `SetupStore.manualFrequencyHz`, which that change deletes — the prompt
+     * moved to the log's own header, and a second copy of the fact would have been overwritten with
+     * `null` by the next sync. This writes the same value to the store `RealCaptureService` itself
+     * reads at session start, which is also what `Settings › Input`'s own row and Ready's radio row
+     * now read, so a scenario that seeds it is describing one fact rather than two that can disagree.
+     *
+     * Read-modify-write rather than a fresh [CaptureConfiguration]: the callers below have usually
+     * already recorded a mode and a route through [verifiedInputStore], and replacing the whole
+     * configuration here would silently drop them.
+     */
+    private fun seedManualFrequency(context: Context, hz: Long?) {
+        // [forceCurrentCaptureConfiguration], not the ordinary store: a fixture is describing a device
+        // that already has this configured, not an operator editing it mid-session. Left to the
+        // default, `update` would land as *pending* on any scenario that has marked capture live
+        // (FR-CAP-12, AC-131 — correct for the real app, wrong for a seed), and the screens this
+        // fixture exists for read `current()`. Read-modify-write, so a mode and route already recorded
+        // are not silently dropped — **which also means this must run after any call that replaces the
+        // whole configuration**, not before it.
+        forceCurrentCaptureConfiguration(
+            context,
+            realCaptureConfigurationStore(context).current().copy(manualFrequencyHz = hz),
+        )
+    }
+
+    private fun republishRigModuleFacet() {
+        DebugRigLinkPortOverride.show(
+            InMemoryRigLinkPort(
+                devices = listOf(PairedDevice(name = "TH-D75A", address = BLUETOOTH_RIG_ADDRESS, sppCapable = true)),
+            ),
+        )
     }
 
     /**
@@ -2357,7 +2418,7 @@ public object Scenarios {
         store.levelPeakDbfs = -14.0
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.NONE
-        store.manualFrequencyHz = 145_230_000L
+        seedManualFrequency(context, 145_230_000L)
         store.setupComplete = false
         return LoadResult(0, 0, null)
     }
@@ -2404,7 +2465,7 @@ public object Scenarios {
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.NONE
         store.rigTransport = RigTransportKind.USB_SERIAL
-        store.manualFrequencyHz = 145_230_000L
+        seedManualFrequency(context, 145_230_000L)
         store.setupComplete = false
         // Merge (2026-09-20): P28's own ANALYTICS_CONSENT gate sits before MODELS in the step
         // order, so this scenario has to pass it too or the natural resume point lands before the
@@ -2499,7 +2560,6 @@ public object Scenarios {
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.NONE
         store.rigTransport = RigTransportKind.USB_SERIAL
-        store.manualFrequencyHz = 145_230_000L
         store.setupComplete = true
         val settingsPrefs = context.applicationContext.getSharedPreferences(
             SharedPreferencesSettingsStore.PREFS_NAME,
@@ -2519,6 +2579,10 @@ public object Scenarios {
             context,
             CaptureConfiguration(mode = CaptureMode.USB_RADIO, selectedInputId = "usb-1"),
         )
+        // P39 (R-1167): after the line above, never before it — that call replaces the whole
+        // configuration, so a frequency seeded earlier would be wiped by it. This is the same
+        // ordering hazard `SetupCaptureConfigurationAdapter` now exists to prevent in production.
+        seedManualFrequency(context, 145_230_000L)
         // R-494 (register, Reviewer D round 2): `SettingsPolling`'s own Input rows (CF01/CF02 —
         // `inputSummaryLine`/`capture()`) never read `SetupStore` at all — confirmed by reading
         // that file before assuming the register's own guess — they read the live `InputStatus`
@@ -2915,7 +2979,21 @@ public object Scenarios {
         store.analyticsConsentSeen = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.bluetoothPermissionDeclined = false
+        republishSetupBtPermissionFacets()
         return LoadResult(0, 0, null)
+    }
+
+    /**
+     * **R-1179 (register): what makes S02c capture its own screen, for the first time.**
+     *
+     * Every committed `setup-bt-permission/S02c` PNG is the Input screen, because `install.ps1` grants
+     * `BLUETOOTH_CONNECT` — correctly, for the four rig-Bluetooth rows that need it — and
+     * `SetupStateMachine.needsBluetoothPermission` therefore can never fire. This publishes the
+     * honest-absence override instead of taking the grant away, which would trade one screen for four.
+     * See [DebugBluetoothPermissionOverride]'s own kdoc for the whole account.
+     */
+    private fun republishSetupBtPermissionFacets() {
+        DebugBluetoothPermissionOverride.show()
     }
 
     /**
@@ -3013,6 +3091,8 @@ public object Scenarios {
         store.radioChoice = RadioChoice.TH_D75A
         store.rigId = BundledDescriptors.kenwoodThD75a().id
         store.rigTransport = null
+        // P39: without a rig module the whole branch is unreachable -- see republishRigModuleFacet.
+        republishRigModuleFacet()
         return LoadResult(0, 0, null)
     }
 
@@ -3986,7 +4066,7 @@ public object Scenarios {
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.NONE
         store.rigTransport = null
-        store.manualFrequencyHz = 145_230_000L
+        seedManualFrequency(context, 145_230_000L)
         store.setupComplete = false
         return LoadResult(0, 0, null)
     }
@@ -4027,7 +4107,7 @@ public object Scenarios {
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.NONE
         store.rigTransport = null
-        store.manualFrequencyHz = 145_230_000L
+        seedManualFrequency(context, 145_230_000L)
         store.setupComplete = false
         return LoadResult(0, 0, null)
     }

@@ -217,10 +217,18 @@ class WpiScenariosTest {
         assertTrue(store.inputVerified)
         assertNotNull(store.radioChoice)
         assertNull(store.rigTransport)
+        // P39 (D58): the rig branch is entered only when a rig module with a real CAT implementation
+        // exists -- `SetupStore.snapshot()` cannot know that, and `SetupActivity.currentSnapshot()`
+        // supplies it from the scripted `RigLinkPort` this scenario installs. Asserted, not assumed:
+        // a scenario that stopped installing one would leave this artboard unreachable by any capture.
+        assertTrue(
+            "the scenario must open the rig-module gate, or this step cannot be reached at all",
+            org.ort.app.ui.setup.DebugRigLinkPortOverride.activeOverride != null,
+        )
         val step = SetupStateMachine.stepFor(
             fullyGrantedBluetooth(),
             micPermanentlyDenied = false,
-            snapshot = store.snapshot(),
+            snapshot = store.snapshot().copy(rigModuleAvailable = true),
         )
         assertEquals(SetupStep.RIG_TRANSPORT, step)
     }
@@ -279,10 +287,18 @@ class WpiScenariosTest {
         val store = setupStore()
         assertNotNull(store.radioChoice)
         assertNull(store.rigTransport)
+        // P39 (D58): the rig branch is entered only when a rig module with a real CAT implementation
+        // exists -- `SetupStore.snapshot()` cannot know that, and `SetupActivity.currentSnapshot()`
+        // supplies it from the scripted `RigLinkPort` this scenario installs. Asserted, not assumed:
+        // a scenario that stopped installing one would leave this artboard unreachable by any capture.
+        assertTrue(
+            "the scenario must open the rig-module gate, or this step cannot be reached at all",
+            org.ort.app.ui.setup.DebugRigLinkPortOverride.activeOverride != null,
+        )
         val step = SetupStateMachine.stepFor(
             fullyGrantedBluetooth(),
             micPermanentlyDenied = false,
-            snapshot = store.snapshot(),
+            snapshot = store.snapshot().copy(rigModuleAvailable = true),
         )
         assertEquals(SetupStep.RIG_TRANSPORT, step)
     }
@@ -295,10 +311,18 @@ class WpiScenariosTest {
         val store = setupStore()
         assertEquals(RigTransportKind.BLUETOOTH_SPP, store.rigTransport)
         assertFalse(store.rigBluetoothVerified)
+        // P39 (D58): the rig branch is entered only when a rig module with a real CAT implementation
+        // exists -- `SetupStore.snapshot()` cannot know that, and `SetupActivity.currentSnapshot()`
+        // supplies it from the scripted `RigLinkPort` this scenario installs. Asserted, not assumed:
+        // a scenario that stopped installing one would leave this artboard unreachable by any capture.
+        assertTrue(
+            "the scenario must open the rig-module gate, or this step cannot be reached at all",
+            org.ort.app.ui.setup.DebugRigLinkPortOverride.activeOverride != null,
+        )
         val step = SetupStateMachine.stepFor(
             fullyGrantedBluetooth(),
             micPermanentlyDenied = false,
-            snapshot = store.snapshot(),
+            snapshot = store.snapshot().copy(rigModuleAvailable = true),
         )
         assertEquals(SetupStep.RIG_BLUETOOTH, step)
     }

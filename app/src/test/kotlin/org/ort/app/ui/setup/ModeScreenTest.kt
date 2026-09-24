@@ -22,7 +22,7 @@ class ModeScreenTest {
     val composeTestRule = createComposeRule()
 
     @Test
-    fun `E2_E01 renders the three modes with the board's exact copy and counter 1 of 10`() {
+    fun `E2_E01 renders the three modes and its own stage counter`() {
         composeTestRule.setContent {
             OrtTheme { ModeScreen(onChoose = {}) }
         }
@@ -31,8 +31,44 @@ class ModeScreenTest {
         composeTestRule.onNodeWithText("Local microphone").assertIsDisplayed()
         composeTestRule.onNodeWithText("USB-connected radio").assertIsDisplayed()
         composeTestRule.onNodeWithText("Bluetooth-connected radio").assertIsDisplayed()
-        // R-1087: the fixed total grew from 8 to 10; MODE's own position (1) is unchanged.
-        composeTestRule.onNodeWithText("1 of $SETUP_TOTAL_STEPS").assertIsDisplayed()
+        // P39: the denominator is derived now, and this is stage 1 of it.
+        composeTestRule.onNodeWithText("1 of $SETUP_STEPS_WITHOUT_DOWNLOAD").assertIsDisplayed()
+    }
+
+    /**
+     * **AC-204**: the microphone rationale is on the surface that asks for it, and there is no
+     * dedicated explainer step preceding the system dialog. This screen is that surface — the tap
+     * fires the request — so the rationale has to be *here* or it is nowhere.
+     *
+     * Asserted through the stable tag rather than the wording (constitution II), plus one property of
+     * the wording that is not a matter of taste: it names the microphone, which is the word Android's
+     * own dialog will use, and the operator has to recognise what they are being asked for.
+     */
+    @Test
+    fun `AC_204 the microphone rationale rides on the mode surface, which is what fires the request`() {
+        composeTestRule.setContent {
+            OrtTheme { ModeScreen(onChoose = {}) }
+        }
+
+        composeTestRule.onNodeWithTag("setup-mode-microphone-rationale").assertIsDisplayed()
+        assert(MICROPHONE_RATIONALE.contains("microphone")) {
+            "the rationale must name what the system dialog will call it, got: $MICROPHONE_RATIONALE"
+        }
+    }
+
+    /**
+     * D58's *"three rows presented over the destination, no Continue, a tap advances"*. A confirm step
+     * for a choice the operator has already made is one more page in a flow whose whole complaint was
+     * that it had too many — and a lit `Continue` beside three tappable rows is also two ways to do
+     * one thing. Asserted as the absence of any primary at all on this screen.
+     */
+    @Test
+    fun `AC_198 the mode screen has no Continue at all -- a tap is the answer`() {
+        composeTestRule.setContent {
+            OrtTheme { ModeScreen(onChoose = {}) }
+        }
+
+        composeTestRule.onNodeWithText("Continue").assertDoesNotExist()
     }
 
     @Test

@@ -1015,7 +1015,7 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   (publishing is a release action for the lead/operator, not a builder fix) — see this unit's own
   CHANGELOG entry for the full per-asset table and what remains open.
 
-- [ ] **P39 · Onboarding cut to four steps** *(`:app` `ui/setup`, `MainActivity`)* — D58,
+- [x] **P39 · Onboarding cut to four steps** *(`:app` `ui/setup`, `MainActivity`)* — D58,
   AC-198..204, AC-166/180/189 (all amended), R-1166, R-1167, R-1170, R-1172. **Beta blocker, and
   the flow the operator actually has to walk.** Rebuild first-run setup to D58's sequence: Welcome
   (one line, the FR-ANL-14 sentence once, the jurisdiction and analytics acknowledgements folded
@@ -1070,6 +1070,21 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   shape here — screens merge — so the boards are part of this unit, not a follow-up, and the
   now-unreachable ones are deleted rather than left to rot. Depends on the R-1161 loop fix and the
   R-1170 always-lit-Continue change landing first; those are separable and are in flight.
+
+  **Done 2026-09-23** — the ladder is `WELCOME → MODE → LISTEN → READY`, with `MODELS` only when a
+  download is owed; `stepFor` is non-null and `READY` is no longer behind the `setupComplete` latch;
+  `refreshStep`'s hand-back branch and `MainActivity`'s overnight detour are both gone (AC-199).
+  AC-198..204 each have a test named for them, each shown to fail for the right reason first. R-1170's
+  second half (`levelAcknowledged`) and R-1179's own fix (`DebugBluetoothPermissionOverride`, plus a
+  step-mismatch guard in the tour runner that re-checks immediately before `drawToBitmap`) landed with
+  it. **Also caught and fixed here, reported by the log-header builder:** removing the frequency prompt
+  would have made `SetupCaptureConfigurationAdapter` push `null` over the operator's own value on every
+  later setup entry — the adapter now carries it through from `CaptureConfigurationStore` and
+  `SetupStore.manualFrequencyHz` is deleted. **Still open, and both are capture-surface work this unit
+  does not own:** the *Keep capture running* prompt on the first missed heartbeat (`SetupStep.OVERNIGHT`
+  and its screen are kept and reachable by `EXTRA_STEP` so it has somewhere to land) and the log
+  header's own frequency editor. The visual re-verification is the lead's: see this unit's CHANGELOG
+  entry for which boards changed, which are new and which were deleted.
 
 **Waves M-Q — planned, expanded into prompts when each wave starts.** **M** UI honesty sweep
 (hide the unreachable Improve destination, share from the open screen, an alert refusal must not

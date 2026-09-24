@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.OrtIcons
+import org.ort.app.ui.components.TextAction
 import org.ort.app.ui.components.safeAreaBottomPadding
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -126,12 +127,32 @@ public fun SetupScaffold(
     subtitle: String,
     onBack: (() -> Unit)?,
     modifier: Modifier = Modifier,
+    /** P39 (D58): the indicator's denominator, which is finally a true one — 3 when every required
+     * model is present and 4 when one must be downloaded ([setupTotalSteps]), both knowable at launch
+     * so it never moves mid-run. Defaulted to the no-download case so a screen-level test that is not
+     * about the indicator does not have to know it exists; [SetupActivity] always passes the real
+     * value. This replaces R-1087's `SETUP_TOTAL_STEPS`, a fixed 10 deliberately larger than any real
+     * run, which is what made the old flow read "4 of 10" to an operator two taps from the end. */
+    totalSteps: Int = SETUP_STEPS_WITHOUT_DOWNLOAD,
     titleOptional: Boolean = false,
     titleTrailing: (@Composable () -> Unit)? = null,
     /** R-903: a small composable rendered before the title text, centre-aligned against it — S11's
      * own 9dp connected marker (`Setup-Rig-Verified.dc.html`), never used by an existing caller
      * (`null` default), so every screen but S11 renders exactly as before this parameter existed. */
     titleLeading: (@Composable () -> Unit)? = null,
+    /**
+     * **AC-200 / R-1162**: the exit every step reachable *after* setup has once completed must carry.
+     * Non-null renders a centred *Back to the app* action beneath whatever [bottomActions] the screen
+     * supplied; `null` (the default, and the whole of a genuine first run) renders nothing, because on
+     * a fresh install there is nowhere to return *to* and an exit there would itself loop.
+     *
+     * It lives here rather than on each screen deliberately. R-1162 shipped this exit on exactly one
+     * screen — the one whose trap had been reported — and its own row notes that the rule "generalises
+     * past `OVERNIGHT`… and that set should be enumerated rather than assumed to be one screen". One
+     * slot on the shared scaffold is that enumeration: every step that renders through this scaffold
+     * gets the exit on the same condition, and no future step can be added without it.
+     */
+    onExitToApp: (() -> Unit)? = null,
     bottomActions: @Composable ColumnScope.() -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -153,32 +174,7 @@ public fun SetupScaffold(
         // Content second with a hard maxHeight -- not the three-slot version that still clipped on
         // device (this file's own class doc has the full account).
         val barPlaceables = subcompose(SetupScaffoldSlot.Bar) {
-            Column(
-                // R-1003 (halt, Oppo Find X9 Ultra): this block used to reserve no space at all
-                // below its own buttons, so it rendered flush against -- and partly behind -- the
-                // navigation bar / gesture pill. `safeAreaBottomPadding()` (`ui/components/
-                // SafeArea.kt`) is applied here, to the bar's own `Column`, so the extra space folds
-                // straight into `barHeightPx` below -- the same measured value the trailing spacer
-                // (R-940, this function's own doc comment) already uses, with no second mechanism.
-                // R-1018 (register, device pass 2): the mechanism itself is correct -- this padding
-                // sits *inside* `safeAreaBottomPadding()`, so the real navigation-bar inset is added
-                // on top of it, never absorbing it (design-guide §10.1's own rule, confirmed
-                // unaffected by this fix) -- the bottom value alone was wrong: `OrtSpacing.md` (12dp)
-                // where the board specifies 24dp of design spacing "between the last control and the
-                // edge of the safe area" (§10.1). The top edge (space above the bar, between it and
-                // the scrollable content) is a different concern §10.1 says nothing about, so it
-                // keeps `OrtSpacing.md` unchanged.
-                modifier = Modifier.fillMaxWidth()
-                    .padding(
-                        start = OrtSpacing.lg,
-                        end = OrtSpacing.lg,
-                        top = OrtSpacing.md,
-                        bottom = BAR_BOTTOM_SAFE_AREA_SPACING,
-                    )
-                    .safeAreaBottomPadding(),
-                verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
-                content = bottomActions,
-            )
+            ScaffoldActionBar(onExitToApp = onExitToApp, bottomActions = bottomActions)
         }.map { it.measure(looseConstraints) }
         val barHeightPx = barPlaceables.maxOfOrNull { it.height } ?: 0
         // R-940 (register, reviewer A3 run 4a): the pinned action block's own real height, as
@@ -215,10 +211,10 @@ public fun SetupScaffold(
                         .background(OrtColors.bgScreen)
                         .testTag("setup-scaffold-header"),
                 ) {
-                    ScaffoldHeaderRow(step = step, onBack = onBack)
-                    step.indicatorIndex()?.let { index ->
+                    ScaffoldHeaderRow(step = step, totalSteps = totalSteps, onBack = onBack)
+                    step.indicatorIndex(totalSteps)?.let { index ->
                         SegmentBars(
-                            steps = SETUP_TOTAL_STEPS,
+                            steps = totalSteps,
                             currentStep = index,
                             haltedStep = if (step.isHalted()) index else null,
                             modifier = Modifier
@@ -250,6 +246,47 @@ public fun SetupScaffold(
 }
 
 private enum class SetupScaffoldSlot { Content, Bar }
+
+/**
+ * The pinned action block — split out of [SetupScaffold] purely to keep that function under detekt's
+ * `LongMethod` ceiling, the same reason [ScaffoldHeaderRow]/[ScaffoldTitleRow]/[SegmentBars] already
+ * are; no state or behaviour of its own.
+ *
+ * R-1003 (halt, Oppo Find X9 Ultra): this block used to reserve no space at all below its own
+ * buttons, so it rendered flush against — and partly behind — the navigation bar / gesture pill.
+ * `safeAreaBottomPadding()` is applied to the bar's own `Column`, so the extra space folds straight
+ * into `barHeightPx` in [SetupScaffold], the same measured value the trailing spacer (R-940) already
+ * uses, with no second mechanism. R-1018 (register, device pass 2): that mechanism was correct — the
+ * padding sits *inside* `safeAreaBottomPadding()`, so the real navigation-bar inset is added on top
+ * of it, never absorbing it (design-guide §10.1) — only the bottom value was wrong: `OrtSpacing.md`
+ * (12 dp) where the board specifies 24 dp "between the last control and the edge of the safe area".
+ * The top edge is a different concern §10.1 says nothing about, so it keeps `OrtSpacing.md`.
+ */
+@Composable
+private fun ScaffoldActionBar(onExitToApp: (() -> Unit)?, bottomActions: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .padding(
+                start = OrtSpacing.lg,
+                end = OrtSpacing.lg,
+                top = OrtSpacing.md,
+                bottom = BAR_BOTTOM_SAFE_AREA_SPACING,
+            )
+            .safeAreaBottomPadding(),
+        verticalArrangement = Arrangement.spacedBy(OrtSpacing.sm),
+    ) {
+        bottomActions()
+        if (onExitToApp != null) {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                TextAction(
+                    text = "Back to the app",
+                    onClick = onExitToApp,
+                    modifier = Modifier.testTag("setup-exit-to-app"),
+                )
+            }
+        }
+    }
+}
 
 /** The title/subtitle pair (+ optional trailing composable) — split out of [SetupScaffold] itself
  * purely to keep it under detekt's `LongMethod` threshold, the same reason [ScaffoldHeaderRow]/
@@ -307,7 +344,7 @@ private fun ScaffoldTitleRow(
  * fix this counter is half of. Split out purely to keep [SetupScaffold] itself under detekt's
  * `LongMethod` threshold; it has no state or behaviour of its own worth documenting separately. */
 @Composable
-private fun ScaffoldHeaderRow(step: SetupStep, onBack: (() -> Unit)?) {
+private fun ScaffoldHeaderRow(step: SetupStep, totalSteps: Int, onBack: (() -> Unit)?) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -331,9 +368,9 @@ private fun ScaffoldHeaderRow(step: SetupStep, onBack: (() -> Unit)?) {
             }
         }
         Row(modifier = Modifier.weight(1f)) {}
-        val index = step.indicatorIndex()
+        val index = step.indicatorIndex(totalSteps)
         if (index != null) {
-            Text(text = "$index of $SETUP_TOTAL_STEPS", style = OrtType.signal, color = OrtColors.textDim)
+            Text(text = "$index of $totalSteps", style = OrtType.signal, color = OrtColors.textDim)
         }
     }
 }

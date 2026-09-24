@@ -69,22 +69,22 @@ public class FakeOvernightSurvivalChecker(@Volatile public var proven: Boolean =
 }
 
 /**
- * **R-1161** (register; AC-189, constitution IV) — whether the overnight step has already been put
- * in front of the operator **in this process**. A process-wide holder in exactly the shape
- * `CaptureState`/`LevelStatus` already establish for this codebase (`:pipeline`), and for the same
- * reason: the fact is true of the running process, not of the device, so it deliberately does not
- * belong in [SetupStore] — persisting it would silence AC-189's "reappears on every relevant
- * subsequent launch".
+ * **R-1161** — whether the overnight prompt has already been put in front of the operator **in this
+ * process**. A process-wide holder in exactly the shape `CaptureState`/`LevelStatus` already
+ * establish for this codebase (`:pipeline`), and for the same reason: the fact is true of the
+ * running process, not of the device, so it deliberately does not belong in [SetupStore] —
+ * persisting it would silence AC-189's "reappears on every relevant subsequent launch".
  *
- * It exists because AC-189's reappearance and R-1104's refusal-to-start-capture are two different
- * things, and conflating them deadlocked the app: `hasProvenSurvival()` can only ever be satisfied
- * by a recorded session, only `MainActivity.startCaptureAndShowStatus()` records one, and that was
- * the branch the refusal never took. `MainActivity.overnightSurvivalStillUnproven` reads and sets
- * this so the detour happens **at most once per process** and capture is never refused a second
- * time — the nag stays, the block goes.
+ * **P39 (D58, AC-199): nothing reads this today, and that is the point.** It existed to bound the
+ * router's detour to once per process, because the detour itself could otherwise loop. The detour is
+ * gone — `MainActivity` no longer diverts a launch for overnight survival at all, which is the
+ * structural half of R-1161's fix — so there is nothing left to bound. It is kept rather than deleted
+ * because the *Keep capture running* prompt D58 names as the ask's new home (first missed heartbeat,
+ * a capture-status surface outside this change's ownership) needs exactly this "have we already asked
+ * this process?" fact, and rebuilding it there from scratch would be rebuilding the reasoning above
+ * too. If that surface lands and does not use it, delete it then and say so.
  *
- * [reset] is a test seam and nothing else: a leaked static between tests is its own defect, and
- * `MainActivityTest` resets on both sides of every test.
+ * [reset] is a test seam and nothing else: a leaked static between tests is its own defect.
  */
 internal object OvernightNagState {
 

@@ -92,12 +92,19 @@ public data class ReadyViewState(val rows: List<ReadyRow>)
  * which parts of the tree each one clears and rebuilds versus leaves to [KeyValueRow] natively.
  */
 @Composable
-public fun ReadyScreen(state: ReadyViewState, onStartCapture: () -> Unit) {
+public fun ReadyScreen(
+    state: ReadyViewState,
+    onStartCapture: () -> Unit,
+    totalSteps: Int = SETUP_STEPS_WITHOUT_DOWNLOAD,
+    onExitToApp: (() -> Unit)? = null,
+) {
     SetupScaffold(
         step = SetupStep.READY,
+        totalSteps = totalSteps,
         title = "Ready",
         subtitle = "Everything below can be changed later in Settings",
         onBack = null,
+        onExitToApp = onExitToApp,
         bottomActions = {
             PrimaryButton(
                 text = "Start capture",
@@ -364,12 +371,25 @@ public data class ReadyActions(
  * radio choice, live [batteryExempt] (`PowerManager.isIgnoringBatteryOptimizations`, diagnostic
  * only per constitution IV), [rigStatus] and [asrState]. Pure and unit-testable without a screen.
  */
+@Suppress("LongParameterList") // P39 added the one parameter that pushed this to six -- see its own
+// doc comment for why the value cannot simply be read from `store` any more.
 public fun readyRowsFor(
     store: SetupStore,
     overnightState: OvernightSurvivalState,
     rigStatus: RigStatus.State,
     modelsState: ModelsViewState,
     actions: ReadyActions,
+    /**
+     * **P39 (AC-202, R-1167): the manual frequency, read from the store that now owns it.**
+     *
+     * It used to come from `SetupStore.manualFrequencyHz`, which this change deletes: the prompt moved
+     * to the log's own header, so setup stopped being the thing that knows the answer, and a second
+     * copy that nothing writes would have rendered "No radio · frequency by hand" beside a log full of
+     * overs labelled with a real one. `org.ort.pipeline.rig.CaptureConfigurationStore` — the store
+     * `RealCaptureService` itself reads at session start — is the source of truth; the caller passes
+     * what it holds. `null` when nothing has ever been entered, never a fabricated 0.
+     */
+    manualFrequencyHz: Long?,
 ): List<ReadyRow> = listOf(
     modeRow(store, actions.onChangeMode),
     ReadyRow(
@@ -382,7 +402,7 @@ public fun readyRowsFor(
     ),
     levelRow(store, actions.onFixLevel),
     overnightRow(overnightState, actions.onFixOvernight),
-    radioRow(store, rigStatus, actions.onFixRadio, actions.onChangeRadio),
+    radioRow(store, rigStatus, manualFrequencyHz, actions.onFixRadio, actions.onChangeRadio),
     modelsRow(modelsState, actions.onInstallModel),
 )
 
@@ -484,12 +504,13 @@ private fun levelRow(store: SetupStore, onFixLevel: () -> Unit): ReadyRow {
 private fun radioRow(
     store: SetupStore,
     rigStatus: RigStatus.State,
+    manualFrequencyHz: Long?,
     onFixRadio: () -> Unit,
     onChangeRadio: () -> Unit,
 ): ReadyRow = when (store.radioChoice) {
     RadioChoice.NONE, null -> ReadyRow(
         label = "Radio",
-        value = store.manualFrequencyHz?.let { "No radio · %.3f MHz by hand".format(it / 1_000_000.0) }
+        value = manualFrequencyHz?.let { "No radio · %.3f MHz by hand".format(it / 1_000_000.0) }
             ?: "No radio · frequency by hand",
         ok = true,
         statusText = null,

@@ -53,12 +53,14 @@ public fun RouteMismatchScreen(
     onChooseAnotherInput: () -> Unit,
     onTryAgain: () -> Unit,
     onBack: (() -> Unit)? = null,
+    onExitToApp: (() -> Unit)? = null,
 ) {
     SetupScaffold(
         step = SetupStep.ROUTE_MISMATCH,
         title = "That is not the radio",
         subtitle = "Capture will not start on this route",
         onBack = onBack,
+        onExitToApp = onExitToApp,
         bottomActions = {
             PrimaryButton(
                 text = "Choose another input",

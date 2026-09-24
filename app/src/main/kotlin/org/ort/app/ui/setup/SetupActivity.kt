@@ -153,6 +153,14 @@ public class SetupActivity : ComponentActivity() {
     private var verifyState by mutableStateOf<RouteCheckState?>(null)
     private var verifyRunToken by mutableStateOf(0)
 
+    /** P39: whether the operator has actually asked for a route check on [SetupStep.LISTEN]. Separate
+     * from [verifyState] because the first emission is not instantaneous — without it the checklist
+     * would flicker into existence a frame after the tap, which reads as the button having done
+     * nothing. `false` on a cold resume, so a screen the operator has only ever scrolled shows the
+     * route list alone rather than four empty rings (constitution I: never a checklist for a check
+     * nobody started). */
+    private var verifyRequested by mutableStateOf(false)
+
     private var levelState by mutableStateOf<LevelCheckState?>(null)
     private var levelRunToken by mutableStateOf(0)
 
@@ -244,9 +252,27 @@ public class SetupActivity : ComponentActivity() {
      * `null` until [SetupStore.captureMode] is set). [CaptureConfigurationStore.update] itself
      * decides pending-vs-immediate from whether capture is running (FR-CAP-12) — this call site
      * never needs to know which. */
-    private fun syncCaptureConfiguration() {
-        SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)?.let(captureConfigStore::update)
+    private fun syncCaptureConfiguration(manualFrequencyHz: Long? = inForceManualFrequencyHz()) {
+        SetupCaptureConfigurationAdapter
+            .toCaptureConfiguration(store, manualFrequencyHz)
+            ?.let(captureConfigStore::update)
     }
+
+    /**
+     * **R-1167/AC-202: the frequency the operator actually set, wherever they set it.**
+     *
+     * `CaptureConfigurationStore.update` replaces the whole configuration, so every sync has to carry
+     * this field through or destroy it. Since P39 moved the prompt to the log's own header, that store
+     * — not [SetupStore] — is the source of truth, and re-entering setup must leave what is there
+     * alone.
+     *
+     * The pending configuration is preferred over the current one deliberately. `update` writes to
+     * *pending* while capture is running (FR-CAP-12, AC-131: a change applies at the next session), so
+     * an operator who edits the frequency mid-session and then opens setup would otherwise have that
+     * edit silently replaced by the value the running session started with.
+     */
+    private fun inForceManualFrequencyHz(): Long? =
+        (captureConfigStore.pendingConfiguration() ?: captureConfigStore.current()).manualFrequencyHz
 
     /** The chosen rig's [RigCatalogueEntry], recovered from [SetupStore.rigId] rather than kept as
      * its own in-memory field — so a process death between S09 and S09b/S10b resumes correctly
@@ -365,11 +391,31 @@ public class SetupActivity : ComponentActivity() {
             micPermanentlyDenied(),
             currentSnapshot(),
         )
-        if (naturalNext != null && requested.ordinal > naturalNext.ordinal) return false
+        if (!requestIsHonourable(requested, naturalNext)) return false
         step = requested
-        if (requested == SetupStep.INPUT && inputRoutes.isEmpty()) refreshInputRoutes()
+        if (requested == SetupStep.LISTEN && inputRoutes.isEmpty()) refreshInputRoutes()
         if (requested == SetupStep.RIG_TRANSPORT) applyPresetRigTransportIfUnselected()
         return true
+    }
+
+    /**
+     * Whether an [EXTRA_STEP] request may be honoured: it must be at or before the natural resume
+     * point, **or** a live sub-state of the very stage we would resume on anyway.
+     *
+     * The second clause is not a loosening, and P39 made it necessary rather than merely tidy. The old
+     * ladder gave every screen its own ordinal, so `ROUTE_MISMATCH` sat between `VERIFY` and `LEVEL`
+     * and a request for it was honoured whenever the resume point was `LEVEL` or later. With
+     * `INPUT`/`VERIFY`/`LEVEL` merged into [SetupStep.LISTEN], a bare ordinal comparison refuses
+     * `ROUTE_MISMATCH` for exactly the operator it exists for — one whose route has just failed, so
+     * whose natural resume point *is* `LISTEN`. Comparing stages instead says what was always meant:
+     * a request can offer a reconfiguration entry into an already-valid sequence, and a halt reachable
+     * from the stage you are on is part of that stage, never a way around a verification.
+     */
+    private fun requestIsHonourable(requested: SetupStep, naturalNext: SetupStep): Boolean {
+        if (requested.ordinal <= naturalNext.ordinal) return true
+        val total = currentTotalSteps()
+        val stage = requested.indicatorIndex(total) ?: return false
+        return stage == naturalNext.indicatorIndex(total)
     }
 
     /**
@@ -381,8 +427,37 @@ public class SetupActivity : ComponentActivity() {
      */
     private fun currentSnapshot(): SetupSnapshot {
         val modelsState = ModelsController.currentState(this)
-        return store.snapshot().copy(requiredModelsInstalled = modelsState.rowsRequiringDownload().isEmpty())
+        return store.snapshot().copy(
+            requiredModelsInstalled = modelsState.rowsRequiringDownload().isEmpty(),
+            rigModuleAvailable = rigModuleAvailable(),
+        )
     }
+
+    /**
+     * P39 (D58): whether the rig branch may be entered at all — *is there a rig module with a real
+     * CAT implementation to talk to?*
+     *
+     * **There is not, on any build shipped today**, and this function says so rather than pretending
+     * otherwise: `:rig-usb`'s transport is not wired to `:app` and no descriptor module has a CAT
+     * implementation behind it ([RigLinkPort]'s own doc comment), so the whole `RADIO` →
+     * `RIG_TRANSPORT` → `RIG_BLUETOOTH` branch is unreachable through [SetupStateMachine.stepFor].
+     * That is the honest rendering of the state the code is in — asking an operator which transport to
+     * use for a radio nothing can command is a wizard page that cannot be answered correctly.
+     *
+     * [DebugRigLinkPortOverride] is the seam that keeps the branch *capturable*: a debug scenario that
+     * installs a scripted link port is, for the tour's purposes, a rig module that exists, and the
+     * screens behind it are still reached by [EXTRA_STEP] regardless. When a real CAT implementation
+     * lands, this becomes a real query against the catalogue and the branch reappears with no other
+     * change to the state machine.
+     */
+    private fun rigModuleAvailable(): Boolean = DebugRigLinkPortOverride.activeOverride != null
+
+    /** P39: the indicator's denominator, derived rather than fixed — see [setupTotalSteps]. Read at
+     * composition time so a model that finishes downloading mid-run does not leave a stale total, and
+     * from the same [ModelsController] fact [currentSnapshot] gates `MODELS` on, so the count and the
+     * ladder can never disagree. */
+    private fun currentTotalSteps(): Int =
+        setupTotalSteps(ModelsController.currentState(this).rowsRequiringDownload().isEmpty())
 
     /**
      * P22 (AC-189, constitution IV): reconciles [SetupStore.overnightSurvivalProven] against real
@@ -460,6 +535,14 @@ public class SetupActivity : ComponentActivity() {
     @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        // P39: the one request that is not a gate is the first-capture-start notification ask — its
+        // answer changes nothing about which step to show, so it resumes the action it interrupted
+        // rather than re-deriving a step (which would land back on Ready and lose the press).
+        if (pendingStartCapture) {
+            pendingStartCapture = false
+            onStartCapture()
+            return
+        }
         refreshStep(pushCurrent = true)
     }
 
@@ -471,20 +554,24 @@ public class SetupActivity : ComponentActivity() {
      * a cold resume (`onCreate`/`onResume` with no user action), which must never fabricate a
      * back-stack entry the operator did not actually navigate through.
      */
+    /**
+     * **P39 (D58), the second structural rule, and the half of R-1161 that lived here.** This function
+     * used to have a `next == null` branch that set [SetupStore.setupComplete] and called
+     * [handBackToMainActivity] — setup treating *"nothing left to do"* as an instruction to hand
+     * control back to the router that had just sent it here. `MainActivity.route` could then send it
+     * straight back, and two components that each defer to the other are a cycle by construction
+     * rather than by accident.
+     *
+     * [SetupStateMachine.stepFor] is now non-null: "no gates remain" resolves to [SetupStep.READY],
+     * a real destination with a real `Start capture` press, so there is no null branch left to hand
+     * back from. This activity leaves only on an explicit operator action.
+     */
     private fun refreshStep(pushCurrent: Boolean = false) {
         val permissions = currentPermissionsState()
         val next = SetupStateMachine.stepFor(permissions, micPermanentlyDenied(), currentSnapshot())
-        if (next == null) {
-            // P28 follow-up (FR-ANL-2): the setup funnel's "step completed" event for the terminal
-            // step -- one line, no other logic added to this class.
-            SetupFunnelAnalytics.completed(SetupStep.READY.name)
-            store.setupComplete = true
-            handBackToMainActivity()
-            return
-        }
         if (pushCurrent) step?.let { if (it != next) backStack.addLast(it) }
         step = next
-        if (next == SetupStep.INPUT && inputRoutes.isEmpty()) refreshInputRoutes()
+        if (next == SetupStep.LISTEN && inputRoutes.isEmpty()) refreshInputRoutes()
         if (next == SetupStep.RIG_TRANSPORT) applyPresetRigTransportIfUnselected()
     }
 
@@ -503,39 +590,54 @@ public class SetupActivity : ComponentActivity() {
         step = previous
     }
 
-    // --- S01 Welcome --------------------------------------------------------------------------
+    // --- Welcome (AC-166, AC-180, AC-203) ---------------------------------------------------------
 
+    /**
+     * **`Begin` is the acknowledgement for all three things Welcome now carries** (P39, D58).
+     *
+     * [SetupStore.jurisdictionNoticeSeen] and [SetupStore.analyticsConsentSeen] are written here, not
+     * deleted: AC-166 and AC-180 were *amended* by D58, not dropped, and both still require the
+     * content to be shown and acknowledged before capture. Folding them onto one screen changes where
+     * the acknowledgement happens, never whether it does — and the two flags remain the record that it
+     * did, for anything downstream that asks.
+     *
+     * [SetupStore.notificationsSkipped] is set here for a different and more mechanical reason, and it
+     * is worth being explicit about it. `NOTIFICATIONS` is no longer a setup step (the ask moved to
+     * first capture start), but `MainActivity` folds this flag into `PermissionsState.notificationsGranted`
+     * and several callers of [org.ort.app.permissions.PermissionsFlow] still read that field. Writing
+     * it once, here, means "setup is not waiting on the notification permission" — which is now simply
+     * true — rather than leaving a flag nobody sets to quietly report that it is.
+     */
     internal fun onBegin() {
         store.welcomeSeen = true
-        refreshStep(pushCurrent = true)
-    }
-
-    // --- P22 Jurisdiction notice (NFR-6c, AC-166) ------------------------------------------------
-
-    internal fun onContinueJurisdictionNotice() {
         store.jurisdictionNoticeSeen = true
-        refreshStep(pushCurrent = true)
-    }
-
-    // --- P28 Analytics consent (D42, FR-ANL-10, AC-180) ---------------------------------------
-
-    /** Declining both toggles (leaving them at their default) and tapping `Continue` leaves every
-     * other function fully working — this only marks the step seen, exactly like
-     * [onContinueJurisdictionNotice] above; the toggles themselves write straight through
-     * [org.ort.app.analytics.AnalyticsAppWiring.controller] as they are flipped, not on continue. */
-    internal fun onContinueAnalyticsConsent() {
         store.analyticsConsentSeen = true
+        store.notificationsSkipped = true
         refreshStep(pushCurrent = true)
     }
 
-    // --- S00 Mode (D33, FR-CAP-8/FR-CAP-9) --------------------------------------------------------
+    /** AC-180's two toggles, one tap from Welcome. They write straight through as they are flipped —
+     * there is nothing to confirm, because nothing here gates anything (FR-ANL-10). */
+    internal fun onToggleAnalyticsTier(tier: org.ort.telemetry.AnalyticsTier, enabled: Boolean) {
+        org.ort.app.analytics.AnalyticsAppWiring.configureOnce(this)
+        org.ort.app.analytics.AnalyticsAppWiring.controller.setTierEnabled(tier, enabled)
+    }
+
+    // --- Mode (D33, FR-CAP-8/FR-CAP-9; AC-204) ----------------------------------------------------
 
     /**
      * Choosing a mode presets both independent axes (FR-CAP-9): the audio route to the first
      * enumerated route of [CaptureModePresets.presetsFor]'s preferred [org.ort.core.capture.AudioRouteKind]
-     * (present, not yet verified — S04 still walks and shows it preselected, per the board), and
-     * the rig-control transport to the preset's [org.ort.core.capture.CapturePreset.preferredRigTransportKind].
-     * Both override flags reset — a fresh mode choice starts with nothing overridden yet.
+     * (present, not yet verified — [ListenScreen] shows it preselected), and the rig-control transport
+     * to the preset's [org.ort.core.capture.CapturePreset.preferredRigTransportKind]. Both override
+     * flags reset — a fresh mode choice starts with nothing overridden yet.
+     *
+     * **AC-204: the tap also fires the system microphone dialog, directly.** There is no explainer step
+     * in front of it any more; the rationale is already on this screen
+     * ([MICROPHONE_RATIONALE]) and the request follows the choice it exists to justify. A mic that is
+     * already granted asks nothing and the flow simply advances — and a permanently denied one is
+     * caught by [SetupStateMachine.stepFor]'s own `MICROPHONE_DENIED` gate on the way through, which
+     * is a real halt rather than another ask.
      */
     internal fun onChooseMode(mode: CaptureMode) {
         store.captureMode = mode
@@ -545,6 +647,10 @@ public class SetupActivity : ComponentActivity() {
         store.rigTransport = preset.preferredRigTransportKind
         store.modeOverriddenRig = false
         syncCaptureConfiguration()
+        if (!currentPermissionsState().recordAudioGranted && !micPermanentlyDenied()) {
+            requestRecordAudio()
+            return
+        }
         refreshStep(pushCurrent = true)
     }
 
@@ -571,8 +677,11 @@ public class SetupActivity : ComponentActivity() {
         SetupFunnelAnalytics.skipped(SetupStep.BLUETOOTH_PERMISSION.name)
     }
 
-    // --- S02/S02b Microphone --------------------------------------------------------------------
+    // --- Microphone (AC-204) ----------------------------------------------------------------------
 
+    /** Fired from the mode tap ([onChooseMode]) — never from an explainer screen of its own, which
+     * P39 deleted. [SetupStore.micRequested] is the bookkeeping `shouldShowRequestPermissionRationale`
+     * alone cannot supply: it is what tells "never asked" from "denied permanently". */
     internal fun requestRecordAudio() {
         store.micRequested = true
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_CODE)
@@ -586,23 +695,7 @@ public class SetupActivity : ComponentActivity() {
         refreshStep()
     }
 
-    // --- S03 Notifications ------------------------------------------------------------------
-
-    internal fun requestNotifications() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_CODE)
-        } else {
-            refreshStep()
-        }
-    }
-
-    internal fun skipNotifications() {
-        store.notificationsSkipped = true
-        SetupFunnelAnalytics.skipped(SetupStep.NOTIFICATIONS.name)
-        refreshStep(pushCurrent = true)
-    }
-
-    // --- S04 Input ------------------------------------------------------------------------------
+    // --- Listen: routes, route check, level -------------------------------------------------------
 
     internal fun refreshInputRoutes() {
         inputRoutes = InputRouteEnumerator(this, audioIo).list()
@@ -625,11 +718,27 @@ public class SetupActivity : ComponentActivity() {
         store.selectedInputLabel = route.label
     }
 
+    /**
+     * P39: picking a *different* route than the one already verified clears the verification on the
+     * spot, which is what collapses [ListenScreen]'s route-check and level sections back down.
+     * [SetupStore.clearInputVerification] is the same call the mismatch/re-verify paths already make —
+     * constitution IV: a route the operator has since changed is exactly as unproven as one that never
+     * passed, and the merged screen makes that visible rather than leaving a green checklist sitting
+     * above a row nobody selected.
+     */
     internal fun onSelectInput(id: String) {
+        if (id != selectedInputId && store.inputVerified) {
+            store.clearInputVerification()
+            verifyState = null
+            levelState = null
+        }
         selectedInputId = id
         selectedInputLabel = inputRoutes.firstOrNull { it.id == id }?.label
     }
 
+    /** Starts the route check **in place** (P39): the checklist expands on [SetupStep.LISTEN] rather
+     * than navigating to a screen of its own. `navigateForward` is deliberately absent — there is
+     * nowhere to go. */
     internal fun onStartVerify() {
         val id = selectedInputId ?: return
         store.selectedInputId = id
@@ -637,15 +746,25 @@ public class SetupActivity : ComponentActivity() {
         store.clearInputVerification()
         syncCaptureConfiguration()
         verifyState = null
+        levelState = null
         verifyRunToken += 1
-        navigateForward(SetupStep.VERIFY)
+        verifyRequested = true
     }
 
     private fun selectedDescriptor(): AudioDeviceDescriptor? =
         audioIo.availableDevices().firstOrNull { it.id == selectedInputId }
 
-    // --- S05/S06 Verify / Route mismatch ---------------------------------------------------
+    // --- Route check and the one hard halt ---------------------------------------------------
 
+    /**
+     * **Constitution IV, unchanged by P39 and this is the load-bearing line.** A
+     * [RouteCheckState.Mismatch] still leaves [SetupStep.LISTEN] for [SetupStep.ROUTE_MISMATCH] — the
+     * one deliberate hard halt in the product. Merging the verify screen into the listen screen moved
+     * where the check is *shown*; it moved nothing about whether it blocks.
+     *
+     * A [RouteCheckState.Passed] is the only thing that ever writes [SetupStore.inputVerified], and
+     * that flag is the only gate in [SetupStateMachine.stepFor] with no acknowledged escape.
+     */
     internal fun onVerifyStateChanged(new: RouteCheckState) {
         verifyState = new
         if (new is RouteCheckState.Mismatch) {
@@ -656,27 +775,29 @@ public class SetupActivity : ComponentActivity() {
             store.verifiedResamplerIdentity = new.resamplerDescription
             // R-1169: recorded alongside the other two facts about this open, for the same reason.
             store.verifiedAudioSource = new.audioSourceLabel
+            // The level meter is only meaningful once the route is proven, and this is that moment —
+            // the third section of the merged screen starts measuring as it appears.
+            levelState = null
+            levelRunToken += 1
         }
-    }
-
-    internal fun onVerifyContinue() {
-        navigateForward(SetupStep.LEVEL)
-        levelState = null
-        levelRunToken += 1
     }
 
     internal fun onChooseAnotherInput() {
         store.clearInputVerification()
-        step = SetupStep.INPUT
+        verifyState = null
+        verifyRequested = false
+        levelState = null
+        step = SetupStep.LISTEN
     }
 
     internal fun onTryVerifyAgain() {
         verifyState = null
         verifyRunToken += 1
-        step = SetupStep.VERIFY
+        verifyRequested = true
+        step = SetupStep.LISTEN
     }
 
-    // --- S07 Level ------------------------------------------------------------------------------
+    // --- Level ----------------------------------------------------------------------------------
 
     internal fun onLevelStateChanged(new: LevelCheckState) {
         levelState = new
@@ -700,22 +821,30 @@ public class SetupActivity : ComponentActivity() {
     }
 
     /**
-     * R-1170: `Continue` here is never disabled for validation — the rule this flow now follows is
-     * keep the button lit, validate on tap, and say what is missing. A quiet band at two in the
+     * `Continue` on [SetupStep.LISTEN] — R-1170/AC-201: never disabled for validation. The rule is
+     * keep the button lit, validate on tap, and say what is missing; a quiet band at two in the
      * morning used to strand the operator with no forward, no back and no later.
      *
-     * "Validate on tap" is this: the unresolved state is **written down** rather than blocked on,
-     * so S12's Level row lights its amber `Fix` instead of the operator being told nothing. The
-     * write is explicit rather than left to whatever `onLevelStateChanged` last saw, because the
-     * case that matters is the one where it saw nothing at all (an input that never produced a
-     * reading), and a stale `levelInBand` from an earlier route must not carry a green marker past
-     * a step that never went green.
+     * "Validate on tap" is this: the unresolved state is **written down** rather than blocked on, so
+     * `Ready`'s Level row lights its amber `Fix` instead of the operator being told nothing. The write
+     * is explicit rather than left to whatever [onLevelStateChanged] last saw, because the case that
+     * matters is the one where it saw nothing at all (an input that never produced a reading), and a
+     * stale `levelInBand` from an earlier route must not carry a green marker past a step that never
+     * went green.
+     *
+     * **P39 adds the second half R-1170 asked for**: [SetupStore.levelAcknowledged]. Writing
+     * `levelInBand = false` alone was enough while the next screen was reached by `navigateForward`,
+     * which does not consult the state machine — under [refreshStep] it would route straight back
+     * here forever. The acknowledged flag is what makes "unresolved" different from "not yet reached"
+     * (see [SetupSnapshot.levelAcknowledged] for why the *route* gate has no such escape and must not
+     * gain one).
      */
-    internal fun onLevelContinue() {
+    internal fun onListenContinue() {
         if ((levelState as? LevelCheckState.Reading)?.level?.band != LevelBand.IN_BAND) {
             store.levelInBand = false
+            store.levelAcknowledged = true
         }
-        navigateForward(SetupStep.OVERNIGHT)
+        refreshStep(pushCurrent = true)
     }
 
     // --- S08 Overnight ----------------------------------------------------------------------
@@ -1020,8 +1149,12 @@ public class SetupActivity : ComponentActivity() {
     internal fun onEnterFrequency(hz: Long?) {
         if (hz == null) return
         store.radioChoice = RadioChoice.NONE
-        store.manualFrequencyHz = hz
-        syncCaptureConfiguration()
+        // P39/R-1167: the value goes to `CaptureConfigurationStore` and nowhere else. `SetupStore` no
+        // longer carries it at all — two stores holding one fact is how the log header's edit would
+        // have been silently overwritten, and a second copy nobody writes is R-1171's own pattern.
+        // Passed explicitly here because this is the one place in setup that genuinely *changes* it,
+        // as distinct from a sync that must preserve whatever is already there.
+        syncCaptureConfiguration(manualFrequencyHz = hz)
         refreshStep(pushCurrent = true)
     }
 
@@ -1057,12 +1190,40 @@ public class SetupActivity : ComponentActivity() {
         step = SetupStep.RADIO_VERIFIED
     }
 
-    // --- S12 Ready ------------------------------------------------------------------------------
+    // --- Ready ------------------------------------------------------------------------------------
 
+    /**
+     * **The notification ask lives here now (P39, D58).** `NOTIFICATIONS` was a numbered setup stage
+     * three screens before anything was captured; D58 moved it to *"the first capture start, in
+     * context, where the persistent notification is about to appear"*, and this tap is that moment.
+     *
+     * The request is fired before the hand-back, from a visible screen the operator has just acted on,
+     * so the system dialog arrives as an answer to something rather than out of a blank window.
+     * [SetupStore.notificationsAskedAtCaptureStart] makes it exactly once, whatever the operator
+     * answers: notifications never gate capture (R-002), so a refusal must cost nothing and asking a
+     * second time would be worse than not asking again. [onRequestPermissionsResult] brings us back
+     * here through [refreshStep], and this function then runs to completion.
+     */
     internal fun onStartCapture() {
+        if (shouldAskForNotifications()) {
+            store.notificationsAskedAtCaptureStart = true
+            pendingStartCapture = true
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_CODE)
+            return
+        }
         store.setupComplete = true
+        SetupFunnelAnalytics.completed(SetupStep.READY.name)
         handBackToMainActivity()
     }
+
+    private fun shouldAskForNotifications(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        !store.notificationsAskedAtCaptureStart &&
+        !granted(Manifest.permission.POST_NOTIFICATIONS)
+
+    /** Set only between firing the first-capture-start notification request and its result arriving —
+     * see [onStartCapture]. Never persisted: a process death mid-dialog leaves the operator back on
+     * `Ready` with `Start capture` still there to press, which is the honest recovery. */
+    private var pendingStartCapture: Boolean = false
 
     /**
      * S12's `Install` (`Setup-Done.dc.html`): opens [ReaderActivity] at its `SETTINGS` destination
@@ -1106,8 +1267,15 @@ public class SetupActivity : ComponentActivity() {
             // the legacy BLUETOOTH permission is normal-protection and granted at install, so this
             // reports true unconditionally rather than ever prompting (PermissionsState's own doc
             // comment).
-            bluetoothConnectGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                granted(Manifest.permission.BLUETOOTH_CONNECT),
+            // R-1179: see `DebugBluetoothPermissionOverride`'s own kdoc -- `install.ps1` grants
+            // BLUETOOTH_CONNECT for the rig-Bluetooth rows, which made the one screen whose entire
+            // purpose is to *request* it permanently unreachable. This seam lets a debug scenario make
+            // the real permission-state function report an honest absence.
+            bluetoothConnectGranted = !DebugBluetoothPermissionOverride.denied &&
+                (
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                        granted(Manifest.permission.BLUETOOTH_CONNECT)
+                    ),
         )
     }
 
@@ -1134,28 +1302,31 @@ public class SetupActivity : ComponentActivity() {
     @Suppress("CyclomaticComplexMethod")
     @Composable
     private fun RenderStep() {
+        val totalSteps = currentTotalSteps()
         when (step) {
-            SetupStep.WELCOME -> WelcomeScreen(onBegin = ::onBegin)
-            SetupStep.JURISDICTION_NOTICE -> JurisdictionNoticeScreen(onContinue = ::onContinueJurisdictionNotice)
-            SetupStep.MODE -> ModeScreen(onChoose = ::onChooseMode)
-            SetupStep.MICROPHONE -> MicrophoneScreen(onAllow = ::requestRecordAudio, onBack = ::onBack)
+            SetupStep.WELCOME -> RenderWelcome()
+            SetupStep.MODE -> ModeScreen(
+                onChoose = ::onChooseMode,
+                totalSteps = totalSteps,
+                onExitToApp = exitToAppOrNull(),
+            )
             SetupStep.MICROPHONE_DENIED -> MicrophoneDeniedScreen(
                 onOpenSettings = ::openAppSettings,
                 onCheckAgain = ::checkMicAgain,
                 onBack = ::onBack,
+                onExitToApp = exitToAppOrNull(),
             )
             SetupStep.BLUETOOTH_PERMISSION -> BluetoothPermissionScreen(
                 onAllow = ::requestBluetoothConnect,
                 onNotNow = ::onDeclineBluetoothPermission,
+                onExitToApp = exitToAppOrNull(),
             )
-            SetupStep.NOTIFICATIONS ->
-                NotificationsScreen(onAllow = ::requestNotifications, onSkip = ::skipNotifications, onBack = ::onBack)
-            SetupStep.INPUT -> RenderInput()
-            SetupStep.VERIFY -> RenderVerify()
+            SetupStep.LISTEN -> RenderListen(totalSteps)
             SetupStep.ROUTE_MISMATCH -> RenderRouteMismatch()
-            SetupStep.LEVEL -> RenderLevel()
             // R-1162: the exit appears only once setup is already complete -- see
             // onReturnToAppFromOvernight's own doc comment for why the first-run walk has none.
+            // P39: no longer reachable from `stepFor` at all (AC-189 as amended) — only from EXTRA_STEP
+            // and from Ready's own overnight row.
             SetupStep.OVERNIGHT -> OvernightScreen(
                 onOpenSetting = ::onOpenBatterySetting,
                 onSkip = ::onSkipOvernight,
@@ -1170,66 +1341,144 @@ public class SetupActivity : ComponentActivity() {
             )
             SetupStep.RIG_BLUETOOTH -> RenderRigBluetooth()
             SetupStep.RADIO_VERIFIED -> RenderRadioVerified()
-            SetupStep.MODELS -> RenderModels()
-            SetupStep.ANALYTICS_CONSENT -> RenderAnalyticsConsent()
-            SetupStep.READY -> RenderReady()
+            SetupStep.MODELS -> RenderModels(totalSteps)
+            SetupStep.READY -> RenderReady(totalSteps)
             null -> {}
         }
     }
 
-    /** P28 (D42, FR-ANL-10, AC-180). [org.ort.app.analytics.AnalyticsAppWiring.configureOnce] is
-     * idempotent and safe to call from composition — [OrtApplication.onCreate] has always already
-     * run by the time a real device reaches setup, but a Robolectric test's own `Application`
-     * (`OrtApplication`, guarded under Robolectric) never calls it, so this screen calls it itself
-     * defensively, the same way `SettingsAnalyticsPolling.current` does. */
+    /**
+     * AC-200: the exit back to the running app, supplied to every step that can be shown *after*
+     * setup has once completed and `null` on a genuine first run, where there is nowhere to return to
+     * and an exit would itself loop. One condition, one place — R-1162's own row asked for the set to
+     * be enumerated rather than assumed to be one screen, and this is that enumeration.
+     */
+    private fun exitToAppOrNull(): (() -> Unit)? = if (store.setupComplete) ::handBackToMainActivity else null
+
+    /**
+     * AC-166, AC-180, AC-203. [org.ort.app.analytics.AnalyticsAppWiring.configureOnce] is idempotent
+     * and safe to call from composition — `OrtApplication.onCreate` has always already run by the time
+     * a real device reaches setup, but a Robolectric test's own `Application` never calls it, so this
+     * calls it defensively, the same way `SettingsAnalyticsPolling.current` does.
+     */
     @Composable
-    private fun RenderAnalyticsConsent() {
+    private fun RenderWelcome() {
         org.ort.app.analytics.AnalyticsAppWiring.configureOnce(this)
         val controller = org.ort.app.analytics.AnalyticsAppWiring.controller
-        var tier2 by remember {
-            mutableStateOf(controller.isTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_2))
-        }
-        var tier3 by remember {
-            mutableStateOf(controller.isTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_3))
-        }
-        AnalyticsConsentScreen(
-            tier2Enabled = tier2,
-            tier3Enabled = tier3,
-            destinationConfigured = org.ort.app.analytics.AnalyticsAppWiring.isDestinationConfigured(),
+        var tier2 by remember { mutableStateOf(controller.isTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_2)) }
+        var tier3 by remember { mutableStateOf(controller.isTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_3)) }
+        WelcomeScreen(
+            onBegin = ::onBegin,
+            analytics = WelcomeAnalyticsState(
+                tier2Enabled = tier2,
+                tier3Enabled = tier3,
+                destinationConfigured = org.ort.app.analytics.AnalyticsAppWiring.isDestinationConfigured(),
+            ),
             onToggleTier2 = {
-                controller.setTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_2, it)
+                onToggleAnalyticsTier(org.ort.telemetry.AnalyticsTier.TIER_2, it)
                 tier2 = it
             },
             onToggleTier3 = {
-                controller.setTierEnabled(org.ort.telemetry.AnalyticsTier.TIER_3, it)
+                onToggleAnalyticsTier(org.ort.telemetry.AnalyticsTier.TIER_3, it)
                 tier3 = it
             },
-            onContinue = ::onContinueAnalyticsConsent,
         )
     }
 
+    /**
+     * **[SetupStep.LISTEN] — the merged input / verify / level screen (P39).** The two live effects
+     * that used to belong to two separate screens now run from one composable, each still keyed on its
+     * own run token so a re-verify or a re-measure restarts cleanly.
+     *
+     * R-943: [DebugRouteCheckOverride.activeOverride] is read *ahead of* ever starting the real check —
+     * the tour opens this step by a cold [EXTRA_STEP] launch, before any selection ever ran, so
+     * [selectedDescriptor] is `null` and [RealRouteCheck] would never even start. A seeded override
+     * emits once and [RealRouteCheck] never runs at all this composition.
+     *
+     * The level effect prefers a real, already-running [LevelStatus] over driving a second, competing
+     * `AudioRecord` open of its own: [LevelStatus] is published only by `RealCaptureService`, so a live
+     * [LevelStatus.State.Measured] means a real session already has this device open (an operator
+     * revisiting setup while capture runs). [LevelStatus.state] is a plain `@Volatile` field, not
+     * Compose-observable, so the poll — not a one-shot read — is what keeps the meter live.
+     */
     @Composable
-    private fun RenderInput() {
+    private fun RenderListen(totalSteps: Int) {
         val chipState = presetChipStateFor(store.captureMode, store.modeOverriddenAudio, inputRoutes)
         // R-902: the same "exactly one match" rule presetInputRouteFor's own pre-select uses --
-        // several equally-preferred routes are exactly as ambiguous for override-detection as they
-        // are for pre-selection, never treated as if the first one enumerated were "the" preset.
+        // several equally-preferred routes are exactly as ambiguous for override-detection as they are
+        // for pre-selection, never treated as if the first one enumerated were "the" preset.
         val presetRouteId = presetInputRouteFor(store.captureMode, inputRoutes)?.id
-        InputScreen(
-            state = InputViewState(
+        val verified = store.inputVerified
+        RunRouteCheckEffect()
+        if (verified) RunLevelEffect()
+        ListenScreen(
+            state = ListenViewState(
                 routes = inputRoutes,
                 selectedId = selectedInputId,
                 presetLabel = chipState.modeLabel,
                 presetUnavailableText = chipState.presetUnavailableText,
+                inputLabel = selectedInputLabel ?: "",
+                inputVerified = verified,
+                check = verifyState,
+                checkRunning = verifyRequested,
+                level = levelState,
+                gainDb = gainDb,
             ),
-            onSelect = {
-                if (isAudioRouteOverride(store.captureMode, presetRouteId, it)) store.modeOverriddenAudio = true
-                onSelectInput(it)
-            },
-            onRefresh = ::refreshInputRoutes,
-            onVerify = ::onStartVerify,
+            actions = ListenActions(
+                onSelect = {
+                    if (isAudioRouteOverride(store.captureMode, presetRouteId, it)) store.modeOverriddenAudio = true
+                    onSelectInput(it)
+                },
+                onRefresh = ::refreshInputRoutes,
+                onVerify = ::onStartVerify,
+                onContinue = ::onListenContinue,
+                onTryAgain = ::onTryVerifyAgain,
+                onChooseAnotherInput = ::onChooseAnotherInput,
+                onGainChange = ::onGainChanged,
+            ),
             onBack = ::onBack,
+            totalSteps = totalSteps,
+            onExitToApp = exitToAppOrNull(),
         )
+    }
+
+    @Composable
+    private fun RunRouteCheckEffect() {
+        val override = DebugRouteCheckOverride.activeOverride
+        val selection = selectedDescriptor()
+        if (override != null) {
+            LaunchedEffect(override) {
+                verifyRequested = true
+                onVerifyStateChanged(override)
+            }
+        } else if (selection != null && verifyRequested) {
+            LaunchedEffect(verifyRunToken) {
+                RealRouteCheck().run(audioIo, selection).collect { onVerifyStateChanged(it) }
+            }
+        }
+    }
+
+    @Composable
+    private fun RunLevelEffect() {
+        if (LevelStatus.state is LevelStatus.State.Measured) {
+            LaunchedEffect(levelRunToken) {
+                while (true) {
+                    val measured = LevelStatus.state
+                    if (measured is LevelStatus.State.Measured) {
+                        val reading = levelReadingFrom(measured, LevelStatus.peakHistoryDbfs)
+                        onLevelStateChanged(LevelCheckState.Reading(reading))
+                    }
+                    delay(LEVEL_STATUS_POLL_INTERVAL_MILLIS)
+                }
+            }
+        } else {
+            val selection = selectedDescriptor()
+            if (selection != null) {
+                LaunchedEffect(levelRunToken) {
+                    RealLevelCheck().run(audioIo, selection).collect { onLevelStateChanged(it) }
+                }
+            }
+        }
     }
 
     @Composable
@@ -1314,34 +1563,6 @@ public class SetupActivity : ComponentActivity() {
         )
     }
 
-    /**
-     * R-943 (register, reviewer A4 run 5, halt): [DebugRouteCheckOverride.activeOverride] is read
-     * *ahead of* ever starting the real check — see that object's own class kdoc for why (the tour
-     * opens this step by a cold [EXTRA_STEP] launch, before any S04 selection ever ran, so
-     * [selectedDescriptor] is `null` and [RealRouteCheck] would never even start). A seeded override
-     * emits once and [RealRouteCheck] never runs at all this composition, matching
-     * [DebugRigLinkPortOverride]'s own "override wins outright" shape in [onCreate].
-     */
-    @Composable
-    private fun RenderVerify() {
-        val override = DebugRouteCheckOverride.activeOverride
-        val selection = selectedDescriptor()
-        if (override != null) {
-            LaunchedEffect(override) { onVerifyStateChanged(override) }
-        } else if (selection != null) {
-            LaunchedEffect(verifyRunToken) {
-                RealRouteCheck().run(audioIo, selection).collect { onVerifyStateChanged(it) }
-            }
-        }
-        VerifyScreen(
-            state = VerifyViewState(inputLabel = selectedInputLabel ?: "", check = verifyState),
-            onContinue = ::onVerifyContinue,
-            onBack = ::onBack,
-            onTryAgain = ::onTryVerifyAgain,
-            onChooseAnotherInput = ::onChooseAnotherInput,
-        )
-    }
-
     /** R-222 (validator pass 2): looks up the chosen device's already-resolved
      * [InputRouteOption.typeLabel] from S04's own route list, rather than re-deriving it from the
      * coarser [org.ort.capture.android.AudioDeviceDescriptor.kind] `RouteCheckState.Mismatch`
@@ -1372,44 +1593,7 @@ public class SetupActivity : ComponentActivity() {
             onChooseAnotherInput = ::onChooseAnotherInput,
             onTryAgain = ::onTryVerifyAgain,
             onBack = ::onChooseAnotherInput,
-        )
-    }
-
-    /**
-     * S07 prefers a real, already-running [LevelStatus] over driving a second, competing
-     * `AudioRecord` open of its own: [LevelStatus] is published only by `RealCaptureService`
-     * itself, so a real [LevelStatus.State.Measured] here means a live capture session already has
-     * this device open (an operator revisiting setup while capture runs, or re-verifying after a
-     * mismatch). [LevelStatus.state] is a plain `@Volatile` field, not Compose-observable state, so
-     * the poll below (not a one-shot read) is what keeps the meter live — [RealLevelCheck] remains
-     * the path for the ordinary first-run case, where nothing has published anything yet.
-     */
-    @Composable
-    private fun RenderLevel() {
-        if (LevelStatus.state is LevelStatus.State.Measured) {
-            LaunchedEffect(levelRunToken) {
-                while (true) {
-                    val measured = LevelStatus.state
-                    if (measured is LevelStatus.State.Measured) {
-                        val reading = levelReadingFrom(measured, LevelStatus.peakHistoryDbfs)
-                        onLevelStateChanged(LevelCheckState.Reading(reading))
-                    }
-                    delay(LEVEL_STATUS_POLL_INTERVAL_MILLIS)
-                }
-            }
-        } else {
-            val selection = selectedDescriptor()
-            if (selection != null) {
-                LaunchedEffect(levelRunToken) {
-                    RealLevelCheck().run(audioIo, selection).collect { onLevelStateChanged(it) }
-                }
-            }
-        }
-        LevelScreen(
-            state = levelState,
-            onContinue = ::onLevelContinue,
-            gainDb = gainDb,
-            onGainChange = ::onGainChanged,
+            onExitToApp = exitToAppOrNull(),
         )
     }
 
@@ -1458,10 +1642,12 @@ public class SetupActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun RenderReady() {
+    private fun RenderReady(totalSteps: Int) {
         val actions = ReadyActions(
-            onFixInput = { step = SetupStep.INPUT },
-            onFixLevel = { step = SetupStep.LEVEL },
+            // P39: Input and Level are one screen now, so both amber rows lead to the same place —
+            // which is also where an operator who has to fix either one would have to end up anyway.
+            onFixInput = { step = SetupStep.LISTEN },
+            onFixLevel = { step = SetupStep.LISTEN },
             onFixOvernight = { step = SetupStep.OVERNIGHT },
             onFixRadio = { step = SetupStep.RADIO },
             // R-285: the same clear-then-navigate callback S11's own "Change radio" already uses
@@ -1478,8 +1664,22 @@ public class SetupActivity : ComponentActivity() {
             batteryExemptDiagnostic = batteryExempt(),
             survivalProven = store.overnightSurvivalProven,
         )
-        val rows = readyRowsFor(store, overnightState, rigStatusSnapshot, modelsState, actions)
-        ReadyScreen(state = ReadyViewState(rows), onStartCapture = ::onStartCapture)
+        val rows = readyRowsFor(
+            store,
+            overnightState,
+            rigStatusSnapshot,
+            modelsState,
+            actions,
+            // P39/R-1167: from the store that owns it now, not from SetupStore -- see
+            // inForceManualFrequencyHz's own doc comment.
+            manualFrequencyHz = inForceManualFrequencyHz(),
+        )
+        ReadyScreen(
+            state = ReadyViewState(rows),
+            onStartCapture = ::onStartCapture,
+            totalSteps = totalSteps,
+            onExitToApp = exitToAppOrNull(),
+        )
     }
 
     /** P22 (D43, FR-AST-10..12) — `SetupStep.MODELS`: whatever the detected tier requires that
@@ -1490,7 +1690,7 @@ public class SetupActivity : ComponentActivity() {
      * other forward action in this class — [SetupStateMachine.stepFor]'s own `requiredModelsInstalled`
      * gate is the one true authority on whether this step is actually done. */
     @Composable
-    private fun RenderModels() {
+    private fun RenderModels(totalSteps: Int) {
         var wifiOnly by remember { mutableStateOf(true) }
         var rows by remember { mutableStateOf(initialModelsSetupRows(this)) }
         LaunchedEffect(Unit) {
@@ -1504,6 +1704,8 @@ public class SetupActivity : ComponentActivity() {
             onDownload = { id -> ModelDownloadWorker.start(this, id, wifiOnly) },
             onToggleWifiOnly = { wifiOnly = it },
             onContinue = { refreshStep(pushCurrent = true) },
+            totalSteps = totalSteps,
+            onExitToApp = exitToAppOrNull(),
         )
     }
 

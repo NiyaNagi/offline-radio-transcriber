@@ -22,16 +22,11 @@ class MicrophoneScreensTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    @Test
-    fun `R_080 MicrophoneScreen shows Allow microphone and invokes onAllow`() {
-        var allowed = false
-        composeTestRule.setContent {
-            OrtTheme { MicrophoneScreen(onAllow = { allowed = true }) }
-        }
-        composeTestRule.onNodeWithText("Microphone").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("setup-mic-allow").performClick()
-        assert(allowed)
-    }
+    // R-080's `MicrophoneScreen shows Allow microphone and invokes onAllow` is **deleted, not
+    // skipped** (P39, D58, AC-204): the explainer screen it covered no longer exists. The system
+    // dialog is fired straight from the mode tap, and the behaviour that replaced this test is
+    // `SetupActivityTest`'s `AC_204 ...` — that choosing a mode requests RECORD_AUDIO with no screen
+    // in between, and `ModeScreenTest`'s that the rationale is on the surface doing the asking.
 
     @Test
     fun `R_085 MicrophoneDeniedScreen shows the halt banner and both actions`() {
@@ -92,6 +87,10 @@ class MicrophoneScreensTest {
         composeTestRule.setContent {
             OrtTheme { MicrophoneDeniedScreen(onOpenSettings = {}, onCheckAgain = {}) }
         }
-        composeTestRule.onNodeWithContentDescription("Step 2 of 10, halted at step 2").assertIsDisplayed()
+        // P39: the denied microphone halts the stage the ask belongs to — the mode surface, stage 1 —
+        // against the derived denominator rather than R-1087's fixed 10.
+        composeTestRule
+            .onNodeWithContentDescription("Step 1 of $SETUP_STEPS_WITHOUT_DOWNLOAD, halted at step 1")
+            .assertIsDisplayed()
     }
 }

@@ -23,8 +23,10 @@ class BluetoothPermissionScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
+    // P39: the Bluetooth permission belongs to the stage the mode was chosen on — segment 1 of 3 (or
+    // 4), not a numbered stage of its own, and against a denominator that is finally a true count.
     @Test
-    fun `E2_E07 renders the rationale, the decline banner and counter 2 of 10`() {
+    fun `E2_E07 renders the rationale, the decline banner and its own stage counter`() {
         composeTestRule.setContent {
             OrtTheme { BluetoothPermissionScreen(onAllow = {}, onNotNow = {}) }
         }
@@ -32,7 +34,7 @@ class BluetoothPermissionScreenTest {
         composeTestRule.onNodeWithText("Nearby devices").assertIsDisplayed()
         // R-1087: MODELS and ANALYTICS_CONSENT each gained their own indicator position, so the
         // fixed total grew from 8 to 10 — this step's own position (2) is unchanged.
-        composeTestRule.onNodeWithText("2 of $SETUP_TOTAL_STEPS").assertIsDisplayed()
+        composeTestRule.onNodeWithText("1 of $SETUP_STEPS_WITHOUT_DOWNLOAD").assertIsDisplayed()
         composeTestRule.onNodeWithTag("setup-bt-permission-decline-banner").performScrollTo().assertIsDisplayed()
     }
 

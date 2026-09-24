@@ -8,16 +8,19 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /** R-081 (ui-conformance-plan WP9) — `Setup-Input.dc.html` (S04). */
 @RunWith(RobolectricTestRunner::class)
+// P39: the merged Listen screen is genuinely taller than Robolectric's 320x470dp default, so these
+// assertions are made at the tour's own geometry rather than at a viewport no real device has.
+@Config(qualifiers = "w390dp-h844dp-420dpi")
 class InputScreenTest {
 
     @get:Rule
@@ -50,11 +53,16 @@ class InputScreenTest {
         var selected: String? = null
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(usb, mic), selectedId = null),
-                    onSelect = { selected = it },
-                    onRefresh = {},
-                    onVerify = {},
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb, mic), selectedId = null),
+                    actions = ListenActions(
+                        onSelect = { selected = it },
+                        onRefresh = {},
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
@@ -77,18 +85,23 @@ class InputScreenTest {
         var verified = false
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(usb, mic), selectedId = null),
-                    onSelect = {},
-                    onRefresh = {},
-                    onVerify = { verified = true },
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb, mic), selectedId = null),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = { verified = true },
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
 
         composeTestRule.onNodeWithTag("setup-input-verify").assertIsEnabled().performClick()
         assert(!verified) // the gate still holds -- lit is not the same as permissive
-        composeTestRule.onNodeWithTag("setup-input-validation").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-listen-validation").assertIsDisplayed()
     }
 
     /** R-1170: the accessibility half — the notice is a live region, so TalkBack announces it the
@@ -97,17 +110,22 @@ class InputScreenTest {
     fun `R_1170 the notice is a live region a screen reader announces`() {
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(usb, mic), selectedId = null),
-                    onSelect = {},
-                    onRefresh = {},
-                    onVerify = {},
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb, mic), selectedId = null),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
 
         composeTestRule.onNodeWithTag("setup-input-verify").performClick()
-        composeTestRule.onNodeWithTag("setup-input-validation")
+        composeTestRule.onNodeWithTag("setup-listen-validation")
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.LiveRegion, LiveRegionMode.Assertive))
     }
 
@@ -117,16 +135,21 @@ class InputScreenTest {
     fun `R_1170 no notice is shown before the primary has been tapped`() {
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(usb, mic), selectedId = null),
-                    onSelect = {},
-                    onRefresh = {},
-                    onVerify = {},
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb, mic), selectedId = null),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
 
-        composeTestRule.onNodeWithTag("setup-input-validation").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("setup-listen-validation").assertDoesNotExist()
     }
 
     /** R-1170: the notice clears itself once the missing thing is supplied, and the primary then
@@ -136,18 +159,23 @@ class InputScreenTest {
         var verified = false
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(usb, mic), selectedId = "usb-1"),
-                    onSelect = {},
-                    onRefresh = {},
-                    onVerify = { verified = true },
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb, mic), selectedId = "usb-1"),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = { verified = true },
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
 
         composeTestRule.onNodeWithTag("setup-input-verify").assertIsEnabled().performClick()
         assert(verified)
-        composeTestRule.onNodeWithTag("setup-input-validation").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("setup-listen-validation").assertDoesNotExist()
     }
 
     /** R-1170: what the tap says is specific to *why* it refused — an empty enumeration is hardware
@@ -156,33 +184,46 @@ class InputScreenTest {
      * copy itself, which a designer may legitimately change tomorrow (constitution II). */
     @Test
     fun `R_1170 inputValidationMessage distinguishes no routes from no choice, and is null once chosen`() {
-        val none = InputViewState(routes = emptyList(), selectedId = null)
-        val unchosen = InputViewState(routes = listOf(usb, mic), selectedId = null)
-        val chosen = InputViewState(routes = listOf(usb, mic), selectedId = "usb-1")
+        val none = ListenViewState(routes = emptyList(), selectedId = null)
+        val unchosen = ListenViewState(routes = listOf(usb, mic), selectedId = null)
+        val chosen = ListenViewState(routes = listOf(usb, mic), selectedId = "usb-1")
 
-        assert(inputValidationMessage(chosen) == null)
-        assert(inputValidationMessage(none) != null)
-        assert(inputValidationMessage(unchosen) != null)
-        assert(inputValidationMessage(none) != inputValidationMessage(unchosen))
+        assert(inputValidationMessage(chosen.routes, chosen.selectedId) == null)
+        assert(inputValidationMessage(none.routes, none.selectedId) != null)
+        assert(inputValidationMessage(unchosen.routes, unchosen.selectedId) != null)
+        assert(
+            inputValidationMessage(none.routes, none.selectedId) !=
+                inputValidationMessage(unchosen.routes, unchosen.selectedId),
+        )
     }
 
-    /** R-850 (validator V8, device): the subtitle read "Which of these is the radio?" — the board's
-     * own copy is "Which of these carries the radio's audio?" (S04 asks which INPUT carries the
-     * audio, not which device the radio itself is). */
+    /**
+     * R-850 (validator V8, device) was a copy defect: the subtitle read "Which of these is the
+     * radio?" when the question is which *input* carries the radio's audio. **P39 subsumes it** — the
+     * merged screen asks the whole question in its title and labels the route list itself, and the
+     * subtitle it used to get wrong no longer exists. Retargeted from the wording (which constitution
+     * II says never to assert, and which this test was asserting) to the stable tag on the section
+     * heading, which is what actually tells the operator what the list below it is.
+     */
     @Test
-    fun `R_850 the subtitle matches the board's own copy`() {
+    fun `R_850 the route list is labelled as the inputs, not left unnamed`() {
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(usb), selectedId = null),
-                    onSelect = {},
-                    onRefresh = {},
-                    onVerify = {},
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb), selectedId = null),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
 
-        composeTestRule.onNodeWithText("Which of these carries the radio's audio?").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-listen-section-inputs").assertIsDisplayed()
     }
 
     @Test
@@ -190,11 +231,16 @@ class InputScreenTest {
         var verified = false
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(usb), selectedId = "usb-1"),
-                    onSelect = {},
-                    onRefresh = {},
-                    onVerify = { verified = true },
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb), selectedId = "usb-1"),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = { verified = true },
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
@@ -214,11 +260,16 @@ class InputScreenTest {
         var selected: String? = null
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(usb, mic), selectedId = selected),
-                    onSelect = { selected = it },
-                    onRefresh = {},
-                    onVerify = {},
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb, mic), selectedId = selected),
+                    actions = ListenActions(
+                        onSelect = { selected = it },
+                        onRefresh = {},
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
@@ -234,11 +285,16 @@ class InputScreenTest {
     fun `AC_128 a device offering only the built-in mic can still reach Verify`() {
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(mic), selectedId = "mic-0"),
-                    onSelect = {},
-                    onRefresh = {},
-                    onVerify = {},
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(mic), selectedId = "mic-0"),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
@@ -251,11 +307,16 @@ class InputScreenTest {
         var refreshed = false
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = emptyList(), selectedId = null),
-                    onSelect = {},
-                    onRefresh = { refreshed = true },
-                    onVerify = {},
+                ListenScreen(
+                    state = ListenViewState(routes = emptyList(), selectedId = null),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = { refreshed = true },
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
@@ -270,15 +331,20 @@ class InputScreenTest {
     fun `E2_E06 a non-null presetLabel renders the preset chip naming the mode`() {
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(
+                ListenScreen(
+                    state = ListenViewState(
                         routes = listOf(usb),
                         selectedId = "usb-1",
                         presetLabel = "USB-connected radio",
                     ),
-                    onSelect = {},
-                    onRefresh = {},
-                    onVerify = {},
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
@@ -290,11 +356,16 @@ class InputScreenTest {
     fun `E2_E06 a null presetLabel omits the chip entirely, eg once the operator has overridden it`() {
         composeTestRule.setContent {
             OrtTheme {
-                InputScreen(
-                    state = InputViewState(routes = listOf(usb), selectedId = "usb-1", presetLabel = null),
-                    onSelect = {},
-                    onRefresh = {},
-                    onVerify = {},
+                ListenScreen(
+                    state = ListenViewState(routes = listOf(usb), selectedId = "usb-1", presetLabel = null),
+                    actions = ListenActions(
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                    ),
                 )
             }
         }
