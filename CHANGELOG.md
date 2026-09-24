@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-24
 
-### `<pending>` — R-1186/R-1187/R-1188: the Listen screen's copy and row geometry, and the overnight screen deleted
+### `ceb73607` — R-1186/R-1187/R-1188: the Listen screen's copy and row geometry, and the overnight screen deleted
 
 **Scope:** `:app` — `ui/setup/` (`VerifyScreen.kt`, `InputScreen.kt`, `SetupStep.kt`,
 `SetupStateMachine.kt`, `SetupActivity.kt`, `ReadyScreen.kt`, `OvernightSurvival.kt`, and the
