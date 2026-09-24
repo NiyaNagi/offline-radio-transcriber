@@ -1,9 +1,11 @@
 package org.ort.data
 
 import androidx.test.core.app.ApplicationProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -122,7 +124,9 @@ public class WorkQueueTest {
         db.transmissionDao().insert(TestFixtures.transmission("TX-HANG"))
         db.transmissionDao().insert(TestFixtures.transmission("TX-OK"))
         // maxAttempts = 1: the first timeout is immediately terminal, matching AC-99's wording.
-        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        // R-1189: the virtual deadline is declared, not inherited by accident -- both lambdas below
+        // are pure `delay`/non-suspending, i.e. entirely on this test scheduler.
+        val queue = WorkQueue(db, clock, maxAttempts = 1, deadlineClock = PassDeadlineClock.VIRTUAL_FOR_TEST)
         queue.enqueue("TX-HANG", PassId.B_OFFLINE)
         queue.enqueue("TX-OK", PassId.B_OFFLINE)
 
@@ -489,7 +493,9 @@ public class WorkQueueTest {
     public fun R_426_a_deadline_timeout_is_recorded_as_its_own_outcome_not_a_generic_failure(): Unit = runTest {
         db.sessionDao().insert(TestFixtures.session())
         db.transmissionDao().insert(TestFixtures.transmission("TX-HANG"))
-        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        // R-1189: `delay(Long.MAX_VALUE / 2)` is entirely on this test scheduler, so the virtual
+        // deadline is honest here -- said explicitly rather than left to the fixture's accident.
+        val queue = WorkQueue(db, clock, maxAttempts = 1, deadlineClock = PassDeadlineClock.VIRTUAL_FOR_TEST)
         queue.enqueue("TX-HANG", PassId.B_OFFLINE)
         val item = queue.leaseBatch("run-1", limit = 10) { 100L }.single()
 
@@ -707,4 +713,128 @@ public class WorkQueueTest {
             // backoff-and-retry ever happens on its own for this regime.
             assertTrue(queue.leaseBatch("run-2", limit = 10) { 60_000L }.isEmpty())
         }
+
+    // ---- Register R-1189 (from R-1180's sweep): the deadline wraps caller-supplied code, so
+    // every caller used to decide, by accident of its fixture, whether it was a bound or a race ----
+
+    /**
+     * Register R-1189 → R-1180. [WorkQueue.runLeased] bounds `execute` with `withTimeoutOrNull`,
+     * and `execute` is **the caller's** lambda. Under `kotlinx.coroutines.test.runTest` that
+     * timeout counts *virtual* time, and the virtual clock jumps to the deadline the instant the
+     * test scheduler has nothing runnable — which is immediately, if `execute` dispatched its work
+     * onto a real dispatcher the scheduler cannot see (every Room DAO call goes to
+     * [OrtDatabase]'s own `Executors.newCachedThreadPool`). The deadline then *races* the work
+     * instead of bounding it, and the item is failed as `"timeout"` with no real time elapsed.
+     *
+     * This test passes exactly such a lambda from inside `runTest`. **Before the guard it did not
+     * throw at all**: `runLeased` returned `Errored("timeout")` and wrote a `TIMEOUT` attempt row
+     * for work that was still running. After it, the queue refuses and says why, naming this row.
+     *
+     * Two things about its shape are deliberate. The assertion on the message is on the **register
+     * id**, a stable identifier this project puts in messages on purpose — not on prose
+     * (constitution II); the load-bearing assertions below it are structural, that no attempt row
+     * was written and the lease is untouched. And `execute`'s real-dispatcher body is unreachable
+     * on the passing path — the guard fires before `withTimeoutOrNull` — so this test costs no
+     * wall-clock time at all until someone reverts the guard, at which point the real 50 ms
+     * deterministically loses to a 1 ms virtual deadline and the old defect reappears exactly.
+     */
+    @Test
+    @Requirement("R-1189", "R-1180")
+    public fun R_1189_a_real_dispatcher_lambda_under_runTest_is_refused_rather_than_silently_timed_out(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+            val queue = WorkQueue(db, clock, maxAttempts = 1)
+            queue.enqueue("TX1", PassId.B_OFFLINE)
+            val item = queue.leaseBatch("run-1", limit = 10) { 1L }.single()
+
+            val thrown = runCatching {
+                queue.runLeased(item) {
+                    // A real dispatcher the test scheduler cannot see, then a real Room read on
+                    // OrtDatabase's own executor -- R-1189's exact shape.
+                    withContext(Dispatchers.IO) { delay(REAL_WORK_MILLIS) }
+                    db.transmissionDao().getById("TX1")
+                    PassRunOutcome.Finished(TransmissionState.COMPLETE)
+                }
+            }.exceptionOrNull()
+
+            assertTrue(
+                "runLeased must refuse a virtual deadline rather than race it; got $thrown",
+                thrown is IllegalStateException,
+            )
+            assertTrue(
+                "the refusal must name the register row so the next reader meets the reasoning",
+                thrown!!.message!!.contains("R-1189"),
+            )
+            // The structural half, and the one that actually distinguishes refusing from lying:
+            // nothing may be recorded as a timeout, and the lease must be exactly as it was.
+            assertTrue(
+                "a refused run must write no attempt row at all",
+                db.workQueueDao().attemptsFor(item.id).isEmpty(),
+            )
+            assertEquals(WorkQueueState.LEASED, db.workQueueDao().getById(item.id)!!.state)
+        }
+
+    /**
+     * Register R-1189, the other half: the refusal is not a blanket ban on running a Room-touching
+     * pass through [WorkQueue.runLeased] — it is a ban on doing it against a *virtual* clock. The
+     * identical lambda under `kotlinx.coroutines.runBlocking` (the fix `ReprocessRunnerTest`'s
+     * class kdoc already documents) is bounded by real wall-clock time and completes normally.
+     *
+     * Honest about what this one is: it passes before the guard as well as after, so it is not the
+     * discriminating test — it is the proof that the discriminating test's failure has a route out
+     * that is not "delete the timeout".
+     */
+    @Test
+    @Requirement("R-1189")
+    public fun R_1189_the_same_lambda_under_runBlocking_is_bounded_by_real_time_and_completes(): Unit = runBlocking {
+        db.sessionDao().insert(TestFixtures.session())
+        db.transmissionDao().insert(TestFixtures.transmission("TX1"))
+        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        queue.enqueue("TX1", PassId.B_OFFLINE)
+        val item = queue.leaseBatch("run-1", limit = 10) { 60_000L }.single()
+
+        val outcome = queue.runLeased(item) {
+            withContext(Dispatchers.IO) { delay(REAL_WORK_MILLIS) }
+            db.transmissionDao().getById("TX1")
+            PassRunOutcome.Finished(TransmissionState.COMPLETE)
+        }
+
+        assertTrue("real time bounds it, so the pass finishes; got $outcome", outcome is PassRunOutcome.Finished)
+        assertEquals(TransmissionState.COMPLETE, db.transmissionDao().getById("TX1")!!.processingState)
+        assertNull(db.workQueueDao().getById(item.id))
+    }
+
+    /**
+     * Register R-1189: [PassDeadlineClock.VIRTUAL_FOR_TEST] is the declaration a caller makes when
+     * everything `execute` touches really does run on the test scheduler — which is the only case
+     * in which the virtual deadline is correct, and, as R-1180's own reasoning notes, also the case
+     * in which it is a provable no-op. It must therefore still *work*: AC-99's hang test above
+     * depends on exactly this, and this case pins that the opt-in is an opt-in and not a no-op.
+     */
+    @Test
+    @Requirement("R-1189", "AC-99")
+    public fun R_1189_an_explicitly_virtual_deadline_is_permitted_and_still_cancels_a_pure_virtual_hang(): Unit =
+        runTest {
+            db.sessionDao().insert(TestFixtures.session())
+            db.transmissionDao().insert(TestFixtures.transmission("TX-HANG"))
+            val queue = WorkQueue(db, clock, maxAttempts = 1, deadlineClock = PassDeadlineClock.VIRTUAL_FOR_TEST)
+            queue.enqueue("TX-HANG", PassId.B_OFFLINE)
+            val item = queue.leaseBatch("run-1", limit = 10) { 100L }.single()
+
+            val outcome = queue.runLeased(item) {
+                delay(Long.MAX_VALUE / 2)
+                error("unreachable")
+            }
+
+            assertTrue(outcome is PassRunOutcome.Errored)
+            assertEquals(WorkQueueState.FAILED, db.workQueueDao().getById(item.id)!!.state)
+        }
+
+    private companion object {
+        /** Real wall-clock work, on a real dispatcher, long enough that a 1 ms *virtual* deadline
+         * deterministically fires first — see the R-1189 case above for why it is never actually
+         * executed while the guard is in place. */
+        const val REAL_WORK_MILLIS = 50L
+    }
 }

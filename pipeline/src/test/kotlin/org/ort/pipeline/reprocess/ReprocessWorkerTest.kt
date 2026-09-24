@@ -371,6 +371,33 @@ class ReprocessWorkerTest {
         assertEquals(ReprocessRunSnapshot.NotRunning, emptyList<WorkInfo>().toReprocessRunSnapshot())
     }
 
+    /**
+     * Register R-1191. This used to be `delay(200) // a real margin for the coroutine to actually
+     * reach the frozen wait loop`, racing an `async(Dispatchers.Default)`. **A margin is not a
+     * bound**: on a saturated hosted runner 200 ms is not reliably enough for a coroutine on a
+     * contended dispatcher to reach a particular line, and when it is not, this test fails for a
+     * reason having nothing to do with what it asserts - then passes on a re-run, which is how
+     * R-1174 and R-1180 both nearly escaped.
+     *
+     * The replacement is a real synchronisation point the production path already publishes:
+     * `ReprocessRunner.awaitCaptureNotBusy` sets [ReprocessStatus.State.Paused] on every poll while
+     * the freeze holds, so reaching that state *is* "the coroutine is in the wait loop". The bound
+     * below is deliberately generous - it is a liveness guard for a hang, not a timing assumption -
+     * and it fails saying what the state actually was, so a real regression is diagnosable instead
+     * of arriving as an unexplained assertion two screens away.
+     */
+    private suspend fun awaitFrozenInTheWaitLoop() {
+        val deadlineNanos = System.nanoTime() + FROZEN_WAIT_BOUND_MILLIS * NANOS_PER_MILLI
+        while (ReprocessStatus.state !is ReprocessStatus.State.Paused) {
+            check(System.nanoTime() < deadlineNanos) {
+                "the worker never reached ReprocessRunner's frozen wait loop within " +
+                    "${FROZEN_WAIT_BOUND_MILLIS}ms - last published state was " +
+                    "${ReprocessStatus.state} (register R-1191)"
+            }
+            delay(FROZEN_WAIT_POLL_MILLIS)
+        }
+    }
+
     private fun progressDataFor(
         done: Int,
         total: Int,
@@ -418,7 +445,7 @@ class ReprocessWorkerTest {
                     .build()
 
                 val firstAttempt = async(Dispatchers.Default) { worker.doWork() }
-                delay(200) // a real margin for the coroutine to actually reach the frozen wait loop
+                awaitFrozenInTheWaitLoop()
                 // Simulates the system stopping this attempt (WorkManager's own `onStopped()` ->
                 // for a `CoroutineWorker`, cancelling its coroutine -- the exact same signal
                 // reaching `doWork()` either way): cancel the coroutine at its real, in-flight
@@ -450,4 +477,12 @@ class ReprocessWorkerTest {
             assertEquals(3, output.getInt(ReprocessWorker.KEY_TOTAL, -1))
             assertTrue(checkpoint.remaining().isEmpty())
         }
+
+    private companion object {
+        /** Register R-1191: a liveness bound on a real hang, deliberately far larger than any
+         * plausible scheduling delay - never a margin the assertion depends on. */
+        const val FROZEN_WAIT_BOUND_MILLIS = 20_000L
+        const val FROZEN_WAIT_POLL_MILLIS = 10L
+        const val NANOS_PER_MILLI = 1_000_000L
+    }
 }

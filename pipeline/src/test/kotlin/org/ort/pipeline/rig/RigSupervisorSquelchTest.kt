@@ -210,9 +210,15 @@ class RigSupervisorSquelchTest {
             val emitted = mutableListOf<RigSquelchTransition>()
             val job = launch { sup.observeSquelchUnion().toList(emitted) }
             transport.pushUnsolicited("BY1") // even a genuine squelch-open line changes nothing
-            // No RigStatus band-state signal exists for an unbanded rig -- a bounded real-time
-            // wait is the honest substitute here, long enough for the poll-only descriptor's own
-            // read loop to have processed the line several times over.
+            // No RigStatus band-state signal exists for an unbanded rig, so this advances the
+            // clock instead: far enough for the poll-only descriptor's own read loop to have
+            // processed the line several times over. (Corrected while annotating for R-1180: this
+            // used to describe itself as "a bounded real-time wait", which it is not -- the whole
+            // scope is on the test scheduler, so `delay(50)` costs 50ms of *virtual* time and no
+            // wall-clock time at all. What it does is right; what it said about itself was not.)
+            // R-1180-virtual-timeout-ok: the supervisor's scope is
+            // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+            // test-scheduler work - which is also what makes it a provable no-op.
             withTimeout(2_000) { delay(50) }
             job.cancel()
             assertTrue(emitted.isEmpty(), "an ineligible connection must never emit a squelch transition")
@@ -319,6 +325,9 @@ class RigSupervisorSquelchTest {
             // RigStatus itself already proves the drop happened (RigSupervisorTest's own
             // FR_RIG_7 case); this asserts the SEPARATE fact the coordinator's report found
             // missing -- that the same drop also reaches observeSquelchUnion as a loss.
+            // R-1180-virtual-timeout-ok: the supervisor's scope is
+            // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+            // test-scheduler work - which is also what makes it a provable no-op.
             withTimeout(60_000) {
                 while (events.none { it.open == null }) delay(10)
             }
@@ -353,6 +362,9 @@ class RigSupervisorSquelchTest {
             // writing "BY" every 100ms forever, but nothing is ever scripted for it, so every
             // write after this gets no reply at all: a link that stays Open yet answers nothing.
             transport.pushUnsolicited("BY1")
+            // R-1180-virtual-timeout-ok: the supervisor's scope is
+            // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+            // test-scheduler work - which is also what makes it a provable no-op.
             withTimeout(2_000) { while (events.isEmpty()) delay(10) }
 
             // The derived bound is 100ms * 2 = 200ms (squelchStalenessBoundMillis). 2000ms here
@@ -360,6 +372,9 @@ class RigSupervisorSquelchTest {
             // RigHealth's own generic floor (5 * 100 = 500, coerced up to its 5000ms minimum),
             // so a pass here can only be the squelch-specific watchdog, not that separate,
             // far looser mechanism.
+            // R-1180-virtual-timeout-ok: the supervisor's scope is
+            // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+            // test-scheduler work - which is also what makes it a provable no-op.
             withTimeout(2_000) {
                 while (events.none { it.open == null }) delay(10)
             }
@@ -391,6 +406,9 @@ class RigSupervisorSquelchTest {
 
                 // Established by the descriptor's own poll cycle (no manual push at all) --
                 // the real, unmodified kenwood-thd75a.json descriptor is what is under test.
+                // R-1180-virtual-timeout-ok: the supervisor's scope is
+                // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+                // test-scheduler work - which is also what makes it a provable no-op.
                 withTimeout(60_000) { while (events.isEmpty()) delay(10) }
                 assertEquals(true, events.single().open, "band 0 opened from the poll's own BY 0 reply")
 
@@ -422,6 +440,9 @@ class RigSupervisorSquelchTest {
                 val events = mutableListOf<RigSquelchTransition>()
                 val job = testScope.launch { sup.observeSquelchUnion().collect { events.add(it) } }
 
+                // R-1180-virtual-timeout-ok: the supervisor's scope is
+                // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+                // test-scheduler work - which is also what makes it a provable no-op.
                 withTimeout(60_000) { while (events.isEmpty()) delay(10) }
                 assertEquals(true, events.single().open)
 

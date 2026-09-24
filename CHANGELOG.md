@@ -32,6 +32,141 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-24
+
+### `492a77f4` — R-1189/R-1190/R-1191: the pass deadline stops racing caller-supplied code, and the trap becomes loud
+
+**Scope:** `data/src/main/kotlin/org/ort/data/WorkQueue.kt` and `data/src/test/kotlin/org/ort/data/WorkQueueTest.kt`;
+`pipeline/src/test/**` (`PassDrainRunnerTest`, `digest/ProseDigestRunnerTest`,
+`reprocess/ReprocessWorkerTest`, `rig/{RigLinkBridgeTest,RigSupervisorSquelchTest,RigSupervisorTest}`,
+new `guard/{TestCoroutineConventions,TestCoroutineConventionGuardTest}.kt`);
+`results/coverage-matrix.md` (regenerated). **`buildSrc/` was owned by this prompt and deliberately
+not touched** — see "Left open" for why a custom detekt rule could not be hosted there.
+
+**Requirements/ACs:** register **R-1189**, **R-1190**, **R-1191**, **R-1180** (its open half);
+AC-99, FR-RUN-10a, AC-47; constitution II ("a test MUST be shown to discriminate", "assertions MUST
+NOT depend on prose"), VI, VII.
+
+**What changed.**
+
+**1 · `WorkQueue.runLeased` refuses a virtual deadline instead of racing it (R-1189).**
+`WorkQueue.kt:205` bounds `execute()` — *the caller's* lambda — with `withTimeoutOrNull`. Under
+`kotlinx.coroutines.test.runTest` that timeout counts **virtual** time, and the virtual clock leaps
+to the deadline the instant the test scheduler is idle, which is immediately if `execute` dispatched
+its work onto a real dispatcher (every Room DAO call goes to `OrtDatabase.kt`'s own
+`Executors.newCachedThreadPool`). No lexical rule can see this, because `PassDrainRunner.kt:26`
+passes `execute` straight through as a parameter.
+
+Both directions the register proposed are now in place, because each covers what the other cannot.
+A new `PassDeadlineClock` enum is the **seam**: `WorkQueue(..., deadlineClock = ...)`, defaulting to
+`REAL`. A new private `requireHonestDeadlineClock()` is the **trap**: with `REAL`, `runLeased` reads
+the calling coroutine's `ContinuationInterceptor` and refuses outright if its class is in
+`kotlinx.coroutines.test.`, with a message naming R-1189 and R-1180 and spelling out both fixes.
+Reading the interceptor — rather than looking for the scheduler anywhere in the context — makes the
+check **exact rather than heuristic**: the interceptor being a `TestDispatcher` is precisely the
+condition that makes the timeout virtual, so a `withContext(Dispatchers.IO) { ... }` nested inside a
+`runTest` body is correctly *not* refused. The class name is read off `javaClass.name`, so `:data`
+links no test framework into production and uses no reflection.
+
+The five existing callers that were safe only by accident of their fixtures now say so:
+`WorkQueueTest`'s AC-99 and R-426 timeout cases and both `PassDrainRunnerTest` cases pass
+`PassDeadlineClock.VIRTUAL_FOR_TEST`, each with the reason written down (a bare `delay`, or a
+non-suspending lambda — entirely on the test scheduler, which is also what makes those deadlines
+provable no-ops). No production call site changes: `RealCaptureService` and `ReprocessRunner` take
+the `REAL` default, which is what they already had.
+
+**2 · `ProseDigestRunnerTest`'s flush joins the convention (R-1190).** `:102` was the one
+`DiagnosticsLog.flush()` call not wrapped in `runBlocking`. **It was not a live bug** and this entry
+does not pretend otherwise: the await is a plain suspension bounded by `runTest`'s own 60-second
+*wall-clock* timeout, never by virtual time, so it behaved. It is fixed as a convention break,
+because one added `withTimeout` in that body would have made it R-1180 exactly.
+
+**3 · `ReprocessWorkerTest` waits on a real signal, not a margin (R-1191).** `:421`'s
+`delay(200) // a real margin for the coroutine to actually reach the frozen wait loop`, racing an
+`async(Dispatchers.Default)`, is replaced by `awaitFrozenInTheWaitLoop()`, which polls the state the
+production path already publishes — `ReprocessRunner.awaitCaptureNotBusy` sets
+`ReprocessStatus.State.Paused` on every poll while frozen, so reaching that state *is* "the
+coroutine is in the wait loop". The 20 s bound is a liveness guard on a hang, not a timing
+assumption, and it fails saying what the last published state actually was.
+
+**4 · A repository-wide guard over test sources (R-1180's open half, R-1190).** New
+`pipeline/src/test/kotlin/org/ort/pipeline/guard/`. `TestCoroutineConventions` is pure logic — it
+masks comments, string/char literals and backticked identifiers, brace-matches every `runTest`/
+`runBlocking` body, and reports a finding by its **innermost enclosing builder**. Rule A: a
+`withTimeout`/`withTimeoutOrNull` inside a `runTest` body, unless a written reason sits on the line
+or within the eight above it (`// R-1180-virtual-timeout-ok: <why>`). Rule B: a
+`DiagnosticsLog.flush`/`FieldReportRecorder.flush` whose innermost enclosing builder is not
+`runBlocking`. `TestCoroutineConventionGuardTest` runs it over every module's `src/test/kotlin` and
+`src/androidTest/kotlin`, finding the repo root by walking up for `settings.gradle.kts` — the shape
+`net`'s own `NetManifestPermissionTest` established, so a regression fails a plain
+`./gradlew :pipeline:test` with no build-script involvement.
+
+Rule A's false-positive set is exactly the set worth annotating, and that is what makes the rule
+tolerable: a virtual `withTimeout` is only correct when everything it bounds is on the test
+scheduler, and when that holds the timeout is a **provable no-op**. Fifteen sites in
+`pipeline/src/test/.../rig/` are annotated accordingly — all are
+`UnconfinedTestDispatcher(testScheduler)` scopes over `FakeRigTransport`. One comment in
+`RigSupervisorSquelchTest` that described itself as "a bounded real-time wait" is corrected in the
+same pass: it is not real time at all, and said so while doing the opposite.
+
+**Verified.**
+
+- `./gradlew :data:test :data:detekt :data:ktlintCheck :pipeline:test :pipeline:detekt :pipeline:ktlintCheck`
+  → **BUILD SUCCESSFUL in 1m 29s** (Windows, local daemon).
+- `./gradlew :app:compileFullDebugUnitTestKotlin` → success. `:data`'s new constructor parameter is
+  defaulted, so no `:app` call site changes; run because `:app` depends on `:data` and is owned by
+  other builders this wave.
+- `./gradlew coverageMatrix` → three new rows (`R-1180`, `R-1189`, `R-1190`); committed.
+  `python tools/backlog/backlog.py --check` → `backlog: up to date`.
+- **R-1189 discrimination, run before the production change existed.** With the enum and the
+  constructor parameter added but `requireHonestDeadlineClock()` not yet called, the new test failed
+  as `runLeased must refuse a virtual deadline rather than race it; got null`. A temporary probe
+  printed the state it left behind, which is the register's claim reproduced exactly:
+  `WorkAttemptEntity(attemptNo=1, startedAtMillis=1600000000000, finishedAtMillis=1600000000000,
+  outcome=TIMEOUT, reason=timeout)`, the item `FAILED`, the transmission `FAILED` — **zero real time
+  elapsed between start and finish.** With the call restored, green.
+- **R-1191 discrimination.** With the freeze lifted and the bound shortened for the probe, the new
+  wait failed loudly and diagnostically: `the worker never reached ReprocessRunner's frozen wait loop
+  within 2000ms - last published state was Done(summary=...) (register R-1191)`. Restored, green.
+- **Guard discrimination.** One opt-out marker removed and the R-1190 flush unwrapped: the guard
+  reported both, by file, line and source text, with both rules' explanations. Restored, green.
+
+**Left open / not done.**
+
+- **A custom detekt rule is not hostable in this build, and this was checked rather than assumed.**
+  There is no `detektPlugins` configuration anywhere in the repository, no `RuleSetProvider`, and no
+  `includeBuild` in `settings.gradle.kts`; `buildSrc`'s classes sit on the buildscript classpath and
+  can never be a `detektPlugins` dependency for the main build. Hosting one would mean a new Gradle
+  build plus wiring in `ort.common.gradle.kts` — a new mechanism, and outside this prompt's
+  ownership. `config/detekt/detekt.yml`'s own header already says where this project puts its real
+  guardrails. The grep-shaped unit test above is the honest alternative the prompt sanctioned.
+- **The general rule was not attempted**, per the audit: "a `runTest` body that reaches a real scope"
+  needs a whole-program call graph across module boundaries, through interfaces and lambdas.
+  R-1189's runtime refusal is what covers the case no lexical rule can see.
+- **Eighteen findings are carried in a named, counted exception list, not fixed**, because they live
+  in `:app` and `:rig`, which other builders own this wave:
+  `InMemoryRigLinkPortTest` (8), `DescriptorRigModuleTest` (9), `FakeRigTransportTest` (1) under
+  Rule A; `FieldReportBundleBuilderTest` (3), `FieldReportAppWiringTest` (2) under Rule B. Each
+  count is pinned in both directions, so a new finding in one of those files fails the guard and so
+  does cleaning one up without deleting its entry.
+- **R-1190 undercounts its own finding, and the guard says so.** The row calls
+  `ProseDigestRunnerTest:102` "the **only** one of 16" unwrapped flush sites. It is one of **six**:
+  the other five are the `FieldReportRecorder.flush` half of the same check, in `:app`, all inside
+  `runTest` bodies. Same shape, never counted. Routing them is the lead's.
+- **Rule A found no second R-1180 race but did surface a file that may hold one.**
+  `rig/.../DescriptorRigModuleTest`'s own kdoc describes "real `Dispatchers.Default`, real wall-clock
+  `delay`/`withTimeoutOrNull`" while nine of its timeouts sit inside `runTest` bodies. That is worth
+  a look by whoever owns `:rig`; this change only counted them.
+- **Both guard rules judge a finding by its innermost *lexical* enclosing builder.** A flush or a
+  timeout hidden behind a `private suspend fun` helper has no enclosing builder in its own file and
+  is not reported. That is the deliberate price of zero false positives; every real site in the
+  repository today is written inline.
+- **No `@Requirement("R-1191")` was added**, so that row does not appear in the coverage matrix: the
+  change there is to a test's own synchronisation, not a new behavioural claim. Its kdoc names the row.
+- **No screen, resource, design or scenario file was touched**, so constitution VIII's visual
+  re-verification is not triggered and no capture accompanies this change.
+- **The register was not edited** (only the session lead edits it), and no emulator was used.
+
 ## 2026-09-23 (P39 wave: two homes for what onboarding stops asking)
 
 ### `ee1a58d8` — P39: the manual frequency moves into the log header, and the battery ask onto the first missed heartbeat

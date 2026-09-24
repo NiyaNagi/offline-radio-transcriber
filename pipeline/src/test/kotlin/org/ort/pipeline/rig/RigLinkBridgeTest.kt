@@ -115,6 +115,9 @@ public class RigLinkBridgeTest {
             moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
 
+        // R-1180-virtual-timeout-ok: the bridge's moduleScope is
+        // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+        // test-scheduler work - which is also what makes it a provable no-op.
         val states = withTimeout(2_000) {
             val collected = mutableListOf<RigLinkProbeState>()
             bridge.probe(TEST_RIG_ID, RigTransportKind.USB_SERIAL, emptyMap()).collect { collected += it }
@@ -138,6 +141,9 @@ public class RigLinkBridgeTest {
             moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
 
+        // R-1180-virtual-timeout-ok: the bridge's moduleScope is
+        // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+        // test-scheduler work - which is also what makes it a provable no-op.
         val states = withTimeout(2_000) {
             val collected = mutableListOf<RigLinkProbeState>()
             bridge.probe(TEST_RIG_ID, RigTransportKind.USB_SERIAL, emptyMap()).collect { state ->
@@ -165,6 +171,9 @@ public class RigLinkBridgeTest {
             moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
 
+        // R-1180-virtual-timeout-ok: the bridge's moduleScope is
+        // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+        // test-scheduler work - which is also what makes it a provable no-op.
         val failed = withTimeout(2_000) {
             bridge.probe("no-such-rig", RigTransportKind.USB_SERIAL, emptyMap())
                 .first { it is RigLinkProbeState.Failed } as RigLinkProbeState.Failed
@@ -213,6 +222,9 @@ public class RigLinkBridgeTest {
             moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
 
+        // R-1180-virtual-timeout-ok: the bridge's moduleScope is
+        // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+        // test-scheduler work - which is also what makes it a provable no-op.
         val states = withTimeout(2_000) {
             val collected = mutableListOf<RigLinkProbeState>()
             bridge.probe(TEST_RIG_ID, RigTransportKind.BLUETOOTH_SPP, emptyMap()).collect { state ->
@@ -274,6 +286,9 @@ public class RigLinkBridgeTest {
         // Detach only once the transport itself has genuinely reached Open -- detaching any
         // earlier races the fake link's own connect sequence and reads as "not found" rather than
         // "detached", regardless of which dispatcher drives it (see this test's own kdoc).
+        // R-1180-virtual-timeout-ok: the bridge's moduleScope is
+        // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+        // test-scheduler work - which is also what makes it a provable no-op.
         val states = withTimeout(2_000) {
             coroutineScope {
                 launch {
@@ -321,6 +336,9 @@ public class RigLinkBridgeTest {
             moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
         )
 
+        // R-1180-virtual-timeout-ok: the bridge's moduleScope is
+        // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+        // test-scheduler work - which is also what makes it a provable no-op.
         val states = withTimeout(20_000) {
             val collected = mutableListOf<RigLinkProbeState>()
             bridge.probe(TEST_RIG_ID, RigTransportKind.USB_SERIAL, emptyMap()).collect { collected += it }
@@ -355,6 +373,9 @@ public class RigLinkBridgeTest {
                 moduleScope = CoroutineScope(SupervisorJob() + UnconfinedTestDispatcher(testScheduler)),
             )
 
+            // R-1180-virtual-timeout-ok: the bridge's moduleScope is
+            // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+            // test-scheduler work - which is also what makes it a provable no-op.
             val states = withTimeout(20_000) {
                 val collected = mutableListOf<RigLinkProbeState>()
                 bridge.probe(TEST_RIG_ID, RigTransportKind.USB_SERIAL, emptyMap()).collect { state ->
