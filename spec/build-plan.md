@@ -1025,6 +1025,42 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   them: notifications to first capture start, the battery prompt to the first missed heartbeat
   (which is also R-1161's structural half), the manual frequency to the log header, the rig branch
   behind "a rig module actually exists".
+
+  **The flow, settled (D58 plus its 2026-09-23 resolution). `n` is 3 when every required model is
+  present and 4 when one must be downloaded — known at launch, so the denominator never moves
+  mid-run:**
+
+  | Indicator | Step | What it is |
+  |---|---|---|
+  | none | `WELCOME` | One line on what the app does. The FR-ANL-14 sentence **once**, from the existing `OfflinePromiseCopy.WELCOME_PROMISE`. The jurisdiction notice folded in as an acknowledged line with its full text in Settings (AC-166 wants it shown and acknowledged, not a screen of its own). The analytics disclosure as one line plus a way to reach the two unchecked toggles (AC-180 wants them present and reachable, not a step). `Begin`. |
+  | 1 of `n` | `MODE` | Three rows, one plain sub-line each, presented over the destination rather than as a wizard page. No Continue — a tap advances. One footer line carrying the microphone rationale in the `needs X so you can Y` shape, because this is the surface the system dialog is fired from (AC-204). |
+  | — | system mic dialog | Fired straight from the mode choice. **No explainer screen.** `MICROPHONE_DENIED` stays exactly as it is — a permanently denied mic is a real halt. |
+  | 2 of `n` | `LISTEN` (new) | `INPUT` + `VERIFY` + `LEVEL` merged into one screen: the route list, the verify checklist expanding in place, then the meter and the gain slider. The only screen that must be full-screen, because it is the only one whose failure is silent. `ROUTE_MISMATCH` remains reachable from it as the one deliberate hard halt. |
+  | 3 of `n` | `MODELS` | Only when something the tier needs is genuinely absent — already correctly scoped today, unchanged. |
+  | `n` of `n` | `READY` | The terminal screen. Carries the unresolved items as amber rows and the `Start capture` press. **No longer gated behind the `setupComplete` latch.** |
+
+  **Steps that leave the ladder, each to the home D58 names — moved, not deleted:**
+  `JURISDICTION_NOTICE` and `ANALYTICS_CONSENT` fold into `WELCOME` (their full content stays
+  reachable in Settings). `NOTIFICATIONS` is asked at first capture start, where the persistent
+  notification is about to appear. `OVERNIGHT` becomes a prompt on the first missed heartbeat and
+  **never a pre-capture gate** — AC-199, and R-1161's structural half. `RADIO_USB`'s frequency moves
+  to the log header, editable in place (R-1167); the field and everything downstream of it stay, only
+  the prompt moves. `RADIO`/`RIG_TRANSPORT`/`RIG_BLUETOOTH` stay in the code but are entered only
+  when the chosen mode implies a rig **and** a rig module with a real CAT implementation exists —
+  none does today, so on current builds that branch does not appear at all, which is the honest
+  rendering of the state the code is in. `BLUETOOTH_PERMISSION` is asked in context when a Bluetooth
+  route is actually chosen, not as a numbered stage.
+
+  **Two structural rules, and they are the reason R-1161 was possible:** the terminal state is a
+  function of *no gates remain*, never of a latch; and setup must never treat "nothing left to do"
+  as an instruction to hand control back to the router that sent it here — two components that each
+  defer to the other are a cycle by construction.
+
+  **Watch for R-1179 while capturing:** `install.ps1` grants `BLUETOOTH_CONNECT`, which is why
+  `S02c` has never once captured its own screen. Any new step whose gate depends on a permission the
+  install script grants has the same problem. The cheap general guard, worth adding here, is for the
+  tour runner to compare `SetupActivity.currentStepForTest` against the step it asked for and fail
+  loudly on a mismatch — it already reads that field for its settle.
   **Done when:** AC-198 holds by walking a real first run; AC-199 holds by the launch-to-capture
   route test with every capture-produced signal reporting unproven; AC-200..204 each have a test
   named for them; `stepFor`'s terminal state is derived from "no gates remain" rather than the

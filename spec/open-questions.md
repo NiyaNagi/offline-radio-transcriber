@@ -926,9 +926,23 @@ not yet heard a single over is not informing them — it is spending attention t
 verification, the one step where being wrong is silent, then does not have. Every one of them keeps
 a permanent home and none becomes unreachable.
 
-**Not settled here, and deliberately left open:** whether the step indicator survives at all. With
-four steps and one conditional, the denominator is genuinely knowable at the mode choice, which
-would retire the R-1087 compromise of a fixed total larger than any real run — but a four-step flow
-may not need an indicator, and the cheapest honest answer may be to delete it rather than fix it.
-Decide against the rebuilt flow, not in advance of it.
+**Left open when this was written, resolved 2026-09-23 before P39 started.**
+
+*The step indicator survives, with a denominator that is finally true.* It is 3 on a run where
+everything is bundled and 4 where a download is owed — both knowable at launch, because whether a
+model is missing is a fact about the manifest, not about anything the operator has yet done. That
+retires R-1087's compromise (a fixed total larger than any real run) rather than inheriting it: the
+reason that compromise existed was a conditional branch several stages downstream, and the rebuilt
+flow has none. The published guidance also favours a step *count* over dots when the count is small
+and flattering, which three is.
+
+*`READY` survives, as the terminal screen rather than the tenth.* AC-198 allows four screens without
+a download and five with, and Welcome/Mode/Listen/Ready is four. Keeping it costs nothing against
+that budget and buys two things the flow would otherwise lose: the single place unresolved items
+(an out-of-band level, a skipped model) are visible before capture starts, and an actual moment
+where the operator presses *Start capture* rather than being tipped into a live session by a screen
+that looked like configuration. The critique that called it *"a good screen, wrong position"* was
+right about the position, not the screen. What must change is that it stops being gated behind the
+`setupComplete` latch — see this decision's structural rules — so it remains reachable on any
+re-entry instead of becoming unshowable the moment the latch flips.
 
