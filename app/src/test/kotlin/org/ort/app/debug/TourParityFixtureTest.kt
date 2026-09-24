@@ -90,7 +90,15 @@ class TourParityFixtureTest {
         assertEquals("USB Audio Device", setupStore.selectedInputLabel)
         assertTrue("expected the input to be verified", setupStore.inputVerified)
         assertEquals(RadioChoice.NONE, setupStore.radioChoice)
-        assertEquals(145_230_000L, setupStore.manualFrequencyHz)
+        // P39 (R-1167): the hand-entered frequency lives in `CaptureConfigurationStore` now --
+        // the store `RealCaptureService` itself reads -- and the fixture seeds it there.
+        val captureConfig = org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore(
+            context.getSharedPreferences(
+                org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+                android.content.Context.MODE_PRIVATE,
+            ),
+        )
+        assertEquals(145_230_000L, captureConfig.current().manualFrequencyHz)
 
         val settingsStore = SharedPreferencesSettingsStore(
             context.getSharedPreferences(

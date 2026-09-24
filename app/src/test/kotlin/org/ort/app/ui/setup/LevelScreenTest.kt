@@ -23,14 +23,52 @@ import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtTheme
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /** R-082 (ui-conformance-plan WP9) — `Setup-Level.dc.html` (S07): `Continue` only in band; no
  * signal renders an honest "cannot measure" state, never fabricated bars. */
 @RunWith(RobolectricTestRunner::class)
+// P39: the merged Listen screen is genuinely taller than Robolectric's 320x470dp default, so these
+// assertions are made at the tour's own geometry rather than at a viewport no real device has.
+@Config(qualifiers = "w390dp-h844dp-420dpi")
 class LevelScreenTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
+
+    /**
+     * P39 (D58): the meter and its gain slider are the third section of [ListenScreen], shown once the
+     * route has actually verified — which is also the first moment a level reading means anything. This
+     * renders exactly that state, so every assertion below still exercises the real screen rather than
+     * a composable that no longer exists on its own.
+     */
+    @androidx.compose.runtime.Composable
+    private fun LevelSectionUnderTest(
+        state: LevelCheckState?,
+        onContinue: () -> Unit,
+        gainDb: Int = org.ort.capture.android.CaptureGain.MIN_GAIN_DB,
+        onGainChange: (Int) -> Unit = {},
+    ) {
+        ListenScreen(
+            state = ListenViewState(
+                routes = emptyList(),
+                selectedId = "usb-1",
+                inputLabel = "USB Audio Device",
+                inputVerified = true,
+                level = state,
+                gainDb = gainDb,
+            ),
+            actions = ListenActions(
+                onSelect = {},
+                onRefresh = {},
+                onVerify = {},
+                onContinue = onContinue,
+                onTryAgain = {},
+                onChooseAnotherInput = {},
+                onGainChange = onGainChange,
+            ),
+        )
+    }
 
     private fun reading(band: LevelBand) = LevelCheckState.Reading(
         LevelReading(bars = listOf(0.1f, 0.4f, 0.7f), peakDbfs = -14.0, noiseFloorDbfs = -58.0, band = band),
@@ -46,9 +84,9 @@ class LevelScreenTest {
     @Requirement("FR-CAP-6", "R-1170")
     fun `FR_CAP_6 Continue stays enabled when the level is too quiet, and says what is unresolved`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = reading(LevelBand.TOO_QUIET), onContinue = {}) }
+            OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.TOO_QUIET), onContinue = {}) }
         }
-        composeTestRule.onNodeWithTag("setup-level-continue").assertIsEnabled()
+        composeTestRule.onNodeWithTag("setup-listen-continue").assertIsEnabled()
         composeTestRule.onNodeWithTag("setup-level-unresolved-note").assertExists()
     }
 
@@ -56,16 +94,18 @@ class LevelScreenTest {
     @Requirement("FR-CAP-6", "R-1170")
     fun `FR_CAP_6 a level that cannot be measured at all is still not a dead end`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = LevelCheckState.Unavailable("device open failed"), onContinue = {}) }
+            OrtTheme {
+                LevelSectionUnderTest(state = LevelCheckState.Unavailable("device open failed"), onContinue = {})
+            }
         }
-        composeTestRule.onNodeWithTag("setup-level-continue").assertIsEnabled()
+        composeTestRule.onNodeWithTag("setup-listen-continue").assertIsEnabled()
     }
 
     @Test
     @Requirement("FR-CAP-6", "R-1170")
     fun `FR_CAP_6 an in band level has nothing unresolved to say`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+            OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.IN_BAND), onContinue = {}) }
         }
         composeTestRule.onNodeWithTag("setup-level-unresolved-note").assertDoesNotExist()
     }
@@ -73,16 +113,18 @@ class LevelScreenTest {
     @Test
     fun `R_082 Continue enables once the level is in band`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+            OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.IN_BAND), onContinue = {}) }
         }
-        composeTestRule.onNodeWithTag("setup-level-continue").assertIsEnabled()
+        composeTestRule.onNodeWithTag("setup-listen-continue").assertIsEnabled()
         composeTestRule.onNodeWithTag("setup-level-meter").assertIsDisplayed()
     }
 
     @Test
     fun `R_082 an Unavailable state renders the honest failed state, not a fabricated meter`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = LevelCheckState.Unavailable("device open failed"), onContinue = {}) }
+            OrtTheme {
+                LevelSectionUnderTest(state = LevelCheckState.Unavailable("device open failed"), onContinue = {})
+            }
         }
         composeTestRule.onNodeWithTag("setup-level-unavailable").assertIsDisplayed()
     }
@@ -93,7 +135,7 @@ class LevelScreenTest {
     @Requirement("FR-CAP-6", "R-1168")
     fun `FR_CAP_6 the gain reading is the real value, not a decorative label`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}, gainDb = 6) }
+            OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.IN_BAND), onContinue = {}, gainDb = 6) }
         }
 
         composeTestRule.onNodeWithTag("setup-level-gain-reading").assertTextEquals("+6 dB")
@@ -103,7 +145,7 @@ class LevelScreenTest {
     @Requirement("FR-CAP-6", "R-1168")
     fun `FR_CAP_6 no gain reads as off rather than a bare zero`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}, gainDb = 0) }
+            OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.IN_BAND), onContinue = {}, gainDb = 0) }
         }
 
         composeTestRule.onNodeWithTag("setup-level-gain-reading").assertTextEquals("0 dB (off)")
@@ -115,7 +157,7 @@ class LevelScreenTest {
         var reported: Int? = null
         composeTestRule.setContent {
             OrtTheme {
-                LevelScreen(
+                LevelSectionUnderTest(
                     state = reading(LevelBand.TOO_QUIET),
                     onContinue = {},
                     gainDb = 0,
@@ -134,7 +176,7 @@ class LevelScreenTest {
     @Requirement("FR-CAP-6", "R-1168")
     fun `FR_CAP_6 the screen no longer claims the app only reads the level`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+            OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.IN_BAND), onContinue = {}) }
         }
 
         // The superseded promise, verbatim -- a gain control makes it false (constitution I).
@@ -148,7 +190,7 @@ class LevelScreenTest {
     @Test
     fun `R_124 the noise axis label reflects the real reading, never a hardcoded figure`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+            OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.IN_BAND), onContinue = {}) }
         }
 
         // `reading()` builds a fixture with noiseFloorDbfs = -58.0 -- if this were still the old
@@ -160,7 +202,7 @@ class LevelScreenTest {
     fun `R_124 a different noise floor changes the axis label, proving it is not a fixed string`() {
         composeTestRule.setContent {
             OrtTheme {
-                LevelScreen(
+                LevelSectionUnderTest(
                     state = LevelCheckState.Reading(
                         LevelReading(
                             bars = listOf(0.5f),
@@ -181,7 +223,7 @@ class LevelScreenTest {
     fun `R_124 headroom at exactly 0 dBFS peak never renders the literal -0 dB`() {
         composeTestRule.setContent {
             OrtTheme {
-                LevelScreen(
+                LevelSectionUnderTest(
                     state = LevelCheckState.Reading(
                         LevelReading(
                             bars = listOf(1f),
@@ -203,7 +245,7 @@ class LevelScreenTest {
     @Test
     fun `R_124 the meter chart renders whatever the reading actually holds`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = reading(LevelBand.CLIPPING), onContinue = {}) }
+            OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.CLIPPING), onContinue = {}) }
         }
 
         composeTestRule.onNodeWithTag("setup-level-meter").assertIsDisplayed()
@@ -214,7 +256,7 @@ class LevelScreenTest {
     @Test
     fun `R_225 at normal font scale the three facts sit on one row`() {
         composeTestRule.setContent {
-            OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+            OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.IN_BAND), onContinue = {}) }
         }
 
         val noiseTop = composeTestRule.onNodeWithText("noise −58").fetchSemanticsNode().boundsInRoot.top
@@ -228,7 +270,7 @@ class LevelScreenTest {
     fun `R_225 at font scale 2_0 the three facts stack instead of collapsing into one run`() {
         composeTestRule.setContent {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
-                OrtTheme { LevelScreen(state = reading(LevelBand.IN_BAND), onContinue = {}) }
+                OrtTheme { LevelSectionUnderTest(state = reading(LevelBand.IN_BAND), onContinue = {}) }
             }
         }
 

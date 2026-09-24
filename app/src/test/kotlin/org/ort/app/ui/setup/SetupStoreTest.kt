@@ -37,7 +37,6 @@ class SetupStoreTest {
         assert(store.levelPeakDbfs == null)
         assert(!store.overnightStepSeen)
         assert(store.radioChoice == null)
-        assert(store.manualFrequencyHz == null)
         assert(!store.setupComplete)
         assert(store.captureMode == null)
         assert(!store.bluetoothPermissionDeclined)
@@ -66,7 +65,6 @@ class SetupStoreTest {
         store.captureGainDb = 6
         store.overnightStepSeen = true
         store.radioChoice = RadioChoice.TH_D75A
-        store.manualFrequencyHz = 145_230_000L
         store.setupComplete = true
         store.captureMode = CaptureMode.BLUETOOTH_RADIO
         store.bluetoothPermissionDeclined = true
@@ -96,7 +94,6 @@ class SetupStoreTest {
         assert(reread.captureGainDb == 6)
         assert(reread.overnightStepSeen)
         assert(reread.radioChoice == RadioChoice.TH_D75A)
-        assert(reread.manualFrequencyHz == 145_230_000L)
         assert(reread.setupComplete)
         assert(reread.captureMode == CaptureMode.BLUETOOTH_RADIO)
         assert(reread.bluetoothPermissionDeclined)
@@ -145,11 +142,10 @@ class SetupStoreTest {
     fun `R_080 snapshot mirrors exactly what SetupStateMachine needs`() {
         val store = InMemorySetupStore(
             welcomeSeen = true,
-            notificationsSkipped = true,
             selectedInputId = "usb-1",
             inputVerified = true,
             levelInBand = true,
-            overnightStepSeen = true,
+            levelAcknowledged = true,
             radioChoice = RadioChoice.NONE,
             setupComplete = false,
         )
@@ -157,13 +153,43 @@ class SetupStoreTest {
         val snapshot = store.snapshot()
 
         assert(snapshot.welcomeSeen)
-        assert(snapshot.notificationsSkipped)
         assert(snapshot.selectedInputId == "usb-1")
         assert(snapshot.inputVerified)
         assert(snapshot.levelInBand)
-        assert(snapshot.overnightStepSeen)
+        assert(snapshot.levelAcknowledged)
         assert(snapshot.radioChoice == RadioChoice.NONE)
         assert(!snapshot.setupComplete)
+    }
+
+    /**
+     * P39 (D58): the two facts this store cannot answer default to *the answer that adds no step* —
+     * `requiredModelsInstalled = true`, `rigModuleAvailable = false` — and [SetupActivity]'s own
+     * `currentSnapshot()` overrides both with the freshly read state. A fixture or a test that has not
+     * thought about them is therefore wrong in the direction that shows the shortest flow, never in the
+     * direction that invents a step nobody can satisfy.
+     */
+    @Test
+    fun `AC_198 the two facts the store cannot know default to adding no step`() {
+        val snapshot = InMemorySetupStore(welcomeSeen = true).snapshot()
+
+        assert(snapshot.requiredModelsInstalled)
+        assert(!snapshot.rigModuleAvailable)
+    }
+
+    /**
+     * R-1170/P39: an acknowledgement is about one route's measured level, so changing the route clears
+     * it along with the verification. Carrying it across would let an unresolved level on a device that
+     * never produced a reading read as answered.
+     */
+    @Test
+    fun `AC_201 clearInputVerification clears the level acknowledgement too`() {
+        val store = InMemorySetupStore(inputVerified = true, levelInBand = true, levelAcknowledged = true)
+
+        store.clearInputVerification()
+
+        assert(!store.inputVerified)
+        assert(!store.levelInBand)
+        assert(!store.levelAcknowledged)
     }
 
     @Test

@@ -22,12 +22,13 @@ import org.ort.app.ui.theme.OrtType
  * now — use USB instead` ([onNotNow]) flips the mode to USB and proceeds — never a dead end.
  */
 @Composable
-public fun BluetoothPermissionScreen(onAllow: () -> Unit, onNotNow: () -> Unit) {
+public fun BluetoothPermissionScreen(onAllow: () -> Unit, onNotNow: () -> Unit, onExitToApp: (() -> Unit)? = null) {
     SetupScaffold(
         step = SetupStep.BLUETOOTH_PERMISSION,
         title = "Nearby devices",
         subtitle = "Bluetooth mode needs one more permission",
         onBack = null,
+        onExitToApp = onExitToApp,
         bottomActions = {
             PrimaryButton(
                 text = "Allow nearby devices",

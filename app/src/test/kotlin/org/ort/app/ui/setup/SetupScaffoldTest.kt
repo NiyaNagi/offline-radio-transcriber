@@ -12,6 +12,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.Density
 import org.junit.Rule
@@ -36,7 +37,7 @@ class SetupScaffoldTest {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = fontScale)) {
                 OrtTheme {
                     SetupScaffold(
-                        step = SetupStep.MICROPHONE,
+                        step = SetupStep.MODE,
                         title = "Title",
                         subtitle = "Subtitle",
                         onBack = null,
@@ -53,12 +54,53 @@ class SetupScaffoldTest {
         }
     }
 
+    /**
+     * **AC-200 (P39, R-1162)**: every step reachable after setup has once completed renders an exit
+     * that returns to the running app, not only a forward action.
+     *
+     * Tested on the shared scaffold rather than screen by screen, which is the whole of the fix:
+     * R-1162 shipped this exit on exactly one screen — the one whose trap had been reported — and its
+     * own row says the rule "generalises past `OVERNIGHT`… and that set should be enumerated rather
+     * than assumed to be one screen". One slot here is that enumeration, and no future step can be
+     * added without inheriting it.
+     */
+    @Test
+    fun `AC_200 a step shown after setup is complete renders an exit back to the running app`() {
+        var exited = false
+        composeTestRule.setContent {
+            OrtTheme {
+                SetupScaffold(
+                    step = SetupStep.MODE,
+                    title = "Title",
+                    subtitle = "Subtitle",
+                    onBack = null,
+                    onExitToApp = { exited = true },
+                    bottomActions = {
+                        PrimaryButton(text = "Begin", onClick = {}, modifier = Modifier.fillMaxWidth())
+                    },
+                ) { Text("content") }
+            }
+        }
+
+        composeTestRule.onNodeWithTag("setup-exit-to-app").assertIsDisplayed().performClick()
+        assert(exited) { "the exit must actually return to the app, not merely render" }
+    }
+
+    /** AC-200's other half, and the reason the exit is conditional: on a genuine first run there is
+     * nowhere to return *to*, and an exit there would itself be the loop R-1161 reported. */
+    @Test
+    fun `AC_200 a genuine first run renders no exit, because there is nowhere to return to`() {
+        renderScaffold()
+
+        composeTestRule.onNodeWithTag("setup-exit-to-app").assertDoesNotExist()
+    }
+
     @Test
     fun `R_120 the step counter renders exactly once, never doubled above the segment row`() {
         renderScaffold()
 
-        // R-1087: the fixed total grew from 8 to 10; MICROPHONE's own position (2) is unchanged.
-        composeTestRule.onAllNodesWithText("2 of $SETUP_TOTAL_STEPS").assertCountEquals(1)
+        // P39: the denominator is derived now (setupTotalSteps), and MODE is stage 1 of it.
+        composeTestRule.onAllNodesWithText("1 of $SETUP_STEPS_WITHOUT_DOWNLOAD").assertCountEquals(1)
     }
 
     /** Matches `FailureScreensTest`'s/`ReaderAccessibilityTest`'s own V7 font-scale pattern — a
@@ -69,7 +111,7 @@ class SetupScaffoldTest {
     fun `R_123 the last content item scrolls clear of the fixed action bar at font scale 2_0`() {
         renderScaffold(lastItemText = "the very last line of content", fontScale = 2f)
 
-        composeTestRule.onNodeWithTag("setup-screen-MICROPHONE").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("setup-screen-MODE").assertIsDisplayed()
         composeTestRule.onAllNodesWithText("the very last line of content")[0].performScrollTo().assertIsDisplayed()
     }
 
@@ -97,7 +139,7 @@ class SetupScaffoldTest {
             CompositionLocalProvider(LocalDensity provides Density(density = 1f, fontScale = 2f)) {
                 OrtTheme {
                     SetupScaffold(
-                        step = SetupStep.MICROPHONE,
+                        step = SetupStep.MODE,
                         title = "Title",
                         subtitle = "Subtitle",
                         onBack = null,

@@ -21,7 +21,7 @@ class SetupCaptureConfigurationAdapterTest {
     fun `no capture mode chosen yet returns null, never a fabricated default`() {
         val store = InMemorySetupStore(captureMode = null)
 
-        assertNull(SetupCaptureConfigurationAdapter.toCaptureConfiguration(store))
+        assertNull(SetupCaptureConfigurationAdapter.toCaptureConfiguration(store, manualFrequencyHz = null))
     }
 
     @Test
@@ -33,7 +33,7 @@ class SetupCaptureConfigurationAdapterTest {
             rigTransport = null,
         )
 
-        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)
+        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store, manualFrequencyHz = null)
 
         assertEquals(CaptureMode.LOCAL_MICROPHONE, config?.mode)
         assertEquals("mic-0", config?.selectedInputId)
@@ -51,7 +51,7 @@ class SetupCaptureConfigurationAdapterTest {
             rigBluetoothAddress = "AA:BB:CC:DD:EE:FF",
         )
 
-        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)
+        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store, manualFrequencyHz = null)
 
         assertEquals(RigTransportKind.BLUETOOTH_SPP, config?.rigTransportKind)
         assertEquals(
@@ -75,40 +75,63 @@ class SetupCaptureConfigurationAdapterTest {
             rigBluetoothAddress = "AA:BB:CC:DD:EE:FF",
         )
 
-        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)
+        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store, manualFrequencyHz = null)
 
         assertEquals(CaptureMode.BLUETOOTH_RADIO, config?.mode)
         assertEquals("usb-1", config?.selectedInputId)
         assertEquals(RigTransportKind.BLUETOOTH_SPP, config?.rigTransportKind)
     }
 
-    /** Register R-1030 (FR-CAP-13): S10b's "logged by hand" frequency must reach the
-     * [org.ort.pipeline.rig.CaptureConfiguration] `RealCaptureService` actually reads, or the
-     * screen's own claim that it does is false. */
+    /** Register R-1030 (FR-CAP-13): the "logged by hand" frequency must reach the
+     * [org.ort.pipeline.rig.CaptureConfiguration] `RealCaptureService` actually reads, or the screen's
+     * own claim that it does is false. **P39: it is now carried through from the configuration store
+     * rather than read from [SetupStore]** — see [SetupCaptureConfigurationAdapter]'s own doc comment. */
     @Test
     fun `R_1030 a manually entered frequency carries through to the capture configuration`() {
-        val store = InMemorySetupStore(
-            captureMode = CaptureMode.LOCAL_MICROPHONE,
-            rigId = NullRigModule.ID,
-            manualFrequencyHz = 146_520_000L,
-        )
+        val store = InMemorySetupStore(captureMode = CaptureMode.LOCAL_MICROPHONE, rigId = NullRigModule.ID)
 
-        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)
+        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store, manualFrequencyHz = 146_520_000L)
 
         assertEquals(146_520_000L, config?.manualFrequencyHz)
     }
 
     @Test
     fun `R_1030 no frequency ever entered carries through as null, never a fabricated 0`() {
-        val store = InMemorySetupStore(
-            captureMode = CaptureMode.LOCAL_MICROPHONE,
-            rigId = NullRigModule.ID,
-            manualFrequencyHz = null,
-        )
+        val store = InMemorySetupStore(captureMode = CaptureMode.LOCAL_MICROPHONE, rigId = NullRigModule.ID)
 
-        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)
+        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store, manualFrequencyHz = null)
 
         assertNull(config?.manualFrequencyHz)
+    }
+
+    /**
+     * **AC-202 / R-1167: the silent data loss this parameter exists to prevent.**
+     *
+     * P39 moves the frequency prompt out of onboarding and into the log's own header, so nothing writes
+     * `SetupStore.manualFrequencyHz` any more. `CaptureConfigurationStore.update` replaces the whole
+     * configuration, so an adapter still sourcing that field from [SetupStore] would push `null` over
+     * whatever the operator typed — on any later trip through setup, with no error, and with no symptom
+     * but every subsequent over logged without a frequency.
+     *
+     * This is the pure half of the discrimination: the adapter must return the value it was handed even
+     * though nothing in the store mentions it. Reverting the parameter to `store.manualFrequencyHz`
+     * cannot make this pass, because the store has no such property to read.
+     */
+    @Test
+    fun `AC_202 a frequency set outside setup survives an adapted configuration untouched`() {
+        val store = InMemorySetupStore(
+            captureMode = CaptureMode.USB_RADIO,
+            selectedInputId = "usb-1",
+            rigId = NullRigModule.ID,
+        )
+
+        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store, manualFrequencyHz = 145_230_000L)
+
+        assertEquals(
+            145_230_000L,
+            config?.manualFrequencyHz,
+            "setup must carry the operator's own frequency through, never replace it",
+        )
     }
 
     @Test
@@ -120,7 +143,7 @@ class SetupCaptureConfigurationAdapterTest {
             rigBluetoothAddress = null,
         )
 
-        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store)
+        val config = SetupCaptureConfigurationAdapter.toCaptureConfiguration(store, manualFrequencyHz = null)
 
         assertEquals(RigTransportKind.USB_SERIAL, config?.rigTransportKind)
         assertEquals(emptyMap<String, String>(), config?.rigParams)

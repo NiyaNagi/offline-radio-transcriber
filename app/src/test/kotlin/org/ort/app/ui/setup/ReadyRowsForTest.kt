@@ -37,7 +37,11 @@ class ReadyRowsForTest {
         ),
         rigStatus: RigStatus.State = RigStatus.State.Absent,
         modelsState: ModelsViewState = ModelsViewState(emptyList()),
-    ) = readyRowsFor(store, overnightState, rigStatus, modelsState, noOpActions)
+        // P39 (AC-202, R-1167): the hand-entered frequency comes from `CaptureConfigurationStore` now,
+        // not from `SetupStore` -- see `readyRowsFor`'s own parameter doc. `null` by default: most rows
+        // here have nothing to do with it, and the honest default is "nothing was ever entered".
+        manualFrequencyHz: Long? = null,
+    ) = readyRowsFor(store, overnightState, rigStatus, modelsState, noOpActions, manualFrequencyHz)
 
     // --- R-1169: the recorded audio source is readable after setup, not only during it -----------
 
@@ -126,6 +130,7 @@ class ReadyRowsForTest {
             RigStatus.State.Absent,
             ModelsViewState(emptyList()),
             actions,
+            manualFrequencyHz = 145_230_000L,
         )
             .first { it.label == "Mode" }
 
@@ -203,8 +208,8 @@ class ReadyRowsForTest {
 
     @Test
     fun `R_084 choosing no radio is a valid, green row naming the manual frequency`() {
-        val store = InMemorySetupStore(radioChoice = RadioChoice.NONE, manualFrequencyHz = 145_230_000L)
-        val row = rows(store).first { it.label == "Radio" }
+        val store = InMemorySetupStore(radioChoice = RadioChoice.NONE)
+        val row = rows(store, manualFrequencyHz = 145_230_000L).first { it.label == "Radio" }
 
         assertTrue(row.ok, "a deliberate choice of no radio must not read as a problem")
         assertTrue(row.value.contains("145.230"))
@@ -225,13 +230,14 @@ class ReadyRowsForTest {
             onInstallModel = {},
             onChangeMode = {},
         )
-        val store = InMemorySetupStore(radioChoice = RadioChoice.NONE, manualFrequencyHz = 145_230_000L)
+        val store = InMemorySetupStore(radioChoice = RadioChoice.NONE)
         val row = readyRowsFor(
             store,
             OvernightSurvivalState(batteryExemptDiagnostic = false, survivalProven = false),
             RigStatus.State.Absent,
             ModelsViewState(emptyList()),
             actions,
+            manualFrequencyHz = 145_230_000L,
         )
             .first { it.label == "Radio" }
 
@@ -378,6 +384,7 @@ class ReadyRowsForTest {
             connected,
             ModelsViewState(emptyList()),
             actions,
+            manualFrequencyHz = null,
         )
             .first { it.label == "Radio" }
 

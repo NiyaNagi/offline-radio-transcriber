@@ -15,6 +15,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.Description
@@ -154,58 +155,161 @@ class SetupActivityTest {
         }
     }
 
+    /**
+     * **AC-204**, the resume half: there is no microphone explainer step to resume onto any more. An
+     * ungranted microphone lands on the mode surface — the one carrying the rationale and firing the
+     * dialog — so one more tap re-fires the system request with the reason already on screen.
+     */
     @Test
-    fun `R_080 once Welcome is seen and the microphone is not granted, resumes on Microphone`() {
+    fun `AC_204 once Welcome is seen and the microphone is not granted, resumes on Mode, not an explainer`() {
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
             .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
-            .putBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, true)
             .putString(SharedPreferencesSetupStore.KEY_CAPTURE_MODE, CaptureMode.USB_RADIO.name)
             .apply()
         deny(Manifest.permission.RECORD_AUDIO)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> assertEquals(SetupStep.MICROPHONE, activity.currentStepForTest) }
+            scenario.onActivity { activity -> assertEquals(SetupStep.MODE, activity.currentStepForTest) }
         }
     }
 
-    // --- P22: SetupStep.JURISDICTION_NOTICE (NFR-6c, AC-166) ---------------------------------
-
+    /**
+     * **AC-204, the half that matters most**: choosing a mode fires the system microphone request
+     * *itself*. The explainer screen that used to sit in front of it is deleted, so if this tap did
+     * not request the permission, nothing would — and the flow would silently stall on a screen with
+     * no primary button at all.
+     */
     @Test
-    fun `AC_166 welcome seen but the jurisdiction notice not yet seen lands on JurisdictionNotice`() {
-        ApplicationProvider.getApplicationContext<Application>()
-            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit()
-            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
-            .apply()
-        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+    fun `AC_204 choosing a mode requests RECORD_AUDIO directly, with no explainer step in between`() {
+        setupPrefs().edit().putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true).commit()
+        deny(Manifest.permission.RECORD_AUDIO)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> assertEquals(SetupStep.JURISDICTION_NOTICE, activity.currentStepForTest) }
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.MODE, activity.currentStepForTest)
+                activity.onChooseMode(CaptureMode.LOCAL_MICROPHONE)
+            }
+            scenario.onActivity { activity ->
+                val requested = shadowOf(activity).lastRequestedPermission?.requestedPermissions?.toList()
+                assertTrue(
+                    "the mode tap must fire the system microphone dialog itself, got $requested",
+                    requested?.contains(Manifest.permission.RECORD_AUDIO) == true,
+                )
+            }
         }
     }
 
+    /**
+     * **AC-198, walked as a real first run rather than reasoned about.** Every answer is given through
+     * the activity's own callbacks, in the order the flow asks for them, and the distinct screens are
+     * counted: four, with every model present. The system permission dialog is not a screen and is not
+     * counted (AC-198 says so in terms).
+     *
+     * `SetupStateMachineTest` walks the same ladder as a pure function; this walks it through the real
+     * `SharedPreferences`, the real `ModelsController` read and the real step dispatch, which is where
+     * a gate that the state machine does not know about — a `tryOpenAtRequestedStep`, an `onResume`
+     * re-derivation — would show up.
+     */
     @Test
-    fun `AC_166 tapping I understand records it seen and proceeds past the notice`() {
-        ApplicationProvider.getApplicationContext<Application>()
-            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .edit()
-            .putBoolean(SharedPreferencesSetupStore.KEY_WELCOME_SEEN, true)
-            .apply()
+    fun `AC_198 a real first run reaches Ready in four screens, the system dialog not counted`() {
+        org.ort.app.debug.ScenarioFixtures.installEveryModelFixtureAtRealSize(
+            ApplicationProvider.getApplicationContext(),
+        )
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        val walked = mutableListOf<SetupStep>()
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            repeat(FIRST_RUN_WALK_BOUND) {
+                var done = false
+                scenario.onActivity { activity ->
+                    val step = checkNotNull(activity.currentStepForTest) { "setup must always name a step" }
+                    if (walked.lastOrNull() != step) walked += step
+                    when (step) {
+                        SetupStep.WELCOME -> activity.onBegin()
+                        SetupStep.MODE -> activity.onChooseMode(CaptureMode.LOCAL_MICROPHONE)
+                        // The real sequence this screen asks for, through its own callbacks: pick a
+                        // route, run the check, and continue once it passes. `onStartVerify` is what
+                        // records the selection (constitution IV — a route nobody verified is not a
+                        // selection), so skipping it would leave the gate unsatisfied forever, which is
+                        // exactly what this walk is bounded to catch.
+                        SetupStep.LISTEN -> {
+                            activity.onSelectInput(FIRST_ROUTE_ID)
+                            activity.onStartVerify()
+                            activity.onVerifyStateChanged(passedRouteCheck())
+                            activity.onListenContinue()
+                        }
+                        SetupStep.READY -> done = true
+                        else -> error("a first run reached $step, which is not one of the four screens")
+                    }
+                }
+                if (done) return@use
+            }
+            error("the flow never reached READY — walked $walked")
+        }
+
+        assertEquals(
+            "AC-198: no more than four screens on a first run with every model present",
+            listOf(SetupStep.WELCOME, SetupStep.MODE, SetupStep.LISTEN, SetupStep.READY),
+            walked,
+        )
+    }
+
+    /** A route check that genuinely passed — the only state that may ever write
+     * `SetupStore.inputVerified` (constitution IV). */
+    private fun passedRouteCheck() = RouteCheckState.Passed(
+        nativeRateHz = 48_000,
+        resamplerDescription = "polyphase/v1 48000->16000",
+        routedDeviceLabel = "Built-in microphone",
+        levelBars = listOf(0.4f),
+        noiseFloorDbfs = -58.0,
+        audioSourceLabel = "unprocessed",
+    )
+
+    // --- AC-166 / AC-180 / AC-203: folded onto Welcome, not deleted (P39, D58) ---------------------
+
+    /**
+     * **AC-166 as amended by D58.** The jurisdiction notice is no longer a step; it is an acknowledged
+     * line on Welcome with its full text one tap away. The criterion's two binding halves are unchanged
+     * and are what this asserts: it is *recorded acknowledged* before capture, and it is recorded by the
+     * one action that acknowledges it. A flow that simply stopped writing the flag would look identical
+     * from the outside until the next launch re-asked, which is exactly why the flag is the assertion.
+     */
+    @Test
+    fun `AC_166 Begin records the jurisdiction notice acknowledged and proceeds straight to Mode`() {
         deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
-                assertEquals(SetupStep.JURISDICTION_NOTICE, activity.currentStepForTest)
-                activity.onContinueJurisdictionNotice()
+                assertEquals(SetupStep.WELCOME, activity.currentStepForTest)
+                activity.onBegin()
                 assertEquals(SetupStep.MODE, activity.currentStepForTest)
             }
         }
-        val seen = ApplicationProvider.getApplicationContext<Application>()
-            .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
-            .getBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, false)
-        assertTrue("the notice must be recorded seen so it never reappears on the next launch", seen)
+        assertTrue(
+            "the notice must be recorded acknowledged so it never silently re-asks on the next launch",
+            setupPrefs().getBoolean(SharedPreferencesSetupStore.KEY_JURISDICTION_NOTICE_SEEN, false),
+        )
+    }
+
+    /** **AC-180 as amended by D58**: the analytics disclosure is shown on Welcome, and the same one
+     * action records it. Unchecked-by-default and declining-costs-nothing are unchanged — neither this
+     * flag nor the two tiers ever gate anything (FR-ANL-10). */
+    @Test
+    fun `AC_180 Begin records the analytics disclosure seen, and it never gates the flow`() {
+        deny(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> activity.onBegin() }
+            scenario.onActivity { activity ->
+                assertEquals(SetupStep.MODE, activity.currentStepForTest)
+            }
+        }
+        assertTrue(
+            "the disclosure must be recorded seen, exactly as the dedicated step used to record it",
+            setupPrefs().getBoolean(SharedPreferencesSetupStore.KEY_ANALYTICS_CONSENT_SEEN, false),
+        )
     }
 
     // --- D33 (WPD): SetupStep.MODE is the very first content gate ------------------------------
@@ -240,7 +344,7 @@ class SetupActivityTest {
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
             scenario.onActivity { activity -> activity.onChooseMode(CaptureMode.LOCAL_MICROPHONE) }
             scenario.onActivity { activity ->
-                assertEquals(SetupStep.INPUT, activity.currentStepForTest)
+                assertEquals(SetupStep.LISTEN, activity.currentStepForTest)
                 val store = SharedPreferencesSetupStore(
                     activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
                 )
@@ -266,7 +370,7 @@ class SetupActivityTest {
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
             scenario.onActivity { activity -> activity.onChooseMode(CaptureMode.USB_RADIO) }
             scenario.onActivity { activity ->
-                assertEquals(SetupStep.INPUT, activity.currentStepForTest)
+                assertEquals(SetupStep.LISTEN, activity.currentStepForTest)
                 val store = SharedPreferencesSetupStore(
                     activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
                 )
@@ -328,7 +432,7 @@ class SetupActivityTest {
             }
             scenario.onActivity { activity -> activity.onDeclineBluetoothPermission() }
             scenario.onActivity { activity ->
-                assertEquals(SetupStep.NOTIFICATIONS, activity.currentStepForTest)
+                assertEquals(SetupStep.LISTEN, activity.currentStepForTest)
                 val store = SharedPreferencesSetupStore(
                     activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
                 )
@@ -376,8 +480,20 @@ class SetupActivityTest {
         }
     }
 
+    /**
+     * **D58's two structural rules, at the activity, and this test is the exact inversion of what it
+     * used to assert.** It was named *"with every gate already satisfied, SetupActivity hands back to
+     * MainActivity immediately"* — and that hand-back is R-1161's second half. Setup treating "nothing
+     * left to do" as an instruction to return control to the router that had just sent it here, while
+     * the router could send it straight back, is a cycle by construction.
+     *
+     * Now: every gate satisfied resolves to [SetupStep.READY] — a real destination with a real
+     * `Start capture` press — **including when `setupComplete` is already true**, which is the latch
+     * the terminal screen used to sit behind. Inverted rather than deleted, and strictly stronger: it
+     * asserts both that the screen is shown and that nothing was started on the way.
+     */
     @Test
-    fun `R_080 with every gate already satisfied, SetupActivity hands back to MainActivity immediately`() {
+    fun `R_1161 with every gate satisfied and setup already complete, Setup shows Ready and hands back to nobody`() {
         val prefs = ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
         prefs.edit()
@@ -407,15 +523,21 @@ class SetupActivityTest {
         )
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
-        // The activity finishes itself inside onCreate (refreshStep() -> handBackToMainActivity()),
-        // so by the time any onActivity{} callback could run it is already DESTROYED and
-        // ActivityScenario refuses to hand it back (NullPointerException, found by actually running
-        // this, not by inspection) -- the application-level shadow still saw the startActivity call.
-        ActivityScenario.launch(SetupActivity::class.java).use {
-            val app = ApplicationProvider.getApplicationContext<Application>()
-            val next = shadowOf(app).nextStartedActivity
-            assertEquals(MainActivity::class.java.name, next?.component?.className)
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertEquals(
+                    "no gates remain, so the terminal screen is the answer -- never a hand-back",
+                    SetupStep.READY,
+                    activity.currentStepForTest,
+                )
+                assertFalse("setup must not finish itself on 'nothing left to do'", activity.isFinishing)
+            }
         }
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        assertNull(
+            "handing control back to the router that sent us here is half of R-1161's cycle",
+            shadowOf(app).nextStartedActivity,
+        )
     }
 
     @Test
@@ -457,9 +579,10 @@ class SetupActivityTest {
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
 
         val context = ApplicationProvider.getApplicationContext<Application>()
-        val intent = Intent(context, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, SetupStep.INPUT.name)
+        val intent = Intent(context, SetupActivity::class.java)
+            .putExtra(SetupActivity.EXTRA_STEP, SetupStep.LISTEN.name)
         ActivityScenario.launch<SetupActivity>(intent).use { scenario ->
-            scenario.onActivity { activity -> assertEquals(SetupStep.INPUT, activity.currentStepForTest) }
+            scenario.onActivity { activity -> assertEquals(SetupStep.LISTEN, activity.currentStepForTest) }
         }
     }
 
@@ -612,6 +735,9 @@ class SetupActivityTest {
      * path does. */
     @Test
     fun `E2_E09 a cold-opened S09b also pre-selects the mode preset transport`() {
+        // P39: this test is about the rig branch, which stepFor enters only when a rig module
+        // with a real CAT implementation exists. See enableRigBranch's own doc comment.
+        enableRigBranch()
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
@@ -671,6 +797,9 @@ class SetupActivityTest {
      * (CF06) and R-903 (S11) already apply. */
     @Test
     fun `R_941 S09b drops the manufacturer prefix from the title`() {
+        // P39: this test is about the rig branch, which stepFor enters only when a rig module
+        // with a real CAT implementation exists. See enableRigBranch's own doc comment.
+        enableRigBranch()
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
             .edit()
@@ -716,6 +845,9 @@ class SetupActivityTest {
      */
     @Test
     fun `R_344 choosing No radio routes to the frequency field, not straight past RADIO`() {
+        // P39: this test is about the rig branch, which stepFor enters only when a rig module
+        // with a real CAT implementation exists. See enableRigBranch's own doc comment.
+        enableRigBranch()
         // Not storeEverySetupGateExceptComplete() -- its own RADIO_CHOICE=NONE would defeat this
         // test before it starts; every other gate is set by hand instead.
         ApplicationProvider.getApplicationContext<Application>()
@@ -764,7 +896,9 @@ class SetupActivityTest {
                 .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE),
         )
         assertEquals(RadioChoice.NONE, store.radioChoice)
-        assertEquals(145_230_000L, store.manualFrequencyHz)
+        // P39/R-1167: the value lands in `CaptureConfigurationStore` -- the store `RealCaptureService`
+        // itself reads -- not in `SetupStore`, which no longer carries it at all.
+        assertEquals(145_230_000L, inForceManualFrequencyHz())
     }
 
     /** [SetupActivity.onEnterFrequency]'s own null guard (constitution I) -- a blank/unparseable
@@ -985,7 +1119,7 @@ class SetupActivityTest {
             scenario.onActivity { activity ->
                 // Notifications was already granted above -- the next unmet gate past
                 // BLUETOOTH_PERMISSION is INPUT (no route chosen yet), not NOTIFICATIONS.
-                assertEquals(SetupStep.INPUT, activity.currentStepForTest)
+                assertEquals(SetupStep.LISTEN, activity.currentStepForTest)
             }
         }
     }
@@ -1090,7 +1224,7 @@ class SetupActivityTest {
                         activity.getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, 0),
                     )
                     assertEquals(RadioChoice.NONE, store.radioChoice)
-                    assertEquals(145_230_000L, store.manualFrequencyHz)
+                    assertEquals(145_230_000L, inForceManualFrequencyHz())
                 }
             }
         } finally {
@@ -1450,6 +1584,21 @@ class SetupActivityTest {
 
     // --- P22: AC-189 -- the battery-exemption step recurs until the heartbeat proves survival ----
 
+    /**
+     * **P39 (D58): makes the rig branch reachable at all.** `SetupStateMachine.stepFor` enters
+     * `RADIO`/`RIG_TRANSPORT`/`RIG_BLUETOOTH` only when a rig module with a real CAT implementation
+     * exists, and none does on any shipped build — `SetupActivity.rigModuleAvailable()` reads exactly
+     * the seam this installs. Every test below that is *about* the rig branch says so by calling this;
+     * a test that does not call it is asserting the shipped state, in which the branch does not appear.
+     *
+     * Both flags are reset by `setUp`'s own safety net, which is why this needs no `finally` of its
+     * own — the same belt-and-braces the surrounding rig tests already rely on.
+     */
+    private fun enableRigBranch(port: RigLinkPort = InMemoryRigLinkPort()) {
+        DebugRigLinkPortOverride.isDebugBuild = { true }
+        DebugRigLinkPortOverride.show(port)
+    }
+
     /** Every gate [storeEverySetupGateExceptComplete] sets, plus [SharedPreferencesSetupStore
      * .KEY_SETUP_COMPLETE] itself — the device has already finished setup once before. */
     private fun storeSetupAlreadyComplete() {
@@ -1461,9 +1610,81 @@ class SetupActivityTest {
             .apply()
     }
 
-    /** R-1161: the state `MainActivity.overnightSurvivalStillUnproven` now leaves behind when it
-     * decides to nag — it, and only it, clears this flag, and it sets the process-wide
-     * [OvernightNagState] in the same breath so the detour can only happen once. */
+    /** The state of a device whose operator has never answered the overnight prompt. **P39: nothing
+     * in the app clears this flag any more** — the router used to, and the composition of that reset
+     * with `SetupActivity`'s own was R-1161. It is set by hand here to describe a device, not to
+     * reproduce a code path. */
+    /**
+     * The frequency as the capture path would actually read it — `CaptureConfigurationStore`, not
+     * `SetupStore`, which P39 stopped carrying it in at all (R-1167). The pending configuration is
+     * preferred for the same reason `SetupActivity.inForceManualFrequencyHz` prefers it: `update`
+     * writes there while capture is running (FR-CAP-12, AC-131).
+     */
+    private fun inForceManualFrequencyHz(): Long? {
+        val store = org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore(
+            ApplicationProvider.getApplicationContext<Application>().getSharedPreferences(
+                org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+                Application.MODE_PRIVATE,
+            ),
+        )
+        return (store.pendingConfiguration() ?: store.current()).manualFrequencyHz
+    }
+
+    /**
+     * **AC-202 / R-1167: the round trip that would have destroyed the operator's frequency.**
+     *
+     * P39 moves the frequency prompt out of onboarding and into the log's own header, which means
+     * `SetupStore` stops being the thing that knows the answer. `CaptureConfigurationStore.update`
+     * replaces the whole configuration, and `SetupActivity` calls it after every mutation to the
+     * mode/route/rig axes — so before this change, re-entering setup from `Settings › Input` and
+     * touching *anything* pushed a configuration whose `manualFrequencyHz` came from a `SetupStore`
+     * field nothing writes any more. **`null` over a real frequency, silently.** No error, and the only
+     * symptom is every subsequent over logged without a frequency.
+     *
+     * Driven as the operator's own sequence: a frequency is already recorded (as the log header records
+     * it — straight into the configuration store), setup is then entered and a mode is chosen, which is
+     * the most ordinary mutation there is. The frequency must still be there afterwards.
+     */
+    @Test
+    @Requirement("FR-RIG-1", "AC-202")
+    fun `AC_202 re-entering setup after a log-header frequency was set leaves that value intact`() {
+        storeSetupAlreadyComplete()
+        grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        setManualFrequencyAsTheLogHeaderWould(145_230_000L)
+
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            // The most ordinary mutation in the flow, and the one Settings' own re-entry lands on.
+            scenario.onActivity { activity -> activity.onChooseMode(CaptureMode.USB_RADIO) }
+        }
+
+        assertEquals(
+            "re-entering setup must never overwrite the frequency the operator typed into the log header",
+            145_230_000L,
+            inForceManualFrequencyHz(),
+        )
+    }
+
+    /** Exactly what the log header's own editor does: write the value to the configuration store, the
+     * one `RealCaptureService` reads at session start. Nothing is written to `SetupStore` — that is the
+     * whole point of the test above. */
+    private fun setManualFrequencyAsTheLogHeaderWould(hz: Long) {
+        val store = org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore(
+            ApplicationProvider.getApplicationContext<Application>().getSharedPreferences(
+                org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore.PREFS_NAME,
+                Application.MODE_PRIVATE,
+            ),
+        )
+        store.update(store.current().copy(manualFrequencyHz = hz))
+    }
+
+    /** P39: [SetupStep.OVERNIGHT] is off the ladder, so it is opened the way its new home will open
+     * it — by [SetupActivity.EXTRA_STEP], which `tryOpenAtRequestedStep` honours once every real gate
+     * has cleared. */
+    private fun overnightIntent(): Intent = Intent(
+        ApplicationProvider.getApplicationContext<Application>(),
+        SetupActivity::class.java,
+    ).putExtra(SetupActivity.EXTRA_STEP, SetupStep.OVERNIGHT.name)
+
     private fun clearOvernightStepSeen() {
         ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
@@ -1473,27 +1694,31 @@ class SetupActivityTest {
     }
 
     /**
-     * AC-189's own requirement — the step *reappears* — unchanged by R-1161, only relocated: the
-     * router clears [SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN] before handing here, and this
-     * activity resumes on [SetupStep.OVERNIGHT] exactly as it always did. What it must **not** do is
-     * fabricate the survival fact on the way (constitution IV: only real session evidence).
+     * **AC-199 / AC-189 as amended (P39, D58).** An operator who has never answered the overnight
+     * prompt, on a device that has never proven survival, is **not** shown the overnight step — the
+     * flow lands on its terminal screen. Overnight survival is evidence only a completed capture can
+     * produce, so a pre-capture gate on it is unsatisfiable by construction, which is what deadlocked
+     * every first-run operator.
      *
-     * **Replaces** `AC_189 unproven survival resets overnightStepSeen so a fresh launch resumes on
-     * Overnight again`, which asserted the reset *here*. That reset is the R-1161 defect: this
-     * activity is re-entered on every trip of the cycle, so resetting here re-armed the step the two
-     * buttons had just cleared, forever. The reappearance it was protecting is still protected —
-     * by `MainActivityTest`'s own R-1161 tests, at the one place that can know whether the operator
-     * has already been asked this process.
+     * **Inverted, not deleted**: this test used to assert the opposite — *"Setup resumes on Overnight"*
+     * — and the inversion is the finding. What it also asserted and still does: this run must not
+     * fabricate the survival fact on the way (constitution IV: only real session evidence).
      */
     @Test
-    fun `AC_189 with the step cleared by the router, Setup resumes on Overnight and proves nothing`() {
+    fun `AC_199 an unanswered overnight prompt is no longer a gate, and Setup lands on Ready`() {
         storeSetupAlreadyComplete()
         clearOvernightStepSeen()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> assertEquals(SetupStep.OVERNIGHT, activity.currentStepForTest) }
+            scenario.onActivity { activity ->
+                assertEquals(
+                    "nothing may gate capture on evidence only capture can produce (AC-199)",
+                    SetupStep.READY,
+                    activity.currentStepForTest,
+                )
+            }
         }
         val survivalProven = ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
@@ -1516,11 +1741,8 @@ class SetupActivityTest {
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
 
-        // Every gate including Overnight is satisfied, so this activity finishes inside onCreate --
-        // the same shape the two "hands back immediately" tests above already document.
-        ActivityScenario.launch(SetupActivity::class.java).use {
-            val app = ApplicationProvider.getApplicationContext<Application>()
-            assertEquals(MainActivity::class.java.name, shadowOf(app).nextStartedActivity?.component?.className)
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.READY, activity.currentStepForTest) }
         }
         val stepSeen = ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
@@ -1529,18 +1751,13 @@ class SetupActivityTest {
     }
 
     @Test
-    fun `AC_189 proven survival latches true and this already-complete flow hands straight back to MainActivity`() {
+    fun `AC_189 proven survival latches true, and this already-complete flow lands on Ready`() {
         storeSetupAlreadyComplete()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = true))
 
-        // Every other gate is already satisfied, so once survival is proven too this activity
-        // finishes itself inside onCreate (refreshStep() -> handBackToMainActivity()) -- the same
-        // shape the pre-existing "everything already complete" test above documents.
-        ActivityScenario.launch(SetupActivity::class.java).use {
-            val app = ApplicationProvider.getApplicationContext<Application>()
-            val next = shadowOf(app).nextStartedActivity
-            assertEquals(MainActivity::class.java.name, next?.component?.className)
+        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> assertEquals(SetupStep.READY, activity.currentStepForTest) }
         }
         val survivalProven = ApplicationProvider.getApplicationContext<Application>()
             .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
@@ -1562,37 +1779,45 @@ class SetupActivityTest {
      * then actually reaches capture`; this one keeps the narrower property it always had, and says
      * so in its name.
      *
-     * [clearOvernightStepSeen] is what changed with R-1161: this activity no longer re-arms the
-     * step itself, so the fixture has to state the router's own reset explicitly to land here.
+     * **P39**: `stepFor` never returns [SetupStep.OVERNIGHT] any more, so the screen is reached the way
+     * its new home will reach it — by [SetupActivity.EXTRA_STEP]. That is deliberate rather than
+     * incidental: the *Keep capture running* prompt D58 moves this ask to is a capture-status surface
+     * outside this change's ownership, and this test is what proves the screen it will open still
+     * behaves when opened that way.
      */
     @Test
-    fun `AC_189 skipping Overnight hands back to MainActivity rather than re-showing it in the same launch`() {
+    fun `AC_189 skipping Overnight records the answer and never re-shows it in the same launch`() {
         storeSetupAlreadyComplete()
         clearOvernightStepSeen()
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
 
-        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+        ActivityScenario.launch<SetupActivity>(overnightIntent()).use { scenario ->
             scenario.onActivity { activity ->
                 assertEquals(SetupStep.OVERNIGHT, activity.currentStepForTest)
                 activity.onSkipOvernight()
-                assertTrue(
-                    "a loop would leave this activity still showing Overnight, never finishing",
-                    activity.isFinishing,
+                assertEquals(
+                    "a loop would leave this activity still showing Overnight; it now re-derives the " +
+                        "step and, with every gate clear, that is the terminal screen",
+                    SetupStep.READY,
+                    activity.currentStepForTest,
                 )
             }
         }
-        val app = ApplicationProvider.getApplicationContext<Application>()
-        val next = shadowOf(app).nextStartedActivity
-        assertEquals(MainActivity::class.java.name, next?.component?.className)
+        assertTrue(
+            "the operator's answer must be recorded, or the prompt reappears having been answered",
+            ApplicationProvider.getApplicationContext<Application>()
+                .getSharedPreferences(SharedPreferencesSetupStore.PREFS_NAME, Application.MODE_PRIVATE)
+                .getBoolean(SharedPreferencesSetupStore.KEY_OVERNIGHT_SEEN, false),
+        )
     }
 
     /**
      * **R-1162**: a step reachable once setup is already complete must offer a way *back into the
      * app*, not only a forward action. `Back to the app` leaves the answer unrecorded on purpose —
      * the operator declined to answer, so AC-189's reappearance stands for the next process — and
-     * simply hands back, which the router then turns into capture because it has already asked this
-     * process ([OvernightNagState]).
+     * simply hands back, which the router then turns into capture, because nothing about overnight
+     * survival diverts a launch any more (AC-199).
      */
     @Test
     fun `R_1162 returning to the app from Overnight hands back without recording an answer`() {
@@ -1601,7 +1826,7 @@ class SetupActivityTest {
         grant(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         DebugOvernightSurvivalOverride.show(FakeOvernightSurvivalChecker(proven = false))
 
-        ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
+        ActivityScenario.launch<SetupActivity>(overnightIntent()).use { scenario ->
             scenario.onActivity { activity ->
                 assertEquals(SetupStep.OVERNIGHT, activity.currentStepForTest)
                 activity.onReturnToAppFromOvernight()
@@ -1688,7 +1913,7 @@ class SetupActivityTest {
                         ),
                     ),
                 )
-                activity.onLevelContinue()
+                activity.onListenContinue()
             }
         }
 
@@ -1705,7 +1930,7 @@ class SetupActivityTest {
         grant(Manifest.permission.RECORD_AUDIO)
 
         ActivityScenario.launch(SetupActivity::class.java).use { scenario ->
-            scenario.onActivity { activity -> activity.onLevelContinue() }
+            scenario.onActivity { activity -> activity.onListenContinue() }
         }
 
         assertFalse(
@@ -1743,6 +1968,16 @@ class SetupActivityTest {
     private companion object {
         /** [WelcomeScreen]'s own title text, `WelcomeHeader`'s own literal — kept as one constant
          * here rather than re-typed at each call site. */
-        const val WELCOME_TITLE_TEXT = "Everything your radio heard, written down, on this phone only."
+        // P39: the ", on this phone only" clause is gone from the title — the FR-ANL-14 sentence
+        // directly beneath it says it correctly, once (AC-203), and the title no longer competes.
+        const val WELCOME_TITLE_TEXT = "Everything your radio heard, written down."
+
+        /** Generous enough for the real ladder, small enough that a cycle fails fast rather than
+         * hanging the suite — a walk needing more than this has a gate it can never satisfy. */
+        const val FIRST_RUN_WALK_BOUND = 12
+
+        /** Any id at all: the walk's point is the *sequence of screens*, not which route was picked,
+         * and `onSelectInput` records whatever it is given. */
+        const val FIRST_ROUTE_ID = "mic-0"
     }
 }

@@ -469,7 +469,9 @@ private fun SettingsModeSubScreen(
             configStore.update(configStore.current().copy(mode = mode))
             onStoreChanged()
         },
-        onChangeAudioRoute = { openSetupAtStep(context, SetupStep.INPUT.name) },
+        // P39 (D58): `SetupStep.INPUT` is now `SetupStep.LISTEN` — the same route list, with the route
+        // check and the level meter beneath it instead of two screens away.
+        onChangeAudioRoute = { openSetupAtStep(context, SetupStep.LISTEN.name) },
         onChangeRigLink = { openSetupAtStep(context, SETUP_STEP_RIG_TRANSPORT) },
         modifier = modifier,
     )
@@ -580,7 +582,8 @@ private fun SettingsCaptureSubScreen(
         // comment for why there is no narrower "re-verify only" entry point yet.
         onOpenInputSetup = {
             val intent = Intent(context, SetupActivity::class.java)
-            intent.putExtra(SetupActivity.EXTRA_STEP, SetupStep.INPUT.name)
+            // P39 (D58): `SetupStep.INPUT` is now `SetupStep.LISTEN`.
+            intent.putExtra(SetupActivity.EXTRA_STEP, SetupStep.LISTEN.name)
             context.startActivity(intent)
         },
         onOpenLevelMeter = onOpenLevelMeter,

@@ -90,9 +90,12 @@ public class ReaderNavigator internal constructor(
      * Capture`'s manual-frequency row (`SettingsCaptureScreen.kt`'s "Log overs against, MHz") is a
      * real, reachable destination instead.
      */
+    /** P39 (D58): `SetupStep.INPUT` no longer exists — input, the route check and the level are one
+     * screen, [SetupStep.LISTEN]. This entry point is unchanged in intent and lands on the same route
+     * list it always did, now with the check and the meter beneath it rather than two screens away. */
     public fun openSetupInput() {
         context.startActivity(
-            Intent(context, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, SetupStep.INPUT.name),
+            Intent(context, SetupActivity::class.java).putExtra(SetupActivity.EXTRA_STEP, SetupStep.LISTEN.name),
         )
     }
 }

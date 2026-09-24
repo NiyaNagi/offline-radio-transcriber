@@ -96,11 +96,18 @@ public fun ModelsSetupScreen(
     onDownload: (ModelId) -> Unit,
     onToggleWifiOnly: (Boolean) -> Unit,
     onContinue: () -> Unit,
+    totalSteps: Int = SETUP_STEPS_WITH_DOWNLOAD,
+    onExitToApp: (() -> Unit)? = null,
 ) {
     var showWhatIsMissing by remember { mutableStateOf(false) }
     val whatIsMissing = modelsValidationMessage(state)
     SetupScaffold(
+        onExitToApp = onExitToApp,
         step = SetupStep.MODELS,
+        // P39: this step only ever exists when a download is owed, so its own default denominator is
+        // the four-step one — a `ModelsSetupScreen` rendered under a total of 3 would be a
+        // contradiction (setupTotalSteps), not merely an off-by-one.
+        totalSteps = totalSteps,
         title = "Models",
         subtitle = "This build did not carry everything your device's tier can use",
         onBack = null,

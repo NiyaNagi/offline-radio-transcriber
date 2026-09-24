@@ -55,6 +55,17 @@ public interface SetupStore {
     public var levelPeakDbfs: Double?
 
     /**
+     * R-1170's second half, routed here by P39 (AC-201): `true` once the operator has tapped
+     * `Continue` on [SetupStep.LISTEN] with the level **not** in band — an unresolved-but-
+     * acknowledged state, distinct from not-yet-reached. [SetupStateMachine.stepFor] then stops
+     * routing back to that step, and [READY]'s Level row renders amber with a way back.
+     *
+     * Cleared by [clearInputVerification] along with the rest: an acknowledgement is about one
+     * route's measured level, and must never survive a changed selection.
+     */
+    public var levelAcknowledged: Boolean
+
+    /**
      * R-1168: the operator's input-gain choice in dB, the preference behind S07's slider. `null`
      * (and 0 dB) until the operator moves it, which is the overwhelmingly common case: gain here is
      * a software multiply on already-digitised audio, not a control anybody should need.
@@ -65,9 +76,34 @@ public interface SetupStore {
      * this is only where it survives a process restart.
      */
     public var captureGainDb: Int?
+
+    /**
+     * **No longer a setup gate** (P39/D58, AC-189 as amended, AC-199, R-1161): overnight survival is
+     * evidence only a completed capture can produce, so nothing pre-capture may wait on it. The flag
+     * is kept because the *Keep capture running* prompt still needs to know whether the operator has
+     * already been asked — [SetupStateMachine.stepFor] simply never reads it.
+     */
     public var overnightStepSeen: Boolean
+
+    /**
+     * P39 (D58): `true` once the notification permission has been asked for at first capture start —
+     * the home the `NOTIFICATIONS` setup step moved to, in context, where the persistent notification
+     * is about to appear. Recorded whatever the operator answered, because notifications never gate
+     * capture (R-002) and asking twice is worse than not asking again.
+     */
+    public var notificationsAskedAtCaptureStart: Boolean
     public var radioChoice: RadioChoice?
-    public var manualFrequencyHz: Long?
+
+    // `manualFrequencyHz` is **deleted** here (P39, D58, AC-202, R-1167), deliberately rather than
+    // left unwritten. The prompt moved to the log's own header, so this store stopped being the thing
+    // that knows the answer — and a preference nothing writes, still read by two screens and still
+    // pushed into `CaptureConfigurationStore` on every sync, is not merely dead: it is a second source
+    // of truth that would have overwritten the operator's real value with `null` the first time they
+    // re-entered setup. `org.ort.pipeline.rig.CaptureConfigurationStore` holds it now — the store
+    // `RealCaptureService` itself reads at session start — and every reader was repointed at it in the
+    // same change (`ReadyScreen.readyRowsFor`, `SettingsPolling.manualFrequencyMhzText`). This is the
+    // R-1171 pattern caught before it shipped rather than eight rows later.
+
     public var setupComplete: Boolean
 
     /** D33/FR-CAP-8 — the S00 choice. `null` until S00 is walked. */
@@ -125,25 +161,26 @@ public interface SetupStore {
 
     /** The immutable view [SetupStateMachine.stepFor] decides against.
      *
-     * [SetupSnapshot.requiredModelsInstalled] is the one field this store cannot itself answer —
-     * see that field's own doc comment — so it defaults `true` here (nothing this store alone can
-     * see is blocking) and the real caller overrides it with the freshly read fact.
+     * Two fields here are ones this store cannot itself answer — see each field's own doc comment.
+     * [SetupSnapshot.requiredModelsInstalled] defaults `true` (nothing this store alone can see is
+     * blocking) and [SetupSnapshot.rigModuleAvailable] defaults `false` (nothing this store alone can
+     * see enables the rig branch); [SetupActivity]'s own `currentSnapshot()` overrides both with the
+     * freshly read facts. Both defaults are the answer that adds no step, which is the right way for
+     * a fixture or a test that has not thought about them to be wrong.
      */
     public fun snapshot(): SetupSnapshot = SetupSnapshot(
         welcomeSeen = welcomeSeen,
-        jurisdictionNoticeSeen = jurisdictionNoticeSeen,
         captureMode = captureMode,
         bluetoothPermissionDeclined = bluetoothPermissionDeclined,
-        notificationsSkipped = notificationsSkipped,
         selectedInputId = selectedInputId,
         inputVerified = inputVerified,
         levelInBand = levelInBand,
-        overnightStepSeen = overnightStepSeen,
+        levelAcknowledged = levelAcknowledged,
         radioChoice = radioChoice,
         rigTransport = rigTransport,
         rigBluetoothVerified = rigBluetoothVerified,
+        rigModuleAvailable = false,
         requiredModelsInstalled = true,
-        analyticsConsentSeen = analyticsConsentSeen,
         setupComplete = setupComplete,
     )
 
@@ -162,6 +199,9 @@ public interface SetupStore {
         verifiedAudioSource = null
         levelInBand = false
         levelPeakDbfs = null
+        // R-1170/P39: an acknowledgement is about one route's measured level. Carrying it across to
+        // a route that never produced a reading would let an unresolved level read as answered.
+        levelAcknowledged = false
     }
 }
 
@@ -183,10 +223,12 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
     override var verifiedAudioSource: String? by StringPref(KEY_VERIFIED_AUDIO_SOURCE)
     override var levelInBand: Boolean by BooleanPref(KEY_LEVEL_IN_BAND, default = false)
     override var levelPeakDbfs: Double? by DoublePref(KEY_LEVEL_PEAK_DBFS)
+    override var levelAcknowledged: Boolean by BooleanPref(KEY_LEVEL_ACKNOWLEDGED, default = false)
     override var captureGainDb: Int? by IntPref(KEY_CAPTURE_GAIN_DB)
     override var overnightStepSeen: Boolean by BooleanPref(KEY_OVERNIGHT_SEEN, default = false)
+    override var notificationsAskedAtCaptureStart: Boolean by
+        BooleanPref(KEY_NOTIFICATIONS_ASKED_AT_CAPTURE_START, default = false)
     override var radioChoice: RadioChoice? by EnumPref(KEY_RADIO_CHOICE, RadioChoice::valueOf)
-    override var manualFrequencyHz: Long? by LongPref(KEY_MANUAL_FREQUENCY_HZ)
     override var setupComplete: Boolean by BooleanPref(KEY_SETUP_COMPLETE, default = false)
     override var captureMode: CaptureMode? by EnumPref(KEY_CAPTURE_MODE, CaptureMode::valueOf)
     override var bluetoothPermissionDeclined: Boolean by BooleanPref(KEY_BLUETOOTH_PERMISSION_DECLINED, default = false)
@@ -222,13 +264,9 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
         }
     }
 
-    private inner class LongPref(val key: String) : kotlin.properties.ReadWriteProperty<Any?, Long?> {
-        override fun getValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>) =
-            if (prefs.contains(key)) prefs.getLong(key, 0L) else null
-        override fun setValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>, value: Long?) {
-            prefs.edit { if (value == null) remove(key) else putLong(key, value) }
-        }
-    }
+    // `LongPref` is deleted with the one property that used it (`manualFrequencyHz`, P39/R-1167 — see
+    // that field's own note above). Kept only in this comment so the next `Long?` preference is not
+    // written from scratch: it is `DoublePref` below with `getLong`/`putLong` and no bit conversion.
 
     private inner class DoublePref(val key: String) : kotlin.properties.ReadWriteProperty<Any?, Double?> {
         override fun getValue(thisRef: Any?, property: kotlin.reflect.KProperty<*>) =
@@ -260,9 +298,21 @@ public class SharedPreferencesSetupStore(private val prefs: SharedPreferences) :
         public const val KEY_VERIFIED_AUDIO_SOURCE: String = "verified_audio_source"
         public const val KEY_LEVEL_IN_BAND: String = "level_in_band"
         public const val KEY_LEVEL_PEAK_DBFS: String = "level_peak_dbfs"
+        public const val KEY_LEVEL_ACKNOWLEDGED: String = "level_acknowledged"
+        public const val KEY_NOTIFICATIONS_ASKED_AT_CAPTURE_START: String = "notifications_asked_at_capture_start"
         public const val KEY_CAPTURE_GAIN_DB: String = "capture_gain_db"
         public const val KEY_OVERNIGHT_SEEN: String = "overnight_step_seen"
         public const val KEY_RADIO_CHOICE: String = "radio_choice"
+
+        /**
+         * P39 (R-1167): **the key survives its property.** Nothing writes it and no production code
+         * reads it any more — the value lives in `CaptureConfigurationStore` now — but an install that
+         * walked the old flow still has a real frequency sitting under it, and this repo's rule is that
+         * nothing is deleted quietly (constitution III). Kept so a migration, a diagnostic bundle, or
+         * the operator's own recovery can still find it; the seeded fixtures under
+         * `app/src/debug/.../Scenarios.kt` also still name it when they are describing a device that
+         * came from that flow. Delete it once a release has shipped that no longer needs to read it.
+         */
         public const val KEY_MANUAL_FREQUENCY_HZ: String = "manual_frequency_hz"
         public const val KEY_SETUP_COMPLETE: String = "setup_complete"
         public const val KEY_CAPTURE_MODE: String = "capture_mode"
@@ -298,10 +348,11 @@ public class InMemorySetupStore(
     override var verifiedAudioSource: String? = null,
     override var levelInBand: Boolean = false,
     override var levelPeakDbfs: Double? = null,
+    override var levelAcknowledged: Boolean = false,
     override var captureGainDb: Int? = null,
     override var overnightStepSeen: Boolean = false,
+    override var notificationsAskedAtCaptureStart: Boolean = false,
     override var radioChoice: RadioChoice? = null,
-    override var manualFrequencyHz: Long? = null,
     override var setupComplete: Boolean = false,
     override var captureMode: CaptureMode? = null,
     override var bluetoothPermissionDeclined: Boolean = false,

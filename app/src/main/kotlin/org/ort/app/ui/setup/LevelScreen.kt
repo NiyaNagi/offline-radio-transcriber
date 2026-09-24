@@ -30,7 +30,6 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.FailedState
-import org.ort.app.ui.components.PrimaryButton
 import org.ort.app.ui.components.referenceLineY
 import org.ort.app.ui.data.LevelViewState
 import org.ort.app.ui.theme.OrtColors
@@ -39,113 +38,99 @@ import org.ort.capture.android.CaptureGain
 import kotlin.math.roundToInt
 
 /**
- * S07 (`Setup-Level.dc.html`, R-082) — the live 60 s meter driven by [LevelCheck]. No level signal
- * at all (open failed, or nothing was ever read) renders an honest "cannot measure" [FailedState]
- * instead of fabricated bars (guide §6.8, constitution I) — never a fake meter.
+ * The level section of [ListenScreen] (`Setup-Listen.dc.html`) — the live 60 s meter driven by
+ * [LevelCheck], its three facts, and the gain slider. No level signal at all (open failed, or nothing
+ * was ever read) renders an honest "cannot measure" [FailedState] instead of fabricated bars (guide
+ * §6.8, constitution I) — never a fake meter.
  *
- * **R-1170: `Continue` is never disabled for validation here.** It used to enable only on
- * [LevelBand.IN_BAND], with [onBack] `null` — so a quiet band at two in the morning left the
- * operator with no forward, no back and no later. A disabled control also gives no account of what
- * is wrong and, decisively, leaves the focus order entirely, so a screen-reader user cannot even
- * find the thing blocking them. The rule this flow now follows is: keep the button lit, validate on
- * tap, and say what is missing. Tapping it out of band proceeds and writes the unresolved state
- * down ([SetupActivity.onLevelContinue]), which lights S12's amber `Fix` on the Level row.
+ * **P39 (D58): this was `LevelScreen`, a step of its own.** It is now the third section of the one
+ * screen that carries the whole audio decision, shown once the route has actually verified — which is
+ * also the first moment a level reading means anything.
  *
- * **R-1168: the gain slider `design/design-intent.md:77` specified and nobody built.** It is
- * deliberately secondary — the meter stays the primary object on this screen — and the copy below
- * states plainly what it is: a software multiply applied after the audio has already been
- * digitised. See [org.ort.capture.android.CaptureGain] for the whole of what it can and cannot do.
+ * **R-1170 / AC-201: `Continue` is never disabled for validation.** It used to enable only on
+ * [LevelBand.IN_BAND] with no back at all, so a quiet band at two in the morning left the operator
+ * with no forward, no back and no later. Tapping it out of band proceeds and writes the unresolved
+ * state down ([SetupActivity.onListenContinue]), which lights `Ready`'s amber `Fix` on the Level row.
+ *
+ * **R-1168: the gain slider `design/design-intent.md:77` specified and nobody built.** Deliberately
+ * secondary — the meter stays the primary object — and the copy below states plainly what it is: a
+ * software multiply applied after the audio has already been digitised. See
+ * [org.ort.capture.android.CaptureGain] for the whole of what it can and cannot do.
  */
 @Composable
-public fun LevelScreen(
+internal fun LevelSection(
     state: LevelCheckState?,
-    onContinue: () -> Unit,
     gainDb: Int = CaptureGain.MIN_GAIN_DB,
     onGainChange: (Int) -> Unit = {},
 ) {
+    if (state is LevelCheckState.Unavailable) {
+        FailedState(
+            title = "Cannot measure the level",
+            body = state.reason,
+            modifier = Modifier.testTag("setup-level-unavailable"),
+        )
+        return
+    }
     val reading = (state as? LevelCheckState.Reading)?.level
-    SetupScaffold(
-        step = SetupStep.LEVEL,
-        title = "Level",
-        subtitle = "Set the radio's volume so speech sits in the band, above the noise",
-        onBack = null,
-        bottomActions = {
-            PrimaryButton(
-                text = "Continue",
-                onClick = onContinue,
-                modifier = Modifier.fillMaxWidth().testTag("setup-level-continue"),
+
+    LevelMeter(reading = reading, modifier = Modifier.testTag("setup-level-meter"))
+    LevelFooterFacts(
+        noiseText = reading?.noiseFloorDbfs?.let { "noise %.0f".format(it).replace('-', '−') } ?: "noise —",
+        modifier = Modifier.testTag("setup-level-footer-facts"),
+    )
+
+    LevelRow(
+        label = "Speech peaks",
+        value = reading?.let { "%.0f dBFS".format(it.peakDbfs) } ?: "—",
+        testTag = "setup-level-peaks",
+    )
+    LevelRow(
+        label = "Noise floor",
+        value = reading?.noiseFloorDbfs?.let { "%.0f dBFS".format(it) } ?: "—",
+        testTag = "setup-level-noise-floor",
+    )
+    LevelRow(
+        label = "Headroom",
+        value = reading?.let { "%.0f dB".format(it.headroomDb) } ?: "—",
+        testTag = "setup-level-headroom",
+    )
+
+    GainSlider(gainDb = gainDb, onGainChange = onGainChange)
+
+    reading?.let {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(9.dp)
+                    .background(colorFor(it.band), CircleShape),
             )
-        },
-    ) {
-        if (state is LevelCheckState.Unavailable) {
-            FailedState(
-                title = "Cannot measure the level",
-                body = state.reason,
-                modifier = Modifier.testTag("setup-level-unavailable"),
-            )
-            return@SetupScaffold
-        }
-
-        LevelMeter(reading = reading, modifier = Modifier.testTag("setup-level-meter"))
-        LevelFooterFacts(
-            noiseText = reading?.noiseFloorDbfs?.let { "noise %.0f".format(it).replace('-', '−') } ?: "noise —",
-            modifier = Modifier.testTag("setup-level-footer-facts"),
-        )
-
-        LevelRow(
-            label = "Speech peaks",
-            value = reading?.let { "%.0f dBFS".format(it.peakDbfs) } ?: "—",
-            testTag = "setup-level-peaks",
-        )
-        LevelRow(
-            label = "Noise floor",
-            value = reading?.noiseFloorDbfs?.let { "%.0f dBFS".format(it) } ?: "—",
-            testTag = "setup-level-noise-floor",
-        )
-        LevelRow(
-            label = "Headroom",
-            value = reading?.let { "%.0f dB".format(it.headroomDb) } ?: "—",
-            testTag = "setup-level-headroom",
-        )
-
-        GainSlider(gainDb = gainDb, onGainChange = onGainChange)
-
-        reading?.let {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                Box(
-                    modifier = Modifier
-                        .size(9.dp)
-                        .background(colorFor(it.band), CircleShape),
-                )
-                Text(
-                    text = messageFor(it.band),
-                    style = OrtType.subtitle,
-                    color = OrtColors.textBody,
-                    modifier = Modifier.padding(start = 8.dp),
-                )
-            }
-        }
-
-        // R-1170: "say what is missing" — the half of the rule that replaces a disabled button.
-        // Shown whenever the band is not green (including with no reading at all, which is the
-        // case an operator with a dead adapter actually hits), never as a dead-end.
-        if (reading?.band != LevelBand.IN_BAND) {
             Text(
-                text = "You can continue. The level stays flagged on the last setup screen, with a " +
-                    "way back here, until it is in the band.",
-                style = OrtType.cardBody,
-                color = OrtColors.textDim,
-                modifier = Modifier.padding(top = 10.dp).testTag("setup-level-unresolved-note"),
+                text = messageFor(it.band),
+                style = OrtType.subtitle,
+                color = OrtColors.textBody,
+                modifier = Modifier.padding(start = 8.dp),
             )
         }
+    }
 
+    // R-1170: "say what is missing" — the half of the rule that replaces a disabled button. Shown
+    // whenever the band is not green (including with no reading at all, which is the case an operator
+    // with a dead adapter actually hits), never as a dead-end.
+    if (reading?.band != LevelBand.IN_BAND) {
         Text(
-            text = LEVEL_GAIN_PARAGRAPH,
+            text = "You can continue — Ready keeps this flagged, with a way back here.",
             style = OrtType.cardBody,
             color = OrtColors.textDim,
-            modifier = Modifier.padding(top = 10.dp),
+            modifier = Modifier.padding(top = 10.dp).testTag("setup-level-unresolved-note"),
         )
     }
+
+    Text(
+        text = LEVEL_GAIN_PARAGRAPH,
+        style = OrtType.cardBody,
+        color = OrtColors.textDim,
+        modifier = Modifier.padding(top = 10.dp),
+    )
 }
 
 /**

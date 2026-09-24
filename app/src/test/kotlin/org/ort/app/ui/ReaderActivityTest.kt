@@ -144,7 +144,7 @@ class ReaderActivityTest {
         val started = shadowOf(composeTestRule.activity).nextStartedActivity
         assertNotNull("expected onRetryInput to start an Activity, not silently do nothing", started)
         assertEquals(SetupActivity::class.java.name, started!!.component?.className)
-        assertEquals(SetupStep.INPUT.name, started.getStringExtra(SetupActivity.EXTRA_STEP))
+        assertEquals(SetupStep.LISTEN.name, started.getStringExtra(SetupActivity.EXTRA_STEP))
     }
 
     @Test
@@ -163,6 +163,6 @@ class ReaderActivityTest {
         val started = shadowOf(composeTestRule.activity).nextStartedActivity
         assertNotNull("expected onSwitchToWiredInput to start an Activity, not silently do nothing", started)
         assertEquals(SetupActivity::class.java.name, started!!.component?.className)
-        assertEquals(SetupStep.INPUT.name, started.getStringExtra(SetupActivity.EXTRA_STEP))
+        assertEquals(SetupStep.LISTEN.name, started.getStringExtra(SetupActivity.EXTRA_STEP))
     }
 }

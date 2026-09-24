@@ -16,38 +16,20 @@ import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtType
 
 /**
- * S02 (`Setup-Mic.dc.html`, R-080) — re-homed from `MainActivity` (WP1 has merged; its interim
- * flow's three composables move here unchanged in substance, now built on [SetupScaffold] and
- * WP2's [PrimaryButton]/[DotPointCard] rather than the hand-rolled versions `MainActivity` used
- * before shared components existed). String resources are WP1's (`res/values/strings.xml`,
- * outside this package's ownership) — referenced, not duplicated.
+ * **The microphone *explainer* screen is deleted (P39, D58, AC-204).** `SetupStep.MICROPHONE` used to
+ * render a whole numbered stage — a title, a body paragraph and three bullets — in front of Android's
+ * own permission dialog. D58 removed it outright: a rationale at the point of asking measurably
+ * outperforms both no rationale and a dedicated screen, and a dedicated screen in front of a system
+ * dialog is request fatigue. The rationale now rides on [ModeScreen], the surface the request is fired
+ * from ([ModeScreen.MICROPHONE_RATIONALE]), and the dialog follows the mode tap directly.
+ *
+ * The `setup_mic_*` string resources it used are in `res/values/strings.xml`, which this package does
+ * not own; they are left in place rather than orphaned silently in someone else's file, and are named
+ * in this change's CHANGELOG entry so they can be swept with the rest of that file.
+ *
+ * [MicrophoneDeniedScreen] below is untouched and stays exactly as it was: a permanently denied
+ * microphone is a real halt, not an explainer.
  */
-@Composable
-public fun MicrophoneScreen(onAllow: () -> Unit, onBack: (() -> Unit)? = null) {
-    SetupScaffold(
-        step = SetupStep.MICROPHONE,
-        title = stringResource(R.string.setup_mic_title),
-        subtitle = stringResource(R.string.setup_mic_subtitle),
-        onBack = onBack,
-        bottomActions = {
-            PrimaryButton(
-                text = stringResource(R.string.setup_mic_allow),
-                onClick = onAllow,
-                modifier = Modifier.fillMaxWidth().testTag("setup-mic-allow"),
-            )
-        },
-    ) {
-        Text(text = stringResource(R.string.setup_mic_body), style = OrtType.bodyProse, color = OrtColors.textSecondary)
-        DotPointCard(
-            points = listOf(
-                stringResource(R.string.setup_mic_point_1),
-                stringResource(R.string.setup_mic_point_2),
-                stringResource(R.string.setup_mic_point_3),
-            ),
-        )
-    }
-}
-
 /**
  * S02b (`Setup-Mic-Denied.dc.html`, R-085) — the interim mic-denied screen, re-homed and kept
  * green (this row's register status is already `fixed`; WP9's job is folding it in, not changing
@@ -60,12 +42,18 @@ public fun MicrophoneScreen(onAllow: () -> Unit, onBack: (() -> Unit)? = null) {
  * so this screen's own tests can render it without wiring a real activity behind it.
  */
 @Composable
-public fun MicrophoneDeniedScreen(onOpenSettings: () -> Unit, onCheckAgain: () -> Unit, onBack: (() -> Unit)? = null) {
+public fun MicrophoneDeniedScreen(
+    onOpenSettings: () -> Unit,
+    onCheckAgain: () -> Unit,
+    onBack: (() -> Unit)? = null,
+    onExitToApp: (() -> Unit)? = null,
+) {
     SetupScaffold(
         step = SetupStep.MICROPHONE_DENIED,
         title = stringResource(R.string.setup_mic_denied_title),
         subtitle = stringResource(R.string.setup_mic_denied_subtitle),
         onBack = onBack,
+        onExitToApp = onExitToApp,
         bottomActions = {
             PrimaryButton(
                 text = stringResource(R.string.setup_mic_denied_open_settings),

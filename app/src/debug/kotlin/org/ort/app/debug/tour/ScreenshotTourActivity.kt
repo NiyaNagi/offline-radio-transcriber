@@ -649,9 +649,38 @@ public class ScreenshotTourActivity : ComponentActivity() {
             }
         }
         awaitStableSemantics(step.id, setupActivity.window.decorView)
+        assertStillOnRequestedStep(step, setupActivity, stepName)
         val bitmap = setupActivity.window.decorView.drawToBitmap()
         setupActivity.finish()
         return TourCapture(bitmap, bitmap.width, bitmap.height, note = scrollNote)
+    }
+
+    /**
+     * **R-1179 (register), the general guard, and it is the cheapest one this tour was missing.**
+     *
+     * `setup-bt-permission/S02c` had **never once captured its own screen**: every committed PNG at
+     * every font scale is the Input screen, and two register rows were closed on that evidence. The
+     * cause was not that the settle above is wrong — it is that the settle is not the *last* thing to
+     * happen. `install.ps1` grants `BLUETOOTH_CONNECT`, so `SetupStateMachine.needsBluetoothPermission`
+     * can never fire; the step is honoured transiently by `tryOpenAtRequestedStep` inside `onCreate`,
+     * the settle loop below sees it and exits, and then `onResume` re-derives the step honestly and
+     * replaces it — before the screenshot. A settle that only has to be true *once* cannot see that.
+     *
+     * So this re-asserts the same fact immediately before `drawToBitmap`, when nothing else can run in
+     * between. It costs one field read and turns "captured the wrong screen" from a silent wrong
+     * picture into a loud, honest failure naming both steps. It would have caught R-1179 on the very
+     * first run, and it catches every future instance — including one introduced by this change.
+     */
+    private fun assertStillOnRequestedStep(step: TourStep, setupActivity: SetupActivity, stepName: String) {
+        val observed = setupActivity.currentStepForTest
+        if (observed?.name == stepName) return
+        error(
+            "tour step '${step.id}' asked for setup step '$stepName' and is about to capture " +
+                "'$observed' instead — the step was replaced after the settle, so this capture would " +
+                "be a picture of a different screen (R-1179). If the requested step's own gate cannot " +
+                "fire on this build (a permission install.ps1 grants, a module that does not exist), " +
+                "the scenario needs a debug override that makes the gate honest, not a looser settle.",
+        )
     }
 
     /**

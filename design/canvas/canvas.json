@@ -137,15 +137,6 @@
       "page": "page-2"
     },
     {
-      "file": "Setup-Mic.dc.html",
-      "x": 490,
-      "y": 0,
-      "w": 390,
-      "h": 844,
-      "title": "S02 Microphone",
-      "page": "page-2"
-    },
-    {
       "file": "Setup-Mic-Denied.dc.html",
       "x": 980,
       "y": 0,
@@ -155,30 +146,12 @@
       "page": "page-2"
     },
     {
-      "file": "Setup-Notify.dc.html",
-      "x": 1470,
-      "y": 0,
-      "w": 390,
-      "h": 844,
-      "title": "S03 Notifications",
-      "page": "page-2"
-    },
-    {
-      "file": "Setup-Input.dc.html",
+      "file": "Setup-Listen.dc.html",
       "x": 1960,
       "y": 0,
       "w": 390,
       "h": 844,
-      "title": "S04 Input",
-      "page": "page-2"
-    },
-    {
-      "file": "Setup-Verify.dc.html",
-      "x": 2450,
-      "y": 0,
-      "w": 390,
-      "h": 844,
-      "title": "S05 Verifying",
+      "title": "S04 Listen — input, route check, level",
       "page": "page-2"
     },
     {
@@ -188,15 +161,6 @@
       "w": 390,
       "h": 844,
       "title": "S06 Route mismatch — halt",
-      "page": "page-2"
-    },
-    {
-      "file": "Setup-Level.dc.html",
-      "x": 490,
-      "y": 984,
-      "w": 390,
-      "h": 844,
-      "title": "S07 Level",
       "page": "page-2"
     },
     {

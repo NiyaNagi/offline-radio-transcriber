@@ -333,7 +333,15 @@ class ReadyScreenTest {
             verification = org.ort.pipeline.capture.RigVerification.Full,
         )
         val overnightState = OvernightSurvivalState(batteryExemptDiagnostic = false, survivalProven = false)
-        val rows = readyRowsFor(store, overnightState, connected, ModelsViewState(emptyList()), actions)
+        val rows =
+            readyRowsFor(
+                store,
+                overnightState,
+                connected,
+                ModelsViewState(emptyList()),
+                actions,
+                manualFrequencyHz = null,
+            )
         composeTestRule.setContent {
             val real = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(real.density, 2f)) {

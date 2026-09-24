@@ -19,7 +19,7 @@ import org.robolectric.util.ReflectionHelpers
  * R-943 (register, reviewer A4 run 5, halt): split out of `SetupActivityTest` (detekt's own
  * `LargeClass` ceiling — that file already covers every other `SetupActivity` seam) to prove
  * [DebugRouteCheckOverride] reaches S05 from exactly the shape the register names: a cold
- * [SetupActivity.EXTRA_STEP] launch straight at [SetupStep.VERIFY], no S04 tap ever made, and no
+ * [SetupActivity.EXTRA_STEP] launch straight at [SetupStep.LISTEN], no S04 tap ever made, and no
  * real audio device under Robolectric matching the stored selection, so [RealRouteCheck] could
  * never have started. [DebugRouteCheckOverride.show] must still reach
  * [SetupActivity.verifyStateForTest], proving [SetupActivity.RenderVerify] reads it *ahead of*, not
@@ -49,7 +49,7 @@ class SetupActivityVerifyOverrideTest {
 
     /** Every gate except [SharedPreferencesSetupStore.KEY_SETUP_COMPLETE] itself satisfied — the
      * natural resume point is [SetupStep.READY], the same base `SetupActivityTest`'s own
-     * `storeEverySetupGateExceptComplete` uses, so [SetupStep.VERIFY]'s `EXTRA_STEP` request (its
+     * `storeEverySetupGateExceptComplete` uses, so [SetupStep.LISTEN]'s `EXTRA_STEP` request (its
      * own ordinal well before [SetupStep.READY]'s) is honored rather than rejected. */
     private fun storeEverySetupGateExceptComplete() {
         ApplicationProvider.getApplicationContext<Application>()
@@ -83,10 +83,10 @@ class SetupActivityVerifyOverrideTest {
 
         val context = ApplicationProvider.getApplicationContext<Application>()
         val intent = Intent(context, SetupActivity::class.java)
-            .putExtra(SetupActivity.EXTRA_STEP, SetupStep.VERIFY.name)
+            .putExtra(SetupActivity.EXTRA_STEP, SetupStep.LISTEN.name)
         ActivityScenario.launch<SetupActivity>(intent).use { scenario ->
             scenario.onActivity { activity ->
-                assertEquals(SetupStep.VERIFY, activity.currentStepForTest)
+                assertEquals(SetupStep.LISTEN, activity.currentStepForTest)
                 assertEquals(seeded, activity.verifyStateForTest)
             }
         }
@@ -106,10 +106,10 @@ class SetupActivityVerifyOverrideTest {
 
         val context = ApplicationProvider.getApplicationContext<Application>()
         val intent = Intent(context, SetupActivity::class.java)
-            .putExtra(SetupActivity.EXTRA_STEP, SetupStep.VERIFY.name)
+            .putExtra(SetupActivity.EXTRA_STEP, SetupStep.LISTEN.name)
         ActivityScenario.launch<SetupActivity>(intent).use { scenario ->
             scenario.onActivity { activity ->
-                assertEquals(SetupStep.VERIFY, activity.currentStepForTest)
+                assertEquals(SetupStep.LISTEN, activity.currentStepForTest)
                 // Ignored: never the seeded snapshot. No real device matches "usb-1" under
                 // Robolectric either, so the real RealRouteCheck path never produces one -- the
                 // honest null "nothing to show yet" shape, never the debug seed.

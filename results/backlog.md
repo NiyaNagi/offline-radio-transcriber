@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 131 | 13 | 25 | 93 |
+| UI / defect register | 127 | 13 | 25 | 89 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
-| Build-plan units | 6 | 2 | 4 | 0 |
+| Build-plan units | 5 | 2 | 3 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **178** | **30** | **44** | **104** |
+| **Total** | **173** | **30** | **43** | **100** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -60,7 +60,6 @@ process, polish, open questions and coverage debt are P2.
 | P9 | GATE: 8-hour run on the reference device | build-plan | not started |  |
 | P11 | End-to-end, then the M4 fork | build-plan | not started |  |
 | P12 | Make capture actually work end to end on a device | build-plan | not started |  |
-| P39 | Onboarding cut to four steps | build-plan | not started |  |
 | E2-A06 | FR-RIG-6, FR-CAP-5, FR-RIG-3 | e2e | **owed data/descriptor additions found while wiring** (wpc2 report): transmissionentity.rigstatechangedmidtransmission (v9), capturegapcause.bluetooth_audio_lost (v9), transportspec.usbvendorid/usbproductid/lineterminator on :rig descriptors (then defaultrigtransportfactory reads the descriptor before |  |
 | E2-I06 | D36 | e2e | hardware |  |
 | E2-L01 | H1 | e2e | hardware |  |
@@ -106,7 +105,7 @@ process, polish, open questions and coverage debt are P2.
 
 | id | what | source | state | refs / note |
 |---|---|---|---|---|
-| coverage-uncovered | 205 requirement ids have no test | coverage | open | ./gradlew coverageMatrix |
+| coverage-uncovered | 199 requirement ids have no test | coverage | open | ./gradlew coverageMatrix |
 | T1 | Speaker embedding separation on narrowband off-air audio | questions | open |  |
 | T2 | Phonetic-unit KWS accuracy on radio audio | questions | open |  |
 | T3 | Whether CB-Whisper's encoder-hidden-state approach ports to sherpa-onnx on Android | questions | open |  |
@@ -206,7 +205,3 @@ process, polish, open questions and coverage debt are P2.
 | R-1178 | The frequency screen's two other branches draw no field for the control its message names | register | app/open | R-1167; R-1170; D58 |
 | R-1179 | The Bluetooth-permission step has never once captured the Bluetooth-permission screen | register | tooling/open | R-817; R-940; R-800; R-1005a; R-810, R-811, R-820, R-830; constitution VIII; R-1160, R-1021 |
 | R-1180 | A test raced virtual time against a real dispatcher and called the result a timeout | register | process/open | R-1139; R-1174; constitution II, VIII |
-| R-1181 | The new log-header frequency row is contradicted by the overs directly beneath it | register | app/open | R-1167; AC-202; constitution I, VIII |
-| R-1182 | A second frequency field in Settings is written, read back, and never reaches capture | register | app/open | R-1167; R-1171; R-1132, R-1139, R-1141; constitution I |
-| R-1183 | The tour navigation helper replays taps at a resolution the tour never uses | register | tooling/open | R-1149; constitution VIII |
-| R-1184 | The heartbeat cadence the new prompt measures against is a copy of the one capture beats on | register | app/open | R-1161; AC-189 |

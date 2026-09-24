@@ -748,7 +748,7 @@ class ScenariosTest {
             isIgnoringBatteryOptimizationsDiagnosticOnly = false,
         )
         val step = SetupStateMachine.stepFor(micNotGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
-        assertEquals(SetupStep.MICROPHONE, step)
+        assertEquals(SetupStep.MODE, step)
     }
 
     /**
@@ -756,7 +756,7 @@ class ScenariosTest {
      * (`Setup-Level.dc.html`) via S12's own `Fix` row -- unreachable from a cold `MainActivity`
      * launch, which is exactly the gap the README's old direct-`SetupActivity`-launch recipe was
      * covering for (and could not, since that activity is `exported=false`). This proves
-     * `setup-level` lands `stepFor` at `SetupStep.LEVEL` directly, given fully-granted permissions --
+     * `setup-level` lands `stepFor` at `SetupStep.LISTEN` directly, given fully-granted permissions --
      * the same real decision function `MainActivity`/`SetupActivity` themselves call.
      */
     @Test
@@ -777,7 +777,7 @@ class ScenariosTest {
             isIgnoringBatteryOptimizationsDiagnosticOnly = false,
         )
         val step = SetupStateMachine.stepFor(fullyGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
-        assertEquals(SetupStep.LEVEL, step)
+        assertEquals(SetupStep.LISTEN, step)
     }
 
     /**
@@ -805,8 +805,13 @@ class ScenariosTest {
             notificationsGranted = true,
             isIgnoringBatteryOptimizationsDiagnosticOnly = false,
         )
-        val step = SetupStateMachine.stepFor(fullyGranted, micPermanentlyDenied = false, snapshot = store.snapshot())
-        assertEquals(SetupStep.RADIO, step)
+        // P39 (D58): the rig branch is entered only when a rig module with a real CAT implementation
+        // exists, and this scenario is what makes one exist for the tour -- asserted, not assumed,
+        // because a scenario that stopped installing the scripted port would leave `Setup-Rig.dc.html`
+        // unreachable by any capture (constitution VIII).
+        assertNotNull(org.ort.app.ui.setup.DebugRigLinkPortOverride.activeOverride)
+        val snapshot = store.snapshot().copy(rigModuleAvailable = true)
+        assertEquals(SetupStep.RADIO, SetupStateMachine.stepFor(fullyGranted, false, snapshot))
     }
 
     /** A `setup-verified` load immediately before `setup-radio` must not leave a stale
