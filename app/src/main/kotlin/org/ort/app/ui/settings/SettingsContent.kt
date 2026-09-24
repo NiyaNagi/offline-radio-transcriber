@@ -588,10 +588,10 @@ private fun SettingsCaptureSubScreen(
         },
         onOpenLevelMeter = onOpenLevelMeter,
         onOpenModeSettings = onOpenModeSettings,
-        onEditManualFrequency = {
-            store.manualFrequencyMhz = it
-            onStoreChanged()
-        },
+        // R-1182: there is no `onEditManualFrequency` any more. It wrote
+        // `SettingsStore.manualFrequencyMhz`, a second field capture never read — see that store's
+        // own note. The frequency is edited in the Log's own header (R-1167, AC-202), over the store
+        // `RealCaptureService` reads; CF02 reports it and no longer pretends to own it.
         modifier = modifier,
     )
 }

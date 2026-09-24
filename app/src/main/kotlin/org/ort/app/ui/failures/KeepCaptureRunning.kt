@@ -42,18 +42,20 @@ public data class MissedHeartbeatEvidence(
 )
 
 /**
- * `RealCaptureService`'s own beat cadence. Its constant there is `private`, so this is a
- * deliberate, documented restatement rather than a shared symbol — [HeartbeatTrailStore
- * .DEFAULT_MAX_ENTRIES]'s own kdoc ("960 beats at the 30 s cadence") pins the same number from the
- * other side, and `KeepCaptureRunningTest` asserts this value directly so a change to the cadence
- * shows up as a failing test rather than as a prompt that quietly stops firing.
+ * **R-1184: the copy is gone.** This file used to declare its own `HEARTBEAT_INTERVAL_MILLIS =
+ * 30_000L`, because `RealCaptureService`'s was `private` — two numbers describing one fact, whose
+ * failure mode is invisible by construction: raise the real cadence, leave this behind, and the gap
+ * threshold below silently widens until the prompt stops firing, which looks exactly like a phone
+ * that never misses a beat. [HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS] is now the single
+ * declaration, in the module that owns the trail this file reads, and both the service's ticker and
+ * this trigger read it from there.
+ *
+ * The same slack `ProveItAnalyzer` (`:capture-android`, the class D8's prove-it run and the 8-hour
+ * gate both read) allows before it calls a late beat a gap. **Still a restatement**, and
+ * deliberately left as one this round: that class's own default is `private` in a different module,
+ * `:capture-android` is outside this brief's ownership, and R-1184 is about the cadence. A beat that
+ * lands 31 seconds late is a busy phone, not a kill.
  */
-public const val HEARTBEAT_INTERVAL_MILLIS: Long = 30_000L
-
-/** The same slack `ProveItAnalyzer` (`:capture-android`, the class D8's prove-it run and the
- * 8-hour gate both read) allows before it calls a late beat a gap. Restated for the same reason as
- * [HEARTBEAT_INTERVAL_MILLIS]: that class's own default is `private`. A beat that lands 31 seconds
- * late is a busy phone, not a kill. */
 public const val HEARTBEAT_GAP_TOLERANCE_MILLIS: Long = 5_000L
 
 /**
@@ -66,7 +68,7 @@ public const val HEARTBEAT_GAP_TOLERANCE_MILLIS: Long = 5_000L
  */
 public fun newestMissedHeartbeat(
     trail: List<HeartbeatTrailEntry>,
-    expectedIntervalMillis: Long = HEARTBEAT_INTERVAL_MILLIS,
+    expectedIntervalMillis: Long = HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS,
     toleranceMillis: Long = HEARTBEAT_GAP_TOLERANCE_MILLIS,
 ): MissedHeartbeatEvidence? {
     var newest: MissedHeartbeatEvidence? = null

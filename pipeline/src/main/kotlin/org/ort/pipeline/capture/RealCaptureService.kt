@@ -641,7 +641,7 @@ public class RealCaptureService : Service() {
                     // and cleared only by recordHeartbeatTick() on whichever coroutine runs it.
                     framesObservedSinceLastBeat = true
                     val now = SystemClock.wallMillis()
-                    if (now - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MILLIS) {
+                    if (now - lastHeartbeatAt >= HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS) {
                         lastHeartbeatAt = now
                         // R-1115: dispatched, never called inline -- recordHeartbeatTick() does
                         // real file I/O (heartbeatStore + heartbeatTrailStore), which must never
@@ -1231,14 +1231,14 @@ public class RealCaptureService : Service() {
      * transmission close, or anything else about the audio path (constitution IV: capture must
      * never block, and a heartbeat that only fires alongside a frame cannot prove the process is
      * alive during a stretch where frames stop). Ticks immediately once (so a session that dies in
-     * its first [HEARTBEAT_INTERVAL_MILLIS] still leaves one row), then every
-     * [HEARTBEAT_INTERVAL_MILLIS] for as long as [source] is set -- the identical convention
-     * [runShedMonitor]'s own loop already uses for the same teardown reason.
+     * its first [HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS] still leaves one row), then every
+     * [HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS] for as long as [source] is set -- the identical
+     * convention [runShedMonitor]'s own loop already uses for the same teardown reason.
      */
     private suspend fun runHeartbeatTicker() {
         recordHeartbeatTick()
         while (source != null) {
-            delay(HEARTBEAT_INTERVAL_MILLIS)
+            delay(HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS)
             if (source != null) recordHeartbeatTick()
         }
     }
@@ -1272,7 +1272,7 @@ public class RealCaptureService : Service() {
             framesObservedSinceLastBeat = framesObserved,
         )
         heartbeatTrailStore.append(entry)
-        heartbeatGapMillisOrNull(previous, entry, HEARTBEAT_INTERVAL_MILLIS)?.let { gapMillis ->
+        heartbeatGapMillisOrNull(previous, entry, HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS)?.let { gapMillis ->
             DiagnosticsLog.logHeartbeatGap(sessionId, gapMillis)
         }
         updateNotification(CaptureNotificationContent.State.CAPTURING)
@@ -1629,7 +1629,12 @@ public class RealCaptureService : Service() {
         public const val NOTIFICATION_ID: Int = 1002
         public const val ACTION_STOP: String = "org.ort.pipeline.capture.STOP"
         public const val EXTRA_SESSION_ID: String = "session_id"
-        private const val HEARTBEAT_INTERVAL_MILLIS: Long = 30_000
+
+        // R-1184: the beat cadence used to be declared here, `private`, which is why `:app`'s own
+        // *Keep capture running* prompt had to restate the number to know what a missed beat is. It
+        // is now declared once, on `HeartbeatTrailStore` -- the same place `DEFAULT_MAX_ENTRIES` is
+        // already derived from it -- and read from there by this file's own ticker.
+
         private const val WAKE_LOCK_TIMEOUT_MILLIS: Long = 12 * 60 * 60 * 1000L
         private const val SHORT_MAX: Float = 32_768f
 

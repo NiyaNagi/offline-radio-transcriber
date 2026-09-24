@@ -30,6 +30,24 @@ public class HeartbeatTrailTest {
         samplePosition: Long = 0L,
     ) = HeartbeatTrailEntry(sessionId, wallMillis, monotonicNanos, samplePosition, framesObserved)
 
+    /**
+     * **R-1184.** [HeartbeatTrailStore.DEFAULT_MAX_ENTRIES]'s own kdoc has always justified 960 as
+     * "eight hours of beats at the cadence" — NFR-8's overnight gate — but the cadence itself was
+     * `private` on [RealCaptureService], so the derivation was prose two numbers had to keep
+     * agreeing with by hand, and `:app`'s *Keep capture running* prompt ended up declaring a third
+     * copy to do its own arithmetic. The cadence is now declared once, beside the bound it
+     * determines, and the derivation is asserted.
+     */
+    @Test
+    @Requirement("R-1184", "NFR-8")
+    public fun `R_1184 the trail's bound is exactly the overnight gate's eight hours at the beat cadence`() {
+        assertEquals(30_000L, HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS)
+        assertEquals(
+            8 * 60 * 60_000L,
+            HeartbeatTrailStore.DEFAULT_MAX_ENTRIES * HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS,
+        )
+    }
+
     @Test
     @Requirement("R-1115")
     public fun `R_1115 the trail keeps every beat, not just the last one`() {

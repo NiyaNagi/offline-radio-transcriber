@@ -11,6 +11,7 @@ import org.ort.data.entity.CaptureGapCause
 import org.ort.data.entity.CaptureGapEntity
 import org.ort.pipeline.capture.CaptureState
 import org.ort.pipeline.capture.HeartbeatTrailEntry
+import org.ort.pipeline.capture.HeartbeatTrailStore
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
@@ -36,7 +37,8 @@ class KeepCaptureRunningTest {
 
     private val context = ApplicationProvider.getApplicationContext<Context>()
 
-    private val beatMillis = HEARTBEAT_INTERVAL_MILLIS
+    // R-1184: the one declaration, in the module that owns the trail this trigger reads.
+    private val beatMillis = HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS
 
     private fun beat(sessionId: String, wallMillis: Long) = HeartbeatTrailEntry(
         sessionId = sessionId,
@@ -130,16 +132,45 @@ class KeepCaptureRunningTest {
         assertEquals(900_000L, found.gapMillis)
     }
 
+    /**
+     * **R-1184: there is one cadence now, and this is what proves this trigger uses it.**
+     *
+     * The old version of this test asserted `30_000L` against a constant this file's own production
+     * source declared for itself, because `RealCaptureService`'s was `private` — a copy, and one
+     * whose drift would be invisible: widen the real cadence, leave the copy, and the prompt quietly
+     * stops firing, which looks exactly like a phone that never misses a beat. The constant now
+     * lives once on [HeartbeatTrailStore], read by the service's ticker and by
+     * [newestMissedHeartbeat] alike.
+     *
+     * Asserted **behaviourally** rather than as `assertEquals(SHARED, SHARED)`, which would pass
+     * whatever either side did: a beat exactly one shared cadence plus the tolerance late is not a
+     * gap, and one millisecond beyond it is. Point a future `newestMissedHeartbeat` at any number
+     * other than the shared one and one of the two halves fails.
+     */
     @Test
-    @Requirement("AC-189", "NFR-8", "constitution IV")
-    fun `AC_189 the cadence this trigger measures against is the one RealCaptureService actually beats on`() {
-        // HeartbeatTrailStore's own kdoc pins the same number from the other side ("960 beats at the
-        // 30 s cadence ... is 8 hours"). Asserted rather than assumed, because a cadence change
-        // elsewhere would otherwise make this prompt quietly stop firing.
-        assertEquals(30_000L, HEARTBEAT_INTERVAL_MILLIS)
+    @Requirement("AC-189", "NFR-8", "R-1184", "constitution IV")
+    fun `R_1184 this trigger measures against the one cadence RealCaptureService actually beats on`() {
+        val cadence = HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS
+        val onTime = listOf(beat("S1", 0L), beat("S1", cadence + HEARTBEAT_GAP_TOLERANCE_MILLIS))
+        val late = listOf(beat("S1", 0L), beat("S1", cadence + HEARTBEAT_GAP_TOLERANCE_MILLIS + 1))
+
+        assertNull("a beat inside the shared cadence plus its tolerance is a busy phone", newestMissedHeartbeat(onTime))
+        assertEquals(
+            "one millisecond past it is a real gap, measured against the shared cadence",
+            cadence + HEARTBEAT_GAP_TOLERANCE_MILLIS + 1,
+            requireNotNull(newestMissedHeartbeat(late)).gapMillis,
+        )
+    }
+
+    /** NFR-8's own 8-hour overnight gate, as an identity rather than a comment two numbers have to
+     * keep agreeing with by hand: the trail's bound *is* eight hours of beats at the cadence above.
+     * Kept here, beside the trigger that depends on both, as well as in `:pipeline`'s own suite. */
+    @Test
+    @Requirement("NFR-8", "R-1184")
+    fun `R_1184 the trail's bound is exactly the overnight gate's eight hours at that cadence`() {
         assertEquals(
             8 * 60 * 60_000L,
-            org.ort.pipeline.capture.HeartbeatTrailStore.DEFAULT_MAX_ENTRIES * HEARTBEAT_INTERVAL_MILLIS,
+            HeartbeatTrailStore.DEFAULT_MAX_ENTRIES * HeartbeatTrailStore.HEARTBEAT_INTERVAL_MILLIS,
         )
     }
 

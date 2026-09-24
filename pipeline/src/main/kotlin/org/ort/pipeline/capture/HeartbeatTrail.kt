@@ -49,9 +49,28 @@ public interface HeartbeatTrailStore {
     public fun clear()
 
     public companion object {
-        /** 960 beats at the 30 s cadence [RealCaptureService] ticks on is 8 hours -- NFR-8's own
-         * overnight gate -- so a trail this bounded still covers the whole run the gate cares
-         * about, not just D8's 30-minute sample of it. */
+        /**
+         * **The beat cadence, declared once (R-1184).**
+         *
+         * [RealCaptureService]'s heartbeat ticker delays by exactly this, and its own constant used
+         * to be `private` -- so the *Keep capture running* prompt
+         * (`org.ort.app.ui.failures.newestMissedHeartbeat`), which has to know the cadence to tell a
+         * missed beat from a late one, declared a second copy of the number. Two constants for one
+         * fact, and the failure that would follow is invisible by construction: raise the real
+         * cadence, leave the copy behind, and the prompt silently widens its gap threshold until it
+         * stops firing -- which looks exactly like a phone that never misses a beat.
+         *
+         * It lives here rather than on [RealCaptureService] because this is where the cadence is
+         * already load-bearing for a second fact ([DEFAULT_MAX_ENTRIES], below, is defined in terms
+         * of it), and because `:app` legitimately reads this interface already while it has no
+         * business reaching into a `Service` class for a number.
+         */
+        public const val HEARTBEAT_INTERVAL_MILLIS: Long = 30_000L
+
+        /** 960 beats at [HEARTBEAT_INTERVAL_MILLIS] is 8 hours -- NFR-8's own overnight gate -- so a
+         * trail this bounded still covers the whole run the gate cares about, not just D8's
+         * 30-minute sample of it. `HeartbeatTrailTest` asserts that identity rather than leaving it
+         * as a comment two numbers have to keep agreeing with by hand. */
         public const val DEFAULT_MAX_ENTRIES: Int = 960
     }
 }

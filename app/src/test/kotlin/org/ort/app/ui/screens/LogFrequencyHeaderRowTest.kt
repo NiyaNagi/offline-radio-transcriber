@@ -5,8 +5,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextClearance
@@ -21,11 +25,18 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.components.LogRowViewState
 import org.ort.app.ui.data.FakeLogFrequencyEditor
 import org.ort.app.ui.data.LogFrequencyFacts
 import org.ort.app.ui.data.LogFrequencyHeaderMapper
+import org.ort.app.ui.data.LogFrequencyHeaderViewState
+import org.ort.app.ui.data.LogListItem
 import org.ort.app.ui.data.LogPolling
+import org.ort.app.ui.data.LogQuickFilterChipViewState
+import org.ort.app.ui.data.LogQuickFilterId
+import org.ort.app.ui.data.LogScreenViewState
 import org.ort.app.ui.theme.OrtTheme
+import org.ort.core.Attribution
 import org.ort.pipeline.capture.RigStatus
 import org.ort.testing.Requirement
 import org.robolectric.RobolectricTestRunner
@@ -229,6 +240,89 @@ class LogFrequencyHeaderRowTest {
         val header = boundsOf(LOG_FREQUENCY_HEADER_TEST_TAG)
         assertTrue("the header does not run past 390dp at 2.0: $header", header.right <= 390.dp + 0.5.dp)
     }
+
+    // -------------------------------------------------------------------------------------------
+    // R-1181: the header, composed over the thing it makes a claim about.
+    // -------------------------------------------------------------------------------------------
+
+    /**
+     * **R-1181 — the arrangement no test in this suite had ever composed, which is the whole
+     * finding.** The twenty-three tests above are good and all pass, because every one of them
+     * exercises the header against its own facts object *in isolation*. The header's "nothing is
+     * entered" sentence is only false in one arrangement — above a list whose rows carry
+     * frequencies — and nothing had ever put it there, so the contradiction the lead found in
+     * `p39-captures-v2/overnight/L01-log.png` was invisible to a green suite. That is the
+     * difference between a unit test and a screenshot (constitution VIII), and this is the unit
+     * test that closes the gap the screenshot exposed.
+     *
+     * Built through [LogScreen] with a hand-made state rather than through [LogContent], because
+     * what has to be composed is precisely the contradiction: the not-set header, the `145.230`
+     * quick chip, and rows whose `FREQ` column carries a real value, all on screen at once.
+     *
+     * Every assertion is rooted in a stable tag (R-1160, R-1070). The one text assertion is on the
+     * *scope word* of the note, read off the header's own tagged node — never a bare
+     * `onNodeWithText`, which is exactly how this repository has twice matched the navigation
+     * drawer instead of the screen under test.
+     */
+    @Test
+    @Requirement("R-1181", "constitution I", "constitution VIII")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Config(qualifiers = "w390dp-h844dp-420dpi")
+    fun `R_1181 the not-set header claims nothing about the overs that carry frequencies beneath it`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                LogScreen(
+                    state = contradictingState(),
+                    onOpen = {},
+                    onQuickFilterSelect = {},
+                    onFilterClick = {},
+                )
+            }
+        }
+
+        // The arrangement really is the contradicting one: the header says "not set" while rows
+        // below it are labelled with real frequencies. Both halves asserted, so a future change
+        // that quietly stops rendering either would fail here rather than pass vacuously.
+        composeTestRule.onNodeWithTag(LOG_FREQUENCY_HEADER_VALUE_TEST_TAG)
+            .assert(hasText(LogFrequencyHeaderViewState.NOT_SET_LABEL, substring = true))
+        // Rooted on each row's own transcript — a string that exists nowhere but this fixture, so it
+        // cannot match the drawer (R-1160) — and asserting what that row's FREQ column carries.
+        listOf("CQ CQ CQ", "roger, seven three").forEach { transcript ->
+            composeTestRule.onNodeWithContentDescription(transcript, substring = true)
+                .assert(hasContentDescription("145.230", substring = true))
+        }
+
+        // …and in that arrangement the header's note must not make a claim about them. Scoped
+        // forward, it is true of what it actually describes; unscoped, the screen disproves itself.
+        composeTestRule.onNodeWithTag(LOG_FREQUENCY_HEADER_NOTE_TEST_TAG)
+            .assert(hasText("from here on", substring = true))
+    }
+
+    /** The not-set header above two overs already labelled `145.230`, with the frequency quick chip
+     * the real `overnight`/`gap-call` fixtures both render. */
+    private fun contradictingState() = LogScreenViewState(
+        items = listOf(
+            LogListItem.Row(logRow("TX1", "CQ CQ CQ")),
+            LogListItem.Row(logRow("TX2", "roger, seven three")),
+        ),
+        quickFilters = listOf(
+            LogQuickFilterChipViewState(LogQuickFilterId.All, "All", true),
+            LogQuickFilterChipViewState(LogQuickFilterId.Frequency(145_230_000L), "145.230", false),
+        ),
+        rejectedFocus = false,
+        rejectedExplanation = null,
+        emptyState = null,
+        frequencyHeader = LogFrequencyHeaderMapper.from(editor().facts()),
+    )
+
+    private fun logRow(id: String, transcript: String) = LogRowViewState(
+        id = id,
+        timeLabel = "02:14:07",
+        frequencyLabel = "145.230",
+        transcript = transcript,
+        attribution = Attribution.unknown(),
+        signalLabel = "S7",
+    )
 
     @Test
     @Requirement("AC-202", "R-1051")

@@ -12,10 +12,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -24,7 +20,6 @@ import org.ort.app.ui.components.KeyValueRow
 import org.ort.app.ui.components.OrtIcons
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.TextAction
-import org.ort.app.ui.components.TextField
 import org.ort.app.ui.components.ToggleRow
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
@@ -52,7 +47,6 @@ public fun SettingsCaptureScreen(
     onOpenInputSetup: () -> Unit = {},
     onOpenLevelMeter: () -> Unit = {},
     onOpenModeSettings: () -> Unit = {},
-    onEditManualFrequency: ((String) -> Unit)? = null,
 ) {
     // Register R-957 (root cause, WPI's host comparison on 5558): R-826's own static trailing
     // clearance below was a *second* reservation stacked on top of `NavHostBody`'s own real,
@@ -135,7 +129,7 @@ public fun SettingsCaptureScreen(
                 label = "Frequency, when no radio is connected",
                 modifier = Modifier.padding(top = OrtSpacing.md),
             )
-            ManualFrequencyRow(manualFrequencyMhz = state.manualFrequencyMhz, onEdit = onEditManualFrequency)
+            ManualFrequencyRow(manualFrequencyMhz = state.manualFrequencyMhz)
 
             Text(
                 text = CAPTURE_LEVEL_PARAGRAPH,
@@ -208,40 +202,35 @@ private fun captureModeIcon(mode: CaptureMode?) = when (mode) {
  * CF02's own Capture-mode row. */
 public const val CAPTURE_MODE_ROW_TEST_TAG: String = "settings-capture-mode-row"
 
-/** R-132 (register, round 4 System validator): `Edit` is real when a caller wires [onEdit] —
- * `SettingsStore.manualFrequencyMhz` is a real writable field (confirmed by reading
- * `SettingsStore.kt` before adding this), previously read-only in this screen. `null` (the
- * default `onEditManualFrequency` [SettingsCaptureScreen] passes through) keeps the row honest for
- * any caller that has not wired a save path yet: no `Edit` action that would silently do nothing.
- * Split out of [SettingsCaptureScreen] purely to keep that function under detekt's length limit. */
+/** The stable handle a test uses to find CF02's own frequency row (R-1160/R-1070: assert a tag,
+ * never a short string the navigation drawer also renders). */
+public const val MANUAL_FREQUENCY_ROW_TEST_TAG: String = "settings-manual-frequency-row"
+
+/**
+ * **R-1182: a report, not an editor — and that is the whole change.**
+ *
+ * R-132 made this row editable, writing `SettingsStore.manualFrequencyMhz`. That was a *second*
+ * hand-entered frequency: `SettingsPolling` read it back, so the row round-tripped convincingly,
+ * while `RealCaptureService` went on reading `CaptureConfiguration.manualFrequencyHz` from
+ * [org.ort.pipeline.rig.CaptureConfigurationStore], which the field never reached. The edit changed
+ * a label and nothing else, and because the label updated it confirmed itself — the most persuasive
+ * form of this repository's built-but-never-called pattern.
+ *
+ * **Why the editor was deleted rather than repointed at the real store.** R-1167 already moved this
+ * question out of onboarding and into the Log's own header, editable in place *above the rows it
+ * labels* — which is where the operator can see what the answer is actually doing, and which is
+ * also the only surface that can state AC-131's "this session keeps what it started with". Keeping a
+ * second editor here would rebuild exactly the two-surfaces-for-one-fact arrangement that let these
+ * two values drift apart in the first place (the same reasoning R-1188 records for `OvernightScreen`
+ * and F24). So CF02 keeps reporting the value — it is genuinely a capture setting and belongs on
+ * this board — and names where it is set, rather than offering a control that lies.
+ */
 @Composable
-private fun ManualFrequencyRow(
-    manualFrequencyMhz: String?,
-    onEdit: ((String) -> Unit)?,
-    modifier: Modifier = Modifier,
-) {
-    var editing by remember { mutableStateOf(false) }
-    var draft by remember(manualFrequencyMhz) { mutableStateOf(manualFrequencyMhz.orEmpty()) }
-    if (onEdit != null && editing) {
-        TextField(
-            value = draft,
-            onValueChange = { draft = it },
-            label = "Log overs against, MHz",
-            modifier = modifier,
-            trailingAction = {
-                TextAction(text = "Save", onClick = {
-                    onEdit(draft)
-                    editing = false
-                })
-            },
-        )
-    } else {
-        KeyValueRow(
-            key = "Log overs against",
-            value = manualFrequencyMhz ?: "not set",
-            subLine = "used only while the rig is disconnected or absent",
-            modifier = modifier,
-            trailingMarker = onEdit?.let { { TextAction(text = "Edit", onClick = { editing = true }) } },
-        )
-    }
+private fun ManualFrequencyRow(manualFrequencyMhz: String?, modifier: Modifier = Modifier) {
+    KeyValueRow(
+        key = "Log overs against",
+        value = manualFrequencyMhz ?: "not set",
+        subLine = "used only while the rig is disconnected or absent · set in the Log's own header",
+        modifier = modifier.testTag(MANUAL_FREQUENCY_ROW_TEST_TAG),
+    )
 }
