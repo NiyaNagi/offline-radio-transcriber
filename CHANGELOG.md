@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-24
 
-### `da7f2a21` — R-1181/R-1182/R-1184: one claim scoped, one field deleted, one constant unified
+### `7ac4a4c3` — R-1181/R-1182/R-1184: one claim scoped, one field deleted, one constant unified
 
 **Scope:** `:app` — `ui/data/LogFrequencyHeader.kt`, `ui/screens/LogFrequencyHeaderRow.kt` (test
 only), `ui/failures/KeepCaptureRunning.kt`, `ui/settings/{SettingsStore,SettingsPolling,
