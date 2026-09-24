@@ -403,8 +403,9 @@ private fun SegmentBars(steps: Int, currentStep: Int, modifier: Modifier = Modif
     }
 }
 
-/** `RationaleCard`/similar boards' green-dot bullet list (`Setup-Mic.dc.html`,
- * `Setup-Battery.dc.html`'s "less likely, not guaranteed" paragraph). */
+/** `RationaleCard`/similar boards' green-dot bullet list. `Setup-Bluetooth-Permission.dc.html` is the
+ * one caller left — the two boards this was drawn for, `Setup-Mic.dc.html` and
+ * `Setup-Battery.dc.html`, have both since been deleted (P39 and R-1188). */
 @Composable
 public fun DotPointCard(points: List<String>, modifier: Modifier = Modifier) {
     Column(

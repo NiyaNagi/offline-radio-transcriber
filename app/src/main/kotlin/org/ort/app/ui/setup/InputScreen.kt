@@ -62,13 +62,27 @@ internal fun InputSection(
     }
     Column {
         routes.forEach { route ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // R-1187 (register; the R-1017/R-880 family): `Alignment.Top`, not `CenterVertically`.
+            // Centring the leading icon against the *row* -- and, inside [RadioRow], the marker
+            // against the whole label+subtitle column -- puts both controls beside the sub-line the
+            // moment the subtitle wraps to a second line, leaving the label floating above them. The
+            // row then reads as a heading followed by an unrelated control, which on this screen is
+            // the shape that gets the wrong input picked. Every route wraps on the emulator (each is
+            // named `sdk_gphone64_x86_64`) and any USB adapter with a long name will wrap on a real
+            // device, so this is not a test-environment artefact. `RigBluetoothScreen`'s own
+            // `PairedDeviceRow` already carries the identical fix for the identical shape; this
+            // caller -- then one screen of twelve, now the screen no first run can skip -- was left
+            // behind by it.
+            Row(verticalAlignment = Alignment.Top) {
                 route.icon?.let {
                     Icon(
                         imageVector = it,
                         contentDescription = null,
                         tint = if (route.advisory.dimsTheRow()) OrtColors.textIconDim else OrtColors.textIcon,
-                        modifier = Modifier.padding(end = 11.dp).size(18.dp),
+                        modifier = Modifier
+                            .padding(end = 11.dp)
+                            .size(18.dp)
+                            .testTag("setup-input-route-icon-${route.id}"),
                     )
                 }
                 RadioRow(
@@ -78,6 +92,7 @@ internal fun InputSection(
                     subtitle = route.subtitle,
                     tone = if (route.advisory.dimsTheRow()) RowTone.Warning else RowTone.Neutral,
                     modifier = Modifier.weight(1f).testTag("setup-input-route-${route.id}"),
+                    verticalAlignment = Alignment.Top,
                 )
             }
         }

@@ -19,12 +19,17 @@ package org.ort.app.ui.setup
  *   [MICROPHONE_DENIED] stays exactly as it was: a permanently denied microphone is a real halt.
  * - `NOTIFICATIONS` is asked at first capture start ([SetupActivity.onStartCapture]), in context,
  *   where the persistent notification is about to appear.
- * - `OVERNIGHT` is no longer a pre-capture gate at all — AC-189 as amended, and the structural half
- *   of R-1161. Overnight survival is evidence only a completed capture can produce, so a gate on it
- *   is unsatisfiable by construction and deadlocked every first-run operator. The step and
- *   [OvernightScreen] remain in the code, reached by [SetupActivity.EXTRA_STEP] and by [READY]'s own
- *   row, so the *Keep capture running* prompt owed to the first missed heartbeat has somewhere to
- *   land; [SetupStateMachine.stepFor] never returns it.
+ * - `OVERNIGHT` is **gone outright** — AC-189 as amended, and the structural half of R-1161.
+ *   Overnight survival is evidence only a completed capture can produce, so a gate on it is
+ *   unsatisfiable by construction and deadlocked every first-run operator. P39 left the step and its
+ *   screen in the code, reachable by [SetupActivity.EXTRA_STEP], so the *Keep capture running* prompt
+ *   owed to the first missed heartbeat would have somewhere to land. **That prompt landed somewhere
+ *   else** — `org.ort.app.ui.failures.FailKeepCaptureRunningBanner`, F24, with its own copy and its
+ *   own battery-setting intent — which left a screen no production path could reach and only its own
+ *   tests kept alive (R-1188). Deleted, deliberately and on the record, so there is one battery
+ *   surface rather than two: two surfaces for one ask is how the two frequency fields in R-1182
+ *   drifted apart. The one thing that screen said and F24 did not — *choose Don't optimise or
+ *   Unrestricted* on the platform screen — moved into F24's body in the same change.
  * - `INPUT`, `VERIFY` and `LEVEL` merge into [LISTEN] — one screen carrying the route list, the
  *   verify checklist expanding in place, and the meter with its gain beneath. This is the only
  *   screen that must be full-screen, because it is the only one whose failure is *silent*
@@ -60,7 +65,6 @@ public enum class SetupStep {
     RIG_BLUETOOTH,
     RADIO_VERIFIED,
     MODELS,
-    OVERNIGHT,
     READY,
 }
 
@@ -88,11 +92,11 @@ public const val SETUP_STEPS_WITH_DOWNLOAD: Int = 4
  * The step-indicator segment a given [SetupStep] lights up, against [totalSteps]
  * ([setupTotalSteps]).
  *
- * [SetupStep.WELCOME] has no indicator — the sequence has not begun. Neither do the off-ladder
- * steps: the rig branch is not a numbered stage of the first run (it is entered only from a rig
- * that exists, which none does today), and [SetupStep.OVERNIGHT] is no longer part of the sequence
- * at all. A step with no segment renders no counter either ([SetupScaffold]'s own header row), which
- * is the honest rendering of "you are not on a numbered stage" — never a fabricated position.
+ * [SetupStep.WELCOME] has no indicator — the sequence has not begun. Neither does the rig branch,
+ * which is not a numbered stage of the first run (it is entered only from a rig that exists, which
+ * none does today). A step with no segment renders no counter either ([SetupScaffold]'s own header
+ * row), which is the honest rendering of "you are not on a numbered stage" — never a fabricated
+ * position.
  */
 public fun SetupStep.indicatorIndex(totalSteps: Int = SETUP_STEPS_WITHOUT_DOWNLOAD): Int? = when (this) {
     SetupStep.WELCOME -> null
@@ -105,7 +109,6 @@ public fun SetupStep.indicatorIndex(totalSteps: Int = SETUP_STEPS_WITHOUT_DOWNLO
     SetupStep.RADIO_USB,
     SetupStep.RIG_BLUETOOTH,
     SetupStep.RADIO_VERIFIED,
-    SetupStep.OVERNIGHT,
     -> null
 }
 

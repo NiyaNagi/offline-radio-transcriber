@@ -470,20 +470,21 @@ public class SetupActivity : ComponentActivity() {
      * **This function latches the proven half and nothing else. It must never clear
      * [SetupStore.overnightStepSeen] — R-1161.** It used to, and the comment that stood here
      * defended the reset on the grounds that the two Overnight actions "still only need to fire
-     * once per launch ... with no risk of looping back to `SetupStep.OVERNIGHT` again within the
+     * once per launch ... with no risk of looping back to the overnight step again within the
      * same launch." That reasoning is **true within a launch and false across launches**, and every
      * trip of this cycle *is* a new launch: [handBackToMainActivity] finishes this activity,
      * `MainActivity.route` finishes itself on the way back, and this `onCreate` then ran again and
      * re-armed the step the operator had just answered. Together with R-1104's fast-path check that
      * made the loop total and inescapable — the operator's own report was *"any button i press just
      * loops back to the running overnight page"*. Neither change was wrong alone; the defect lived
-     * only in their composition, which is why no single unit test saw it. If you are tempted to put
-     * the reset back: the flag is cleared by `MainActivity.overnightSurvivalStillUnproven`, once per
-     * process, at the one place that also knows whether the operator has already been asked.
+     * only in their composition, which is why no single unit test saw it. **R-1188 has since removed
+     * the step and its screen entirely** — the battery ask is F24's banner — so there is no longer a
+     * step for a reset to re-arm; the rule is kept here because the latch below is what survives of
+     * that whole episode and the reasoning is the only record of why it may not grow a second half.
      *
-     * AC-189's own requirement — the step **reappears** on every relevant subsequent launch — is
-     * unaffected and is satisfied there; what AC-189 never asked for, and R-1104 over-implemented,
-     * is refusing capture until survival is proven.
+     * AC-189's own requirement is satisfied by F24, which re-raises on every strictly newer missed
+     * heartbeat; what AC-189 never asked for, and R-1104 over-implemented, is refusing capture until
+     * survival is proven.
      *
      * This reruns Setup's own walk whenever [SetupActivity] is entered for any reason. **R-1104**:
      * an operator who completes setup once and always launches through `MainActivity`'s
@@ -847,46 +848,11 @@ public class SetupActivity : ComponentActivity() {
         refreshStep(pushCurrent = true)
     }
 
-    // --- S08 Overnight ----------------------------------------------------------------------
-
-    internal fun onOpenBatterySetting() {
-        try {
-            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
-            startActivity(intent)
-        } catch (e: SecurityException) {
-            android.util.Log.w(TAG, "battery-exemption request denied", e)
-        } catch (e: android.content.ActivityNotFoundException) {
-            android.util.Log.w(TAG, "no handler for battery-exemption request", e)
-        }
-        store.overnightStepSeen = true
-        refreshStep(pushCurrent = true)
-    }
-
-    /**
-     * **R-1162**: [SetupStep.OVERNIGHT] can be shown *after* setup is already complete (that is what
-     * `MainActivity`'s own AC-189 re-ask does), and a step in that position must offer a way back
-     * into the app, not only a forward action. It cannot use [onBack]: a cold resume deliberately
-     * calls `refreshStep(pushCurrent = false)` and pushes nothing onto [backStack] (that function's
-     * own doc comment is right that it must not fabricate an entry the operator never navigated
-     * through), so an exit here needs a real destination, and [handBackToMainActivity] is the only
-     * honest one — the app the operator came from.
-     *
-     * Deliberately writes nothing. The operator declined to answer rather than answering, so
-     * [SetupStore.overnightStepSeen] stays as it was and AC-189's reappearance stands for the next
-     * process; what lets the router through on the way back is [OvernightNagState], which already
-     * recorded that this process has asked. Offered only while [SetupStore.setupComplete] — on the
-     * first-run walk there is genuinely nowhere to return *to*, which is what `onBack = null` on
-     * this screen was always right about.
-     */
-    internal fun onReturnToAppFromOvernight() {
-        handBackToMainActivity()
-    }
-
-    internal fun onSkipOvernight() {
-        store.overnightStepSeen = true
-        SetupFunnelAnalytics.skipped(SetupStep.OVERNIGHT.name)
-        refreshStep(pushCurrent = true)
-    }
+    // R-1188: `S08 Overnight` stood here — `onOpenBatterySetting`, `onSkipOvernight` and R-1162's
+    // `onReturnToAppFromOvernight`, all three serving a screen this activity was the only thing that
+    // could reach. The battery-exemption ask has one surface now, F24's *Keep capture running* banner
+    // (`ui/failures/FailureBanners.kt`), which fires the same platform intent from `ReaderActivity`.
+    // The intent is not duplicated here: a second copy of an ask is how two surfaces drift apart.
 
     // --- S09 Radio picker (D33/P19 WPD: generated from :rig's RigCatalogue) -----------------------
 
@@ -1323,15 +1289,6 @@ public class SetupActivity : ComponentActivity() {
             )
             SetupStep.LISTEN -> RenderListen(totalSteps)
             SetupStep.ROUTE_MISMATCH -> RenderRouteMismatch()
-            // R-1162: the exit appears only once setup is already complete -- see
-            // onReturnToAppFromOvernight's own doc comment for why the first-run walk has none.
-            // P39: no longer reachable from `stepFor` at all (AC-189 as amended) — only from EXTRA_STEP
-            // and from Ready's own overnight row.
-            SetupStep.OVERNIGHT -> OvernightScreen(
-                onOpenSetting = ::onOpenBatterySetting,
-                onSkip = ::onSkipOvernight,
-                onReturnToApp = if (store.setupComplete) ::onReturnToAppFromOvernight else null,
-            )
             SetupStep.RADIO -> RenderRadioPicker()
             SetupStep.RIG_TRANSPORT -> RenderRigTransport()
             SetupStep.RADIO_USB -> RadioUsbScreen(
@@ -1648,7 +1605,6 @@ public class SetupActivity : ComponentActivity() {
             // which is also where an operator who has to fix either one would have to end up anyway.
             onFixInput = { step = SetupStep.LISTEN },
             onFixLevel = { step = SetupStep.LISTEN },
-            onFixOvernight = { step = SetupStep.OVERNIGHT },
             onFixRadio = { step = SetupStep.RADIO },
             // R-285: the same clear-then-navigate callback S11's own "Change radio" already uses
             // ([RadioVerifiedScreen]), not the bare step jump [onFixRadio] is — this row is already

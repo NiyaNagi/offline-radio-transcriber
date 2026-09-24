@@ -29,8 +29,8 @@ class SetupStepTest {
      * The `null` group is larger than it was, and every member earns it. [SetupStep.WELCOME] has no
      * indicator because the sequence has not begun. The rig branch has none because it is not a
      * numbered stage of a first run and is unreachable on current builds at all
-     * ([SetupSnapshot.rigModuleAvailable]). [SetupStep.OVERNIGHT] has none because it is no longer
-     * part of the sequence (AC-189 as amended) — it is reached only from outside it.
+     * ([SetupSnapshot.rigModuleAvailable]). `OVERNIGHT` was in this group until R-1188 removed the
+     * step entirely; the battery ask is F24's banner, outside setup altogether (AC-189 as amended).
      */
     private val expectedGroups: Map<Int?, Set<SetupStep>> = mapOf(
         null to setOf(
@@ -40,7 +40,6 @@ class SetupStepTest {
             SetupStep.RADIO_USB,
             SetupStep.RIG_BLUETOOTH,
             SetupStep.RADIO_VERIFIED,
-            SetupStep.OVERNIGHT,
         ),
         1 to setOf(SetupStep.MODE, SetupStep.MICROPHONE_DENIED, SetupStep.BLUETOOTH_PERMISSION),
         2 to setOf(SetupStep.LISTEN, SetupStep.ROUTE_MISMATCH),

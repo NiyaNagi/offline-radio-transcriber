@@ -2,6 +2,7 @@
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.ort.app.ui.data.ModelId
@@ -22,7 +23,6 @@ class ReadyRowsForTest {
     private val noOpActions = ReadyActions(
         onFixInput = {},
         onFixLevel = {},
-        onFixOvernight = {},
         onFixRadio = {},
         onChangeRadio = {},
         onInstallModel = {},
@@ -117,7 +117,6 @@ class ReadyRowsForTest {
         val actions = ReadyActions(
             onFixInput = {},
             onFixLevel = {},
-            onFixOvernight = {},
             onFixRadio = {},
             onChangeRadio = {},
             onInstallModel = {},
@@ -178,9 +177,23 @@ class ReadyRowsForTest {
             exemptButNotProven.ok,
             "the OS reporting the exemption already granted must never satisfy this gate by itself",
         )
-        assertEquals("Fix", exemptButNotProven.actionLabel)
-        assertEquals("Battery exemption granted", exemptButNotProven.value)
-        assertEquals("Battery exemption skipped", provenButNotExempt.value)
+        // The diagnostic flag still drives the wording, and only the wording — asserted on the one
+        // word each case turns on rather than on the whole sentence, which R-1188 lengthened and a
+        // designer may legitimately reword again (constitution II).
+        assertTrue(exemptButNotProven.value.contains("granted"), exemptButNotProven.value)
+        assertTrue(provenButNotExempt.value.contains("skipped"), provenButNotExempt.value)
+
+        // R-1188: this row used to offer `Fix`, jumping to the deleted `SetupStep.OVERNIGHT`. It
+        // offers none now, and that is not merely a consequence of the deletion: **there is nothing
+        // this row could route to that would fix it.** The only evidence that clears it is a capture
+        // that ran long enough and ended cleanly, and an operator standing on Ready has not started
+        // one — the same unsatisfiable-by-construction shape R-1161 was about. A `Fix` that cannot
+        // fix is a claim the screen cannot keep (constitution I).
+        assertNull(
+            exemptButNotProven.actionLabel,
+            "an unproven overnight row must offer no Fix: nothing it could open would prove survival",
+        )
+        assertNull(provenButNotExempt.actionLabel)
     }
 
     @Test
@@ -224,7 +237,6 @@ class ReadyRowsForTest {
         val actions = ReadyActions(
             onFixInput = {},
             onFixLevel = {},
-            onFixOvernight = {},
             onFixRadio = { fixed = true },
             onChangeRadio = { changed = true },
             onInstallModel = {},
@@ -362,7 +374,6 @@ class ReadyRowsForTest {
         val actions = ReadyActions(
             onFixInput = {},
             onFixLevel = {},
-            onFixOvernight = {},
             onFixRadio = { fixed = true },
             onChangeRadio = { changed = true },
             onInstallModel = {},

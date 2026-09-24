@@ -32,6 +32,116 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-24
+
+### `<pending>` — R-1186/R-1187/R-1188: the Listen screen's copy and row geometry, and the overnight screen deleted
+
+**Scope:** `:app` — `ui/setup/` (`VerifyScreen.kt`, `InputScreen.kt`, `SetupStep.kt`,
+`SetupStateMachine.kt`, `SetupActivity.kt`, `ReadyScreen.kt`, `OvernightSurvival.kt`, and the
+deleted `OvernightScreen.kt`), plus three files outside it that the deletion forced:
+`ui/failures/FailureBanners.kt` (F24's body), `MainActivity.kt` (a doc comment), and
+`app/src/debug/.../tour/SetupStepIds.kt`. Also `design/design-intent.md`, the deleted
+`design/canvas/Setup-Battery.dc.html`, and three `tools/ui-audit/tour.json` steps that pointed at
+the deleted screen. **`app/src/debug/.../Scenarios.kt` was deliberately not touched** — another
+builder owns it concurrently, and the one thing this change would have wanted there is reported
+under "Left open" below rather than edited.
+
+**Requirements/ACs:** R-1186, R-1187, R-1188 (and R-1162, resolved by the same deletion); R-1166's
+copy audit, R-1017/R-880 (the alignment family), R-1161, AC-189 as amended, AC-199, AC-1, FR-CAP-1,
+D58; constitution I (never assert what the state does not back), II (a test must discriminate, and
+must not assert prose), III (never delete quietly), IV (a route that is not the selected device is
+the highest-consequence silent failure), VIII (a screen is not fixed until it has been captured).
+
+**What changed:**
+
+*R-1186 — a source-code identifier in operator copy.* The route-check row on the merged Listen
+screen rendered `getRoutedDevice() → USB Audio Device` as its detail line: a literal Android API
+call, shown to an operator, on the one screen a first run cannot avoid and the one whose whole job
+is convincing someone the right device is being recorded. R-1166's audit named that exact string
+and the P39 rewrite carried it through untouched. It now reads
+`Android confirmed it is recording from USB Audio Device`, behind a new `routedDeviceDetail()` seam
+in `VerifyScreen.kt` so the tests match a function rather than prose. The fact is unchanged — the
+row still says that Android's own routing report was read back and named the chosen device. The
+other three check rows on that screen were read in the same pass and carry no identifier: their
+details are the grouped native rate with the audio source's own plain label
+(`voice recognition (OEM processed)`), an instruction to key the radio, and nothing at all.
+
+*R-1187 — route rows rendered their label above their own radio button.* `RadioRow` centres its
+marker against the whole label+subtitle column and `InputSection` centred its leading device-type
+icon against the row, so once the subtitle wrapped — every route on the emulator, and any USB
+adapter with a long name — both controls sat beside the *sub-line* with the label floating above
+them, reading as a heading followed by an unrelated control. Fixed with `Alignment.Top` on both,
+which is exactly the fix R-1017 already applied to `RigBluetoothScreen`'s paired-device rows for the
+identical shape and which this caller — then one screen of twelve — was left out of. The icon gained
+a `setup-input-route-icon-<id>` tag so its bounds can be asserted independently.
+
+*R-1188 — a screen kept alive entirely by its own tests.* P39 removed `OVERNIGHT` from the setup
+ladder but kept `SetupStep.OVERNIGHT` and `OvernightScreen`, recording that the *Keep capture
+running* prompt would land there. It landed on **F24** instead — a dismissable banner in
+`FailureHost`, with its own copy and its own battery-setting intent — leaving the screen unreachable
+from any production path while its tests went on passing. **Deleted**: `OvernightScreen.kt`,
+`OvernightScreenTest.kt`, the `SetupStep.OVERNIGHT` enum constant and its `indicatorIndex` branch,
+`SetupActivity`'s `onOpenBatterySetting`/`onSkipOvernight`/`onReturnToAppFromOvernight` and its
+render branch, `ReadyActions.onFixOvernight`, the two `SetupActivityTest` cases that opened the
+screen by `EXTRA_STEP`, `design/canvas/Setup-Battery.dc.html`, the `S08` tour id and its three tour
+steps. `OvernightNagState` went with them on the condition its own doc comment set — *"If that
+surface lands and does not use it, delete it then and say so"* — F24 keys its dismissal to a
+persisted per-gap watermark instead.
+
+Two things did **not** simply vanish with it, and both are the "never delete quietly" half. First,
+the old screen carried one instruction F24 did not: *choose Don't optimise or Unrestricted* on the
+platform screen the button opens. Steps 1 and 3 of its numbered list are F24's own primary action
+and the fact that a banner is not somewhere you have to come back from; step 2 is the one that
+matters, because that screen offers several options and picking the wrong one produces exactly the
+silent outcome the prompt exists to prevent. It is now in F24's body. Second, **Ready's Overnight
+row was reachable in production** — contrary to the row's premise, `readyRowsFor` gave it a `Fix`
+action wired to `SetupStep.OVERNIGHT`, and on a first run that row is always amber. The row stays
+and still names the fact; the `Fix` is gone, because nothing it could route to would fix it: the
+only evidence that clears it is a capture that has not been started yet, which is the same
+unsatisfiable-by-construction shape R-1161 was about. Its value line now says what would settle it.
+
+**Verified:** `./gradlew :app:testFullDebugUnitTest :app:smokeTestFullDebugUnitTest :app:detekt
+:app:ktlintCheck -PortAllowMissingBundledAssets=true` — green. Each new test was watched fail first,
+for the right reason and not for a missing symbol:
+
+- `R_1186 no line on Listen renders a source-code identifier` — red with
+  `a line on the one screen a first run cannot avoid names a source-code call:
+  [getRoutedDevice() → USB Audio Device]`. It scans every text node for the shape `identifier()`
+  rather than matching the one string, so it covers the neighbouring rows R-1186 asked about and the
+  next line somebody adds, and it is not an assertion on prose (constitution II).
+- `R_1187 the route row marker and icon sit beside the label, not below it, at font scale 1_0` /
+  `…2_0`, Robolectric at `w390dp-h844dp-420dpi` with `GraphicsMode.NATIVE` — red at 1.0 with
+  *marker's vertical centre (152.38dp) … label's own bounds (129.14..145.52)* and at 2.0 with
+  *(325.71dp) … (253.71..284.19)*. The invariant is the marker's and the icon's vertical centre each
+  falling inside the label's own vertical bounds and above where the subtitle begins, with a
+  premise assertion that the subtitle genuinely wrapped so the test cannot pass vacuously.
+- `R_1187 the route row's label is inside its own selectable node` — passed before the fix as well
+  as after, and is recorded as a *finding* rather than a regression guard: the label and sub-line
+  were already inside the row's `.selectable(...)` node, so the accessibility reading was not wrong.
+- `R_1188 the keep-running prompt names which option to choose on the platform screen` — red with
+  `Failed: assertExists`, scoped through the banner's own test tag (R-1160/R-1070: never match
+  something outside the surface under test).
+
+**Left open / not done:**
+
+- **No captures.** The emulator is reserved by the session lead. `Setup-Listen` (S04) needs
+  re-capturing at 1.0, 2.0 and 2.0-end for both the copy and the row geometry; `Setup-Done` (S12)
+  at the same three for the Overnight row losing its `Fix` and gaining a longer value line;
+  `keep-running/F24-keep-running-now` at the same three for the longer banner body, which is the one
+  most likely to change height. `setup-verified/S08-battery` and its two companions are gone from
+  the manifest, so the lead's tour will no longer produce them.
+- **A `uiautomator` dump is still owed for R-1187.** The Robolectric assertion above says the label
+  is inside the selectable node in Compose's own semantics tree; constitution VIII is explicit that
+  this tree and the real `AccessibilityNodeInfo` tree have disagreed before, on this screen's own
+  sibling (R-342, R-361). One dump settles it.
+- **`SetupStore.overnightStepSeen` is now a write-only remnant.** Its two production writers were
+  the deleted Overnight actions; the only remaining writers are twelve seeding calls in
+  `app/src/debug/.../Scenarios.kt`, which this change does not own. Named in
+  `SetupStateMachine.kt`'s own doc comment as well as here so it is not rediscovered as a mystery.
+- **`RouteCheckState.Passed.resamplerDescription` is computed and rendered nowhere.** Noticed while
+  building the R-1186 fixture; not this change's row, not touched, reported here.
+- The register rows are the lead's to move — nothing under `results/ui-audit/` was edited.
+
 ## 2026-09-23 (P39 wave: two homes for what onboarding stops asking)
 
 ### `ee1a58d8` — P39: the manual frequency moves into the log header, and the battery ask onto the first missed heartbeat

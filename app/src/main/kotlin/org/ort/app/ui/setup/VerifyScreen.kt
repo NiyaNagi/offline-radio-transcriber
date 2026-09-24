@@ -68,7 +68,7 @@ internal fun VerifySection(inputLabel: String, check: RouteCheckState?) {
     )
     CheckRow(
         title = "Routed device matches the one you chose",
-        detail = facts.routedDeviceLabel?.let { "getRoutedDevice() → $it" },
+        detail = facts.routedDeviceLabel?.let(::routedDeviceDetail),
         done = RouteCheckStage.ROUTE_MATCH in passed,
         testTag = "setup-verify-check-route-match",
     )
@@ -104,6 +104,31 @@ internal fun VerifySection(inputLabel: String, check: RouteCheckState?) {
         signalHeard = RouteCheckStage.SIGNAL in passed,
     )
 }
+
+/**
+ * **R-1186 (register; R-1166's copy audit): the routed-device line, without the API call in it.**
+ *
+ * This line read `getRoutedDevice() → <device>` — a literal Android method name shown to an operator.
+ * R-1166's audit named that exact string and proposed *"Android confirmed it is using that device"*;
+ * the P39 rewrite simplified every other sub-line on this flow and carried this one through untouched,
+ * which is worth stating plainly as the pattern it is: the copy that got attention was the copy the
+ * operator had complained about by name.
+ *
+ * It matters more here than it did on the old twelve-screen wizard. [ListenScreen] is the one screen a
+ * first run cannot avoid, and this row is the one whose entire job is convincing someone that the
+ * right device is being recorded (constitution IV — the route that is not the selected device is the
+ * highest-consequence silent failure in the system). A line an operator cannot parse cannot do that
+ * job, however true it is.
+ *
+ * **The fact is kept, only the identifier goes.** What the row establishes is that the app read
+ * Android's own report of what it is recording from, and that report named the device the operator
+ * chose — so the sentence says Android confirmed it, and names the device. It is deliberately not
+ * "we checked": *who* made the statement is the whole content of the check.
+ *
+ * A function rather than a string constant so the device's real name stays inside the one sentence
+ * that is allowed to say it, and so the tests have a seam that is not a prose match (constitution II).
+ */
+internal fun routedDeviceDetail(deviceLabel: String): String = "Android confirmed it is recording from $deviceLabel"
 
 /**
  * R-1170: what [ListenScreen]'s primary says when it refuses. **This is the careful one.**

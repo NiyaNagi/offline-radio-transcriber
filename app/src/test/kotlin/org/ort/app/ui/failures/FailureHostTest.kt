@@ -228,6 +228,54 @@ class FailureHostTest {
         }
     }
 
+    /**
+     * **R-1188: what came across when `OvernightScreen` was deleted.**
+     *
+     * That screen carried a three-step numbered list — *Open the system setting*, *Choose Don't
+     * optimise or Unrestricted*, *Come back here*. Steps 1 and 3 are this banner's own primary action
+     * and the fact that it is a banner, so they needed no words. **Step 2 did.** The platform screen
+     * that opens offers several options, only one of them is the one being asked for, and picking the
+     * wrong one produces exactly the silent outcome this prompt exists to prevent: the operator
+     * believes they answered and the OS keeps ending the app. Deleting the only place that was said
+     * would have been deleting quietly (constitution III).
+     *
+     * Asserted on the platform's own option names rather than on this app's sentence around them.
+     * Constitution II forbids assertions on prose a designer may reword tomorrow; *Unrestricted* is
+     * not that — it is a label on a screen this app does not own, and it is the single fact this test
+     * exists to keep from being lost again.
+     */
+    @Test
+    @Requirement("AC-189", "R-1188", "NFR-8")
+    fun `R_1188 the keep-running prompt names which option to choose on the platform screen`() {
+        seedHeartbeatGap()
+        try {
+            composeTestRule.setContent {
+                OrtTheme {
+                    FailureHost(sessionId = null) {
+                        Text("underlying destination", modifier = Modifier.fillMaxSize())
+                    }
+                }
+            }
+
+            awaitKeepRunningBanner()
+            // R-1160/R-1070: still reached through the banner's own tag, so this cannot pass by
+            // matching anything outside the surface under test. `useUnmergedTree` because the body is
+            // prose rather than an action: `Banner` merges its whole subtree into one node, so in the
+            // merged tree the text *is* the tagged node and has no ancestor carrying that tag --
+            // which is why [actionInsideKeepRunningBanner], correct for the two buttons, cannot
+            // reach it.
+            composeTestRule.onNode(
+                androidx.compose.ui.test.hasText("Unrestricted", substring = true) and
+                    androidx.compose.ui.test.hasAnyAncestor(
+                        androidx.compose.ui.test.hasTestTag(KEEP_CAPTURE_RUNNING_BANNER_TEST_TAG),
+                    ),
+                useUnmergedTree = true,
+            ).assertExists()
+        } finally {
+            clearHeartbeatTrail()
+        }
+    }
+
     @Test
     @Requirement("AC-189", "R-1161")
     fun `AC_189 dismissing the keep-running prompt answers this gap and persists that answer`() {

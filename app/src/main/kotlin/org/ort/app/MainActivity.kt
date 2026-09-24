@@ -103,12 +103,11 @@ public class MainActivity : ComponentActivity() {
      * the cycle but uninstalling. AC-189 as amended is explicit that this is a *post-capture* prompt
      * and SHALL NOT gate capture; AC-199 generalises it to every signal of this kind.
      *
-     * **Where the nag went.** D58 names its home: a *Keep capture running* prompt on the first missed
-     * heartbeat, which is where a post-capture fact belongs. That surface is not built here — it is a
-     * capture-status surface, outside this change's ownership — and `SetupStep.OVERNIGHT` plus
-     * [org.ort.app.ui.setup.OvernightScreen] are deliberately left intact and reachable by
-     * `SetupActivity.EXTRA_STEP` so it has somewhere to land. Until it exists, the prompt does not
-     * appear; what does not happen any more is the deadlock.
+     * **Where the nag went.** D58 named its home and it is built: `FailKeepCaptureRunningBanner`
+     * (F24), raised by the first missed heartbeat in the app's own trail, which is where a
+     * post-capture fact belongs. `SetupStep.OVERNIGHT` and its screen were left intact by P39 so that
+     * prompt would have somewhere to land; it landed elsewhere, leaving a screen nothing could reach,
+     * and R-1188 deleted both. What does not happen any more is the deadlock.
      *
      * The latch itself is worth keeping and is R-1104's real content: an operator who completes setup
      * once and always launches through this fast path never enters `SetupActivity` again, so

@@ -1,5 +1,7 @@
 package org.ort.app.ui.setup
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -245,6 +247,99 @@ class VerifyScreenTest {
         composeTestRule.onNodeWithText("48 000 Hz · mono · 16-bit").assertIsDisplayed()
     }
 
+    // --- R-1186 (register; R-1166's copy audit): no source-code identifier in operator copy --------
+
+    /**
+     * **The general form of R-1186, not the specific string.** The route-check row rendered
+     * `getRoutedDevice() → USB Audio Device` — a literal Android API call shown to an operator on
+     * the one screen a first run cannot avoid, and the screen whose whole job is convincing someone
+     * the right device is being recorded.
+     *
+     * Asserted as a property of the whole screen rather than by matching the one offending string,
+     * for two reasons. It catches the *neighbouring* rows R-1186 asked to be checked in the same
+     * pass, and it catches the next one somebody adds; and it is not an assertion on prose, which
+     * constitution II forbids — a designer may reword any line here freely, and this test only ever
+     * objects to the shape `someIdentifier()`, which is never copy.
+     *
+     * The screen is driven in its most fact-bearing state (every check passed, every optional
+     * detail present), because a state with fewer facts renders fewer lines to scan.
+     */
+    @Test
+    @Requirement("R-1186", "R-1166")
+    fun `R_1186 no line on Listen renders a source-code identifier`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ListenScreen(
+                    state = listenStateFor(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.Passed(
+                            nativeRateHz = 48_000,
+                            resamplerDescription = null,
+                            routedDeviceLabel = "USB Audio Device",
+                            audioSourceLabel = "unprocessed",
+                        ),
+                    ),
+                    onBack = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
+                )
+            }
+        }
+
+        val offending = composeTestRule
+            .onAllNodes(SemanticsMatcher.keyIsDefined(SemanticsProperties.Text), useUnmergedTree = true)
+            .fetchSemanticsNodes()
+            .flatMap { node -> node.config[SemanticsProperties.Text].map { it.text } }
+            .filter(CALL_SYNTAX::containsMatchIn)
+
+        assert(offending.isEmpty()) {
+            "a line on the one screen a first run cannot avoid names a source-code call: $offending"
+        }
+    }
+
+    /**
+     * R-1186's other half: losing the identifier must not lose the *fact*. The row exists to say
+     * that Android's own routing report was read back and named the device the operator chose, so
+     * the device's real name still has to appear on the line — asserted by the label, not by the
+     * sentence around it.
+     */
+    @Test
+    @Requirement("R-1186", "AC-1")
+    fun `R_1186 the route-match row still names the device Android reported`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                ListenScreen(
+                    state = listenStateFor(
+                        inputLabel = "USB Audio Device",
+                        check = RouteCheckState.InProgress(
+                            passed = setOf(RouteCheckStage.NATIVE_RATE, RouteCheckStage.ROUTE_MATCH),
+                            nativeRateHz = 48_000,
+                            elapsedListeningMillis = 0L,
+                            routedDeviceLabel = "Behringer UMC202HD",
+                        ),
+                    ),
+                    onBack = {},
+                    actions = ListenActions(
+                        onContinue = {},
+                        onTryAgain = {},
+                        onChooseAnotherInput = {},
+                        onSelect = {},
+                        onRefresh = {},
+                        onVerify = {},
+                    ),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Behringer UMC202HD", substring = true).assertIsDisplayed()
+    }
+
     @Test
     fun `R_943 the routed device detail line names the real routed device once matched`() {
         composeTestRule.setContent {
@@ -272,7 +367,9 @@ class VerifyScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("getRoutedDevice() → USB Audio Device").assertIsDisplayed()
+        // R-1186 retargeted the copy; R-943's own property -- the line names the *real* routed device
+        // rather than a placeholder -- is what this test establishes and is unchanged.
+        composeTestRule.onNodeWithText(routedDeviceDetail("USB Audio Device")).assertIsDisplayed()
     }
 
     @Test
@@ -297,7 +394,9 @@ class VerifyScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText("getRoutedDevice", substring = true).assertDoesNotExist()
+        // R-1186: matched on the sentence's own fixed half, so an empty-label placeholder would be
+        // caught just as the old `getRoutedDevice` substring caught it.
+        composeTestRule.onNodeWithText(routedDeviceDetail(""), substring = true).assertDoesNotExist()
     }
 
     @Test
@@ -523,5 +622,16 @@ class VerifyScreenTest {
         assert(formatElapsed(11_000L) == "0:11") { formatElapsed(11_000L) }
         assert(formatElapsed(65_000L) == "1:05") { formatElapsed(65_000L) }
         assert(formatElapsed(0L) == "0:00") { formatElapsed(0L) }
+    }
+
+    private companion object {
+        /**
+         * R-1186: an identifier immediately followed by an empty argument list — `getRoutedDevice()`,
+         * `isIgnoringBatteryOptimizations()`. Deliberately narrow. The wider net (any camelCase run)
+         * would fire on ordinary prose, and a check that cries wolf gets disabled, which is the
+         * failure mode after this one (R-1175). Empty parens specifically: the native-rate row's own
+         * `voice recognition (OEM processed)` is real, plain copy and must keep passing.
+         */
+        val CALL_SYNTAX = Regex("""[A-Za-z_][A-Za-z0-9_]*\(\)""")
     }
 }
