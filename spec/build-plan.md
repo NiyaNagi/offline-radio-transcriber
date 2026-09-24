@@ -1086,6 +1086,153 @@ because an external tester hits it; none is a feature. Sources: the roadmap rese
   header's own frequency editor. The visual re-verification is the lead's: see this unit's CHANGELOG
   entry for which boards changed, which are new and which were deleted.
 
+---
+
+## Work ledger — state of play, 2026-09-24
+
+Written at the end of the session that landed P39 (onboarding, twelve screens to four) and three
+repo-wide audits. Everything below is open. Register ids are the detail; this is the ordering and,
+more usefully, **who can actually do each thing**. Nothing here is a new requirement — it is what
+already exists, sorted.
+
+### A. Only the operator can do these
+
+1. **Publish the `models-v1` mirror.** All five asset URLs still 404, so **every slim `play` install
+   fails setup**. Outward-facing and permanent, which is why no session has done it unasked. This is
+   the single biggest blocker to the `play` variant existing at all.
+2. **Run hardware protocol H1–H15** on the TH-D75A and the reference phone. Never run;
+   `results/e2e-audit/hardware/` does not exist. Includes H11 (on-device LLM digest) and AC-127.
+3. **The 8-hour overnight run** (P9) — and it is now also the only way to exercise the new
+   *Keep capture running* prompt, which by design cannot fire before a real capture has happened.
+4. **A live TalkBack pass** (R-1090). Robolectric demonstrably passes the broken shape; only a real
+   screen reader settles whether a small icon inside a clickable box is announced.
+5. **Record and label the validation hour** (Q2/Q16, `docs/reference/labelling-protocol.md`), then
+   measure M3 callsign precision/recall on the **dev** fold. Until this exists the product cannot
+   make any accuracy claim at all.
+6. **The `README.md` headline wording.** The claim is now correct, but how the project presents
+   itself — whether the word *offline* survives anywhere — is a positioning judgement, not a
+   correctness one.
+7. **Decide tier 3's fate** (see B1). Build it, or remove it from the product. It cannot stay as it
+   is now that the app says plainly that it collects nothing.
+
+### B. Spec defects — decisions, not code
+
+These are all the same shape: **an amendment changed a requirement and left the reasoning that
+justified it standing.**
+
+1. **FR-ANL-4 is not implementable as written** (R-1193). Its field list names a *corrected*
+   transcript and the app has **no free-text transcript-correction flow** — the only correction that
+   exists is callsign/attribution. A producer built today would put an uncorrected transcript in a
+   field named `correctedTranscript`, which is the same defect one layer down in the data. Separately
+   FR-ANL-13's queue bound (5 000 events / 8 MiB) was sized for text: roughly ten tier-3 events fill
+   it and begin evicting queued tier-1 events. Pair tier 3's fate with the correction flow, or delete
+   it.
+2. **FR-SPK-20's own rationale contradicts FR-SPK-20** (`spec/functional-spec.md:1075-1080`). It
+   still reads *"but they never leave the device"* and *"The silent default is defensible only
+   because FR-SPK-20 holds."* D38 amended the requirement and not the paragraph justifying it — so
+   the argument that makes a silent default acceptable now rests on a premise the spec itself
+   removed. **This is the one to fix first**: it is not copy, it is the reasoning behind a default.
+3. **`docs/privacy-policy.md` §tier 2 and §tier 3 describe collection that does not happen.** The
+   in-app surfaces were corrected this session; the public legal document was not, and it outranks
+   them.
+
+### C. The evidence gap
+
+4. **The full canonical tour has not run since P39** (R-1177, R-1149). `results/ui-audit/` now
+   describes a flow that no longer exists: seven boards were deleted, three screens merged, the `S08`
+   captures are orphaned, and roughly ten more screens changed after that. **Until it runs, the
+   register's visual evidence cannot be trusted for any setup screen.** It is the lead's run,
+   needs the `1260x2772` override (R-1149), and R-1157 warns it degrades around step 300.
+   Screens known to need capturing: `S04-listen`, `S12-ready`, `F24-keep-running-now`,
+   `L01-log` under both `overnight` and `gap-call`, `CF02`, `CF13-settings-analytics`,
+   `ST04-station-identity`, `CF07-settings-export`.
+5. **R-1202 — the destination half of the tour still cannot prove what it photographed.** The
+   setup half now re-checks the step immediately before `drawToBitmap`; the 264 destination steps
+   have the same check for *destination*, but **drill-in identity has no seam** — which transmission
+   or station is open lives in `OrtNavHost`'s private nav state. Closing it means mirroring those ids
+   onto `ReaderNavigator`, the way `drawerOpenState` (R-803) and `reviewSessionViewState` (R-840)
+   already were.
+
+### D. Guards worth building, in value order
+
+6. **R-1197 — the reachability guard.** Three closed inventories only: preference keys (with the
+   *read outside the writing package* clause, which is what distinguishes a live setting from a
+   render-yourself loop), DAO methods, and screen/destination enums. Escapes go in one allowlist with
+   a reason and a register id, never a silent suppression. **Do not** attempt a general unused-API
+   gate — 21 `explicitApi()` modules with hand-rolled DI will drown it in false positives and it will
+   be disabled within a week.
+7. **R-1203 — the gate does not run `buildSrc`'s tests**, so `dependencyRules` and `platformGuards`
+   — the first two tasks the gate names, and the mechanism enforcing the module boundaries the
+   constitution calls non-negotiable — have meta-guards that only CI runs, as a separate step. Green
+   currently proves they ran, not that they still work.
+8. **R-1204 — `platformGuards` reads `src/main`'s manifest and `api`/`implementation` only**, while
+   the Release workflow publishes the **debug** APK. The guard enforcing FR-OBS-5 does not cover the
+   artifact that reaches the operator's phone.
+9. **R-1196 — audit the coverage matrix for requirements carried only by negative assertions.** It
+   maps requirement ids to test-function *names*, so a dead feature with a well-named test scores
+   100%; AC-174 was the worked example and the tell was that tier 2 had a positive counterpart and
+   tier 3 had none. A mechanical query over the existing mapping; probably a short list.
+
+### E. Dead paths still open
+
+10. **R-1194 — two crash-recovery paths, specified, written and never called.** `findAllProcessing()`
+    and `selectExpired(now)` each have exactly one reference: their own declaration. A transmission
+    left `PROCESSING` is stranded permanently, and lease deadlines are written and never swept, so
+    recovery is a restart rather than a sweep — **and a device that never restarts never recovers,
+    which is precisely the overnight case this product exists for.** Highest-harm item in this
+    section.
+11. **R-1198 — 24 of 145 DAO methods unreachable**, including `CatalogDao`'s duplicate
+    `CorrectionEntity` path, which is not merely dead but a **loaded footgun**: it compiles, it is the
+    obvious API to reach for, and it writes to the same table the live `CorrectionDao` maintains
+    invariants on. Delete that one first and separately. Also `station_summary`, an entire table with
+    no consumer in main, debug or test.
+12. **R-1199 — provenance recorded where nothing can read it.** `verifiedResamplerIdentity` is
+    written and never read, though constitution VI makes determinism bounded by resampler identity;
+    the voiceprint-binding and prior-weight histories are written on the production path and readable
+    only from tests, so constitution III's guarantee is **storable but not inspectable**.
+13. **R-1200 — `FailureId`, an 18-member enum with zero references anywhere**, documented as though
+    it were the failure registry while the real dispatch is the sealed `FailurePresentation`. Anyone
+    adding a failure mode wires the wrong type and the doc comment confirms the mistake. Plus
+    `TransmissionListScreen` and `PlaceholderScreen`, both unreferenced.
+14. **R-1206 — 18 convention findings pinned rather than fixed**, in `:app` and `:rig`, count-pinned
+    in both directions so a stale entry fails as loudly as a new violation. Needs routing to the
+    owning packages.
+15. **Found while fixing the above, not yet filed as their own rows:**
+    `SetupStore.overnightStepSeen` is now write-only (its only writers are twelve scenario seeds);
+    `RouteCheckState.Passed.resamplerDescription` is computed and rendered nowhere; a **third**
+    `HEARTBEAT_INTERVAL_MILLIS` lives in `:capture-android`'s `CaptureService`, which is
+    manifest-declared and started by nothing; `HEARTBEAT_GAP_TOLERANCE_MILLIS` restates a private
+    default one module over.
+
+### F. Onboarding, remaining
+
+16. **R-1185 — the capture-mode step is a full screen, not presented over the destination.** D58 and
+    P39 both specify the latter and the builder built the former without flagging it. Either build it
+    or amend both documents; do not leave the contract and the code disagreeing.
+17. **The first-run Welcome sheet still needs its analytics non-collection disclosure.** Exact wording
+    is in the R-1193 builder's report; the sheet was owned by a different builder that wave. Note
+    AC-203 is adjacent — it permits one privacy *claim* in the flow, and this is a non-collection
+    disclosure beside an existing one.
+18. **R-1187's `uiautomator` dump is still owed.** The geometry is fixed and tested, but this screen's
+    sibling (`ReadyScreen`, R-342/R-361) is exactly where Compose's semantics tree and the real
+    `AccessibilityNodeInfo` tree once disagreed. The dump should also settle whether the leading
+    device-type icon, a sibling of the selectable row, sits outside the touch target.
+
+### What this session established that is worth not relearning
+
+- **A capture is only evidence of the commit it was taken from.** Two findings this session were
+  filed against captures that a concurrent merge had already fixed (R-1181) or that a grep had
+  missed one level of indirection on (R-1188). Both were the lead's errors and both are recorded in
+  place.
+- **Every gate this project has asks "is this declared and consistent?" and none asks "does
+  production reach it?"** That single sentence explains ten separate instances of the
+  built-but-never-called defect.
+- **Visual verification is blind to dead code by construction** — a dead switch renders
+  pixel-identically to a live one, so the capture matches the artboard and the evidence becomes the
+  camouflage.
+- **A guard needs its own positive control.** The analytics reachability scan asserts that it *does*
+  find the one real producer, plus a floor on files walked, so it cannot pass by scanning nothing.
+
 **Waves M-Q — planned, expanded into prompts when each wave starts.** **M** UI honesty sweep
 (hide the unreachable Improve destination, share from the open screen, an alert refusal must not
 open the coalescing episode, unattributed overs in the thread order, the storage screen's
