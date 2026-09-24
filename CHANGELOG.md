@@ -32,6 +32,113 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-24
+
+### `<pending>` — R-1193/R-1196: the analytics screen stops asking consent for two tiers nothing in this build collects
+
+**Scope:** `:telemetry` (`src/test` only — no production telemetry code changed) and the one `:app`
+screen this row names. New: `telemetry/src/test/kotlin/org/ort/telemetry/AnalyticsProducerReachabilityTest.kt`.
+Edited: `app/src/main/kotlin/org/ort/app/ui/settings/SettingsAnalyticsScreen.kt`,
+`app/src/test/kotlin/org/ort/app/ui/settings/SettingsAnalyticsScreenTest.kt`,
+`design/canvas/Settings-Analytics.dc.html`. Deliberately **not** touched:
+`app/src/main/kotlin/org/ort/app/ui/setup/**` (a second builder is rewriting that package
+concurrently; the identical correction the Welcome analytics sheet needs is reported to the lead,
+not applied here), `docs/privacy-policy.md`, `design/design-intent.md`'s CF13 row, and
+`results/ui-audit/register.md`.
+
+**Requirements/ACs:** **AC-174**, **AC-173**; FR-ANL-3, FR-ANL-4, FR-ANL-9; D42, D48, D54;
+constitution I, II, VIII; register **R-1193**, **R-1196**, R-1160/R-1070 (the assertion technique),
+R-1086 (the same defect class one requirement over), R-1197 (the general guard this is a narrow
+instance of).
+
+**What changed.**
+
+**1 · The finding.** Analytics tier 3 had no producer anywhere in the repository: `AnalyticsEvent.kt`
+declares `tier3`, `AnalyticsPayload.kt` declares `AnalyticsTier3Payload`, the toggle is offered on
+first-run Welcome and in Settings and the choice is persisted — and the only construction of that
+payload in the tree was in `AnalyticsControllerTest`. `AnalyticsTier2Payload.Transcript` was dead the
+same way; the one live tier-2 path is `CorrectionAnalytics`, which builds `.Correction` (the
+previous and new callsign) and nothing else. Meanwhile Settings told the operator tier 3 means
+*"Retained over audio together with its corrected transcript"* and tier 2 means *"Transcript text and
+callsigns"*. Nothing leaked — the failure is safe in the privacy direction — but the app asked the
+operator to consent to sharing recorded third-party speech and had no code that could act on that
+consent. Constitution I, arriving as copy.
+
+**2 · Route taken: disclose, not implement — and the payload question is what decided it.** A
+*shape* satisfying FR-ANL-4 exists. A compliant **producer** does not, and cannot be written without
+spec work. (a) FR-ANL-4's second field is a *corrected* transcript, and this build has no free-text
+transcript-edit flow at all — `CorrectionAnalytics`'s own doc comment records that the only
+correction the app can make is a callsign/attribution correction. A producer would therefore have to
+send an uncorrected transcript in a field named corrected, which is the same defect one layer down.
+(b) FR-ANL-4 names content, not a trigger: nothing says which overs, at what rate. (c) FR-ANL-13's
+bound is `AnalyticsAppWiring`'s 5 000 events / 8 MiB, sized for text events. One 20-second over of
+16 kHz 16-bit audio is roughly 850 KB base64, so a handful of tier-3 events would evict every queued
+tier-1 event — the bound would need re-deciding, which is a spec decision. (d) Under D48 no endpoint
+is configured, and D54 has the whole channel off for the closed beta, so a producer built today
+would base64 third-party audio into a second on-disk copy for a destination that does not exist.
+Route 2 is therefore not the lazy option; it is the only one available without amending FR-ANL-4 and
+FR-ANL-13 first.
+
+**3 · What the screen now says.** A `FailedState` under the Opt-in group, tagged
+`analytics-opt-in-not-collected` — the payload-side companion to the destination-side disclosure the
+subtitle has carried since D48, and the same shape `SettingsContributeScreen` already uses for the
+contribution channel's missing upload client. Title: *"Neither opt-in tier is collected in this
+build"*. Body: *"No audio is ever recorded for analytics here, so the tier 3 switch changes nothing
+yet — your choice is kept for when it does. Tier 2 collects only the callsign you chose and the one
+it replaced; no transcript text is collected."* Both toggle rows keep FR-ANL-2..4's field lists
+verbatim, because FR-ANL-9 requires the row to state them; the correction is a disclosure beside
+them, not a rewrite of them. **The toggles stay live and keep writing through**: removing or
+disabling the tier-3 control would breach FR-ANL-9's "three toggles, one per tier" and would throw
+away the operator's recorded choice, which is the standing consent a later producer would need.
+
+**4 · AC-174's coverage now means something (R-1196).** AC-174 was scored covered by
+`AC_174_tier 3 is never queued while disabled` — a negative assertion a dead producer satisfies
+perfectly, which would go on passing if every line of tier 3 were deleted — while tier 2 had a
+positive counterpart. `AnalyticsProducerReachabilityTest` supplies what a dead implementation cannot
+satisfy: it asserts the **production fact the new copy claims**, by scanning every module's
+committed `src/main` Kotlin for a construction of `AnalyticsTier3Payload` or
+`AnalyticsTier2Payload.Transcript` and requiring none. The moment either producer is built the test
+goes red and names the surfaces whose copy must change in the same commit — the claim and the code
+can no longer drift apart silently. Its own false-green mode (a scan that finds nothing because it
+scanned nothing) is closed by a positive control that asserts the scanner *does* locate
+`AnalyticsTier2Payload.Correction(` in `app/src/main/.../CorrectionAnalytics.kt`, plus a floor on
+the number of files walked. Technique and caveat follow `org.ort.net.NetManifestPermissionTest`: it
+proves what is written in source, never what a build reaches at runtime.
+
+**Verified.**
+- `./gradlew :telemetry:testDebugUnitTest --tests "org.ort.telemetry.AnalyticsProducerReachabilityTest"`
+  — 3 passed. **Discrimination**: a temporary `telemetry/src/main/.../TempDiscriminationProbe.kt`
+  constructing both payloads turned `AC_174_no production source constructs a tier 3 payload…` and
+  `AC_173_no production source constructs a tier 2 transcript payload…` red, each naming the probe
+  file; probe deleted, both green again.
+- `./gradlew :app:testFullDebugUnitTest --tests "org.ort.app.ui.settings.SettingsAnalyticsScreenTest"`
+  — 8 passed. **Discrimination**: written before the `FailedState`, both new tests failed with
+  *"could not find any node that satisfies: (TestTag = 'analytics-opt-in-not-collected')"* — absent
+  block, the right reason — and pass with it. Both assert through the block's own stable tag rather
+  than sweeping the tree for prose, which is R-1160/R-1070's lesson applied.
+- `./gradlew :telemetry:test :telemetry:detekt :telemetry:ktlintCheck :app:test :app:detekt :app:ktlintCheck -PortAllowMissingBundledAssets=true`
+  — see the report; run on Windows 10, local workstation.
+
+**Left open / not done.**
+- **No capture.** The emulator is reserved by the session lead, and this diff touches
+  `app/src/main/kotlin/org/ort/app/ui/settings/` and `design/`, so constitution VIII's
+  re-verification is owed: `overnight/CF13-settings-analytics` at 1.0, 2.0 and 2.0-end, compared
+  against the amended artboard. The artboard carries a "captured and compared: NOT YET" note saying
+  so.
+- **The first-run Welcome sheet is uncorrected.** `WelcomeScreen.kt`'s `AnalyticsSheet` offers the
+  same two toggles with the same implied capability and is owned by another builder this wave. The
+  exact wording it needs is in this change's report; until it lands, the most exposed surface — the
+  first screen of a new install — still carries the defect.
+- **`docs/privacy-policy.md` §"Tier 2"/"Tier 3" and `design/design-intent.md`'s CF13 row** both still
+  describe collection that does not happen, and CF13 still reads "No copy finding on this screen".
+  Neither is in this unit's ownership; both are reported.
+- **This is one instance, not R-1197's guard.** The scan is hand-written for two payload types. The
+  general reachability check, and R-1196's audit of every other requirement carried only by negative
+  assertions, are untouched.
+- **No spec change proposed.** Whether tier 3 should be implemented (and therefore whether FR-ANL-4
+  needs a trigger and FR-ANL-13 an audio-sized bound), or removed from the product, is a product
+  owner's decision, not a builder's.
+
 ## 2026-09-23 (P39 wave: two homes for what onboarding stops asking)
 
 ### `ee1a58d8` — P39: the manual frequency moves into the log header, and the battery ask onto the first missed heartbeat
