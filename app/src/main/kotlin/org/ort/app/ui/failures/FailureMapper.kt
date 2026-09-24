@@ -68,6 +68,17 @@ public data class FailureSignals(
      * its own dedup guard did not prevent it (see that object's kdoc for why this is the safety
      * net, not the fix itself). `null` on every healthy launch — never fabricated. */
     public val databaseOpenFailureReason: String? = null,
+    /**
+     * R-1161, D58, AC-189 (as amended): the newest real gap in the app's own heartbeat trail, or
+     * `null` when it has never missed a beat — [MissedHeartbeatReader]'s own reading. **The OS
+     * battery-exemption flag is deliberately not a field on this type**: constitution IV and NFR-8
+     * say it lies on the reference device, so it is not the trigger, not a guard and not a
+     * suppressor for the prompt this feeds (see `KeepCaptureRunning.kt`).
+     */
+    public val missedHeartbeat: MissedHeartbeatEvidence? = null,
+    /** [KeepCaptureRunningDismissStore.dismissedThroughWallMillis] — the watermark the operator's
+     * own "Not now" set. `null` until they have dismissed the prompt at least once. */
+    public val keepCaptureRunningDismissedThroughWallMillis: Long? = null,
 )
 
 /** One observed [org.ort.pipeline.capture.StorageForecast.State] transition, timestamped. */
@@ -95,6 +106,12 @@ public sealed interface FailurePresentation {
     public data class BluetoothAudioDropped(public val state: BluetoothAudioDroppedViewState) : FailurePresentation
     public data class Level(public val state: LevelViewState) : FailurePresentation
     public data class Killed(public val state: KilledViewState) : FailurePresentation
+
+    /** F24 — R-1161, D58, AC-189 as amended. A **banner**, never a takeover and never a gate:
+     * AC-199 forbids any surface blocking capture on evidence only capture can produce, and this is
+     * the surface that reports exactly such evidence. */
+    public data class KeepCaptureRunning(public val state: KeepCaptureRunningViewState) : FailurePresentation
+
     public data class StorageWarning(public val state: StorageWarningViewState) : FailurePresentation
     public data class StorageHalt(public val state: StorageHaltViewState) : FailurePresentation
     public data class StorageAudioPaused(public val state: StorageAudioPausedViewState) : FailurePresentation
@@ -235,16 +252,28 @@ public object FailureMapper {
         )
     }
 
-    /** At most one banner, in `Flow-Degrade.dc.html`'s own story order. */
-    private fun mapBanner(signals: FailureSignals): FailurePresentation {
-        mapInputOrLevelBanner(signals)?.let { return it }
-        mapKilledOrStorageWarningBanner(signals)?.let { return it }
-        mapThermalOrBacklogOrRigBanner(signals)?.let { return it }
-        if (isRecentCallGap(signals)) {
-            val gap = requireNotNull(signals.newestGap)
-            return FailurePresentation.Call(CallViewState(durationLabel(gap.endedAt!! - gap.startedAt)))
-        }
-        return FailurePresentation.None
+    /**
+     * At most one banner, in `Flow-Degrade.dc.html`'s own story order — the first one that matches
+     * wins. Written as one elvis chain rather than a run of early returns so the order *is* the
+     * code: adding a new id means putting it at the right point in this list and nowhere else.
+     *
+     * R-1161/AC-189: `mapKeepCaptureRunningBanner` sits where it does on purpose. F5 (`Killed`) is
+     * the same event reported with stronger, session-level evidence — a real `CaptureGapEntity` with
+     * cause `OS_STOPPED` — so it must win when both are true rather than showing two banners about
+     * one kill. Above thermal/backlog/rig, because a phone that ends the app outranks one that is
+     * merely warm.
+     */
+    private fun mapBanner(signals: FailureSignals): FailurePresentation = mapInputOrLevelBanner(signals)
+        ?: mapKilledOrStorageWarningBanner(signals)
+        ?: mapKeepCaptureRunningBanner(signals)
+        ?: mapThermalOrBacklogOrRigBanner(signals)
+        ?: mapRecentCallBanner(signals)
+        ?: FailurePresentation.None
+
+    private fun mapRecentCallBanner(signals: FailureSignals): FailurePresentation? {
+        if (!isRecentCallGap(signals)) return null
+        val gap = requireNotNull(signals.newestGap)
+        return FailurePresentation.Call(CallViewState(durationLabel(gap.endedAt!! - gap.startedAt)))
     }
 
     private fun mapInputOrLevelBanner(signals: FailureSignals): FailurePresentation? {
@@ -321,6 +350,34 @@ public object FailureMapper {
                 )
             else -> null
         }
+    }
+
+    /**
+     * **R-1161, D58, AC-189 as amended — the whole trigger, in one place.**
+     *
+     * Raised when, and only when, the app has actually observed a gap in its own heartbeat trail.
+     * Never from `isIgnoringBatteryOptimizations()`, which is not a field on [FailureSignals] at all
+     * for exactly this reason (constitution IV, NFR-8): on the reference device it reports the
+     * exemption granted while the OS ends the app anyway, so a prompt keyed to it would be both
+     * raised and silenced at the wrong times.
+     *
+     * The dismiss watermark is compared against the gap's own [MissedHeartbeatEvidence
+     * .resumedAtWallMillis], so an answered gap stays answered and a *newer* one is a new question —
+     * which is what keeps AC-189's "reappears on every relevant subsequent launch until the evidence
+     * exists" true without turning it into the nag R-1161 is a row about. See
+     * [KeepCaptureRunningDismissStore]'s own kdoc for the policy in full.
+     */
+    private fun mapKeepCaptureRunningBanner(signals: FailureSignals): FailurePresentation? {
+        val evidence = signals.missedHeartbeat ?: return null
+        val dismissedThrough = signals.keepCaptureRunningDismissedThroughWallMillis
+        if (dismissedThrough != null && evidence.resumedAtWallMillis <= dismissedThrough) return null
+        return FailurePresentation.KeepCaptureRunning(
+            KeepCaptureRunningViewState(
+                stoppedAtLabel = clockLabel(evidence.stoppedAtWallMillis),
+                gapDurationLabel = durationLabel(evidence.gapMillis),
+                dismissKey = evidence.resumedAtWallMillis,
+            ),
+        )
     }
 
     /** Register R-149: `Fail-Storage.dc.html`'s own "How this unfolded" stage copy, keyed to

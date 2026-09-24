@@ -17,8 +17,10 @@ import androidx.compose.ui.Modifier
 import kotlinx.coroutines.delay
 import org.ort.app.ui.data.LogFilterSelection
 import org.ort.app.ui.data.LogFilterSheetViewState
+import org.ort.app.ui.data.LogFrequencyEditor
 import org.ort.app.ui.data.LogPolling
 import org.ort.app.ui.data.LogQuickFilterId
+import org.ort.app.ui.data.RealLogFrequencyEditor
 import org.ort.core.AttributionState
 
 private const val POLL_INTERVAL_MILLIS = 2_000L
@@ -139,6 +141,10 @@ public fun LogContent(
     onOpenThread: (String) -> Unit = {},
     initialFilter: LogFilterSelection? = null,
     initialSheetOpen: Boolean = false,
+    // R-1167/D58/AC-202: the hand-entered frequency's read/write seam, trailing and defaulted to
+    // the real store-backed one so every existing caller (`OrtNavHost`, the tour's own seeds)
+    // compiles unchanged.
+    frequencyEditor: LogFrequencyEditor = remember(context) { RealLogFrequencyEditor(context) },
 ) {
     // R-247: `sessionId == null` (no session has ever started) never polls below, so
     // `LogPolling.noSessionState()` is the screen's actual, final state for that case — a real,
@@ -153,7 +159,13 @@ public fun LogContent(
     // session held dozens of overs (the register's own bisect). `LogPolling.loadingState()` is the
     // honest "not yet known" value the first poll below replaces on its very next tick.
     var screenState by remember(sessionId) {
-        mutableStateOf(if (sessionId != null) LogPolling.loadingState() else LogPolling.noSessionState())
+        mutableStateOf(
+            if (sessionId != null) {
+                LogPolling.loadingState()
+            } else {
+                LogPolling.noSessionState(frequencyEditor)
+            },
+        )
     }
     var quickFilter by rememberSaveable(stateSaver = LogQuickFilterIdSaver) {
         mutableStateOf<LogQuickFilterId>(
@@ -166,6 +178,17 @@ public fun LogContent(
     var sheetOpen by rememberSaveable { mutableStateOf(initialSheetOpen) }
     var sheetState by remember { mutableStateOf<LogFilterSheetViewState?>(null) }
 
+    // R-1167/D58/AC-202: `frequencyRevision` exists so a write does not wait out the 2 s poll before
+    // the header re-reads — bumping it re-keys the poll effect below, which re-reads the store on its
+    // very next composition rather than on its next tick. Everything else about the editor lives in
+    // `rememberLogFrequencyHeaderHost`.
+    var frequencyRevision by remember { mutableStateOf(0) }
+    val frequencyHost = rememberLogFrequencyHeaderHost(
+        editor = frequencyEditor,
+        currentAction = { screenState.frequencyHeader?.action },
+        onWritten = { frequencyRevision += 1 },
+    )
+
     // R-333 (Log half — `OrtNavHost`'s own host `BackHandler`, WP3's, closes the drawer and pops
     // drill-ins, but has no idea this sheet exists; register: "the host simply has no `BackHandler`
     // for the generic drill-in/sheet/drawer states"). `LogFilterSheet` is a plain composable, not a
@@ -175,10 +198,17 @@ public fun LogContent(
     // the host's own handler (and the Activity's default finish) still apply otherwise.
     BackHandler(enabled = sheetOpen) { sheetOpen = false }
 
+    // R-1167: outside the `sessionId != null` branch below on purpose — the first-launch Log (no
+    // session has ever started) is exactly where setup no longer asks for this, so the header must
+    // re-read there too after a write.
+    LaunchedEffect(sessionId, frequencyRevision) {
+        if (sessionId == null) screenState = LogPolling.noSessionState(frequencyEditor)
+    }
+
     if (sessionId != null) {
-        LaunchedEffect(sessionId, quickFilter, selection) {
+        LaunchedEffect(sessionId, quickFilter, selection, frequencyRevision) {
             while (true) {
-                screenState = LogPolling.screenState(context, sessionId, selection, quickFilter)
+                screenState = LogPolling.screenState(context, sessionId, selection, quickFilter, frequencyEditor)
                 delay(POLL_INTERVAL_MILLIS)
             }
         }
@@ -202,6 +232,7 @@ public fun LogContent(
                 selection = LogFilterSelection()
                 quickFilter = LogQuickFilterId.All
             },
+            frequencyHost = frequencyHost,
         )
 
         val currentSheetState = sheetState

@@ -43,7 +43,24 @@ public object FailureSignalsPolling {
     private val storageHistory = mutableListOf<StorageForecastSample>()
     private val backlogHistory = mutableListOf<BacklogSample>()
 
-    public suspend fun current(context: Context, sessionId: String?): FailureSignals {
+    /**
+     * R-1161, D58, AC-189: the heartbeat-trail reader and the dismiss watermark, both overridable so
+     * `FailureHostTest`/`KeepCaptureRunningTest` can drive the prompt without writing a real
+     * `heartbeat-trail.log`. Defaulted to the real, file- and preferences-backed pair, so every
+     * pre-existing caller is unchanged.
+     *
+     * Cheap enough for this object's 2 s tick: the trail is bounded at
+     * [org.ort.pipeline.capture.HeartbeatTrailStore.DEFAULT_MAX_ENTRIES] rows (8 hours at the beat
+     * cadence) and the file is a few tens of kilobytes at worst — smaller than the three Room
+     * queries above it.
+     */
+    public suspend fun current(
+        context: Context,
+        sessionId: String?,
+        missedHeartbeatReader: MissedHeartbeatReader = FileMissedHeartbeatReader(context),
+        keepCaptureRunningDismissStore: KeepCaptureRunningDismissStore =
+            SharedPreferencesKeepCaptureRunningDismissStore(context),
+    ): FailureSignals {
         var newestGap: CaptureGapEntity? = null
         var sessionStartedAtMillis: Long? = null
         var sessionTransmissionCount = 0
@@ -88,6 +105,11 @@ public object FailureSignalsPolling {
             stagedActivationActiveLabel = stagedActivationActiveLabel,
             // Register R-1120: DatabaseOpenFailure's own real fact — see that object's kdoc.
             databaseOpenFailureReason = DatabaseOpenFailure.reason,
+            // R-1161/AC-189: the app's own heartbeat trail, and the operator's own last answer.
+            // Deliberately no `PowerManager` read here — constitution IV, NFR-8.
+            missedHeartbeat = missedHeartbeatReader.newest(),
+            keepCaptureRunningDismissedThroughWallMillis =
+            keepCaptureRunningDismissStore.dismissedThroughWallMillis(),
         )
     }
 

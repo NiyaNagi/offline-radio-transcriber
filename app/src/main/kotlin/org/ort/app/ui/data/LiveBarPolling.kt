@@ -183,6 +183,11 @@ public object LiveBarPolling {
         // kind, so this falls through the same way F2/`Disconnect` does, never a second, competing
         // override here.
         is FailurePresentation.BluetoothAudioDropped,
+        // R-1161/D58 (F24, `Fail-Keep-Running.dc.html`): falls through for exactly F5's reason —
+        // it reports a *past* gap while capture is running normally now, so the live bar stays
+        // whatever the real signals say it is. Inventing a label here would claim something is wrong
+        // this moment, which is precisely what is not true.
+        is FailurePresentation.KeepCaptureRunning,
         is FailurePresentation.Calibration, FailurePresentation.None, null,
         -> null
     }
