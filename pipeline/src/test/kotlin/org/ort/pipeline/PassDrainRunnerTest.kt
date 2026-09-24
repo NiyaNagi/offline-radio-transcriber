@@ -11,6 +11,7 @@ import org.junit.runner.RunWith
 import org.ort.core.PassId
 import org.ort.core.TransmissionState
 import org.ort.data.OrtDatabase
+import org.ort.data.PassDeadlineClock
 import org.ort.data.PassRunOutcome
 import org.ort.data.WorkQueue
 import org.ort.data.entity.WorkQueueState
@@ -41,7 +42,10 @@ public class PassDrainRunnerTest {
         db.sessionDao().insert(PipelineTestFixtures.session())
         db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-HANG"))
         db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-OK"))
-        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        // Register R-1189: both passes below are entirely on this test scheduler -- `HangingPass`
+        // is a bare `delay`, the other returns without suspending -- so the virtual deadline bounds
+        // them honestly. Declared rather than inherited by accident of the fixture.
+        val queue = WorkQueue(db, clock, maxAttempts = 1, deadlineClock = PassDeadlineClock.VIRTUAL_FOR_TEST)
         queue.enqueue("TX-HANG", PassId.B_OFFLINE)
         queue.enqueue("TX-OK", PassId.B_OFFLINE)
 
@@ -73,7 +77,9 @@ public class PassDrainRunnerTest {
     public fun `R_426 a pass errored through the real drain path leaves a durable attempt row`(): Unit = runTest {
         db.sessionDao().insert(PipelineTestFixtures.session())
         db.transmissionDao().insert(PipelineTestFixtures.transmission("TX-BAD"))
-        val queue = WorkQueue(db, clock, maxAttempts = 1)
+        // Register R-1189: the pass below returns without suspending at all, so this deadline is a
+        // provable no-op on the test scheduler -- which is exactly the case the opt-in names.
+        val queue = WorkQueue(db, clock, maxAttempts = 1, deadlineClock = PassDeadlineClock.VIRTUAL_FOR_TEST)
         queue.enqueue("TX-BAD", PassId.B_OFFLINE)
         val runner = PassDrainRunner(queue, runId = "run-1")
 

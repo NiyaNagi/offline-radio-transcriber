@@ -9,6 +9,8 @@ import org.ort.data.entity.WorkAttemptEntity
 import org.ort.data.entity.WorkAttemptOutcome
 import org.ort.data.entity.WorkQueueItemEntity
 import org.ort.data.entity.WorkQueueState
+import kotlin.coroutines.ContinuationInterceptor
+import kotlin.coroutines.coroutineContext
 
 /** What running one leased item produced — this module's minimal vocabulary, not `:pipeline`'s `PassOutcome`. */
 public sealed interface PassRunOutcome {
@@ -17,6 +19,32 @@ public sealed interface PassRunOutcome {
 
     /** The pass ran and threw or returned an error (FR-RUN-9). */
     public data class Errored(val message: String) : PassRunOutcome
+}
+
+/**
+ * Register R-1189 (from R-1180's sweep): which clock [WorkQueue.runLeased]'s per-item deadline is
+ * counted against. This exists because that deadline wraps **caller-supplied** code, so nothing at
+ * the timeout itself can see what it is bounding — [org.ort.pipeline.PassDrainRunner] passes
+ * `execute` straight through as a parameter, and no lexical rule can follow it.
+ */
+public enum class PassDeadlineClock {
+    /**
+     * Production, and the default. The deadline is counted against whatever clock the calling
+     * coroutine's dispatcher provides — real wall-clock time everywhere the app actually runs.
+     * [WorkQueue.runLeased] **refuses to run** under `kotlinx.coroutines.test`'s virtual clock with
+     * this setting, which is what makes the name true rather than merely intended.
+     */
+    REAL,
+
+    /**
+     * Test-only, and a **declaration**: everything the caller's `execute` lambda touches runs on
+     * this same test scheduler, so the virtual deadline bounds it honestly. R-1180's own reasoning
+     * is worth repeating — when that is true the deadline is also a provable no-op, because virtual
+     * time cannot elapse against work the scheduler owns. A test that cannot truthfully say this
+     * wants `kotlinx.coroutines.runBlocking` instead (`ReprocessRunnerTest`'s class kdoc is the
+     * worked example).
+     */
+    VIRTUAL_FOR_TEST,
 }
 
 /**
@@ -30,6 +58,7 @@ public class WorkQueue(
     private val db: OrtDatabase,
     private val clock: Clock,
     private val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
+    private val deadlineClock: PassDeadlineClock = PassDeadlineClock.REAL,
 ) {
     private val queueDao get() = db.workQueueDao()
     private val transmissionDao get() = db.transmissionDao()
@@ -198,8 +227,12 @@ public class WorkQueue(
      * timeout if the deadline passes (FR-RUN-10a → AC-99) — the coroutine is cancelled, the item
      * is marked and the caller is free to lease and drain the next item immediately. Commits the
      * outcome via [completePass]/[failPass] either way.
+     *
+     * Register R-1189: [requireHonestDeadlineClock] runs first, so a caller that would have raced
+     * this deadline instead of being bounded by it is told so, loudly, before anything is written.
      */
     public suspend fun runLeased(item: WorkQueueItemEntity, execute: suspend () -> PassRunOutcome): PassRunOutcome {
+        requireHonestDeadlineClock()
         val now = clock.wallMillis()
         val remaining = (item.deadlineAt ?: now) - now
         val outcome = if (remaining <= 0) null else withTimeoutOrNull(remaining) { execute() }
@@ -212,6 +245,47 @@ public class WorkQueue(
             is PassRunOutcome.Errored -> failPass(item, outcome.message)
         }
         return outcome
+    }
+
+    /**
+     * Register R-1189 → R-1180. [runLeased]'s `withTimeoutOrNull` bounds **caller-supplied** code,
+     * and `withTimeout` is counted against whatever [kotlin.coroutines.ContinuationInterceptor] the
+     * calling coroutine carries. Under `kotlinx.coroutines.test` that interceptor is a
+     * `TestDispatcher`, whose `Delay` is the virtual scheduler — and the virtual clock leaps to the
+     * deadline the instant that scheduler has nothing runnable, which is immediately if `execute`
+     * dispatched its work somewhere the scheduler cannot see. The deadline then races the work
+     * instead of bounding it: green when the real work happens to win, red on a loaded runner,
+     * green again on a re-run. That is precisely how R-1180 nearly escaped.
+     *
+     * The check is on the interceptor and nothing else, which makes it **exact rather than a
+     * heuristic**: the interceptor being a `kotlinx.coroutines.test` dispatcher is the same
+     * condition that makes the timeout virtual, so this fires when and only when the deadline is
+     * not a real bound. A `withContext(Dispatchers.IO) { ... }` nested inside a `runTest` body
+     * replaces the interceptor and is correctly *not* refused, even though the test scheduler is
+     * still in the context.
+     *
+     * The class name is read off the interceptor rather than typed against
+     * `kotlinx.coroutines.test.TestDispatcher` on purpose: `:data` must not link a test framework
+     * into production, and this needs no reflection beyond `javaClass.name`.
+     */
+    private suspend fun requireHonestDeadlineClock() {
+        if (deadlineClock == PassDeadlineClock.VIRTUAL_FOR_TEST) return
+        val interceptor = coroutineContext[ContinuationInterceptor] ?: return
+        val dispatcherName = interceptor.javaClass.name
+        check(!dispatcherName.startsWith(TEST_COROUTINES_PACKAGE)) {
+            "register R-1189: WorkQueue.runLeased's deadline would be counted against " +
+                "kotlinx.coroutines.test virtual time here ($dispatcherName), so withTimeoutOrNull " +
+                "races the `execute` lambda instead of bounding it - the exact defect R-1180 " +
+                "shipped. Any work `execute` does on a real dispatcher (every Room DAO call goes to " +
+                "OrtDatabase's own Executors.newCachedThreadPool) leaves this test scheduler idle, " +
+                "and an idle scheduler advances virtual time to the deadline instantly: the item is " +
+                "failed as \"timeout\" with no real time elapsed at all. Fix it one of two ways. " +
+                "Use kotlinx.coroutines.runBlocking for this test, so the deadline is real seconds " +
+                "(ReprocessRunnerTest's class kdoc is the worked example). Or, only if everything " +
+                "`execute` touches genuinely runs on this same test scheduler - which makes the " +
+                "deadline a provable no-op - construct the queue as WorkQueue(..., deadlineClock = " +
+                "PassDeadlineClock.VIRTUAL_FOR_TEST) to say so explicitly."
+        }
     }
 
     /**
@@ -326,6 +400,9 @@ public class WorkQueue(
          * never whether a failure is honestly reported (constitution I).
          */
         public const val SINGLE_ATTEMPT_FOREGROUND: Int = 1
+
+        /** Register R-1189: the one package whose dispatchers make `withTimeout` virtual. */
+        private const val TEST_COROUTINES_PACKAGE: String = "kotlinx.coroutines.test."
 
         /** Mirrors `idx_wq_active`'s own `WHERE state IN (...)` (technical design §7.1) exactly. */
         private val ACTIVE_STATES: Set<WorkQueueState> =

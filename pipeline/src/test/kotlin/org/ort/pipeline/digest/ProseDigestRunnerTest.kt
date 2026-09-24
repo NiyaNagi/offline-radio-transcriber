@@ -9,6 +9,7 @@ import androidx.work.WorkManager
 import androidx.work.testing.SynchronousExecutor
 import androidx.work.testing.TestListenableWorkerBuilder
 import androidx.work.testing.WorkManagerTestInitHelper
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -99,7 +100,12 @@ class ProseDigestRunnerTest {
         val worker = TestListenableWorkerBuilder<ProseDigestRunner>(context).build()
 
         worker.doWork()
-        DiagnosticsLog.flush()
+        // Register R-1190: `runBlocking`, like the other fifteen DiagnosticsLog.flush() sites.
+        // Not a live race before this change -- the await is a plain suspension bounded by
+        // `runTest`'s own 60 s *wall-clock* timeout, not by virtual time -- but it is the one site
+        // of sixteen that broke the convention, and a single added `withTimeout` inside this body
+        // would have made it R-1180 exactly.
+        runBlocking { DiagnosticsLog.flush() }
 
         val written = capturePipelineLog()
         assertEquals("expected exactly one event, got: $written", 1, written.size)

@@ -477,6 +477,9 @@ class RigSupervisorTest {
             // independently-invented one.
             clock.advance(1_000)
             transport.dropMidStream("cable pulled again")
+            // R-1180-virtual-timeout-ok: the supervisor's scope is
+            // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+            // test-scheduler work - which is also what makes it a provable no-op.
             val second = withTimeout(2_000) {
                 var s = RigStatus.state
                 while (s !is RigStatus.State.Stale || s.attempt != 2) {
@@ -621,6 +624,9 @@ class RigSupervisorTest {
             // The rig speaks again well inside the bound -- a fresh RigState must cancel the
             // pending health-timeout countdown, never leaving RigStatus stuck mid-flight.
             transport.pushUnsolicited("FQ0014300000")
+            // R-1180-virtual-timeout-ok: the supervisor's scope is
+            // UnconfinedTestDispatcher(testScheduler) over a FakeRigTransport, so this bounds only
+            // test-scheduler work - which is also what makes it a provable no-op.
             withTimeout(5_000) {
                 while ((RigStatus.state as? RigStatus.State.Connected)?.bands?.first()?.frequencyHz != 14_300_000L) {
                     delay(10)
