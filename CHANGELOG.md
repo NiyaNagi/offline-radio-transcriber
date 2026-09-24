@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-23 (P39: onboarding cut from twelve screens to four)
 
-### `<pending>` — P39 · onboarding cut to four screens, and the two structural rules that made R-1161 possible
+### `6a105634` — P39 · onboarding cut from twelve screens to four
 
 **Scope:** `:app` — `ui/setup/**` (the whole package), `MainActivity.kt`, the setup artboards under
 `design/canvas/` plus `design/canvas/canvas.json` and `design/design-intent.md` §2, the setup
@@ -132,18 +132,70 @@ lost theirs entirely (they are not numbered stages any more). **Deleted, named r
 rot:** `Setup-Mic`, `Setup-Notify`, `Setup-Jurisdiction`, `Setup-Analytics-Consent`, `Setup-Input`,
 `Setup-Verify`, `Setup-Level`. `canvas.json` and `design-intent.md` §2 follow.
 
-**Verified:** `./gradlew :app:test :app:smokeTestFullDebugUnitTest :app:smokeTestPlayDebugUnitTest
-:app:detekt :app:ktlintCheck` — see the report for the real output. Each of AC-198..204 has at least
-one test named for it and each was shown to fail for the right reason before the production change,
-by reverting that change and watching it go red.
+**Verified.**
 
-**Left open / not done:** the *Keep capture running* prompt on the first missed heartbeat, and the
-log header's own frequency editor, are both capture-surface work outside this change's ownership —
-`SetupStep.OVERNIGHT` and `OvernightScreen` are kept and reachable by `EXTRA_STEP` so the first has
-somewhere to land, and the adapter now preserves whatever the second writes. The `setup_mic_*` and
-notification string resources in `res/values/strings.xml` are orphaned by the two deleted screens and
-left in place (that file is not this package's). `setup-analytics-consent` remains a registered
-scenario with no tour step, since the step it reached no longer exists.
+`./gradlew :app:test :app:smokeTestFullDebugUnitTest :app:smokeTestPlayDebugUnitTest` —
+**BUILD SUCCESSFUL in 35m 14s**, no failures, both flavors plus the 18 isolated Compose-poisoning
+classes. `./gradlew :app:detekt :app:ktlintCheck` — **BUILD SUCCESSFUL**, zero findings; the twelve
+detekt findings this change first produced were fixed rather than suppressed (a `ListenActions`
+bundle for the merged screen's callbacks, `ScaffoldActionBar` split out of `SetupScaffold`, the
+pinned-action tests split into `ListenBottomActionsTest`, the unused `LongPref` deleted with the
+property it served, `SetupViewStates.kt` renamed to `ListenViewState.kt`).
+`python tools/spec-check/spec_check.py` — all eight checks PASS. `coverageMatrix` regenerated and
+`coverageMatrixCheck` green; `python tools/backlog/backlog.py --check` — up to date.
+
+**Each of AC-198..204 was shown to discriminate**, by reverting the production change behind it and
+watching the named test go red, in three batches:
+- **AC-198** — the jurisdiction notice restored as a screen of its own: `AC_198 a first run with
+  every model present reaches Ready in four screens`, `AC_198 a first run that must download a model
+  reaches Ready in five screens` and `AC_198 a real first run reaches Ready in four screens` all red.
+- **AC-199** — the router's overnight detour restored: both `AC_199 …` tests in `MainActivityTest`
+  red; separately, the notification clause restored to `isComplete`: `AC_199 an ungranted
+  notification permission never makes a completed setup incomplete` red.
+- **AC-200** — the exit slot removed from `SetupScaffold`: `AC_200 a step shown after setup is
+  complete renders an exit back to the running app` red.
+- **AC-201** — the route gate given the level's acknowledged escape: `AC_201 an unverified route
+  never proceeds, whatever else has been acknowledged` red. **Constitution IV's own proof.**
+- **AC-202** — the adapter reverted to writing `null`: `AC_202 a frequency set outside setup
+  survives an adapted configuration untouched` and `AC_202 re-entering setup after a log-header
+  frequency was set leaves that value intact` both red (and `R_344`/`R_1005c` with them).
+- **AC-203** — the deleted privacy sentence put back on the jurisdiction sheet: `AC_203 the
+  jurisdiction notice makes no privacy claim of its own` red.
+- **AC-204** — the microphone explainer step restored: `AC_204 an ungranted microphone resumes on
+  Mode, never on an explainer step` red; the request removed from the mode tap: `AC_204 choosing a
+  mode requests RECORD_AUDIO directly` red; the rationale removed from the mode surface: `AC_204 the
+  microphone rationale rides on the mode surface` red.
+
+**Captured.** `tools\ui-audit\install.ps1 -Port 5558 -Clear` then
+`tools\ui-audit\tour.ps1 -Port 5558 -Only "setup-*" -Out <scratch>` on `emulator-5558` at
+`1260x2772` density 420 — **43 steps, 43 ok, 0 errors**, in a scratch directory, not
+`results/ui-audit/` (only a full canonical run may replace that). **`setup-bt-permission/S02c`
+captures the Nearby-devices screen for the first time** — reading `1 of 3`, not the Input screen
+every committed PNG of it shows (R-1179), and the new step-mismatch guard passed 43 times rather
+than being silent. The lead judges these against the boards; this is a builder's scoped run.
+
+**Left open / not done.**
+- The *Keep capture running* prompt on the first missed heartbeat, and the log header's own
+  frequency editor, are both capture-surface work outside this change's ownership.
+  `SetupStep.OVERNIGHT` and `OvernightScreen` are kept and reachable by `EXTRA_STEP` so the first has
+  somewhere to land, and the adapter now preserves whatever the second writes.
+- **The captures are a builder's scoped run, not the evidence that closes anything.** They were not
+  compared against the boards here — several boards were redrawn in this same change, so the lead
+  judges both together, and `results/ui-audit/` is untouched.
+- The register rows (R-1161, R-1162, R-1166, R-1167, R-1170, R-1172, R-1178, R-1179) are **not
+  edited**: only the session lead edits that file. Each is reported with its evidence.
+- The `setup_mic_*` and notification string resources in `res/values/strings.xml` are orphaned by the
+  two deleted screens and left in place — that file is not this package's.
+- `setup-analytics-consent` remains a registered scenario with no tour step, since the step it
+  reached no longer exists. Its `SetupStore.analyticsConsentSeen = false` seed now has nothing to
+  gate, so a load of it resumes wherever the rest of its store says.
+- AC-166's amendment says the jurisdiction notice's full text is "permanently reachable from
+  Settings". It is reachable from Welcome's own sheet; **a Settings › About home for it is not
+  built** — `ui/settings` is not this package's file and no other change here needed it.
+- `SettingsPolling`, `ReaderNavigator` and `SettingsContent` were edited outside this unit's
+  ownership because the `SetupStep.INPUT` rename and the `manualFrequencyHz` deletion would not
+  otherwise compile, or would have left a screen reading a value nothing writes. Each edit is one to
+  three lines and is commented in place.
 
 ---
 
