@@ -34,7 +34,7 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ## 2026-09-23 (P39 wave: two homes for what onboarding stops asking)
 
-### `85642606` — P39: the manual frequency moves into the log header, and the battery ask onto the first missed heartbeat
+### `ee1a58d8` — P39: the manual frequency moves into the log header, and the battery ask onto the first missed heartbeat
 
 **Scope:** `:app` only, and deliberately **nothing** under `app/src/main/kotlin/org/ort/app/ui/setup/`
 or `MainActivity.kt` — a second builder is rewriting that package concurrently to remove these two
