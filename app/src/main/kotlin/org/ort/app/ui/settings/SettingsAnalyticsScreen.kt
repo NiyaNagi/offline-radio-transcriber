@@ -9,14 +9,24 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import org.ort.app.analytics.AnalyticsAppWiring
 import org.ort.app.ui.components.DrillInHeader
+import org.ort.app.ui.components.FailedState
 import org.ort.app.ui.components.SectionHeader
 import org.ort.app.ui.components.ToggleRow
 import org.ort.app.ui.theme.OrtColors
 import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 import org.ort.telemetry.AnalyticsTier
+
+/**
+ * [SettingsAnalyticsScreen]'s opt-in disclosure block — a real Compose `testTag`, so the assertion
+ * that the block is present is rooted in this screen rather than in whatever else happens to render
+ * the same words (R-1160, R-1070). Read back by
+ * `SettingsAnalyticsScreenTest` and, once it is captured, by the tour.
+ */
+public const val ANALYTICS_OPT_IN_NOT_COLLECTED_TAG: String = "analytics-opt-in-not-collected"
 
 /**
  * P28 (D42, FR-ANL-1..14): three toggles, one per tier, each stating in plain language what that
@@ -31,10 +41,30 @@ import org.ort.telemetry.AnalyticsTier
  * ANRs", but no ANR-detection mechanism exists anywhere in this codebase — no watchdog runs, and
  * [org.ort.telemetry.AnalyticsTier1Payload.Crash.isAnr] is deliberately nullable ("never
  * measured") for exactly that reason ([org.ort.app.analytics.CrashPayloads]'s own doc comment).
- * "and ANRs" is dropped here, from [org.ort.app.ui.setup.AnalyticsConsentScreen]'s identical
- * paragraph, from `design/canvas/Settings-Analytics.dc.html` and
+ * "and ANRs" is dropped here, from setup's identical paragraph (that step was
+ * `AnalyticsConsentScreen` when R-1086 was fixed; D58 folded it into `WelcomeScreen`'s analytics
+ * sheet, so the KDoc link is spelled out rather than left dangling), from
+ * `design/canvas/Settings-Analytics.dc.html` and
  * `design/canvas/Setup-Analytics-Consent.dc.html`, and from `docs/privacy-policy.md`'s tier 1
  * description.
+ *
+ * **R-1193 (register; constitution I; D42, FR-ANL-3, FR-ANL-4):** the same defect one layer up, and
+ * worse, because the subject is the operator's own recordings. **Tier 3 has no producer anywhere in
+ * this repository** — nothing constructs an [org.ort.telemetry.AnalyticsTier3Payload] outside a
+ * test — and [org.ort.telemetry.AnalyticsTier2Payload.Transcript] has none either; the one live
+ * tier-2 path is [org.ort.app.analytics.CorrectionAnalytics], which sends the callsign pair alone.
+ * The two rows still state FR-ANL-2..4's field lists because FR-ANL-9 requires exactly that, so the
+ * correction is a disclosure rather than a rewrite: the [FailedState] below says plainly that
+ * neither tier is collected yet, the same shape
+ * [org.ort.app.ui.settings.SettingsContributeScreen] already uses for the contribution channel's
+ * missing upload client. The toggles stay live and keep writing through, because the operator's
+ * recorded choice is the standing consent a later producer would need (FR-ANL-9's "three toggles"
+ * is not satisfied by two and a disabled control).
+ *
+ * The disclosure's truth is not asserted by this screen's own test alone — that would be another
+ * claim proving itself. `org.ort.telemetry.AnalyticsProducerReachabilityTest` asserts the
+ * production fact (no `src/main` source in the repository constructs either payload) and goes red
+ * the moment a producer is built, which is what forces this copy to change in the same commit.
  */
 @Composable
 public fun SettingsAnalyticsScreen(
@@ -85,6 +115,15 @@ public fun SettingsAnalyticsScreen(
                 checked = state.tier3Enabled,
                 onCheckedChange = onToggleTier3,
                 subLine = "Retained over audio together with its corrected transcript.",
+            )
+            FailedState(
+                title = "Neither opt-in tier is collected in this build",
+                body = "No audio is ever recorded for analytics here, so the tier 3 switch changes " +
+                    "nothing yet — your choice is kept for when it does. Tier 2 collects only the " +
+                    "callsign you chose and the one it replaced; no transcript text is collected.",
+                modifier = Modifier
+                    .padding(top = OrtSpacing.sm)
+                    .testTag(ANALYTICS_OPT_IN_NOT_COLLECTED_TAG),
             )
 
             SectionHeader(label = "Never in any tier", modifier = Modifier.padding(top = OrtSpacing.md))

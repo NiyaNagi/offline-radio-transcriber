@@ -1,8 +1,10 @@
 package org.ort.app.ui.settings
 
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import org.junit.Rule
 import org.junit.Test
@@ -116,6 +118,56 @@ class SettingsAnalyticsScreenTest {
         }
 
         composeTestRule.onNodeWithText("nothing is ever sent", substring = true).assertExists()
+    }
+
+    /**
+     * Register R-1193/R-1196 (constitution I; D42, FR-ANL-4). The tier-3 row states FR-ANL-4's field
+     * list, as FR-ANL-9 requires — but **no tier-3 producer exists anywhere in this build**, so the
+     * row on its own asks the operator to consent to sharing third parties' recorded audio and
+     * describes a consequence no code can deliver. This asserts the correction: the screen says
+     * plainly that no audio is collected here, the same shape `SettingsContributeScreen` already
+     * uses for the contribution channel's missing upload client.
+     *
+     * The companion assertion — that the producer really is absent, which is what makes this copy
+     * true rather than merely present — is `AnalyticsProducerReachabilityTest` in `:telemetry`.
+     * That pair is this screen's answer to R-1196: a dead implementation satisfies neither.
+     *
+     * Asserted through the block's own stable tag rather than a bare `onNodeWithText` sweep of the
+     * whole tree (R-1160, R-1070: this repo has twice shipped a Compose assertion that passed by
+     * matching something other than the screen under test).
+     */
+    @Test
+    @Requirement("AC-174", "FR-ANL-4", "R-1193")
+    fun `AC_174_the opt-in block states that no audio is collected in this build`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsAnalyticsScreen(state = state(), onBack = {
+                }, onToggleTier1 = {}, onToggleTier2 = {}, onToggleTier3 = {}, onResetInstallId = {})
+            }
+        }
+
+        composeTestRule.onNodeWithTag(ANALYTICS_OPT_IN_NOT_COLLECTED_TAG)
+            .assertTextContains("No audio is ever recorded for analytics here", substring = true)
+    }
+
+    /**
+     * Register R-1193, the tier-2 half: `AnalyticsTier2Payload.Transcript` has no producer either,
+     * and the one live tier-2 path (`CorrectionAnalytics`) sends the callsign pair alone. The row
+     * above still states FR-ANL-3's field list because FR-ANL-9 requires it; this block is what
+     * keeps that from being a promise of transcript collection the build never makes.
+     */
+    @Test
+    @Requirement("AC-173", "FR-ANL-3", "R-1193")
+    fun `AC_173_the opt-in block states that tier 2 collects only the callsign pair`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsAnalyticsScreen(state = state(), onBack = {
+                }, onToggleTier1 = {}, onToggleTier2 = {}, onToggleTier3 = {}, onResetInstallId = {})
+            }
+        }
+
+        composeTestRule.onNodeWithTag(ANALYTICS_OPT_IN_NOT_COLLECTED_TAG)
+            .assertTextContains("no transcript text is collected", substring = true)
     }
 
     @Test

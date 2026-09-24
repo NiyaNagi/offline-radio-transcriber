@@ -41,7 +41,28 @@
      and AnalyticsTier1Payload.Crash.isAnr is deliberately nullable, "never measured"). "and ANRs"
      is dropped here, from SettingsAnalyticsScreen.kt's identical row, from
      Setup-Analytics-Consent.dc.html's tier 1 paragraph, and from docs/privacy-policy.md's tier 1
-     description -- all four said the same false thing and now say the same true one. -->
+     description -- all four said the same false thing and now say the same true one.
+
+     R-1193 (register; constitution I; D42, FR-ANL-3, FR-ANL-4): the same class of defect one layer
+     up, and worse, because the subject is the operator's own recordings. Tier 3 has NO producer
+     anywhere in the repository -- nothing constructs an AnalyticsTier3Payload outside a test -- and
+     AnalyticsTier2Payload.Transcript has none either; the one live tier-2 path is
+     CorrectionAnalytics, which sends the callsign pair alone. The two opt-in rows still state
+     FR-ANL-2..4's field lists verbatim because FR-ANL-9 requires exactly that, so the correction is
+     a disclosure rather than a rewrite: a failed-state block under the Opt-in group, drawn below,
+     says plainly that neither tier is collected yet. That is the same shape
+     Settings-Contribute.dc.html already draws for the contribution channel's missing upload client,
+     and it is the payload-side companion to the destination-side disclosure the subtitle above has
+     carried since D48. The "Copy finding ... none on THIS screen" note above therefore no longer
+     holds and is superseded by this paragraph; design-intent.md's CF13 row says the same and is
+     owed the same correction.
+
+     The toggles stay live and keep writing through. Removing or disabling the tier 3 control would
+     breach FR-ANL-9 ("three toggles, one per tier") and would throw away the operator's recorded
+     choice, which is the standing consent a later producer would need. -->
+
+<!-- Captured and compared: NOT YET. This board changed after the last canonical tour; the
+     overnight/CF13-settings-analytics steps need re-capturing at 1.0, 2.0 and 2.0-end. -->
 
 <div style="width: 390px; height: 844px; background: oklch(0.155 0.008 250); color: oklch(0.94 0.006 250); display: flex; flex-direction: column; overflow: hidden; padding-top: 44px; box-sizing: border-box;">
 
@@ -69,9 +90,16 @@
       <div style="flex-grow: 1;"><div class="n">Transcripts and callsigns (tier 2)</div><div class="s">Transcript text and callsigns, including what the recognizer heard paired with your correction.</div></div>
       <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
     </div>
-    <div class="r" style="border-bottom: 1px solid oklch(0.21 0.010 250);">
+    <div class="r">
       <div style="flex-grow: 1;"><div class="n">Audio (tier 3)</div><div class="s">Retained over audio together with its corrected transcript.</div></div>
       <div class="tg-off"><div style="width: 18px; height: 18px; border-radius: 50%; background: oklch(0.50 0.008 250);"></div></div>
+    </div>
+    <div style="padding: 10px 20px 12px; border-top: 1px solid oklch(0.21 0.010 250); border-bottom: 1px solid oklch(0.21 0.010 250);">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, oklch(0.78 0.13 75) 50%, transparent 50%); border: 1.5px solid oklch(0.78 0.13 75); box-sizing: border-box; flex-shrink: 0;"></div>
+        <div style="font-size: 15px; color: oklch(0.94 0.006 250);">Neither opt-in tier is collected in this build</div>
+      </div>
+      <div style="font-size: 12.5px; line-height: 1.5; color: oklch(0.655 0.008 250); margin-top: 6px;">No audio is ever recorded for analytics here, so the tier 3 switch changes nothing yet — your choice is kept for when it does. Tier 2 collects only the callsign you chose and the one it replaced; no transcript text is collected.</div>
     </div>
 
     <div class="lbl">Never in any tier</div>
