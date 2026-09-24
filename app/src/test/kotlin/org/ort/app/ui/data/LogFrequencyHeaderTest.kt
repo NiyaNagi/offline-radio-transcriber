@@ -86,6 +86,32 @@ class LogFrequencyHeaderTest {
         assertTrue("there is nothing to clear yet", !state.hasValue)
     }
 
+    /**
+     * **R-1181.** This note used to read *"Overs are logged without one until you enter it"* — a
+     * claim about **every** over, which the same screen disproves the moment the list beneath it
+     * holds overs carrying a real `FREQ` value. Both facts are true and they are different: this
+     * row is what the *next* session is started with, the column is what each transmission was
+     * actually recorded against. So the fix is to scope the claim, not to soften it or drop it —
+     * and it is not only a fixture problem, because an operator who set a frequency, captured, then
+     * cleared it reaches the same arrangement with every store seeded correctly.
+     *
+     * **Pinned as text on purpose**, against constitution II's general "never assert prose" rule:
+     * what is asserted here is not wording but the **scope of a claim the product makes**, the same
+     * class of thing FR-ANL-14's verbatim privacy sentence is pinned for. A designer may rewrite
+     * this line; they may not widen what it asserts back to every over.
+     */
+    @Test
+    @Requirement("R-1181", "constitution I")
+    fun `R_1181 the no-radio note scopes its claim to overs from here on, never to every over`() {
+        val note = requireNotNull(LogFrequencyHeaderMapper.from(facts())?.note)
+
+        assertTrue("the claim has to be scoped forward: $note", note.contains("from here on"))
+        assertTrue(
+            "an unscoped claim about every over is contradicted by the FREQ column beneath it: $note",
+            !note.contains("Overs are logged without"),
+        )
+    }
+
     @Test
     @Requirement("AC-202")
     fun `AC_202 a hand-entered value is shown with its provenance and offers an edit`() {

@@ -125,8 +125,25 @@ public object LogFrequencyHeaderMapper {
         "This session keeps the frequency it started with. A change applies when you start the next session."
     private const val EDITOR_NOTE_WHILE_IDLE: String = "Applies to the next session you start."
 
+    /**
+     * **R-1181: the claim is scoped, because unscoped it is contradicted by the screen it sits on.**
+     *
+     * This used to read *"…Overs are logged without one until you enter it"* — a claim about
+     * **every** over — directly above quick-filter chips reading `145.230` and `146.960` and a list
+     * whose every row carried a real value in its `FREQ` column. Both facts were true and they are
+     * different: this row is [org.ort.pipeline.rig.CaptureConfigurationStore]'s own
+     * `manualFrequencyHz`, what the *next* session will be started with, while the column is what
+     * each transmission was actually recorded against, which can have come from a rig that was
+     * connected at the time or from a value since cleared. Shown together with an unscoped verb,
+     * the screen asserted something the same screen disproved — constitution I's failure mode
+     * arriving through the eye rather than the data layer.
+     *
+     * **Not only a fixture problem**, which is why the sentence changed rather than only the
+     * scenario: an operator who sets a frequency, captures a night, then clears it reaches exactly
+     * this arrangement with every store seeded correctly.
+     */
     private const val NO_RIG_NOTE: String =
-        "No radio is reporting a frequency. Overs are logged without one until you enter it."
+        "No radio is reporting a frequency. Overs from here on are logged without one until you enter it."
 
     public fun from(facts: LogFrequencyFacts): LogFrequencyHeaderViewState? {
         val rigHz = facts.rigReportedHz

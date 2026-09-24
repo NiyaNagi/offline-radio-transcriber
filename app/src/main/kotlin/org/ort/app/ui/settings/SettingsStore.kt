@@ -72,7 +72,26 @@ public interface SettingsStore {
     public var noiseReductionEnabled: Boolean
     public var bandPassFilterEnabled: Boolean
     public var levelWarnEnabled: Boolean
-    public var manualFrequencyMhz: String?
+
+    /**
+     * **R-1182: `manualFrequencyMhz` was deleted here, deliberately, and this note is the record.**
+     *
+     * It was a *second* hand-entered frequency, separate from the one capture consumes.
+     * `SettingsContent`'s edit action wrote it and `SettingsPolling` read it back to render CF02, so
+     * it round-tripped convincingly — but `RealCaptureService` reads
+     * `CaptureConfiguration.manualFrequencyHz` from
+     * [org.ort.pipeline.rig.CaptureConfigurationStore], which this field never reached. Editing the
+     * frequency in Settings changed a label and nothing else, and because the label updated, it
+     * confirmed itself: the most persuasive instance of this repository's built-but-never-called
+     * pattern (R-1132, R-1139, R-1141, R-1171, R-1188), because it showed the operator their own
+     * input back.
+     *
+     * Deleted rather than wired, because R-1167 already gave the value a real home in the Log's own
+     * header, editable in place over the store `RealCaptureService` actually reads — and two fields
+     * for one fact is precisely how these two drifted apart. CF02 still *reports* the value; it no
+     * longer owns it. The `manual_frequency_mhz` preference key is left unread on devices that have
+     * one; nothing writes it any more and nothing has ever acted on it.
+     */
 }
 
 /** The real, `SharedPreferences`-backed [SettingsStore]. */
@@ -101,7 +120,6 @@ public class SharedPreferencesSettingsStore(private val prefs: SharedPreferences
     override var noiseReductionEnabled: Boolean by BooleanPref(KEY_NOISE_REDUCTION, default = true)
     override var bandPassFilterEnabled: Boolean by BooleanPref(KEY_BAND_PASS, default = false)
     override var levelWarnEnabled: Boolean by BooleanPref(KEY_LEVEL_WARN, default = true)
-    override var manualFrequencyMhz: String? by StringPref(KEY_MANUAL_FREQUENCY_MHZ)
 
     private inner class BooleanPref(val key: String, val default: Boolean) :
         kotlin.properties.ReadWriteProperty<Any?, Boolean> {
@@ -141,7 +159,7 @@ public class SharedPreferencesSettingsStore(private val prefs: SharedPreferences
         public const val KEY_NOISE_REDUCTION: String = "noise_reduction_enabled"
         public const val KEY_BAND_PASS: String = "band_pass_enabled"
         public const val KEY_LEVEL_WARN: String = "level_warn_enabled"
-        public const val KEY_MANUAL_FREQUENCY_MHZ: String = "manual_frequency_mhz"
+        // R-1182: `manual_frequency_mhz` is gone — see [SettingsStore]'s own note for why.
     }
 }
 
@@ -163,5 +181,4 @@ public class InMemorySettingsStore(
     override var noiseReductionEnabled: Boolean = true,
     override var bandPassFilterEnabled: Boolean = false,
     override var levelWarnEnabled: Boolean = true,
-    override var manualFrequencyMhz: String? = null,
 ) : SettingsStore

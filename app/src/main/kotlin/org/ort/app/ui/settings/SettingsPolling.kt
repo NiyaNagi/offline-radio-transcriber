@@ -249,7 +249,7 @@ public object SettingsPolling {
             levelWarnEnabled = store.levelWarnEnabled,
             noiseReductionEnabled = store.noiseReductionEnabled,
             bandPassEnabled = store.bandPassFilterEnabled,
-            manualFrequencyMhz = store.manualFrequencyMhz ?: setupManualFrequencyLabel(context),
+            manualFrequencyMhz = manualFrequencyLabel(context),
             mode = mode,
             modeLabel = mode?.operatorLabel ?: NOT_SET_MODE_LABEL,
             modeSubLine = mode?.let { modeSubLine(it) } ?: NOT_SET_MODE_SUB_LINE,
@@ -404,29 +404,27 @@ public object SettingsPolling {
     }
 
     /**
-     * Register R-951 (Reviewer B3, run 4a, halt): CF02's "Log overs against" read "not set" under
-     * `overnight`, though that fixture hand-enters 145.230 MHz — reading, by hand, before writing
-     * this: the scenario (and the real onboarding flow it mirrors, `SetupActivity.kt` — confirmed
-     * by grep, it never touches [SettingsStore] at all) only ever records that entry to
-     * [org.ort.app.ui.setup.SetupStore.manualFrequencyHz] (S12's own field, [ReadyScreen]'s own
-     * summary line), never to [SettingsStore.manualFrequencyMhz] (the *separate* field this row
-     * itself reads and writes going forward, via [SettingsContent]'s own edit action) — a real gap,
-     * not only a scenario one: an operator who hand-enters a frequency once during Setup and never
-     * revisits CF02 sees "not set" there too. This is the honest fallback, not a merge of the two
-     * stores: an explicit Settings-time edit (any string, [SettingsStore.manualFrequencyMhz] once
-     * touched) always wins outright; only the genuinely-untouched case reads the real entry instead
-     * of a bare "not set". `null` when neither store ever recorded one.
+     * **R-1182: this is now the *only* source, and that is the fix.**
      *
-     * **P39 (D58, AC-202, R-1167) repointed the fallback, and this file is edited only because the
-     * deletion forced it.** `SetupStore.manualFrequencyHz` is gone — the prompt moved to the log's own
-     * header, so setup stopped being the thing that knows the answer, and leaving a second copy behind
-     * would have let this row show a value the capture path was no longer using. It now reads
-     * [org.ort.pipeline.rig.CaptureConfigurationStore], the store `RealCaptureService` itself reads at
-     * session start, which is where every writer of this fact now writes. `current()`, not the pending
-     * configuration: this row describes what capture is actually logging against, and a change made
-     * mid-session does not take effect until the next one (FR-CAP-12, AC-131).
+     * Register R-951 (Reviewer B3, run 4a, halt) originally made this a *fallback*: CF02 preferred
+     * `SettingsStore.manualFrequencyMhz` — a second, Settings-only copy of the frequency, written by
+     * [SettingsContent]'s own edit action and read back here — and only consulted the real store when
+     * that copy had never been touched. The round trip was convincing and it was a lie: nothing
+     * downstream ever read that field, so editing the frequency in Settings changed this label and
+     * nothing else, while `RealCaptureService` went on starting sessions from
+     * [org.ort.pipeline.rig.CaptureConfigurationStore]. Because the label updated, it confirmed
+     * itself. R-1182 deletes the second field outright rather than wiring it (R-1167 already gave the
+     * value a real, in-place editor in the Log's own header, over this same store), so this row can
+     * only ever report what capture is actually configured with.
+     *
+     * `current()`, never the pending configuration: this row describes what capture is logging
+     * against right now, and a change made mid-session does not take effect until the next one
+     * (FR-CAP-12, AC-131) — the Log header is where that distinction is stated, because that is the
+     * surface that can also act on it.
+     *
+     * `null` when nothing has ever been entered, which CF02 renders as an honest "not set".
      */
-    private fun setupManualFrequencyLabel(context: Context): String? {
+    private fun manualFrequencyLabel(context: Context): String? {
         val hz = realCaptureConfigurationStore(context).current().manualFrequencyHz ?: return null
         return "%.3f".format(Locale.ROOT, hz / 1_000_000.0)
     }

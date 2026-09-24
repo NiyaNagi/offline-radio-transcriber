@@ -267,9 +267,12 @@ class SettingsPollingTest {
      * P39 (D58, AC-202, R-1167): `SetupStore.manualFrequencyHz` is gone — the prompt moved to the log's
      * own header, and a second copy of the fact would have been overwritten with `null` by the next
      * setup sync. `CaptureConfigurationStore`, the store `RealCaptureService` reads at session start,
-     * holds it now, and this row's fallback reads it there. The R-951 behaviour itself is unchanged: an
-     * explicit Settings-time edit still wins outright, and "neither store ever recorded one" still
-     * reads honestly not-set.
+     * holds it now.
+     *
+     * **R-1182** then removed the last competitor: `SettingsStore.manualFrequencyMhz` was a second
+     * hand-entered frequency that this row preferred over the real one, written by CF02's own `Edit`
+     * action and read straight back, while nothing downstream ever consumed it. It is deleted, so
+     * these three tests now pin one source rather than a precedence order between two.
      */
     private fun recordManualFrequencyInTheCaptureConfiguration(hz: Long) {
         val store = org.ort.pipeline.rig.SharedPreferencesCaptureConfigurationStore(
@@ -282,7 +285,7 @@ class SettingsPollingTest {
     }
 
     @Test
-    fun `R_951 Log overs against falls back to the frequency the capture configuration holds`() {
+    fun `R_951 Log overs against reads the frequency the capture configuration holds`() {
         recordManualFrequencyInTheCaptureConfiguration(145_230_000L)
         val state = SettingsPolling.capture(context, InMemorySettingsStore())
         assert(state.manualFrequencyMhz == "145.230") {
@@ -290,17 +293,28 @@ class SettingsPollingTest {
         }
     }
 
+    /**
+     * **R-1182, the red this fix was written against.** Before the deletion this test read
+     * `InMemorySettingsStore(manualFrequencyMhz = "146.960")` against a capture configuration
+     * holding 145.230 and asserted `"145.230"` — and failed with *"expected the value
+     * RealCaptureService actually reads, got 146.960"*, which is the defect stated exactly: the
+     * board showed the operator their own Settings entry while capture used a different number.
+     * Once the second field was deleted the test could no longer name it, so what survives is the
+     * property that outlives the fix — there is one source, and a later write to it wins because
+     * there is nothing else to lose to.
+     */
     @Test
-    fun `R_951 a Settings-time edit always wins over the Setup-time one`() {
+    fun `R_1182 CF02 shows the frequency capture consumes, never a second Settings-only copy of it`() {
         recordManualFrequencyInTheCaptureConfiguration(145_230_000L)
-        val state = SettingsPolling.capture(context, InMemorySettingsStore(manualFrequencyMhz = "146.960"))
+        recordManualFrequencyInTheCaptureConfiguration(146_960_000L)
+        val state = SettingsPolling.capture(context, InMemorySettingsStore())
         assert(state.manualFrequencyMhz == "146.960") {
-            "expected the operator's own later Settings edit to win, got ${state.manualFrequencyMhz}"
+            "expected the value RealCaptureService actually reads, got ${state.manualFrequencyMhz}"
         }
     }
 
     @Test
-    fun `R_951 stays honestly not set when neither store ever recorded one`() {
+    fun `R_951 stays honestly not set when nothing has ever been entered`() {
         val state = SettingsPolling.capture(context, InMemorySettingsStore())
         assert(state.manualFrequencyMhz == null) {
             "expected no fabricated frequency, got ${state.manualFrequencyMhz}"

@@ -11,8 +11,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -83,6 +85,39 @@ class SettingsCaptureScreenTest {
         modeLabel = mode.operatorLabel,
         modeSubLine = modeSubLine,
     )
+
+    /**
+     * **R-1182.** This row used to carry an `Edit` action that wrote a Settings-only copy of the
+     * frequency — a field `RealCaptureService` never read — and then rendered that copy straight
+     * back, so the edit confirmed itself while capture went on using a different value entirely.
+     * The value is now edited in the Log's own header (R-1167, AC-202), over the store capture
+     * actually consumes, and CF02 reports it.
+     *
+     * Two assertions, because either alone would pass for the wrong reason: the row still carries
+     * the real value (a deletion that also dropped the fact would be a different defect), **and**
+     * there is no action inside the row's own tagged subtree. Scoped to that subtree rather than
+     * matched by text, because `Edit`/`Change` render elsewhere on this very screen — the accidental
+     * match R-1160 and R-1070 both record.
+     */
+    @Test
+    @Requirement("R-1182", "R-1167", "constitution I")
+    fun `R_1182 the frequency row reports the configured value and offers no editor that cannot reach capture`() {
+        composeTestRule.setContent {
+            OrtTheme {
+                SettingsCaptureScreen(
+                    state = state(CaptureMode.USB_RADIO).copy(manualFrequencyMhz = "145.230"),
+                    onBack = {},
+                    toggles = SettingsCaptureToggleActions({}, {}, {}),
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag(MANUAL_FREQUENCY_ROW_TEST_TAG)
+            .assert(hasText("145.230", substring = true))
+        composeTestRule
+            .onAllNodes(hasClickAction() and hasAnyAncestor(hasTestTag(MANUAL_FREQUENCY_ROW_TEST_TAG)))
+            .assertCountEquals(0)
+    }
 
     @Test
     @Requirement("FR-CAP-12")

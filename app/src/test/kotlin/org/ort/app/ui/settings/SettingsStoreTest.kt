@@ -39,12 +39,14 @@ class SettingsStoreTest {
         assert(!realStore().autoPruneEnabled)
     }
 
+    // R-1182: `manualFrequencyMhz` was asserted here too. It is deleted — this store never held the
+    // frequency capture consumes, and the one that does is `CaptureConfigurationStore`, whose own
+    // honest default is covered by `LogFrequencyHeaderTest`.
     @Test
-    fun `R_090 no audio budget, no tier override, no manual frequency is the honest default`() {
+    fun `R_090 no audio budget and no tier override is the honest default`() {
         val store = realStore()
         assert(store.audioBudgetGb == null)
         assert(store.tierOverrideName == null)
-        assert(store.manualFrequencyMhz == null)
     }
 
     @Test

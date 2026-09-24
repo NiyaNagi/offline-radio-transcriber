@@ -32,6 +32,118 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-24
+
+### `da7f2a21` — R-1181/R-1182/R-1184: one claim scoped, one field deleted, one constant unified
+
+**Scope:** `:app` — `ui/data/LogFrequencyHeader.kt`, `ui/screens/LogFrequencyHeaderRow.kt` (test
+only), `ui/failures/KeepCaptureRunning.kt`, `ui/settings/{SettingsStore,SettingsPolling,
+SettingsContent,SettingsCaptureScreen}.kt`, `src/debug/.../Scenarios.kt` (unchanged in the end — see
+below), and their tests; `:pipeline` — `capture/HeartbeatTrail.kt`, `capture/RealCaptureService.kt`
+and `HeartbeatTrailTest.kt`. Nothing under `ui/setup/**`, which another builder owns concurrently.
+
+**Requirements/ACs:** R-1181, R-1182, R-1184; AC-202, AC-131, AC-189, NFR-8, D58, R-1167, R-1188;
+constitution I (uncertainty is content), II (discriminating tests), VII (structural boundaries),
+VIII (visual conformance is evidence-backed).
+
+**What changed:**
+
+**R-1181 — the Log header's frequency row no longer makes a claim the same screen disproves.** The
+note shown when nothing is entered read *"No radio is reporting a frequency. Overs are logged
+without one until you enter it"* — an unqualified claim about **every** over — directly above
+quick-filter chips reading `145.230`/`146.960` and a list whose every row carried a real `FREQ`
+value. It now reads *"No radio is reporting a frequency. **Overs from here on** are logged without
+one until you enter it."* The production logic was never wrong: the header reads
+`CaptureConfigurationStore.current().manualFrequencyHz`, which is what `RealCaptureService`
+consumes, and the per-over column is a different fact. Only the sentence's scope changed, and it had
+to change rather than only the fixture, because an operator who sets a frequency, captures, then
+clears it reaches the same arrangement with every store seeded correctly.
+- **The fixture half was already closed by the P39 merge and is now guarded.** `overnight` does seed
+  the configuration store (`seedConfiguredDeviceState` → `seedManualFrequency(145_230_000L)`, added
+  by `6a105634`); the capture R-1181 was judged from (`p39-captures-v2`) predates that merge. No
+  scenario code changed. What was missing was any test of what the *fixture* leaves the header
+  saying, so `LogFrequencyScenarioSeedTest` now pins both tour frames through the real read path.
+- **No new "genuinely empty" scenario was added, deliberately.** `gap-call` already is one — it
+  seeds no manual frequency anywhere while its overs carry `FREQ_A` — and it already has three tour
+  steps (`gap-call/L01-log-gap` at 1.0, 2.0, 2.0-end). Adding a scenario would have meant editing
+  `tools/ui-audit/tour.json` and the capture catalogue while the lead is mid-tour.
+- **The test that would have caught it:** `LogFrequencyHeaderRowTest.R_1181 the not-set header
+  claims nothing about the overs that carry frequencies beneath it` — a Robolectric composition at
+  `w390dp-h844dp-420dpi` that puts the not-set header above real `LogRow`s carrying `145.230`. The
+  twenty-three existing tests all pass because every one of them exercises the header against its
+  own facts object in isolation; nothing had ever composed the one arrangement in which the sentence
+  is false. That gap, not the sentence, was the finding.
+
+**R-1182 — the second frequency field in Settings is deleted, not wired.** `SettingsStore
+.manualFrequencyMhz` was a separate manual frequency from the one capture consumes: `SettingsContent`
+wrote it, `SettingsPolling` read it back to render CF02, and `RealCaptureService` never saw it.
+Editing the frequency in Settings changed a label and nothing else — and because the label updated,
+it confirmed itself. **Deleted** rather than repointed, because R-1167 already gave the value a real
+in-place editor in the Log's own header, over the store capture reads, *above the rows it labels*,
+which is also the only surface that can state AC-131's "this session keeps what it started with".
+Two editors for one fact is exactly how these two drifted apart (the same reasoning R-1188 records
+for `OvernightScreen` and F24). Gone: the `SettingsStore.manualFrequencyMhz` property, its
+`SharedPreferencesSettingsStore` backing and `KEY_MANUAL_FREQUENCY_MHZ`, the `InMemorySettingsStore`
+parameter, `SettingsContent`'s `onEditManualFrequency` wiring, and `SettingsCaptureScreen`'s
+`onEditManualFrequency` parameter and the row's whole edit branch. CF02 keeps **reporting** the
+value — it is genuinely a capture setting — from `CaptureConfigurationStore.current()` alone, with
+the sub-line now naming where it is set. The parameter's removal is a compile-time guarantee that no
+caller can reintroduce a write that cannot reach capture (constitution VII). The stale
+`manual_frequency_mhz` preference is left unread on devices that have one; nothing ever acted on it.
+
+**R-1184 — one heartbeat cadence.** `HEARTBEAT_INTERVAL_MILLIS` now lives once, on
+`HeartbeatTrailStore`'s companion in `:pipeline`, beside `DEFAULT_MAX_ENTRIES`, whose kdoc has
+always *derived itself* from the cadence ("960 beats at the 30 s cadence … is 8 hours", NFR-8's
+overnight gate). `RealCaptureService`'s `private` copy is deleted and its four call sites read the
+shared constant; `:app`'s `KeepCaptureRunning.HEARTBEAT_INTERVAL_MILLIS` is deleted and
+`newestMissedHeartbeat` defaults to the shared one. Chosen over making the service's constant public
+because the trail store is where the cadence is already load-bearing for a second fact, `:app`
+already depends on that interface, and nothing in `:app` has business reaching into a `Service`
+class for a number. The 8-hour identity is now asserted in code on both sides rather than restated
+in prose. **A third copy remains and is out of scope**: `org.ort.capture.android.service
+.CaptureService.HEARTBEAT_INTERVAL_MILLIS` (`:capture-android`, manifest-declared but started by
+nothing in the app) — flagged for the register rather than touched, since that module is outside
+this brief's ownership.
+
+**Verified:** `./gradlew :app:test :app:smokeTestFullDebugUnitTest :pipeline:test :app:detekt
+:app:ktlintCheck :pipeline:detekt :pipeline:ktlintCheck -PortAllowMissingBundledAssets=true` —
+green. Every new test was shown to discriminate, by reverting the production change and watching the
+right assertion fail:
+- copy revert → `R_1181 the no-radio note scopes its claim…` red (*"the claim has to be scoped
+  forward: …Overs are logged without one…"*) and the composition test red on
+  *"(Text + EditableText contains 'from here on') as substring"*;
+- `seedManualFrequency` removed from `seedConfiguredDeviceState` → `R_1181 overnight seeds the store
+  the header reads…` red (*"expected:<145230000> but was:<null>"*);
+- R-1182's red before the fix, with the second field still present: `R_1182 CF02 shows the frequency
+  capture consumes…` failed *"expected the value RealCaptureService actually reads, got 146.960"* —
+  the defect stated exactly. That form could not survive the deletion (it named the deleted field),
+  so the surviving test pins the one-source property and the screen test carries the structural half;
+  an `Edit` action temporarily restored on the row → `R_1182 the frequency row reports the configured
+  value and offers no editor…` red (*"Did not expect any node but found '1' node that satisfies:
+  ((OnClick is defined) && hasAnyAncestorThat(TestTag = 'settings-manual-frequency-row'))"*);
+- cadence changed to 45 s with a hardcoded 30 s copy reintroduced in `newestMissedHeartbeat` →
+  `R_1184 this trigger measures against the one cadence…`, `R_1184 the trail's bound…` and two
+  pre-existing `AC_189` gap tests all red — i.e. the silent-widening failure R-1184 describes is now
+  caught rather than invisible.
+
+**Left open / not done:**
+- **No captures taken.** The emulator is reserved by the session lead for a full canonical tour, so
+  this change installs and captures nothing. Screens needing re-capture, at font scale 1.0 and 2.0
+  (and 2.0 scrolled to end where the screen scrolls): **L01 Log** on `overnight` (the header now
+  reads `145.230 MHz · by hand` with no note) and on `gap-call` (the unset header with the rescoped
+  sentence, which is the frame R-1181 is really about); **CF02 Settings › Input and level** (the
+  frequency row lost its `Edit` action and gained a sub-line clause).
+- **R-1182 leaves CF02 with a statement rather than a link.** The row names where the frequency is
+  set but does not navigate there; wiring a Settings→Log drill-in was outside this brief's files.
+- `HEARTBEAT_GAP_TOLERANCE_MILLIS` in `:app` is still a restatement of `ProveItAnalyzer`'s own
+  `private` default in `:capture-android`. R-1184 is about the cadence; this is the same class of
+  finding one module over, and is named here rather than silently fixed out of ownership.
+- Nothing in `RELEASES.md` — the operator-visible half (the Settings frequency editor is gone; the
+  frequency is set in the Log header) is for the lead to word, since that file is being edited
+  concurrently.
+
+---
+
 ## 2026-09-23 (P39 wave: two homes for what onboarding stops asking)
 
 ### `ee1a58d8` — P39: the manual frequency moves into the log header, and the battery ask onto the first missed heartbeat
