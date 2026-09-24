@@ -180,7 +180,21 @@ public enum class VoiceprintBindingSource { AUTO, MANUAL }
 @Entity(tableName = "voiceprint", indices = [Index("boundStationId")])
 public data class VoiceprintEntity(
     @PrimaryKey val id: String,
-    /** Never leaves the device (D28, FR-SPK-20). */
+    /**
+     * Biometric data about a person who did not consent to being enrolled (D28).
+     *
+     * **This is no longer "never leaves the device", and R-1173 is the row that swept the places
+     * still saying so.** FR-SPK-20 as D38 amends it keeps the embedding out of the corpus
+     * contribution channel, out of the exported diagnostic bundle and out of cloud backup, and
+     * permits exactly two outbound routes, both the operator's own action: an export for their own
+     * device-to-device transfer, which `SettingsBackupScreen` states on the screen, and the
+     * field-report channel — per-category, defaulting off, every file and its real size named
+     * before each upload, and refused against a public destination unless the FR-OBS-10 Settings
+     * switch has been explicitly turned off (FR-OBS-9, FR-OBS-10).
+     *
+     * A writer that serialises this column into any other payload is a defect: every outbound
+     * payload is recomputed from its own closed field list (constitution V), never from an entity.
+     */
     val embedding: ByteArray,
     val memberCount: Int,
     val centroidUpdatedAt: Long?,

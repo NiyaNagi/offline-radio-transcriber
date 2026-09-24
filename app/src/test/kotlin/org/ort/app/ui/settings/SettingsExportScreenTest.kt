@@ -24,6 +24,7 @@ import org.ort.app.export.ExportCountPreview
 import org.ort.app.export.ExportFileFormat
 import org.ort.app.export.ExportRequest
 import org.ort.app.export.ExportRequestScope
+import org.ort.app.ui.OfflinePromiseCopy
 import org.ort.app.ui.theme.OrtTheme
 import org.robolectric.RobolectricTestRunner
 import java.time.Instant
@@ -243,6 +244,13 @@ class SettingsExportScreenTest {
         composeTestRule.onAllNodesWithText("not yet written by this exporter").assertCountEquals(3)
     }
 
+    /**
+     * R-135, and R-1173 for the wording. The literal this asserted was retyped from the artboard,
+     * which is how it went on stating *"Never exported, by any option"* after FR-SPK-20's
+     * device-to-device clause and D38's field-report exception had made that collide with
+     * `SettingsBackupScreen`. It now reads the one approved source and roots in this screen's own
+     * tag rather than a free-floating text match (R-1160, R-1070).
+     */
     @Test
     fun `R_135 the never-included promise banner renders regardless of scope`() {
         composeTestRule.setContent {
@@ -256,10 +264,8 @@ class SettingsExportScreenTest {
             }
         }
         composeTestRule.onNodeWithTag("export-scope-range").performClick()
-        composeTestRule.onNodeWithText(
-            "Never exported, by any option: voiceprints, names you gave stations, notes, your " +
-                "location, the level of any signal that would locate you.",
-        ).assertExists()
+        composeTestRule.onNodeWithTag("export-never-included")
+            .assertTextEquals(OfflinePromiseCopy.EXPORT_NEVER_INCLUDED)
     }
 
     /**

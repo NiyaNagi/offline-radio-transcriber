@@ -46,6 +46,7 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
+import org.ort.app.ui.OfflinePromiseCopy
 import org.ort.app.ui.components.ActionBar
 import org.ort.app.ui.components.AttributionMarker
 import org.ort.app.ui.components.Badge
@@ -100,10 +101,12 @@ public fun StationIdentityScreen(
                     modifier = Modifier.semantics { heading() },
                 )
                 Text(
-                    text = "Three things, kept separately, none of which leave this phone",
+                    text = OfflinePromiseCopy.STATION_IDENTITY_SUBTITLE,
                     style = OrtType.subtitle,
                     color = OrtColors.textDim,
-                    modifier = Modifier.padding(top = OrtSpacing.xs, bottom = OrtSpacing.md),
+                    modifier = Modifier
+                        .padding(top = OrtSpacing.xs, bottom = OrtSpacing.md)
+                        .testTag("station-identity-subtitle"),
                 )
 
                 HeardAndVoiceFacts(state = state, onSplit = onSplit)
@@ -478,16 +481,21 @@ private fun InlineEditRow(
     }
 }
 
+/**
+ * ST04's lock card. Its wording is [OfflinePromiseCopy.STATION_IDENTITY_CARD] and lives there
+ * rather than here: R-1173 found this card, `SettingsExportScreen`'s, the README and two kdocs
+ * each carrying their own copy of a claim D37/D38 had superseded, which is exactly the drift
+ * R-1165 introduced that object to stop.
+ */
 @Composable
 private fun NeverLeavesCard(modifier: Modifier = Modifier) {
-    val text = "The voiceprint, the name and the note are never included in a contribution, a " +
-        "diagnostic bundle or a backup. The callsign itself is public by nature and is the only " +
-        "part of this record that can be exported."
+    val text = OfflinePromiseCopy.STATION_IDENTITY_CARD
     Row(
         modifier = modifier
             .fillMaxWidth()
             .background(OrtColors.bgCard, RoundedCornerShape(10.dp))
             .padding(14.dp)
+            .testTag("station-identity-never-leaves")
             .semantics(mergeDescendants = true) { contentDescription = text },
         verticalAlignment = Alignment.Top,
     ) {

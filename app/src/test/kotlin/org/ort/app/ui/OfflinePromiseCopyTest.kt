@@ -31,7 +31,7 @@ class OfflinePromiseCopyTest {
     @Test
     @Requirement("FR-ANL-14", "R-1164")
     fun `FR_ANL_14 no offline-promise copy makes a bare never-uploaded claim`() {
-        val all = (OfflinePromiseCopy.POINTS + OfflinePromiseCopy.WELCOME_PROMISE).joinToString("\n")
+        val all = allCopy().joinToString("\n")
 
         FORBIDDEN_ABSOLUTES.forEach { forbidden ->
             assert(!all.contains(forbidden, ignoreCase = true)) {
@@ -95,7 +95,118 @@ class OfflinePromiseCopyTest {
         }
     }
 
+    /**
+     * R-1173 — the finding this test exists for is that a *second* surface restated the voiceprint
+     * absolute after R-1165 had corrected the first two. Naming surfaces one at a time is how that
+     * happened, so the sweep enumerates the object by reflection: a constant added to
+     * [OfflinePromiseCopy] tomorrow is checked whether or not anyone remembers to list it here.
+     */
+    @Test
+    @Requirement("FR-SPK-20", "D38", "R-1173")
+    fun `FR_SPK_20 no copy anywhere in the object restates the voiceprint absolute`() {
+        allCopy().forEach { copy ->
+            if (!copy.contains("oiceprint")) return@forEach
+            VOICEPRINT_ABSOLUTES.forEach { forbidden ->
+                assert(!copy.contains(forbidden, ignoreCase = true)) {
+                    "D38 gave voiceprints an outbound path (FR-SPK-20, FR-OBS-9, FR-OBS-10), so no " +
+                        "surface may restate the absolute. Found \"$forbidden\" in:\n  $copy"
+                }
+            }
+        }
+    }
+
+    /**
+     * R-1173's own warning, made mechanical: a replacement naming only the field report would
+     * contradict `SettingsBackupScreen`, which already tells the operator voiceprints travel in a
+     * backup they make themselves (FR-SPK-20's device-to-device clause).
+     */
+    @Test
+    @Requirement("FR-SPK-20", "R-1173")
+    fun `FR_SPK_20 every surface that names a voiceprint route names both of them`() {
+        val surfaces = allCopy().filter { it.contains("oiceprint") && it.contains("can leave") }
+
+        assert(surfaces.size >= EXPECTED_VOICEPRINT_SURFACES) {
+            "R-1173 lists Welcome/About, Station identity and Export as the surfaces that state " +
+                "where a voiceprint can go; found ${surfaces.size}:\n" + surfaces.joinToString("\n")
+        }
+        surfaces.forEach { surface ->
+            assert(surface.contains(OfflinePromiseCopy.VOICEPRINT_ROUTES)) {
+                "Both FR-SPK-20 routes must be stated from the one shared clause, never retyped " +
+                    "or abridged. Expected:\n  ${OfflinePromiseCopy.VOICEPRINT_ROUTES}\nin:\n  $surface"
+            }
+        }
+    }
+
+    /**
+     * The other half of R-1173, and the one a find-and-replace would have broken: FR-SPK-25,
+     * FR-DIG-13 and FR-LEX-24 are untouched by D38, so every surface that corrects the voiceprint
+     * claim must still say the other categories leave in no channel and no tier.
+     */
+    @Test
+    @Requirement("FR-SPK-25", "FR-DIG-13", "FR-LEX-24", "R-1173")
+    fun `FR_SPK_25 the station identity and export cards keep the absolute for names and location`() {
+        assert(OfflinePromiseCopy.STATION_IDENTITY_CARD.contains("no channel and no tier")) {
+            "The name and the note on ST04 are FR-SPK-25/FR-DIG-13 categories and keep an absolute " +
+                "the voiceprint no longer has:\n  ${OfflinePromiseCopy.STATION_IDENTITY_CARD}"
+        }
+        assert(OfflinePromiseCopy.EXPORT_NEVER_INCLUDED.contains("no channel and no tier")) {
+            "Names, notes and location keep their absolute on CF07 (FR-SPK-25, FR-DIG-13, " +
+                "FR-LEX-24):\n  ${OfflinePromiseCopy.EXPORT_NEVER_INCLUDED}"
+        }
+    }
+
+    /**
+     * R-1173: the ST04 subtitle claimed all three facts stay on the phone. The callsign is public
+     * by nature and is in every export, and a voiceprint has [OfflinePromiseCopy.VOICEPRINT_ROUTES],
+     * so the only honest subtitle is one that does not make a blanket claim about all three.
+     */
+    @Test
+    @Requirement("FR-SPK-20", "R-1173")
+    fun `FR_SPK_20 the station identity subtitle makes no blanket claim about all three facts`() {
+        assert(!OfflinePromiseCopy.STATION_IDENTITY_SUBTITLE.contains("none of which leave")) {
+            "Two of the three do leave — the callsign in every export, a voiceprint by its two " +
+                "routes. Found the blanket claim in:\n  ${OfflinePromiseCopy.STATION_IDENTITY_SUBTITLE}"
+        }
+    }
+
+    /**
+     * Every `String` and `List<String>` [OfflinePromiseCopy] holds, read off the object rather than
+     * listed by hand: R-1173 is what happens when a sweep only covers the surfaces someone
+     * remembered, so a constant added tomorrow is in this list without anyone adding it.
+     */
+    private fun allCopy(): List<String> {
+        val values = OfflinePromiseCopy::class.java.declaredFields
+            .filterNot { it.isSynthetic || it.name == "INSTANCE" }
+            .mapNotNull { field ->
+                field.isAccessible = true
+                field.get(OfflinePromiseCopy)
+            }
+        return values.flatMap { value ->
+            when (value) {
+                is String -> listOf(value)
+                is List<*> -> value.filterIsInstance<String>()
+                else -> emptyList()
+            }
+        }
+    }
+
     private companion object {
+        /**
+         * Claims that were true of a voiceprint before D38 and are not now. These are deliberately
+         * narrower than [FORBIDDEN_ABSOLUTES]: "never leave" is still correct wherever it is said
+         * of a name, station knowledge or a location, so only copy that mentions a voiceprint is
+         * held to this list.
+         */
+        val VOICEPRINT_ABSOLUTES: List<String> = listOf(
+            "never leave",
+            "never leaves",
+            "none of which leave",
+            "or a backup",
+        )
+
+        /** Welcome/About's [OfflinePromiseCopy.POINTS] entry, ST04's card, CF07's card. */
+        const val EXPECTED_VOICEPRINT_SURFACES: Int = 3
+
         /** `spec/functional-spec.md` FR-ANL-14, and constitution V's "one permitted privacy claim". */
         const val PERMITTED_SENTENCE: String =
             "Your audio is processed only on your phone and is never uploaded unless you choose to share it."

@@ -359,8 +359,18 @@ public data class SettingsContributeCategoryViewState(val label: String, val sub
 public data class SettingsContributeViewState(
     val contributionEnabled: Boolean,
     val categories: List<SettingsContributeCategoryViewState>,
-    /** Constitution V's closed list, verbatim — the four categories that never leave the device
-     * under any setting here. */
+    /**
+     * The **corpus contribution channel's** never-included list (FR-CON-3 as FR-SPK-20 amends it)
+     * — every row here is genuinely absolute for a contribution, including voiceprints.
+     *
+     * R-1173: this kdoc read *"Constitution V's closed list, verbatim — the four categories that
+     * never leave the device under any setting here"*, and since 2.0.0 it misdescribed the very
+     * list it points at. V's closed list is **three** categories (FR-SPK-25, FR-DIG-13,
+     * FR-LEX-24); voiceprints came out of it at D38 and now have their own two routes, neither of
+     * which is this channel. The scope that makes these four rows true is *a contribution*, not
+     * *the device* — see [org.ort.app.ui.OfflinePromiseCopy] for where a voiceprint can go, which
+     * Export, Backup and About each state.
+     */
     val neverIncluded: List<NeverLeavesDeviceItem>,
 )
 
@@ -476,10 +486,6 @@ public data class SettingsAboutViewState(
  * plus its own longer sub-line — losing the board's actual per-item wording). */
 public data class NeverLeavesDeviceItem(val title: String, val subLine: String? = null)
 
-/** Constitution III/V, `Settings-Contribute.dc.html` verbatim (R-136) — [SettingsContributeViewState.neverIncluded]
- * quotes this exactly; `Settings-Export`'s own single-sentence "never exported" note is a separate,
- * differently-worded restatement `Settings-Export.dc.html` itself gives, so it is not built from
- * this list. */
 /** P31 (FR-ALR-1): the three watch kinds FR-ALR-1 names, kept as this package's own UI-facing
  * enum rather than importing `org.ort.pipeline.alerts.AlertWatch`'s sealed class directly into a
  * view state — the same view/domain separation every other `Settings*ViewState` in this file
@@ -521,6 +527,21 @@ public data class SettingsAlertsActions(
     val onAddFrequencyWatch: (String) -> Unit = {},
 )
 
+/**
+ * `Settings-Contribute.dc.html` verbatim (R-136) — [SettingsContributeViewState.neverIncluded]
+ * quotes this exactly. `Settings-Export`'s own card is a separate, differently-scoped statement
+ * (`OfflinePromiseCopy.EXPORT_NEVER_INCLUDED`), so it is not built from this list.
+ *
+ * **Scope, which R-1173 found stated wrongly one field away from here:** every row is absolute
+ * *for a contribution* (FR-CON-3, and FR-SPK-20 keeps voiceprints out of that channel too). Only
+ * the last three are absolute for the device — constitution V's closed list since 2.0.0 is names
+ * (FR-SPK-25), station knowledge (FR-DIG-13) and location (FR-LEX-24), and a voiceprint has the
+ * two routes `OfflinePromiseCopy.VOICEPRINT_ROUTES` names. Do not reuse this list as though it
+ * were a device-wide guarantee; that is the reuse the register row is about.
+ *
+ * R-1173 also moved this comment here from above [SettingsAlertWatchKind], where it had been
+ * stranded behind a second kdoc and therefore bound to an unrelated enum.
+ */
 public val NEVER_LEAVES_DEVICE: List<NeverLeavesDeviceItem> = listOf(
     NeverLeavesDeviceItem("Voiceprints", "a voice is a biometric · it is used here and only here"),
     NeverLeavesDeviceItem("Names and notes you gave stations"),
