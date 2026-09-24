@@ -142,6 +142,15 @@ public fun FailureHost(
     var dismissedCallLabel by remember(sessionId) { mutableStateOf<String?>(null) }
     var dismissedClockLabel by remember(sessionId) { mutableStateOf<String?>(null) }
     var dismissedInterruptedLabel by remember(sessionId) { mutableStateOf<String?>(null) }
+    // R-1161/AC-189: deliberately **not** keyed on `sessionId`, unlike every dismiss above it — a
+    // missed heartbeat is a fact about this device's own power management, not about one session, so
+    // starting a new session must not un-answer it. The real answer is persisted by
+    // `KeepCaptureRunningDismissStore` (which is what survives the process); this holds it locally
+    // as well so the banner disappears on the tap rather than on the next 2 s poll.
+    val keepCaptureRunningDismissStore = remember(context) {
+        SharedPreferencesKeepCaptureRunningDismissStore(context)
+    }
+    var dismissedKeepCaptureRunningKey by remember { mutableStateOf<Long?>(null) }
     var bannerHeight by remember { mutableStateOf(0.dp) }
     // FR-AST-4 (register R-448 follow-up): F21's own radio selection — purely local UI state, never
     // round-tripped through the polled `AssetSwapViewState` (which always maps `selectedOption = 0`,
@@ -177,6 +186,11 @@ public fun FailureHost(
         onDismissClock = { dismissedClockLabel = it },
         interruptedLabel = dismissedInterruptedLabel,
         onDismissInterrupted = { dismissedInterruptedLabel = it },
+        keepCaptureRunningKey = dismissedKeepCaptureRunningKey,
+        onDismissKeepCaptureRunning = {
+            dismissedKeepCaptureRunningKey = it
+            keepCaptureRunningDismissStore.dismiss(it)
+        },
     )
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
@@ -477,6 +491,11 @@ private data class FailureDismissState(
     val onDismissClock: (String) -> Unit,
     val interruptedLabel: String?,
     val onDismissInterrupted: (String) -> Unit,
+    /** R-1161/AC-189: F24's own dismiss, keyed by the gap's [MissedHeartbeatEvidence
+     * .resumedAtWallMillis] rather than a label, because the policy is a watermark — see
+     * [KeepCaptureRunningDismissStore]'s kdoc. */
+    val keepCaptureRunningKey: Long? = null,
+    val onDismissKeepCaptureRunning: (Long) -> Unit = {},
 )
 
 /** Every [FailurePresentation] id that renders via [TakeoverOrScreen] — a full-screen takeover or
@@ -530,10 +549,72 @@ private fun BoxScope.FailurePresentationOverlay(
     FailureBannerOverlay(presentation, actions, dismiss, onBannerHeightChanged, viewportHeight)
 }
 
+/**
+ * The **dismissable** banner ids: F5, F15 and F24. What they have in common is not their subject but
+ * their shape — each reports an event that is already *over* (the app was stopped; a call took the
+ * mic; the heartbeat missed a beat and came back), so each needs an explicit answer and none of them
+ * clears itself when a signal stops matching, the way every banner in [FailureBannerOverlay] below
+ * does. Split out for that reason and to keep both functions under detekt's `LongMethod`.
+ *
+ * Each is keyed by something that distinguishes *this* occurrence, so answering one occurrence never
+ * answers a later one — `null` (no match) hands the id back to [FailureBannerOverlay].
+ */
+@Composable
+private fun BoxScope.DismissablePastEventBanner(
+    presentation: FailurePresentation,
+    actions: FailureHostActions,
+    dismiss: FailureDismissState,
+    onBannerHeightChanged: (Dp) -> Unit,
+    viewportHeight: Dp,
+): Boolean {
+    when (presentation) {
+        is FailurePresentation.Killed -> if (presentation.state.stoppedAtLabel != dismiss.killedLabel) {
+            BannerOverlay(onBannerHeightChanged, viewportHeight) {
+                FailKilledBanner(
+                    state = presentation.state,
+                    onOpenBatterySettings = actions.onOpenBatteryExemptionSettings,
+                    onDismiss = { dismiss.onDismissKilled(presentation.state.stoppedAtLabel) },
+                )
+            }
+        } else {
+            onBannerHeightChanged(0.dp)
+        }
+        // R-1161/D58/AC-189: keyed to the gap it reports, so answering one gap does not answer every
+        // future one. A banner in this overlay and nothing else — `content` in [FailureHost] is always
+        // composed regardless, which is the structural half of AC-199: there is no code path here
+        // that can withhold a destination, let alone capture.
+        is FailurePresentation.KeepCaptureRunning ->
+            if (presentation.state.dismissKey != dismiss.keepCaptureRunningKey) {
+                BannerOverlay(onBannerHeightChanged, viewportHeight) {
+                    FailKeepCaptureRunningBanner(
+                        state = presentation.state,
+                        onOpenBatterySettings = actions.onOpenBatteryExemptionSettings,
+                        onDismiss = { dismiss.onDismissKeepCaptureRunning(presentation.state.dismissKey) },
+                    )
+                }
+            } else {
+                onBannerHeightChanged(0.dp)
+            }
+        is FailurePresentation.Call -> if (presentation.state.durationLabel != dismiss.callLabel) {
+            BannerOverlay(onBannerHeightChanged, viewportHeight) {
+                FailCallBanner(
+                    state = presentation.state,
+                    onDismiss = { dismiss.onDismissCall(presentation.state.durationLabel) },
+                )
+            }
+        } else {
+            onBannerHeightChanged(0.dp)
+        }
+        else -> return false
+    }
+    return true
+}
+
 /** Every banner-shaped [FailurePresentation] id — anything [FailurePresentationOverlay] did not
- * already route to [TakeoverOrScreen]. Deliberately not exhaustive over the full sealed interface
- * ([TAKEOVER_PRESENTATIONS]'s ids fall to `else`, unreachable in practice — the caller never routes
- * them here) — see [FailurePresentationOverlay]'s own kdoc for why the split exists. */
+ * already route to [TakeoverOrScreen], and that [DismissablePastEventBanner] did not already claim.
+ * Deliberately not exhaustive over the full sealed interface ([TAKEOVER_PRESENTATIONS]'s ids fall to
+ * `else`, unreachable in practice — the caller never routes them here) — see
+ * [FailurePresentationOverlay]'s own kdoc for why the split exists. */
 @Composable
 private fun BoxScope.FailureBannerOverlay(
     presentation: FailurePresentation,
@@ -542,6 +623,7 @@ private fun BoxScope.FailureBannerOverlay(
     onBannerHeightChanged: (Dp) -> Unit,
     viewportHeight: Dp,
 ) {
+    if (DismissablePastEventBanner(presentation, actions, dismiss, onBannerHeightChanged, viewportHeight)) return
     when (presentation) {
         is FailurePresentation.Disconnect -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailDisconnectBanner(
@@ -559,17 +641,6 @@ private fun BoxScope.FailureBannerOverlay(
         }
         is FailurePresentation.Level -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailLevelBanner(state = presentation.state)
-        }
-        is FailurePresentation.Killed -> if (presentation.state.stoppedAtLabel != dismiss.killedLabel) {
-            BannerOverlay(onBannerHeightChanged, viewportHeight) {
-                FailKilledBanner(
-                    state = presentation.state,
-                    onOpenBatterySettings = actions.onOpenBatteryExemptionSettings,
-                    onDismiss = { dismiss.onDismissKilled(presentation.state.stoppedAtLabel) },
-                )
-            }
-        } else {
-            onBannerHeightChanged(0.dp)
         }
         is FailurePresentation.StorageWarning -> BannerOverlay(onBannerHeightChanged, viewportHeight) {
             FailStorageWarningBanner(
@@ -598,18 +669,10 @@ private fun BoxScope.FailureBannerOverlay(
                 onSetFrequencyByHand = actions.onSetFrequencyByHand,
             )
         }
-        is FailurePresentation.Call -> if (presentation.state.durationLabel != dismiss.callLabel) {
-            BannerOverlay(onBannerHeightChanged, viewportHeight) {
-                FailCallBanner(
-                    state = presentation.state,
-                    onDismiss = { dismiss.onDismissCall(presentation.state.durationLabel) },
-                )
-            }
-        } else {
-            onBannerHeightChanged(0.dp)
-        }
         FailurePresentation.None -> onBannerHeightChanged(0.dp)
-        else -> Unit // TAKEOVER_PRESENTATIONS's ids — unreachable, see this function's own kdoc.
+        // TAKEOVER_PRESENTATIONS's ids (unreachable — the caller never routes them here) and the
+        // three [DismissablePastEventBanner] already handled and returned for.
+        else -> Unit
     }
 }
 

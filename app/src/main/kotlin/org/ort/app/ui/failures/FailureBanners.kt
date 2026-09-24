@@ -158,6 +158,53 @@ public fun FailKilledBanner(
 }
 
 // -------------------------------------------------------------------------------------------
+// F24 — Fail-Keep-Running (`design/canvas/Fail-Keep-Running.dc.html`). R-1161, D58, AC-189 as
+// amended: the battery-exemption ask, in its new home. `onOpenBatterySettings` is the same real
+// platform Settings intent F5 already uses (wired by `ReaderActivity`); the banner is dismissable
+// because it reports a past event and, per AC-199, must never be something the operator has to get
+// past.
+// -------------------------------------------------------------------------------------------
+
+/**
+ * **The caveat in this copy is load-bearing, not hedging.** The step this replaces said the same
+ * thing and was right to (R-1172 fixed its own earlier, dishonest version): on the reference device
+ * `isIgnoringBatteryOptimizations()` reports the app exempt while ColorOS ends it anyway, and the
+ * generic exemption covers neither auto-start nor the vendor sleep list. Promising that the setting
+ * fixes this would be a claim the product cannot keep — and it is precisely why the app proves
+ * liveness by heartbeat and shows the gap rather than trusting the flag (constitution IV, NFR-8).
+ *
+ * The last sentence is [org.ort.app.ui.failures.FailurePresentation.KeepCaptureRunning]'s own half
+ * of **AC-199**, said out loud: dismissing this blocks nothing, and the operator is told so rather
+ * than left to find out.
+ */
+@Composable
+public fun FailKeepCaptureRunningBanner(
+    state: KeepCaptureRunningViewState,
+    onOpenBatterySettings: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Banner(
+        title = "Keep capture running",
+        body = "The heartbeat stopped at ${state.stoppedAtLabel} and nothing was heard for " +
+            "${state.gapDurationLabel}. Android can stop this app while the screen is off; exempting it " +
+            "from battery optimisation usually helps. It is not a guarantee — some phones report the " +
+            "app exempt and end it anyway, which is why this app proves it is alive by heartbeat and " +
+            "shows you the gap rather than trusting that setting. Whatever you choose here, it never " +
+            "blocks capture.",
+        tone = BannerTone.DEGRADED,
+        primaryActionLabel = "Open the battery setting",
+        onPrimaryAction = onOpenBatterySettings,
+        secondaryActionLabel = "Not now",
+        onSecondaryAction = onDismiss,
+        modifier = modifier.testTag(KEEP_CAPTURE_RUNNING_BANNER_TEST_TAG),
+    )
+}
+
+/** R-1160/R-1070: a stable tag, declared once, so no test has to match this banner by its prose. */
+public const val KEEP_CAPTURE_RUNNING_BANNER_TEST_TAG: String = "failure-keep-capture-running-banner"
+
+// -------------------------------------------------------------------------------------------
 // F6 (warning stage) — Fail-Storage.
 // -------------------------------------------------------------------------------------------
 

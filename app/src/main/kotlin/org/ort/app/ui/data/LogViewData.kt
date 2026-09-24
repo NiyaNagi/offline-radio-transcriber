@@ -133,6 +133,14 @@ public data class LogScreenViewState(
      * [LogPolling.loadingState]'s own kdoc for the one shape that sets it.
      */
     val loading: Boolean = false,
+    /**
+     * R-1167, D58, **AC-202**: the hand-entered frequency's row in the Log's own header — `null`
+     * (every caller before this existed, and every real snapshot where a rig is reporting a
+     * frequency nothing is overriding) omits the row entirely. See
+     * [LogFrequencyHeaderMapper.from]'s own kdoc for each of the three cases and why absence is a
+     * real answer here rather than a placeholder.
+     */
+    val frequencyHeader: LogFrequencyHeaderViewState? = null,
 )
 
 // -------------------------------------------------------------------------------------------
@@ -870,13 +878,21 @@ public object LogPolling {
         return LogSource(entities, gaps, routeFacts, curated)
     }
 
+    /**
+     * R-1167, D58, AC-202: [frequencyEditor] is the hand-entered frequency's read seam — trailing
+     * and defaulted to the real, `SharedPreferences`-backed one, so every pre-existing caller
+     * (including this package's own tests) compiles unchanged while a test can still script the
+     * three cases [LogFrequencyHeaderMapper.from] distinguishes without writing real preferences.
+     */
     public suspend fun screenState(
         context: Context,
         sessionId: String,
         selection: LogFilterSelection,
         activeQuickFilter: LogQuickFilterId,
+        frequencyEditor: LogFrequencyEditor = RealLogFrequencyEditor(context),
     ): LogScreenViewState {
         val db = OrtDatabase.create(context.applicationContext)
+        val frequencyHeader = LogFrequencyHeaderMapper.from(frequencyEditor.facts())
         val source = resolveSource(context, db, sessionId, selection)
         val entities = source.entities
         val details = entities.map { buildDetail(context, db, it) }
@@ -924,6 +940,7 @@ public object LogPolling {
                 rejectedExplanation = LogItemsMapper.rejectedExplanation(items.size),
                 emptyState = emptyState,
                 bluetoothAudioFootnote = bluetoothAudioFootnote,
+                frequencyHeader = frequencyHeader,
             )
         }
 
@@ -958,6 +975,7 @@ public object LogPolling {
             emptyState = emptyState,
             bluetoothAudioFootnote = bluetoothAudioFootnote,
             appliedFilterLabel = appliedFilterLabel,
+            frequencyHeader = frequencyHeader,
         )
     }
 
@@ -1011,7 +1029,7 @@ public object LogPolling {
      * still an honest, fully-drawn empty Log (headline, sentence, quick-filter chips), never the
      * blank body a `sessionId == null` early-return otherwise left behind.
      */
-    public fun noSessionState(): LogScreenViewState {
+    public fun noSessionState(frequencyEditor: LogFrequencyEditor? = null): LogScreenViewState {
         val frequencies = connectedFrequencies()
         return LogScreenViewState(
             items = emptyList(),
@@ -1023,6 +1041,10 @@ public object LogPolling {
                 sessionStartedAtUtcMillis = null,
                 frequencies = frequencies,
             ),
+            // R-1167/AC-202: the first-launch Log is the one place the frequency prompt used to be
+            // asked for and now is not, so the row belongs here too — `null` (no editor supplied)
+            // is exactly this function's pre-existing behaviour for every caller that predates it.
+            frequencyHeader = frequencyEditor?.let { LogFrequencyHeaderMapper.from(it.facts()) },
         )
     }
 

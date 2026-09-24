@@ -139,6 +139,156 @@ class FailureHostTest {
         assertEquals(0, composeTestRule.onAllNodesWithTag("failure-route-screen").fetchSemanticsNodes().size)
     }
 
+    // -------------------------------------------------------------------------------------------
+    // F24 — R-1161, D58, AC-189 as amended, AC-199. The battery-exemption ask's new home.
+    // -------------------------------------------------------------------------------------------
+
+    /** Writes a **real** `heartbeat-trail.log` holding one real gap, at exactly the path
+     * `RealCaptureService` writes and [FileMissedHeartbeatReader] reads — so this test drives the
+     * prompt from the app's own evidence rather than through [DebugFailureOverride]. The row after
+     * the gap carries a different session id, which is what a process the OS ended and then
+     * restarted actually leaves behind. */
+    private fun seedHeartbeatGap(): Long {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val trail = org.ort.pipeline.capture.FileHeartbeatTrailStore(
+            java.io.File(context.filesDir, FileMissedHeartbeatReader.TRAIL_FILE_NAME),
+        )
+        trail.clear()
+        SharedPreferencesKeepCaptureRunningDismissStore(context)
+        context.getSharedPreferences(
+            SharedPreferencesKeepCaptureRunningDismissStore.PREFS_NAME,
+            android.content.Context.MODE_PRIVATE,
+        ).edit().clear().commit()
+        val stoppedAt = 1_000_000L
+        val resumedAt = stoppedAt + 3 * 60 * 60_000L
+        listOf(
+            org.ort.pipeline.capture.HeartbeatTrailEntry("s1", stoppedAt - 30_000L, 0L, 0L, true),
+            org.ort.pipeline.capture.HeartbeatTrailEntry("s1", stoppedAt, 0L, 0L, true),
+            org.ort.pipeline.capture.HeartbeatTrailEntry("s2", resumedAt, 0L, 0L, true),
+        ).forEach(trail::append)
+        return resumedAt
+    }
+
+    private fun clearHeartbeatTrail() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        org.ort.pipeline.capture.FileHeartbeatTrailStore(
+            java.io.File(context.filesDir, FileMissedHeartbeatReader.TRAIL_FILE_NAME),
+        ).clear()
+        context.getSharedPreferences(
+            SharedPreferencesKeepCaptureRunningDismissStore.PREFS_NAME,
+            android.content.Context.MODE_PRIVATE,
+        ).edit().clear().commit()
+    }
+
+    /** R-1160/R-1070: every node is reached *through* the banner's own tag, so no assertion here can
+     * pass by matching something outside the surface under test. */
+    private fun actionInsideKeepRunningBanner(label: String) = composeTestRule.onNode(
+        androidx.compose.ui.test.hasText(label, substring = true) and
+            androidx.compose.ui.test.hasAnyAncestor(
+                androidx.compose.ui.test.hasTestTag(KEEP_CAPTURE_RUNNING_BANNER_TEST_TAG),
+            ),
+    )
+
+    private fun awaitKeepRunningBanner() {
+        composeTestRule.waitUntil(timeoutMillis = 5_000) {
+            composeTestRule.onAllNodesWithTag(KEEP_CAPTURE_RUNNING_BANNER_TEST_TAG)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    @Test
+    @Requirement("AC-189", "AC-199", "R-1161", "NFR-8")
+    fun `AC_199 the keep-running prompt never withholds the destination beneath it`() {
+        seedHeartbeatGap()
+        var openedSetting = false
+        try {
+            composeTestRule.setContent {
+                OrtTheme {
+                    FailureHost(
+                        sessionId = null,
+                        actions = FailureHostActions(onOpenBatteryExemptionSettings = { openedSetting = true }),
+                    ) {
+                        Text("underlying destination", modifier = Modifier.fillMaxSize())
+                    }
+                }
+            }
+
+            awaitKeepRunningBanner()
+            // AC-199's behavioural half: the destination is composed and displayed *while* the
+            // prompt is up. The old OVERNIGHT step's whole defect was standing in front of the app.
+            composeTestRule.onNodeWithText("underlying destination").assertIsDisplayed()
+
+            actionInsideKeepRunningBanner("Open the battery setting").performClick()
+            assertTrue("the primary action reaches the real platform Settings intent", openedSetting)
+            // Acting on it does not remove the prompt either — the gap is still a fact, and nothing
+            // about tapping the OS setting proves the app will survive next time (NFR-8).
+            composeTestRule.onNodeWithTag(KEEP_CAPTURE_RUNNING_BANNER_TEST_TAG).assertIsDisplayed()
+        } finally {
+            clearHeartbeatTrail()
+        }
+    }
+
+    @Test
+    @Requirement("AC-189", "R-1161")
+    fun `AC_189 dismissing the keep-running prompt answers this gap and persists that answer`() {
+        val resumedAt = seedHeartbeatGap()
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        try {
+            composeTestRule.setContent {
+                OrtTheme {
+                    FailureHost(sessionId = null) {
+                        Text("underlying destination", modifier = Modifier.fillMaxSize())
+                    }
+                }
+            }
+
+            awaitKeepRunningBanner()
+            actionInsideKeepRunningBanner("Not now").performClick()
+
+            composeTestRule.waitUntil(timeoutMillis = 5_000) {
+                composeTestRule.onAllNodesWithTag(KEEP_CAPTURE_RUNNING_BANNER_TEST_TAG)
+                    .fetchSemanticsNodes().isEmpty()
+            }
+            // The answer outlives the process, which is what stops the nag R-1161 is a row about.
+            assertEquals(
+                resumedAt,
+                SharedPreferencesKeepCaptureRunningDismissStore(context).dismissedThroughWallMillis(),
+            )
+        } finally {
+            clearHeartbeatTrail()
+        }
+    }
+
+    @Test
+    @Requirement("AC-189", "NFR-8", "constitution IV")
+    fun `AC_189 a clean heartbeat trail raises no keep-running prompt at all`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val trail = org.ort.pipeline.capture.FileHeartbeatTrailStore(
+            java.io.File(context.filesDir, FileMissedHeartbeatReader.TRAIL_FILE_NAME),
+        )
+        trail.clear()
+        (0 until 6).forEach {
+            trail.append(org.ort.pipeline.capture.HeartbeatTrailEntry("s1", 1_000_000L + it * 30_000L, 0L, 0L, true))
+        }
+        try {
+            composeTestRule.setContent {
+                OrtTheme {
+                    FailureHost(sessionId = null) {
+                        Text("underlying destination", modifier = Modifier.fillMaxSize())
+                    }
+                }
+            }
+
+            composeTestRule.onNodeWithText("underlying destination").assertIsDisplayed()
+            assertEquals(
+                0,
+                composeTestRule.onAllNodesWithTag(KEEP_CAPTURE_RUNNING_BANNER_TEST_TAG).fetchSemanticsNodes().size,
+            )
+        } finally {
+            clearHeartbeatTrail()
+        }
+    }
+
     @Test
     fun `R_164 a banner never covers the header — its top bound clears the 44dp header height`() {
         // `backlog/T01-threads-live-header.png` — the finding this proves against: the banner used

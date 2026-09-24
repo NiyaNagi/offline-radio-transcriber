@@ -19,6 +19,7 @@ import org.ort.app.ui.failures.ClockViewState
 import org.ort.app.ui.failures.DebugFailureOverride
 import org.ort.app.ui.failures.FailurePresentation
 import org.ort.app.ui.failures.FailureSignalsPolling
+import org.ort.app.ui.failures.FileMissedHeartbeatReader
 import org.ort.app.ui.failures.InterruptedOverRow
 import org.ort.app.ui.failures.InterruptedViewState
 import org.ort.app.ui.failures.MigrationStep
@@ -26,6 +27,7 @@ import org.ort.app.ui.failures.MigrationViewState
 import org.ort.app.ui.failures.ReconcileFile
 import org.ort.app.ui.failures.ReconcileRecord
 import org.ort.app.ui.failures.ReconcileViewState
+import org.ort.app.ui.failures.SharedPreferencesKeepCaptureRunningDismissStore
 import org.ort.app.ui.failures.UsbViewState
 import org.ort.app.ui.settings.SharedPreferencesSettingsStore
 import org.ort.app.ui.setup.DebugMicPermissionOverride
@@ -73,6 +75,8 @@ import org.ort.data.execRaw
 import org.ort.data.inWriteTransaction
 import org.ort.pipeline.capture.AsrAvailability
 import org.ort.pipeline.capture.CaptureState
+import org.ort.pipeline.capture.FileHeartbeatTrailStore
+import org.ort.pipeline.capture.HeartbeatTrailEntry
 import org.ort.pipeline.capture.InputStatus
 import org.ort.pipeline.capture.LevelStatus
 import org.ort.pipeline.capture.RigStatus
@@ -170,6 +174,11 @@ public object Scenarios {
         "overnight-live",
         "unclean-end",
         "os-stopped",
+        // R-1161/D58 (F24, `Fail-Keep-Running.dc.html`): a real heartbeat *trail* with a real gap in
+        // it — distinct from `os-stopped`, which seeds a `CaptureGapEntity` the F5 banner reads. This
+        // one seeds only the app's own beat-by-beat record, which is what the *Keep capture running*
+        // prompt is triggered by (`ui/failures/KeepCaptureRunning.kt`).
+        "keep-running",
         "gap-call",
         "pass-a-partial",
         "pass-failed",
@@ -315,6 +324,7 @@ public object Scenarios {
             "gap-call" -> OvernightScenario.gapCall(context, db)
             "unclean-end" -> uncleanEnd(context, db)
             "os-stopped" -> osStopped(context, db)
+            "keep-running" -> keepRunning(context, db)
             "pass-a-partial" -> passAPartial(db)
             "pass-failed" -> passFailed(context, db)
             "corrected" -> corrected(db)
@@ -643,6 +653,16 @@ public object Scenarios {
         File(context.filesDir, "audio").listFiles { f -> f.name.startsWith(ScenarioFixtures.SESSION_PREFIX) }
             ?.forEach { it.deleteRecursively() }
         File(context.filesDir, "heartbeat.txt").delete()
+        // R-1161/D58 (F24): the heartbeat *trail* is a second, independent file, and a gap left in it
+        // by the `keep-running` scenario would raise the *Keep capture running* prompt over every
+        // scenario loaded afterwards in the same process — a banner appearing on boards it has
+        // nothing to do with, which is exactly the leak this function exists to prevent.
+        File(context.filesDir, FileMissedHeartbeatReader.TRAIL_FILE_NAME).delete()
+        File(context.filesDir, "${FileMissedHeartbeatReader.TRAIL_FILE_NAME}.rotated").delete()
+        context.applicationContext.getSharedPreferences(
+            SharedPreferencesKeepCaptureRunningDismissStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        ).edit().clear().apply()
 
         // P19/WPI: two more `SharedPreferences` files a P19 scenario can write outside :data —
         // cleared unconditionally (a no-op if nothing was ever written), the same "start from a
@@ -947,6 +967,50 @@ public object Scenarios {
         )
         return LoadResult(0, 1, id)
     }
+
+    /**
+     * `keep-running` — **F24**, `Fail-Keep-Running.dc.html` (R-1161, D58, AC-189 as amended).
+     *
+     * Seeds a real `heartbeat-trail.log` — the same file `RealCaptureService`'s own beat ticker
+     * appends to, at the same path — holding beats on cadence and then one real three-hour gap,
+     * with the row after it under a *different* session id, which is what a process the OS ended
+     * and then restarted actually leaves behind.
+     *
+     * Deliberately **not** an `os-stopped` variant: that scenario seeds a [CaptureGapEntity] with
+     * cause [CaptureGapCause.OS_STOPPED], which is what F5's banner reads, and F5 outranks this
+     * prompt precisely because it is the same event with stronger evidence. Seeding one here would
+     * capture F5 under this step's name — exactly the class of "the step captured a screen it was
+     * not named for" R-1179 is a row about. No gap row, no `CaptureState` capturing: only the trail.
+     *
+     * The dismiss watermark is cleared too, so a previous run's "Not now" cannot silently suppress
+     * the very board this step exists to photograph.
+     */
+    private suspend fun keepRunning(context: Context, db: OrtDatabase): LoadResult {
+        val id = ScenarioFixtures.sessionId("keep-running")
+        val resumedAtWallMillis = SystemClock.wallMillis() - 5 * 60_000L
+        val stoppedAtWallMillis = resumedAtWallMillis - 3 * 3_600_000L
+        db.sessionDao().insert(
+            ScenarioFixtures.session(id, startedAt = stoppedAtWallMillis - 3_600_000L, endedAt = null),
+        )
+        val trail = FileHeartbeatTrailStore(File(context.filesDir, FileMissedHeartbeatReader.TRAIL_FILE_NAME))
+        trail.clear()
+        val beat = KEEP_RUNNING_BEAT_MILLIS
+        listOf(
+            HeartbeatTrailEntry("$id-before", stoppedAtWallMillis - 2 * beat, 0L, 0L, true),
+            HeartbeatTrailEntry("$id-before", stoppedAtWallMillis - beat, 0L, 0L, true),
+            HeartbeatTrailEntry("$id-before", stoppedAtWallMillis, 0L, 0L, true),
+            HeartbeatTrailEntry("$id-after", resumedAtWallMillis, 0L, 0L, true),
+        ).forEach(trail::append)
+        context.applicationContext.getSharedPreferences(
+            SharedPreferencesKeepCaptureRunningDismissStore.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        ).edit().clear().apply()
+        return LoadResult(0, 1, id)
+    }
+
+    /** `RealCaptureService`'s own beat cadence, the same number `ui/failures/KeepCaptureRunning.kt`
+     * documents and pins. */
+    private const val KEEP_RUNNING_BEAT_MILLIS = 30_000L
 
     /**
      * `pass-a-partial` — a transmission whose only transcript row is a Pass A partial

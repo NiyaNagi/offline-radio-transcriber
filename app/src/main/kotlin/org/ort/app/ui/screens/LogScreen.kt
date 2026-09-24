@@ -54,6 +54,10 @@ public fun LogScreen(
     // resetting to the plain, unfiltered `All` view — never called when that label is `null` (no
     // statement to clear). Defaulted to a no-op so every existing caller keeps compiling unchanged.
     onClearAppliedFilter: () -> Unit = {},
+    // R-1167/D58/AC-202: the frequency header's own transient editor state and callbacks — see
+    // [LogFrequencyHeaderHost]. Defaulted, so a caller whose state carries no
+    // [LogScreenViewState.frequencyHeader] (every pre-existing one) is unchanged.
+    frequencyHost: LogFrequencyHeaderHost = LogFrequencyHeaderHost(),
 ) {
     Column(modifier = modifier.fillMaxSize()) {
         Row(
@@ -63,6 +67,13 @@ public fun LogScreen(
             Text(text = "Log", style = OrtType.screenTitle, modifier = Modifier.weight(1f))
             TextAction(text = "Filter", onClick = onFilterClick)
         }
+
+        // R-1167/D58/AC-202: between the title and the chips — it is a fact about the *data* every
+        // row below carries (the applied-filter statement, below the chips, is a fact about the
+        // filter). In the header rather than the list, so the `LazyColumn` can never scroll away the
+        // one thing that says what these overs are labelled with. Absent entirely when a rig is
+        // reporting a frequency and nothing is overriding it — see `LogFrequencyHeaderMapper.from`.
+        state.frequencyHeader?.let { header -> LogFrequencyHeaderRow(state = header, host = frequencyHost) }
 
         FilterChipRow(
             modifier = Modifier.fillMaxWidth().padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),

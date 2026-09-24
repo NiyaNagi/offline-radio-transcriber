@@ -27,6 +27,20 @@
     <div style="font-size: 13px; color: oklch(0.72 0.14 150);">Filter</div>
   </div>
 
+  <!-- R-1167 / D58 / AC-202: the hand-entered frequency, editable in place. It used to be asked for
+       during first-run setup (Setup-Rig-Usb); only the prompt moved. Here because this is where the
+       operator can see what it is labelling — every row below carries the frequency it produced.
+       Above the chips (a fact about the data) rather than below them (where the applied-filter
+       statement sits, a fact about the filter). Absent entirely when a rig is reporting a frequency
+       and nothing is overriding it. -->
+  <div style="display: flex; align-items: center; padding: 0 20px 10px;">
+    <div style="flex-grow: 1; min-width: 0;">
+      <div style="font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: oklch(0.55 0.008 250);">Frequency</div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 14px; color: oklch(0.94 0.006 250); margin-top: 2px;">145.230 MHz · by hand</div>
+    </div>
+    <div style="font-size: 13px; color: oklch(0.72 0.14 150);">Change</div>
+  </div>
+
   <!-- filter chips -->
   <div style="display: flex; gap: 7px; padding: 0 20px 12px;">
     <div style="font-size: 12px; font-weight: 500; padding: 5px 11px; border-radius: 14px; background: oklch(0.30 0.012 250); color: oklch(0.94 0.006 250);">All</div>

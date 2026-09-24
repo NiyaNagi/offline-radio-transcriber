@@ -32,6 +32,151 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-23 (P39 wave: two homes for what onboarding stops asking)
+
+### `85642606` — P39: the manual frequency moves into the log header, and the battery ask onto the first missed heartbeat
+
+**Scope:** `:app` only, and deliberately **nothing** under `app/src/main/kotlin/org/ort/app/ui/setup/`
+or `MainActivity.kt` — a second builder is rewriting that package concurrently to remove these two
+asks from the setup ladder. This change builds the two destinations D58 names for them, so deferring
+the ask cannot turn into losing it.
+
+New: `ui/data/LogFrequencyHeader.kt`, `ui/screens/LogFrequencyHeaderRow.kt`,
+`ui/failures/KeepCaptureRunning.kt`, three test classes, `design/canvas/Fail-Keep-Running.dc.html`,
+`design/canvas/Log-Frequency-Edit.dc.html`. Edited: `ui/data/LogViewData.kt`,
+`ui/data/LiveBarPolling.kt`, `ui/screens/LogScreen.kt`, `ui/screens/LogContent.kt`,
+`ui/failures/{FailureMapper,FailureViewState,FailureBanners,FailureSignalsPolling,FailureHost}.kt`,
+`app/src/debug/.../Scenarios.kt`, `tools/ui-audit/tour.json`, `design/design-intent.md`,
+`results/ui-audit/README.md`.
+
+**Requirements/ACs:** **AC-202**, **AC-189 (as amended)**, **AC-199**, AC-131, AC-201; FR-RIG-1,
+FR-RIG-8, FR-CAP-8, FR-CAP-12, FR-SVC-5b, NFR-8; D58; constitution I, II, III, IV, VIII; register
+R-1167, R-1161, R-1162, R-1170, R-1176, R-1160/R-1070, R-1179.
+
+**What changed.**
+
+**1 · The manual frequency now lives in the Log's own header (R-1167, AC-202).** Setup used to demand
+a parseable MHz value on `RADIO_USB` while the tap immediately beside it advanced with the value
+still `null` and capture ran perfectly well. D58 removes the prompt; **nothing downstream moves** —
+`CaptureConfiguration.manualFrequencyHz` → `SharedPreferencesCaptureConfigurationStore` →
+`RealCaptureService` at session start → `RigSupervisor.setManualFrequencyOverrideHz` is untouched.
+
+`LogFrequencyHeaderMapper` is a pure function over a plain `LogFrequencyFacts` snapshot, with three
+decisions worth naming. (a) **The row is absent** exactly when a rig is reporting a frequency and
+nothing overrides it — there is nothing for the header to add, and absence is a real answer rather
+than a placeholder. (b) **A reporting rig is never offered a silent hand-override.** `RigSupervisor
+.frequencyForTransmission` gives the manual value precedence over the radio (FR-RIG-8), so an
+editable field beside a live rig would let one tap relabel every over; the only action there is
+*Use the radio's frequency*, which clears the override. (c) **The conflicting case is stated, not
+hidden**: a hand-entered value while a rig reports a different one names both numbers in the row's
+own note — that is a confident-wrong-frequency defect arriving through the eye, and constitution I
+applies to it.
+
+**AC-131 is reported, never worked around.** Writes go through `CaptureConfigurationStore.update`
+and nothing else, so the freeze rule cannot be bypassed from the UI; the editor states which of the
+two things is true at the moment of saving (*"Applies to the next session you start."* when idle;
+*"This session keeps the frequency it started with. A change applies when you start the next
+session."* while capturing), and a pending write renders as *"Changed to X. This session keeps Y; the
+change applies when the next session starts."* A frequency edit bases itself on the **pending**
+configuration when one exists, so it cannot drop a mode change already waiting.
+
+R-1170's rule is applied here too: `Save` is lit at all times and the *tap* refuses, with its own
+tagged assertive live region naming the unit and an example. Clearing is a separate labelled action
+(`Clear the frequency`), never the meaning of a blank field (constitution III).
+
+`megahertzFieldText` does **not** use the `"%.3f"` every other frequency label in this app uses.
+Three decimals is 1 kHz resolution and silently rounds a real 12.5 kHz-step channel (446.00625 MHz
+on PMR446 → 446.006). Harmless on a label; not harmless on the text the editor re-opens with, where
+a rounded seed plus an untouched `Save` would rewrite the operator's own entry. `BigDecimal`, padded
+to three decimals so the ordinary case is unchanged.
+
+**2 · The battery-exemption ask now lands on the first missed heartbeat (R-1161, AC-189, AC-199).**
+The old `OVERNIGHT` step refused to start capture until overnight survival was proven, and only a
+capture can prove it. F24 `Fail-Keep-Running` is its new home: an amber, dismissable banner in the
+already-mounted `FailureHost`, wired to the same real platform Settings intent F5 uses.
+
+**The trigger is a real gap in the app's own `heartbeat-trail.log`** — two consecutive beats more
+than 30 s + 5 s apart, `ProveItAnalyzer`'s own rule, plus the *when* that class does not report.
+`isIgnoringBatteryOptimizations()` appears nowhere: not as the trigger, not as a guard, not as a
+suppressor (constitution IV, NFR-8). The trail is a file, so it survives exactly the process death it
+detects, and by construction it cannot exist before a capture has run — which is what makes this a
+post-capture fact rather than a pre-capture gate.
+
+**Dismiss policy, stated and tested:** *dismissal is keyed to the gap it was shown for and persists
+across process restarts; the prompt returns only when a strictly newer missed heartbeat is
+observed.* Persisting it is what stops the nag R-1161 is a row about; keying it to the gap is what
+keeps AC-189's "reappears on every relevant subsequent launch until the evidence exists" true — a
+phone that keeps killing the app keeps producing new evidence, one that has stopped produces none.
+Stored as a wall-clock watermark, never a boolean, because a boolean could only express "never ask
+again", which is not what the operator was asked. The watermark never moves backwards.
+
+**AC-199 is proven twice, structurally and behaviourally.** The presentation is not in
+`TAKEOVER_PRESENTATIONS`, so no code path can route it to a full-screen takeover; and
+`FailureHostTest` asserts the destination behind it stays displayed while the prompt is up, and
+stays up after the primary action is tapped (tapping an OS setting proves nothing about survival).
+The banner's copy says so in words, and keeps the substance of the old screen's caveat: the
+exemption is not a guarantee, some phones report the app exempt and end it anyway, and that is why
+the app proves liveness by heartbeat and shows the gap.
+
+**3 · Visual evidence.** New artboards `Fail-Keep-Running.dc.html` (F24) and
+`Log-Frequency-Edit.dc.html` (L06); `Log.dc.html`'s header gains the collapsed frequency row;
+`design-intent.md` gains both rows. A new `keep-running` debug scenario seeds a real trail with a
+real gap — deliberately *not* an `os-stopped` variant, because that seeds the `OS_STOPPED` gap row F5
+reads and F5 outranks F24, which would capture F5 under a step named for F24 (the R-1179 class of
+defect). `clearPriorScenarioData` now deletes the trail and its rotation file and clears the dismiss
+watermark, so a gap cannot leak a banner onto every board captured after it. Three tour steps at 1.0,
+2.0 and 2.0-scrolled.
+
+**Verified.**
+- `:app:testFullDebugUnitTest --tests …LogFrequencyHeaderTest --tests …LogFrequencyHeaderRowTest` →
+  **BUILD SUCCESSFUL**, 23 tests, all PASSED.
+- `:app:testFullDebugUnitTest --tests …KeepCaptureRunningTest` → **BUILD SUCCESSFUL**, 15 PASSED.
+- `:app:smokeTestFullDebugUnitTest --tests …FailureHostTest` → **BUILD SUCCESSFUL**, 14 PASSED
+  (11 pre-existing plus the three new F24 cases).
+- **Discrimination, six separate reverts, each restored afterwards** (constitution II):
+  `LogFrequencyHeaderMapper.from` → `null`: **14 of 23 failed**. `LogScreen`'s header render removed:
+  **8 of 10 failed**. `RealLogFrequencyEditor.save` based on `current()` instead of the pending
+  configuration: **1 failed**, `expected:<USB_RADIO> but was:<LOCAL_MICROPHONE>`.
+  `newestMissedHeartbeat` → `null`: **3 of 15 failed** in `KeepCaptureRunningTest` and **2 of 14** in
+  `FailureHostTest`. The dismiss-watermark check removed from the mapper: **1 failed** —
+  *"a dismissed gap must not come back"*. The `FailureHost` routing branch disabled: **2 of 14
+  failed**. `megahertzFieldText`'s precision fix discriminated live: with `"%.3f"` the round-trip
+  test failed `expected:<446006250> but was:<446006000>`.
+- `:app:detekt :app:ktlintCheck` → **BUILD SUCCESSFUL**, no findings, nothing suppressed. Three
+  detekt findings were fixed rather than suppressed, and each was a real second responsibility:
+  `mapBanner`'s `ReturnCount` became one elvis chain so the banner order *is* the code;
+  `FailureBannerOverlay`'s `LongMethod` split out `DismissablePastEventBanner` (F5/F15/F24 — the ids
+  that report an event already over and so need an explicit answer, unlike every banner that clears
+  itself); `LogContent`'s `LongMethod` extracted `rememberLogFrequencyHeaderHost`, which had made one
+  composable responsible both for polling the Log and for editing a configuration value.
+
+**Left open / not done.**
+- **A real cross-package hazard the lead should route.** `SetupActivity` pushes
+  `SetupCaptureConfigurationAdapter.toCaptureConfiguration(SetupStore)` through
+  `CaptureConfigurationStore.update` after every mutation, and that adapter sources
+  `manualFrequencyHz` from `SetupStore`. Once D58 removes the setup prompt, `SetupStore
+  .manualFrequencyHz` is never written, so **re-entering setup from Settings › Input would clobber a
+  frequency entered in the log header with `null`.** This file is `ui/setup/`, owned by the
+  concurrent P39 builder, so nothing was changed here. The fix belongs in that rewrite: either drop
+  `manualFrequencyHz` from the adapter entirely (the store is now the source of truth) or have it
+  preserve the store's existing value.
+- **`SettingsStore.manualFrequencyMhz` is a second, display-only field that never reaches capture.**
+  `SettingsContent`'s own edit action writes it and `SettingsPolling` reads it back for CF02, but it
+  is not the value `RealCaptureService` consumes — so an operator editing the frequency in Settings
+  today changes a label and nothing else. Pre-existing, unrelated to this change, and not fixed here;
+  worth a register row.
+- **`HEARTBEAT_INTERVAL_MILLIS` is restated, not shared.** `RealCaptureService`'s own constant is
+  `private`. A test pins the value against `HeartbeatTrailStore.DEFAULT_MAX_ENTRIES`'s documented
+  8-hour span so a cadence change fails loudly rather than silently stopping the prompt, but the two
+  numbers are still two numbers.
+- **The `uiautomator` dump and the scoped tour capture were not run by this builder** — see the
+  builder's report for what was and was not obtained, and the register rows need the capture paths
+  before R-1167 or R-1161 can close on evidence.
+- **R-1178** (the frequency screen's `Connected`/`Stale` branches naming a field they do not draw) is
+  untouched here on purpose: it resolves by deletion when the concurrent builder removes that screen.
+
+---
+
 ## 2026-09-23 (r-1180: a test that raced virtual time against a real dispatcher)
 
 ### `e18b009f` — r-1180: the two R-1139 scope tests get real seconds instead of virtual ones

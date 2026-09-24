@@ -107,6 +107,21 @@ public data class LevelViewState(
 public data class KilledViewState(public val stoppedAtLabel: String, public val gapDurationLabel: String)
 
 // -------------------------------------------------------------------------------------------
+// F24 — Fail-Keep-Running (banner). R-1161, D58, AC-189 as amended: the battery-exemption ask,
+// raised by the first missed heartbeat and never before. See `KeepCaptureRunning.kt` for the
+// trigger and the dismiss policy, and `design/canvas/Fail-Keep-Running.dc.html` for the board.
+// -------------------------------------------------------------------------------------------
+
+/** `Fail-Keep-Running.dc.html`. [dismissKey] is [org.ort.app.ui.failures.MissedHeartbeatEvidence
+ * .resumedAtWallMillis] — the gap's own identity, so dismissing answers *this* gap and not every
+ * future one (that type's own kdoc has the policy and why it is a watermark, not a boolean). */
+public data class KeepCaptureRunningViewState(
+    public val stoppedAtLabel: String,
+    public val gapDurationLabel: String,
+    public val dismissKey: Long,
+)
+
+// -------------------------------------------------------------------------------------------
 // F6 — Fail-Storage. StorageForecast.State.{ThreeNightsLeft,OneNightLeft} (warning, banner) and
 // StorageForecast.State.AtFloor + CaptureState.State.Failed (halt, takeover).
 // -------------------------------------------------------------------------------------------
