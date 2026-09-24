@@ -75,11 +75,15 @@ public fun RecordingsScreen(
         Column(
             modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = OrtSpacing.lg),
         ) {
+            // R-1201 (register): RC01's own drawer row reads "Recordings" too
+            // (`ReaderDestination.EARLIER_NIGHTS.drawerLabel`), and the drawer is composed on every
+            // screen — so the tour's `Text("Recordings")` check proved nothing about this screen.
+            // The same collision R-1070 already found on the session-review path, one level up.
             Text(
                 text = "Recordings",
                 style = OrtType.screenTitle,
                 color = OrtColors.textHigh,
-                modifier = Modifier.padding(top = OrtSpacing.sm),
+                modifier = Modifier.padding(top = OrtSpacing.sm).testTag("recordings-title"),
             )
             Text(
                 text = state.headline,

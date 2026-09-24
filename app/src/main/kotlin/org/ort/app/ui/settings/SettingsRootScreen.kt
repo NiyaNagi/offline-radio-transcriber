@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import org.ort.app.ui.components.NavRow
 import org.ort.app.ui.components.OrtIcons
@@ -53,11 +54,16 @@ public fun SettingsRootScreen(
     Column(modifier = modifier.fillMaxSize()) {
         ScreenHeader(onDrawer = onDrawer, onSearch = onSearch)
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            // R-1201 (register): "Settings" is also `ReaderDestination.SETTINGS.drawerLabel`, and
+            // the drawer is composed whether open or closed — so the tour's `Text("Settings")`
+            // check passed on every screen in the app, root and sub-screens alike (52 steps).
             Text(
                 text = "Settings",
                 style = OrtType.screenTitle,
                 color = OrtColors.textHigh,
-                modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm),
+                modifier = Modifier
+                    .padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)
+                    .testTag("settings-root-title"),
             )
             state.sections.forEach { section ->
                 SectionHeader(

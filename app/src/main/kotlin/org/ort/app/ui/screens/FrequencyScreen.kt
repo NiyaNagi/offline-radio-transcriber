@@ -81,7 +81,14 @@ public fun FrequenciesListScreen(
         )
         return
     }
-    Column(modifier = modifier.fillMaxSize()) {
+    // R-1201 (register): the tour's step check used to assert `Text("Frequencies")`, which
+    // `ReaderDrawerContent`'s always-composed `Frequencies` row satisfied on every screen. On the
+    // real list only, deliberately: the two branches above hand this same `modifier` straight to
+    // [LoadingState]/[EmptyState], which put their own `testTag` on that very node — and a second
+    // `testTag` on one node silently loses to the first (proven here: tagging them broke
+    // `FrequenciesContentLoadingTest`'s own `loading-state` assertion). A step that lands on
+    // loading or empty therefore fails loudly rather than being quietly counted as the list.
+    Column(modifier = modifier.fillMaxSize().testTag("frequencies-screen")) {
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             Text(text = "Frequencies", style = OrtType.screenTitle, modifier = Modifier.semantics { heading() })
             // R-215 (register, polish, V5 @f8430b8): the real frequency counts, matching
@@ -221,7 +228,9 @@ public fun FrequencyDetailScreen(
     // pending WP3 wiring the real navigation origin.
     backLabel: String = "Frequencies",
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
+    // R-1201 (register): a `frequency` drill-in step used to assert `Text("Frequencies")` — this
+    // screen's own back label *and* the drawer's own row label, so it proved neither.
+    Column(modifier = modifier.fillMaxSize().testTag("frequency-detail-screen")) {
         DrillInHeader(parentLabel = backLabel, onBack = onBack)
         // A single top-level LazyColumn — see StationDetailScreen's own doc comment for why
         // (a `verticalScroll` Column measured fine here too, but silently swallowed a nested

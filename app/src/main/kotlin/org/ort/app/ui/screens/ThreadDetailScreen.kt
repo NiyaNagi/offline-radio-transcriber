@@ -68,7 +68,10 @@ public fun ThreadDetailScreen(
     backLabel: String = "Threads",
     onShare: (() -> Unit)? = null,
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
+    // R-1201 (register): the tour's step check for a `thread` drill-in used to assert
+    // `Text("Threads")` — the drill-in header's own back label, which `ReaderDrawerContent`'s
+    // always-composed `Threads` row satisfied on every screen, open drawer or not.
+    Column(modifier = modifier.fillMaxSize().testTag("thread-detail-screen")) {
         DrillInHeader(
             parentLabel = backLabel,
             onBack = onBack,

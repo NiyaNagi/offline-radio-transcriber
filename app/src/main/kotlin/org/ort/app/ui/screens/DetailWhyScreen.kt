@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import org.ort.app.ui.components.ActionBar
@@ -73,7 +74,10 @@ public fun DetailWhyScreen(
     onConfirm: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
+    // R-1201 (register): D05's own step shape is `transmission` + `whyOpen`, which used to fall
+    // through to the generic transmission case and assert `Text("Log")` — the drawer's own `Log`
+    // row, composed on every screen. This tag names the screen the step is actually for.
+    Column(modifier = modifier.fillMaxSize().testTag("detail-why-screen")) {
         DrillInHeader(parentLabel = callsignLabel, onBack = onBack)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             Text(text = "Why this callsign", style = OrtType.screenTitle, color = OrtColors.textHigh)

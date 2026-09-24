@@ -145,8 +145,12 @@ public fun TransmissionDetailScreen(
     // content slot's own height to `viewport − bar`, so content physically cannot occupy the bar's
     // region at any scroll offset, first frame included — reused here rather than a second,
     // look-alike scaffold (constitution VII).
+    // R-1201 (register): 33 tour steps drill into a transmission, and every one of them asserted
+    // `Text("Log")` — the drill-in header's own back label, which is also
+    // `ReaderDestination.LOG.drawerLabel` on the always-composed drawer row, so the check was
+    // satisfied on any screen at all, this one included by accident rather than by evidence.
     FailureActionBarScaffold(
-        modifier = modifier,
+        modifier = modifier.testTag("transmission-detail-screen"),
         actionBar = {
             BottomActionBar(
                 state = state,

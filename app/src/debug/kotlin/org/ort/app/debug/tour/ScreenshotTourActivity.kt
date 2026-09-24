@@ -395,10 +395,65 @@ public class ScreenshotTourActivity : ComponentActivity() {
             }
         }
         awaitStableSemantics(step.id, window.decorView)
+        assertStillOnRequestedDestination(step, destination, expectDrawerOpen, expectReviewSessionView, navSeed)
         val bitmap = window.decorView.drawToBitmap()
         currentDestinationStep = null
         activeNavigator = null
         return TourCapture(bitmap, bitmap.width, bitmap.height, note = scrollNote)
+    }
+
+    /**
+     * **R-1202 (register)**: the destination-side half of [assertStillOnRequestedStep], which was
+     * setup-steps-only. For the 264 destination steps nothing re-checked, immediately before
+     * `drawToBitmap`, that the picture is of the screen the step names — and everything between
+     * [awaitDestinationSettled] and the capture can move it: a `tapLicenseNotice`/`tapLiveBar` tap,
+     * the `playThenNavigate` back press, an `override` scenario reload, a scroll. That is exactly
+     * the shape R-1179 turned out to be on the setup side, where one step photographed the wrong
+     * screen for the life of the programme while its manifest said `ok`.
+     *
+     * **What this can and cannot prove, stated rather than implied.** [ReaderNavigator] publishes
+     * four live facts — [ReaderNavigator.currentState], [ReaderNavigator.drawerOpenState],
+     * [ReaderNavigator.reviewSessionViewState] and [ReaderNavigator.settingsScreenState] — and all
+     * four are re-read here. The **drill-in identity itself has no seam**: which transmission,
+     * station, thread, frequency or recording session is open lives in `OrtNavHost`'s own private
+     * `NavHostNavState`, which nothing outside that composable can read. So a step that navigated
+     * from one transmission to another between the settle and the capture is still undetectable
+     * here. Closing that needs `NavHostNavState`'s ids mirrored onto [ReaderNavigator] the way
+     * `drawerOpenState` (R-803) and `reviewSessionViewState` (R-840) already were — an
+     * `ui/navigation` change, not this package's, and R-1202 stays open for it. `liveBarState` is
+     * deliberately *not* re-asserted: `playThenNavigate` already proves the bar came back by tag,
+     * and a scenario whose capture genuinely ends is entitled to lose it.
+     */
+    private fun assertStillOnRequestedDestination(
+        step: TourStep,
+        destination: ReaderDestination,
+        expectDrawerOpen: Boolean,
+        expectReviewSessionView: ReviewSessionView?,
+        navSeed: NavSeed?,
+    ) {
+        val observed = activeNavigator
+        val mismatch = when {
+            observed == null -> "the composition published no navigator at all"
+            observed.currentState.value != destination ->
+                "destination is '${observed.currentState.value}', not '$destination'"
+
+            observed.drawerOpenState.value != expectDrawerOpen ->
+                "drawerOpen is ${observed.drawerOpenState.value}, not $expectDrawerOpen"
+
+            expectReviewSessionView != null && observed.reviewSessionViewState.value != expectReviewSessionView ->
+                "reviewSessionView is '${observed.reviewSessionViewState.value}', not '$expectReviewSessionView'"
+
+            navSeed?.settingsScreen != null && observed.settingsScreenState.value != navSeed.settingsScreen ->
+                "settingsScreen is '${observed.settingsScreenState.value}', not '${navSeed.settingsScreen}'"
+
+            else -> return
+        }
+        error(
+            "tour step '${step.id}' settled on what it asked for and then moved before the capture — " +
+                "$mismatch. This screenshot would be a picture of a different screen (R-1202, the same " +
+                "class as R-1179). Whatever runs between the settle and `drawToBitmap` (a tap, a back " +
+                "press, an override reload, a scroll) has to leave the step where it said it would.",
+        )
     }
 
     /** R-803 (halt): polls [activeNavigator] (bounded, [STATE_WAIT_TIMEOUT_MILLIS]) until it reports

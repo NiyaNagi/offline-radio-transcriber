@@ -17,6 +17,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -77,7 +78,15 @@ public fun CorrectionSheet(
 ) {
     var tier by remember { mutableStateOf(initialStep) }
 
-    Column(modifier = modifier.fillMaxHeight(0.85f).verticalScroll(rememberScrollState())) {
+    // R-1201 (register): D08–D10's own step shape is `transmission` + `correctionStep`, which used
+    // to fall through to the generic transmission case and assert `Text("Log")` — the drawer's own
+    // always-composed `Log` row, true on every screen whether or not this sheet ever opened.
+    Column(
+        modifier = modifier
+            .fillMaxHeight(0.85f)
+            .verticalScroll(rememberScrollState())
+            .testTag("correction-sheet"),
+    ) {
         Sheet(title = "Who was it?") {
             when (tier) {
                 CorrectionTierStep.MAIN -> MainTier(

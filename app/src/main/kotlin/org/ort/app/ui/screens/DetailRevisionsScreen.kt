@@ -10,6 +10,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -53,15 +54,20 @@ public fun DetailRevisionsScreen(
      */
     loading: Boolean = false,
 ) {
+    // R-1201 (register): D06's own step shape is `transmission` + `revisionsOpen`, which used to
+    // fall through to the generic transmission case and assert `Text("Log")` — satisfied by the
+    // always-composed drawer's own `Log` row on any screen. Both branches carry the marker, since
+    // the loading one is a real state a tour step can land on.
+    val screen = modifier.fillMaxSize().testTag("detail-revisions-screen")
     if (loading) {
-        Column(modifier = modifier.fillMaxSize()) {
+        Column(modifier = screen) {
             DrillInHeader(parentLabel = parentLabel, onBack = onBack)
             LoadingState(message = "Loading…", modifier = Modifier.padding(OrtSpacing.lg))
         }
         return
     }
     val current = versions.firstOrNull { it.isCurrent }
-    Column(modifier = modifier.fillMaxSize()) {
+    Column(modifier = screen) {
         DrillInHeader(parentLabel = parentLabel, onBack = onBack)
         Column(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             Text(text = "Earlier versions", style = OrtType.screenTitle, color = OrtColors.textHigh)

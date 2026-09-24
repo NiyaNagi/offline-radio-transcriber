@@ -75,7 +75,10 @@ public fun StationsListScreen(
     sortMostHeard: Boolean = false,
     onToggleSort: () -> Unit = {},
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
+    // R-1201 (register): the root, not the "Stations" title — the title is the same word
+    // `ReaderDrawerContent`'s always-composed `Stations` row carries, so the tour's step check for
+    // this destination matched the drawer on every screen. See `TourStepExpectations`' doc comment.
+    Column(modifier = modifier.fillMaxSize().testTag("stations-screen")) {
         Row(modifier = Modifier.padding(horizontal = OrtSpacing.lg, vertical = OrtSpacing.sm)) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(text = "Stations", style = OrtType.screenTitle, modifier = Modifier.semantics { heading() })
@@ -298,7 +301,9 @@ public fun StationDetailScreen(
     // (WP10 is editing it concurrently) compiles unchanged; WP3 wires the true origin afterwards.
     backLabel: String = "Stations",
 ) {
-    Column(modifier = modifier.fillMaxSize()) {
+    // R-1201 (register): see [StationsListScreen]'s own note — a `station` drill-in step used to
+    // assert `Text("Stations")`, this screen's own back label *and* the drawer's own row label.
+    Column(modifier = modifier.fillMaxSize().testTag("station-detail-screen")) {
         // R-192 (register, design): the board draws no explicit Identity action, section preview
         // or row anywhere in its body — the header kebab is the *only* affordance, so it must
         // carry a real, specific description rather than the shared header's generic "More". WP2
