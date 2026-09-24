@@ -32,6 +32,122 @@ one entry covering what the merge brought in, not a restatement of the branch's 
 
 ---
 
+## 2026-09-24 (the superseded privacy claim, swept out of the last places that carried it)
+
+### `<pending>` — R-1173: the seven remaining copies of a claim D37/D38/D42 superseded, including the README headline; `OfflinePromiseCopy` becomes the only place any of them is written
+
+**Scope:** `:app` (`ui/OfflinePromiseCopy.kt`, `ui/screens/StationIdentityScreen.kt`,
+`ui/settings/SettingsExportScreen.kt`, `ui/settings/SettingsViewData.kt` and the three test
+classes), `:data` (`entity/CatalogEntities.kt` — a kdoc), plus `README.md`,
+`design/canvas/Station-Identity.dc.html`, `design/canvas/Settings-Export.dc.html`,
+`design/design-intent.md`, `results/audit-2026-09-07.md` and `RELEASES.md`.
+
+**Requirements/ACs:** FR-ANL-14, FR-SPK-20 (as D38 amends it), FR-SPK-25, FR-DIG-13, FR-LEX-24,
+FR-OBS-9, FR-OBS-10, FR-PLT-5, FR-CON-3, FR-STO-6; D28, D37, D38, D42; constitution I, II, V,
+VIII; register R-1173, building on R-1164/R-1165 and following R-1160/R-1070 on how a Compose
+assertion is rooted.
+
+**What changed.**
+
+**1 · One source, and it now holds every privacy claim the app makes.** R-1165 created
+`OfflinePromiseCopy` for Welcome and About. R-1173 is the same defect arriving three screens
+later, so `STATION_IDENTITY_SUBTITLE`, `STATION_IDENTITY_CARD` and `EXPORT_NEVER_INCLUDED` moved
+in beside `WELCOME_PROMISE`/`POINTS`, and the two screens read them. The new
+`VOICEPRINT_ROUTES` constant holds FR-SPK-20's exception as **one clause used by all three
+surfaces**, which is the specific defect this row warned about: a replacement naming only the
+field report would have contradicted `SettingsBackupScreen`, which already tells the operator
+voiceprints travel in a backup they make to their own device. `POINTS`' voiceprint entry is now
+composed from that clause and is **byte-identical to what shipped**, so Welcome and About are
+unchanged.
+
+**2 · What each line now says, and why the other half did not move.** ST04's subtitle claimed all
+three of its facts stay on the phone; the callsign is public by nature and is in every export, so
+that was never true of all three, and it now reads *"each with its own rule about leaving this
+phone"* — pointing at the card that says which is which. ST04's card and CF07's card each keep
+the **absolute** for names, notes and location (FR-SPK-25, FR-DIG-13, FR-LEX-24 are untouched by
+D38 and the new tests assert they still read *"no channel and no tier"*) and state the voiceprint
+exception separately. CF07's *"Never exported, by any option"* is true of the four flat export
+formats and false of *export* as FR-STO-6 and FR-SPK-20 use the word, so the absolute is now bound
+to the **file** — the genuinely excluded case is a **cloud** backup (FR-PLT-5), not a backup.
+
+**3 · Two kdocs that misdescribed what they pointed at.** `SettingsViewData`'s `neverIncluded`
+called its list *"Constitution V's closed list, verbatim"*; V's closed list has been three
+categories since 2.0.0, and this list is the **contribution channel's** never-included list
+(FR-CON-3), where all four rows including voiceprints genuinely are absolute. The scope was wrong,
+not the rows. Found alongside it: the comment describing `NEVER_LEAVES_DEVICE` was stranded behind
+a second kdoc and therefore bound to `SettingsAlertWatchKind`, an unrelated enum — moved to the
+value it describes. `VoiceprintEntity.embedding`'s `/** Never leaves the device (D28, FR-SPK-20).
+*/` now states both permitted routes and their conditions.
+
+**4 · The README headline, which is the most public of the seven.** *"transcribes it entirely
+offline"* became *"transcribes it **entirely on the device**"*, followed by FR-ANL-14's one
+permitted sentence and a plain statement of the three things that can leave when the operator asks
+them to. The word *offline* was wrong not because anything regressed — capture, transcription and
+resolution still cannot reach the network, and `dependencyRules` enforces that — but because the
+product now ships a contribution channel, a field-report channel and three analytics tiers. Key
+decision 2 (*"On-device only. No cloud"*) was corrected in the same file for the same reason.
+
+**5 · The historical record was corrected, not rewritten.** `results/audit-2026-09-07.md:539` has
+*"embeddings never leave"* recorded as settled. That was true of constitution 1.0.1, which is what
+that register audited. The line is left exactly as written and carries a dated
+`> **Corrected 2026-09-23 (R-1173, D38).**` note beneath it, in the style
+`spec/open-questions.md:436` and `spec/build-plan.md:207` already use — rewriting it would destroy
+the evidence that the claim was believed then, which is the whole value of an audit register.
+
+**6 · Four new tests, and the sweep no longer depends on anyone remembering a surface.**
+`OfflinePromiseCopyTest` gains `FR_SPK_20 no copy anywhere in the object restates the voiceprint
+absolute`, `FR_SPK_20 every surface that names a voiceprint route names both of them`,
+`FR_SPK_25 the station identity and export cards keep the absolute for names and location` and
+`FR_SPK_20 the station identity subtitle makes no blanket claim about all three facts`. All four
+enumerate the object **by reflection** rather than by a hand-maintained list, so a constant added
+tomorrow is checked without anyone adding it — R-1173 exists precisely because a sweep covered
+only the surfaces someone remembered. The existing bare-never-uploaded test now runs over that
+same reflected set instead of two named constants.
+
+**7 · Two render assertions rerooted (R-1160, R-1070).** `StationIdentityScreenTest`'s
+never-leaves test matched the substring *"never included in a contribution"* — both the superseded
+claim and the free-floating prose match those two rows warn about. It now asserts
+`station-identity-subtitle` and `station-identity-never-leaves`, two new tags on the screen under
+test, against the constants. `SettingsExportScreenTest`'s banner test asserted a **retyped
+literal**, which is exactly how it went on passing while the claim it asserted became false; it now
+reads `export-never-included` and compares to the one approved source.
+
+**Verified.** `:app:testFullDebugUnitTest` and `:app:smokeTestFullDebugUnitTest`,
+`:app:detekt`, `:app:ktlintCheck`, `:data:test`, `:data:detekt`, `:data:ktlintCheck`, plus
+`python tools/spec-check/spec_check.py` — all green (see the session report for the run output).
+**Discrimination, both halves separately.** With the three constants still holding the shipped
+wording, all four new `OfflinePromiseCopyTest` tests failed, each quoting the exact superseded
+sentence back (`"or a backup"` in ST04's card; `found 1` voiceprint-route surface instead of 3;
+the missing `no channel and no tier`; `none of which leave` in the subtitle). Separately — because
+a render test that reads the same constant the screen reads would otherwise pass both ways — the
+screen wiring was replaced with literals and `R_1173 the station identity card and subtitle render
+the approved privacy wording` and `R_135 the never-included promise banner renders regardless of
+scope` both failed; wiring restored, both pass.
+
+**Left open / not done.**
+- **No captures.** The emulator was reserved by the session lead for a full canonical tour, so this
+  change is **not closed under constitution VIII**. `ST04 Station-Identity` and `CF07
+  Settings-Export` both need re-capture at font scale 1.0 and 2.0, scrolled to the end: both cards
+  roughly doubled in length and ST04's subtitle went from one line to two at 390 dp, so a 2.0
+  reflow is the specific risk.
+- `design/canvas/Settings.dc.html:65` and its code counterpart `SettingsPolling.kt:81` (*"Log,
+  transcripts and digests · never voiceprints, names or location"*) were **deliberately left
+  unchanged**: scoped to the Export destination that sentence is true and stays true, and the
+  Backup row beside it is a different destination. Named in the row, judged, reported rather than
+  churned.
+- Four further instances found outside R-1173's list and reported to the lead rather than fixed
+  here: `SettingsContributeScreen.kt:44` / `Settings-Contribute.dc.html:35` (*"Nothing leaves this
+  phone until you save a bundle and send it yourself"* — false once tier-1 analytics is on by
+  default), `WelcomeScreen.kt:246` (*"what never leaves this phone"* as the sheet title over a
+  sheet that now says a voiceprint can), `spec/functional-spec.md:1075-1080` (FR-SPK-20's own
+  rationale still reads *"but they never leave the device"* — the requirement was amended, its
+  justifying paragraph was not), and `net/src/main/AndroidManifest.xml:5`, which quotes
+  constitution V's pre-2.0.0 title.
+- No mechanical repo-wide guard was added. `spec_check.py` reads a fixed set of spec files, and a
+  naive grep for these phrases matches the constitution, `AGENTS.md`, `CHANGELOG.md`, the register
+  and every legitimately-absolute category — see the session report for the narrower rule that
+  would work and what it would cost.
+
 ## 2026-09-23 (P39 wave: two homes for what onboarding stops asking)
 
 ### `ee1a58d8` — P39: the manual frequency moves into the log header, and the battery ask onto the first missed heartbeat

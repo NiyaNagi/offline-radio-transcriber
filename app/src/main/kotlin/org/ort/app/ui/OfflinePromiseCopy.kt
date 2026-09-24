@@ -12,7 +12,16 @@ package org.ort.app.ui
  * principle was amended, so the prose now lives in one place and a test asserts both screens
  * render exactly it.
  *
- * Both constants are checked against the spec by `OfflinePromiseCopyTest`:
+ * R-1173 is the same finding again, three screens further on, and it is why every privacy claim
+ * the app makes now lives here rather than beside the composable that draws it: `README.md`,
+ * `StationIdentityScreen`, `SettingsExportScreen`, a `SettingsViewData` kdoc and a `:data` entity
+ * kdoc had each kept a copy of the superseded wording, and one of them ([EXPORT_NEVER_INCLUDED])
+ * flatly contradicted `SettingsBackupScreen` on the same device. [VOICEPRINT_ROUTES] exists so a
+ * surface cannot state *some* of FR-SPK-20's exception — naming the field report and forgetting
+ * the operator's own device-to-device transfer would ship a third false claim, not a fix.
+ *
+ * Every constant here is checked against the spec by `OfflinePromiseCopyTest`, which sweeps them
+ * by reflection so a constant added later cannot escape the check by not being listed:
  *
  * - [WELCOME_PROMISE] must carry **FR-ANL-14**'s one permitted single-sentence claim verbatim, and
  *   no copy here may make the bare "no upload, ever" claim that requirement forbids (R-1164). The
@@ -29,6 +38,21 @@ package org.ort.app.ui
  * not apply: FR-ANL-14 makes the wording itself the requirement.
  */
 internal object OfflinePromiseCopy {
+
+    /**
+     * FR-SPK-20's amended voiceprint exception, as one clause, so no surface can state a different
+     * number of routes from another. It completes the sentence *"…can leave only "*.
+     *
+     * Both routes are the operator's own action and neither is a background path: a backup they
+     * transfer to their own device (FR-SPK-20's *"Export MAY include them only for the user's own
+     * device-to-device transfer, and SHALL say so"*), and the field-report channel, per-category
+     * and defaulting off (FR-OBS-9, FR-OBS-10, D38). Stating only one of the two is how R-1173's
+     * own warning gets ignored: a screen reading *"only by field report"* would contradict
+     * `SettingsBackupScreen`, which already tells the operator about the other one.
+     */
+    const val VOICEPRINT_ROUTES: String =
+        "by your own hand — a transfer you make to your own device, or a field report where you " +
+            "switch that one category on"
 
     /**
      * `Setup-Welcome.dc.html`'s lead paragraph (S01), under the screen title.
@@ -59,11 +83,50 @@ internal object OfflinePromiseCopy {
             "your location never leave this phone — not in an export, a contribution, a diagnostic " +
             "bundle, a backup, or any analytics tier.",
         "Voiceprints are biometric data: never in a contribution, a diagnostic bundle or a cloud " +
-            "backup. They can leave only by your own hand — a transfer you make to your own device, " +
-            "or a field report where you switch that one category on. It is off on every report " +
+            "backup. They can leave only $VOICEPRINT_ROUTES. It is off on every report " +
             "until you do, each file and its real size is named before anything is sent, and a " +
             "public destination is refused unless you have explicitly turned off the guard in Settings.",
         "Nothing is deleted quietly. Every attribution carries its confidence. A weaker phone knows " +
             "less; it is never more wrong.",
     )
+
+    /**
+     * `Station-Identity.dc.html`'s subtitle (ST04), under *How this station is known*.
+     *
+     * R-1173: this read *"Three things, kept separately, none of which leave this phone"*. Two of
+     * the three do leave — the callsign is public by nature and is in every export, and a
+     * voiceprint has [VOICEPRINT_ROUTES] — so the screen now points at the card that says which is
+     * which instead of flattening all three into one absolute that was never true of all of them.
+     */
+    const val STATION_IDENTITY_SUBTITLE: String =
+        "Three things, kept separately, each with its own rule about leaving this phone"
+
+    /**
+     * `Station-Identity.dc.html`'s lock card (ST04), beneath the three facts.
+     *
+     * R-1173: the *"or a backup"* clause was the false half — `SettingsBackupScreen` already tells
+     * the operator that voiceprints travel in a backup, because FR-SPK-20 permits exactly that for
+     * their own device-to-device transfer. The name and the note keep their absolute; the
+     * voiceprint gets [VOICEPRINT_ROUTES], neither larger nor smaller than FR-SPK-20 makes it.
+     */
+    const val STATION_IDENTITY_CARD: String =
+        "The name and the note you add here leave this phone in no channel and no tier. A " +
+            "voiceprint is biometric data: never in a contribution, a diagnostic bundle or a " +
+            "cloud backup, and it can leave only $VOICEPRINT_ROUTES. The callsign itself is " +
+            "public by nature and is the only part of this record an export file carries."
+
+    /**
+     * `Settings-Export.dc.html`'s lock card (CF07).
+     *
+     * R-1173: *"Never exported, by any option"* is true of the four flat export formats and false
+     * of the word *export* as FR-STO-6 and FR-SPK-20 use it — a backup is an export, and it
+     * carries voiceprints. Binding the absolute to the **file** keeps it true, and the second half
+     * names the two routes a voiceprint does have rather than leaving Export and Backup
+     * contradicting each other on the same device.
+     */
+    const val EXPORT_NEVER_INCLUDED: String =
+        "No export file carries any of these, whichever options you choose: voiceprints, names " +
+            "you gave stations, notes, your location, the level of any signal that would locate " +
+            "you. Names, notes and location leave this phone in no channel and no tier. A " +
+            "voiceprint can leave only $VOICEPRINT_ROUTES."
 }

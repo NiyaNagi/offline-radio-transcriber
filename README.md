@@ -1,8 +1,19 @@
 # Offline Radio Transcriber
 
 An Android application that listens to amateur and scanner radio traffic, transcribes it
-entirely offline, resolves callsigns by matching a lexicon **against the audio itself**,
-groups transmissions into conversations, and presents a searchable log plus a digest.
+**entirely on the device**, resolves callsigns by matching a lexicon **against the audio
+itself**, groups transmissions into conversations, and presents a searchable log plus a digest.
+
+**Your audio is processed only on your phone and is never uploaded unless you choose to share
+it.** Capture, segmentation, transcription, lexicon, identity and digest cannot reach the network
+at all — that is enforced by the build (`./gradlew dependencyRules`), not promised in prose. What
+*can* leave: a corpus contribution and a field report, both off until you enable them and both
+showing you every file and its real size before anything is sent; and analytics, where tier 1
+(usage, crashes, aggregate quality — no transcript, callsign, name, station knowledge or
+location) is on by default and can be switched off, while tiers 2 and 3 are opt-in. Each is
+recomputed from a closed field list rather than serialised from the database, and none of them
+runs during capture. The full statement is in
+[`docs/privacy-policy.md`](docs/privacy-policy.md).
 
 **Status: build wave A started.** The specification set is complete and adversarially audited.
 The Gradle multi-module skeleton (technical design §2) is now in place — every module wired
@@ -195,8 +206,12 @@ information. Full rationale in the functional spec, section 3.
 
 1. **Android, not iOS.** The `microphone` foreground service type has no time limit;
    iOS background recording is technically permitted but commercially fragile.
-2. **On-device only.** No cloud, no desktop dependency. Reprocessing is designed in as an
-   extensibility point but is not required for the product to work.
+2. **Audio is processed on-device only.** No cloud inference over audio or its transcripts, ever,
+   and no desktop dependency. Constitution 2.0.0 (D42) narrowed this from "nothing leaves the
+   device" to "audio and its processing never leave it": contribution, field reports and
+   analytics are declared, closed-field outbound channels, and none of them is in the capture
+   path. Reprocessing is designed in as an extensibility point but is not required for the
+   product to work.
 3. **Design for the best hardware first.** The reference experience is defined on a modern
    flagship and is not capped by what a weak device can do.
 4. **Lexicon runs against audio, not text.** This is the core accuracy thesis.

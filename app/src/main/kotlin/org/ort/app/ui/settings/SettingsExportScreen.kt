@@ -52,6 +52,7 @@ import org.ort.app.export.ExportCountPreview
 import org.ort.app.export.ExportFileFormat
 import org.ort.app.export.ExportRequest
 import org.ort.app.export.ExportRequestScope
+import org.ort.app.ui.OfflinePromiseCopy
 import org.ort.app.ui.components.CheckboxRow
 import org.ort.app.ui.components.DrillInHeader
 import org.ort.app.ui.components.FailedState
@@ -66,12 +67,16 @@ import org.ort.app.ui.theme.OrtSpacing
 import org.ort.app.ui.theme.OrtType
 import java.util.Locale
 
-/** Constitution III's never-included list, `Settings-Export.dc.html` verbatim (R-135, round 4
- * System validator: this must show even while export is unbuilt, not only once a real exporter
- * exists — the promise is about what would leave the device, not about whether that path works). */
-private const val EXPORT_NEVER_INCLUDED_PROMISE =
-    "Never exported, by any option: voiceprints, names you gave stations, notes, your location, " +
-        "the level of any signal that would locate you."
+/** `Settings-Export.dc.html`'s never-included card (R-135, round 4 System validator: this must
+ * show even while export is unbuilt, not only once a real exporter exists — the promise is about
+ * what would leave the device, not about whether that path works).
+ *
+ * R-1173 moved the wording itself into [org.ort.app.ui.OfflinePromiseCopy]. It used to read
+ * *"Never exported, by any option"*, which is true of this screen's four flat formats and false
+ * of *export* as FR-STO-6 and FR-SPK-20 use the word — a backup is an export and it carries
+ * voiceprints, which `SettingsBackupScreen` already tells the operator. Two screens on one device
+ * cannot disagree about that. */
+private val EXPORT_NEVER_INCLUDED_PROMISE = OfflinePromiseCopy.EXPORT_NEVER_INCLUDED
 
 /** `RANGE` ("a range of nights") has no [ExportRequestScope] counterpart — see
  * [org.ort.app.export.ExportRequestScope]'s own kdoc for why: no date-range picker exists in this
@@ -484,7 +489,7 @@ private fun ExportFooter(
                 text = EXPORT_NEVER_INCLUDED_PROMISE,
                 style = OrtType.cardBody,
                 color = OrtColors.textBody,
-                modifier = Modifier.padding(start = OrtSpacing.sm),
+                modifier = Modifier.padding(start = OrtSpacing.sm).testTag("export-never-included"),
             )
         }
 

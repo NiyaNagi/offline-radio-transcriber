@@ -60,6 +60,14 @@ prerelease contains.
   contribution at your choice — and it offered one of those a few screens later. It now states the
   one accurate promise: *your audio is processed only on your phone and is never uploaded unless
   you choose to share it.*
+- **The same superseded promise was still on two more screens, and on the project's front page.**
+  *How this station is known* said all three of its facts stay on the phone — the callsign is in
+  every export, so that was never true of all three — and the Export screen said voiceprints are
+  *"never exported, by any option"* while the Backup screen, two rows away, correctly told you they
+  travel in a backup you make to your own device. Both now say the same thing as each other and as
+  the Backup screen. The README's own headline said the app transcribes *"entirely offline"*; it
+  now says **entirely on the device**, which is the part that is actually guaranteed, and states
+  plainly what can leave when you ask it to.
 - **Two screens still said voiceprints never leave the device.** They can, by one route you control
   — a field report where you switch that category on, or a transfer you make to your own device.
   Names you give stations, what the phone has learned about who is around when, and your location

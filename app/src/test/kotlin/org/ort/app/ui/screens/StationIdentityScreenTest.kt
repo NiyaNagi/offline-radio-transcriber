@@ -2,7 +2,9 @@ package org.ort.app.ui.screens
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -18,6 +20,7 @@ import androidx.compose.ui.unit.Density
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.ort.app.ui.OfflinePromiseCopy
 import org.ort.app.ui.data.StationGivenByYouViewState
 import org.ort.app.ui.data.StationIdentityViewState
 import org.ort.app.ui.data.StationVoiceSplitViewState
@@ -83,12 +86,22 @@ class StationIdentityScreenTest {
             .assertCountEquals(2)
     }
 
+    /**
+     * R-1173. This used to match the substring *"never included in a contribution"*, which was both
+     * the claim D37/D38 superseded and the kind of prose match R-1160 and R-1070 warn about — a
+     * phrase that happens to be on screen proves nothing about which node carries it. It now roots
+     * in this screen's own tags and compares against [OfflinePromiseCopy], so the screen and the
+     * approved wording cannot drift apart in either direction.
+     */
     @Test
-    fun `R_073 the never-leaves-the-device statement is always present`() {
+    fun `R_1173 the station identity card and subtitle render the approved privacy wording`() {
         composeTestRule.setContent { OrtTheme { StationIdentityScreen(state = fixtureState(), onBack = {}) } }
 
-        composeTestRule.onNodeWithText("never included in a contribution", substring = true).performScrollTo()
-        composeTestRule.onNodeWithText("never included in a contribution", substring = true).assertExists()
+        composeTestRule.onNodeWithTag("station-identity-subtitle")
+            .assertTextEquals(OfflinePromiseCopy.STATION_IDENTITY_SUBTITLE)
+        composeTestRule.onNodeWithTag("station-identity-never-leaves").performScrollTo()
+        composeTestRule.onNodeWithTag("station-identity-never-leaves")
+            .assertContentDescriptionEquals(OfflinePromiseCopy.STATION_IDENTITY_CARD)
     }
 
     @Test
