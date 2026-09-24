@@ -10,13 +10,13 @@ process, polish, open questions and coverage debt are P2.
 
 | Source | Open | P0 | P1 | P2 |
 |---|---:|---:|---:|---:|
-| UI / defect register | 143 | 13 | 25 | 105 |
+| UI / defect register | 144 | 13 | 25 | 106 |
 | Hardware protocol | 15 | 15 | 0 | 0 |
 | Build-plan units | 5 | 2 | 3 | 0 |
 | Capture-modes checklist | 15 | 0 | 15 | 0 |
 | Open questions | 10 | 0 | 0 | 10 |
 | Coverage matrix | 1 | 0 | 0 | 1 |
-| **Total** | **189** | **30** | **43** | **116** |
+| **Total** | **190** | **30** | **43** | **117** |
 
 ## P0 — blocks the beta, or is wrong in front of the operator
 
@@ -221,3 +221,4 @@ process, polish, open questions and coverage debt are P2.
 | R-1203 | The gate's first two tasks have their own tests, and the gate never runs them | register | tooling/open | R-1140; constitution VI, VIII |
 | R-1204 | The platform guard reads a manifest, and the Release workflow publishes a different one | register | tooling/open | FR-OBS-5; constitution VII; R-1203 |
 | R-1205 | Six suites report green from a place where nothing ran | register | tooling/open | R-1140; R-1203; constitution VI |
+| R-1206 | Eighteen convention findings are pinned rather than fixed, and one lead in that list is false | register | process/open | R-1180; R-1189; R-1190; R-1191; R-808 |
